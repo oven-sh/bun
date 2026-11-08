@@ -1,0 +1,7 @@
+# it leaves the sight of the look
+# -- source: a-class-in-a-list-uses-its-features.ts
+# const list = [WebSocket];
+# console.log(list.length);
+# -- end of source
+# RUN: features
+# CHECK: by WebSocket

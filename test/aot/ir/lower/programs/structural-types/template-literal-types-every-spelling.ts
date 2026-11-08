@@ -86,97 +86,78 @@ attempt("written out", () => {
 
 // GENERATED: make pixels isOn isId remember
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=[[w_1]]}] results=[{type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = String string="id-"
 // CHECK-NEXT: v2 = ToString v0
 // CHECK-NEXT: v3 = Strcat v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="pixels"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_4]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v2 = PropGet v1 key="parseFloat" [isFreeName]
 // CHECK-NEXT: v3 = Convert v2 declared={type=builtin(ParseFloat) flags=[IsExpected]}
 // CHECK-NEXT: v4 = Call v3, -, v0 calleeName="parseFloat"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=number site=[[w_5]]}}, {declared={type=number site=[[w_4]]}}]
+// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=number}}, {declared={type=number}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isOn"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"is-false"|"is-true" site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_7]]}] functionTypes={{*}}[[f_8]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"is-false"|"is-true" flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
 // CHECK-NEXT: b0(v0: undefined|null|"is-false"|"is-true"):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = String string="is-true"
 // CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean site=[[w_7]]}
+// CHECK-NEXT: v3 = Convert v2 declared={type=boolean}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="isId"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_10]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] {
 // CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = PropGet v0 key="startsWith"
 // CHECK-NEXT: v2 = String string="id-"
 // CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="startsWith" calleeName="text.startsWith"
-// CHECK-NEXT: v4 = Convert v3 declared={type=boolean site=[[w_11]]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v4 = Convert v3 declared={type=boolean} illTypedCause=DeclarationWithoutBody
 // CHECK-NEXT: v5 = ToBoolean v4
-// CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
+// CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b4(| 0)
+// CHECK-NEXT: b1(v6):
 // CHECK-NEXT: v7 = PropGet v0 key="length"
-// CHECK-NEXT: v8 = Convert v7 declared={type=number site=[[w_12]]} illTypedCause=Assertion
-// CHECK-NEXT: v9 = Integer integer=3
-// CHECK-NEXT: v10 = Greater v8, v9
-// CHECK-NEXT: Jump -> next b5(v10)
-// CHECK-NEXT: b4(v11):
-// CHECK-NEXT: Jump -> next b5(v11)
-// CHECK-NEXT: b5(v12):
-// CHECK-NEXT: v13 = ToBoolean v12
-// CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b8(| 0)
-// CHECK-NEXT: b6(v14):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: v15 = Builtin builtin=Number
-// CHECK-NEXT: v16 = Builtin builtin=NumberIsNaN
-// CHECK-NEXT: v17 = Builtin builtin=Number
-// CHECK-NEXT: v18 = PropGet v0 key="slice"
-// CHECK-NEXT: v19 = Integer integer=3
-// CHECK-NEXT: v20 = Call v18, v0, v19 calleeKey="slice" calleeName="text.slice"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|string site=[[w_13]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v22 = Call v17, -, v21 calleeName="Number"
-// CHECK-NEXT: v23 = Convert v22 declared={type=number site=[[w_14]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v24 = Call v16, v15, v23 calleeName="Number.isNaN"
-// CHECK-NEXT: v25 = Convert v24 declared={type=boolean site=[[w_15]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v26 = ToBoolean v25
-// CHECK-NEXT: v27 = LogicalNot v26
-// CHECK-NEXT: Jump -> next b9(v27)
-// CHECK-NEXT: b8(v28):
-// CHECK-NEXT: Jump -> next b9(v28)
-// CHECK-NEXT: b9(v29):
-// CHECK-NEXT: v30 = Convert v29 declared={type=boolean site=[[w_10]]}
-// CHECK-NEXT: Return v30
+// CHECK-NEXT: v8 = Integer integer=3
+// CHECK-NEXT: v9 = Greater v7, v8
+// CHECK-NEXT: v10 = ToBoolean v9
+// CHECK-NEXT: Branch v10 -> taken b2(| 0), notTaken b3(| 0)
+// CHECK-NEXT: b2(v11):
+// CHECK-NEXT: v12 = Builtin builtin=Number
+// CHECK-NEXT: v13 = Builtin builtin=NumberIsNaN
+// CHECK-NEXT: v14 = Builtin builtin=Number
+// CHECK-NEXT: v15 = PropGet v0 key="slice"
+// CHECK-NEXT: v16 = Integer integer=3
+// CHECK-NEXT: v17 = Call v15, v0, v16 calleeKey="slice" calleeName="text.slice"
+// CHECK-NEXT: v18 = Convert v17 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v19 = Call v14, -, v18 calleeName="Number"
+// CHECK-NEXT: v20 = Convert v19 declared={type=number} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v21 = Call v13, v12, v20 calleeName="Number.isNaN"
+// CHECK-NEXT: v22 = Convert v21 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v23 = ToBoolean v22
+// CHECK-NEXT: v24 = LogicalNot v23
+// CHECK-NEXT: Jump -> next b5(v24)
+// CHECK-NEXT: b3(v25):
+// CHECK-NEXT: Jump -> next b5(v25)
+// CHECK-NEXT: b4(v26):
+// CHECK-NEXT: Jump -> next b5(v26)
+// CHECK-NEXT: b5(v27):
+// CHECK-NEXT: v28 = Convert v27 declared={type=boolean}
+// CHECK-NEXT: Return v28
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="remember"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_16]] flags=[OmitsNull, OmitsUndefined]}, {type=number site=[[w_17]]}] results=[{type=number site=[[w_18]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
 // CHECK-NEXT: b0(v0: undefined|null|string, v1: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_19]]
+// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_1]]
 // CHECK-NEXT: v3 = CheckInitialized v2 name="table"
-// CHECK-NEXT: v4 = Convert v1 declared={type=number site=[[w_20]]}
-// CHECK-NEXT: ElemSet v3, v0, v4
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_19]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="table"
-// CHECK-NEXT: v8 = ElemGet v7, v0
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|number site=[[w_21]]} illTypedCause=FromLooseType
-// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_18]]}
-// CHECK-NEXT: Return v10
+// CHECK-NEXT: ElemSet v3, v0, v1
+// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_1]]
+// CHECK-NEXT: v6 = CheckInitialized v5 name="table"
+// CHECK-NEXT: v7 = ElemGet v6, v0
+// CHECK-NEXT: v8 = Convert v7 declared={type=number}
+// CHECK-NEXT: Return v8
 // CHECK-NEXT: }

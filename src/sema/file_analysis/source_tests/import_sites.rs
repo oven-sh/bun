@@ -205,21 +205,20 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"import { createRequire } from "node:module"; import.meta.url = other; createRequire(import.meta.url)("a");"#,
         &[],
     ),
-    // What is made is asked for on the way to what it is made of.
-    (
-        "a.mts",
-        r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("a");"#,
-        &[],
-    ),
-    (
-        "a.cjs",
-        r#"const load = require("module").createRequire(load("path").join(__dirname, "lib", "index.js")); load("a");"#,
-        &["module"],
-    ),
     (
         "a.mts",
         r#"import { createRequire } from "node:module"; const meta = import.meta; createRequire(import.meta.url)("a");"#,
         &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; import.meta.tag`x`; createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; tag`${import.meta.dir}`; createRequire(import.meta.url)("a");"#,
+        &["a"],
     ),
     (
         "a.mjs",
@@ -526,6 +525,171 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"change(import.meta); import.meta.require("node:module").createRequire(import.meta.url)("a");"#,
         &[],
     ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = (0, m.createRequire)(__filename); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire.call(void 0, __filename); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = (0, m.createRequire).call(null, __filename); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire.call(__filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire.call(...list, __filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire.apply(void 0, __filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.other.call(void 0, __filename); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(new URL("file:" + __filename).href)("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(new URL("file://" + __filename))("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire("file://" + __filename)("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"const url = new URL("file:" + __filename); const text = url.href; require("module").createRequire(text)("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("url").pathToFileURL(__filename))("a");"#,
+        &["module", "url", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("node:url").pathToFileURL(__filename).href)("a");"#,
+        &["module", "node:url", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(new URL(import.meta.url).href)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { pathToFileURL } from "url"; createRequire(pathToFileURL(import.meta.filename))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { pathToFileURL } from "url"; createRequire(pathToFileURL(import.meta.url))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire("file://" + import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire("file://" + new URL("file:" + __filename).href)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire("http://" + __filename)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__filename + "file:")("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__filename.href)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(new URL("file:" + __filename).pathname)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(new Other("file:" + __filename).href)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("./url").pathToFileURL(__filename))("a");"#,
+        &["module", "./url"],
+    ),
+    (
+        "a.cjs",
+        r#"var url = () => typeof document === "undefined" ? new URL("file:" + __filename).href : document.currentScript && document.currentScript.src || new URL("main.js", document.baseURI).href; var own = url(); var m = require("module"); var load = (0, m.createRequire)(own); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(typeof document === "undefined" ? require("u" + "rl").pathToFileURL(__filename).href : document.baseURI); function f() { return load("a"); }"#,
+        &["module", "url", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(other || __filename); var again = load; again("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var url = () => typeof document === "undefined" ? new URL(`file:${__filename}`).href : document.baseURI; var own = url(); var load = require("module").createRequire.call(void 0, own); load("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); m.createRequire(other || __filename)("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(other || elsewhere); load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(other || __filename); load = x; load("a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var m = require("module"); var load = m.createRequire(other || __filename); load.call(null, "a");"#,
+        &["module"],
+    ),
+    (
+        "a.cjs",
+        r#"var url = given => given || elsewhere; var m = require("module"); var load = m.createRequire(url(x, y)); load("a");"#,
+        &["module"],
+    ),
 ];
 
 const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
@@ -586,6 +750,37 @@ const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
     (
         "a.cjs",
         r#"const load = (flag ? require : other); load("a");"#,
+        &["a"],
+    ),
+    ("a.cjs", r#"(other ?? require)("a");"#, &["a"]),
+    ("a.cjs", r#"(require || other)("a");"#, &["a"]),
+    (
+        "a.cjs",
+        r#"(one ?? (two || (flag ? three : require)))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"(a ?? (b ?? (c ?? (d ?? (e ?? (f ?? (g ?? (h ?? (i ?? (j ?? require))))))))))("a");"#,
+        &["a"],
+    ),
+    ("a.cjs", r#"(one ?? two)("a");"#, &[]),
+    ("a.cjs", r#"var load = load || require; load("a");"#, &["a"]),
+    ("a.cjs", r#"var load = load ?? require; load("a");"#, &["a"]),
+    (
+        "a.cjs",
+        r#"var load = typeof load === "function" ? load : require; load("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"var one = two || require; var two = one || require; one("a"); two("b");"#,
+        &["a", "b"],
+    ),
+    ("a.cjs", r#"var load = load || other; load("a");"#, &[]),
+    (
+        "a.cjs",
+        r#"var one = two || one; var two = one || two; one("a");"#,
         &[],
     ),
     (
@@ -637,6 +832,18 @@ const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
     (
         "a.cjs",
         r#"function f(require) { const load = require; load("a"); }"#,
+        &[],
+    ),
+    ("a.cjs", r#"function f(require) { require("a"); }"#, &[]),
+    ("a.cjs", r#"function require(name) {} require("a");"#, &[]),
+    (
+        "a.cjs",
+        r#"{ class require {} require("a"); require.resolve("a"); }"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"function f(module) { module.require("a"); }"#,
         &[],
     ),
     ("a.cjs", r#"require.bind(null)("a");"#, &[]),
@@ -778,6 +985,26 @@ fn macro_callee_names_binding_and_member() {
 }
 
 #[test]
+fn macro_callee_names_template_tag() {
+    let text =
+        r#"import d, * as m from "./m" with { type: "macro" }; d`a`; m.f`${1}`; m`a`; x`a`;"#;
+    analyzed("a.ts", text, |s| {
+        let default = s.bound.declared_symbol(Decl::ImportDefault(ImportId(0)));
+        let namespace = s.bound.declared_symbol(Decl::ImportNamespace(ImportId(0)));
+        let mut macro_symbols = [default, namespace];
+        macro_symbols.sort_unstable();
+        let templates = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::TaggedTemplate(_)));
+        let callees: Vec<Option<(SymbolId, Option<Atom>)>> = templates
+            .iter()
+            .map(|&template| macro_callee(&s.hir, &s.bound, &macro_symbols, template))
+            .collect();
+        let member_tag = Some((namespace, Some(s.workspace.atom("f"))));
+        assert_eq!(callees, [Some((default, None)), member_tag, None, None]);
+        assert_eq!(s.analysis.pending_macro_calls, &templates[..2]);
+    });
+}
+
+#[test]
 fn specifier_node_is_first_argument() {
     for &text in CALL_SITES {
         analyzed("a.mts", text, |s| {
@@ -790,6 +1017,36 @@ fn specifier_node_is_first_argument() {
         assert_eq!(sites.len(), 4);
         assert!(sites.iter().all(|site| site.specifier_node.is_none()));
     });
+}
+
+#[test]
+fn alias_by_require_in_a_namespace_is_a_site() {
+    for (text, count) in [
+        (
+            r#"namespace N { import r = require("s"); export const a = r; }"#,
+            1,
+        ),
+        (r#"namespace N { export import r = require("s"); }"#, 1),
+        (
+            r#"namespace N { namespace M { import r = require("s"); export const a = r; } }"#,
+            1,
+        ),
+        (
+            r#"import r = require("s"); namespace N { export const a = r; }"#,
+            1,
+        ),
+        (
+            r#"namespace N { import type r = require("s"); export const a = 1; }"#,
+            0,
+        ),
+        (r#"declare namespace N { import r = require("s"); }"#, 0),
+    ] {
+        analyzed("a.ts", text, |s| {
+            let sites = s.analysis.import_sites.iter();
+            let aliases = sites.filter(|site| matches!(site.kind, ImportSiteKind::ImportEquals(_)));
+            assert_eq!(aliases.count(), count, "{text}");
+        });
+    }
 }
 
 #[test]
@@ -811,6 +1068,101 @@ fn builtin_module_call_needs_constant_specifier() {
     }
 }
 
+const ASKED_OF_DATA_FILES: &[(&str, &str, &[(&str, &str)])] = &[
+    (
+        "a.cjs",
+        r#"require(require("./c.json").plugin);"#,
+        &[("./c.json", "plugin")],
+    ),
+    (
+        "a.cjs",
+        r#"require(require("./c.json").nested.main);"#,
+        &[("./c.json", "nested"), ("./c.json", "nested\0main")],
+    ),
+    (
+        "a.cjs",
+        r#"const c = require("./c.json"); require(c.list[0]);"#,
+        &[("./c.json", "list"), ("./c.json", "list\x000")],
+    ),
+    (
+        "a.cjs",
+        r#"const { plugin } = require("./c.json"); require(plugin);"#,
+        &[("./c.json", "plugin")],
+    ),
+    (
+        "a.mts",
+        r#"import c from "./c.json"; import(c.plugin);"#,
+        &[("./c.json", "plugin")],
+    ),
+    (
+        "a.mts",
+        r#"import { plugin } from "./c.json"; import(plugin);"#,
+        &[("./c.json", "plugin")],
+    ),
+    (
+        "a.mts",
+        r#"import * as c from "./c.json"; import(c.default.plugin); import(c.other);"#,
+        &[("./c.json", "other"), ("./c.json", "plugin")],
+    ),
+    ("a.cjs", r#"console.log(require("./c.json").plugin);"#, &[]),
+    ("a.cjs", r#"require(require("./c.json")[key]);"#, &[]),
+];
+
+#[test]
+fn names_of_loads_ask_for_texts_of_other_files() {
+    for &(path, text, expected) in ASKED_OF_DATA_FILES {
+        analyzed(path, text, |s| {
+            let asked = s.analysis.asked_of_data_files.iter();
+            let mut asked: Vec<(&str, &str)> = asked
+                .map(|it| (s.workspace.text(it.0), s.workspace.text(it.1)))
+                .collect();
+            asked.sort_unstable();
+            assert_eq!(asked, expected, "{text}");
+        });
+    }
+}
+
+const ASKED_WHERE_FILES_LIE: &[(&str, &str, &[&str])] = &[
+    (
+        "a.cjs",
+        r#"const path = require("path"); require(path.join(path.dirname(require.resolve("b/package.json")), x));"#,
+        &["b/package.json"],
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("path"), other = require("module").createRequire(__dirname + "/c/d.cjs");
+           require(path.join(path.dirname(require.resolve("b/package.json")), x));
+           require(path.join(path.dirname(other.resolve("b/package.json")), x));"#,
+        &["b/package.json", "b/package.json"],
+    ),
+    (
+        "a.mjs",
+        r#"import path from "path"; import { fileURLToPath } from "url";
+           await import(path.join(path.dirname(fileURLToPath(import.meta.resolve("b/package.json"))), x));"#,
+        &["b/package.json"],
+    ),
+    ("a.cjs", r#"require(require.resolve("b"));"#, &[]),
+    ("a.cjs", r#"console.log(require.resolve("b") + x);"#, &[]),
+];
+
+#[test]
+fn what_goes_on_from_answer_of_resolver_asks_where_file_lies_for_each_call() {
+    for &(path, text, expected) in ASKED_WHERE_FILES_LIE {
+        analyzed(path, text, |s| {
+            let asked = s.analysis.asked_of_data_files.iter();
+            let mut asked: Vec<(&str, &str)> = asked
+                .map(|it| (s.workspace.text(it.0), s.workspace.text(it.1)))
+                .collect();
+            asked.sort_unstable();
+            asked.dedup();
+            let mark = bun_sema::import_sites::WHERE_FILE_LIES;
+            let questions = asked.iter().filter(|it| it.1.as_bytes().starts_with(mark));
+            let names: Vec<&str> = questions.map(|it| it.0).collect();
+            assert_eq!(names, expected, "{text}");
+        });
+    }
+}
+
 #[test]
 fn call_of_require_made_for_own_file_is_site() {
     let programs = MADE_REQUIRES.iter().chain(REQUIRES_AS_VALUES);
@@ -824,6 +1176,143 @@ fn call_of_require_made_for_own_file_is_site() {
                 _ => None,
             });
             assert_eq!(required.collect::<Vec<&str>>(), specifiers, "{text}");
+        });
+    }
+}
+
+const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/")("./a");"#,
+        Some(None),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/beside.js")("./a");"#,
+        Some(None),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/index.js")("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib" + "/index.js")("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(`${__dirname}/lib/index.js`)("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(require("path").join(__dirname, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.cjs",
+        r#"const base = __dirname + "/lib/"; const load = require("module").createRequire(base); load("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/").resolve("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/../lib/")("./a");"#,
+        Some(Some("./../lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname)("./a");"#,
+        Some(Some(".")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; createRequire(import.meta.dir + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/")(__dirname + "/a");"#,
+        Some(None),
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/lib/..")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + name)("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(__dirname + "/" + name + "/")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire("x" + __dirname + "/lib/")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"require("module").createRequire(other + "/lib/")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"__dirname = other; require("module").createRequire(__dirname + "/lib/")("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"var a = b + "/x", b = a + "/y"; require("module").createRequire(a)("./a");"#,
+        None,
+    ),
+    (
+        "a.cjs",
+        r#"const load = require("module").createRequire(load("path").join(__dirname, "lib", "index.js")); load("./a");"#,
+        None,
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("./a");"#,
+        Some(None),
+    ),
+];
+
+#[test]
+fn call_of_require_made_for_path_from_own_folder_is_resolved_from_that_path() {
+    for &(path, text, expected) in REQUIRES_MADE_FOR_PATHS {
+        analyzed(path, text, |s| {
+            let sites = s.analysis.import_sites.iter().enumerate();
+            let found = sites.filter_map(|(index, site)| match site.specifier {
+                ImportSpecifier::Constant(name) if s.workspace.text(name) == "./a" => {
+                    Some(match s.analysis.path_to_resolve_from(index) {
+                        Some(ResolvedFrom::PathFromOwnFolder(path)) => Some(s.workspace.text(path)),
+                        Some(ResolvedFrom::File(_)) => Some("a file"),
+                        None => None,
+                    })
+                }
+                _ => None,
+            });
+            assert_eq!(
+                found.collect::<Vec<_>>(),
+                Vec::from_iter(expected),
+                "{text}"
+            );
         });
     }
 }
@@ -966,8 +1455,19 @@ const TARGET: Fold<'static> = Fold {
     ..Fold::NONE
 };
 
-/// The last call names one of these. A text with `*` stands for its start and its end. That two arms of a condition exclude each other is not looked at.
 const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
+    (
+        "import { fileURLToPath } from 'node:url'; await import(fileURLToPath(new URL(`./a/${x}.js`, import.meta.url)));",
+        &["./a/*.js"],
+    ),
+    (
+        "import { fileURLToPath } from 'node:url'; const folder = fileURLToPath(new URL('../a', import.meta.url)); require(require('path').join(folder, x + '.js'));",
+        &["./../a/*.js"],
+    ),
+    (
+        "import { fileURLToPath } from 'node:url'; require(require('path').join(fileURLToPath(import.meta.url), '..', 'a', x));",
+        &["./a/*"],
+    ),
     (
         "const names = { linux: `./a-${process.arch}`, darwin: './b' }; require(names[process.platform]);",
         &["./a-x64"],
@@ -1089,6 +1589,22 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
         &["./a.node", "./b.node"],
     ),
     (
+        "const table = { a: 1, b: 2 }; for (const name in table) require(name);",
+        &["a", "b"],
+    ),
+    (
+        "const table = { a: 1, b: 2 }; for (const name in table) require(`./${name}.node`);",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) { return found; }, b: found => found }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: function (found) {} }; for (const name of Object.keys(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
         "const name = a || './a'; require(name ?? './b');",
         &[],
     ),
@@ -1098,8 +1614,17 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// Something may change the list, the object or the variable in a way that the build does not follow.
 const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "const uses = { a() { this.b = 1; } }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a() { (() => this)().b = 1; } }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a() { super.b = 1; } }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a: other }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a() { uses.b = 1; } }; for (const name in uses) uses[name](require(name));",
+    "const uses = { a() { eval(x); } }; for (const name in uses) uses[name](require(name));",
+    "const table = { __proto__: more, a: 1 }; for (const name in table) require(name);",
+    "const table = { a: 1, ...more }; for (const name in table) require(name);",
+    "const list = ['a']; for (const name in list) require(name);",
+    "const table = { a: 1 }; change(table); for (const name in table) require(name);",
     "const names = { linux: './a' }; names.linux = x; require(names[process.platform]);",
     "const names = { linux: './a' }; change(names); require(names[process.platform]);",
     "const names = { linux: './a' }; const other = names; other[k] = x; require(names[process.platform]);",
@@ -1132,7 +1657,6 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "async function find() { return './a'; } require(find());",
 ];
 
-/// What is read out of the list or the object that changes is any text. The other parts of the name are followed.
 const NAMES_WITH_A_PART_OUT_OF_WHAT_MAY_CHANGE: &[(&str, &[&str])] = &[
     (
         "const names = ['A']; names.forEach((name, index, all) => { all[index] = x; }); require(['./lib', names[0] + '.js'].join('/'));",
@@ -1237,6 +1761,21 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         &["./a"],
     ),
     (
+        "require(require.resolve('./a', { [Symbol.for('outside')]: true }));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
+        "require(require.resolve('./a', {}));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
+        "require(require.resolve('./a', options));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
         "const found = require.resolve(c ? './a' : './b'); require(found);",
         ResolvedForm::Path,
         &["./a", "./b"],
@@ -1312,11 +1851,6 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         &["./a/*.js"],
     ),
     (
-        "import { fileURLToPath } from 'node:url'; await import(fileURLToPath(new URL(`./a/${x}.js`, import.meta.url)));",
-        ResolvedForm::Path,
-        &["./a/*.js"],
-    ),
-    (
         "import(require('url').pathToFileURL(require('path').join(__dirname, 'a', x + '.js')).href);",
         ResolvedForm::Url,
         &["./a/*.js"],
@@ -1340,6 +1874,56 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         "const path = require('path'), folder = path.join(__dirname, 'a'); import(require('url').pathToFileURL(path.join(folder, x)).href);",
         ResolvedForm::Url,
         &["./a/*"],
+    ),
+    (
+        "require('file://' + __dirname + '/lib/a.js');",
+        ResolvedForm::Url,
+        &["./lib/a.js"],
+    ),
+    (
+        "require(`file://${__dirname}/lib/a.js`);",
+        ResolvedForm::Url,
+        &["./lib/a.js"],
+    ),
+    (
+        "require('file://' + require('path').join(__dirname, 'lib', 'a.js'));",
+        ResolvedForm::Url,
+        &["./lib/a.js"],
+    ),
+    (
+        "const name = c ? 'a' : 'b'; import('file://' + __dirname + '/lib/' + name + '.js');",
+        ResolvedForm::Url,
+        &["./lib/a.js", "./lib/b.js"],
+    ),
+    (
+        "import('file://' + __dirname + '/lib/' + x + '.js');",
+        ResolvedForm::Url,
+        &["./lib/*.js"],
+    ),
+    (
+        "export {}; await import(new URL('./a/', import.meta.url).href + x);",
+        ResolvedForm::Url,
+        &["./a/*"],
+    ),
+    (
+        "export {}; await import(new URL('../a/', import.meta.url) + x);",
+        ResolvedForm::Url,
+        &["../a/*"],
+    ),
+    (
+        "export {}; await import(import.meta.resolve('./a/') + x);",
+        ResolvedForm::Url,
+        &["./a/*"],
+    ),
+    (
+        "export {}; await import(import.meta.resolve('../a/') + x);",
+        ResolvedForm::Url,
+        &["../a/*"],
+    ),
+    (
+        "export {}; await import(import.meta.resolve('./a.js') + x);",
+        ResolvedForm::Url,
+        &["./a.js*"],
     ),
     (
         "require(require.resolve(`./a/${x}.js`).trim());",
@@ -1367,11 +1951,19 @@ const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "export {}; await import(new URL('./a.js?b', import.meta.url));",
     "export {}; await import(new URL('https://a/' + x, import.meta.url));",
     "export {}; await import(new URL('./a.js', import.meta.url).search);",
-    "export {}; await import(new URL('./a.js', import.meta.url).href + x);",
+    "export {}; await import(import.meta.resolve('a') + x);",
     "export {}; class URL {} await import(new URL('./a.js', import.meta.url));",
+    "export {}; function URL() {} await import(new URL('./a.js', import.meta.url));",
+    "export {}; async function load(URL) { await import(new URL('./a.js', import.meta.url)); }",
     "export {}; import.meta.url = x; await import(new URL('./a.js', import.meta.url));",
     "export {}; await import(c ? new URL('./a.js', import.meta.url) : import.meta.resolve('./b'));",
     "require(require.resolve('./a').trimEnd(x));",
+    "require('file://' + __dirname + '/a%20b.js');",
+    "require('file://' + __dirname + '/a.js?b');",
+    "require('file://' + __dirname + '/a.js#b');",
+    "require('file://' + 'file://' + __dirname + '/a.js');",
+    "require(require('path').join('file://' + __dirname, 'a.js'));",
+    "require(require('url').pathToFileURL('file://' + __dirname + '/a.js').href);",
 ];
 
 fn find_site_given_answer_of_resolver<'a>(
@@ -1417,7 +2009,55 @@ const NAMES_OF_WORKERS_THAT_ARE_KNOWN_IN_PART: &[(&str, &[&str])] = &[
     ),
     ("new Worker(require.resolve('./a/' + x));", &["./a/*"]),
     (
+        "class Worker extends Base {} new Worker('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
+        "class Worker {} Worker = Other; new Worker('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
         "export {}; new Worker(new URL(`./a/${x}.js`, import.meta.url), { name });",
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; import { Worker as Thread } from 'node:worker_threads'; new Thread('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; import * as threads from 'worker_threads'; new threads.Worker('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
+        "const { Worker: Thread } = require('worker_threads'); new Thread('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
+        "const threads = require('node:worker_threads'); const Thread = threads.Worker; new Thread(c ? './a.js' : './b.js');",
+        &["./a.js", "./b.js"],
+    ),
+    (
+        "const Thread = Worker; new Thread('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
+        "const Thread = globalThis.Worker; new Thread('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
+        "function start(Worker) { new Worker('./a/' + x + '.js'); }",
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; import { Worker } from './pool.js'; new Worker('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
+        "const Worker = pick(); new Worker('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
+        "with (scope) { new Worker('./a/' + x + '.js'); }",
         &["./a/*.js"],
     ),
 ];
@@ -1428,6 +2068,13 @@ const NAMES_OF_WORKERS_THAT_ARE_WHOLE_OR_UNKNOWN: &[&str] = &[
     "new Worker(x + '.js');",
     "new Worker();",
     "new Other('./a/' + x);",
+    "class Worker { constructor(job) {} } new Worker('./a/' + x);",
+    "function Worker(job) {} new Worker('./a/' + x);",
+    "const Worker = class { constructor(job) {} }; new Worker('./a/' + x);",
+    "const Worker = function (job) {}; new Worker('./a/' + x);",
+    "const Worker = Other; new Worker('./a/' + x);",
+    "const { MessageChannel: Worker } = require('node:worker_threads'); new Worker('./a/' + x);",
+    "export {}; import { MessageChannel as Worker } from 'node:worker_threads'; new Worker('./a/' + x);",
     "Worker('./a/' + x);",
     "if (false) new Worker('./a/' + x);",
 ];
@@ -1465,6 +2112,58 @@ fn name_of_a_worker_is_known_in_part() {
     }
 }
 
+const URLS_WITH_CODE_GIVEN_TO_CONSTRUCTORS: &[(&str, bool)] = &[
+    ("new Worker('data:text/javascript,' + '1');", true),
+    (
+        "export {}; import { Worker as Thread } from 'node:worker_threads'; new Thread('data:text/javascript,' + '1');",
+        true,
+    ),
+    (
+        "const Thread = require('worker_threads').Worker; new Thread('data:text/javascript,' + '1');",
+        true,
+    ),
+    (
+        "function start(Worker) { new Worker('data:text/javascript,' + '1'); }",
+        true,
+    ),
+    ("new threads.Worker('data:text/javascript,' + '1');", true),
+    (
+        "class Worker {} new Worker('data:text/javascript,' + '1');",
+        false,
+    ),
+    (
+        "function Worker() {} new Worker('data:text/javascript,' + '1');",
+        false,
+    ),
+    ("new Other('data:text/javascript,' + '1');", false),
+];
+
+#[test]
+fn url_with_code_is_kept_where_a_worker_may_start_from_it() {
+    for &(text, is_kept) in URLS_WITH_CODE_GIVEN_TO_CONSTRUCTORS {
+        let path = if text.starts_with("export") {
+            "a.mjs"
+        } else {
+            "a.cjs"
+        };
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new(path, text), &w.fold_inputs(&TARGET));
+            let constructions = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::New(_)));
+            let kept = constructions.into_iter().any(|construction| {
+                let ExprKind::New(call) = s.hir[construction].kind else {
+                    return false;
+                };
+                let argument = s.hir.ids(s.hir[call].args).next();
+                argument.is_some_and(|argument| {
+                    let url = s.analysis.decisions.specifier(argument);
+                    matches!(url, ImportSpecifier::Constant(_))
+                })
+            });
+            assert_eq!(kept, is_kept, "{text}");
+        });
+    }
+}
+
 const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
     (
         "import { writeFileSync } from 'node:fs'; writeFileSync('/p/a.js', text);",
@@ -1492,7 +2191,59 @@ const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
     ),
     (
         "import { renameSync } from 'node:fs'; renameSync('/p/a.js', '/p/b.js');",
-        &["/p/a.js", "/p/b.js"],
+        &["/p/a.js and below", "/p/b.js and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { force: true, recursive: true });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { recursive: false });",
+        &["/p/a"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { force: true });",
+        &["/p/a"],
+    ),
+    (
+        "import { rm } from 'node:fs'; rm('/p/a', () => {});",
+        &["/p/a"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { recursive: deep });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { recursive });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { ...options });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', { [name]: true });",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', options);",
+        &["/p/a and below"],
+    ),
+    (
+        "import { rmSync } from 'node:fs'; rmSync('/p/a', ...rest);",
+        &["/p/a and below"],
+    ),
+    (
+        "import { cpSync } from 'node:fs'; cpSync('/p/a', '/p/b', { recursive: true });",
+        &["/p/b and below"],
+    ),
+    (
+        "import { cpSync } from 'node:fs'; cpSync('/p/a', '/p/b');",
+        &["/p/b"],
+    ),
+    (
+        "import { createWriteStream } from 'node:fs'; createWriteStream('', { fd });",
+        &[""],
     ),
     (
         "import { copyFileSync } from 'node:fs'; copyFileSync('/p/a.js', '/p/b.js');",
@@ -1523,6 +2274,18 @@ const PATHS_OF_CHANGED_FILES: &[(&str, &[&str])] = &[
         "import { writeFileSync } from 'node:fs'; for (const name of ['a.js', 'b.js']) writeFileSync('/p/' + name, text);",
         &["/p/a.js", "/p/b.js"],
     ),
+    (
+        "import { writeFileSync } from 'node:fs'; import { join } from 'node:path'; writeFileSync(join(process.cwd(), 'lib', 'a.js'), text);",
+        &["./lib/a.js"],
+    ),
+    (
+        "import { writeFileSync } from 'node:fs'; import { cwd } from 'node:process'; const root = cwd(); writeFileSync(`${root}/a.js`, text);",
+        &["./a.js"],
+    ),
+    (
+        "const { writeFileSync } = await import('node:fs'); writeFileSync('/p/a.js', text);",
+        &["/p/a.js"],
+    ),
 ];
 
 const CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN: &[&str] = &[
@@ -1544,7 +2307,15 @@ fn describe_paths_of_changed_files(text: &str) -> Vec<String> {
         let s = &w.analyze(&Source::new("a.mjs", text), &w.fold_inputs(&TARGET));
         let paths = s.analysis.paths_of_changed_files.iter();
         described = paths
-            .flat_map(|(_, specifier)| describe_specifier(s, specifier))
+            .flat_map(|changed| {
+                let reach = if changed.reaches_below {
+                    " and below"
+                } else {
+                    ""
+                };
+                let paths = describe_specifier(s, &changed.path).into_iter();
+                paths.map(move |path| path + reach)
+            })
             .collect();
     });
     described
@@ -1557,6 +2328,61 @@ fn paths_that_a_file_spells_to_calls_which_change_what_is_there() {
     }
     for &text in CALLS_THAT_CHANGE_NO_FILE_THAT_IS_KNOWN {
         assert!(describe_paths_of_changed_files(text).is_empty(), "{text}");
+    }
+}
+
+const FUNCTIONS_THAT_CHANGE_THE_FILE_THEY_ARE_TOLD: &[(&str, &str, &[&str])] = &[
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; export const put = (path, text) => writeFileSync(path, text);",
+        &["put 0"],
+    ),
+    (
+        "a.mjs",
+        "import { rmSync } from 'node:fs'; function clear(options, folder) { rmSync(folder, { recursive: true }); } export { clear, clear as empty };",
+        &["clear 1 and below", "empty 1 and below"],
+    ),
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; export default function (path, text) { writeFileSync(path, text); }",
+        &["default 0"],
+    ),
+    (
+        "a.cjs",
+        "const { writeFileSync } = require('node:fs'); exports.put = function (path, text) { writeFileSync(path, text); };",
+        &["put 0"],
+    ),
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; const put = (path, text) => writeFileSync(path, text);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; export const put = (path, text) => { path = other; writeFileSync(path, text); };",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; export const read = path => readFileSync(path);",
+        &[],
+    ),
+];
+
+#[test]
+fn functions_that_a_file_exports_and_that_change_the_file_they_are_told() {
+    for &(name, text, functions) in FUNCTIONS_THAT_CHANGE_THE_FILE_THEY_ARE_TOLD {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new(name, text), &w.fold_inputs(&TARGET));
+            let mut described: Vec<String> = (s.analysis.exported_file_changers.iter())
+                .map(|it| {
+                    let reach = if it.reaches_below { " and below" } else { "" };
+                    format!("{} {}{reach}", s.workspace.text(it.export), it.place)
+                })
+                .collect();
+            described.sort();
+            assert_eq!(described, functions, "{text}");
+        });
     }
 }
 

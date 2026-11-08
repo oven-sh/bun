@@ -1,3 +1,0 @@
-console.log("held runs");
-export const c = 1;
-export const d = 2;

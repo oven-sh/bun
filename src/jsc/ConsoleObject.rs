@@ -3179,10 +3179,9 @@ pub mod formatter {
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
     // params are by-value `JSValue`/scalars → `safe fn`.
     unsafe extern "C" {
-        /// C++ helper (`UtilInspect.cpp`) — invokes a user-supplied
+        /// C++ helper (`bindings.cpp`) — invokes a user-supplied
         /// `[util.inspect.custom]` function with the synthesized `(depth, opts,
-        /// inspect)` argument shape. Only called from `print_as`. For a `this`
-        /// that is a prototype object it returns `this` and calls nothing.
+        /// inspect)` argument shape. Only called from `print_as`.
         safe fn JSC__JSValue__callCustomInspectFunction(
             global: &JSGlobalObject,
             function: JSValue,
@@ -3806,11 +3805,7 @@ pub mod formatter {
                     C,
                 )
             })?;
-            // A custom inspector that returns its own `this` would recurse
-            // forever; re-tag without the custom hook so it falls through to
-            // default formatting (mirrors util.inspect's `ret !== context`).
-            // The shim also returns `this` for a prototype object, in place of
-            // a call of its hook.
+            // `this` as the result (from a hook, or from the C++ helper for a prototype object) prints without the hook.
             if result == self.custom_formatted_object.this {
                 let tag = Tag::get_advanced(
                     result,

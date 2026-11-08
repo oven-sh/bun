@@ -40,11 +40,7 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
     return options;
 }
 
-// Node's formatValue does not call the hook of a prototype object:
-//   ObjectGetOwnPropertyDescriptor(value, 'constructor')?.value?.prototype !== value
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L1150-L1154
-// Node reads `prototype` with a [[Get]]. This reads a data property, own or inherited, so that
-// no getter and no Proxy trap of the constructor runs.
+// The test of Node's formatValue for a prototype object, on data properties only: no getter and no Proxy trap runs.
 static NEVER_INLINE bool isPrototypeOfItsConstructor(VM& vm, JSGlobalObject* globalObject, JSObject* object)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -83,8 +79,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (JSObject* thisObject = thisValue.getObject()) {
-        // An instance has no own `constructor`. For an ordinary object and for a typed array
-        // (a Buffer) the Structure says so, with no PropertySlot and no method table call.
+        // An instance has no own `constructor`: the Structure of an ordinary object or a typed array (a Buffer) says so.
         auto flags = thisObject->inlineTypeFlags();
         bool structureListsOwnProperties = !TypeInfo::hasStaticPropertyTable(flags)
             && (!TypeInfo::overridesGetOwnPropertySlot(flags) || isTypedArrayType(thisObject->type()));

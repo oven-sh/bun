@@ -217,9 +217,7 @@ impl<'a, 's> Syntax<'a, 's> {
         let file = self.file;
         let mut annotations = FxHashMap::default();
         for parameter in file.params.iter().filter(|it| it.default.is_some()) {
-            let (Some(key), Some(annotation)) =
-                (self.first_identifier(parameter.pat), parameter.ty.some())
-            else {
+            let Some(annotation) = parameter.ty.some() else {
                 continue;
             };
             let is_parenthesized_in_a_union = matches!(
@@ -227,7 +225,7 @@ impl<'a, 's> Syntax<'a, 's> {
                 TypeNodeKind::Fn(_) | TypeNodeKind::Cond { .. }
             );
             annotations.insert(
-                key,
+                file[parameter.pat].pos,
                 (self.type_span(annotation), is_parenthesized_in_a_union),
             );
         }

@@ -4146,37 +4146,25 @@ describe("bundler", () => {
       },
     });
   }
-  // An --aot build leaves `= undefined` out of the parameter list, so it has the `length` of the whole list.
-  itBundled("react-compiler/FunctionWithADefaultParameterKeepsItsLength-aot", {
-    todo: true,
-    files: defaultParameterForms,
-    reactCompiler: true,
-    backend: "cli",
-    target: "bun",
-    compile: { aot: true },
-    run: { stdout: defaultParameterOutput },
-  });
 
   // `bun test --react-compiler` compiles a hook of a `.ts` file too, and keeps what it compiled in the
   // cache of the runtime transpiler. The second run reads the hook from that cache.
-  test(
-    "react-compiler: bun test --react-compiler keeps the length of a hook with a default parameter",
-    async () => {
-      using dir = tempDir("react-compiler-test-length", {
-        "node_modules/react/package.json": JSON.stringify({
-          name: "react",
-          version: "19.0.0",
-          exports: { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" },
-        }),
-        "node_modules/react/index.js": `export const useState = value => [value, () => {}];`,
-        "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
-        "src/useStep.ts": `import { useState } from "react";
+  test("react-compiler: bun test --react-compiler keeps the length of a hook with a default parameter", async () => {
+    using dir = tempDir("react-compiler-test-length", {
+      "node_modules/react/package.json": JSON.stringify({
+        name: "react",
+        version: "19.0.0",
+        exports: { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" },
+      }),
+      "node_modules/react/index.js": `export const useState = value => [value, () => {}];`,
+      "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+      "src/useStep.ts": `import { useState } from "react";
 export function useStep(step: number = 1, scale = 2): number[] {
   const [value] = useState(step);
   return [value * scale];
 }
 `,
-        "length.test.ts": `import { expect, test } from "bun:test";
+      "length.test.ts": `import { expect, test } from "bun:test";
 import { useStep } from "./src/useStep";
 test("length", () => {
   const isCompiled = /\\$\\[\\d+\\]/.test(String(useStep));
@@ -4184,29 +4172,28 @@ test("length", () => {
   expect(useStep()).toEqual([2]);
 });
 `,
-        "cache/.keep": "",
+      "cache/.keep": "",
+    });
+    const seen = async (...flags: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...flags, "./length.test.ts"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache"),
+          BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
       });
-      const seen = async (...flags: string[]) => {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "test", ...flags, "./length.test.ts"],
-          cwd: String(dir),
-          env: {
-            ...bunEnv,
-            BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache"),
-            BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
-          },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { seen: stdout.match(/seen: (.*)/)?.[1] ?? stderr, exitCode };
-      };
-      expect(await seen()).toEqual({ seen: "[0,[2],[12],false]", exitCode: 0 });
-      expect(await seen("--react-compiler")).toEqual({ seen: "[0,[2],[12],true]", exitCode: 0 });
-      expect(await seen("--react-compiler")).toEqual({ seen: "[0,[2],[12],true]", exitCode: 0 });
-    },
-    isDebug || isASAN ? 60_000 : undefined,
-  );
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const cached = readdirSync(join(String(dir), "cache")).length - 1;
+      return { seen: stdout.match(/seen: (.*)/)?.[1] ?? stderr, cached, exitCode };
+    };
+    expect(await seen()).toEqual({ seen: "[0,[2],[12],false]", cached: 0, exitCode: 0 });
+    expect(await seen("--react-compiler")).toEqual({ seen: "[0,[2],[12],true]", cached: 1, exitCode: 0 });
+    expect(await seen("--react-compiler")).toEqual({ seen: "[0,[2],[12],true]", cached: 1, exitCode: 0 });
+  });
 
   // `bun build --dts` writes each bundle with its types kept (`.aot.ts`): the annotation of a
   // parameter in the source goes to the parameter that the bundle has for it. The parameter
@@ -4222,6 +4209,7 @@ test("length", () => {
     "function useCalled(t0: (() => void) | undefined = undefined): number {",
     "function useIsString(value: unknown, t0: string | undefined = undefined): value is string {",
     'function useKind(t0: (string extends string ? "s" : "n") | undefined = undefined): string {',
+    "function useLabel(t0: { label?: string } | undefined = undefined): string {",
   ];
   const writtenDefaults = [
     "function pick(index: number = undefined as any): number {",
@@ -4233,7 +4221,7 @@ test("length", () => {
       "--react-compiler for a server",
       ["./src/index.tsx", "--react-compiler", "--target=bun"],
       typedDefaults,
-      '[1,3,6,1,4]\n["s",2,2]\n0 1 0 1 0 0 0\n',
+      '[1,3,6,1,4]\n["s","none",2,2]\n0 1 0 1 0 0 0 0\n',
     ],
     [
       "--react-compiler for a client, minified",
@@ -4313,10 +4301,14 @@ export function useKind(kind: string extends string ? "s" : "n" = "s"): string {
   const [value] = useState(kind);
   return value;
 }
+export function useLabel({ label }: { label?: string } = {}): string {
+  const [value] = useState(label ?? "none");
+  return value;
+}
 const read: unknown = "read";
 console.log(JSON.stringify([useStep(), useStep(3), useScaled(2, 3, nothing), useCalled(), useIsString(read) ? read.length : -1]));
-console.log(JSON.stringify([useKind(), useJs(2), useUnchecked(2)]));
-console.log(useStep.length, useScaled.length, useCalled.length, useIsString.length, useKind.length, useJs.length, useUnchecked.length);
+console.log(JSON.stringify([useKind(), useLabel(), useJs(2), useUnchecked(2)]));
+console.log(useStep.length, useScaled.length, useCalled.length, useIsString.length, useKind.length, useLabel.length, useJs.length, useUnchecked.length);
 `,
         // `by` is a number by the type of `step`. As `any` it takes the other overload of `pad`.
         "src/contextual.tsx": `import { useState } from "./state";
@@ -4359,7 +4351,9 @@ console.log(pick(1), read({ a: 2 }), made());
       const name = flags[0].replace(/^.*\/(\w+)\.tsx?$/, "$1");
       const typed = (await Bun.file(join(String(dir), `out/${name}.aot.ts`)).text()).replaceAll("void 0", "undefined");
       expect(lines.filter(line => !typed.includes(line))).toEqual([]);
-      if (stdout !== undefined) expect((await run(`out/${name}.js`)).stdout).toBe(stdout);
+      if (stdout === undefined) return;
+      const ran = await run(`out/${name}.js`);
+      expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout, exitCode: 0 });
     },
     // A build with --dts checks the types of the bundle: some seconds in a debug build.
     isDebug || isASAN ? 60_000 : undefined,

@@ -64,13 +64,17 @@ impl TreeWriter<'_, '_> {
             return Err(UnsupportedNode("TypeScript parameter"));
         }
         let pat = self.write_binding(&parameter.binding)?;
-        // The compiler's `= undefined` keeps `length`. It is left out: an --aot build has the `length` of the whole list.
-        let default = ExprId::NONE;
+        let undefined = self.write_expression_or_none(parameter.default.as_ref())?;
         let (start, binding_end) = self.range_of(parameter.binding.loc);
         let is_identifier = matches!(parameter.binding.data, BindingData::BIdentifier(_));
-        let can_be_optional = is_identifier && !is_rest && default.is_none();
+        let can_be_optional = is_identifier && !is_rest && undefined.is_none();
         let (ty, mut flags) =
-            self.annotate_parameter(replaced, default, can_be_optional, binding_end);
+            self.annotate_parameter(replaced, undefined.is_some(), can_be_optional, binding_end);
+        // Without an annotation a parameter has the type of its default, and the compiler's one default is `= undefined`.
+        let default = match (ty.some(), undefined.some()) {
+            (None, Some(undefined)) => self.as_any(undefined),
+            _ => undefined,
+        };
         flags.set(Flags::REST, is_rest);
         let type_end = ty.some().map_or(binding_end, |ty| self.file[ty].end);
         Ok(Param {
@@ -89,7 +93,7 @@ impl TreeWriter<'_, '_> {
     fn annotate_parameter(
         &mut self,
         replaced: Option<(Param, bool)>,
-        default: ExprId,
+        keeps_default: bool,
         can_be_optional: bool,
         position: u32,
     ) -> (TypeNodeId, Flags) {
@@ -102,9 +106,16 @@ impl TreeWriter<'_, '_> {
             };
         };
         let flags = parameter.flags & PRESERVED_PARAMETER_FLAGS;
-        let has_default_in_body = parameter.default.is_some() && default.is_none();
-        if !has_default_in_body {
+        if parameter.default.is_none() {
             return (parameter.ty, flags);
+        }
+        if keeps_default {
+            let ty = match parameter.ty.some() {
+                Some(annotation) => self.or_undefined(annotation),
+                None if is_typescript => self.any_type(position),
+                None => TypeNodeId::NONE,
+            };
+            return (ty, flags);
         }
         let is_optional = can_be_optional && !is_before_required;
         let reuses_annotation = !is_typescript || is_optional && parameter.ty.is_some();

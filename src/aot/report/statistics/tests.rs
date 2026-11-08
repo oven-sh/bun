@@ -77,12 +77,45 @@ fn entries_are_statistics_without_position() {
 }
 
 #[test]
+fn stage_lists_its_statistics_in_schema_order() {
+    assert_eq!(
+        BString::from(stage_line(StatisticStage::Read)),
+        "stage Read: TypesInterned FunctionsRead ValuesRead"
+    );
+}
+
+#[test]
+fn statistic_stands_in_the_line_of_its_stage_alone() {
+    let mut entries = Vec::new();
+    collect_stages(&mut entries);
+    assert_eq!(entries.len(), StatisticStage::COUNT - 1);
+    let mut listed = Vec::new();
+    for entry in &entries {
+        listed.extend(
+            bun_core::strings::split(&entry.text, b" ")
+                .skip(2)
+                .map(BString::from),
+        );
+    }
+    let staged = StatisticId::ALL
+        .into_iter()
+        .filter(|id| id.stage() != StatisticStage::None);
+    let mut staged: Vec<BString> = staged.map(|id| BString::from(id.name())).collect();
+    listed.sort();
+    staged.sort();
+    assert_eq!(listed, staged);
+}
+
+#[test]
 fn report_reads_statistics_of_build() {
     let mut fixture = ReportFixture::new(ResultRecords::default());
     fixture.statistics.count(StatisticId::SourceLines, 7);
     let mut entries = Vec::new();
     fixture.with_input(|input| collect(input, &mut entries));
-    assert_eq!(entries.len(), StatisticId::COUNT - 1);
+    assert_eq!(
+        entries.len(),
+        StatisticId::COUNT - 1 + StatisticStage::COUNT - 1
+    );
     let line = ReportEntry::line(ExplainSet::STATISTICS, b"SourceLines 7".to_vec());
     assert!(entries.contains(&line));
 }

@@ -1,0 +1,21 @@
+# what is written of a variable holds at the head of a loop: whatever comes in has been held to the promise where it was stored. So the step of a loop is judged with the variable an int32 and the test of the loop in front of it
+# nobody knows who calls, so the walk trusts no parameter and bounds no variable: UNTIL 0-int32-promises-3 EIGHT OF THE NINE WERE REPORTED ("i++ .. anything from 1 to 9007199254740992"): a right program did not build
+# f1 toLimit . f2 overText: a text has at most 2147483647 signs . f3 toTen . f4 down . f5 downToZero . f6 whileLess . f7 counted: the test stands in the body
+# f8 twoVariables, f9 loopInLoop: ways part and meet between the test of the loop and its step, and the test holds all the same
+# -- source: variable-of-a-loop-is-judged-as-it-is-written-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function toLimit(to: Bun.int32): Bun.int32 { let n: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < to; i++) n = i; return n; }
+# function overText(text: string): Bun.int32 { let n: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < text.length; i++) n = i; return n; }
+# function toTen(): Bun.int32 { let n: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < 10; i++) n = i; return n; }
+# function down(from: Bun.int32): Bun.int32 { let n: Bun.int32 = 0; for (let i: Bun.int32 = from; i > 0; i--) n = i; return n; }
+# function downToZero(from: Bun.int32): Bun.int32 { let n: Bun.int32 = 0; for (let i: Bun.int32 = from; i >= 0; i--) n = i; return n; }
+# function whileLess(to: Bun.int32): Bun.int32 { let i: Bun.int32 = 0; while (i < to) i++; return i; }
+# function counted(list: number[]): Bun.int32 { let n: Bun.int32 = 0; for (const v of list) if (v > 0 && n < 1000) n++; return n; }
+# function twoVariables(to: Bun.int32): Bun.int32 { let j: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < to; i++) if (j < i) j++; return j; }
+# function loopInLoop(to: Bun.int32): Bun.int32 { let n: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < to; i++) for (let j: Bun.int32 = 0; j < i; j++) n = (n + j) | 0; return n; }
+# sink(toLimit, overText, toTen, down, downToZero, whileLess, counted, twoVariables, loopInLoop);
+# -- end of source
+# RUN: walk f1 f2 f3 f4 f5 f6 f7 f8 f9 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK-LABEL: code f9:Body

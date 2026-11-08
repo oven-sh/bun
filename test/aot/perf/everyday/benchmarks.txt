@@ -777,3 +777,48 @@ const inputs: Input[] = [{ name: "Ann", age: 30, email: "a@b.c" }, { name: "B", 
 function turn(i: number): number {
   return problems(inputs[i & 3]!);
 }
+//// nested-loops-sum-remainders-by-a-number
+const divisor = Number(process.env.DIVISOR ?? 40);
+const sums = new Int32Array(16);
+function turn(i: number): number {
+  const at = i & 15;
+  for (let j = 0; j < 100; j++) sums[at] = sums[at]! + (j % divisor);
+  sums[at]! += 3;
+  return sums[at]!;
+}
+//// nested-loops-sum-remainders-by-a-whole-number
+const divisor = Number(process.env.DIVISOR ?? 40) | 0;
+const sums = new Int32Array(16);
+function turn(i: number): number {
+  const at = i & 15;
+  for (let j = 0; j < 100; j++) sums[at] = sums[at]! + (j % divisor);
+  sums[at]! += 3;
+  return sums[at]!;
+}
+//// nested-loops-sum-remainders-by-a-parameter
+const sums = new Int32Array(16);
+function sum(at: number, divisor: number): number {
+  for (let j = 0; j < 100; j++) sums[at] = sums[at]! + (j % divisor);
+  sums[at]! += 3;
+  return sums[at]!;
+}
+const given = Number(process.env.DIVISOR ?? 40) | 0;
+function turn(i: number): number {
+  return sum(i & 15, given);
+}
+//// nested-loops-sum-remainders-of-either-sign
+const divisor = Number(process.env.DIVISOR ?? 40) | 0;
+const sums = new Int32Array(16);
+function turn(i: number): number {
+  const at = i & 15;
+  for (let j = -50; j < 50; j++) sums[at] = sums[at]! + (j % divisor);
+  return sums[at]!;
+}
+//// nested-loops-sum-quotients-by-a-whole-number
+const divisor = Number(process.env.DIVISOR ?? 7) | 0;
+const sums = new Int32Array(16);
+function turn(i: number): number {
+  const at = i & 15;
+  for (let j = 0; j < 100; j++) sums[at] = sums[at]! + ((j / divisor) | 0);
+  return sums[at]!;
+}

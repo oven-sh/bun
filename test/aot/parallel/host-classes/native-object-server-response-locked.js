@@ -1,4 +1,4 @@
-// The native object behind a ServerResponse has no public name: a program reaches it only through a symbol of the library. Under --aot its prototype is locked like a built-in's: whoever replaces, adds, deletes or re-parents there is refused loudly, and the server goes on answering. The object itself stays free: an own property hides the prototype's member, for the library too.
+// The native object behind a ServerResponse has no public name: a program reaches it only through a symbol of the library. Under --aot its prototype is locked like a built-in's: whoever replaces, deletes or re-parents there is refused loudly, a new name is taken, and the server goes on answering. The object itself stays free: an own property hides the prototype's member, for the library too.
 "use strict";
 const http = require("node:http");
 const lines = [];
@@ -49,7 +49,7 @@ store the same method: true
 Reflect.set: false
 delete a member: throws TypeError
 Reflect.deleteProperty: false
-add a name: throws TypeError
+add a name: true
 another parent: throws TypeError
 the same parent: true
 Reflect.setPrototypeOf: false

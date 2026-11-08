@@ -1,9 +1,12 @@
 import * as b from "bun-builtins-table";
+import lightStreams from "../../../js/internal/streams/load_all.ts";
 import { pathOfNativeFunction } from "../paths.ts";
 import {
   asyncContextCell,
+  callbacksOfFsCell,
   closesChannelCell,
   coercesEnvironmentValueCell,
+  disabledWarningsCell,
   drainMicrotasksCell,
   editsWindowsEnvironmentCell,
   emitsProcessEventCell,
@@ -19,11 +22,15 @@ import {
   needsWholeOutputStreamCell,
   nextTickQueueCell,
   onWarningCell,
+  randomIntCallbackCell,
   readsWindowSizeCell,
   releaseCell,
   reportsExceptionCell,
   resetsEnvironmentValueCell,
   sendsOverChannelCell,
+  sentHandlesCell,
+  sentMessagesCell,
+  sentOptionsCell,
   setModuleWrapperCell,
   standardErrorCell,
   standardInputCell,
@@ -60,7 +67,6 @@ const standardStreamModulesThatTestsCanWatch = standardStreamModules.map(load =>
 }));
 
 const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadSpec[]>> = {
-  "node:child_process": channelModules,
   "node:fs/promises": evaluates("internal/fifo"),
   "node:repl": standardStreamModules,
   "node:worker_threads": evaluates("internal/worker/stdio"),
@@ -85,14 +91,17 @@ const loadedModulesByPath: Readonly<Record<b.BuiltinPath, readonly b.ModuleLoadS
   "process.stdout": standardStreamModulesThatTestsCanWatch,
 };
 
-const bundlerPluginFunctions = functionsIn(
+const pluginFunctionsOfBuild = functionsIn(
   "builtins/BundlerPlugin",
-  "loadAndResolvePluginsForServe",
   "runOnEndCallbacks",
   "runOnLoadPlugins",
   "runOnResolvePlugins",
   "runSetupFunction",
 );
+const bundlerPluginFunctions = [
+  ...functionsIn("builtins/BundlerPlugin", "loadAndResolvePluginsForServe"),
+  ...pluginFunctionsOfBuild,
+];
 
 // A server runs the plugins that bunfig names, which are code from outside the executable.
 const pluginFunctionsOfServer = bundlerPluginFunctions.map(called => ({
@@ -100,13 +109,20 @@ const pluginFunctionsOfServer = bundlerPluginFunctions.map(called => ({
   when: b.whenBuildAdmitsRuntimeCode,
 }));
 
-const channelFunctions = functionsIn(
-  "builtins/Ipc",
-  "parseHandle",
-  "restoreAdvancedBuffers",
-  "serialize",
-  "tagAdvancedBuffers",
-);
+// ipc_host.rs do_send: serialize() gets the message, the handle and the options of the send() that is under way, and nothing else.
+const channelFunctions: readonly { function: b.FunctionRef; uses?: readonly b.HostUseSpec[] }[] = [
+  ...functionsIn("builtins/Ipc", "parseHandle", "restoreAdvancedBuffers", "tagAdvancedBuffers").map(called => ({
+    function: called,
+  })),
+  b.functionUsed(
+    b.functionIn("builtins/Ipc", "serialize"),
+    b.calledByHost({
+      times: "Repeatedly",
+      this: b.undefined,
+      args: [sentMessagesCell, sentHandlesCell, sentOptionsCell].map(cell => b.nativeCell(cell)),
+    }),
+  ),
+];
 
 const whenChannelEvent = b.whenOperandOfCallOn("process", "event", "message", "disconnect");
 
@@ -116,7 +132,7 @@ const functionsOfChannel = [
   pathOfNativeFunction("BunProcess.cpp", "Bun__Process__disconnect"),
 ];
 
-// js_bun_spawn_bindings.rs: the child has a channel where `ipc` of the options is a function. Without one, send() and disconnect() of the Subprocess find no channel and run nothing of the library.
+// js_bun_spawn_bindings.rs: the child has a channel where `ipc` of the options is a function. Without one, disconnect() of the Subprocess finds no channel and runs nothing of the library, and send() queues its callback with the error.
 const spawnsWithChannel = ["commandOrOptions", "options"].map(operand => ({
   path: "Bun.spawn",
   when: b.whenOperandHasProperty(operand, "ipc"),
@@ -124,9 +140,9 @@ const spawnsWithChannel = ["commandOrOptions", "options"].map(operand => ({
 
 // Not process.connected: its getter answers a flag of native code and its setter does nothing (BunProcess.cpp processConnected, setProcessConnected): neither opens the channel.
 // Not process.channel: its ref() and unref() say whether the channel keeps the process alive (node_cluster_binding.rs set_ref), open or not.
+// Not node:child_process: its code is compiled with the program, and the one channel it opens is that of its own Bun.spawn with `ipc`.
 const channelUsers: readonly b.CallingEntrySpec[] = [
   ...spawnsWithChannel,
-  "node:child_process",
   "node:cluster",
   ...functionsOfChannel.map(path => ({ path, when: b.whenCallRunsOtherCode })),
   ...["addListener", "on", "once", "prependListener", "prependOnceListener"].map(name => ({
@@ -221,7 +237,7 @@ const lightOutputStreams = b.functionUsed(
       b.memberOfValue("stderr", ...usesOfStandardStream[2]),
       b.memberOfValue(
         "listenForSizeOfTerminal",
-        b.calledByHost({ times: "Repeatedly", this: b.any, args: [], result: b.dropped }),
+        b.calledByHost({ times: "Repeatedly", this: b.any, args: [b.int(1, 2)], result: b.dropped }),
       ),
     ],
   }),
@@ -243,9 +259,20 @@ const outputStreams = [
 const needsWholeInputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeInputStream");
 const needsWholeOutputStream = pathOfNativeFunction("BunProcess.cpp", "Process_functionNeedsWholeOutputStream");
 // One function makes both outputs, so an executable has it for both or for neither.
+// The traps of a light stream call the function whatever they are asked, and go by the same lists: so it is called only where a stream is asked for more than they name.
 const madeWholeBy = [
-  { path: needsWholeInputStream, functions: [wholeInputStream] },
-  { path: needsWholeOutputStream, functions: [wholeOutputStream(1), wholeOutputStream(2)] },
+  {
+    path: needsWholeInputStream,
+    functions: [wholeInputStream],
+    whenAskedForMore: [b.whenAskedForOtherNames("process.stdin", lightStreams.servedByLightInput)],
+  },
+  {
+    path: needsWholeOutputStream,
+    functions: [wholeOutputStream(1), wholeOutputStream(2)],
+    whenAskedForMore: ["process.stdout", "process.stderr", "console._stdout", "console._stderr"].map(stream =>
+      b.whenAskedForOtherNames(stream, lightStreams.servedByLightOutputs),
+    ),
+  },
 ];
 
 // Native code makes the value of the property by a call without operands, or with `process`.
@@ -271,37 +298,34 @@ const moduleChildrenFunctions = [
   ),
 ];
 
-const requireCacheFunctions = [...functionsIn("builtins/CommonJS", "createRequireCache"), ...moduleChildrenFunctions];
+const requireCacheFunctions = [
+  ...functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
+  ...moduleChildrenFunctions,
+];
 
-const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverseArray");
+// JSCommonJSExtensions.cpp builtinLoader(): the functions under ".js", ".ts" and ".json" call it for a file that turns out to be an ES module. Nobody has one of them but from the table of loaders.
+const functionsOfDefaultLoaders = functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension");
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
-
-const fakeTimerFunctions = functionsIn("builtins/useFakeTimers", "createPerformance");
 
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
   "%ModuleRequire%.cache": requireCacheFunctions,
+  "%ModuleRequire%.extensions": functionsOfDefaultLoaders,
   "%ModuleRequire%.main": [...functionsIn("builtins/CommonJS", "main"), ...moduleChildrenFunctions],
   "%ModuleRequire%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
   "%ModuleRequirePrototype%.cache": requireCacheFunctions,
+  "%ModuleRequirePrototype%.extensions": functionsOfDefaultLoaders,
   // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
-  "Array.prototype.filter": fusedTraversalFunctions,
-  "Array.prototype.flatMap": fusedTraversalFunctions,
-  "Array.prototype.map": fusedTraversalFunctions,
-  "Array.prototype.slice": fusedTraversalFunctions,
-  "Array.prototype.sort": functionsIn(
-    "prelude/array-sort",
-    "sortByDifference",
-    "sortByReversedDifference",
-    "sortWhereNobodySeesTheComparator",
-  ).map(called => ({
-    ...called,
-    when: b.whenCallRunsOtherCode,
-  })),
+  "Array.prototype.sort": functionsIn("prelude/array-sort", "sortByDifference", "sortByReversedDifference").map(
+    called => ({
+      ...called,
+      when: b.whenCallRunsOtherCode,
+    }),
+  ),
   "Buffer.from": functionsIn("builtins/JSBufferConstructor", "from"),
   "Buffer.isBuffer": functionsIn("builtins/JSBufferConstructor", "isBuffer"),
   "Buffer.prototype.offset": functionsIn("builtins/JSBufferPrototype", "offset"),
@@ -309,15 +333,12 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   "Buffer.prototype.toJSON": functionsIn("builtins/JSBufferPrototype", "toJSON"),
   "Bun.$": functionsIn("builtins/shell", "createBunShellTemplateFunction"),
   "Bun.Glob": functionsIn("builtins/Glob", "scan", "scanSync"),
-  "Bun.build": bundlerPluginFunctions,
-  "Bun.jest": fakeTimerFunctions,
+  "Bun.build": pluginFunctionsOfBuild,
   "Bun.peek": [heldAs(b.functionIn("builtins/Peek", "peek"), "Bun.peek"), b.functionIn("builtins/Peek", "peekStatus")],
   "Bun.plugin": bundlerPluginFunctions,
   "Bun.serve": pluginFunctionsOfServer,
   "WebAssembly.compileStreaming": streamedModuleFunctions,
   "WebAssembly.instantiateStreaming": streamedModuleFunctions,
-  "bun:test": fakeTimerFunctions,
-  "bun:test/vitest": fakeTimerFunctions,
   // The getter calls it on `console`, with `console`, and what it answers takes the getter's place.
   "console.Console": [
     b.functionUsed(
@@ -336,7 +357,6 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   // Worker.cpp jsFunctionSetNodeWorkerStdioPorts(), which the binding holds: from that call on the three properties are made of the ports.
   "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding": [streamOfWorker(0), streamOfWorker(1), streamOfWorker(2)],
   "node:fs/promises": functionsIn("builtins/Fifo", "createFIFO"),
-  "node:module": functionsIn("builtins/CommonJS", "requireESMFromHijackedExtension"),
   "node:module.wrapper": [
     b.functionUsed(
       b.functionIn("builtins/CommonJS", "getWrapperArrayProxy"),
@@ -350,6 +370,7 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   ],
   "node:module._initPaths": [heldAs(b.functionIn("builtins/NodeModuleObject", "_initPaths"), "node:module._initPaths")],
   "node:module._cache": requireCacheFunctions,
+  "node:module._extensions": functionsOfDefaultLoaders,
   "process._rawDebug": [heldAs(processInternal("rawDebug"), "process._rawDebug")],
   "process.allowedNodeEnvironmentFlags": builtBy(
     "buildAllowedNodeEnvironmentFlags",
@@ -368,8 +389,8 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
 
 const inBindings = (file: string): string => `src/jsc/bindings/${file}`;
 
-// The object warns about a value that is stored into it and is no string, number or boolean. A read of it runs nothing.
-const environmentObjects = ["%ImportMeta%.env", "Bun.env", "process.env"].map(path => ({
+// The object warns about a value that is stored into it and is no string, number or boolean. A read of it runs nothing. A report hands out the very object, under `environmentVariables`.
+const environmentObjects = ["%ImportMeta%.env", "Bun.env", "process.env", "process.report.getReport"].map(path => ({
   path,
   when: b.whenObjectNobodyKnowsIsWritten,
 }));
@@ -404,8 +425,9 @@ const eventTargetSources = [
 
 const nodeCryptoBinding = ["native:Cpp:node_crypto_binding.cpp:createNodeCryptoBinding"];
 
-// The run time reports a promise that is rejected without a handler, and one that gets its handler afterwards.
-const promises = ["Promise"];
+// The run time warns of a promise that is rejected without a handler, and of one that gets its handler afterwards, only where `--unhandled-rejections` is set. No text can name this entry: the build names it for the option.
+const warningsOfRejections = "%WarningsOfRejections%";
+const promises = [warningsOfRejections];
 
 // The overload for a delay that fits a timer says that it runs no code.
 const timersWithOtherDelays = ["setInterval", "setTimeout"].map(path => ({ path, when: b.whenCallRunsOtherCode }));
@@ -486,23 +508,21 @@ const queuedByNativeCode = (cell: string, ...args: readonly b.PlaceLike[]) =>
   );
 
 // What it answers prints a warning. The listener that is on `process` from the start hands it what the listener is called with, and answers what it answers.
+// It gets the list of --disable-warning where there is one.
 const warningPrinterCalledWith = (...warnings: readonly b.PlaceLike[]) => [
   b.functionUsed(
     processInternal("createOnWarning"),
-    b.calledByHost({
-      times: "Once",
-      this: b.undefined,
-      args: [
-        processObject,
-        b.string.or(b.undefined),
-        b.instance("Array").holding({ element: b.string }).fresh.or(b.undefined),
-        b.nativeCell(writeWarningCell),
-      ],
-      result: [
-        b.keptIn(onWarningCell),
-        ...warnings.map(warning => b.calledByHost({ times: "PerEvent", this: processObject, args: [warning] })),
-      ],
-    }),
+    ...[b.undefined, b.nativeCell(disabledWarningsCell)].map(disabledWarnings =>
+      b.calledByHost({
+        times: "Once",
+        this: b.undefined,
+        args: [processObject, b.string.or(b.undefined), disabledWarnings, b.nativeCell(writeWarningCell)],
+        result: [
+          b.keptIn(onWarningCell),
+          ...warnings.map(warning => b.calledByHost({ times: "PerEvent", this: processObject, args: [warning] })),
+        ],
+      }),
+    ),
   ),
 ];
 // A program that emits the event by itself, or takes the listener out of the list and calls it, passes what it likes.
@@ -520,8 +540,6 @@ const warningFunctions = [
 ];
 // Of native code that nothing describes, nobody knows what it emits as a warning.
 const warningFunctionsOfUndeclaredCode = [...warningPrinterFunctions, ...tickFunctions];
-
-const testModules = ["Bun.jest", "bun:test", "bun:test/vitest"];
 
 // On Windows the object is a proxy that the function makes.
 const environmentObjectUsed = (result: readonly b.HostUseSpec[] | undefined) => [
@@ -651,7 +669,7 @@ const nativeCalls = [
       { file: "src/runtime/node/node_crypto_binding.rs", times: 4 },
     ],
     callers: [
-      // These two queue the operands of the program, as process.nextTick does.
+      // These two queue the operands of the program, as process.nextTick does. The second stands in its place under fake timers: whoever calls it has read that name.
       {
         file: inBindings("BunProcess.cpp"),
         caller: "jsFunctionNextTickInDefaultRealm",
@@ -661,7 +679,7 @@ const nativeCalls = [
       {
         file: inBindings("node/NodeTimers.cpp"),
         caller: "functionFakeNextTick",
-        onBehalfOf: testModules,
+        onBehalfOf: ["process.nextTick"],
         calls: nextTickMaker,
       },
       {
@@ -686,16 +704,23 @@ const nativeCalls = [
       { file: "src/runtime/ipc.rs", caller: "call_next_tick", times: 2, onBehalfOf: channelUsers },
       { file: "src/runtime/ipc.rs", caller: "complete", onBehalfOf: channelUsers },
       { file: "src/runtime/ipc.rs", caller: "on_ack_nack", onBehalfOf: channelUsers },
-      { file: "src/runtime/ipc_host.rs", caller: "do_send_err", times: 2, onBehalfOf: channelUsers },
+      {
+        file: "src/runtime/ipc_host.rs",
+        caller: "do_send_err",
+        times: 2,
+        onBehalfOf: [...channelUsers, "%Subprocess%.prototype.send"],
+      },
       {
         file: "src/runtime/node/node_crypto_binding.rs",
         caller: "random_int",
         onBehalfOf: ["native:Bindgen:node_crypto_binding.bind.ts:crypto"],
+        calls: queuedByNativeCode(randomIntCallbackCell, b.undefined, b.f64),
       },
       {
         file: "src/runtime/node/node_fs_binding.rs",
         caller: "reject_before_schedule",
         onBehalfOf: fsMethodsTakingCallback,
+        calls: queuedByNativeCode(callbacksOfFsCell, b.nativeMemory),
       },
     ],
   }),
@@ -749,7 +774,8 @@ const nativeCalls = [
         onBehalfOf: startedWorkers,
         calls: environmentObjectMade(listedWithValues),
       },
-      { file: inBindings("ViUtils.cpp"), caller: "processEnv", onBehalfOf: testModules },
+      // vi.stubEnv stores into the object. Whoever sees it has read one of the names above.
+      { file: inBindings("ViUtils.cpp"), caller: "processEnv", onBehalfOf: ["process.env"] },
     ],
   }),
 ];
@@ -778,14 +804,15 @@ const undeclaredNativeCode = "%UndeclaredNativeCode%";
 
 export default b.declarations(
   b.namespace(undeclaredNativeCode, {}, { callsFunctions: warningFunctionsOfUndeclaredCode }),
+  b.namespace(warningsOfRejections, {}, { listsAllMembers: true }),
   ...nativeCalls,
   callsOfInspect,
   Object.entries(loadedModulesByPath).flatMap(([path, loads]) => b.extend(path, { loads })),
   Object.entries(calledFunctionsByPath).flatMap(([path, callsFunctions]) => b.extend(path, { callsFunctions })),
-  madeWholeBy.flatMap(({ path, functions }) =>
+  madeWholeBy.flatMap(({ path, functions, whenAskedForMore }) =>
     b.extend(path, {
-      loads: standardStreamModules.map(load => ({ ...load, when: b.whenCallRunsOtherCode })),
-      callsFunctions: functions.map(called => ({ ...called, when: b.whenCallRunsOtherCode })),
+      loads: whenAskedForMore.flatMap(when => standardStreamModules.map(load => ({ ...load, when }))),
+      callsFunctions: whenAskedForMore.flatMap(when => functions.map(called => ({ ...called, when }))),
     }),
   ),
   // getWindowSize of the functions that node:tty has from ProcessBindingTTYWrap.cpp: what native-bindings.builtins.ts says of it.
@@ -829,7 +856,7 @@ export default b.declarations(
     typeof user === "string"
       ? b.extend(user, { callsFunctions: channelFunctions })
       : b.extend(user.path, {
-          callsFunctions: channelFunctions.map(called => ({ function: called, when: user.when })),
+          callsFunctions: channelFunctions.map(called => ({ ...called, when: user.when })),
         }),
   ),
   // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored. On Windows windowsEnv() makes what lies in the cell.
@@ -869,8 +896,11 @@ export default b.declarations(
     implementation: b.hostCall,
   }),
   // BunProcess.cpp constructVersions, constructProcessReleaseObject, constructFeatures: ordinary objects. Which versions and features there are differs between platforms and builds.
-  b.hostObject(versionsCell, { otherNames: b.string }),
-  b.hostObject(releaseCell, { fields: { name: b.string, sourceUrl: b.string, headersUrl: b.string } }),
+  b.hostObject(versionsCell, { otherNames: b.string, locked: { holder: "process.versions", names: ["node", "bun"] } }),
+  b.hostObject(releaseCell, {
+    fields: { name: b.string, sourceUrl: b.string, headersUrl: b.string },
+    locked: { holder: "process.release", names: ["name"] },
+  }),
   b.hostObject(featuresCell, { otherNames: [b.bool, b.string] }),
   // `$asyncContext`: its field holds the frame of AsyncLocalStorage that is current, undefined from the start.
   b.hostObject(asyncContextCell, { prototype: null, internalFields: { 0: [b.inspectedByHost] } }),
@@ -883,6 +913,12 @@ export default b.declarations(
     capability: "js",
     throws: true,
     implementation: b.hostCall,
+  }),
+  // Process::ensureOnWarning makes an array of them.
+  b.hostObject(disabledWarningsCell, {
+    prototype: "Array.prototype",
+    fields: { length: b.int(0, 2 ** 32 - 1) },
+    otherNames: b.string,
   }),
   // Process::emitWarning makes an Error and defines the name, and the code and the detail where it has them.
   b.hostObject(madeWarningsCell, {
@@ -910,7 +946,7 @@ export default b.declarations(
     "jsWebStreamsHandler_onDirectEndOfTickFlush",
     {
       args: { ignored: b.any.optional, controller: b.any.optional },
-      returns: b.any,
+      returns: b.undefined,
       capability: "js",
       throws: true,
       uses: { ignored: b.inspected, controller: [b.retained] },
@@ -932,7 +968,12 @@ export default b.declarations(
     returns: b.bool,
     capability: "js",
     throws: true,
-    uses: { message: [b.retained], handle: [b.retained], options: [b.retained], callback: [b.retained] },
+    uses: {
+      message: [b.retained, b.storedIn(b.nativeCell(sentMessagesCell))],
+      handle: [b.retained, b.storedIn(b.nativeCell(sentHandlesCell))],
+      options: [b.retained, b.storedIn(b.nativeCell(sentOptionsCell))],
+      callback: [b.retained],
+    },
     implementation: b.hostCall,
   }),
   // It opens the channel to close it, or emits an error on process where the channel is closed already.
@@ -962,7 +1003,7 @@ export default b.declarations(
   // Where it is handed the name of a file it appends to that. Else, until the program has read or replaced process.stderr, it writes to the descriptor itself.
   b.hostFunction(writeWarningCell, "BunProcess.cpp", "Process_functionWriteWarning", {
     args: { text: b.any.optional, file: b.any.optional },
-    returns: b.undefined,
+    returns: b.union(b.bool, b.undefined),
     capability: "js",
     throws: true,
     uses: { text: [b.retained, b.runs("ToPrimitive")], file: b.inspected },
@@ -984,24 +1025,6 @@ export default b.declarations(
       colors: b.bool,
     },
   }),
-  b.namedMemberCall(customInspect, [b.f64, b.nativeCell(inspectOptionsCell), b.nativeCell(inspectCell)]),
-  // ConsoleObject.rs print_to_json and the printer of FormData: the formatter passes nothing.
-  b.namedMemberCall("toJSON", []),
-  // It prints an object that it makes, or a string, with a copy of the options that it was called with.
-  b.hostMethodCall(customInspect, inspectCell, {
-    times: "Once",
-    this: b.nativeMemory,
-    args: [b.nativeMemory, b.nativeMemory],
-    result: [b.inspectedByHost],
-  }),
-  // Below the depth that is printed, the method of URLSearchParams answers what `stylize` of its options answers. The formatter calls the method with its own options.
-  [stylizeWithColorCell, stylizeWithNoColorCell].flatMap(cell =>
-    b.hostMethodCall(customInspect, cell, {
-      times: "Once",
-      this: b.nativeCell(inspectOptionsCell),
-      args: [b.string, b.string],
-    }),
-  ),
   b.startup({
     loads: [{ module: "internal/util/inspect", exports: [b.exportRead("inspect", b.keptIn(inspectCell))] }],
     functionsCalledWithLoads: [
@@ -1017,6 +1040,8 @@ export default b.declarations(
       b.functionUsed(b.functionIn("builtins/UtilInspect", "stylizeWithNoColor"), b.keptIn(stylizeWithNoColorCell)),
     ],
     namesOfMethodsCallingLoads: [customInspect],
+    // The object behind `require.cache` prints a copy of itself.
+    functionsLayingSuchMethods: functionsIn("builtins/CommonJS", "createRequireCacheOverCompiledProgram"),
     moduleLoaderFunctions: functionsIn(
       "builtins/CommonJS",
       "internalRequire",
@@ -1027,4 +1052,7 @@ export default b.declarations(
     ),
   }),
   b.excluded("builtins/Bake", "renderRoutesForProdStatic"),
+  b.excluded("builtins/CommonJS", "createRequireCache"),
+  // The test runner's own. In the program it would be compiled with the files under test, which are to come out as in an executable.
+  b.excluded("builtins/useFakeTimers", "createPerformance"),
 );

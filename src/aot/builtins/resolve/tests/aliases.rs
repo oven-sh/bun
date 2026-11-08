@@ -39,15 +39,13 @@ case_tests! {
     stored_let_is_not_alias: PROGRAM, "let m = Math; m = other; m.floor;", |case| {
         assert_unresolved(case, "m.floor");
         assert_eq!(case.symbol("m"), None);
-        assert!(case.mentions(BuiltinId::MathFloor));
-        assert!(!case.exposes(BuiltinId::Math));
+        assert!(case.exposes(BuiltinId::Math));
     };
     var_initialized_once_is_alias: PROGRAM, "var m = Math; m.floor;", |case|
         assert_builtin(case, "m.floor", BuiltinId::MathFloor);
     var_in_loop_is_not_alias: PROGRAM, "for (;;) { var m = Math; } m.floor;", |case| {
         assert_unresolved(case, "m.floor");
-        assert!(case.mentions(BuiltinId::MathFloor));
-        assert!(!case.exposes(BuiltinId::Math));
+        assert!(case.exposes(BuiltinId::Math));
     };
     dead_store_is_ignored: PROGRAM, "let m = Math; if (false) m = other; m.floor;", |case|
         assert_builtin(case, "m.floor", BuiltinId::MathFloor);
@@ -71,8 +69,7 @@ case_tests! {
     };
     operator_is_not_alias: PROGRAM, "const m = Math || other; m.floor;", |case| {
         assert_unresolved(case, "m.floor");
-        assert!(case.mentions(BuiltinId::MathFloor));
-        assert!(!case.exposes(BuiltinId::Math));
+        assert!(case.exposes(BuiltinId::Math));
     };
     namespace_export_is_not_alias: PROGRAM, "namespace N { export const floor = Math.floor, m = Math; floor(1); m.ceil; }", |case| {
         assert_unresolved(case, "floor");

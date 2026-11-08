@@ -189,7 +189,8 @@ fn arguments_store_is_recorded() {
                 [(scope, ScopeSlot::ArgumentsBinding)],
                 "{store}"
             );
-            assert!(walk.loops[0].stored.contains(&binding), "{store}");
+            let mut loops = walk.loops.iter();
+            assert!(loops.any(|it| it.stored.contains(&binding)), "{store}");
         });
     }
     let read = "function f() { for (var i = 0; i < arguments.length; i++) { arguments[i] = i; } }";

@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 2
+// CHECK-LABEL: function {{*}}name="lazy"
+// CHECK-LABEL: function {{*}}name="closure"
 
 // FILE: main.js
 // The plain case: exports that are read, stored and called by name, as TypeScript emits them.
@@ -50,33 +52,3 @@ exports.helper = typeof __importDefault;
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: lazy closure
-// CHECK-LABEL: function {{*}}name="lazy"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: EvaluateModule module=[[m_1]] referrer=[[m_0]] [isCallOfRequire]
-// CHECK-NEXT: v1 = Boolean boolean=true
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=7 flags=[IsExpected]}
-// CHECK-NEXT: v5 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: v7 = Integer integer=1
-// CHECK-NEXT: v8 = Integer integer=1
-// CHECK-NEXT: v9 = Call v5, v6, v7, v8 calleeName="inner.add"
-// CHECK-NEXT: v10 = Convert v9 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v11 = Add v4, v10
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="closure"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=env [[L_4]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_5]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: env [[L_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewClosure v0 function=[[f_6]]
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }

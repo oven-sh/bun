@@ -510,19 +510,21 @@ bun run logo.ts
 
 In the bundler, Bun copies the file into `outdir` and adds a hash of the file's contents to the name of the copy. The import resolves to a relative path pointing to the copied file.
 
-```js
-// Output
-var logo = "./logo-a7305bdef.svg";
-console.log(logo);
+```js Output
+// logo.svg
+var logo_default = "./logo-r2wfzjrq.svg";
+
+// logo.ts
+console.log(logo_default);
 ```
 
 If `publicPath` is set, the import uses its value as a prefix to construct an absolute path/URL.
 
-| Public path                  | Resolved import                              |
-| ---------------------------- | -------------------------------------------- |
-| `""` (default)               | `./logo-a7305bdef.svg`                       |
-| `"/assets/"`                 | `/assets/logo-a7305bdef.svg`                 |
-| `"https://cdn.example.com/"` | `https://cdn.example.com/logo-a7305bdef.svg` |
+| Public path                  | Resolved import                             |
+| ---------------------------- | ------------------------------------------- |
+| `""` (default)               | `./logo-r2wfzjrq.svg`                       |
+| `"/assets/"`                 | `/assets/logo-r2wfzjrq.svg`                 |
+| `"https://cdn.example.com/"` | `https://cdn.example.com/logo-r2wfzjrq.svg` |
 
 <Note>
   The value of `naming.asset` determines the location and file name of the copied file. The default is

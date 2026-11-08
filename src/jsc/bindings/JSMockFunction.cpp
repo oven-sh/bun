@@ -3443,8 +3443,7 @@ static JSObject* createReplacedPropertyHandle(Zig::GlobalObject* globalObject, J
     return handle;
 }
 
-// The entry of an earlier jest.replaceProperty() on the same object and key that is not restored yet.
-// A test file replaces over a preload's replacement with a record of its own, so that the end of the file gives the preload's value back.
+// The entry of an earlier jest.replaceProperty() on the same object and key that is not restored yet. A test file gets its own record over a preload's.
 static JSMockModule::ReplacedProperty* findReplacedProperty(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& propertyKey)
 {
     bool isInPreload = globalObject->mockModule.preloadMayBeRunning && JSMock__isInPreload(globalObject);
@@ -3472,8 +3471,7 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
         throwVMError(globalObject, scope, makeString("Property `"_s, keyForMessage, "` does not exist in the provided object"_s));
         return {};
     }
-    // In tests `import.meta.env` is a view of `process.env` with Vite's variables converted, and with a default for the ones it lacks.
-    // The original is what `process.env` holds, and the restore deletes a default.
+    // import.meta.env converts Vite's variables and gives the ones process.env lacks a default. The original is what process.env holds.
     JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object);
     RETURN_IF_EXCEPTION(scope, {});
     if (env) {

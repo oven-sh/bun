@@ -2548,43 +2548,43 @@ describe("spyOn", () => {
       );
     });
 
-    test.skipIf("MODE" in process.env || "DEV" in process.env || "PROD" in process.env || "TZ" in process.env)(
-      "import.meta.env",
-      () => {
-        expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV]).toEqual(["test", false, true]);
-        const mode = jest.replaceProperty(import.meta.env, "MODE", "production");
-        const dev = jest.replaceProperty(import.meta.env, "DEV", false);
-        expect([import.meta.env.MODE, process.env.MODE, import.meta.env.DEV]).toEqual([
-          "production",
-          "production",
-          false,
-        ]);
-        mode.restore();
-        dev.restore();
-        expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV, "DEV" in process.env]).toEqual([
-          "test",
-          false,
-          true,
-          false,
-        ]);
-        // A variable that is set keeps the string it had, not the boolean import.meta.env shows.
-        process.env.PROD = "0";
-        try {
-          const prod = jest.replaceProperty(import.meta.env, "PROD", true);
-          expect([import.meta.env.PROD, process.env.PROD]).toEqual([true, "1"]);
-          prod.restore();
-          expect([import.meta.env.PROD, process.env.PROD]).toEqual([false, "0"]);
-        } finally {
-          delete process.env.PROD;
-        }
-        // TZ is an own accessor of process.env while it is not set. The restore deletes it, which puts the zone back.
-        const zone = new Date(0).getTimezoneOffset();
-        const tz = jest.replaceProperty(import.meta.env, "TZ", "Asia/Tokyo");
-        expect(new Date(0).getTimezoneOffset()).toBe(-540);
-        tz.restore();
-        expect([new Date(0).getTimezoneOffset(), process.env.TZ]).toEqual([zone, undefined]);
-      },
-    );
+    // TZ is an own accessor of process.env even while it is not set, so `in` would skip always.
+    test.skipIf(
+      [process.env.MODE, process.env.DEV, process.env.PROD, process.env.TZ].some(value => value !== undefined),
+    )("import.meta.env", () => {
+      expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV]).toEqual(["test", false, true]);
+      const mode = jest.replaceProperty(import.meta.env, "MODE", "production");
+      const dev = jest.replaceProperty(import.meta.env, "DEV", false);
+      expect([import.meta.env.MODE, process.env.MODE, import.meta.env.DEV]).toEqual([
+        "production",
+        "production",
+        false,
+      ]);
+      mode.restore();
+      dev.restore();
+      expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV, "DEV" in process.env]).toEqual([
+        "test",
+        false,
+        true,
+        false,
+      ]);
+      // A variable that is set keeps the string it had, not the boolean import.meta.env shows.
+      process.env.PROD = "";
+      try {
+        const prod = jest.replaceProperty(import.meta.env, "PROD", true);
+        expect([import.meta.env.PROD, process.env.PROD]).toEqual([true, "1"]);
+        prod.restore();
+        expect([import.meta.env.PROD, process.env.PROD]).toEqual([false, ""]);
+      } finally {
+        delete process.env.PROD;
+      }
+      // TZ is an own accessor of process.env while it is not set. The restore deletes it, which puts the zone back.
+      const zone = new Date(0).getTimezoneOffset();
+      const tz = jest.replaceProperty(import.meta.env, "TZ", "Asia/Tokyo");
+      expect(new Date(0).getTimezoneOffset()).toBe(-540);
+      tz.restore();
+      expect([new Date(0).getTimezoneOffset(), process.env.TZ]).toEqual([zone, undefined]);
+    });
 
     test("through a Proxy", () => {
       const target = { value: 1 };
@@ -2611,17 +2611,19 @@ describe("spyOn", () => {
       );
       // The write runs a trap that replaces other properties, which moves the records around.
       const objects = Array.from({ length: 20 }, () => ({ value: 1 }));
+      let isReplacing = true;
       const busy = new Proxy(
         { value: 1 },
         {
           defineProperty(target, key, descriptor) {
-            for (const object of objects) jest.replaceProperty(object, "value", 2);
+            if (isReplacing) for (const object of objects) jest.replaceProperty(object, "value", 2);
             return Reflect.defineProperty(target, key, descriptor);
           },
         },
       );
       const first = jest.replaceProperty(busy, "value", 2);
       expect(jest.replaceProperty(busy, "value", 3)).toBe(first);
+      isReplacing = false;
       jest.restoreAllMocks();
       expect([busy.value, ...objects.map(object => object.value)]).toEqual(Array(21).fill(1));
     });

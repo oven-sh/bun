@@ -114,6 +114,11 @@ pub struct EnvironmentConfig {
     /// A regular expression literal is an object: a call or a store can change it, so they are in its memo block, and
     /// what is read from it can depend on a prop. To upstream it is a primitive. It was an object there in 19.1.0.
     pub objects_are_not_primitives: bool,
+    /// A tagged template has the effects of a call of its tag with the template object as the argument: it returns
+    /// what the signature of the tag says, or a mutable object, and it can change what the tag captures. To upstream
+    /// it makes a primitive and calls nothing. It was a call there in 19.1.0, it is one in oxc, and react/react#37506
+    /// makes it one again. Unlike `tagged_templates_are_always_called`, a memo block can still hold it.
+    pub tagged_templates_have_the_effects_of_a_call: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -174,6 +179,7 @@ impl Default for EnvironmentConfig {
             dependencies_are_sorted_by_bytes: false,
             spread_arguments_run_iterators: true,
             objects_are_not_primitives: true,
+            tagged_templates_have_the_effects_of_a_call: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

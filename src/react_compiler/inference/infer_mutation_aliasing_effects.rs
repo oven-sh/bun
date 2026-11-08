@@ -2879,6 +2879,24 @@ fn compute_signature_for_instruction(
                 reason: ValueReason::Other,
             });
         }
+        // Upstream has this in the arm below. react/react#37506 moves it here: the tag is called with the template
+        // object, which is no place of the HIR.
+        InstructionValue::TaggedTemplateExpression { tag, loc, .. }
+            if env.config.tagged_templates_have_the_effects_of_a_call =>
+        {
+            let sig = get_function_call_signature(env, tag.identifier)
+                .ok()
+                .flatten();
+            effects.push(AliasingEffect::Apply(Rc::new(ApplyEffect {
+                receiver: tag.clone(),
+                function: tag.clone(),
+                mutates_function: true,
+                args: crate::hir_vec![PlaceOrSpreadOrHole::Hole],
+                into: lvalue.clone(),
+                signature: sig,
+                loc: *loc,
+            })));
+        }
         // All primitive-creating instructions
         InstructionValue::TaggedTemplateExpression { .. }
         | InstructionValue::BinaryExpression { .. }

@@ -2,7 +2,10 @@
 // namespace asks for all of them: Object.keys() wants the descriptor of each name to see whether it is listed, and the descriptor of an export holds its value. Once the build kept what the program
 // named, and the list ended the executable: "process.allowedNodeEnvironmentFlags was left out of the executable".
 // Every way of listing, told over the modules and over how the namespace is come by.
-import { writeFileSync } from "node:fs";
+// A file that exports such a module again (`export * from "node:process"`) hands the same names to whoever lists its own namespace, and there no code of the program names the module:
+// the program is a folder then, and hands-on.mjs is that file. So does a file that hands on one member by its name (`export { $ } from "bun"`): once the executable of
+// `import * as utils from "./hands-on.mjs"; typeof utils.$` ended with "Bun.$ was left out of the executable", where a named import of the same file, or `Bun.$` written anywhere, ran.
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const modules: Record<string, string> = {
@@ -35,6 +38,48 @@ const roads: Record<string, (name: string) => string> = {
   "an-import-awaited": name => `const held = await import(${JSON.stringify(name)});\n`,
 };
 
+// The same namespaces behind a file that exports the module again: what is listed is the namespace of that file.
+const roadsOverAFile: Record<string, string> = {
+  "a-star-of-a-file-that-hands-it-on": `import * as held from "./hands-on.mjs";\n`,
+  "an-import-awaited-of-a-file-that-hands-it-on": `const held = await import("./hands-on.mjs");\n`,
+};
+
+// One member handed on by its name, and what the program does with it: `taken` holds the member. The first names of each module are made by Bun's own JavaScript when they are first read,
+// or call it; the last is made by native code alone, and says that the road itself is sound.
+const handedOnByName: Record<string, Record<string, string>> = {
+  bun: {
+    $: "typeof taken",
+    sql: "typeof taken",
+    SQL: "typeof taken",
+    postgres: "typeof taken",
+    peek: "taken(Promise.resolve(7))",
+    Glob: `[...new taken("*.none").scanSync(".")].length`,
+    file: "typeof taken",
+  },
+  process: {
+    nextTick: "typeof taken",
+    allowedNodeEnvironmentFlags: "typeof taken.has",
+    finalization: "typeof taken.register",
+    argv: "Array.isArray(taken)",
+  },
+  module: {
+    _cache: "typeof taken",
+    wrapper: "taken.length",
+    createRequire: "typeof taken",
+  },
+};
+
+/** How the program comes by the member that hands-on.mjs exports again. The last lists the namespace of that file and names no member. */
+const roadsToOneName: Record<string, (member: string, use: string) => string> = {
+  "read-off-a-star": (member, use) =>
+    `import * as held from "./hands-on.mjs";\nconst taken = held.${member};\nconsole.log(${use});\n`,
+  "taken-out-of-an-import-awaited": (member, use) =>
+    `const { ${member}: taken } = await import("./hands-on.mjs");\nconsole.log(${use});\n`,
+  "taken-out-of-what-require-answers": (member, use) =>
+    `const { ${member}: taken } = require("./hands-on.mjs");\nconsole.log(${use});\n`,
+  "listed": () => `import * as held from "./hands-on.mjs";\nconsole.log(Object.keys(held).join());\n`,
+};
+
 // A call of process.exit() is company enough to change what the build holds: with it the list was refused by an error, without it the executable died.
 const ends: Record<string, string> = { "ends-by-itself": "", "exits": "process.exit(0);\n" };
 
@@ -50,12 +95,38 @@ console.log(
 );
 `;
 
+/** A program of two files: main.mjs, and the file that exports again. */
+function writeBehindAFile(folder: string, program: string, handsOn: string, main: string) {
+  mkdirSync(join(folder, program));
+  writeFileSync(join(folder, program, "hands-on.mjs"), handsOn);
+  writeFileSync(join(folder, program, "main.mjs"), main);
+}
+
 export default function write(folder: string) {
   for (const [module, name] of Object.entries(modules))
     for (const [way, text] of Object.entries(ways))
       for (const [road, come] of Object.entries(roads))
         for (const [end, last] of Object.entries(ends))
           writeFileSync(join(folder, `${module}--${way}--${road}--${end}.mjs`), `${come(name)}${text}\n${last}`);
+  for (const [module, name] of Object.entries(modules))
+    for (const [way, text] of Object.entries(ways))
+      for (const [road, come] of Object.entries(roadsOverAFile))
+        for (const [end, last] of Object.entries(ends))
+          writeBehindAFile(
+            folder,
+            `${module}--${way}--${road}--${end}`,
+            `export * from ${JSON.stringify(name)};\n`,
+            `${come}${text}\n${last}`,
+          );
+  for (const [module, members] of Object.entries(handedOnByName))
+    for (const [member, use] of Object.entries(members))
+      for (const [road, come] of Object.entries(roadsToOneName))
+        writeBehindAFile(
+          folder,
+          `${module}--one-name-handed-on--${member.replace("$", "dollar")}--${road}`,
+          `export { ${member} } from ${JSON.stringify(modules[module])};\n`,
+          come(member, use),
+        );
   for (const module of [...written, "process", "module"])
     for (const [road, come] of Object.entries(roads))
       writeFileSync(

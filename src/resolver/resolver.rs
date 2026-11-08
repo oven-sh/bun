@@ -1894,9 +1894,10 @@ impl<'a> Resolver<'a> {
             }
             z[..len].copy_from_slice(abs_path);
             z[len] = 0;
+            // NONBLOCK: a FIFO entry must not wait for a writer here.
             let Ok(file) = bun_sys::open(
                 bun_core::ZStr::from_buf(&z[..], len),
-                bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
+                bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NONBLOCK,
                 0,
             ) else {
                 return ResultUnion::NotFound;

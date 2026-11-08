@@ -54,7 +54,6 @@ unsafe extern "C" {
         owner: JSValue,
         name: &bun_core::String,
     ) -> JSValue;
-    safe fn Bun__FakeTimers__hasCompiledCode(global: &JSGlobalObject) -> bool;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1033,8 +1032,6 @@ impl FakeTimers {
     /// off its global.
     #[optimize(size)]
     fn is_whole(&self, global: &JSGlobalObject) -> bool {
-        // Compiled code keeps its builtins on the globals, and they ask this clock themselves.
-        let builtins_stay = Bun__FakeTimers__hasCompiledCode(global);
         self.replaced.iter().all(|replaced| {
             let (api, fake, original) = (replaced.api, replaced.fake.get(), replaced.original.get());
             let owner = api.owner(global);
@@ -1045,7 +1042,6 @@ impl FakeTimers {
             let name = bun_core::String::static_(api.property());
             let on_global = Bun__FakeTimers__getDirect(global, owner, &name);
             on_global == fake
-                || (builtins_stay && on_global == original)
                 // The builtin `now` reads this clock itself. It is back when a spy under the fake is restored.
                 || (matches!(api, Api::Date | Api::Performance)
                     && !on_global.is_empty()

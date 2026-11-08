@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
@@ -621,7 +621,7 @@ describe("junit reporter", () => {
     expect(proc.exitCode).toBe(1);
   });
 
-  it("writes the earlier attempts of retried tests with --parallel as without", async () => {
+  it.concurrent("writes the earlier attempts of retried tests with --parallel as without", async () => {
     await using tmpDir = tempDir("junit-retry-parallel", {
       "package.json": "{}",
       "a.test.js": `
@@ -697,88 +697,94 @@ describe("junit reporter", () => {
     expect(serial.exitCode).toBe(1);
   });
 
-  it("with --parallel, hundreds of failed attempts after a huge error are one failed test case", async () => {
-    // A worker sends each earlier failed attempt in an IPC frame of its own, so no frame
-    // grows with the retry count. The first attempt alone has more text than the 64 MiB of
-    // a frame: its message fits, and its stack, which repeats the message, is cut.
-    const retries = 300;
-    const messageLength = 34 * 1024 * 1024;
-    await using tmpDir = tempDir("junit-retry-parallel-huge", {
-      "package.json": "{}",
-      "a.test.js": `
-        import { test } from "bun:test";
-        let attempt = 0;
-        test("fails every time", { retry: ${retries} }, () => {
-          attempt++;
-          throw new Error(attempt === 1 ? Buffer.alloc(${messageLength}, "a").toString() : "short " + attempt);
-        });
-      `,
-      "b.test.js": `import { test } from "bun:test"; test("other file", () => {});`,
-    });
-    await using proc = spawn([bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=junit.xml"], {
-      cwd: String(tmpDir),
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toContain("PARALLEL");
-    // An element per line. The line of the first attempt is megabytes long, so the
-    // assertions take pieces of it: a failure must not print it.
-    const lines = (await file(join(String(tmpDir), "junit.xml")).text()).split("\n").map(line => line.trimStart());
-    const element = /^<(?:testcase name="[^"]*"|\w*[fF]ailure type="\w+" message="[^"]{0,16})/;
-    expect(lines.flatMap(line => line.match(element) ?? [])).toEqual([
-      `<testcase name="fails every time"`,
-      `<failure type="Error" message="short ${retries + 1}`,
-      `<rerunFailure type="Error" message="aaaaaaaaaaaaaaaa`,
-      ...Array.from({ length: retries - 1 }, (_, i) => `<rerunFailure type="Error" message="short ${i + 2}`),
-      `<testcase name="other file"`,
-    ]);
-    const first = lines.find(line => line.startsWith(`<rerunFailure type="Error" message="a`));
-    // The message is whole, and the stack fills the rest of the frame up to the marker.
-    expect(first.indexOf(`">Error: a`)).toBe(`<rerunFailure type="Error" message="`.length + messageLength);
-    const cut = "a&#10;... [output truncated: would exceed --parallel IPC frame limit]&#10;</rerunFailure>";
-    expect(first.slice(-cut.length)).toBe(cut);
-    expect(first.length).toBeWithin(63 * 1024 * 1024, 65 * 1024 * 1024);
-    // The summary ends stderr, behind the megabytes of the first attempt's error. A result line has no
-    // duration when the test took under 10 microseconds.
-    expect(stderr.slice(stderr.lastIndexOf("\n(fail) ")).replace(/ \[[^\]\n]+\]/g, "")).toBe(
-      `\n(fail) fails every time (attempt ${retries + 1})\n\n 1 pass\n 1 fail\nRan 2 tests across 2 files.\n`,
-    );
-    expect(exitCode).toBe(1);
-  }, 90_000);
+  it.concurrent(
+    "with --parallel, a retried test whose worker exits is in the report with all its attempts or not at all",
+    async () => {
+      // The frame of the first attempt is larger than a socket buffer: the worker has not
+      // sent all that it has for "flaky" when the next test ends the process.
+      await using tmpDir = tempDir("junit-retry-parallel-exit", {
+        "package.json": "{}",
+        "a.test.js": `
+          import { test } from "bun:test";
+          const big = Buffer.alloc(1 << 20, "x").toString();
+          let attempt = 0;
+          test("flaky", { retry: 2 }, () => {
+            if (++attempt === 1) throw new Error(big);
+          });
+          test("exits", () => {
+            process.exit(1);
+          });
+        `,
+        "b.test.js": `import { test } from "bun:test"; test("other file", () => {});`,
+      });
+      await using proc = spawn([bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=junit.xml"], {
+        cwd: String(tmpDir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const exitCode = await proc.exited;
+      const xml = await file(join(String(tmpDir), "junit.xml")).text();
+      const elements = xml.match(/<testcase name="[^"]*"|<\w*[fF]ailure /g);
+      const crashed = [`<testcase name="(worker crashed)"`, `<failure `, `<testcase name="other file"`];
+      expect([crashed, [`<testcase name="flaky"`, `<flakyFailure `, ...crashed]]).toContainEqual(elements);
+      expect(exitCode).toBe(1);
+    },
+  );
 
-  it("with --parallel, a retried test whose worker exits is in the report with all its attempts or not at all", async () => {
-    // The frame of the first attempt is larger than a socket buffer: the worker has not
-    // sent all that it has for "flaky" when the next test ends the process.
-    await using tmpDir = tempDir("junit-retry-parallel-exit", {
-      "package.json": "{}",
-      "a.test.js": `
-        import { test } from "bun:test";
-        const big = Buffer.alloc(1 << 20, "x").toString();
-        let attempt = 0;
-        test("flaky", { retry: 2 }, () => {
-          if (++attempt === 1) throw new Error(big);
-        });
-        test("exits", () => {
-          process.exit(1);
-        });
-      `,
-      "b.test.js": `import { test } from "bun:test"; test("other file", () => {});`,
-    });
-    await using proc = spawn([bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=junit.xml"], {
-      cwd: String(tmpDir),
-      env: bunEnv,
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    const exitCode = await proc.exited;
-    const xml = await file(join(String(tmpDir), "junit.xml")).text();
-    const elements = xml.match(/<testcase name="[^"]*"|<\w*[fF]ailure /g);
-    const crashed = [`<testcase name="(worker crashed)"`, `<failure `, `<testcase name="other file"`];
-    expect([crashed, [`<testcase name="flaky"`, `<flakyFailure `, ...crashed]]).toContainEqual(elements);
-    expect(exitCode).toBe(1);
-  });
+  it(
+    "with --parallel, hundreds of failed attempts after a huge error are one failed test case",
+    async () => {
+      // A worker sends each earlier failed attempt in an IPC frame of its own, so no frame
+      // grows with the retry count. The first attempt alone has more text than the 64 MiB of
+      // a frame: its message fits, and its stack, which repeats the message, is cut.
+      const retries = 300;
+      const messageLength = 34 * 1024 * 1024;
+      await using tmpDir = tempDir("junit-retry-parallel-huge", {
+        "package.json": "{}",
+        "a.test.js": `
+          import { test } from "bun:test";
+          let attempt = 0;
+          test("fails every time", { retry: ${retries} }, () => {
+            attempt++;
+            throw new Error(attempt === 1 ? Buffer.alloc(${messageLength}, "a").toString() : "short " + attempt);
+          });
+        `,
+        "b.test.js": `import { test } from "bun:test"; test("other file", () => {});`,
+      });
+      await using proc = spawn([bunExe(), "test", "--parallel=2", "--reporter=junit", "--reporter-outfile=junit.xml"], {
+        cwd: String(tmpDir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("PARALLEL");
+      // An element per line. The line of the first attempt is megabytes long, so the
+      // assertions take pieces of it: a failure must not print it.
+      const lines = (await file(join(String(tmpDir), "junit.xml")).text()).split("\n").map(line => line.trimStart());
+      const element = /^<(?:testcase name="[^"]*"|\w*[fF]ailure type="\w+" message="[^"]{0,16})/;
+      expect(lines.flatMap(line => line.match(element) ?? [])).toEqual([
+        `<testcase name="fails every time"`,
+        `<failure type="Error" message="short ${retries + 1}`,
+        `<rerunFailure type="Error" message="aaaaaaaaaaaaaaaa`,
+        ...Array.from({ length: retries - 1 }, (_, i) => `<rerunFailure type="Error" message="short ${i + 2}`),
+        `<testcase name="other file"`,
+      ]);
+      const first = lines.find(line => line.startsWith(`<rerunFailure type="Error" message="a`));
+      // The message is whole, and the stack fills the rest of the frame up to the marker.
+      expect(first.indexOf(`">Error: a`)).toBe(`<rerunFailure type="Error" message="`.length + messageLength);
+      const cut = "a&#10;... [output truncated: would exceed --parallel IPC frame limit]&#10;</rerunFailure>";
+      expect(first.slice(-cut.length)).toBe(cut);
+      expect(first.length).toBeWithin(63 * 1024 * 1024, 65 * 1024 * 1024);
+      expect(filterJunitXmlOutput(lines[1])).toBe(
+        `<testsuites name="bun test" tests="2" assertions="0" failures="1" skipped="0">`,
+      );
+      expect(exitCode).toBe(1);
+    },
+    // The report of this one test has 64 MiB, which is what a frame holds.
+    isDebug || isASAN ? 60_000 : 20_000,
+  );
 
   it("omits U+FFFE and U+FFFF, which XML 1.0 forbids", async () => {
     await using tmpDir = tempDir("junit-noncharacters", {

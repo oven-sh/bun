@@ -20,20 +20,20 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
     let Some(junit) = coord.reporter.reporters.junit.as_deref_mut() else {
         return;
     };
-    for (idx, file) in files.iter().enumerate() {
+    for (idx, file) in files.into_iter().enumerate() {
         let rel = junit_file_name(coord.files[idx].as_bytes());
         junit.file_start_unix_ms = if file.started_unix_ms != 0 {
             file.started_unix_ms
         } else {
             bun_core::time::milli_timestamp()
         };
-        let mut attempts = file.attempts.iter().peekable();
-        for (index, payload) in file.tests.iter().enumerate() {
+        let mut attempts = file.attempts.into_iter().peekable();
+        for (index, payload) in file.tests.into_iter().enumerate() {
             let earlier_failures =
                 core::iter::from_fn(|| attempts.next_if(|(test, _)| *test == index))
-                    .map(|(_, attempt)| runner::decode_failure(&mut Reader { p: attempt }))
+                    .map(|(_, attempt)| runner::decode_failure(&mut Reader { p: &attempt }))
                     .collect();
-            let test = runner::decode_test_case(&mut Reader { p: payload }, rel, earlier_failures);
+            let test = runner::decode_test_case(&mut Reader { p: &payload }, rel, earlier_failures);
             if let Some(test) = test {
                 junit.record_test_case(&test).expect("oom");
             }

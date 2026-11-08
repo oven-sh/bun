@@ -221,8 +221,8 @@ pub struct VirtualMachine {
     /// (POSIX only; on Windows that path calls `loop_dec()` instead and the
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
-    /// Records of collections wait for `EventLoop::tick_immediate_tasks` to give them to `node:perf_hooks`. `GCPerformanceEntries` (C++) keeps it, from whichever thread ends a collection.
-    pub gc_performance_entries_wait: core::sync::atomic::AtomicBool,
+    /// Records of collections wait for `EventLoop::tick_immediate_tasks` to give them to `node:perf_hooks`. `GCPerformanceEntries` (C++) keeps it.
+    pub gc_performance_entries_wait: core::cell::Cell<bool>,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
@@ -1866,12 +1866,10 @@ impl VirtualMachine {
             || self.has_immediates()
     }
 
-    /// What an unref'd `setImmediate` and the hand-off of `gc` performance entries ask, because neither keeps the loop alive by itself: does something other than a queued immediate keep it alive.
+    /// The one rule of an unref'd `setImmediate` and of the hand-off of `gc` performance entries, because neither keeps the loop alive by itself.
     #[inline]
     pub fn is_event_loop_kept_alive(&self) -> bool {
-        // `bun test` runs on after an unhandled error.
-        (self.unhandled_error_counter == 0 || isBunTest.load(core::sync::atomic::Ordering::Relaxed))
-            && (self.is_platform_loop_active() || self.has_queued_work_excluding_immediates())
+        self.is_event_loop_alive_excluding_immediates()
     }
 
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
@@ -1890,9 +1888,6 @@ impl VirtualMachine {
             || self.has_handles(timers.holds_loop_ref)
             || self.has_handles_off_the_loop()
             || crate::cpp::Bun__hasDeferredWorkNotKeepingEventLoopAlive(self.global())
-            || self
-                .gc_performance_entries_wait
-                .load(core::sync::atomic::Ordering::Relaxed)
     }
 
     /// Handles that wake the loop from their own thread: a `Worker`, `fs.watch()`, a napi threadsafe function.

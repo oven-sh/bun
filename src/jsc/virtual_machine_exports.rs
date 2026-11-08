@@ -28,8 +28,7 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
 
 // HOST_EXPORT(Bun__VM__setGCPerformanceEntriesWait, c)
 pub fn set_gc_performance_entries_wait(this: &VirtualMachine, wait: bool) {
-    this.gc_performance_entries_wait
-        .store(wait, core::sync::atomic::Ordering::Relaxed);
+    this.gc_performance_entries_wait.set(wait);
 }
 
 // HOST_EXPORT(Bun__getVM, c)

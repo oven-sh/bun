@@ -13,8 +13,6 @@ let isGCEntryListenerSet = false;
 
 // https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.h#L112-L140
 function emitGCEntry(startTime: number, duration: number, isFullCollection: boolean, forced: boolean) {
-  // As in Node, the observers that exist now get the entry, whether or not they did when the collection ran.
-  if (!hasObserver("gc")) return;
   const detail = {
     kind: isFullCollection ? constants.NODE_PERFORMANCE_GC_MAJOR : constants.NODE_PERFORMANCE_GC_MINOR,
     flags: forced ? constants.NODE_PERFORMANCE_GC_FLAGS_FORCED : constants.NODE_PERFORMANCE_GC_FLAGS_NO,

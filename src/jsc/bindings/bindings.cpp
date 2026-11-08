@@ -5604,7 +5604,7 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
 // allocated from its last interval, plus 1). The collector's frames are then built over those words without writing
 // every slot, and the conservative scan covers those frames, so that one cell, dead or not, survives the collection.
 // Nothing leaks (the next collection frees it), but a test that expects Bun.gc(true) to collect an object it just
-// dropped fails: node-sqlite.test.ts did on x64 ASAN, and programs of test/aot/parallel/gc did in release builds.
+// dropped fails: node-sqlite.test.ts did on x64 ASAN. It has not been seen in a release build.
 //
 // The sizes: only the stack between JSC__VM__runGC and callWithCurrentThreadState(), where the collector captures the
 // stack, is scanned. Measured on x64, that is 0.6 KB in a release build and 1.8 KB under ASAN; the sizes below are a
@@ -5624,7 +5624,7 @@ static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
 }
 
 extern "C++" {
-// runGC<false> is JSC__VM__runGC as it was before 'gc' performance entries, statement for statement. runGC<true> is for a VM that observes them: the collection is one that the program forces.
+// runGC<false> is what a VM with no observer of 'gc' performance entries runs, and clearStackBelowCaller() is sized for its frame. runGC<true> also marks the record of its collection as forced.
 template<bool observed>
 static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
 {
@@ -5674,20 +5674,13 @@ static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
 }
 }
 
-// Each runGC frame holds a GCRequest, and nothing writes the padding of one: the collection scans the dead word under it. The sizes of clearStackBelowCaller() are measured for the frame of runGC<false>. The frame of runGC<true> is another, so it is built over zeroes.
-static NEVER_INLINE size_t runGCWithPerformanceEntry(JSC::VM* vm)
-{
-    clearStackBelowCaller();
-    return runGC<true>(vm, true);
-}
-
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     if (sync) {
-        if (auto* gcPerformanceEntries = WebCore::clientData(*vm)->gcPerformanceEntries.get(); gcPerformanceEntries && gcPerformanceEntries->observesHeap()) [[unlikely]]
-            return runGCWithPerformanceEntry(vm);
+        if (auto* gcPerformanceEntries = WebCore::clientData(*vm)->gcPerformanceEntries.get(); gcPerformanceEntries && gcPerformanceEntries->recordsCollections()) [[unlikely]]
+            return runGC<true>(vm, true);
     }
-    // A tail call: runGC<false> then has the frame that this function had before it had the branch above. In another frame the collection scans other dead words (clearStackBelowCaller()).
+    // A tail call, so that runGC<false> has the frame of this function: clearStackBelowCaller() is sized for the frames from here on.
     MUST_TAIL_CALL return runGC<false>(vm, sync);
 }
 

@@ -1150,7 +1150,7 @@ impl EventLoop {
         // immediates JS queued during this tick. ASM-verified PROVEN_CACHED.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: per the caller contract. Before the batch is taken: the hand-off queues the immediate that calls the observers.
-        unsafe { Self::hand_off_gc_performance_entries(this, virtual_machine) };
+        unsafe { Self::hand_off_gc_performance_entries(virtual_machine) };
         // SAFETY: `this` is the unique live `EventLoop`; each access below is a
         // short-lived `&mut` that does not overlap re-entry.
         let mut to_run_now = core::mem::take(unsafe { &mut (*this).immediate_tasks });
@@ -1196,15 +1196,12 @@ impl EventLoop {
         unsafe { (*this).next_immediate_tasks = to_run_now };
     }
 
-    /// Gives the records of collections to `node:perf_hooks` in a turn in which an unref'd `setImmediate` runs. The entry of a collection reaches its observers from an immediate, and a collection keeps no loop alive.
+    /// Gives the records of collections to `node:perf_hooks`, under the rule of an unref'd `setImmediate`: a collection keeps no loop alive.
     #[inline]
-    unsafe fn hand_off_gc_performance_entries(
-        this: *mut Self,
-        virtual_machine: *mut VirtualMachine,
-    ) {
-        // SAFETY: `virtual_machine` is the live VM that owns `this`, as for `tick_immediate_tasks`.
+    unsafe fn hand_off_gc_performance_entries(virtual_machine: *mut VirtualMachine) {
+        // SAFETY: `virtual_machine` is the live VM of this thread, as for `tick_immediate_tasks`.
         let vm = unsafe { &*virtual_machine };
-        if !vm.gc_performance_entries_wait.load(Ordering::Relaxed) {
+        if !vm.gc_performance_entries_wait.get() {
             return;
         }
         bun_core::hint::cold();
@@ -1213,11 +1210,17 @@ impl EventLoop {
             return;
         }
         let global = vm.global();
-        // SAFETY: `this` is the live loop of that VM.
-        unsafe { (*this).enter() };
+        // Not with a termination pending (the deadline of a `node:vm` run in a nested wait): the records wait.
+        let EnterJs::Entered(_) = Self::enter_js(crate::ContextId::NONE, global) else {
+            return;
+        };
+        // The loop that the VM runs on now, as for an immediate.
+        let event_loop = vm.event_loop();
+        // SAFETY: the VM's current loop is live.
+        unsafe { (*event_loop).enter() };
         let _ = crate::cpp::Bun__GCPerformanceEntries__handOff(global);
-        // SAFETY: as above.
-        let _ = unsafe { (*this).exit_maybe_drain_microtasks(true) };
+        // SAFETY: as above. Read again behind the call, which runs script.
+        unsafe { (*core::hint::black_box(event_loop)).exit() };
     }
 
     pub fn ensure_waker(&mut self) {
@@ -1303,14 +1306,6 @@ impl EventLoop {
 
     /// With nothing keeping the loop alive, `auto_tick` only polls, so a caller that keeps waiting would spin. This sleeps.
     pub fn auto_tick_asleep(&mut self) {
-        // The tick starts with the hand-off of `gc` performance entries and nothing wakes the loop behind it, so it must not sleep: the caller asks again what is left.
-        if self
-            .vm_ref()
-            .gc_performance_entries_wait
-            .load(Ordering::Relaxed)
-        {
-            self.wakeup();
-        }
         if self.vm_ref().is_event_loop_alive_despite_errors() {
             return self.auto_tick();
         }

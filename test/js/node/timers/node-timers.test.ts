@@ -1,6 +1,6 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
@@ -415,56 +415,6 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
 });
-
-// `bun test` runs on after an error that nothing handles. An unref'd immediate still only needs something else that
-// keeps the event loop alive.
-describe.each(["the same file", "a later file"])(
-  "setImmediate().unref() in bun test, after an unhandled error in %s",
-  where => {
-    const throws = `
-    test("throws where nothing handles it", async () => {
-      const { promise, resolve } = Promise.withResolvers();
-      setTimeout(() => {
-        resolve();
-        throw new Error("unhandled on purpose");
-      }, 1);
-      await promise;
-    });
-  `;
-    const probes = `
-    test("an unref'd immediate runs beside a ref'd timer", async () => {
-      const { promise, resolve } = Promise.withResolvers();
-      let ran = false;
-      setImmediate(() => {
-        ran = true;
-      }).unref();
-      setTimeout(() => resolve(ran), 1);
-      expect(await promise).toBe(true);
-    });
-  `;
-    const header = `import { expect, test } from "bun:test";`;
-    const files: Record<string, string> =
-      where === "the same file"
-        ? { "a.test.js": header + throws + probes }
-        : { "a.test.js": header + throws, "b.test.js": header + probes };
-
-    it("runs while a ref'd timer keeps the event loop alive", async () => {
-      using dir = tempDir("unref-immediate-after-error", files);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", ...Object.keys(files)],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const output = stdout + stderr;
-      expect(output).toContain("unhandled on purpose");
-      expect(output).toContain("(pass) an unref'd immediate runs beside a ref'd timer");
-      expect(exitCode).toBe(1);
-    });
-  },
-);
 
 it("a promise assigned to _onTimeout resolves to undefined, not the timer's arguments", async () => {
   await using proc = Bun.spawn({

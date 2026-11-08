@@ -81,7 +81,7 @@ bool Isolate::GetHeapObjectStatisticsAtLastGC(HeapObjectStatistics*, size_t)
 
 void Isolate::AddGCPrologueCallback(GCCallbackWithData callback, void* data, GCType)
 {
-    // Stored but not fired: JSC has no hook right before and right after a collection on the JS thread, and an addon that times the gap between two later calls would read zero.
+    // Stored but not fired: JSC tells the JS thread only once a collection has ended, so the two callbacks would run back to back, and an addon that times the gap between them would read zero.
     m_globalInternals->gcPrologueCallbacks().append({ callback, data });
 }
 

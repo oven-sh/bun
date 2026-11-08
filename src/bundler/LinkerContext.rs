@@ -1366,6 +1366,8 @@ pub struct LinkerOptions {
     pub(crate) minify_whitespace: bool,
     pub(crate) minify_syntax: bool,
     pub(crate) minify_identifiers: bool,
+    /// See `Features::is_library` of the parser.
+    pub(crate) is_library: bool,
     pub(crate) banner: &'static [u8],
     pub(crate) footer: &'static [u8],
     pub(crate) css_chunking: bool,
@@ -1430,6 +1432,7 @@ impl Default for LinkerOptions {
             minify_whitespace: false,
             minify_syntax: false,
             minify_identifiers: false,
+            is_library: false,
             banner: b"",
             footer: b"",
             css_chunking: false,

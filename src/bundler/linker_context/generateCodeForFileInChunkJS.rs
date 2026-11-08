@@ -505,6 +505,18 @@ pub fn generate_code_for_file_in_chunk_js(
         merge_adjacent_local_stmts(&mut stmts.all_stmts, temp_arena);
     }
 
+    if flags.wrap == WrapKind::None
+        && ast.flags.contains(AstFlags::HAS_TOP_LEVEL_USING)
+        && chunk
+            .content
+            .javascript()
+            .scoped_using_files
+            .binary_search(&(source_index as u32))
+            .is_ok()
+    {
+        c.scope_using_in_block(&mut stmts.all_stmts, temp_arena);
+    }
+
     let mut out_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
 
     // Optionally wrap all statements in a closure

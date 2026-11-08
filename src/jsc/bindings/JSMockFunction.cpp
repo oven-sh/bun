@@ -130,8 +130,7 @@ JSC_DECLARE_HOST_FUNCTION(jsMockFunctionThrowThis);
 
 uint64_t JSMockModule::s_nextInvocationId = 0;
 
-// The mocks that clearAllMocks(), resetAllMocks() or restoreAllMocks() has to visit, in the order they entered.
-// The list doesn't keep them alive: the collector takes out the dead ones at the end of every collection.
+// The mocks that a clearAllMocks(), resetAllMocks() or restoreAllMocks() has to visit, in the order they entered. It doesn't keep them alive: the collector takes out the dead ones.
 class WeakMockList final : public JSC::WeakGCHashTable {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(WeakMockList);
     WTF_MAKE_NONCOPYABLE(WeakMockList);
@@ -156,20 +155,24 @@ public:
         markDirty(m_vm);
     }
 
-    // Puts `mocks` in front of the ones in the list.
-    NEVER_INLINE void prepend(std::span<JSMockFunction*> mocks)
+    // For the list of spies, which also notes whether they entered in the order they were made.
+    void append(JSMockFunction* spy, uint64_t spyOrder)
     {
-        m_mocks.insertSpan(0, mocks);
-        markDirty(m_vm);
+        if (spyOrder < m_lastSpyOrder) [[unlikely]]
+            m_isInSpyOrder = false;
+        m_lastSpyOrder = spyOrder;
+        append(spy);
     }
 
-    // Empties the list into `mocks`, which keeps them alive.
-    NEVER_INLINE void moveTo(MarkedVector<JSMockFunction*>& mocks)
+    // Empties the list into `mocks`, which keeps them alive. Returns whether spies are in the order they were made.
+    NEVER_INLINE bool moveTo(MarkedVector<JSMockFunction*>& mocks)
     {
         mocks.ensureCapacity(m_mocks.size());
         for (auto* mock : m_mocks)
             mocks.append(mock);
         m_mocks.shrink(0);
+        m_lastSpyOrder = 0;
+        return std::exchange(m_isInSpyOrder, true);
     }
 
 private:
@@ -184,6 +187,8 @@ private:
 
     Vector<JSMockFunction*> m_mocks;
     VM& m_vm;
+    uint64_t m_lastSpyOrder { 0 };
+    bool m_isInSpyOrder { true };
 };
 
 class JSMockImplementation final : public JSNonFinalObject {
@@ -908,7 +913,7 @@ public:
     }
 
     // Spies are restored in the order they were made. Call it before wrapFunction() and the store of the spy, which can both run script that makes another spy.
-    void willInstall() { takePlaceIn(List::Spies); }
+    void willInstall() { m_spyOrder = ++mockModule().spiesMade; }
 
     static void clearAll(Zig::GlobalObject*);
     static void resetAll(Zig::GlobalObject*);
@@ -948,10 +953,12 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    // The bit of `m_lists` that says the list, or the forEachIn() that runs over it, has an entry for this mock.
+    // The bit of `m_lists` that says the list has an entry for this mock.
     static constexpr uint8_t hasEntryIn(List list) { return static_cast<uint8_t>(list) << 3; }
 
     template<typename Functor> static void forEachIn(Zig::GlobalObject*, List, const Functor&);
+    static void sortSpies(std::span<JSMockFunction*>);
+    static void enterAgainAfterTermination(List, std::span<JSMockFunction*>);
 
     ALWAYS_INLINE void enter(List list)
     {
@@ -961,19 +968,22 @@ private:
 
     NEVER_INLINE void enterSlow(List list)
     {
-        takePlaceIn(list);
+        takeEntryIn(list);
         m_lists |= static_cast<uint8_t>(list);
     }
 
-    // A mock has one entry, and keeps it when it leaves, so it has the same place if it enters again.
-    void takePlaceIn(List list)
+    // The list has at most one entry for a mock. The entry stays when the mock leaves, until a forEachIn() takes it out.
+    void takeEntryIn(List list)
     {
         if (m_lists & hasEntryIn(list))
             return;
         auto& mocks = listOf(mockModule(), list);
         if (!mocks)
             mocks = makeUnique<WeakMockList>(vm());
-        mocks->append(this);
+        if (list == List::Spies)
+            mocks->append(this, m_spyOrder);
+        else
+            mocks->append(this);
         m_lists |= hasEntryIn(list);
     }
 
@@ -1065,7 +1075,12 @@ private:
     JSC::Identifier m_spyIdentifier;
     unsigned m_spyAttributes { 0 };
     uint8_t m_lists { 0 };
+    // From JSMockModule::spiesMade: a spy that was made later has a higher one.
+    uint64_t m_spyOrder { 0 };
 };
+
+// The cell of a mock is 208 bytes, because an IsoSubspace rounds the size up to 16.
+static_assert(sizeof(JSMockFunction) <= 208);
 
 template<typename Visitor>
 void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
@@ -1181,6 +1196,7 @@ static SpyWeakHandleOwner& weakValueHandleOwner()
 
 void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes)
 {
+    ASSERT(m_spyOrder);
     enter(List::Spies);
     this->isSpy = true;
     m_spyTarget = JSC::Weak<JSObject>(target, &weakValueHandleOwner(), nullptr);
@@ -1192,9 +1208,24 @@ void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
 
-// Visits the mocks of a list in the order they entered it. Keeps going after an exception and rethrows the first one at the end.
-// Every mock leaves first, so `apply` must enter() the ones that stay. Those keep their places, ahead of the mocks that script makes enter during the pass.
-// A pass that script starts from inside `apply` finds none of the mocks that this pass has yet to visit, nor the one it is visiting.
+NEVER_INLINE void JSMockFunction::sortSpies(std::span<JSMockFunction*> spies)
+{
+    std::ranges::sort(spies, {}, &JSMockFunction::m_spyOrder);
+}
+
+// A termination ended a pass at the first of `mocks`. If that one is a spy that is still installed, it enters the list again, and so do the mocks the pass did not get to.
+NEVER_INLINE void JSMockFunction::enterAgainAfterTermination(List list, std::span<JSMockFunction*> mocks)
+{
+    if (list == List::Spies && mocks.front()->m_spyTarget)
+        mocks.front()->enter(list);
+    for (auto* mock : mocks.subspan(1)) {
+        if (mock->m_lists & static_cast<uint8_t>(list))
+            mock->takeEntryIn(list);
+    }
+}
+
+// Empties the list first, which drops its stale entries and lets script that `apply` runs register mocks in it for a later pass.
+// Every mock leaves, so `apply` must enter() the ones that stay. Keeps going after an exception and rethrows the first one at the end.
 template<typename Functor>
 void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const Functor& apply)
 {
@@ -1204,30 +1235,30 @@ void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const
         return;
 
     MarkedVector<JSMockFunction*> mocks;
-    entries->moveTo(mocks);
-    size_t staying = 0;
-    bool isTerminating = false;
+    bool isInSpyOrder = entries->moveTo(mocks);
+    for (auto* mock : mocks)
+        mock->m_lists &= ~hasEntryIn(list);
+    // Only restores overwrite each other, so only spies are put in the order they were made. They are out of it if script ran inside spyOn(), or a restore failed.
+    if (list == List::Spies && !isInSpyOrder) [[unlikely]]
+        sortSpies(mocks.mutableSpan());
+    ASSERT(list != List::Spies || std::ranges::is_sorted(mocks.mutableSpan(), {}, &JSMockFunction::m_spyOrder));
     JSC::Exception* firstException = nullptr;
-    for (JSMockFunction* mock : mocks) {
-        // A termination ends the pass. The mocks it did not get to stay in the list.
-        if (!isTerminating && (mock->m_lists & static_cast<uint8_t>(list))) {
-            mock->leave(list);
-            apply(mock);
-            if (auto* exception = scope.exception()) [[unlikely]] {
-                if (!scope.tryClearException())
-                    isTerminating = true;
-                else if (!firstException)
-                    firstException = exception;
+    for (size_t i = 0; i < mocks.size(); ++i) {
+        auto* mock = mocks.at(i);
+        if (!(mock->m_lists & static_cast<uint8_t>(list)))
+            continue;
+        mock->leave(list);
+        apply(mock);
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException()) {
+                enterAgainAfterTermination(list, mocks.mutableSpan().subspan(i));
+                return;
             }
+            if (!firstException)
+                firstException = exception;
         }
-        if (mock->m_lists & static_cast<uint8_t>(list))
-            mocks.at(staying++) = mock;
-        else
-            mock->m_lists &= ~hasEntryIn(list);
     }
-    if (staying)
-        entries->prepend(mocks.mutableSpan().first(staying));
-    if (firstException && !isTerminating)
+    if (firstException)
         throwException(globalObject, scope, firstException);
 }
 

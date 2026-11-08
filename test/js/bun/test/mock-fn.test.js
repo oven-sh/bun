@@ -5040,12 +5040,14 @@ if (isBun) {
 
     test("resetAllMocks() resets the mocks in the order they were configured", () => {
       const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+      const configured = ["c", "a", "h", "b", "g", "d", "f", "e"];
       const reset = [];
-      const mocks = names.map(name => resettable(() => reset.push(name)).mockReturnValue("configured"));
+      const mocks = Object.fromEntries(names.map(name => [name, resettable(() => reset.push(name))]));
+      for (const name of configured) mocks[name].mockReturnValue("configured");
       reset.length = 0;
       vi.resetAllMocks();
-      expect(reset).toEqual(names);
-      expect(mocks.map(mocked => mocked())).toEqual(names.map(() => undefined));
+      expect(reset).toEqual(configured);
+      expect(names.map(name => mocks[name]())).toEqual(names.map(() => undefined));
     });
 
     test("resetAllMocks() resets a mock once, also if it was reset and configured again before", () => {
@@ -5066,16 +5068,54 @@ if (isBun) {
       expect([resets, mocked()]).toEqual([2, undefined]);
     });
 
+    test("a resetAllMocks() that is called while a mock is reset also resets that mock if it was configured again", () => {
+      let isArmed = false;
+      const mocked = resettable(() => {
+        if (!isArmed) return;
+        isArmed = false;
+        mocked.mockReturnValue("configured again");
+        vi.resetAllMocks();
+      });
+      mocked.mockReturnValue("configured");
+      isArmed = true;
+      vi.resetAllMocks();
+      expect(mocked()).toBeUndefined();
+    });
+
+    test("a resetAllMocks() that is called while a mock is reset also resets a mock that was configured meanwhile", () => {
+      // With `wasConfigured` the running resetAllMocks() has yet to visit `later`. Without it, `later` was reset before.
+      for (const wasConfigured of [false, true]) {
+        let isArmed = false;
+        let later;
+        let seen = "the reset step did not run";
+        const first = resettable(() => {
+          if (!isArmed) return;
+          isArmed = false;
+          if (wasConfigured) later.mockReset();
+          later.mockReturnValue("configured again");
+          vi.resetAllMocks();
+          seen = later();
+        });
+        later = resettable(() => {});
+        first.mockReturnValue("configured");
+        later.mockReturnValue("configured");
+        if (!wasConfigured) later.mockReset();
+        isArmed = true;
+        vi.resetAllMocks();
+        expect({ wasConfigured, seen, later: later() }).toEqual({ wasConfigured, seen: undefined, later: undefined });
+      }
+    });
+
     test("a resetAllMocks() that is terminated leaves the mocks it did not reach to the next one", () => {
       const names = ["a", "b", "c", "d", "e", "f"];
       const reset = [];
       let phase = "configure";
-      let isSpinning = false;
+      let spinning;
       const mocks = names.map(name =>
         resettable(() => {
           if (phase === "configure") return;
-          if (phase === "spin" && name === "c") {
-            isSpinning = true;
+          if (phase === "spin") {
+            spinning = name;
             for (;;);
           }
           reset.push(name);
@@ -5084,8 +5124,9 @@ if (isBun) {
       globalThis.resetAllMocksUntilTerminated = () => vi.resetAllMocks();
       try {
         phase = "spin";
-        // The timeout of node:vm terminates the call. If it comes before `c` spins, try a longer one.
-        for (let timeout = 50; !isSpinning; timeout *= 2) {
+        // The timeout of node:vm terminates the call. One that comes before a reset spins can end the reset of
+        // a mock that has left the list already, so the next try, with a longer timeout, spins in the mock after it.
+        for (let timeout = 50; spinning === undefined; timeout *= 2) {
           expect(() => vm.runInThisContext("resetAllMocksUntilTerminated()", { timeout })).toThrow(
             expect.objectContaining({ code: "ERR_SCRIPT_EXECUTION_TIMEOUT" }),
           );
@@ -5096,7 +5137,7 @@ if (isBun) {
         vi.resetAllMocks();
         delete globalThis.resetAllMocksUntilTerminated;
       }
-      expect(reset).toEqual(["d", "e", "f"]);
+      expect(reset).toEqual(names.slice(names.indexOf(spinning) + 1));
       expect(mocks.map(mocked => mocked())).toEqual(names.map(() => undefined));
     });
 
@@ -5250,6 +5291,7 @@ if (isBun) {
           const restored = [];
           const expected = [];
           const proxies = [];
+          const getters = [];
           let isRestoring = false;
           for (let i = 0; i < 6; i++) {
             const inner = trapped({ method() {} }, () => isRestoring && restored.push(`inner ${i}`));
@@ -5257,6 +5299,7 @@ if (isBun) {
               if (isRestoring) restored.push(`outer ${i}`);
               else spy(inner, "method");
             });
+            getters.push([outer, Object.getOwnPropertyDescriptor(outer, "value").get]);
             spy(outer, "value", "get");
             proxies.push(outer, inner);
             expected.push(`outer ${i}`, `inner ${i}`);
@@ -5265,6 +5308,8 @@ if (isBun) {
           jest.restoreAllMocks();
           expect(restored).toEqual(expected);
           expect(spied(proxies)).toEqual([]);
+          for (const [outer, getter] of getters)
+            expect(Object.getOwnPropertyDescriptor(outer, "value").get).toBe(getter);
         },
       );
 
@@ -5274,27 +5319,33 @@ if (isBun) {
           const second = () => "second";
           // The spy that is made first replaces the other one, which is then only restored while something refers to it.
           const replaced = [];
-          const objects = Array.from({ length: 16 }, () => {
-            const first = function () {};
-            const object = { method: first };
-            let isArmed = true;
-            // spyOn() reads the `length` of the original before it stores the spy.
-            Object.defineProperty(first, "length", {
-              get() {
-                if (isArmed) {
-                  isArmed = false;
-                  object.method = second;
-                  replaced.push(spy(object, "method"));
-                }
-                return 0;
-              },
+          for (const restoresAllInBetween of [false, true]) {
+            const objects = Array.from({ length: 16 }, () => {
+              const first = function () {};
+              const object = { method: first };
+              let isArmed = true;
+              // spyOn() reads the `length` of the original before it stores the spy.
+              Object.defineProperty(first, "length", {
+                get() {
+                  if (isArmed) {
+                    isArmed = false;
+                    if (restoresAllInBetween) jest.restoreAllMocks();
+                    object.method = second;
+                    replaced.push(spy(object, "method"));
+                  }
+                  return 0;
+                },
+              });
+              return object;
             });
-            return object;
-          });
-          for (const object of objects) spy(object, "method");
-          jest.restoreAllMocks();
-          expect(objects.map(object => object.method())).toEqual(objects.map(() => "second"));
-          expect(replaced.length).toBe(16);
+            for (const object of objects) spy(object, "method");
+            jest.restoreAllMocks();
+            expect({ restoresAllInBetween, methods: objects.map(object => object.method()) }).toEqual({
+              restoresAllInBetween,
+              methods: objects.map(() => "second"),
+            });
+          }
+          expect(replaced.length).toBe(32);
         },
       );
 
@@ -5342,6 +5393,58 @@ if (isBun) {
       });
 
       test.each(flavors)(
+        "%s: the spies that an eden collection frees are out of the list before the next restoreAllMocks()",
+        (_, isVitest, fn, spy) => {
+          const { edenGC } = require("bun:jsc");
+          edenGC();
+          const restored = [];
+          const proxies = [];
+          let isRestoring = false;
+          const make = i => {
+            proxies.push(trapped({ method() {} }, () => isRestoring && restored.push(i)));
+            spy(proxies[i], "method");
+          };
+          for (let i = 0; i < 4; i++) {
+            make(i);
+            (() => {
+              for (let j = 0; j < 200; j++) spy({ method() {} }, "method").mockRestore();
+            })();
+          }
+          edenGC();
+          // The spies made from here on take the cells that the collection freed.
+          for (let i = 4; i < 8; i++) make(i);
+          isRestoring = true;
+          jest.restoreAllMocks();
+          expect(restored).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+          expect(spied(proxies)).toEqual([]);
+        },
+      );
+
+      test.each(flavors)(
+        "%s: a collection during restoreAllMocks() does not free the spies that it has yet to restore",
+        (_, isVitest, fn, spy) => {
+          const restored = [];
+          let phase = "install";
+          const proxies = Array.from({ length: 32 }, (_, i) =>
+            trapped({ method() {} }, () => {
+              if (phase !== "restore") return;
+              restored.push(i);
+              if (i !== 0) return;
+              // From here on only the restoreAllMocks() that runs refers to the other spies.
+              phase = "replace";
+              for (const proxy of proxies.slice(1)) proxy.method = () => {};
+              phase = "restore";
+              Bun.gc(true);
+            }),
+          );
+          for (const proxy of proxies) spy(proxy, "method");
+          phase = "restore";
+          jest.restoreAllMocks();
+          expect(restored).toEqual(proxies.map((_, i) => i));
+        },
+      );
+
+      test.each(flavors)(
         "%s: a restoreAllMocks() that is terminated leaves the spies it did not reach to the next one",
         (_, isVitest, fn, spy) => {
           const keys = ["a", "b", "c", "d", "e", "f"];
@@ -5380,11 +5483,12 @@ if (isBun) {
     });
 
     describe("the end of a test file", () => {
-      const runTestFiles = async files => {
+      const runTestFiles = async (files, flags = []) => {
         const { bunEnv, bunExe, tempDir } = require("harness");
         using dir = tempDir("mock-fn-end-of-file", files);
+        const testFiles = Object.keys(files).filter(name => name.includes(".test."));
         await using proc = Bun.spawn({
-          cmd: [bunExe(), "test", ...Object.keys(files).map(name => `./${name}`)],
+          cmd: [bunExe(), "test", ...flags, ...testFiles.map(name => `./${name}`)],
           env: bunEnv,
           cwd: String(dir),
           stdout: "pipe",
@@ -5470,6 +5574,49 @@ if (isBun) {
             " 2 errors",
           ],
           exitCode: 1,
+        });
+      });
+
+      test("the spies of a preload stay in the order they were made", async () => {
+        const { stderr, exitCode } = await runTestFiles(
+          {
+            "preload.ts": `
+              import { spyOn } from "bun:test";
+              globalThis.restored = [];
+              globalThis.isRestoring = false;
+              globalThis.trapped = name =>
+                new Proxy({ method() {} }, {
+                  defineProperty(target, key, descriptor) {
+                    if (isRestoring) restored.push(name);
+                    return Reflect.defineProperty(target, key, descriptor);
+                  },
+                });
+              globalThis.ofPreload = ["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7"].map(trapped);
+              for (const object of ofPreload) spyOn(object, "method");
+            `,
+            "a.test.ts": `
+              import { spyOn, test } from "bun:test";
+              test("a", () => {
+                globalThis.ofA = ["a0", "a1"].map(trapped);
+                for (const object of ofA) spyOn(object, "method");
+              });
+            `,
+            "b.test.ts": `
+              import { expect, jest, spyOn, test } from "bun:test";
+              test("b", () => {
+                globalThis.ofB = ["b0", "b1"].map(trapped);
+                for (const object of ofB) spyOn(object, "method");
+                isRestoring = true;
+                jest.restoreAllMocks();
+                expect(restored).toEqual(["p0", "p1", "p2", "p3", "p4", "p5", "p6", "p7", "b0", "b1"]);
+              });
+            `,
+          },
+          ["--preload", "./preload.ts"],
+        );
+        expect({ reported: reported(stderr), exitCode }).toEqual({
+          reported: ["a.test.ts:", "(pass) a", "b.test.ts:", "(pass) b"],
+          exitCode: 0,
         });
       });
     });

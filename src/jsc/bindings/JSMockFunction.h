@@ -75,6 +75,8 @@ public:
 
     // True until the first test starts. A preload, or a beforeAll() of one, can only run before that.
     bool preloadMayBeRunning { true };
+    // How many spies this global has made. A spy's number is its place in restoreAllMocks().
+    uint64_t spiesMade { 0 };
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

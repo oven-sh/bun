@@ -1613,7 +1613,7 @@ class ChildProcess extends EventEmitter {
       ) {
         this.#handle = null;
         (ex as SystemError).syscall = "spawn " + this.spawnfile;
-        (ex as SystemError).spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
+        (ex as SystemError).spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
         process.nextTick(() => {
           this.emit("error", ex);
           this.emit("close", (ex as SystemError).errno ?? -1);

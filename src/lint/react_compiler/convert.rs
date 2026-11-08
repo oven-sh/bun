@@ -1192,14 +1192,16 @@ impl<'a> Converter<'a, '_> {
     }
 
     /// `{...a}` among the children of an element, as the spread that it is. The plugin's lowering records a Todo at its
-    /// braces and never looks at the operand, and so does Bun's with a spread. So nothing in the operand is recorded.
-    fn spread_child(&mut self, child: Expr<'a>) -> Converts<JsExpr> {
+    /// braces and doesn't lower the operand, and so does Bun's with a spread. So nothing in the operand is recorded.
+    /// The operand stays in the tree: what the lowering finds out by walking the function (the variables that a
+    /// nested function captures or reassigns) includes it, as Babel's traversals do in the plugin.
+    fn spread_child(&mut self, child: Expr<'a>, operand: Expr<'a>) -> Converts<JsExpr> {
         self.has_spread_child = true;
-        let braces = child.jsx_container_span().unwrap_or_else(|| child.span());
+        let loc = self.loc(child.jsx_container_span().unwrap_or_else(|| child.span()));
         let recorded = self.recorded.len();
-        let converted = self.nested(|this| this.expr_at(child, braces))?;
+        let value = self.expr(operand)?;
         self.recorded.truncate(recorded);
-        Ok(converted)
+        Ok(JsExpr::init(E::Spread { value }, loc))
     }
 
     fn jsx(&mut self, jsx: Jsx<'a>, whole: Expr<'a>, loc: Loc) -> Converts<JsExpr> {
@@ -1255,8 +1257,8 @@ impl<'a> Converter<'a, '_> {
         });
         for child in children {
             let child = match child.kind() {
-                ExprKind::Spread(_) if self.leaves_spread_children() => {
-                    args.push(self.spread_child(child)?);
+                ExprKind::Spread(operand) if self.leaves_spread_children() => {
+                    args.push(self.spread_child(child, operand)?);
                     continue;
                 }
                 // oxc's lowering takes the operand of a spread child as the child, and has no Todo for it

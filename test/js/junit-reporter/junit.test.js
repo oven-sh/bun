@@ -1171,14 +1171,12 @@ describe("junit reporter", () => {
           test("runs", () => {});
         `,
       };
-      // Without JSC's own limit of 5 MB, the recursion takes the whole stack of the thread.
+      // Without JSC's own limit of 5 MB, JS takes the stack of the thread down to JSC's reserve. The printer asks for
+      // at least that much, some frames further, so it prints nothing.
       const env = { BUN_JSC_maxPerThreadStackUsage: String(2 ** 30) };
       const [{ xml, cases, stderr, counted, exitCode }] = await reports(files, [[]], env);
-      // The failure has what the console has: no detail where the printer gave up, and the TypeError where it did not.
-      const failure = stderr.includes("TypeError: deep")
-        ? { type: "TypeError", message: "deep", text: ["TypeError: deep"] }
-        : { type: "Error", text: [] };
-      expect(cases["deep.test.js"]).toEqual([{ name: "(unhandled error)", failure: [failure] }, { name: "runs" }]);
+      expect(stderr).toMatch(/# Unhandled error between tests\n-+\n-+\n/);
+      expect(cases["deep.test.js"]).toEqual([unhandled({ type: "Error", text: [] }), { name: "runs" }]);
       expect(xml).toContain(
         '<testsuite name="deep.test.js" file="deep.test.js" tests="2" assertions="0" failures="1" skipped="0">',
       );

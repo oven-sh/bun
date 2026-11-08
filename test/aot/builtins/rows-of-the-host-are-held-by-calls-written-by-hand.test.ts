@@ -14,7 +14,7 @@ import { EventEmitter, getEventListeners } from "node:events";
 import { closeSync, openSync } from "node:fs";
 import { join, posix, win32 } from "node:path";
 import { domainToASCII, domainToUnicode } from "node:url";
-import { MIMEParams, MIMEType, parseEnv } from "node:util";
+import { MIMEParams, MIMEType, parseArgs, parseEnv } from "node:util";
 import { describe, test } from "../supported";
 import { never } from "./differential/fixtures";
 import { Log } from "./differential/log";
@@ -643,6 +643,80 @@ const cases: Case[] = [
     place: "the result",
     typesIn: result,
     see: () => [{ value: parseEnv("FIRST=1\nSECOND=two\n7=seven") }, { value: parseEnv("") }],
+  },
+  // parse_args.rs: an object that holds `values` without a prototype, the list `positionals` and, where they are asked for, the list `tokens` of objects.
+  // A `default` comes back as the operand held it, so a list of a class of the program may lie in `values`.
+  {
+    row: "native:Bindgen:parse_args.bind.ts:parseArgs",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => [
+      {
+        value: parseArgs({
+          args: ["--name", "made-for-this-test", "-v", "first", "--no-color", "--", "last"],
+          options: {
+            name: { type: "string" },
+            verbose: { type: "boolean", short: "v" },
+            color: { type: "boolean" },
+            listed: { type: "string", multiple: true, default: new (class Words extends Array<string> {})("p", "q") },
+            plain: { type: "string", default: "kept" },
+          },
+          allowPositionals: true,
+          allowNegative: true,
+          tokens: true,
+        }),
+      },
+      {
+        value: parseArgs({
+          args: ["--many", "1", "--many", "2"],
+          options: { many: { type: "string", multiple: true } },
+        }),
+      },
+      { value: parseArgs({ args: [] }) },
+    ],
+  },
+  // BunProcess.cpp Process::getArgv(): what process.argv answers when Bun.argv is first read. Native code makes the list of strings there.
+  // Another value that a program has stored in process.argv comes back as it is.
+  {
+    row: "Bun.argv",
+    mode: "Get",
+    place: "the result",
+    typesIn: result,
+    see: () => [{ value: Bun.argv }],
+  },
+  // html_rewriter.rs transform(): a string for a string, a new ArrayBuffer for a buffer or a view of any kind, a new Response for a Response.
+  {
+    row: "HTMLRewriter.prototype.transform",
+    mode: "Call",
+    place: "the result",
+    typesIn: result,
+    see: () => {
+      const rewriter = new HTMLRewriter().on("p", {
+        element(element) {
+          element.setAttribute("seen", "yes");
+        },
+      });
+      const text = "<p>made for this test</p>";
+      const bytes = () => new TextEncoder().encode(text);
+      const shared = new SharedArrayBuffer(text.length);
+      new Uint8Array(shared).set(bytes());
+      return [
+        text,
+        "",
+        bytes().buffer,
+        new ArrayBuffer(0),
+        shared,
+        new Uint8Array(shared),
+        bytes(),
+        new DataView(bytes().buffer),
+        new Float64Array(8),
+        Buffer.from(text),
+        new Response(text),
+        new (class Answer extends Response {})(text),
+        new Response(new Blob([text])),
+      ].map(input => ({ value: rewriter.transform(input as Response) }));
+    },
   },
   {
     row: "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsGetEventListeners",

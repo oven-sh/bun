@@ -32,3 +32,121 @@ import { createHistogram } from "node:perf_hooks";
 const histogram = createHistogram();
 histogram.record(5);
 console.log(histogram.count, histogram.max);
+//// the-text-that-a-rewriter-of-HTML-answers
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter().on("p", {
+  element(element) {
+    element.setAttribute("seen", "yes");
+  },
+});
+console.log(rewriter.transform("<p>text</p>"), rewriter.transform("") === "");
+//// the-bytes-that-a-rewriter-of-HTML-answers
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter().on("p", {
+  element(element) {
+    element.setAttribute("seen", "yes");
+  },
+});
+const bytes = () => new TextEncoder().encode("<p>bytes</p>");
+const shared = new SharedArrayBuffer(12);
+new Uint8Array(shared).set(bytes());
+const decoder = new TextDecoder();
+for (const input of [bytes().buffer, bytes(), new DataView(bytes().buffer), shared, new Uint8Array(shared)]) {
+  const answer = rewriter.transform(input);
+  console.log(answer.byteLength, decoder.decode(answer));
+}
+//// the-response-that-a-rewriter-of-HTML-answers
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter().on("p", {
+  element(element) {
+    element.setAttribute("seen", "yes");
+  },
+});
+const response = rewriter.transform(new Response("<p>response</p>", { status: 201 }));
+console.log(typeof response, response.status, await response.text());
+//// what-a-rewriter-of-HTML-refuses
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter();
+for (const refused of [new Blob(["<p>blob</p>"]), 5, undefined]) {
+  try {
+    rewriter.transform(refused);
+  } catch (error) {
+    console.log(error.name, error.message);
+  }
+}
+//// the-arguments-that-node-util-parses
+//@ removes Bun.build
+//@ removes Bun.serve
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+import { parseArgs } from "node:util";
+class Words extends Array {}
+const words = Words.of("p", "q");
+const { values, positionals, tokens } = parseArgs({
+  args: ["--name", "x", "-v", "first", "--no-color", "--", "last"],
+  options: {
+    name: { type: "string" },
+    verbose: { type: "boolean", short: "v" },
+    color: { type: "boolean" },
+    listed: { type: "string", multiple: true, default: words },
+    plain: { type: "string", default: "kept" },
+  },
+  allowPositionals: true,
+  allowNegative: true,
+  tokens: true,
+});
+console.log(Object.getPrototypeOf(values), Object.keys(values).join(), "toString" in values);
+console.log(values.name.toUpperCase(), values.verbose, values.color, values.plain, values.listed === words, values.listed instanceof Words);
+console.log(positionals.join(), tokens.map(token => `${token.kind}:${token.name ?? token.value}:${token.index}`).join(" "));
+const repeated = parseArgs({ args: ["--many", "1", "--many", "2"], options: { many: { type: "string", multiple: true } } });
+console.log(repeated.values.many.map(Number).join(), repeated.tokens);
+try {
+  parseArgs({ args: ["--nope"], options: {} });
+} catch (error) {
+  console.log(error.code);
+}
+//// the-arguments-that-Bun-keeps
+//@ args first --second
+//@ removes Bun.build
+//@ removes Bun.serve
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const { argv } = Bun;
+console.log(Array.isArray(argv), argv === process.argv, argv.length, argv.slice(2).join(), argv.every(each => typeof each === "string"));
+//// what-node-util-prints-of-an-object
+//@ removes Bun.build
+//@ removes Bun.serve
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+import { inspect, promisify } from "node:util";
+console.log(inspect({ a: 1, list: [1, "two"] }), typeof promisify);
+//// the-arguments-as-the-guide-of-the-documentation-parses-them
+//@ args --flag1 --flag2 value
+//@ removes Bun.build
+//@ removes Bun.serve
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+import { parseArgs } from "util";
+const { values, positionals } = parseArgs({
+  args: Bun.argv,
+  options: { flag1: { type: "boolean" }, flag2: { type: "string" } },
+  strict: true,
+  allowPositionals: true,
+});
+console.log(values, positionals.length);

@@ -39,7 +39,7 @@ function sequenceOfId(id: string): Sequence {
   return sequenceOf(steps.replaceAll("+", ","), kind, place, body as Body);
 }
 
-const env = { ...process.env, NO_COLOR: "1", BUN_DEBUG_QUIET_LOGS: "1", BUN_ENABLE_CRASH_REPORTING: "0", DO_NOT_TRACK: "1", BUN_OPTIONS: "--no-install" };
+const env = { ...process.env, NO_COLOR: "1", BUN_DEBUG_QUIET_LOGS: "1", BUN_ENABLE_CRASH_REPORTING: "0", DO_NOT_TRACK: "1" };
 
 async function runOf(cwd: string, ids: string[], flags: string[]) {
   const child = Bun.spawn([process.execPath, "test", ...flags, ...ids.map(id => `./test/${id}.test.js`)], { cwd, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });

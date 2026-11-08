@@ -303,8 +303,6 @@ const environment = {
   NO_COLOR: "1",
   TZ: "Etc/UTC",
   BUN_AOT_VERBOSE: "1",
-  // See asksNoRegistry(). `// Env: BUN_OPTIONS=..` of a program goes over it.
-  BUN_OPTIONS: inherited.BUN_OPTIONS ?? "--no-install",
   // For the builds. No user sets it, so what is RUN runs without it, the executable and plain Bun alike (`envOfRuns`): the reference is `bun <file>` as users run it.
   // On one thread plain Bun reads the texts in the order in which they are asked for, which hid what a ring of modules does at default flags.
   BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",

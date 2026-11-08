@@ -5,7 +5,6 @@
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "../supported";
-import { asksNoRegistry } from "./without-core-dump";
 
 const importers = {
   "the default": `import validator from "validator";\nexport const check = () => validator.isEmail();\n`,
@@ -52,7 +51,7 @@ export function answersAsPlainBunTest(ways: Way[]) {
         await using child = Bun.spawn({
           cmd: [bunExe(), "test", ...flags],
           cwd: dir,
-          env: asksNoRegistry({ ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words }),
+          env: { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words },
           stdio: ["ignore", "pipe", "pipe"],
         });
         const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);

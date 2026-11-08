@@ -12,7 +12,6 @@ import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "../supported";
 import { run } from "./run";
-import { asksNoRegistry } from "./without-core-dump";
 
 const root = join(import.meta.dir, "..", "parallel-test-runs");
 const holdsFile = (folder: string): boolean =>
@@ -66,7 +65,7 @@ async function outcomeOf(dir: string, words: string, ...flags: string[]) {
   layPackages(dir);
   // As users run it: whoever runs this file may have switched the thread off that reads the texts.
   const env = { ...bunEnv, NO_COLOR: "1", BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "0", BUN_DEBUG_TEST_AOT_WORDS: words };
-  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, asksNoRegistry(env));
+  const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, ...testFilesIn(dir)], dir, env);
   return {
     printed: stdout.split("\n").filter(line => line && !line.startsWith("bun test v")),
     // The times differ from run to run.

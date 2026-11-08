@@ -267,17 +267,10 @@ JSC_DEFINE_HOST_FUNCTION(jsPerformanceEntryPrototypeFunction_inspectCustom, (JSG
     if (depth < 0 || !entry)
         return JSValue::encode(thisValue);
 
-    // util.inspect skips the hook on a prototype object (`obj.constructor.prototype === obj`),
-    // but console.log / Bun.inspect call it, and toJSON below is brand-checked. On the WebCore
-    // prototypes `constructor` is a custom getter, so this has to be a [[Get]], not an own-value check.
     JSValue constructor = entry->get(lexicalGlobalObject, vm.propertyNames->constructor);
     RETURN_IF_EXCEPTION(throwScope, {});
     JSValue constructorName = jsUndefined();
     if (constructor.isObject()) {
-        JSValue prototype = constructor.get(lexicalGlobalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (prototype == thisValue)
-            return JSValue::encode(thisValue);
         constructorName = constructor.get(lexicalGlobalObject, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(throwScope, {});
     }

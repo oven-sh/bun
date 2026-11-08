@@ -482,15 +482,16 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
          json,
          inspected: [inspect(mark), inspect(measure, { depth: 0 }), inspect(mark, { depth: -1 })],
          nativeInspected: Bun.inspect(mark),
-         // util.inspect never calls the hook on a prototype object. Bun.inspect / console.log do,
-         // and the hook has to fall back to the default formatting there instead of throwing
-         // from the brand-checked toJSON.
+         // util.inspect, Bun.inspect and console.log never call the hook on a prototype object,
+         // so a prototype gets the default formatting and not a throw from the brand-checked toJSON.
          protos: [
            inspect(PerformanceMark.prototype),
            Bun.inspect(PerformanceEntry.prototype).split("\\n")[0],
            Bun.inspect(PerformanceMark.prototype).split("\\n")[0],
            Bun.inspect(PerformanceMeasure.prototype).split("\\n")[0],
          ],
+         // A direct call of the hook with the prototype throws from toJSON, as in Node.
+         direct: (() => { try { return typeof PerformanceEntry.prototype[custom].call(PerformanceEntry.prototype, 1, {}, inspect); } catch (e) { return e.code; } })(),
          descriptor: { ...Object.getOwnPropertyDescriptor(PerformanceEntry.prototype, custom), value: PerformanceEntry.prototype[custom].name },
          toJSONEnumerable: Object.getOwnPropertyDescriptor(PerformanceMark.prototype, "toJSON").enumerable,
          generic: PerformanceEntry.prototype[custom].call({ constructor: { name: "Fake" }, toJSON: () => ({ z: 1 }) }, 1, {}, inspect),
@@ -526,6 +527,7 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
     "PerformanceMark {",
     "PerformanceMeasure {",
   ]);
+  expect(result.direct).toBe("ERR_INVALID_THIS");
   expect(result.descriptor).toEqual({
     value: "[nodejs.util.inspect.custom]",
     writable: true,

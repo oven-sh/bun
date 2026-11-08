@@ -11,6 +11,11 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/IdentifierInlines.h"
+#include "JavaScriptCore/BooleanObject.h"
+#include "JavaScriptCore/GetterSetter.h"
+#include "JavaScriptCore/NumberObject.h"
+#include "JavaScriptCore/RegExpObject.h"
+#include "JavaScriptCore/StringObject.h"
 
 namespace Bun {
 
@@ -40,6 +45,35 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
     return options;
 }
 
+// Node's formatValue does not call the hook of a prototype object:
+//   ObjectGetOwnPropertyDescriptor(value, 'constructor')?.value?.prototype !== value
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L1150-L1154
+// Node reads `prototype` with a [[Get]]. This reads the own data property, so that no getter
+// and no Proxy trap of the constructor runs.
+static bool isPrototypeOfItsConstructor(VM& vm, JSGlobalObject* globalObject, JSObject* object)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Through the method table: `constructor` of a WebCore prototype is a native custom value.
+    PropertySlot constructorSlot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasConstructor = object->methodTable()->getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, constructorSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasConstructor || constructorSlot.isAccessor() || (constructorSlot.attributes() & PropertyAttribute::CustomAccessor))
+        return false;
+    JSValue constructorValue = constructorSlot.getValue(globalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSObject* constructor = constructorValue.getObject();
+    if (!constructor)
+        return false;
+
+    PropertySlot prototypeSlot(constructor, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool hasPrototype = constructor->methodTable()->getOwnPropertySlot(constructor, globalObject, vm.propertyNames->prototype, prototypeSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasPrototype || !prototypeSlot.isValue())
+        return false;
+    RELEASE_AND_RETURN(scope, prototypeSlot.getValue(globalObject, vm.propertyNames->prototype) == JSValue(object));
+}
+
 extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedFunctionValue,
@@ -52,6 +86,14 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSValue thisValue = JSValue::decode(encodedThisValue);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (JSObject* thisObject = thisValue.getObject()) {
+        bool isPrototype = isPrototypeOfItsConstructor(vm, globalObject, thisObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        // The formatter prints a result that is the receiver itself without the hook.
+        if (isPrototype)
+            return JSValue::encode(thisValue);
+    }
 
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
@@ -71,6 +113,76 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
+}
+
+// The text of a value that the formatter prints as a string. A String object is read from
+// [[StringData]] and a RegExp from its pattern and flags: ToString would call a `toString`,
+// `valueOf` or `Symbol.toPrimitive` that the program put on the value. Any other value is
+// converted with ToString, which is what `%s` asks for.
+extern "C" bool Bun__ConsoleFormatter__toDisplayString(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* out)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = JSValue::decode(encodedValue);
+
+    if (auto* stringObject = dynamicDowncast<StringObject>(value))
+        value = stringObject->internalValue();
+    else if (auto* regExpObject = dynamicDowncast<RegExpObject>(value)) {
+        *out = Bun::toStringRef(regExpObject->regExp()->toSourceString());
+        return true;
+    }
+
+    *out = Bun::toStringRef(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+// [[NumberData]] or [[BooleanData]] of a wrapper object, and the empty value for anything else.
+extern "C" JSC::EncodedJSValue Bun__ConsoleFormatter__wrappedPrimitive(JSC::EncodedJSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (value.inherits<NumberObject>() || value.inherits<BooleanObject>())
+        return JSValue::encode(uncheckedDowncast<JSWrapperObject>(value)->internalValue());
+    return {};
+}
+
+static NEVER_INLINE JSC::EncodedJSValue getOwnIndexSlow(JSC::JSGlobalObject* globalObject, JSObject* object, uint32_t index, bool callGetters)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    bool hasProperty = object->methodTable()->getOwnPropertySlotByIndex(object, globalObject, index, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!hasProperty)
+        return {};
+
+    if (slot.isAccessor() && !callGetters) {
+        GetterSetter* accessor = slot.getterSetter();
+        // `{ get: undefined, set: undefined }` has nothing to name.
+        if (accessor->isGetterNull() && accessor->isSetterNull())
+            return JSValue::encode(jsUndefined());
+        return JSValue::encode(accessor);
+    }
+
+    JSValue result = slot.getValue(globalObject, index);
+    if (scope.exception() && slot.isAccessor()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return {};
+        return JSValue::encode(slot.getterSetter());
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+}
+
+// The own element at `index` for the array printer: the empty value for a hole, and an accessor
+// as its GetterSetter cell, which prints as [Getter] without a call. With `callGetters` (bun:test
+// matcher messages) the getter runs, and the accessor is what is left if it throws.
+extern "C" JSC::EncodedJSValue Bun__ConsoleFormatter__getOwnIndex(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, uint32_t index, bool callGetters)
+{
+    JSObject* object = JSValue::decode(encodedValue).getObject();
+    if (JSValue quick = object->tryGetIndexQuickly(index))
+        return JSValue::encode(quick);
+    return getOwnIndexSlow(globalObject, object, index, callGetters);
 }
 
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by

@@ -1625,6 +1625,158 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
   );
 });
 
+// util.inspect prints these values from the internal slots of the engine. The formatter called
+// `toJSON`, `toString` or an index getter of the value, so console.log could throw, or print
+// text that the value does not hold.
+describe("prints from the internal slots, without a call into the program", () => {
+  let calls = 0;
+  const counted = () => {
+    calls++;
+    throw new Error("the program was called");
+  };
+  // The value alone, as a property and as an element.
+  const inspectEach = value => [Bun.inspect(value), Bun.inspect({ value }), Bun.inspect([0, value])];
+  const printedAs = text => [text, `{\n  value: ${text},\n}`, `[ 0, ${text} ]`];
+
+  describe("a Date", () => {
+    class Subclass extends Date {
+      toJSON() {
+        return counted();
+      }
+      toISOString() {
+        return counted();
+      }
+    }
+    it.each([
+      ["an own toISOString", () => Object.assign(new Date(0), { toISOString: counted })],
+      ["an own toJSON", () => Object.assign(new Date(0), { toJSON: counted })],
+      ["a subclass that overrides both", () => new Subclass(0)],
+      ["no prototype", () => Object.setPrototypeOf(new Date(0), null)],
+    ])("with %s", (_, make) => {
+      calls = 0;
+      expect(inspectEach(make())).toEqual(printedAs("1970-01-01T00:00:00.000Z"));
+      expect(calls).toBe(0);
+    });
+
+    it("does not print what its toJSON returns", () => {
+      expect(Bun.inspect(Object.assign(new Date(0), { toJSON: () => "other text" }))).toBe("1970-01-01T00:00:00.000Z");
+      expect(Bun.inspect(Object.assign(new Date(0), { toJSON: () => ({ a: 1 }) }))).toBe("1970-01-01T00:00:00.000Z");
+      expect(Bun.inspect(Object.assign(new Date(NaN), { toJSON: () => "other text" }))).toBe("Invalid Date");
+    });
+
+    it("outside the years 0000 to 9999", () => {
+      expect(Bun.inspect(new Date(8.64e15))).toBe("+275760-09-13T00:00:00.000Z");
+      expect(Bun.inspect(new Date(-8.64e15))).toBe("-271821-04-20T00:00:00.000Z");
+    });
+
+    it("in a row that breaks where it did", () => {
+      const date = new Date(0);
+      expect(Bun.inspect([0, date, date, date])).toBe(
+        "[ 0, 1970-01-01T00:00:00.000Z, 1970-01-01T00:00:00.000Z, 1970-01-01T00:00:00.000Z ]",
+      );
+      expect(Bun.inspect([0, date, date, date, date])).toBe(
+        "[ 0, 1970-01-01T00:00:00.000Z, 1970-01-01T00:00:00.000Z, 1970-01-01T00:00:00.000Z,\n  1970-01-01T00:00:00.000Z\n]",
+      );
+    });
+  });
+
+  describe("a boxed primitive or a RegExp", () => {
+    const conversions = { toString: counted, valueOf: counted, toJSON: counted, [Symbol.toPrimitive]: counted };
+    class Celsius extends Number {}
+    it.each([
+      ["a String", () => new String("s"), '"s"'],
+      ["a String that is not Latin-1", () => new String("日本"), '"日本"'],
+      ["a Number", () => new Number(5), "[Number: 5]"],
+      ["a Number that holds -0", () => new Number(-0), "[Number: -0]"],
+      ["a Number that is not finite", () => new Number(-Infinity), "[Number: -Infinity]"],
+      ["a subclass of Number", () => new Celsius(21.5), "[Number (Celsius): 21.5]"],
+      ["a Boolean", () => new Boolean(false), "[Boolean: false]"],
+      ["a RegExp", () => /a\/b/gi, "/a\\/b/gi"],
+    ])("%s with conversions of its own", (_, make, text) => {
+      calls = 0;
+      expect(inspectEach(Object.assign(make(), conversions))).toEqual(printedAs(text));
+      expect(calls).toBe(0);
+    });
+
+    it.each([
+      ["a String", () => new String("s"), '"s"'],
+      ["a Number", () => new Number(5), "[Number: 5]"],
+      ["a Boolean", () => new Boolean(true), "[Boolean: true]"],
+      ["a RegExp", () => /a/g, "/a/g"],
+    ])("%s with no prototype", (_, make, text) => {
+      expect(inspectEach(Object.setPrototypeOf(make(), null))).toEqual(printedAs(text));
+    });
+
+    // Node prints a RegExp with RegExp.prototype.toString, which reads `source` and `flags`.
+    it("a RegExp with a source and flags of its own", () => {
+      calls = 0;
+      const regExp = Object.defineProperties(/a/g, { source: { get: counted }, flags: { get: counted } });
+      expect(Bun.inspect(regExp)).toBe("/a/g");
+      expect(calls).toBe(0);
+    });
+  });
+
+  describe("an index of an array", () => {
+    it.each([
+      ["a getter", { get: counted }, "[Getter]"],
+      ["a getter and a setter", { get: counted, set: counted }, "[Getter/Setter]"],
+      ["a setter", { set: counted }, "[Setter]"],
+      ["neither", { get: undefined }, "undefined"],
+    ])("that has %s", (_, descriptor, text) => {
+      calls = 0;
+      expect(Bun.inspect(Object.defineProperty([1, 2, 3], 0, descriptor))).toBe(`[ ${text}, 2, 3 ]`);
+      expect(Bun.inspect(Object.defineProperty([1, 2, 3], 1, descriptor))).toBe(`[ 1, ${text}, 3 ]`);
+      expect(Bun.inspect(Object.defineProperty([1, , , 4], 2, descriptor))).toBe(`[ 1, empty item, ${text}, 4 ]`);
+      (function () {
+        expect(Bun.inspect(Object.defineProperty(arguments, 1, descriptor))).toBe(`[ 1, ${text} ]`);
+      })(1, 2);
+      expect(calls).toBe(0);
+    });
+
+    // A matcher message prints what a getter returns, as pretty-format does.
+    it("in a matcher message is read once, and is named if the getter throws", () => {
+      const received = value => {
+        try {
+          expect(value).toBeNull();
+        } catch (error) {
+          return Bun.stripANSI(error.message).split("\n").at(-2);
+        }
+      };
+      let reads = 0;
+      expect(received(Object.defineProperty([1, 2], 0, { get: () => (reads++, 7) }))).toBe("Received: [ 7, 2 ]");
+      expect(reads).toBe(1);
+      expect(received(Object.defineProperty([1, 2], 0, { get: counted }))).toBe("Received: [ [Getter], 2 ]");
+    });
+  });
+
+  it("the constructor of a value whose hook is called", () => {
+    let ran = 0;
+    const hook = { [Bun.inspect.custom]: () => "from the hook" };
+    const withGetter = { ...hook };
+    withGetter.constructor = {
+      get prototype() {
+        ran++;
+        return withGetter;
+      },
+    };
+    const withProxy = { ...hook };
+    withProxy.constructor = new Proxy(function () {}, {
+      get(target, key, receiver) {
+        ran++;
+        return key === "prototype" ? withProxy : Reflect.get(target, key, receiver);
+      },
+      getOwnPropertyDescriptor(target, key) {
+        ran++;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    // Node reads `constructor.prototype` with a [[Get]] and then takes both for prototypes.
+    expect(Bun.inspect(withGetter)).toBe("from the hook");
+    expect(Bun.inspect(withProxy)).toBe("from the hook");
+    expect(ran).toBe(0);
+  });
+});
+
 it("expect.objectContaining(fn) prints the function when it has no properties to list", () => {
   const f = () => {};
   expect(Bun.inspect(expect.objectContaining(f))).toBe("ObjectContaining [Function: f]");

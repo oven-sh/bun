@@ -141,7 +141,44 @@ test.concurrent.each([
   expect(proc.exitCode).toBe(1);
 });
 
-const throwsWhenPrinted = `Object.assign(new String("q"), { toString() { throw 1; }, [Symbol.toPrimitive]() { throw 1; } })`;
+test.concurrent("error printer prints a value without a call into the program", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const boom = () => { throw new Error("the program was called"); };
+       class Money { #cents = 1; [Symbol.for("nodejs.util.inspect.custom")]() { return "Money<" + this.#cents + ">"; } }
+       reportError(Object.assign(new String("q"), { toString: boom, [Symbol.toPrimitive]: boom }));
+       reportError(Object.assign(new Date(0), { toJSON: boom }));
+       reportError(Object.defineProperty([1, 2], 0, { get: boom }));
+       reportError(Money.prototype);
+       console.log("after");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: normalizeBunSnapshot(stderr), exitCode }).toEqual({
+    stdout: "after\n",
+    stderr: [
+      "error",
+      '[String: "q"]',
+      "error",
+      "1970-01-01T00:00:00.000Z",
+      "error",
+      "[ [Getter], 2 ]",
+      "error",
+      "Money {}",
+      "",
+      "Bun v<bun-version>",
+    ].join("\n"),
+    exitCode: 1,
+  });
+});
+
+// The formatter asks a Map for its `size`, so this getter runs.
+const throwsWhenPrinted = `new (class extends Map { get size() { throw 1; } })()`;
 
 test.concurrent.each([
   {

@@ -249,3 +249,77 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+// Node prints each of these from what the engine holds. console.log called into the program
+// for them: the hook of a prototype, `toJSON` of a Date, `toString` of a boxed primitive or
+// a RegExp, and the getter of an index.
+it.concurrent("prints a value without a call into the program", async () => {
+  const hook = `[Symbol.for("nodejs.util.inspect.custom")]() { return "Money<" + this.#cents + ">"; }`;
+  const cases: [args: string, printed: string][] = [
+    [`(class Money { #cents = 1; ${hook} }).prototype`, "Money {}"],
+    [`Object.assign(new Date(0), { toISOString: boom })`, "1970-01-01T00:00:00.000Z"],
+    [`Object.assign(new Date(0), { toJSON: () => "other text" })`, "1970-01-01T00:00:00.000Z"],
+    [`new (class extends Date { toJSON() { boom(); } })(0)`, "1970-01-01T00:00:00.000Z"],
+    [`Object.assign(new String("s"), { toString: boom })`, `[String: "s"]`],
+    [`Object.assign(new String("s"), { toString: boom }), 1`, `[String: "s"] 1`],
+    [`new String("%d items"), 5`, `[String: "%d items"] 5`],
+    [`Object.assign(new Number(5), { toString: boom, valueOf: boom })`, "[Number: 5]"],
+    [`new Number(-0)`, "[Number: -0]"],
+    [`Object.assign(new Boolean(false), { [Symbol.toPrimitive]: boom })`, "[Boolean: false]"],
+    [`Object.assign(/a/g, { toString: boom })`, "/a/g"],
+    [`Object.assign(/a%s/g, { toString: boom }), "b"`, "/a%s/g b"],
+    [`Object.defineProperty([1, 2], 0, { get: boom })`, "[ [Getter], 2 ]"],
+    [`Object.defineProperty([1, 2, 3], 1, { get: boom, set() {} })`, "[ 1, [Getter/Setter], 3 ]"],
+    [`Object.defineProperty([1, 2, 3], 1, { set() {} })`, "[ 1, [Setter], 3 ]"],
+    [`(function () { return Object.defineProperty(arguments, 0, { get: boom }); })(1, 2)`, "[ [Getter], 2 ]"],
+    // `%s` is String(value), as in Node.
+    [`"%s|", Object.assign(new String("s"), { toString: () => "from toString" })`, `[String: "from toString"]|`],
+  ];
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const boom = () => { throw new Error("the program was called"); };
+       function print(...args) {
+         try { console.log(...args); } catch (error) { console.log("threw: " + error.message); }
+       }
+       ${cases.map(([args]) => `print(${args});`).join("\n")}
+       console.table([{ at: Object.assign(new Date(0), { toJSON: boom }) }]);
+       console.log(Buffer.prototype);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stdout.replaceAll("\r\n", "\n").split("\n");
+  expect({ stdout: lines.slice(0, cases.length + 6), stderr, exitCode }).toEqual({
+    stdout: [
+      ...cases.map(([, printed]) => printed),
+      "┌───┬──────────────────────────┐",
+      "│   │ at                       │",
+      "├───┼──────────────────────────┤",
+      "│ 0 │ 1970-01-01T00:00:00.000Z │",
+      "└───┴──────────────────────────┘",
+      "Buffer {",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(lines.slice(-2)).toEqual(["}", ""]);
+});
+
+it.concurrent("bun -p prints an array that has an index getter", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-p", `Object.defineProperty([1, 2], 0, { get() { throw new Error("the program was called"); } })`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.replaceAll("\r\n", "\n"), stderr, exitCode }).toEqual({
+    stdout: "[ [Getter], 2 ]\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

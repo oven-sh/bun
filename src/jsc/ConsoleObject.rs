@@ -1395,7 +1395,12 @@ pub fn format2(
             any = true;
 
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+            // Only a primitive string is a format string. The `String` tag also has String
+            // objects and RegExps, and a format string is read with ToString.
+            if matches!(tag.tag, TagPayload::String)
+                && tag.cell == jsc::JSType::String
+                && !fmt.remaining().is_empty()
+            {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
 
@@ -1417,7 +1422,10 @@ pub fn format2(
             }
             any = true;
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+            if matches!(tag.tag, TagPayload::String)
+                && tag.cell == jsc::JSType::String
+                && !fmt.remaining().is_empty()
+            {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
 
@@ -2388,11 +2396,22 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
+                                // `%s` is `String(value)`. `print_string` reads a String
+                                // object and a RegExp from their internal slots, so the
+                                // conversion of those happens here.
+                                let js_type = next_value.js_type();
+                                let converted = if js_type.is_string_object_like()
+                                    || js_type == jsc::JSType::RegExpObject
+                                {
+                                    next_value.to_js_string(global)?.to_js()
+                                } else {
+                                    next_value
+                                };
                                 self.print_as::<ENABLE_ANSI_COLORS>(
                                     Tag::String,
                                     writer_,
-                                    next_value,
-                                    next_value.js_type(),
+                                    converted,
+                                    js_type,
                                 )?;
                                 writer = WrappedWriter {
                                     ctx: writer_,
@@ -3170,9 +3189,10 @@ pub mod formatter {
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
     // params are by-value `JSValue`/scalars → `safe fn`.
     unsafe extern "C" {
-        /// C++ helper (`bindings.cpp`) — invokes a user-supplied
+        /// C++ helper (`UtilInspect.cpp`) — invokes a user-supplied
         /// `[util.inspect.custom]` function with the synthesized `(depth, opts,
-        /// inspect)` argument shape. Only called from `print_as`.
+        /// inspect)` argument shape. Only called from `print_as`. For a `this`
+        /// that is a prototype object it returns `this` and calls nothing.
         safe fn JSC__JSValue__callCustomInspectFunction(
             global: &JSGlobalObject,
             function: JSValue,
@@ -3181,6 +3201,61 @@ pub mod formatter {
             max_depth: u32,
             colors: bool,
         ) -> JSValue;
+        safe fn Bun__ConsoleFormatter__toDisplayString(
+            global: &JSGlobalObject,
+            value: JSValue,
+            out: &mut BunString,
+        ) -> bool;
+        /// `[[NumberData]]` or `[[BooleanData]]` of a wrapper object. Empty
+        /// for any other value.
+        safe fn Bun__ConsoleFormatter__wrappedPrimitive(value: JSValue) -> JSValue;
+        safe fn Bun__ConsoleFormatter__getOwnIndex(
+            global: &JSGlobalObject,
+            value: JSValue,
+            index: u32,
+            call_getters: bool,
+        ) -> JSValue;
+    }
+
+    /// The text of a value that prints as a string. A String object is read
+    /// from `[[StringData]]` and a RegExp from its pattern and flags, so
+    /// neither runs a `toString` of the program. Any other value is
+    /// `ToString(value)`.
+    fn to_display_string(value: JSValue, global: &JSGlobalObject) -> JsResult<BunString> {
+        let mut out = BunString::DEAD;
+        crate::call_false_is_throw(global, || {
+            Bun__ConsoleFormatter__toDisplayString(global, value, &mut out)
+        })?;
+        Ok(out)
+    }
+
+    /// `value` when it is a primitive string, or else `text` as one.
+    /// `JSON.stringify` of a String object calls its `toJSON` and `toString`.
+    fn to_primitive_string(
+        value: JSValue,
+        text: &BunString,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
+        use crate::StringJsc as _;
+        if value.is_string_literal() {
+            return Ok(value);
+        }
+        text.to_js(global)
+    }
+
+    /// The own element of an array or `arguments` object at `index`. A hole is
+    /// the empty value. An accessor is its `GetterSetter` cell, which prints
+    /// as `[Getter]`; with `call_getters` the getter runs instead, and the
+    /// cell is what is left if it throws.
+    fn get_own_index(
+        value: JSValue,
+        global: &JSGlobalObject,
+        index: u32,
+        call_getters: bool,
+    ) -> JsResult<JSValue> {
+        crate::call_check_slow(global, || {
+            Bun__ConsoleFormatter__getOwnIndex(global, value, index, call_getters)
+        })
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -3537,7 +3612,11 @@ pub mod formatter {
         ) -> JsResult<()> {
             // This is called from the '%s' formatter, so it can actually be any value
             use crate::StringJsc as _;
-            let str = BunString::from_js(value, self.global_this)?;
+            let str = if value.is_string_literal() {
+                BunString::from_js(value, self.global_this)?
+            } else {
+                to_display_string(value, self.global_this)?
+            };
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3562,7 +3641,8 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
+                    let primitive = to_primitive_string(value, &str, self.global_this)?;
+                    self.print_as::<C>(Tag::JSON, writer_, primitive, jsc::JSType::StringObject)?;
                     if C {
                         let _ = writer_.write_all(pfmt!("<r>", true).as_bytes());
                     }
@@ -3591,7 +3671,8 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    self.print_as::<C>(Tag::JSON, writer_, value, jsc::JSType::StringObject)?;
+                    let primitive = to_primitive_string(value, &str, self.global_this)?;
+                    self.print_as::<C>(Tag::JSON, writer_, primitive, jsc::JSType::StringObject)?;
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
@@ -3713,11 +3794,16 @@ pub mod formatter {
             if value.is_cell() {
                 let number_name = value.get_class_name(self.global_this)?;
 
-                let number_value = value.to_js_string_view(self.global_this)?;
+                // From [[NumberData]]: ToString of the object calls its `toString` or `valueOf`.
+                let number = Bun__ConsoleFormatter__wrappedPrimitive(value).as_number();
+                let mut buf = [0u8; 124];
+                let number_value = bstr::BStr::new(
+                    bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, number),
+                );
 
                 if !number_name.eq_ascii(b"Number") {
                     writer.add_for_new_line(
-                        number_name.length() + number_value.length() + "[Number ():]".len(),
+                        number_name.length() + number_value.len() + "[Number ():]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
@@ -3732,7 +3818,7 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                writer.add_for_new_line(number_name.length() + number_value.length() + 4);
+                writer.add_for_new_line(number_name.length() + number_value.len() + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
                     pf!("<r><yellow>"),
@@ -3796,6 +3882,19 @@ pub mod formatter {
                     C,
                 )
             })?;
+            // A custom inspector that returns its own `this` would recurse
+            // forever; re-tag without the custom hook so it falls through to
+            // default formatting (mirrors util.inspect's `ret !== context`).
+            // The shim also returns `this` for a prototype object, in place of
+            // a call of its hook.
+            if result == self.custom_formatted_object.this {
+                let tag = Tag::get_advanced(
+                    result,
+                    self.global_this,
+                    TagOptions::DISABLE_INSPECT_CUSTOM,
+                )?;
+                return self.format::<C>(tag, writer_, result, self.global_this);
+            }
             // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
                 if writer_
@@ -3805,14 +3904,7 @@ pub mod formatter {
                     self.failed = true;
                 }
             } else {
-                // A custom inspector that returns its own `this` would recurse
-                // forever; re-tag without the custom hook so it falls through to
-                // default formatting (mirrors util.inspect's `ret !== context`).
-                let tag = if result == self.custom_formatted_object.this {
-                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
-                } else {
-                    Tag::get(result, self.global_this)?
-                };
+                let tag = Tag::get(result, self.global_this)?;
                 self.format::<C>(tag, writer_, result, self.global_this)?;
             }
             Ok(())
@@ -4104,11 +4196,16 @@ pub mod formatter {
             }
             if value.is_cell() {
                 let bool_name = value.get_class_name(self.global_this)?;
-                let bool_value = value.to_js_string_view(self.global_this)?;
+                // From [[BooleanData]]: ToString of the object calls its `toString` or `valueOf`.
+                let bool_value = if Bun__ConsoleFormatter__wrappedPrimitive(value).to_boolean() {
+                    "true"
+                } else {
+                    "false"
+                };
 
                 if !bool_name.eq_ascii(b"Boolean") {
                     writer.add_for_new_line(
-                        bool_value.length() + bool_name.length() + "[Boolean (): ]".len(),
+                        bool_value.len() + bool_name.length() + "[Boolean (): ]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
@@ -4122,7 +4219,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 }
-                writer.add_for_new_line(bool_value.length() + "[Boolean: ]".len());
+                writer.add_for_new_line(bool_value.len() + "[Boolean: ]".len());
                 writer.print(format_args!(
                     "{}[Boolean: {}]{}",
                     pf!("<r><yellow>"),
@@ -4180,26 +4277,22 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            let str = value.json_stringify(self.global_this, self.indent)?;
-            writer.add_for_new_line(str.length());
             if js_type == jsc::JSType::JSDate {
-                // in the code for printing dates, it never exceeds this amount
-                let mut iso_string_buf = [0u8; 36];
-                let mut out_buf: &[u8] = {
-                    use std::io::Write as _;
-                    let mut cursor = &mut iso_string_buf[..];
-                    let start_len = cursor.len();
-                    let _ = write!(cursor, "{str}");
-                    let written = start_len - cursor.len();
-                    &iso_string_buf[..written]
-                };
-
-                if out_buf == b"null" {
-                    out_buf = b"Invalid Date";
-                } else if out_buf.len() > 2 {
-                    // trim the quotes
-                    out_buf = &out_buf[1..out_buf.len() - 1];
-                }
+                // From [[DateValue]]: JSON.stringify calls the `toJSON` and `toISOString` of the object.
+                let mut iso_string_buf = [0u8; 64];
+                let out_buf: &[u8] =
+                    match value.to_iso_string(self.global_this, &mut iso_string_buf) {
+                        Some(iso) => {
+                            // Wide as the JSON text was, quotes included, so that a row of dates
+                            // breaks where it did.
+                            writer.add_for_new_line(iso.len() + 2);
+                            iso
+                        }
+                        None => {
+                            writer.add_for_new_line("null".len());
+                            b"Invalid Date"
+                        }
+                    };
 
                 writer.print(format_args!(
                     "{}{}{}",
@@ -4213,6 +4306,8 @@ pub mod formatter {
                 return Ok(());
             }
 
+            let str = value.json_stringify(self.global_this, self.indent)?;
+            writer.add_for_new_line(str.length());
             writer.print(format_args!("{str}"));
             if writer.failed {
                 self.failed = true;
@@ -4235,6 +4330,7 @@ pub mod formatter {
             // function, and `WrappedWriter` holds `&mut self.estimated_line_length`
             // which prevents calling `&self` methods while it is live.
             let tag_opts = self.tag_opts();
+            let call_own_getters = self.call_own_getters;
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -4271,12 +4367,12 @@ pub mod formatter {
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
                 'first: {
-                    let element = value.get_direct_index(self.global_this, 0)?;
+                    let element = get_own_index(value, self.global_this, 0, call_own_getters)?;
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
 
                     was_good_time = was_good_time
-                        || !tag.tag.is_primitive()
+                        || !(tag.tag.is_primitive() || matches!(tag.tag, TagPayload::GetterSetter))
                         || writer.good_time_for_a_new_line(self.indent);
 
                     if !self.single_line && (self.ordered_properties || was_good_time) {
@@ -4311,7 +4407,7 @@ pub mod formatter {
                 let mut nonempty_count: u32 = 1;
 
                 while (i as u64) < len {
-                    let element = value.get_direct_index(self.global_this, i)?;
+                    let element = get_own_index(value, self.global_this, i, call_own_getters)?;
                     if element.is_empty() {
                         if empty_start.is_none() {
                             empty_start = Some(i);
@@ -5186,7 +5282,7 @@ pub mod formatter {
                                 match tag.tag.tag() {
                                     Tag::String => {
                                         let children_string =
-                                            children.to_js_string_view(self.global_this)?;
+                                            to_display_string(children, self.global_this)?;
                                         if children_string.is_empty() {
                                             break 'print_children;
                                         }

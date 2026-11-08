@@ -1,6 +1,8 @@
 // this file is compatible with jest to test node.js' util.inspect as well as bun's
 
 const util = require("util");
+const vm = require("vm");
+const { MessagePort } = require("worker_threads");
 
 test("util.inspect.custom exists", () => {
   expect(util.inspect.custom).toEqual(Symbol.for("nodejs.util.inspect.custom"));
@@ -144,6 +146,63 @@ for (const [name, inspect] of process.versions.bun
       ? "{[Symbol(nodejs.util.inspect.custom)]:512,}"
       : "{Symbol(nodejs.util.inspect.custom):512}";
     expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe(expected);
+  });
+
+  test(name + " does not call inspect.custom of a prototype object", () => {
+    const receivers = [];
+    class Money {
+      #cents = 150;
+      [customSymbol]() {
+        receivers.push(this === money ? "instance" : "other");
+        return "Money<" + this.#cents + ">";
+      }
+    }
+    class Salary extends Money {}
+    function Legacy() {}
+    Legacy.prototype[customSymbol] = function () {
+      receivers.push("other");
+      return "Legacy<>";
+    };
+    const money = new Money();
+
+    expect(inspect(money)).toBe("Money<150>");
+    for (const prototype of [Money.prototype, Salary.prototype, Legacy.prototype]) {
+      inspect(prototype);
+      inspect({ nested: prototype });
+      inspect([prototype]);
+      inspect(new Map([["value", prototype]]));
+      inspect(new Proxy(prototype, {}));
+      inspect({ [customSymbol]: () => prototype });
+    }
+    expect(receivers).toEqual(["instance"]);
+  });
+
+  test(name + " calls inspect.custom of an object that is not the prototype of its own constructor", () => {
+    const receivers = [];
+    function custom() {
+      receivers.push(this.name);
+      return "custom";
+    }
+    const nullConstructor = { name: "null", constructor: null, [customSymbol]: custom };
+    const primitiveConstructor = { name: "primitive", constructor: 1, [customSymbol]: custom };
+    const otherConstructor = { name: "other", constructor: Object, [customSymbol]: custom };
+    const accessorConstructor = {
+      name: "accessor",
+      get constructor() {
+        throw new Error("the constructor getter must not run");
+      },
+      [customSymbol]: custom,
+    };
+    // The inherited constructor points back at the object, but it is not an own property.
+    const parent = { name: "parent", [customSymbol]: custom };
+    const inheritedConstructor = Object.create(parent, { name: { value: "inherited" } });
+    parent.constructor = { prototype: inheritedConstructor };
+
+    for (const value of [nullConstructor, primitiveConstructor, otherConstructor, accessorConstructor]) {
+      expect(inspect(value)).toBe("custom");
+    }
+    expect(inspect(inheritedConstructor)).toBe("custom");
+    expect(receivers).toEqual(["null", "primitive", "other", "accessor", "inherited"]);
   });
 
   const exceptions = [new Error("don't crash!"), 42];
@@ -338,4 +397,21 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     // formats as a plain object instead of throwing.
     expect(inspect(globalThis[className].prototype)).toContain("encoding: [Getter]");
   });
+});
+
+// The hook of each of these throws ERR_INVALID_THIS for a receiver that is not an instance.
+test.each([
+  ["Buffer", Buffer],
+  ["BroadcastChannel", BroadcastChannel],
+  ["CompressionStream", CompressionStream],
+  ["DecompressionStream", DecompressionStream],
+  ["TextEncoderStream", TextEncoderStream],
+  ["TextDecoderStream", TextDecoderStream],
+  ["Module", vm.Module],
+  ["SourceTextModule", vm.SourceTextModule],
+  ["SyntheticModule", vm.SyntheticModule],
+  ["MessagePort", MessagePort],
+])("Bun.inspect prints %s.prototype without its inspect.custom", (className, { prototype }) => {
+  expect(Bun.inspect(prototype)).toStartWith(className + " {");
+  expect(Bun.inspect({ nested: prototype })).toStartWith("{\n  nested: " + className + " {");
 });

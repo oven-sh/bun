@@ -101,22 +101,22 @@ pub struct UUID7 {
 // it can back a `static` directly (no lazy init).
 static UUID_V7_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
 // State for `UUID7::now`, where the RFC 9562 §6.2 monotonic clamp applies.
-// Every VM in the process shares it and nothing resets it.
 static UUID_V7_LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
 static UUID_V7_COUNTER: AtomicU32 = AtomicU32::new(0);
-// Separate state for `UUID7::at`, so a caller-supplied timestamp neither
-// observes nor rebases the monotonic state of `UUID7::now`.
+// Separate state for caller-supplied timestamps so an explicit call neither
+// observes nor rebases the default path's monotonic state.
 static UUID_V7_EXPLICIT_REQUESTED: AtomicU64 = AtomicU64::new(u64::MAX);
 static UUID_V7_EXPLICIT_EMITTED: AtomicU64 = AtomicU64::new(0);
 static UUID_V7_EXPLICIT_COUNTER: AtomicU32 = AtomicU32::new(0);
 
+/// Where the `timestamp` passed to [`UUID7::init`] came from.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TimestampSource {
-    /// [`UUID7::now`]. The RFC 9562 §6.2 monotonic clamp applies: the emitted
-    /// timestamp never moves backward.
+    /// Read from the generator's own clock. The RFC 9562 §6.2 monotonic clamp
+    /// applies: the emitted timestamp never moves backward.
     Clock,
-    /// [`UUID7::at`]. The value is encoded verbatim and does not touch the
-    /// clock-path state.
+    /// Supplied by the caller. The value is encoded verbatim and does not
+    /// touch the clock-path state.
     Explicit,
 }
 
@@ -172,26 +172,18 @@ impl UUID7 {
         (ts, count)
     }
 
-    /// The current time, ordered after every earlier `now()` in the process
-    /// (RFC 9562 §6.2).
-    ///
-    /// It takes no timestamp on purpose. The timestamp it emits stays in
-    /// process-wide state, so it has to come from the system clock and never
-    /// from a clock that one VM has mocked (bun:test `setSystemTime()`).
+    /// Takes no timestamp: every VM shares the state it writes, so it reads the system clock and never a clock that bun:test mocked.
     pub fn now(random: [u8; 10]) -> UUID7 {
         let timestamp = bun_core::time::milli_timestamp().max(0) as u64;
         Self::init(timestamp, random, TimestampSource::Clock)
     }
 
-    /// A caller-supplied timestamp, encoded verbatim. Consecutive calls with
-    /// one timestamp increment a counter. Another timestamp starts a new one.
+    /// A caller-supplied timestamp, encoded verbatim. Consecutive calls with one timestamp increment a counter.
     pub fn at(timestamp: u64, random: [u8; 10]) -> UUID7 {
         Self::init(timestamp, random, TimestampSource::Explicit)
     }
 
-    /// A timestamp and 74 random bits, which is what Node's
-    /// `crypto.randomUUIDv7()` returns. No counter and no last timestamp, so
-    /// no order within one millisecond or across a backward step of the clock.
+    /// What Node's `crypto.randomUUIDv7()` returns: the timestamp and 74 random bits, with no counter and no last timestamp.
     pub fn stateless(timestamp: u64, random: [u8; 10]) -> UUID7 {
         let rand_a = u16::from_le_bytes([random[8], random[9]]) & 0x0FFF;
         Self::encode(timestamp, u32::from(rand_a), random)

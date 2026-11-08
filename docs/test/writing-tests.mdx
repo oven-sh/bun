@@ -513,8 +513,12 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
 | `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
 | `.not.not`                                                | cancels out                          | still negates                                                        |
+| `toEqual()` on arrays of different lengths                | a missing item is `undefined`        | never equal                                                          |
+| `toEqual()` on two errors                                 | compares `cause`, but not `errors`   | compares `cause` if the expected error has one, and `errors`         |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 | `performance` while fake timers are on                    | the same object, on the fake clock   | a new object; the one it replaces still reads the real clock         |
+
+`aroundEach` and `aroundAll` receive the same arguments from every module. For the default timeout, for the two `toEqual()` rows and for [errors that nothing handles](/test/runtime-behavior#custom-error-handling), they follow the module they were imported from, and so do the callbacks they register on the test context.
 
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context). It exports `inject` too, which always returns `undefined`, because `bun test` has no `provide` option or global setup file to provide a value.
 

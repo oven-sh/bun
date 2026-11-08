@@ -621,8 +621,7 @@ pub fn parse_env_json(
     }
 }
 
-/// The value of a text that is whitespace and then one whole keyword or JSON value. Any other
-/// text stays what the caller makes of it.
+/// The value of a text that is whitespace and then one whole keyword or JSON value, or `None`.
 #[cold]
 fn whole_value_after_whitespace(
     source: &bun_ast::Source,

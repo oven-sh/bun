@@ -20,6 +20,9 @@ async function listen(server: http.Server) {
   return (server.address() as net.AddressInfo).port;
 }
 
+// For setSocketOptions(). A small kernel buffer keeps most of a large write with the server, whatever the limits of the machine are.
+const KERNEL_BUFFER = 64 * 1024;
+
 describe("node:http server timeout enforcement", () => {
   test("headersTimeout closes a connection that never completes its request headers", async () => {
     const server = http.createServer({ connectionsCheckingInterval: 50 }, (req, res) => {
@@ -939,7 +942,8 @@ describe("node:http server writes restart the socket inactivity timeout", () => 
     let referenceFired = false;
     const { promise: timedOut, resolve: onTimedOut } = Promise.withResolvers<number>();
     const server = http.createServer((req, res) => {
-      // More than the kernel buffers take, so this write stays pending and every later one queues behind it.
+      // The kernel takes little of this write, so it stays pending and every later one queues behind it.
+      setSocketOptions(req.socket, 1, KERNEL_BUFFER);
       res.write(Buffer.alloc(16 * 1024 * 1024, "a"));
       pendingSince = performance.now();
       const interval = setInterval(() => res.write("data: ping\n\n"), TIMEOUT / 8);
@@ -976,8 +980,6 @@ describe("node:http server writes restart the socket inactivity timeout", () => 
 // timer fires. setSocketOptions() does nothing on Windows, where the kernel can take a whole body at once.
 describe.skipIf(isWindows)("node:http: a write that drains slowly holds the socket inactivity timeout back", () => {
   const TIMEOUT = 400;
-  // Small kernel buffers at both ends keep most of the body with the server, whatever the limits of the machine are.
-  const KERNEL_BUFFER = 64 * 1024;
   const BODY = Buffer.alloc(2 * 1024 * 1024, "a");
   // A server that holds 'timeout' back once, and does not see the bytes leave, fires at the second
   // expiry. For longer than that the reader takes 16 KB every 20 ms, less than half of the body in
@@ -988,13 +990,16 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
     let budget = 0;
     let received = 0;
     let head = -1;
+    let beforeBody = "";
     let startedAt = 0;
     const { promise, resolve, reject } = Promise.withResolvers<number>();
     client.on("data", chunk => {
       startedAt ||= performance.now();
       if (head === -1) {
-        const end = chunk.indexOf("\r\n\r\n");
-        if (end !== -1) head = received + end + 4;
+        // The blank line that ends the head can lie across two chunks.
+        beforeBody += chunk.toString("latin1");
+        const end = beforeBody.indexOf("\r\n\r\n");
+        if (end !== -1) head = end + 4;
       }
       received += chunk.length;
       budget -= chunk.length;

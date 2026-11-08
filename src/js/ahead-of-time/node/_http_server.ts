@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 b193d24210dd78d099109bea822f2a2db1ea10994a6953ec80c11fbae3e365c8.
+// Written against that file with the SHA-256 c8bac99def344958c19aa7f6e5441df451518f0275c5d1cd93f986c3cc652556.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -2742,7 +2742,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     _onTimeout() {
       const handle = this[kHandle];
       // A write in progress holds 'timeout' back once: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
-      if ((this.writableLength > 0 || handle?.response?.bufferedAmount! > 0) && handle?.holdTimeoutBackOnce()) {
+      if ((this.writableLength > 0 || (handle?.response?.bufferedAmount ?? 0) > 0) && handle?.holdTimeoutBackOnce()) {
         this._unrefTimer();
         return;
       }

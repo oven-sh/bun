@@ -1967,7 +1967,7 @@ function getNodeHTTPServerSocket() {
     _onTimeout() {
       const handle = this[kHandle];
       // A write in progress holds 'timeout' back once: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
-      if ((this.writableLength > 0 || handle?.response?.bufferedAmount > 0) && handle?.holdTimeoutBackOnce()) {
+      if ((this.writableLength > 0 || (handle?.response?.bufferedAmount ?? 0) > 0) && handle?.holdTimeoutBackOnce()) {
         this._unrefTimer();
         return;
       }

@@ -2245,6 +2245,35 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // The compiler printed `let helper;` in front of the memo block and a declaration of the same name inside it.
+  test("a hoisted function that a memo block declares is assigned", async () => {
+    const result = await compiled(
+      {
+        "src/Hoisted.tsx": `
+          export function Hoisted({ a }) {
+            const unused = () => helper();
+            function helper() {
+              return a;
+            }
+            return <button onClick={helper}>{a}</button>;
+          }
+        `,
+        "compiled.test.tsx": `
+          import { expect, test } from "bun:test";
+          import { Hoisted } from "./src/Hoisted";
+          test("which are compiled", () => {
+            const all = { Hoisted };
+            ${printCompiled}
+            expect(typeof Hoisted({ a: 1 }).props.onClick).toBe("function");
+          });
+        `,
+      },
+      ["--react-compiler"],
+    );
+    expect(result.compiled).toBe("Hoisted");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a data: URL that is longer than a path can be is not compiled", async () => {
     const result = await compiled(
       {

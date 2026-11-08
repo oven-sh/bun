@@ -2016,106 +2016,148 @@ describe("bundler", () => {
   // A function declaration is a hoisted context variable when something refers to it before it. When that reference
   // is dead code the function is compiled, and a memo block that declares the function has to assign it: a declaration
   // in the block would shadow the `let` outside of it (facebook/react#37833). `BeforeDeclaration` needs the declaration.
-  // `LiveEarlyReference` and `InRemovedBranchingCatch` are left as written.
-  itBundled("react-compiler/HoistedFunctionThatAMemoBlockDeclaresIsAssigned", {
-    files: {
-      "/entry.jsx": /* jsx */ `
-        import { sizes } from "react/compiler-runtime";
+  //
+  // An assignment is not hoisted, so the function is left as written when another function is declared below it and
+  // referenced above it (`IndirectEarlyCall`, `CallsALaterFunction`), and when its own early reference is live
+  // (`LiveEarlyReference`). `InRemovedBranchingCatch` is left as written only while the parser keeps the `const` in its
+  // `try`: with `minify.syntax`, and always at runtime, the `try` is empty and the function is compiled.
+  for (const minifySyntax of [false, true] as const) {
+    itBundled(`react-compiler/HoistedFunctionThatAMemoBlockDeclaresIsAssigned-syntax=${minifySyntax}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { sizes } from "react/compiler-runtime";
 
-        function UnusedClosure(p) {
-          const unused = () => helper();
-          function helper() {
-            return p.a;
+          function UnusedClosure(p) {
+            const unused = () => helper();
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{p.a}</button>;
           }
-          return <button onClick={helper}>{p.a}</button>;
-        }
-        function CalledAfter(p) {
-          const unused = () => helper();
-          function helper() {
-            return p.a + 1;
+          function CalledAfter(p) {
+            const unused = () => helper();
+            function helper() {
+              return p.a + 1;
+            }
+            const v = helper();
+            return <button onClick={helper}>{v}</button>;
           }
-          const v = helper();
-          return <button onClick={helper}>{v}</button>;
-        }
-        function InRemovedCatch(p) {
-          try {
-            const limit = 3;
-          } catch (e) {
-            helper(e);
+          function ValueBetween(p) {
+            const unused = () => helper();
+            const x = [p.b];
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{x}</button>;
           }
-          function helper() {
-            return p.a;
+          function InRemovedCatch(p) {
+            try {
+              const limit = 3;
+            } catch (e) {
+              helper(e);
+            }
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{p.a}</button>;
           }
-          return <button onClick={helper}>{p.a}</button>;
-        }
-        function InRemovedBranchingCatch(p) {
-          try {
-            const limit = 3;
-          } catch (e) {
-            if (p.debug) helper(e);
+          function InRemovedBranchingCatch(p) {
+            try {
+              const limit = 3;
+            } catch (e) {
+              if (p.debug) helper(e);
+            }
+            const label = p.a + "!";
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper}>{label}</button>;
           }
-          const label = p.a + "!";
-          function helper() {
-            return p.a;
+          function IndirectEarlyCall(p) {
+            const unused = () => helper();
+            const v = sibling();
+            function helper() {
+              return p.a;
+            }
+            function sibling() {
+              return helper();
+            }
+            return <button onClick={helper}>{v}</button>;
           }
-          return <button onClick={helper}>{label}</button>;
-        }
-        function BeforeDeclaration(p) {
-          const t = { a: p.a };
-          add(t);
-          function add(it) {
-            it.b = 1;
+          function CallsALaterFunction(p) {
+            const unused = () => helper();
+            function helper() {
+              return later() + 1;
+            }
+            function later() {
+              return p.a;
+            }
+            return <button onClick={helper}>{p.a}</button>;
           }
-          return <button>{JSON.stringify(t)}</button>;
-        }
-        function LiveEarlyReference(p) {
-          const early = () => helper();
-          function helper() {
-            return p.a;
+          function BeforeDeclaration(p) {
+            const t = { a: p.a };
+            add(t);
+            function add(it) {
+              it.b = 1;
+            }
+            return <button>{JSON.stringify(t)}</button>;
           }
-          return <button onClick={helper} onFocus={early}>{p.a}</button>;
-        }
+          function LiveEarlyReference(p) {
+            const early = () => helper();
+            function helper() {
+              return p.a;
+            }
+            return <button onClick={helper} onFocus={early}>{p.a}</button>;
+          }
 
-        function render(fn, props) {
-          const before = sizes().length;
-          const { onClick, children } = fn(props).props;
-          return [typeof onClick, children, sizes().slice(before)];
-        }
-        console.log(JSON.stringify({
-          UnusedClosure: render(UnusedClosure, { a: 1 }),
-          CalledAfter: render(CalledAfter, { a: 2 }),
-          InRemovedCatch: render(InRemovedCatch, { a: 3 }),
-          InRemovedBranchingCatch: render(InRemovedBranchingCatch, { a: 4 }),
-          BeforeDeclaration: render(BeforeDeclaration, { a: 5 }),
-          LiveEarlyReference: render(LiveEarlyReference, { a: 6 }),
-        }));
-      `,
-      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
-      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
-      "/node_modules/react/compiler-runtime.js": /* js */ `
-        const sizes = [];
-        exports.c = size => {
-          sizes.push(size);
-          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
-        };
-        exports.sizes = () => sizes;
-      `,
-      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
-    },
-    reactCompiler: true,
-    target: "browser",
-    backend: "cli",
-    run: {
-      stdout: JSON.stringify({
-        UnusedClosure: ["function", 1, [5]],
-        CalledAfter: ["function", 3, [6]],
-        InRemovedCatch: ["function", 3, [5]],
-        InRemovedBranchingCatch: ["function", "4!", []],
-        BeforeDeclaration: ["undefined", '{"a":5,"b":1}', [4]],
-        LiveEarlyReference: ["function", 6, []],
-      }),
-    },
-  });
+          function render(fn, props) {
+            const before = sizes().length;
+            const { onClick, children } = fn(props).props;
+            return [typeof onClick, children, sizes().slice(before)];
+          }
+          console.log(JSON.stringify({
+            UnusedClosure: render(UnusedClosure, { a: 1 }),
+            CalledAfter: render(CalledAfter, { a: 2 }),
+            ValueBetween: render(ValueBetween, { a: 1, b: 2 }),
+            InRemovedCatch: render(InRemovedCatch, { a: 3 }),
+            InRemovedBranchingCatch: render(InRemovedBranchingCatch, { a: 4 }),
+            IndirectEarlyCall: render(IndirectEarlyCall, { a: 2 }),
+            CallsALaterFunction: render(CallsALaterFunction, { a: 7 }),
+            BeforeDeclaration: render(BeforeDeclaration, { a: 5 }),
+            LiveEarlyReference: render(LiveEarlyReference, { a: 6 }),
+          }));
+        `,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+        "/node_modules/react/compiler-runtime.js": /* js */ `
+          const sizes = [];
+          exports.c = size => {
+            sizes.push(size);
+            return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+          };
+          exports.sizes = () => sizes;
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler: true,
+      target: "browser",
+      backend: "cli",
+      minifySyntax,
+      run: {
+        stdout: JSON.stringify({
+          UnusedClosure: ["function", 1, [5]],
+          CalledAfter: ["function", 3, [6]],
+          ValueBetween: ["function", [2], [9]],
+          InRemovedCatch: ["function", 3, [5]],
+          InRemovedBranchingCatch: ["function", "4!", minifySyntax ? [6] : []],
+          IndirectEarlyCall: ["function", 2, []],
+          CallsALaterFunction: ["function", 7, []],
+          BeforeDeclaration: ["undefined", '{"a":5,"b":1}', [4]],
+          LiveEarlyReference: ["function", 6, []],
+        }),
+      },
+    });
+  }
 
   // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
   // (no operand is reactive, callee isn't a hook), so its scope's deps prune

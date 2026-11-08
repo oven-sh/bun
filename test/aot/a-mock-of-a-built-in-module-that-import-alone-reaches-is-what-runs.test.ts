@@ -46,13 +46,15 @@ function runsAsPlain(
     expect(plain?.printed).toContain("mocked");
     expect(plain?.printed).not.toContain("real");
     // The image answers require() of a mock that was laid over a module which an import alone had loaded with the `default` of an
-    // object marked `__esModule`. Plain Bun answers the object itself. Until the engine follows, only the result is compared there.
-    const asPlain = (ran: typeof plain) => (imageAnswersRequireWithDefault ? ran?.result : ran);
-    expect(asPlain((await group.ran(["--debug-aot"])).get(name))).toEqual(asPlain(plain));
-    if (nameInLayers)
-      expect(asPlain((await inLayers.ran(["--debug-aot"], "TestRunLayers:0")).get(nameInLayers))).toEqual(
-        asPlain(plain),
-      );
+    // object marked `__esModule`. Plain Bun answers the object itself. Until the engine follows, what require() got is not compared there.
+    const expectAsPlain = (ran: typeof plain) => {
+      if (!imageAnswersRequireWithDefault) return expect(ran).toEqual(plain);
+      expect(ran?.result).toBe("pass");
+      expect(ran?.printed).toContain("mocked");
+      expect(ran?.printed).not.toContain("real");
+    };
+    expectAsPlain((await group.ran(["--debug-aot"])).get(name));
+    if (nameInLayers) expectAsPlain((await inLayers.ran(["--debug-aot"], "TestRunLayers:0")).get(nameInLayers));
   });
 }
 

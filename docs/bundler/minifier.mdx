@@ -1146,32 +1146,38 @@ console.log(test());
 
 **Mode:** `--drop=console`
 
-Removes all `console.*` method calls from code. If your code uses the value of a call, Bun puts `undefined` in its place.
+Removes the calls that are written as `console.<method>(...)`. If your code uses the value of a call, Bun puts `undefined` in its place. Bun keeps a call that reaches `console` in another way, such as `globalThis.console.log()` or `console["log"]()`. If you also set `--minify-syntax`, Bun removes the call with brackets too.
 
 ```ts Input
 console.log("debug");
 console.warn("warning");
 x = console.error("error");
+globalThis.console.log("kept");
+console["log"]("kept");
 ```
 
 ```js Output
 x = undefined;
+globalThis.console.log("kept");
+console["log"]("kept");
 ```
 
 ### Drop custom function calls
 
 **Mode:** `--drop=assert`
 
-`--drop=<name>` removes calls to the global function `<name>` and to its methods. If your code uses the value of a call, Bun puts `undefined` in its place.
+`--drop=<name>` removes calls to the global function `<name>` and to its methods. If your code uses the value of a call, Bun puts `undefined` in its place. As with `console`, Bun keeps a method call that is written with brackets, unless you also set `--minify-syntax`.
 
 ```ts Input
 assert(condition);
 assert.equal(a, b);
 x = assert(condition);
+assert["equal"](a, b);
 ```
 
 ```js Output
 x = undefined;
+assert["equal"](a, b);
 ```
 
 ## Keep Names

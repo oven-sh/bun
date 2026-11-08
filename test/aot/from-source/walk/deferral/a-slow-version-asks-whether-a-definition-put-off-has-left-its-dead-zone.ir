@@ -1,0 +1,23 @@
+# the definition of `late` is put off: the variable holds a mark until somebody reads it, and nothing at all until the `const` is passed. `read` has a guard, a fast version and a slow one, and names a
+# built-in, so the slow one is walked and not written straight. It is walked without Link's tables: nothing is proven of the variable there. "Nothing proven" of a variable with a dead zone is every
+# value and no value yet: said as every value alone, the check of the dead zone passed by its type and was folded away, and the read by name took the empty word for a cell and died.
+# f1 = read
+# -- source: a-slow-version-asks-whether-a-definition-put-off-has-left-its-dead-zone.ts
+# class Tag { n = 1; m = 2; }
+# const unseen = (x: any): any => [x][JSON.parse("0")];
+# function read(tag: Tag): number { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return late.rate + Math.abs(work); }
+# function ask(tag: Tag): string { try { return String(read(tag)); } catch (error) { return (error as Error).name; } }
+# const real = new Tag(), liar = unseen({ n: 1, m: 2 });
+# print(ask(real), ask(liar));
+# const late = { rate: 0.5 };
+# print(ask(real), ask(liar));
+# declare function print(...values: unknown[]): void;
+# -- end of source
+# RUN: walk f1:SlowBody mechanisms=all
+# CHECK-LABEL: code f1:SlowBody
+# CHECK: [[held]]: {{*}} = GetModuleVariable
+# CHECK: = CheckInitialized {{*}}name="late"
+# CHECK: = PropGet {{*}}key="rate"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: ReferenceError ReferenceError
+# ANSWERS-NEXT: 6.5 6.5

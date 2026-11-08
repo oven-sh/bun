@@ -1,5 +1,5 @@
 // Keep in sync with src/runtime.js (__legacyDecorateClassTS through __decorateElement). The functions of `context.access` are anonymous there, so they are assigned to members: an object literal would name them.
-// Plain Bun has these functions in bun:wrap, and programs look for its frames above a decorator: the first statement of each says so.
+// Plain Bun has these functions in bun:wrap, and programs look for its frames above a decorator: the first statement of each says so, of the functions inside them too.
 
 export function decorateClass(decorators: any, target: any): any {
   ("frames are of bun:wrap");
@@ -15,6 +15,7 @@ export function decorateClass(decorators: any, target: any): any {
 }
 
 function decorateMember(decorators: any, target: any, key: any, descriptor: any): any {
+  ("frames are of bun:wrap");
   let result = descriptor;
   if (typeof Reflect === "object" && typeof (Reflect as any).decorate === "function") {
     result = (Reflect as any).decorate(decorators, target, key, descriptor);
@@ -43,7 +44,10 @@ export function decorateProperty(decorators: any, target: any, key: any): any {
 
 export function decorateParameter(index: number, decorator: any): any {
   ("frames are of bun:wrap");
-  return (target: any, key: any) => decorator(target, key, index);
+  return (target: any, key: any) => {
+    ("frames are of bun:wrap");
+    return decorator(target, key, index);
+  };
 }
 
 export function defineMetadata(key: any, value: any): any {
@@ -53,25 +57,30 @@ export function defineMetadata(key: any, value: any): any {
 }
 
 function metadataSymbol(): any {
+  ("frames are of bun:wrap");
   return (Symbol as any).metadata || Symbol.for("Symbol.metadata");
 }
 
 function throwTypeError(message: string): any {
+  ("frames are of bun:wrap");
   throw TypeError(message);
 }
 
 function defineNormalProperty(object: any, key: any, value: any): any {
+  ("frames are of bun:wrap");
   return key in object
     ? Object.defineProperty(object, key, { enumerable: true, configurable: true, writable: true, value })
     : (object[key] = value);
 }
 
 function setFunctionName(target: any, name: any): any {
+  ("frames are of bun:wrap");
   Object.defineProperty(target, "name", { value: name, enumerable: false, configurable: true });
   return target;
 }
 
 function expectFunction(value: any): any {
+  ("frames are of bun:wrap");
   return value !== undefined && typeof value !== "function" ? throwTypeError("Function expected") : value;
 }
 
@@ -96,16 +105,20 @@ export function createPrivateStorage(test: any, get: any, set: any): any {
 }
 
 function createClassContext(name: any, done: any, metadata: any, initializers: any): any {
+  ("frames are of bun:wrap");
   return {
     kind: "class",
     name,
     metadata,
-    addInitializer: (initializer: any) =>
-      done._ ? throwTypeError("Already initialized") : initializers.push(expectFunction(initializer || null)),
+    addInitializer: (initializer: any) => {
+      ("frames are of bun:wrap");
+      return done._ ? throwTypeError("Already initialized") : initializers.push(expectFunction(initializer || null));
+    },
   };
 }
 
 function createContext(element: any, done: any, metadata: any, initializers: any, access: any): any {
+  ("frames are of bun:wrap");
   const context = createClassContext(element.name, done, metadata, initializers);
   context.kind = element.kind;
   context.static = element.isStatic;
@@ -115,37 +128,56 @@ function createContext(element: any, done: any, metadata: any, initializers: any
 }
 
 function requirePrivateState(test: any, object: any, action: string): any {
+  ("frames are of bun:wrap");
   return (Object(object) === object && test.call(object)) || throwTypeError("Cannot " + action);
 }
 
 function testPrivateState(test: any, object: any): any {
+  ("frames are of bun:wrap");
   return Object(object) !== object ? throwTypeError('Cannot use the "in" operator on this value') : test.call(object);
 }
 
 function createPublicAccess(name: any): any {
+  ("frames are of bun:wrap");
   const access: any = {};
-  access.has = (object: any) => name in object;
-  access.get = (object: any) => object[name];
-  access.set = (object: any, value: any) => (object[name] = value);
+  access.has = (object: any) => {
+    ("frames are of bun:wrap");
+    return name in object;
+  };
+  access.get = (object: any) => {
+    ("frames are of bun:wrap");
+    return object[name];
+  };
+  access.set = (object: any, value: any) => {
+    ("frames are of bun:wrap");
+    return (object[name] = value);
+  };
   return access;
 }
 
 function createPrivateAccess(test: any, accessors: any): any {
+  ("frames are of bun:wrap");
   const access: any = {};
-  access.has = (object: any) => testPrivateState(test, object);
-  access.get = (object: any) => (
-    requirePrivateState(test, object, "read from private field"),
-    accessors.get.call(object)
-  );
-  access.set = (object: any, value: any) => (
-    requirePrivateState(test, object, "write to private field"),
-    accessors.set.call(object, value),
-    value
-  );
+  access.has = (object: any) => {
+    ("frames are of bun:wrap");
+    return testPrivateState(test, object);
+  };
+  access.get = (object: any) => {
+    ("frames are of bun:wrap");
+    requirePrivateState(test, object, "read from private field");
+    return accessors.get.call(object);
+  };
+  access.set = (object: any, value: any) => {
+    ("frames are of bun:wrap");
+    requirePrivateState(test, object, "write to private field");
+    accessors.set.call(object, value);
+    return value;
+  };
   return access;
 }
 
 function takeAccessorResult(result: any, descriptor: any, valueInitializers: any): void {
+  ("frames are of bun:wrap");
   if (result === undefined) return;
   if (typeof result !== "object" || result === null) throwTypeError("Object expected");
   let part;
@@ -182,9 +214,20 @@ export function applyMethodDecorators(
   for (let i = decorators.length - 1; i >= 0; i--) {
     const done: any = {};
     const access: any = {};
-    access.has = (object: any) => name in object;
-    if (kind === "setter") access.set = (object: any, value: any) => (object[name] = value);
-    else access.get = (object: any) => object[name];
+    access.has = (object: any) => {
+      ("frames are of bun:wrap");
+      return name in object;
+    };
+    if (kind === "setter")
+      access.set = (object: any, value: any) => {
+        ("frames are of bun:wrap");
+        return (object[name] = value);
+      };
+    else
+      access.get = (object: any) => {
+        ("frames are of bun:wrap");
+        return object[name];
+      };
     const result = (0, decorators[i])(descriptor[key], createContext(element, done, metadata, initializers, access));
     done._ = 1;
     expectFunction(result) && (descriptor[key] = result);
@@ -206,17 +249,29 @@ export function applyPrivateMethodDecorators(
   for (let i = decorators.length - 1; i >= 0; i--) {
     const done: any = {};
     const access: any = {};
-    access.has = (object: any) => testPrivateState(test, object);
+    access.has = (object: any) => {
+      ("frames are of bun:wrap");
+      return testPrivateState(test, object);
+    };
     if (kind === "method")
-      access.get = (object: any) => (requirePrivateState(test, object, "access private method"), value);
+      access.get = (object: any) => {
+        ("frames are of bun:wrap");
+        requirePrivateState(test, object, "access private method");
+        return value;
+      };
     if (kind === "getter")
-      access.get = (object: any) => (requirePrivateState(test, object, "read from private field"), value.call(object));
+      access.get = (object: any) => {
+        ("frames are of bun:wrap");
+        requirePrivateState(test, object, "read from private field");
+        return value.call(object);
+      };
     if (kind === "setter")
-      access.set = (object: any, next: any) => (
-        requirePrivateState(test, object, "write to private field"),
-        value.call(object, next),
-        next
-      );
+      access.set = (object: any, next: any) => {
+        ("frames are of bun:wrap");
+        requirePrivateState(test, object, "write to private field");
+        value.call(object, next);
+        return next;
+      };
     const result = (0, decorators[i])(value, createContext(element, done, metadata, initializers, access));
     done._ = 1;
     expectFunction(result) && (value = result);

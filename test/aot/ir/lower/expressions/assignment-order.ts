@@ -1,7 +1,6 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="computed"
-// CHECK: [[objectResult]] = Call {{*}}calleeName="o"
-// CHECK-NEXT: [[object]] = Convert [[objectResult]] declared={type=undefined|null|object flags=[IsExpected]}
+// CHECK: [[object]] = Call {{*}}calleeName="o"
 // CHECK: [[key]] = Call {{*}}calleeName="k"
 // CHECK: [[value]] = Call {{*}}calleeName="v"
 // CHECK-NEXT: ElemSet [[object]], [[key]], [[value]]
@@ -9,8 +8,7 @@
 // CHECK: [[assigned]] = Call {{*}}calleeName="v"
 // CHECK-NEXT: Return [[assigned]]
 // CHECK-LABEL: function {{*}}name="named"
-// CHECK: [[targetResult]] = Call {{*}}calleeName="o"
-// CHECK-NEXT: [[target]] = Convert [[targetResult]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
+// CHECK: [[target]] = Call {{*}}calleeName="o"
 // CHECK: [[stored]] = Call {{*}}calleeName="v"
 // CHECK-NEXT: PropSet [[target]], [[stored]] key="p"
 

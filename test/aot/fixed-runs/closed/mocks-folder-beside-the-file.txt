@@ -1,0 +1,60 @@
+`vi.mock("./src/lib")` and `jest.mock("./src/lib")` without a factory, where src/__mocks__/lib.ts exists: the test runner loads that file in place of the module. No import names the file. Here: an ES module, a CommonJS file, a file in the folder that requires the original, and a factory, which goes before the folder.
+#### commonjs.test.js
+import { jest, test } from "bun:test";
+jest.mock("./src/old.cjs");
+test("a CommonJS file in the folder: require() answers its module.exports", async () => {
+  const imported = await import("./src/old.cjs");
+  const required = import.meta.require("./src/old.cjs");
+  console.log("| CASE", required.who, Object.keys(required).join(), imported.who, Object.keys(imported).sort().join());
+});
+#### factory.test.ts
+import { test, vi } from "bun:test";
+import { seen } from "./src/user";
+vi.mock("./src/lib", () => ({ who: "factory", twice: (n: number) => n }));
+test("a factory goes before the folder", () => console.log("| CASE", seen()));
+#### jest-file.test.ts
+import { jest, test } from "bun:test";
+import { seen } from "./src/user";
+jest.mock("./src/lib.ts");
+test("jest.mock of a file", () => console.log("| CASE", seen()));
+#### partly.test.js
+import { jest, test } from "bun:test";
+import { seen } from "./src/user-of-partly.js";
+jest.mock("./src/partly.js");
+test("the file in the folder requires the original", () => console.log("| CASE", seen()));
+#### vi-file.test.ts
+import { test, vi } from "bun:test";
+import { seen } from "./src/user";
+vi.mock("./src/lib");
+test("vi.mock of a file", () => console.log("| CASE", seen()));
+#### package.json
+{ "name": "mock-manual-folder", "type": "module" }
+#### src/__mocks__/lib.ts
+import { factor } from "../helper";
+console.log("| CASE manual lib runs");
+export const who = "manual lib";
+export function twice(n: number) { return n * factor; }
+#### src/__mocks__/old.cjs
+exports.who = "manual old";
+#### src/__mocks__/partly.js
+import { jest } from "bun:test";
+const real = jest.requireActual("../partly.js");
+export const kept = real.kept;
+export const replaced = "manual";
+#### src/helper.ts
+export const factor = 20;
+#### src/lib.ts
+console.log("| CASE real lib runs");
+export const who = "real lib";
+export function twice(n: number) { return n * 2; }
+#### src/old.cjs
+exports.who = "real old";
+#### src/partly.js
+export const kept = "kept";
+export const replaced = "real";
+#### src/user-of-partly.js
+import { kept, replaced } from "./partly.js";
+export const seen = () => kept + " " + replaced;
+#### src/user.ts
+import { twice, who } from "./lib";
+export const seen = () => who + " " + twice(2);

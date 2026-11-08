@@ -1,14 +1,21 @@
-use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
-use bun_core::strings::{CodepointIterator, Cursor};
-use bun_sema::atom::Atom;
-use bun_sema::hir::{Branches, ExprId, ExprKind, NodeData};
-use smallvec::SmallVec;
+use std::borrow::Cow;
 
+use bun_sema::hir::{Branches, ExprId, ExprKind, NodeData};
+use smallvec::{SmallVec, smallvec};
+
+use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
-use crate::engine::describe_regexp_syntax_error;
-use crate::ir::generated::RegExpFlags;
-use crate::ir::{TypeId, TypeTable, ValueId};
+use crate::engine::{
+    RegExpLiteralCreation, classify_regexp_literal, describe_regexp_construction_error,
+};
+use crate::ir::generated::{BlockRole, RegExpFlags};
+use crate::ir::{StringId, TypeId, TypeTable, ValueId};
+use crate::lower::call::Arguments;
+use crate::lower::context::regexp_pattern_as_printed;
 use crate::lower::{FileLowering, FunctionLowering};
+
+const TOO_MANY_NESTED_DISJUNCTIONS: &[u8] =
+    b"Invalid regular expression: too many nested disjunctions";
 
 fn regexp_flags(letters: &[u8]) -> Option<RegExpFlags> {
     let mut flags = RegExpFlags::default();
@@ -29,7 +36,53 @@ fn regexp_flags(letters: &[u8]) -> Option<RegExpFlags> {
         }
         flags |= flag;
     }
+    if flags.contains(RegExpFlags::UNICODE) && flags.contains(RegExpFlags::UNICODE_SETS) {
+        return None;
+    }
     Some(flags)
+}
+
+fn emit_regexp_construction(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    pattern: StringId,
+    letters: &[u8],
+) -> ValueId {
+    let letters = lowering.file.intern_bytes(letters);
+    let constructor = lowering.emit_builtin_itself(BuiltinId::RegExp);
+    let pattern = lowering.builder.string(pattern);
+    let letters = lowering.builder.string(letters);
+    let arguments = Arguments::Values(smallvec![pattern, letters]);
+    lowering.emit_construct(constructor, arguments, None)
+}
+
+fn emit_syntax_error(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    message: &[u8],
+) -> ValueId {
+    let message = lowering.file.intern_bytes(message);
+    let message = lowering.builder.string(message);
+    let constructor = lowering.emit_builtin_itself(BuiltinId::SyntaxError);
+    lowering.emit_construct(constructor, Arguments::Values(smallvec![message]), None)
+}
+
+fn emit_deeply_nested_regexp(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    pattern: StringId,
+    letters: &[u8],
+) -> ValueId {
+    let after = lowering.create_block();
+    let handler = lowering.begin_handler(BlockRole::CatchHandler, None);
+    let created = emit_regexp_construction(lowering, pattern, letters);
+    lowering.end_handler(handler);
+    lowering.jump(after);
+
+    lowering.continue_in(handler.block());
+    lowering.builder.catch_value();
+    let error = emit_syntax_error(lowering, TOO_MANY_NESTED_DISJUNCTIONS);
+    lowering.builder.throw(error);
+
+    lowering.continue_in(after);
+    created
 }
 
 pub(super) fn lower_array_literal(
@@ -52,64 +105,37 @@ pub(super) fn lower_regexp_literal(
     let ExprKind::Regex { pattern, flags } = lowering.file.hir[literal].kind else {
         unreachable!("lower_regexp_literal takes a Regex expression");
     };
-    let letters = lowering.file.queries.atom_bytes(flags);
-    if is_left_out_and_invalid(lowering.file, literal, pattern, flags) {
+    if lowering.file.is_invalid_regexp_literal_left_out(literal) {
         let empty = lowering.file.intern_bytes(b"(?:)");
         return lowering.builder.new_reg_exp(empty, RegExpFlags::default());
     }
+    let letters = lowering.file.queries.atom_bytes(flags);
     let Some(flags) = regexp_flags(letters) else {
         let span = lowering.file.span_of(NodeData::Expr(literal));
         let diagnostics = &mut lowering.file.diagnostics;
         diagnostics.report(Code::InvalidRegExpFlags, span, &[letters]);
         return lowering.builder.undefined();
     };
-    let pattern = match pattern_as_printed(lowering.file.queries.atom_bytes(pattern)) {
-        Some(printed) => lowering.file.intern_bytes(&printed),
-        None => lowering.file.intern_atom(pattern),
+    let text = regexp_pattern_as_printed(lowering.file.queries.atom_bytes(pattern));
+    let creation = classify_regexp_literal(&text, letters);
+    if creation == RegExpLiteralCreation::NeverBuilt
+        && let Some(message) = describe_regexp_construction_error(&text, letters)
+    {
+        let error = emit_syntax_error(lowering, &message);
+        lowering.emit_throw(error);
+        return lowering.builder.undefined();
+    }
+    let pattern = match &text {
+        Cow::Borrowed(_) => lowering.file.intern_atom(pattern),
+        Cow::Owned(printed) => lowering.file.intern_bytes(printed),
     };
-    lowering.builder.new_reg_exp(pattern, flags)
-}
-
-/// `bun run` never parses a literal that its transpiler leaves out, so one that JavaScript rejects stops nothing. It stays an object for a test of its truth.
-fn is_left_out_and_invalid(
-    file: &FileLowering<'_, '_, '_, '_>,
-    literal: ExprId,
-    pattern: Atom,
-    flags: Atom,
-) -> bool {
-    let position = file.hir[literal].pos;
-    if !file
-        .transpiled
-        .as_ref()
-        .is_some_and(|it| !it.has_regexp_literal_at(position))
-    {
-        return false;
-    }
-    let letters = file.queries.atom_bytes(flags);
-    regexp_flags(letters).is_none()
-        || describe_regexp_syntax_error(file.queries.atom_bytes(pattern), letters).is_some()
-}
-
-/// As `js_printer` writes a literal for `bun run`, so that `source` reads the same. `None`: as written.
-fn pattern_as_printed(written: &[u8]) -> Option<Vec<u8>> {
-    let is_printed_as_written = |character: u32| (FIRST_ASCII..=LAST_ASCII).contains(&character);
-    if written
-        .iter()
-        .all(|&byte| is_printed_as_written(u32::from(byte)))
-    {
-        return None;
-    }
-    let mut printed = Vec::with_capacity(written.len() * 2);
-    let characters = CodepointIterator::init(written);
-    let mut cursor = Cursor::default();
-    while characters.next(&mut cursor) {
-        match cursor.c as u32 {
-            character if is_printed_as_written(character) => printed.push(character as u8),
-            character @ 0..=0xFFFF => printed.extend_from_slice(&bmp_escape(character)),
-            character => printed.extend_from_slice(&surrogate_pair_escape(character)),
+    match creation {
+        RegExpLiteralCreation::FromRecord => lowering.builder.new_reg_exp(pattern, flags),
+        RegExpLiteralCreation::NeverBuilt => emit_regexp_construction(lowering, pattern, letters),
+        RegExpLiteralCreation::DependsOnStack => {
+            emit_deeply_nested_regexp(lowering, pattern, letters)
         }
     }
-    Some(printed)
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -135,6 +161,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut length = prefix.len() as u32;
         let mut remaining = elements;
         while let Some((&element, rest)) = remaining.split_first() {
+            if !self.may_wait_with(values.len() - prefix.len()) {
+                break;
+            }
             match hir[element].kind {
                 ExprKind::Spread(_) => break,
                 ExprKind::Missing => holes.push(length),
@@ -153,27 +182,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn lower_appended_spread(&mut self, array: ValueId, spread: ExprId, iterable: ExprId) {
         let hir = self.file.hir;
-        // JSC reports and records the iteration at the end of `...`.
-        let position = match self.file.begins_with_parenthesis(iterable) {
-            _ if self.file.runs_as_written() => hir[spread].pos + 3,
-            true => hir[spread].pos,
-            false => self.file.first_position(iterable),
-        };
-        if !ends_in_list_literal(self.file, iterable) {
+        if !ends_in_array_literal(self.file, iterable) {
+            let position = hir[spread].pos + 3;
             let iterable = self.lower_expression(iterable);
             self.set_position(position);
             self.builder.append_spread(array, iterable);
-            self.builder.record_position(position);
             return;
         }
+        if !self.enter_nesting(hir[iterable].pos) {
+            return;
+        }
+        let counted = self.enter_counted_expression(iterable);
         match hir[iterable].kind {
-            // Bun's transpiler prints the elements of a list in place of its spread, unless it has none.
             ExprKind::Array(elements) => {
                 for element in hir.ids(elements) {
                     self.lower_appended_element(array, element);
-                }
-                if elements.is_empty() {
-                    self.builder.record_position(position);
                 }
             }
             ExprKind::Cond { test, branches } => {
@@ -188,10 +211,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     self.jump(join);
                 }
                 self.continue_in(join);
-                self.builder.record_position(position);
             }
-            _ => unreachable!("ends_in_list_literal has looked"),
+            _ => unreachable!("ends_in_array_literal has looked"),
         }
+        self.leave_counted_expression(counted);
+        self.leave_nesting();
     }
 
     fn lower_appended_element(&mut self, array: ValueId, element: ExprId) {
@@ -212,33 +236,91 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 }
 
-fn ends_in_list_literal(file: &FileLowering<'_, '_, '_, '_>, iterable: ExprId) -> bool {
+fn ends_in_array_literal(file: &FileLowering<'_, '_, '_, '_>, iterable: ExprId) -> bool {
     let hir = file.hir;
-    if file.is_statically_resolved(iterable)
-        || file.is_simplified(iterable)
-        || file.runs_as_written()
-    {
+    if !file.is_array_iterator_protocol_intact() {
         return false;
     }
     let is_dead = |arm: ExprId| file.decisions().is_dead_expr(arm);
-    match hir[iterable].kind {
-        ExprKind::Array(elements) => hir
-            .ids(elements)
-            .all(|element| !matches!(hir[element].kind, ExprKind::Missing)),
-        ExprKind::Cond { branches, .. } => {
-            let Branches { yes, no } = hir.branches(branches);
-            !is_dead(yes)
-                && !is_dead(no)
-                && (ends_in_list_literal(file, yes) || ends_in_list_literal(file, no))
+    let is_hole = |element: ExprId| matches!(hir[element].kind, ExprKind::Missing);
+    let mut pending: SmallVec<[ExprId; 8]> = SmallVec::from_slice(&[iterable]);
+    while let Some(candidate) = pending.pop() {
+        if file.is_statically_resolved(candidate) || file.is_simplified(candidate) {
+            continue;
         }
-        _ => false,
+        match hir[candidate].kind {
+            ExprKind::Array(elements) if !hir.ids(elements).any(is_hole) => return true,
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
+                if !is_dead(yes) && !is_dead(no) {
+                    pending.extend_from_slice(&[no, yes]);
+                }
+            }
+            _ => {}
+        }
     }
+    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::regexp_flags;
+    use crate::compile::testing::lower_program_replacing;
+    use crate::ir::Opcode;
     use crate::ir::generated::RegExpFlags;
+
+    fn count_closures_that_wait(program: &str, function: &str) -> usize {
+        let lowered = lower_program_replacing(&[("a.js", program)], &[]);
+        let fragment = &lowered[0].1.fragment;
+        let tables = fragment.tables.take();
+        let mut functions = fragment.functions.iter().map(|(_, function)| function);
+        let found = functions.find(|candidate| {
+            let text = candidate.name.map(|name| tables.strings.get(name));
+            text == Some(function.as_bytes())
+        });
+        let found = found.expect("the fragment defines the function");
+        let takers = [
+            Opcode::NewArray,
+            Opcode::AppendElement,
+            Opcode::NewObject,
+            Opcode::PropDefine,
+        ];
+        let (mut waiting, mut most) = (0, 0);
+        for value in found.body.blocks().flat_map(|block| block.values()) {
+            if value.opcode == Opcode::NewClosure {
+                waiting += 1;
+                most = most.max(waiting);
+            } else if takers.contains(&value.opcode) {
+                waiting = 0;
+            }
+        }
+        most
+    }
+
+    #[test]
+    fn literal_takes_its_values_as_they_are_made_where_the_function_suspends() {
+        let write_out = |write: &dyn Fn(usize) -> String| -> String {
+            (0..40).map(write).collect::<Vec<String>>().join(", ")
+        };
+        let list = write_out(&|index| format!("() => {index}"));
+        let object = write_out(&|index| format!("k{index}: () => {index}"));
+        let indexes = write_out(&|index| format!("{index}: () => {index}"));
+        let heads = [
+            ("async function", [32, 33, 32]),
+            ("function*", [32, 33, 32]),
+            ("function", [40, 40, 40]),
+        ];
+        for (head, expected) in heads {
+            let program = format!(
+                "export {head} list() {{ return [{list}]; }}
+export {head} object() {{ return {{ {object} }}; }}
+export {head} indexes() {{ return {{ {indexes} }}; }}"
+            );
+            let counted = ["list", "object", "indexes"]
+                .map(|function| count_closures_that_wait(&program, function));
+            assert_eq!(counted, expected, "{head}");
+        }
+    }
 
     #[test]
     fn flag_letters() {
@@ -255,7 +337,10 @@ mod tests {
         for (letter, flag) in flags {
             assert_eq!(regexp_flags(&[letter]), Some(flag));
         }
-        assert_eq!(regexp_flags(b"dgimsuvy"), Some(RegExpFlags::ALL));
+        let without_sets = RegExpFlags::ALL.without(RegExpFlags::UNICODE_SETS);
+        let without_unicode = RegExpFlags::ALL.without(RegExpFlags::UNICODE);
+        assert_eq!(regexp_flags(b"dgimsuy"), Some(without_sets));
+        assert_eq!(regexp_flags(b"dgimsvy"), Some(without_unicode));
         assert_eq!(regexp_flags(b""), Some(RegExpFlags::default()));
     }
 
@@ -265,5 +350,12 @@ mod tests {
         assert_eq!(regexp_flags(b"gz"), None);
         assert_eq!(regexp_flags(b"gig"), None);
         assert_eq!(regexp_flags("g\u{e9}".as_bytes()), None);
+    }
+
+    #[test]
+    fn unicode_excludes_unicode_sets() {
+        assert_eq!(regexp_flags(b"uv"), None);
+        assert_eq!(regexp_flags(b"vu"), None);
+        assert_eq!(regexp_flags(b"dgimsuvy"), None);
     }
 }

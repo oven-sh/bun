@@ -1,0 +1,12 @@
+import { round, makeThings, tell, Crate } from "./the-questions.mjs";
+const things = makeThings();
+await round("as made", things);
+const old = Crate.prototype;
+Crate.prototype = { weigh: old.weigh };
+await round("the old things below the old prototype", things);
+await round("new things below the new one", makeThings());
+Crate.prototype = 5;
+await round("no object under prototype", { crate: things.crate, number: 7 });
+Crate.prototype = old;
+await round("the old one again", things);
+tell();

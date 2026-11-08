@@ -2336,7 +2336,7 @@ static bool isNativeFunction(JSValue value)
     JSObject* object = asObject(value);
 #if ENABLE(AOT)
     if (JSC::AOT::CompiledCallee::isCompiledCallee(object))
-        return JSC::AOT::belongsToBuiltinModule(object) || JSC::AOT::CompiledCallee::isBoundFunction(object);
+        return JSC::AOT::belongsToBuiltinModule(object);
 #endif
     auto* function = dynamicDowncast<JSFunction>(object);
     return !function || function->isHostOrPrivateBuiltinFunction();

@@ -2041,3 +2041,149 @@ it("Readable.fromWeb's native source accepts pull(view) without the flags array"
     delete Object.prototype.setFlowing;
   }
 });
+
+// `Stream`, the exports object of node:stream, is above every stream class. Modules such as node:net, node:tls and
+// node:crypto load their class without node:stream, so a program can reach `Stream` there first, and freeze it.
+describe("the members of node:stream before node:stream has loaded", () => {
+  const show = value => (typeof value === "function" ? `function ${value.name}` : typeof value);
+  // Of the node:stream that this file has imported.
+  const keys = Object.keys(Stream);
+  const members = keys.map(key => show(Stream[key]));
+  const kinds = keys.map(key => ("value" in Object.getOwnPropertyDescriptor(Stream, key) ? "data" : "accessor"));
+
+  // The same three lists, of the node:stream of a child.
+  const helpers = `
+    const show = value => (typeof value === "function" ? "function " + value.name : typeof value);
+    const describeStream = nodeStream => {
+      const keys = Object.keys(nodeStream);
+      return {
+        keys,
+        members: keys.map(key => show(nodeStream[key])),
+        kinds: keys.map(key => ("value" in Object.getOwnPropertyDescriptor(nodeStream, key) ? "data" : "accessor")),
+      };
+    };
+  `;
+
+  async function expectChildToPrint(script, expected) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", helpers + script], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  }
+
+  it.concurrent.each([
+    ["freeze", `require("node:net").Socket`],
+    ["seal", `require("node:crypto").Hash`],
+    ["preventExtensions", `require("node:tls").TLSSocket`],
+  ])("require('node:stream') has them after Object.%s of what is above %s", async (lock, top) => {
+    // A sealed or frozen `Stream` keeps the accessors that it had for the members, and a store to one does nothing.
+    // Node.js has data properties there, so a store to a sealed one takes effect.
+    const keepsAccessors = lock !== "preventExtensions";
+    await expectChildToPrint(
+      `
+        for (let object = ${top}; object !== Function.prototype; object = Object.getPrototypeOf(object))
+          Object.${lock}(object);
+        const nodeStream = require("node:stream");
+        nodeStream.pipeline = "stored";
+        console.log(JSON.stringify({
+          isAboveReadable: Object.getPrototypeOf(nodeStream.Readable) === nodeStream,
+          isExtensible: Object.isExtensible(nodeStream),
+          others: [typeof require("node:zlib").createGzip, typeof process.stdout.write],
+          ...describeStream(nodeStream),
+        }));
+      `,
+      {
+        isAboveReadable: true,
+        isExtensible: false,
+        others: ["function", "function"],
+        keys,
+        members: keepsAccessors ? members : members.with(keys.indexOf("pipeline"), "string"),
+        kinds: keepsAccessors
+          ? keys.map(key => (key.startsWith("_") || key === "Stream" ? "data" : "accessor"))
+          : kinds,
+      },
+    );
+  });
+
+  it.concurrent("a class of node:net inherits them, and node:stream has the same ones", async () => {
+    await Promise.all([
+      expectChildToPrint(
+        `
+          const { Socket } = require("node:net");
+          const Stream = Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(Socket)));
+          const keysBefore = Object.keys(Stream);
+          const getters = keysBefore.map(key => Object.getOwnPropertyDescriptor(Stream, key).get);
+          class Below extends Socket {}
+          Below.pipeline = "stored on the class below";
+          const pipeline = Socket.pipeline;
+          const afterTheFirstRead = describeStream(Stream);
+          const nodeStream = require("node:stream");
+          console.log(JSON.stringify({
+            keysBefore,
+            storedBelow: Object.getOwnPropertyDescriptor(Below, "pipeline"),
+            afterTheFirstRead,
+            isTheSameObject: nodeStream === Stream && nodeStream.pipeline === pipeline,
+            gettersAnswer: keysBefore.filter((key, index) => getters[index] && getters[index]() === nodeStream[key]),
+            ...describeStream(nodeStream),
+          }));
+        `,
+        {
+          keysBefore: keys,
+          storedBelow: { value: "stored on the class below", writable: true, enumerable: true, configurable: true },
+          // The first read of one has loaded node:stream.
+          afterTheFirstRead: { keys, members, kinds },
+          isTheSameObject: true,
+          // What the accessors of before the load return, which is what they return on a sealed or frozen `Stream`.
+          gettersAnswer: keys.filter(key => !key.startsWith("_") && key !== "Stream"),
+          keys,
+          members,
+          kinds,
+        },
+      ),
+      // Where node:stream loads first, `Stream` never has the accessors, and ends the same.
+      expectChildToPrint(`console.log(JSON.stringify(describeStream(require("node:stream"))));`, {
+        keys,
+        members,
+        kinds,
+      }),
+    ]);
+  });
+
+  it.concurrent("a store through a class below goes where a store to a data property goes", async () => {
+    await expectChildToPrint(
+      `
+        const { Socket } = require("node:net");
+        const Stream = Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(Socket)));
+        class ReadOnly extends Socket {}
+        Object.defineProperty(ReadOnly, "compose", { value: "read-only", configurable: true });
+        class WithAccessor extends Socket {
+          static get finished() {
+            return "accessor";
+          }
+        }
+        class WithMethod extends Socket {
+          static destroy() {}
+        }
+        Reflect.set(Stream, "compose", "stored", ReadOnly);
+        Reflect.set(Stream, "finished", "stored", WithAccessor);
+        Reflect.set(Stream, "destroy", "stored", WithMethod);
+        Reflect.set(Stream, "pipeline", "stored", 5);
+        console.log(JSON.stringify({
+          readOnly: ReadOnly.compose,
+          withAccessor: WithAccessor.finished,
+          withMethod: Object.getOwnPropertyDescriptor(WithMethod, "destroy"),
+          kindsOfStream: ["compose", "finished", "destroy", "pipeline"].map(key =>
+            "value" in Object.getOwnPropertyDescriptor(Stream, key) ? "data" : "accessor",
+          ),
+        }));
+      `,
+      {
+        readOnly: "read-only",
+        withAccessor: "accessor",
+        withMethod: { value: "stored", writable: true, enumerable: false, configurable: true },
+        kindsOfStream: ["accessor", "accessor", "accessor", "accessor"],
+      },
+    );
+  });
+});

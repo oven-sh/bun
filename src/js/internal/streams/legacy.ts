@@ -2,9 +2,17 @@
 
 const EE = require("node:events");
 const { isArrayBufferView, isUint8Array } = require("node:util/types");
+const { internals } = require("internal/streams/state");
 
-const ReflectOwnKeys = Reflect.ownKeys;
+// Reflect lists a member from when it is first read. internal/primordials, which is loaded behind this one, reads the second ahead of the last two.
+const {
+  ownKeys: ReflectOwnKeys,
+  getPrototypeOf: _ReflectGetPrototypeOf,
+  getOwnPropertyDescriptor: ReflectGetOwnPropertyDescriptor,
+  defineProperty: ReflectDefineProperty,
+} = Reflect;
 const ArrayIsArray = Array.isArray;
+const ObjectDefineProperty = Object.defineProperty;
 
 declare global {
   namespace $Node {
@@ -24,7 +32,7 @@ declare global {
       resume?(): unknown;
     }
 
-    /** `require("node:stream")`. internal/stream.ts adds the members that other modules define. */
+    /** `require("node:stream")`. internal/stream.ts stores the members that other modules define. */
     interface StreamConstructor {
       new (options?: EventEmitterOptions): Stream;
       (this: Stream, options?: EventEmitterOptions): void;
@@ -38,8 +46,8 @@ declare global {
       duplexPair: typeof import("internal/streams/duplexpair").default;
       pipeline: typeof import("internal/streams/pipeline").default.pipeline;
       finished: typeof import("internal/streams/end-of-stream").default;
-      /** The old name of `finished`, which node/stream.ts adds. */
-      eos?: typeof import("internal/streams/end-of-stream").default;
+      /** The old name of `finished`. */
+      eos: typeof import("internal/streams/end-of-stream").default;
       compose: typeof import("internal/streams/compose").default;
       addAbortSignal: typeof import("internal/streams/add-abort-signal").default.addAbortSignal;
       destroy: typeof import("internal/streams/destroy").default.destroyer;
@@ -179,4 +187,131 @@ Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
   return new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
 };
 
-export default { Stream: Stream as $Node.StreamConstructor, prependListener };
+type LazyMember = Exclude<keyof $Node.StreamConstructor, "prototype" | "Stream" | "promises" | `_${string}`>;
+
+// What internal/stream.ts stores to `Stream` under that name.
+function loadMember(name: LazyMember): Function {
+  switch (name) {
+    case "isDestroyed":
+      return require("internal/streams/utils").isDestroyed;
+    case "isDisturbed":
+      return require("internal/streams/utils").isDisturbed;
+    case "isErrored":
+      return require("internal/streams/utils").isErrored;
+    case "isReadable":
+      return require("internal/streams/utils").isReadable;
+    case "isWritable":
+      return require("internal/streams/utils").isWritable;
+    case "Readable":
+      return require("internal/streams/readable");
+    case "Writable":
+      return require("internal/streams/writable");
+    case "Duplex":
+      return require("internal/streams/duplex");
+    case "Transform":
+      return require("internal/streams/transform");
+    case "PassThrough":
+      return require("internal/streams/passthrough");
+    case "duplexPair":
+      return require("internal/streams/duplexpair");
+    case "pipeline":
+      return require("internal/streams/pipeline").pipeline;
+    case "addAbortSignal":
+      return require("internal/streams/add-abort-signal").addAbortSignal;
+    case "finished":
+    case "eos":
+      return require("internal/streams/end-of-stream");
+    case "destroy":
+      return require("internal/streams/destroy").destroyer;
+    case "compose":
+      return require("internal/streams/compose");
+    case "setDefaultHighWaterMark":
+      return require("internal/streams/state").setDefaultHighWaterMark;
+    case "getDefaultHighWaterMark":
+      return require("internal/streams/state").getDefaultHighWaterMark;
+  }
+}
+
+function lazyMember(name: LazyMember) {
+  // As a store to a data property: the value goes on the receiver, a class below `Stream` for `Socket.pipeline = value`.
+  function set(this: unknown, value: unknown) {
+    if (!$isObject(this)) return;
+    const own = ReflectGetOwnPropertyDescriptor(this, name);
+    if (own === undefined)
+      ReflectDefineProperty(this, name, {
+        __proto__: null,
+        value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    else if (own.writable || own.set === set)
+      ReflectDefineProperty(this, name, { __proto__: null, value, writable: true });
+  }
+  ObjectDefineProperty(Stream, name, {
+    __proto__: null,
+    enumerable: true,
+    configurable: true,
+    get() {
+      // internal/stream stores the members itself once it has begun to load, and a load that throws does so at require("node:stream").
+      if (!internals.streamDefinesItsMembers) {
+        try {
+          require("internal/stream");
+        } catch {}
+      }
+      return loadMember(name);
+    },
+    set,
+  });
+}
+
+// Modules such as node:net and node:crypto make `Stream` without internal/stream, where a program can freeze it: so it has every member from the start, as an accessor that loads internal/stream.
+function defineLazyMembers() {
+  const names = [
+    "isDestroyed",
+    "isDisturbed",
+    "isErrored",
+    "isReadable",
+    "isWritable",
+    "Readable",
+    "Writable",
+    "Duplex",
+    "Transform",
+    "PassThrough",
+    "duplexPair",
+    "pipeline",
+    "addAbortSignal",
+    "finished",
+    "destroy",
+    "compose",
+    "setDefaultHighWaterMark",
+    "getDefaultHighWaterMark",
+  ] as const satisfies readonly LazyMember[];
+  for (let i = 0; i < names.length; i++) lazyMember(names[i]);
+  definePromisesAndStream();
+  lazyMember("eos");
+}
+
+// Behind the members that other modules define and ahead of `eos`, from whichever module puts the members on `Stream`.
+function definePromisesAndStream() {
+  ObjectDefineProperty(Stream, "promises", {
+    __proto__: null,
+    configurable: true,
+    enumerable: true,
+    get() {
+      return require("internal/stream.promises");
+    },
+  });
+  // Backwards-compat with node 0.4.x
+  (Stream as $Node.StreamConstructor).Stream = Stream as $Node.StreamConstructor;
+}
+
+const hasLazyMembers = !internals.streamDefinesItsMembers;
+if (hasLazyMembers) defineLazyMembers();
+
+export default {
+  Stream: Stream as $Node.StreamConstructor,
+  prependListener,
+  hasLazyMembers,
+  definePromisesAndStream,
+};

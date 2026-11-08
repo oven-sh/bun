@@ -3,16 +3,17 @@
 const ObjectKeys = Object.keys;
 const ObjectDefineProperty = Object.defineProperty;
 
+const { setDefaultHighWaterMark, getDefaultHighWaterMark, internals } = require("internal/streams/state");
+// Set before internal/streams/legacy can load: a `Stream` that is made from here on gets its members from the stores below, not as accessors.
+internals.streamDefinesItsMembers = true;
 const customPromisify = Symbol.for("nodejs.util.promisify.custom");
 const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
 const compose = require("internal/streams/compose");
-const { setDefaultHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
 const { pipeline } = require("internal/streams/pipeline");
 const { destroyer } = require("internal/streams/destroy");
 const eos = require("internal/streams/end-of-stream");
 const utils = require("internal/streams/utils");
-const { isArrayBufferView, isUint8Array } = require("node:util/types");
-const Stream = require("internal/streams/legacy").Stream;
+const { Stream, hasLazyMembers, definePromisesAndStream } = require("internal/streams/legacy");
 
 Stream.isDestroyed = utils.isDestroyed;
 Stream.isDisturbed = utils.isDisturbed;
@@ -75,14 +76,9 @@ Stream.compose = compose;
 Stream.setDefaultHighWaterMark = setDefaultHighWaterMark;
 Stream.getDefaultHighWaterMark = getDefaultHighWaterMark;
 
-ObjectDefineProperty(Stream, "promises", {
-  __proto__: null,
-  configurable: true,
-  enumerable: true,
-  get() {
-    return require("internal/stream.promises");
-  },
-});
+if (!hasLazyMembers) definePromisesAndStream();
+// The old name of `finished`.
+Stream.eos = eos;
 
 ObjectDefineProperty(pipeline, customPromisify, {
   __proto__: null,
@@ -99,14 +95,5 @@ ObjectDefineProperty(eos, customPromisify, {
     return require("internal/stream.promises").finished;
   },
 });
-
-// Backwards-compat with node 0.4.x
-Stream.Stream = Stream;
-
-Stream._isArrayBufferView = isArrayBufferView;
-Stream._isUint8Array = isUint8Array;
-Stream._uint8ArrayToBuffer = function _uint8ArrayToBuffer(chunk) {
-  return new $Buffer(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-};
 
 export default Stream;

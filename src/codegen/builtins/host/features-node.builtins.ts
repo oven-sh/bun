@@ -222,7 +222,7 @@ export default b.declarations(
 
   extendAll(["NodeSmallModules"], "node:util/types", "node:constants"),
 
-  extendAll(["Buffer"], "Buffer", "internal/stream", "internal/streams/legacy", "internal/streams/readable"),
+  extendAll(["Buffer"], "Buffer", "internal/streams/legacy", "internal/streams/readable"),
   extendAll(["NodeBufferModule", "Buffer"], "node:buffer"),
 
   extendAll(["NodeFetch"], "node-fetch", ...nativeBindings("Cpp", "NodeFetch.cpp", "createNodeFetchInternalBinding")),

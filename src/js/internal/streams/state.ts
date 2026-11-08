@@ -147,6 +147,8 @@ interface Internals {
   destroyEndedRequest: ((state: ReadableState, stream: $Node.Readable) => boolean) | undefined;
   /** Only in what was compiled ahead of time. */
   makeObjectReadable?: (highWaterMark: number) => $Node.Readable;
+  /** internal/stream sets it before it loads its parts: it stores the members of node:stream on `Stream` itself. */
+  streamDefinesItsMembers: boolean;
 }
 
 type WritableAccessorName =
@@ -183,6 +185,7 @@ const internals: Internals = {
   onRequestBodyData: undefined,
   takeRequestCloseTick: undefined,
   destroyEndedRequest: undefined,
+  streamDefinesItsMembers: false,
 };
 
 // TODO(benjamingr) it is likely slower to do it this way than with free functions

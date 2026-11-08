@@ -306,8 +306,6 @@ pub struct VirtualMachine {
     pub(crate) has_enabled_macro_mode: bool,
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
-    /// True only while preload modules evaluate, not inside the hooks they register. Whether what a preload sets up
-    /// stays for every test file is a question for `bun_test::is_preload_for_the_run`.
     pub is_in_preload: bool,
     /// `Watcher::get_hash()` of the preload script currently loading.
     pub preload_hash: u32,

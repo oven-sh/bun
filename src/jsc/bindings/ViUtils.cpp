@@ -370,6 +370,28 @@ extern "C" void ViUtils__unstubAllGlobals(Zig::GlobalObject* globalObject)
     Bun::unstubAllGlobals(globalObject);
 }
 
+// What the first stub of `globalThis[name]` replaced: undefined for nothing or an accessor. Empty if it isn't stubbed.
+extern "C" JSC::EncodedJSValue ViUtils__replacedByStub(Zig::GlobalObject* globalObject, const BunString* name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSValue stubbedGlobals = globalObject->mockModule.stubbedGlobals.get();
+    if (!stubbedGlobals)
+        return {};
+    auto* originals = uncheckedDowncast<JSC::JSMap>(stubbedGlobals);
+    // The keys are what vi.stubGlobal() made of its names, so the lookups of this one run no script.
+    JSC::JSValue key = JSC::identifierToJSValue(vm, JSC::Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy)));
+    bool isStubbed = Bun::hasOriginal(globalObject, originals, key);
+    scope.assertNoException();
+    if (!isStubbed)
+        return {};
+    JSC::JSValue original = JSC::JSValue::decode(JSC__JSMap__get(originals, globalObject, JSC::JSValue::encode(key)));
+    scope.assertNoException();
+    auto* descriptor = original ? original.getObject() : nullptr;
+    JSC::JSValue replaced = descriptor ? descriptor->getDirect(vm, vm.propertyNames->value) : JSC::JSValue();
+    return JSC::JSValue::encode(replaced ? replaced : JSC::jsUndefined());
+}
+
 // Call after the two above. A test file may have undone or replaced the preload's stubs.
 extern "C" void ViUtils__stubWhatPreloadStubbed(Zig::GlobalObject* globalObject)
 {

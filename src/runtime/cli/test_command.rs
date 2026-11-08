@@ -5582,14 +5582,9 @@ impl TestCommand {
                 }
             }
 
-            let kept_fakes = if next_load_shares_global {
-                crate::test_runner::timers::fake_timers::kept_fakes_of_preload(vm.global())
-            } else {
-                Default::default()
-            };
             crate::test_runner::vi_utils::on_test_file_end(vm.global(), next_load_shares_global);
             if next_load_shares_global {
-                crate::test_runner::timers::fake_timers::on_test_file_end(vm.global(), kept_fakes);
+                crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
             Self::undo_module_mocks(vm, global, file_path, next_load_shares_global);
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.

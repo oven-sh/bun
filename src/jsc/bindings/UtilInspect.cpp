@@ -11,6 +11,7 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/IdentifierInlines.h"
+#include <wtf/SetForScope.h>
 
 namespace Bun {
 
@@ -63,7 +64,10 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;
     arguments.append(jsNumber(depth));
-    if (WebCore::isInspectFunctionOfBuffer(functionToCall)) {
+    const bool isOfBuffer = WebCore::isInspectFunctionOfBuffer(functionToCall);
+    // What a function of the program prints is a print of its own: a Buffer that is being printed is no way back for it.
+    SetForScope buffersBeingInspected(WebCore::bufferBeingInspected, isOfBuffer ? WebCore::bufferBeingInspected : nullptr);
+    if (isOfBuffer) {
         // Of its operands it reads `showHidden` of the second, which has no prototype: only the formatter turns it on.
         JSObject* options = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
         if (flags.contains(CustomInspectFlag::ShowHidden)) [[unlikely]]

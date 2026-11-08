@@ -3835,6 +3835,13 @@ for (let withOverridenBufferWrite of [false, true]) {
         });
       });
 
+      it("inspect() prints a Buffer in full that a custom inspect function of one of its values prints", () => {
+        const buf = Buffer.from("a");
+        let again = false;
+        buf.x = { [util.inspect.custom]: () => (again ? "again" : ((again = true), "first:" + util.inspect(buf))) };
+        expect(util.inspect(buf)).toBe("<Buffer 61, x: first:<Buffer 61, x: again>>");
+      });
+
       it("read alias", () => {
         var buf = new Buffer(1024);
         var data = new DataView(buf.buffer);

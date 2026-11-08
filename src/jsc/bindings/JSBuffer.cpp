@@ -1913,12 +1913,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalOb
     return JSC::JSValue::encode(jsNumber(index));
 }
 
-// The Buffers whose extra values are being printed on this thread, innermost first. Each value is printed by a formatter of its own, which knows none of them.
-struct BufferBeingInspected {
-    JSArrayBufferView* buffer;
-    const BufferBeingInspected* outer;
-};
-static thread_local const BufferBeingInspected* s_bufferBeingInspected = nullptr;
+thread_local const BufferBeingInspected* bufferBeingInspected = nullptr;
 
 static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
@@ -1969,11 +1964,11 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
         RETURN_IF_EXCEPTION(scope, {});
 
         if (array.size() > 0) {
-            for (auto* outer = s_bufferBeingInspected; outer; outer = outer->outer) {
+            for (auto* outer = bufferBeingInspected; outer; outer = outer->outer) {
                 if (outer->buffer == castedThis)
                     return JSValue::encode(jsNontrivialString(vm, "[Circular]"_s));
             }
-            const BufferBeingInspected thisBuffer { castedThis, s_bufferBeingInspected };
+            const BufferBeingInspected thisBuffer { castedThis, bufferBeingInspected };
 
             any = true;
             if (data.size() > 0) {
@@ -1988,7 +1983,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 auto value = castedThis->get(globalObject, ident);
                 RETURN_IF_EXCEPTION(scope, {});
                 // Not around the read above: a getter that prints this Buffer starts a print of its own.
-                SetForScope whileTheValueIsPrinted(s_bufferBeingInspected, &thisBuffer);
+                SetForScope whileTheValueIsPrinted(bufferBeingInspected, &thisBuffer);
                 auto inspected = Bun__inspect_singleline_show_hidden(globalObject, value, showHidden).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, {});
                 result.append(inspected);

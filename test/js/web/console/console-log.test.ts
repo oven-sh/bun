@@ -522,6 +522,16 @@ describe("non-enumerable keys", () => {
         const printsItself = Buffer.from("c");
         Object.defineProperty(printsItself, "hex", { get() { if (!printed) { printed = true; console.log(this); } return "63"; }, enumerable: true });
         console.log(printsItself);
+        // So does a custom inspect function of a value that prints the Buffer.
+        let again = false;
+        const printedByItsValue = Buffer.from("d");
+        printedByItsValue.x = { [Symbol.for("nodejs.util.inspect.custom")]: () => (again ? "again" : ((again = true), "first:" + Bun.inspect(printedByItsValue))) };
+        console.log(printedByItsValue);
+        // The inspect method of a Buffer reads its values, as in Node: a non-enumerable getter of the Buffer itself is called.
+        let calls = 0;
+        const withGetter = Object.defineProperty(Buffer.from("e"), "g", { get: () => ++calls, enumerable: false });
+        console.log("%o", withGetter);
+        console.log(calls);
         Object.prototype.showHidden = true;
         console.log(buf);`),
     ).toEqual({
@@ -534,6 +544,9 @@ describe("non-enumerable keys", () => {
         "<Buffer 62, holder: { back: [Circular] }>",
         `<Buffer 63, hex: "63">`,
         `<Buffer 63, hex: "63">`,
+        "<Buffer 64, x: first:<Buffer 64, x: again>>",
+        "<Buffer 65, g: 1>",
+        "1",
         "<Buffer 61 62, prop: { shown: 1 }>",
         "",
       ].join("\n"),

@@ -426,16 +426,16 @@ export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefin
 interface GithubPullRequestFile {
   filename: string;
   status: string;
-  /** Where a moved file was. */
+  /** Where a moved file was, or what a copied file was copied from. */
   previous_filename?: string;
 }
 
 /**
  * The paths that a pull request changes with one file. GitHub lists a moved file once, under its new path. The file is
- * gone from its old path, so that path changes too.
+ * gone from its old path, so that path changes too. The source of a copy does not change.
  */
-export function pullRequestFilePaths({ filename, previous_filename }: GithubPullRequestFile): string[] {
-  return previous_filename ? [filename, previous_filename] : [filename];
+export function pullRequestFilePaths({ filename, status, previous_filename }: GithubPullRequestFile): string[] {
+  return status === "renamed" && previous_filename ? [filename, previous_filename] : [filename];
 }
 
 /**

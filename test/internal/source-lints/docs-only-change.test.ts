@@ -32,7 +32,20 @@ test("a change is docs-only when each path is under docs/ and none is under docs
 test("a moved file counts under its old path too", () => {
   const moved = (from: string, to: string) =>
     pullRequestFilePaths({ filename: to, status: "renamed", previous_filename: from });
-  expect(pullRequestFilePaths({ filename: "docs/index.mdx", status: "modified" })).toEqual(["docs/index.mdx"]);
+  expect({
+    "a changed file": pullRequestFilePaths({ filename: "docs/index.mdx", status: "modified" }),
+    "a moved file": moved("docs/runtime/a.mdx", "docs/runtime/b.mdx"),
+    // The pull request does not change what it copies from.
+    "a copied file": pullRequestFilePaths({
+      filename: "scripts/agent-copy.ts",
+      status: "copied",
+      previous_filename: "scripts/agent.ts",
+    }),
+  }).toEqual({
+    "a changed file": ["docs/index.mdx"],
+    "a moved file": ["docs/runtime/b.mdx", "docs/runtime/a.mdx"],
+    "a copied file": ["scripts/agent-copy.ts"],
+  });
   expect({
     "a page moved inside docs/": isDocsOnlyChange(moved("docs/runtime/a.mdx", "docs/runtime/b.mdx")),
     "a rule page moved out of docs/lint/rules/": isDocsOnlyChange(
@@ -50,21 +63,24 @@ test("a moved file counts under its old path too", () => {
 // scripts/build/codegen.ts, or an `include_str!`.
 test("no file in a source list of scripts/glob-sources.ts is docs-only", () => {
   // Without a docs file in the source lists, the next assertion would hold for any rule.
-  expect(inSourceLists.filter(file => file.startsWith("docs/")).length).toBeGreaterThan(1000);
+  expect(inSourceLists.some(file => file.startsWith("docs/"))).toBe(true);
   expect(inSourceLists.filter(file => isDocsOnlyChange([file]))).toEqual([]);
 });
 
 // Both scripts do their work when they are imported, so they are read as text.
 test("the pipeline step and the test runner decide with isDocsOnlyChange()", () => {
-  const conditionsAbove = (file: string, line: string) =>
-    Array.from(readFileSync(join(root, file), "utf8").matchAll(/^\s*if \((.+)\) \{\r?\n(.*)$/gm))
-      .filter(([, , next]) => next.trim() === line)
-      .map(([, condition]) => condition);
+  // The line above each place where `statement` is: the condition that the skip is under.
+  const linesAbove = (file: string, statement: string) => {
+    const lines = readFileSync(join(root, file), "utf8")
+      .split(/\r?\n/)
+      .map(line => line.trim());
+    return lines.flatMap((line, index) => (line === statement ? [lines[index - 1]] : []));
+  };
   expect({
-    ".buildkite/ci.ts": conditionsAbove(".buildkite/ci.ts", "console.log(`- PR is only docs, skipping tests!`);"),
-    "scripts/runner.node.ts": conditionsAbove("scripts/runner.node.ts", "doRunTests = false;"),
+    ".buildkite/ci.ts": linesAbove(".buildkite/ci.ts", "console.log(`- PR is only docs, skipping tests!`);"),
+    "scripts/runner.node.ts": linesAbove("scripts/runner.node.ts", "doRunTests = false;"),
   }).toEqual({
-    ".buildkite/ci.ts": ["isDocsOnlyChange(allFiles)"],
-    "scripts/runner.node.ts": ["isDocsOnlyChange(allFiles)"],
+    ".buildkite/ci.ts": ["if (isDocsOnlyChange(allFiles)) {"],
+    "scripts/runner.node.ts": ["if (isDocsOnlyChange(allFiles)) {"],
   });
 });

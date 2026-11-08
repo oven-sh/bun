@@ -109,7 +109,10 @@ test("a line leaves one way uncompared, and another leaves its build out; the ot
     ways: { ...theOtherThree, "under --aot-harden=proof-checks": "built and run, not compared" },
     exitCode: 0,
   });
-  expect(await waysUnder("// No build under --aot-harden=proof-checks: for the test\n")).toEqual({ ways: theOtherThree, exitCode: 0 });
+  expect(await waysUnder("// No build under --aot-harden=proof-checks: for the test\n")).toEqual({
+    ways: theOtherThree,
+    exitCode: 0,
+  });
 }, 240_000);
 
 test("--no-erased leaves it out with the other builds behind the first, and --deal prices it", async () => {

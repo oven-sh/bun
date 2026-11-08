@@ -397,6 +397,74 @@ test.concurrent("a '{dir}' matching nothing is the usual no-match error", async 
   expect(await exists(join(dir, "bun.lock"))).toBeFalse();
 });
 
+test.concurrent("braces around a list of names select by name", async () => {
+  const dir = await makeMonorepo();
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "{pkg-a,pkg-b}"], dir);
+  expect(stderr).toBe("Saved lockfile\n");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["pkg-a", "pkg-b"]);
+});
+
+test.concurrent("a negated list of names keeps add and remove away from them", async () => {
+  const dir = await makeMonorepo();
+
+  {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "!{pkg-a,pkg-b}"], dir);
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+
+    await expectWorkspaces(dir, [ROOT, plus(API), plus(WEB), PKG_A, PKG_B]);
+  }
+
+  {
+    const { stderr, exitCode } = await run(["remove", "no-deps", "--filter", "!{api,pkg-a,pkg-b}"], dir);
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+
+    await expectWorkspaces(dir, [ROOT, plus(API), WEB, PKG_A, PKG_B]);
+  }
+});
+
+// An update of a name glob reads the filter twice: on bun.lock and on the root's `workspaces`.
+test.concurrent("update of a name glob with a negated list of names skips those workspaces", async () => {
+  const at = (version: string) => (name: string) => ({ name, dependencies: { "no-deps": version } });
+  const [pinned, latest] = [at("1.0.0"), at("2.0.0")];
+  const dir = await makeMonorepo({
+    api: pinned("api"),
+    web: pinned("web"),
+    "pkg-a": pinned("pkg-a"),
+    "pkg-b": pinned("pkg-b"),
+  });
+  await installOk(dir);
+
+  const { stderr, exitCode } = await run(["update", "no-*", "--latest", "--filter", "!{pkg-a,pkg-b}"], dir);
+  expect(stderr).toBe("Saved lockfile\n");
+  expect(exitCode).toBe(0);
+
+  await expectWorkspaces(dir, [ROOT, latest("api"), latest("web"), pinned("pkg-a"), pinned("pkg-b")]);
+});
+
+test.concurrent("a name glob that matches the empty string does not select a root without a name", async () => {
+  const dir = await makeMonorepo({ root: { workspaces: ["packages/*"] } });
+  const before = await allPackageJsonTexts(dir);
+
+  for (const pattern of ["", "{,}"]) {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", pattern], dir);
+    expect(stderr).toBe(`error: No workspace packages matched the filter "${pattern}"\n`);
+    expect(exitCode).toBe(1);
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  }
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "{pkg-a,}"], dir);
+  expect(stderr).toBe("Saved lockfile\n");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["pkg-a"]);
+});
+
 test.concurrent.each<[string, Workspace[]]>([
   ["api...", ["api", "pkg-a"]],
   ["api^...", ["pkg-a"]],
@@ -404,6 +472,7 @@ test.concurrent.each<[string, Workspace[]]>([
   ["...^api", ["web"]],
   ["...api...", ["api", "web", "pkg-a"]],
   ["...{./packages/pkg-a}", ["api", "web", "pkg-a"]],
+  ["{api,pkg-b}...", ["api", "pkg-a", "pkg-b"]],
 ])("relation selector '%s' edits %p", async (pattern, edited) => {
   const dir = await makeMonorepo(GRAPH);
   await installOk(dir);

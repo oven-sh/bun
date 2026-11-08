@@ -3898,6 +3898,19 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["{rec-a,rec-b}", ["rec-a", "rec-b"]],
+    ["!{rec-a,rec-b}", ["rec-c"]],
+  ])("--filter '%s' reads braces around a list as names", async (filter, names) => {
+    using registry = workspaceRegistry();
+    using dir = workspace(registry.mock);
+
+    const { out, exitCode } = await publish(env, String(dir), "--filter", filter);
+    expect(registry.asked).toEqual([...names.map(name => `GET ${name}`), ...names.map(name => `PUT ${name}`)]);
+    expect(published(out)).toEqual(names.map(name => ` + ${name}@1.0.0`));
+    expect(exitCode).toBe(0);
+  });
+
   test("--filter that matches nothing is an error", async () => {
     using registry = workspaceRegistry();
     using dir = workspace(registry.mock);

@@ -107,6 +107,7 @@ impl NegatedWorkspaces {
 }
 
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
+/// Braces around a list, `{a,b}`, are a name glob. A body that starts with `.` or `/`, or has a `\`, is always a `{dir}`.
 fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
     let (mut remain, negated) = strip_negations(raw);
     let mut dependencies = false;
@@ -151,7 +152,15 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
     let base = if remain == b"*" || remain == b"**" {
         Base::All
     } else if remain.len() >= 2 && remain[0] == b'{' && remain[remain.len() - 1] == b'}' {
-        Base::Subtree(resolve(&remain[1..remain.len() - 1], path_buf))
+        let dir = &remain[1..remain.len() - 1];
+        let may_list = !matches!(dir.first(), Some(b'.' | b'/'))
+            && strings::contains_char(dir, b',')
+            && !strings::contains_char(dir, b'\\');
+        match may_list.then(|| Prepared::new(Box::<[u8]>::from(remain))) {
+            // `{a,b}` lists names. The `,` in `{a/{b,c}}` doesn't: those braces hold one directory.
+            Some(names) if !names.is_one_braced_alternative() => Base::Name(names),
+            _ => Base::Subtree(resolve(dir, path_buf)),
+        }
     } else if remain.first() == Some(&b'.') {
         Base::Path(resolve(remain, path_buf))
     } else {
@@ -169,7 +178,7 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
 
 fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> bool {
     match base {
-        // A package.json without a name (bun run --filter's walk) is only selectable by path.
+        // Neither `*` nor a name selects a package.json without a name (bun run --filter's walk). A path or a relation can.
         Base::All => {
             if c.is_root {
                 !explicit_root_only
@@ -177,7 +186,8 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
                 !c.name.is_empty()
             }
         }
-        Base::Name(glob) => glob.r#match(c.name).matches(),
+        // A glob can match the empty string, like `{a,}`.
+        Base::Name(glob) => !c.name.is_empty() && glob.r#match(c.name).matches(),
         Base::Path(glob) => glob.r#match(c.abs_posix_dir).matches(),
         Base::Subtree(glob) => {
             let mut dir = c.abs_posix_dir;

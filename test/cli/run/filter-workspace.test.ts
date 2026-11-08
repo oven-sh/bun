@@ -970,6 +970,125 @@ describe("selectors", () => {
     });
   });
 
+  // What the `present` scripts that ran printed, sorted and without the `out-` of graph_root's scripts.
+  // That is the name of each member of graph_root that ran. `shared` has no such script.
+  async function ranIn(args: string[], cwd = graph_root) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args, "present"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const ran = [...stdout.matchAll(/(?:: | \| )(?:out-)?(\S+)\r?$/gm)].map(m => m[1]).sort();
+    return { ran, error: stderr.match(/^error: .*/m)?.[0], exitCode };
+  }
+  const noMatch = (pattern: string) => ({
+    ran: [],
+    error: `error: No workspace packages matched the filter "${pattern}"`,
+    exitCode: 1,
+  });
+
+  const nameLists = [
+    { args: ["--filter", "{pkg-a,pkg-b}"], ran: ["pkg-a", "pkg-b"] },
+    { args: ["--filter", "!{pkg-a,pkg-b}"], ran: ["api", "web"] },
+    { args: ["--filter", "!!{pkg-a,pkg-b}"], ran: ["pkg-a", "pkg-b"] },
+    { args: ["--filter", "*", "--filter", "!{web,pkg-b}"], ran: ["api", "pkg-a"] },
+    { args: ["--filter", "{pkg-*,web}"], ran: ["pkg-a", "pkg-b", "web"] },
+    { args: ["--filter", "{@scope/x,pkg-a}"], ran: ["pkg-a"] },
+    { args: ["--filter", "{pkg-a,pkg-b}{,}"], ran: ["pkg-a", "pkg-b"] },
+    { args: ["--filter", "{pkg,nope}-{a,b}"], ran: ["pkg-a", "pkg-b"] },
+    { args: ["--filter", "{pkg}-{a,b}"], ran: ["pkg-a", "pkg-b"] },
+    { args: ["--filter", "{api,nope}..."], ran: ["api", "pkg-a"] },
+    { args: ["--filter", "...{pkg-a,nope}"], ran: ["api", "pkg-a", "web"] },
+    { args: ["--filter", "...^{pkg-a,nope}"], ran: ["api", "web"] },
+    { args: ["--filter", "!...{pkg-a,nope}"], ran: ["pkg-b"] },
+    { args: ["--filter", "{pkg-a,pkg-b}", "--if-present"], ran: ["pkg-a", "pkg-b"] },
+    { args: ["--parallel", "--filter", "{pkg-a,pkg-b}"], ran: ["pkg-a", "pkg-b"] },
+    { args: ["--sequential", "--filter", "{pkg-a,pkg-b}"], ran: ["pkg-a", "pkg-b"] },
+  ];
+  test.concurrent.each(nameLists.map(row => [row.args.join(" "), row] as const))(
+    "braces around a list select by name: bun run %s",
+    async (_, { args, ran }) => {
+      expect(await ranIn(args)).toEqual({ ran, error: undefined, exitCode: 0 });
+    },
+  );
+
+  // graph_root has no directory `pkg-a` and none with a `,` in its name. A `\` is a path separator on every platform.
+  test.concurrent.each<[string, string[] | undefined]>([
+    ["{packages/{web,api}}", ["api", "web"]],
+    ["!{packages/{web,api}}", ["pkg-a", "pkg-b"]],
+    ["{packages\\{web,api}}", ["api", "web"]],
+    ["!{packages\\{web,api}}", ["pkg-a", "pkg-b"]],
+    ["{packages/pkg-[a,b]}", ["pkg-a", "pkg-b"]],
+    ["{./packages/web,api}", undefined],
+    ["{/packages/web,api}", undefined],
+    ["{pkg-a}", undefined],
+    ["{pkg}-{a}", undefined],
+  ])("braces around anything else are still a directory: '%s'", async (pattern, ran) => {
+    expect(await ranIn(["--filter", pattern])).toEqual(ran ? { ran, error: undefined, exitCode: 0 } : noMatch(pattern));
+  });
+
+  // A Windows command line is too short for it.
+  test.concurrent.skipIf(isWindows)("a list of names is not joined onto a path", async () => {
+    const long = Buffer.alloc(MAX_PATH_BYTES, "x").toString();
+    expect(await ranIn(["--filter", `{pkg-a,${long}}`])).toEqual({ ran: ["pkg-a"], error: undefined, exitCode: 0 });
+  });
+
+  test.concurrent("a list of names wins over a directory with that name", async () => {
+    const pkg = (name: string) => ({
+      "package.json": JSON.stringify({ name, scripts: { present: `echo out-${name}` } }),
+    });
+    using dir = tempDir("filter-comma-directories", {
+      packages: { a: pkg("a"), b: pkg("b"), "a,b": pkg("c"), "m,n": pkg("d") },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+    const packages = join(String(dir), "packages");
+    const ran = (names: string[]) => ({ ran: names, error: undefined, exitCode: 0 });
+    // An absolute path starts with a drive letter on Windows, not with `/`.
+    const filters = ["{a,b}", "!{a,b}", "{m,n}", "{./a,b}", ...(isWindows ? [] : [`{${packages}/a,b}`])];
+    expect(await Promise.all(filters.map(filter => ranIn(["--filter", filter], packages)))).toEqual([
+      ran(["a", "b"]),
+      ran(["c", "d"]),
+      noMatch("{m,n}"),
+      ran(["c"]),
+      ...(isWindows ? [] : [ran(["c"])]),
+    ]);
+  });
+
+  test.concurrent("a relation reaches a package.json without a name, a list of names does not", async () => {
+    using dir = tempDir("filter-nameless-dependent", {
+      packages: {
+        lib: { "package.json": JSON.stringify({ name: "lib", scripts: { present: "echo out-lib" } }) },
+        noname: {
+          "package.json": JSON.stringify({
+            dependencies: { lib: "workspace:*" },
+            scripts: { present: "echo out-noname" },
+          }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+    expect(await ranIn(["--filter", "...{lib,nope}"], String(dir))).toEqual({
+      ran: ["lib", "noname"],
+      error: undefined,
+      exitCode: 0,
+    });
+    expect(await ranIn(["--filter", "{lib,}"], String(dir))).toEqual({ ran: ["lib"], error: undefined, exitCode: 0 });
+  });
+
+  // `malformed1` in cwd_root has no name. Its script prints `malformed1`.
+  test.concurrent("a name glob that matches the empty string skips a package.json without a name", async () => {
+    expect(await ranIn(["--filter", "{pkga,}"], cwd_root)).toEqual({ ran: ["scripta"], error: undefined, exitCode: 0 });
+    expect(await ranIn(["--filter", ""], cwd_root)).toEqual(noMatch(""));
+    expect(await ranIn(["--filter", "./packages/malformed1"], cwd_root)).toEqual({
+      ran: ["malformed1"],
+      error: undefined,
+      exitCode: 0,
+    });
+  });
+
   test("'foo...' follows optionalDependencies but not peerDependencies", () => {
     using dir = tempDir("filter-optional-peer", {
       packages: {

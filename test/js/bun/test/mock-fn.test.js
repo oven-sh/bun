@@ -2597,6 +2597,23 @@ describe("spyOn", () => {
       expect(new Date(0).getTimezoneOffset()).toBe(zone);
     });
 
+    test("import.meta.env over an object put in place of process.env", () => {
+      const env = process.env;
+      process.env = { VALUE: undefined, get ACCESSOR() {}, set ACCESSOR(v) {} };
+      try {
+        // A value of undefined is a value. An accessor that reads undefined is an unset variable.
+        const replaced = jest.replaceProperty(import.meta.env, "VALUE", "x");
+        expect([import.meta.env.VALUE, process.env.VALUE]).toEqual(["x", "x"]);
+        replaced.restore();
+        expect([import.meta.env.VALUE, Object.hasOwn(process.env, "VALUE")]).toEqual([undefined, true]);
+        expect(() => jest.replaceProperty(import.meta.env, "ACCESSOR", "x")).toThrow(
+          "Property `ACCESSOR` does not exist in the provided object",
+        );
+      } finally {
+        process.env = env;
+      }
+    });
+
     test("through a Proxy", () => {
       const target = { value: 1 };
       const traps = [];

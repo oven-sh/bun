@@ -3475,13 +3475,15 @@ __attribute__((minsize)) static JSValue replaceProperty(Zig::GlobalObject* globa
     JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object);
     RETURN_IF_EXCEPTION(scope, {});
     if (env) {
-        property.isOwn = env->hasOwnProperty(globalObject, propertyKey);
+        PropertySlot envSlot(env, PropertySlot::InternalMethodType::GetOwnProperty);
+        property.isOwn = env->getOwnPropertySlotInline(globalObject, propertyKey, envSlot);
         RETURN_IF_EXCEPTION(scope, {});
         if (property.isOwn) {
-            property.value = env->get(globalObject, propertyKey);
+            // On Windows process.env is a Proxy whose target holds the TZ accessor, so read it through the Proxy.
+            property.value = envSlot.isValue() ? envSlot.getValue(globalObject, propertyKey) : env->get(globalObject, propertyKey);
             RETURN_IF_EXCEPTION(scope, {});
-            // process.env holds strings. Its accessor for an unset TZ reads undefined: the variable does not exist, as in Node.
-            if (property.value.isUndefined()) {
+            // process.env's accessor for an unset TZ reads undefined: the variable does not exist, as in Node. A value of undefined on an object put in place of process.env is a value.
+            if (!envSlot.isValue() && property.value.isUndefined()) {
                 throwVMError(globalObject, scope, makeString("Property `"_s, keyForMessage, "` does not exist in the provided object"_s));
                 return {};
             }

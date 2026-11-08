@@ -3277,7 +3277,10 @@ pub(crate) mod __gated_printer {
                                 && matches!(call.target.data, ExprData::EDot(callee) if callee.target.loc == expr.loc)
                         });
                     if wrap {
-                        self.print_whitespacer(ws!(b"(0, "));
+                        // `void 0`, because TypeScript reports a left operand that has no side effect (2695)
+                        // unless it is a `void`, and `bun build --dts` type checks this output.
+                        self.print(b"(void 0,");
+                        self.print_space();
                     }
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);

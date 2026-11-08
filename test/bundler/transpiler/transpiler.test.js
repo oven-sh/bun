@@ -4139,29 +4139,32 @@ console.log(resolve.length)
       ],
       [
         `f(import.meta.glob("./a/*.js"), import.meta["glob"]("./b/*.js"));`,
-        `f(import.meta.glob("./a/*.js"), (0, import.meta).glob("./b/*.js"));`,
+        `f(import.meta.glob("./a/*.js"), (void 0, import.meta).glob("./b/*.js"));`,
       ],
       // Not direct in the source.
-      [`import.meta["glob"]("./a/*.js");`, `(0, import.meta).glob("./a/*.js");`],
-      [`(0, import.meta).glob("./a/*.js");`, `(0, import.meta).glob("./a/*.js");`, minifySyntax],
+      [`import.meta["glob"]("./a/*.js");`, `(void 0, import.meta).glob("./a/*.js");`],
+      [`(0, import.meta).glob("./a/*.js");`, `(void 0, import.meta).glob("./a/*.js");`, minifySyntax],
+      // What this prints is not direct when Bun transpiles it again.
+      [`(void 0, import.meta).glob("./a/*.js");`, `(undefined, import.meta).glob("./a/*.js");`],
+      [`(void 0, import.meta).glob("./a/*.js");`, `(void 0, import.meta).glob("./a/*.js");`, minifySyntax],
       [
         `function f(x) { const meta = import.meta; x = meta.glob("./a/*.js"); return x; }`,
-        `function f(x) {\n  x = (0, import.meta).glob("./a/*.js");\n  return x;\n}`,
+        `function f(x) {\n  x = (void 0, import.meta).glob("./a/*.js");\n  return x;\n}`,
         minifySyntax,
       ],
       // Direct, but the file assigns its own function.
       [
         `import.meta.glob = f;\nimport.meta.glob("./a/*.js");`,
-        `import.meta.glob = f;\n(0, import.meta).glob("./a/*.js");`,
+        `import.meta.glob = f;\n(void 0, import.meta).glob("./a/*.js");`,
       ],
       // Wherever the call is.
-      [`new (import.meta["glob"]("./a/*.js"))();`, `new ((0, import.meta).glob("./a/*.js"));`],
-      ['import.meta["glob"]("./a/*.js")`x`;', '(0, import.meta).glob("./a/*.js")`x`;'],
-      [`import.meta["glob"]("./a/*.js").x = 1;`, `(0, import.meta).glob("./a/*.js").x = 1;`],
-      [`import.meta["glob"](import.meta.url);`, `(0, import.meta).glob(import.meta.url);`],
+      [`new (import.meta["glob"]("./a/*.js"))();`, `new ((void 0, import.meta).glob("./a/*.js"));`],
+      ['import.meta["glob"]("./a/*.js")`x`;', '(void 0, import.meta).glob("./a/*.js")`x`;'],
+      [`import.meta["glob"]("./a/*.js").x = 1;`, `(void 0, import.meta).glob("./a/*.js").x = 1;`],
+      [`import.meta["glob"](import.meta.url);`, `(void 0, import.meta).glob(import.meta.url);`],
       [
         `function f(){return import.meta["glob"]("./a/*.js")}`,
-        `function f(){return(0,import.meta).glob("./a/*.js")}`,
+        `function f(){return(void 0,import.meta).glob("./a/*.js")}`,
         { minify: { whitespace: true } },
       ],
       // Bun never replaces these.

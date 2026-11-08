@@ -322,10 +322,19 @@ describe("bundler", () => {
   };
   const keptFiles = Object.keys(kept);
   const keptSources = Object.fromEntries(Object.entries(kept).map(([file, { source }]) => [file, source]));
-  const nextToTheOutput = {
-    "/out/pages/next-to-the-output.js": "",
-    "/out/effects/next-to-the-output.js": `globalThis.effects = "imported";`,
-  };
+  const nextTo = (outdir: string) => ({
+    [`${outdir}/pages/next-to-the-output.js`]: "",
+    [`${outdir}/effects/next-to-the-output.js`]: `globalThis.effects = "imported";`,
+  });
+  const nextToTheOutput = nextTo("/out");
+  // Loads the output of every file, and expects what the source files print.
+  const readAll = keptFiles.map(file => `await import(".${file}");`).join("\n");
+  const reads = (outdir: string) => ({
+    file: `${outdir}/read.mjs`,
+    stdout: Object.values(kept)
+      .map(({ printed }) => printed)
+      .join("\n"),
+  });
 
   const writers: Record<string, Partial<BundlerTestInput>> = {
     bun: { target: "bun" },
@@ -335,12 +344,6 @@ describe("bundler", () => {
     minify: { target: "node", minifySyntax: true, minifyWhitespace: true },
   };
   for (const [writer, options] of Object.entries(writers)) {
-    const read = {
-      file: "/out/read.mjs",
-      stdout: Object.values(kept)
-        .map(({ printed }) => printed)
-        .join("\n"),
-    };
     itBundled(`import-meta-glob/BunDoesNotReplaceACallThatTheBundleKept/${writer}`, {
       files: keptSources,
       entryPoints: keptFiles,
@@ -348,23 +351,29 @@ describe("bundler", () => {
       ...options,
       runtimeFiles: {
         ...nextToTheOutput,
-        "/out/read.mjs": keptFiles.map(file => `await import(".${file}");`).join("\n"),
+        ...nextTo("/out/again"),
+        "/out/read.mjs": readAll,
+        "/out/again/read.mjs": readAll,
       },
       async onAfterBundle(api) {
         for (const file of keptFiles) api.expectFile("/out" + file).not.toContain("import.meta.glob(");
-        const again = await Bun.build({
+        await Bun.build({
           entrypoints: keptFiles.map(file => api.outdir + file),
+          outdir: api.outdir + "/again",
           target: "bun",
           minify: true,
         });
-        for (const output of again.outputs) {
-          const text = await output.text();
-          expect(text).not.toContain("import.meta.glob(");
-          expect(text).not.toContain("next-to-the-output");
+        for (const file of keptFiles) {
+          api.expectFile("/out/again" + file).not.toContain("import.meta.glob(");
+          api.expectFile("/out/again" + file).not.toContain("next-to-the-output");
         }
       },
-      // Node has no `import.meta.glob`, so it shows what a call gives when nothing replaces it.
-      run: writer === "node" ? [read, { ...read, runtime: "node" }] : read,
+      run: [
+        reads("/out"),
+        reads("/out/again"),
+        // Node has no `import.meta.glob`, so it shows what a call gives when nothing replaces it.
+        ...(writer === "node" ? [{ ...reads("/out"), runtime: "node" as const }] : []),
+      ],
     });
   }
 
@@ -430,7 +439,7 @@ describe("bundler", () => {
   // No transpile reads what the module loader prints or what an executable holds. So both print the call as they
   // always did, and the error of a call that finds no function still names `import.meta.glob`.
   const callsNoFunction = `try { import.meta["glob"]("./pages/*.js"); } catch (error) { console.log(error.message); }`;
-  test("import-meta-glob/TheModuleLoaderPrintsAKeptCallAsBefore", async () => {
+  test.concurrent("import-meta-glob/TheModuleLoaderPrintsAKeptCallAsBefore", async () => {
     using dir = tempDir("import-meta-glob", { "entry.js": callsNoFunction });
     await using run = Bun.spawn({
       cmd: [bunExe(), "entry.js"],

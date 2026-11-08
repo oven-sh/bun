@@ -260,7 +260,7 @@ fn project_for_build(
 
 pub fn default_options_of_aot_package() -> Vec<(Vec<u8>, Json)> {
     let text = |value: &[u8]| Json::String(value.to_vec());
-    let options: [(&[u8], Json); 8] = [
+    let options: [(&[u8], Json); 7] = [
         (b"target", text(b"esnext")),
         (b"module", text(b"preserve")),
         (b"moduleResolution", text(b"bundler")),
@@ -268,8 +268,6 @@ pub fn default_options_of_aot_package() -> Vec<(Vec<u8>, Json)> {
         (b"allowImportingTsExtensions", Json::Bool(true)),
         (b"skipLibCheck", Json::Bool(true)),
         (b"strict", Json::Bool(true)),
-        // The printer writes `(0, import.meta).glob()` for a call that no transpile may replace, which is a 2695.
-        (b"allowUnreachableCode", Json::Bool(true)),
     ];
     options.map(|(name, value)| (name.to_vec(), value)).into()
 }

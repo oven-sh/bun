@@ -3399,6 +3399,26 @@ describe.concurrent("require() of a mock whose factory's object is marked __esMo
     );
   });
 
+  test("its named exports too, when an import loaded the module first", async () => {
+    await expectFixturesToPass(
+      {
+        ...dep,
+        "imported-first.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import * as dep from "./dep";
+          test("import, mock.module(), require()", () => {
+            const fake = { fake: true };
+            mock.module("./dep", () => ({ __esModule: true, default: fake, named: 2 }));
+            expect([dep.named, dep.default]).toEqual([2, fake]);
+            const required = require("./dep");
+            expect([required.named, required.default]).toEqual([2, fake]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
   test("import() still gets a namespace whose default is the object's default", async () => {
     await expectFixturesToPass(
       {

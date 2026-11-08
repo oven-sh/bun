@@ -1812,93 +1812,104 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
   }, 30_000);
 });
 
-// Node makes the argv of a child with copies of the Array functions that it took before any script ran. So a script that
-// replaces those functions changes no child, in whatever order it replaces them and loads node:child_process.
-describe("functions of Array.prototype that a script replaced", () => {
+// A child gets the argv, the command line, the stdio and the environment that the caller passed, whatever a script stored on
+// Array.prototype. Each case runs in a process of its own.
+describe("what a script stored on Array.prototype", () => {
   const files = {
     // Windows has no /bin/echo.
     "echo.cjs": `process.stdout.write(process.argv.slice(2).join(" ") + "\\n");`,
-    "fixture.cjs": /* js */ `
+    "ipc-child.cjs": `process.on("message", message => process.send("child got " + message, () => process.disconnect()));`,
+    // Prints the same under Node v26.12.1, in each of the three orders.
+    "replaced-functions.cjs": /* js */ `
       const order = process.argv[2];
-      const echo = process.platform === "win32" ? process.execPath : "/bin/echo";
-      const echoed = () =>
-        process.platform === "win32" ? [__dirname + "\\\\echo.cjs", "intended", "last"] : ["intended", "last"];
+      const windows = process.platform === "win32";
+      const echo = windows ? process.execPath : "/bin/echo";
+      const echoed = (...words) => (windows ? [__dirname + "\\\\echo.cjs", ...words] : words);
       const stringify = JSON.stringify;
       const apply = Reflect.apply;
+      const keys = Object.keys;
       // The children get this copy: the walk over process.env is not what this is about.
-      const env = { ...process.env };
-      const names = ["slice", "unshift", "join", "filter", "map", "includes", Symbol.iterator];
+      const env = { ...process.env, REPLACED_ARRAY_FUNCTIONS: "in the environment" };
+      // Every function of Array.prototype but the array iterator, which Node reads for the names of the environment. On
+      // Windows the list of those names still goes through kept copies of filter() and sort().
+      const names = Reflect.ownKeys(Array.prototype).filter(
+        name =>
+          typeof Array.prototype[name] === "function" &&
+          name !== "constructor" &&
+          Array.prototype[name] !== Array.prototype[Symbol.iterator] &&
+          !(windows && (name === "filter" || name === "sort")),
+      );
       const real = names.map(name => Array.prototype[name]);
       const calls = {};
-      let armed = false;
-      let installed = false;
+      // True inside watch(). True for good once the functions are restored: only a copy that a module kept reaches a
+      // replacement then.
+      let watching = false;
 
       function install() {
-        installed = true;
         for (let i = 0; i < names.length; i++) {
           const name = names[i];
           const original = real[i];
           Array.prototype[name] = function (...args) {
-            if (!armed) return apply(original, this, args);
-            // Node reads the array iterator once per child, for the names of the environment. It gets nothing here.
-            if (typeof name === "symbol") return apply(original, [], args);
-            calls[name] = (calls[name] || 0) + 1;
-            // A wrong answer: a child whose argv comes from it shows it.
-            if (name === "unshift") return this.length;
-            if (name === "join") return "joined";
-            if (name === "includes") return false;
-            return [];
+            if (!watching) return apply(original, this, args);
+            calls[String(name)] = (calls[String(name)] || 0) + 1;
+            // What a spy answers once it is restored.
+            return undefined;
           };
         }
       }
 
       function restore() {
-        installed = false;
         for (let i = 0; i < names.length; i++) Array.prototype[names[i]] = real[i];
       }
 
-      // While the functions are replaced, only the call itself is watched: the streams of Node call slice() too. Once they
-      // are restored, only a copy that a module kept can still reach a replacement, so everything is watched.
-      function callIsOver() {
-        if (installed) armed = false;
+      function watch(call) {
+        const was = watching;
+        watching = true;
+        try {
+          return call();
+        } finally {
+          watching = was;
+        }
       }
 
-      function spawned(cp, options) {
-        const wasArmed = armed;
-        const child = cp.spawn(echo, echoed(), options);
-        callIsOver();
+      function outputOf(child) {
         let out = "";
         child.stdout.on("data", chunk => (out += chunk));
-        return new Promise(resolve => {
-          child.on("close", () => {
-            armed = wasArmed;
-            resolve(out);
-          });
-        });
-      }
-
-      function execFiled(cp) {
-        const wasArmed = armed;
-        // The call sets the encoding of the streams, and setEncoding() of Node calls slice().
-        callIsOver();
-        return new Promise(resolve => {
-          cp.execFile(echo, echoed(), { env, encoding: "utf8" }, (error, stdout) => {
-            armed = wasArmed;
-            resolve(error ? String(error) : stdout);
-          });
-        });
+        return new Promise(resolve => child.on("close", () => resolve(out)));
       }
 
       async function useAll(cp) {
         const result = {};
-        result.spawnSync = String(cp.spawnSync(echo, echoed(), { env }).stdout);
-        if (process.platform !== "win32") {
-          result.shell = String(cp.spawnSync(echo, echoed(), { env, shell: true }).stdout);
+        result.spawnSync = String(watch(() => cp.spawnSync(echo, echoed("intended", "last"), { env })).stdout);
+        const printsVariable = windows ? "echo %REPLACED_ARRAY_FUNCTIONS%" : "echo $REPLACED_ARRAY_FUNCTIONS";
+        result.shell = String(watch(() => cp.spawnSync(printsVariable, { env, shell: true })).stdout).trim();
+        if (!windows) {
+          result.shellWithArgs = String(watch(() => cp.spawnSync(echo, ["intended", "last"], { env, shell: true })).stdout);
         }
-        result.execFileSync = cp.execFileSync(echo, echoed(), { env, encoding: "utf8" });
-        result.execFile = await execFiled(cp);
-        result.spawn = await spawned(cp, { env });
-        result.spawnWithFourthPipe = await spawned(cp, { env, stdio: ["pipe", "pipe", "pipe", "pipe"] });
+        result.execFileSync = watch(() => cp.execFileSync(echo, echoed("intended", "last"), { env, encoding: "utf8" }));
+        try {
+          watch(() => cp.spawnSync(echo, ["first", "l\\0ast"], { env }));
+        } catch (error) {
+          result.nullByte = error.code + ": " + error.message;
+        }
+        // Not watched while the functions are replaced: execFile() sets the encoding of its streams, and setEncoding() of
+        // Node calls slice(). fork() of Node spreads its arguments.
+        result.execFile = await new Promise(resolve => {
+          const options = { env, encoding: "utf8" };
+          cp.execFile(echo, echoed("intended", "last"), options, (error, stdout) => resolve(error ? String(error) : stdout));
+        });
+        result.fork = await new Promise(resolve => {
+          const options = { env, stdio: ["ignore", "ignore", "inherit", "ipc"] };
+          const child = cp.fork(__dirname + (windows ? "\\\\" : "/") + "ipc-child.cjs", [], options);
+          child.on("message", resolve);
+          child.send("a message");
+        });
+        result.spawn = await outputOf(watch(() => cp.spawn(echo, echoed("intended", "last"), { env })));
+        const fourPipes = { env, stdio: ["pipe", "pipe", "pipe", "pipe"] };
+        result.spawnWithFourthPipe = await outputOf(watch(() => cp.spawn(echo, echoed("intended", "last"), fourPipes)));
+        const withHole = watch(() => cp.spawn(echo, windows ? [__dirname + "\\\\echo.cjs", , "last"] : ["intended", , "last"], { env }));
+        result.indexesWithAHole = keys(withHole.spawnargs).length + " of " + withHole.spawnargs.length;
+        result.spawnWithAHole = await outputOf(withHole);
         return result;
       }
 
@@ -1912,29 +1923,76 @@ describe("functions of Array.prototype that a script replaced", () => {
           cp = require("node:child_process");
           await useAll(cp);
           restore();
+          watching = true;
         } else if (order === "after the first use of node:child_process") {
           cp = require("node:child_process");
           await useAll(cp);
           install();
         } else throw new Error("unknown order: " + order);
-        armed = true;
         const result = await useAll(cp);
-        armed = false;
+        watching = false;
         restore();
         console.log(stringify({ result, calls }));
       })();
     `,
-    "throwing-iterator.cjs": /* js */ `
-      const [streamsLoadedFirst, stdioLength] = process.argv.slice(2);
-      const cp = require("node:child_process");
+    "a.test.js": /* js */ `
+      import { expect, mock, spyOn, test } from "bun:test";
+
+      test("spies are on while node:child_process first loads and runs", () => {
+        for (const name of ["slice", "unshift", "push", "join", "includes"]) spyOn(Array.prototype, name);
+        const { spawnSync } = require("node:child_process");
+        expect(spawnSync(process.execPath, ["-e", ""]).status).toBe(0);
+        mock.restore();
+      });
+    `,
+    "b.test.js": /* js */ `
+      import { expect, test } from "bun:test";
+      import { execFileSync, spawn, spawnSync } from "node:child_process";
+      import { join } from "node:path";
+
       const echo = process.platform === "win32" ? process.execPath : "/bin/echo";
-      const echoed = process.platform === "win32" ? [__dirname + "\\\\echo.cjs", "the child ran"] : ["the child ran"];
+      const echoed = process.platform === "win32" ? [join(import.meta.dir, "echo.cjs"), "from", "b"] : ["from", "b"];
+
+      test("spawnSync() and execFileSync() in a later file", () => {
+        expect(String(spawnSync(echo, echoed).stdout)).toBe("from b\\n");
+        expect(execFileSync(echo, echoed, { encoding: "utf8" })).toBe("from b\\n");
+      });
+
+      test("spawn() in a later file", async () => {
+        const child = spawn(echo, echoed);
+        let out = "";
+        child.stdout.on("data", chunk => (out += chunk));
+        await new Promise(resolve => child.on("close", resolve));
+        expect(out).toBe("from b\\n");
+      });
+    `,
+    // The script of https://github.com/oven-sh/bun/issues/42723, with commands whose output shows what ran.
+    "index-setter.cjs": /* js */ `
+      const { exec, spawnSync } = require("node:child_process");
+      const windows = process.platform === "win32";
+      Object.defineProperty(Array.prototype, "2", { set() {}, configurable: true });
+      const sync = spawnSync(
+        windows ? process.execPath : "/bin/echo",
+        windows ? [__dirname + "\\\\echo.cjs", "a", "b", "c"] : ["a", "b", "c"],
+      );
+      exec("echo the command ran", (error, stdout) => {
+        delete Array.prototype[2];
+        process.stdout.write(String(sync.stdout) + (error ? String(error) : stdout));
+      });
+    `,
+    "throwing-iterator.cjs": /* js */ `
+      const cp = require("node:child_process");
+      const windows = process.platform === "win32";
+      const echo = windows ? process.execPath : "/bin/echo";
+      const echoed = windows ? [__dirname + "\\\\echo.cjs", "the child ran"] : ["the child ran"];
       const env = { ...process.env };
       // The child writes to this process's stdout, so what reads that stdout to its end knows whether a child ran.
-      const stdio = ["pipe", "inherit", "pipe", "pipe"].slice(0, Number(stdioLength));
+      const stdio = ["pipe", "inherit", "pipe", "pipe"].slice(0, Number(process.argv[2]));
       const realIterator = Array.prototype[Symbol.iterator];
-
-      function spawnUnderThrowingIterator() {
+      // The first child loads the modules of the streams.
+      const first = cp.spawn(echo, echoed, { env, stdio: ["pipe", "pipe", "pipe", "pipe"] });
+      first.stdout.resume();
+      first.on("close", () => {
         Array.prototype[Symbol.iterator] = function () {
           throw new Error("the array iterator was called");
         };
@@ -1946,74 +2004,116 @@ describe("functions of Array.prototype that a script replaced", () => {
         }
         Array.prototype[Symbol.iterator] = realIterator;
         process.stdout.write(threw ? "spawn() threw\\n" : "spawn() returned\\n");
+      });
+    `,
+    // Prints once its stdin ends, which is when the process that started it is gone.
+    "outlives.cjs": `process.stdin.on("end", () => process.stdout.write("the child outlived spawn()\\n")).resume();`,
+    "throws-after-the-child-started.cjs": /* js */ `
+      const cp = require("node:child_process");
+      const env = { ...process.env };
+      const stdio = ["pipe", "inherit", "ignore"];
+      const realNextTick = process.nextTick;
+      // spawn() calls process.nextTick() once the child runs.
+      process.nextTick = () => {
+        throw new Error("process.nextTick was called");
+      };
+      let threw = false;
+      try {
+        // The child holds this process's stdout, and prints there once its stdin ends.
+        if (process.platform === "win32") cp.spawn(process.execPath, [__dirname + "\\\\outlives.cjs"], { env, stdio });
+        else cp.spawn("/bin/sh", ["-c", "read line; echo 'the child outlived spawn()'"], { env, stdio });
+      } catch {
+        threw = true;
       }
-
-      if (streamsLoadedFirst === "yes") {
-        const first = cp.spawn(echo, echoed, { env, stdio: ["pipe", "pipe", "pipe", "pipe"] });
-        first.stdout.resume();
-        first.on("close", spawnUnderThrowingIterator);
-      } else spawnUnderThrowingIterator();
+      process.nextTick = realNextTick;
+      process.stdout.write(threw ? "spawn() threw\\n" : "spawn() returned\\n");
     `,
   };
 
   async function run(...args: string[]) {
-    using dir = tempDir("child-process-replaced-array-functions", files);
+    using dir = tempDir("child-process-array-prototype", files);
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
+      // A process that waits for a child that nothing can reach any more would wait for good.
+      timeout: 40_000,
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
-
-  const echoed = "intended last\n";
-  const result = {
-    spawnSync: echoed,
-    ...(isWindows ? {} : { shell: echoed }),
-    execFileSync: echoed,
-    execFile: echoed,
-    spawn: echoed,
-    spawnWithFourthPipe: echoed,
-  };
+  const ranToItsEnd = { stderr: "", exitCode: 0, signalCode: null };
+  // A debug build takes some seconds for each of these: one starts up to 18 children.
+  const timeout = 60_000;
 
   it.concurrent.each([
     "before node:child_process loads",
     "only while node:child_process loads and is first used",
     "after the first use of node:child_process",
   ])(
-    "replaced %s: every child gets its argv and none of the functions is called",
+    "functions replaced %s: every child gets what was passed, and none of the functions is called",
     async order => {
-      expect(await run("fixture.cjs", order)).toEqual({
+      const result = {
+        spawnSync: "intended last\n",
+        shell: "in the environment",
+        ...(isWindows ? {} : { shellWithArgs: "intended last\n" }),
+        execFileSync: "intended last\n",
+        nullByte:
+          "ERR_INVALID_ARG_VALUE: The argument 'args[1]' must be a string without null bytes. Received 'l\\x00ast'",
+        execFile: "intended last\n",
+        fork: "child got a message",
+        spawn: "intended last\n",
+        spawnWithFourthPipe: "intended last\n",
+        indexesWithAHole: "3 of 4",
+        spawnWithAHole: isWindows ? "undefined last\n" : "intended undefined last\n",
+      };
+      expect(await run("replaced-functions.cjs", order)).toEqual({
         stdout: JSON.stringify({ result, calls: {} }) + "\n",
-        stderr: "",
-        exitCode: 0,
+        ...ranToItsEnd,
       });
     },
-    // A debug build takes about 4 s: it starts up to 10 children.
-    20_000,
+    timeout,
   );
 
-  // Node's spawn() reads the array iterator before it starts the child, so under an iterator that throws it throws and no
-  // child runs. Whether spawn() throws here is not the point: it must not throw and leave a running child.
-  it.concurrent.each([
-    ["yes", "3"],
-    ["yes", "4"],
-    ["no", "3"],
-    ["no", "4"],
-  ])(
-    "an array iterator that throws, streams loaded first: %s, stdio of %s: spawn() does not throw once the child runs",
-    async (streamsLoadedFirst, stdioLength) => {
-      const { stdout, stderr, exitCode } = await run("throwing-iterator.cjs", streamsLoadedFirst, stdioLength);
-      const lines = stdout.split("\n").filter(Boolean).sort();
-      expect({ lines, stderr, exitCode }).toEqual({
-        lines: lines.includes("spawn() threw") ? ["spawn() threw"] : ["spawn() returned", "the child ran"],
-        stderr: "",
-        exitCode: 0,
+  it.concurrent(
+    "spies that a test file restored: the spawns of a later test file work",
+    async () => {
+      const { stderr, exitCode } = await run("test", "./a.test.js", "./b.test.js");
+      expect(stderr).toContain(" 3 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+
+  // Node throws a TypeError here. Before, the shell ran the command "undefined".
+  it.concurrent(
+    "a setter on an index of Array.prototype: the commands run (#42723)",
+    async () => {
+      expect(await run("index-setter.cjs")).toEqual({ stdout: "a b c\nthe command ran\n", ...ranToItsEnd });
+    },
+    timeout,
+  );
+
+  // Node reads the array iterator on this path and throws before it starts the child.
+  it.concurrent.each(["3", "4"])(
+    "an array iterator that throws, stdio of %s: spawn() reads none",
+    async stdioLength => {
+      const { stdout, ...rest } = await run("throwing-iterator.cjs", stdioLength);
+      expect({ lines: stdout.split("\n").filter(Boolean).sort(), ...rest }).toEqual({
+        lines: ["spawn() returned", "the child ran"],
+        ...ranToItsEnd,
       });
     },
-    20_000,
+    timeout,
+  );
+
+  it.concurrent(
+    "spawn() that throws after the child started leaves no child behind",
+    async () => {
+      expect(await run("throws-after-the-child-started.cjs")).toEqual({ stdout: "spawn() threw\n", ...ranToItsEnd });
+    },
+    timeout,
   );
 });

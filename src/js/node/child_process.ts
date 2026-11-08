@@ -22,9 +22,12 @@ function getSignals() {
   return (signals ??= require("node:os").constants.signals);
 }
 
+var ArrayPrototypeJoin = Array.prototype.join;
 var ArrayPrototypeSlice = Array.prototype.slice;
+const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeLastIndexOf = Array.prototype.lastIndexOf;
 const ArrayPrototypeSplice = Array.prototype.splice;
 
@@ -39,39 +42,49 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
 
-// These read a list by index, because script can replace the functions of Array.prototype and the array iterator.
+// What a child receives (argv, shell command, stdio, environment) and what exec() returns are made by index and with direct
+// writes. Script can replace the functions of Array.prototype and the array iterator, and can put a setter on an index of
+// Array.prototype. fork() keeps its spreads: an iterable execArgv works there, as in Node.
 
-// `list.slice(start)` behind `lead` empty slots.
-function copyArray(list, start: number, lead: number) {
-  const count = list.length - start;
-  const copy = $newArrayWithSize<any>(count > 0 ? lead + count : lead);
-  for (let i = 0; i < count; i++) {
-    const from = start + i;
+// `list.slice()`
+function copyArray<T>(list: ArrayLike<T>): T[] {
+  const length = list.length;
+  const copy = $newArrayWithSize<T>(length);
+  for (let i = 0; i < length; i++) {
+    const item = list[i];
     // slice() leaves a hole where the list has one.
-    if (from in list) $putByValDirect(copy, lead + i, list[from]);
+    if (item !== undefined || i in list) $putByValDirect(copy, i, item);
   }
   return copy;
 }
 
 // `list.slice(first).join(separator)`
-function joinArray(list, first: number, separator: string) {
+function joinArray(list: ArrayLike<unknown>, first: number, separator: string): string {
   let joined = "";
   for (let i = first; i < list.length; i++) {
     // join() takes null and undefined as "".
     const item = list[i] ?? "";
-    // One template is one rope.
-    joined = i > first ? `${joined}${separator}${item}` : `${item}`;
+    // One template is one rope, and an empty separator would be a third of it.
+    joined = i === first ? `${item}` : separator === "" ? `${joined}${item}` : `${joined}${separator}${item}`;
   }
   return joined;
 }
 
 // spawnargs is `[argv0, ...args]`. Bun.spawn() takes argv0 apart and wants the program in cmd[0].
-function spawnCommand(file: string, spawnargs: string[]) {
+function spawnCommand(file: string, spawnargs: string[]): string[] {
+  if (spawnargs[0] === file) return spawnargs;
   const length = spawnargs.length;
   const cmd = $newArrayWithSize<string>(length > 1 ? length : 1);
   $putByValDirect(cmd, 0, file);
   for (let i = 1; i < length; i++) $putByValDirect(cmd, i, spawnargs[i]);
   return cmd;
+}
+
+function includesIpc(stdio: ArrayLike<unknown>): boolean {
+  for (let i = 0; i < stdio.length; i++) {
+    if (stdio[i] === "ipc") return true;
+  }
+  return false;
 }
 
 interface ExecException extends Error {
@@ -352,7 +365,7 @@ function execFile(file, args, options?, callback?: ExecCallback) {
       return;
     }
 
-    if (args?.length) cmd += ` ${joinArray(args, 0, " ")}`;
+    if (args?.length) cmd += ` ${ArrayPrototypeJoin.$call(args, " ")}`;
     if (!ex) {
       const { getSystemErrorName } = require("node:util");
       let message = `Command failed: ${cmd}`;
@@ -490,7 +503,7 @@ const customPromiseExecFunction = (orig: (...args: any[]) => ChildProcess) => {
   return (...args: unknown[]) => {
     const { resolve, reject, promise }: ExecPromiseWithResolvers = Promise.withResolvers();
 
-    promise.child = orig(...args, (err, stdout, stderr) => {
+    $arrayPush(args, (err, stdout, stderr) => {
       if (err !== null) {
         err.stdout = stdout;
         err.stderr = stderr;
@@ -499,6 +512,7 @@ const customPromiseExecFunction = (orig: (...args: any[]) => ChildProcess) => {
         resolve({ stdout, stderr });
       }
     });
+    promise.child = orig.$apply(undefined, args);
 
     return promise;
   };
@@ -565,7 +579,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       -4071,
       "EINVAL",
     );
-    error.spawnargs = copyArray(options.args, 1, 0);
+    error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
     return {
       signal: null,
       status: null,
@@ -707,7 +721,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   const resultError = result.error;
   if (resultError) {
     resultError.syscall = "spawnSync " + options.file;
-    resultError.spawnargs = copyArray(options.args, 1, 0);
+    resultError.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
 
   return result;
@@ -744,11 +758,13 @@ function execFileSync(file, args, options) {
   let retStderr;
   if (inheritStderr && (retStderr = ret.stderr)) process.stderr.write(retStderr);
 
-  const errArgs = copyArray(args, 0, 1);
-  $putByValDirect(errArgs, 0, options.argv0 || file);
-  const err = checkExecSyncError(ret, errArgs);
-
-  if (err) throw err;
+  // Only a failure needs the arguments, for its message.
+  if (ret.error || ret.status !== 0) {
+    const errArgs = [options.argv0 || file];
+    ArrayPrototypePush.$apply(errArgs, args);
+    const err = checkExecSyncError(ret, errArgs);
+    if (err) throw err;
+  }
 
   return ret.stdout;
 }
@@ -918,7 +934,7 @@ function getSignalsToNamesMapping() {
 
 function normalizeExecFileArgs(file, args, options, callback?) {
   if ($isJSArray(args)) {
-    args = copyArray(args, 0, 0);
+    args = copyArray(args);
   } else if (args != null && typeof args === "object") {
     callback = options;
     options = args;
@@ -984,9 +1000,22 @@ function normalizeSpawnArguments(file, args, options?) {
 
   if (file.length === 0) throw $ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
-  // `args` becomes the child's argv, `[argv0, ...args]`, in one copy. Slot 0 is set at the end.
+  // `args` becomes the child's argv, `[argv0, ...args]`. One loop copies and checks. Slot 0 is set at the end.
   if ($isJSArray(args)) {
-    args = copyArray(args, 0, 1);
+    const list = args;
+    const length = list.length;
+    args = $newArrayWithSize(length + 1);
+    let withNull = -1;
+    for (let i = 0; i < length; i++) {
+      const arg = list[i];
+      // slice() leaves a hole where the list has one.
+      if (arg === undefined && !(i in list)) continue;
+      if (withNull === -1 && typeof arg === "string" && StringPrototypeIndexOf.$call(arg, "\u0000") !== -1)
+        withNull = i;
+      $putByValDirect(args, i + 1, arg);
+    }
+    // Node copies the whole list before it checks, so every element is read before this throws.
+    if (withNull !== -1) validateArgumentNullCheck(args[withNull + 1], `args[${withNull}]`);
   } else if (args == null) {
     args = $newArrayWithSize(1);
   } else if (typeof args !== "object") {
@@ -995,8 +1024,6 @@ function normalizeSpawnArguments(file, args, options?) {
     options = args;
     args = $newArrayWithSize(1);
   }
-
-  validateArgumentsNullCheck(args, "args", 1);
 
   if (options === undefined) options = {};
   else validateObject(options, "options");
@@ -1100,15 +1127,14 @@ function normalizeSpawnArguments(file, args, options?) {
   if (process.platform === "win32") {
     // On Windows env keys are case insensitive. Filter out duplicates, keeping only the first one (in lexicographic order)
     const sawKey = new Set();
-    const sortedKeys = ArrayPrototypeSort.$call(envKeys);
-    envKeys = [];
-    for (let i = 0; i < sortedKeys.length; i++) {
-      const key = sortedKeys[i];
+    envKeys = ArrayPrototypeFilter.$call(ArrayPrototypeSort.$call(envKeys), key => {
       const uppercaseKey = StringPrototypeToUpperCase.$call(key);
-      if (sawKey.has(uppercaseKey)) continue;
+      if (sawKey.has(uppercaseKey)) {
+        return false;
+      }
       sawKey.add(uppercaseKey);
-      $arrayPush(envKeys, key);
-    }
+      return true;
+    });
   }
 
   for (let i = 0; i < envKeys.length; i++) {
@@ -1150,7 +1176,7 @@ function checkExecSyncError(ret: SpawnSyncResult, args: string[] | undefined, cm
     delete err.error;
   } else if (ret.status !== 0) {
     let msg = "Command failed: ";
-    msg += cmd || joinArray(args, 0, " ");
+    msg += cmd || ArrayPrototypeJoin.$call(args, " ");
     const stderr = ret.stderr;
     if (stderr && stderr.length > 0) msg += `\n${stderr.toString()}`;
     err = genericNodeError(msg, ret);
@@ -1160,9 +1186,10 @@ function checkExecSyncError(ret: SpawnSyncResult, args: string[] | undefined, cm
 function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> | undefined {
   if (!envPairs) return undefined;
   const resEnv = {};
-  for (const line of envPairs) {
-    const [key, ...value] = line.split("=", 2);
-    resEnv[key] = value.join("=");
+  for (let i = 0; i < envPairs.length; i++) {
+    // The value is everything behind the first "=".
+    const parts = envPairs[i].split("=");
+    resEnv[parts[0]] = joinArray(parts, 1, "=");
   }
   return resEnv;
 }
@@ -1235,7 +1262,7 @@ class ChildProcess extends EventEmitter {
     const spawnfile = this.spawnfile;
     if (err) {
       if (spawnfile) err.path = spawnfile;
-      err.spawnargs = copyArray(this.spawnargs, 1, 0);
+      err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
       err.pid = this.pid;
       this.emit("error", err);
     } else if (exitCode < 0) {
@@ -1250,7 +1277,7 @@ class ChildProcess extends EventEmitter {
 
       if (spawnfile) err.path = spawnfile;
 
-      err.spawnargs = copyArray(this.spawnargs, 1, 0);
+      err.spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
       this.emit("error", err);
     }
 
@@ -1497,10 +1524,12 @@ class ChildProcess extends EventEmitter {
     }
 
     const cmd = spawnCommand(file, spawnargs);
-    if (hasSocketsToEagerlyLoad) loadStdioModules(bunStdio);
+    let started: $Bindgen.Subprocess | undefined;
+    // Set when this throws after the child started. The caller gets no ChildProcess then, so the exit reports to nobody.
+    let abandoned = false;
 
     try {
-      this.#handle = Bun.spawn({
+      started = this.#handle = Bun.spawn({
         cmd,
         stdio: bunStdio,
         cwd: options.cwd || undefined,
@@ -1510,6 +1539,7 @@ class ChildProcess extends EventEmitter {
         gid: options.gid,
         cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
+          if (abandoned) return;
           this.#handle = handle as unknown as $Bindgen.Subprocess;
           this.pid = this.#handle!.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
@@ -1564,6 +1594,13 @@ class ChildProcess extends EventEmitter {
         for (let i = 0; i < streams.length; i++) streams[i]?.ref?.();
       }
     } catch (ex) {
+      if (started !== undefined) {
+        // The child runs, and nothing could wait for it or stop it.
+        abandoned = true;
+        started.kill("SIGKILL");
+        started.unref();
+        throw ex;
+      }
       const exCode =
         ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? (ex as SystemError).code : undefined;
       if (
@@ -1576,7 +1613,7 @@ class ChildProcess extends EventEmitter {
       ) {
         this.#handle = null;
         (ex as SystemError).syscall = "spawn " + this.spawnfile;
-        (ex as SystemError).spawnargs = copyArray(this.spawnargs, 1, 0);
+        (ex as SystemError).spawnargs = ArrayPrototypeSlice.$call(this.spawnargs, 1);
         process.nextTick(() => {
           this.emit("error", ex);
           this.emit("close", (ex as SystemError).errno ?? -1);
@@ -1886,27 +1923,6 @@ function fdToStdioName(fd: number) {
   }
 }
 
-// `child.stdio` makes its streams right after the native spawn. Their modules first run before it: one that throws while it loads
-// must not leave a running child behind.
-function loadStdioModules(bunStdio) {
-  for (let i = 0; i < bunStdio.length; i++) {
-    const io = bunStdio[i];
-    if (i > 2) {
-      if (io === "pipe" || io === "socket-fd") require("node:net");
-    } else if (io === "pipe") {
-      if (i === 0) require("internal/fs/streams");
-      else require("internal/streams/native-readable");
-    }
-  }
-}
-
-function includesIpc(stdio): boolean {
-  for (let i = 0; i < stdio.length; i++) {
-    if (stdio[i] === "ipc") return true;
-  }
-  return false;
-}
-
 function getBunStdioFromOptions(stdio) {
   // May be the caller's array: read it by index, because script can replace filter() and map().
   const normalizedStdio = normalizeStdio(stdio);
@@ -2008,11 +2024,11 @@ function validateArgumentNullCheck(arg, propName) {
   }
 }
 
-function validateArgumentsNullCheck(args, propName, first = 0) {
-  for (let i = first; i < args.length; ++i) {
+function validateArgumentsNullCheck(args, propName) {
+  for (let i = 0; i < args.length; ++i) {
     const arg = args[i];
     if (typeof arg === "string" && StringPrototypeIndexOf.$call(arg, "\u0000") !== -1) {
-      validateArgumentNullCheck(arg, `${propName}[${i - first}]`);
+      validateArgumentNullCheck(arg, `${propName}[${i}]`);
     }
   }
 }

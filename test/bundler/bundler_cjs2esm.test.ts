@@ -690,10 +690,11 @@ describe("bundler", () => {
       stdout: "sched react sched react",
     },
   });
-  // `react` is an alias of an ES module in a package that is not on the list:
-  // the tsconfig `paths` of the Preact documentation, and the layout of
-  // `preact/compat`. A pattern reads the namespace object of that module,
-  // with or without a `default` export.
+  // `react` is an alias of an ES module that is not in a package on the list,
+  // as in a project that aliases it to `preact/compat` with tsconfig `paths`.
+  // The alias names the only file, so the `require()` cannot resolve to a
+  // CommonJS file. A pattern reads the exports of that module, with or
+  // without a `default` export.
   for (const hasDefault of [true, false]) {
     itBundled(`cjs2esm/UnwrappedRequireDestructuredOfAliasedESModule${hasDefault ? "" : "WithoutDefault"}`, {
       files: {
@@ -706,19 +707,12 @@ describe("bundler", () => {
           console.log(typeof useState, version, inFunction());
         `,
         "/tsconfig.json": /* json */ `
-          { "compilerOptions": { "paths": { "react": ["./node_modules/preact/compat/"] } } }
-        `,
-        "/node_modules/preact/compat/package.json": /* json */ `
-          { "name": "preact-compat", "main": "dist/compat.js", "module": "dist/compat.module.js" }
+          { "compilerOptions": { "paths": { "react": ["./node_modules/preact/compat/dist/compat.module.js"] } } }
         `,
         "/node_modules/preact/compat/dist/compat.module.js": /* js */ `
           export function useState() {}
           export const version = "18.3.1";
-          ${hasDefault ? "export default { useState, version };" : ""}
-        `,
-        "/node_modules/preact/compat/dist/compat.js": /* js */ `
-          exports.useState = function () {};
-          exports.version = "18.3.1";
+          ${hasDefault ? 'export default { useState: "default", version: "default" };' : ""}
         `,
       },
       run: {
@@ -796,6 +790,12 @@ describe("bundler", () => {
       `,
       ...unwrapListPackages,
     },
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("const a = __using(__stack, exports_react, 0);");
+      expect(code).toContain("const b = __using(__stack, exports_react_is, 0);");
+      expect(code).toContain("const e = __using(__stack, scheduler, 1);");
+    },
     run: {
       stdout: "TypeError TypeError TypeError TypeError TypeError",
     },
@@ -819,7 +819,7 @@ describe("bundler", () => {
     runtimeFiles: unwrapListPackages,
     target: "bun",
     onAfterBundle(api) {
-      expect(api.readFile("/out.js")).toContain("using a = ");
+      expect(api.readFile("/out.js")).toContain("using a = react;");
     },
     run: {
       stdout: "TypeError",

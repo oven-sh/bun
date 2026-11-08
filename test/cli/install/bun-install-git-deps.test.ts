@@ -1569,6 +1569,18 @@ test.concurrent.each(["hoisted", "isolated"])(
         files: { "package.json": pkg({ main: "./lib/main.js" }), "lib/main.js": "m\n", ".npmignore": "lib\n" },
       },
       {
+        branch: "main-root",
+        files: { "package.json": pkg({ main: ".", files: ["src"] }), "src/a.js": "a\n" },
+      },
+      {
+        branch: "prepare-empty",
+        files: {
+          "package.json": pkg({ files: ["dist"], scripts: { prepare: "" } }),
+          "src/a.js": "a\n",
+          "dist/a.js": "a\n",
+        },
+      },
+      {
         branch: "prepare",
         files: {
           "package.json": pkg({
@@ -1588,6 +1600,8 @@ test.concurrent.each(["hoisted", "isolated"])(
       "main-extensionless",
       "main-directory",
       "main-npmignored",
+      "main-root",
+      "prepare-empty",
       "prepare",
       "trusted",
     ]) {
@@ -1607,6 +1621,8 @@ test.concurrent.each(["hoisted", "isolated"])(
       "main-extensionless": ["lib", "lib/entry.js", "package.json", "src", "src/a.js"],
       "main-directory": ["lib", "lib/index.js", "package.json", "src", "src/a.js"],
       "main-npmignored": ["index.js", "lib", "lib/main.js", "package.json"],
+      "main-root": ["index.js", "package.json", "src", "src/a.js"],
+      "prepare-empty": ["dist", "dist/a.js", "package.json"],
       prepare: ["dist", "dist/a.js", "index.js", "package.json", "src", "src/a.js"],
       trusted: ["dist", "dist/a.js", "dist/built.js", "index.js", "package.json", "src", "src/a.js"],
     });
@@ -1638,116 +1654,36 @@ test.concurrent("bun pm trust can run the prepare script of a git dependency ins
   expect(install.stdout).toContain("Blocked 1 postinstall");
   expect(install.exitCode).toBe(0);
   const trust = await runBun(project, cache, {}, "pm", "trust", "demo-lib");
-  expect(readFileSync(join(project, "node_modules", "demo-lib", "dist", "built.js"), "utf8")).toBe("a\n");
+  const built = join(project, "node_modules", "demo-lib", "dist", "built.js");
+  expect(existsSync(built) ? readFileSync(built, "utf8") : trust).toBe("a\n");
   expect(trust.exitCode).toBe(0);
 });
 
-test.concurrent(
-  'a git dependency follows the last duplicate "files" and prunes the copy of a cache entry from an older Bun',
-  async () => {
-    using dir = tempDir("git-dep-published-files-cache", {});
-    const root = String(dir);
-    const bare = await makeSharedRepo(root, [
-      {
-        branch: "dup",
-        files: {
-          "package.json": '{"name":"demo-lib","version":"1.0.0","files":["src"],"files":["dist"]}',
-          "src/a.js": "a\n",
-          "dist/b.js": "b\n",
-          "README": "readme\n",
-        },
-      },
-    ]);
-    const project = writeProject(join(root, "dup"), { "demo-lib": `git+${pathToFileURL(bare)}#dup` });
-    const cache = join(root, "cache");
-    const first = await runInstall(project, cache, {});
-    expect(installOutput(first.stdout).at(-1)).toBe("1 package installed");
-    expect(first.exitCode).toBe(0);
-    const installed = join(project, "node_modules", "demo-lib");
-    const tree = () => treeOf(installed).filter(path => path !== ".bun-tag");
-    const expected = ["README", "dist", "dist/b.js", "package.json"];
-    expect(tree()).toEqual(expected);
-
-    const entry = readdirSync(cache).find(name => name.startsWith("@G@"))!;
-    mkdirSync(join(cache, entry, "src"), { recursive: true });
-    writeFileSync(join(cache, entry, "src", "a.js"), "a\n");
-    mkdirSync(join(cache, entry, "docs"), { recursive: true });
-    writeFileSync(join(cache, entry, "docs", "guide.md"), "docs\n");
-    rmSync(join(project, "node_modules"), { recursive: true });
-    const second = await runInstall(project, cache, {});
-    expect(installOutput(second.stdout).at(-1)).toBe("1 package installed");
-    expect(second.exitCode).toBe(0);
-    expect(tree()).toEqual(expected);
-    // The shared cache entry is not changed while other installs may be reading it.
-    expect(existsSync(join(cache, entry, "src", "a.js"))).toBe(true);
-    expect(existsSync(join(cache, entry, "docs", "guide.md"))).toBe(true);
-  },
-);
-
-// Older versions of Bun checked symlinks out as links, and `main` can be one.
-test.concurrent.skipIf(isWindows)("the copy of a cache entry from an older Bun that has symlinks is not pruned", async () => {
-  using dir = tempDir("git-dep-published-files-cache-link", {});
+test.concurrent('a git dependency follows the last duplicate "files"', async () => {
+  using dir = tempDir("git-dep-published-files-dup", {});
   const root = String(dir);
   const bare = await makeSharedRepo(root, [
     {
-      branch: "linked-main",
+      branch: "dup",
       files: {
-        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "entry.js", files: ["dist"] }),
-        "dist/b.js": "module.exports = 'b';\n",
+        "package.json": '{"name":"demo-lib","version":"1.0.0","files":["src"],"files":["dist"]}',
+        "src/a.js": "a\n",
+        "dist/b.js": "b\n",
+        "README": "readme\n",
       },
     },
   ]);
-  const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#linked-main` });
-  const cache = join(root, "cache");
-  const first = await runInstall(project, cache, {});
-  expect(installOutput(first.stdout).at(-1)).toBe("1 package installed");
-  expect(first.exitCode).toBe(0);
-
-  const entry = readdirSync(cache).find(name => name.startsWith("@G@"))!;
-  symlinkSync("dist/b.js", join(cache, entry, "entry.js"));
-  mkdirSync(join(cache, entry, "src"));
-  writeFileSync(join(cache, entry, "src", "a.js"), "a\n");
-  rmSync(join(project, "node_modules"), { recursive: true });
-  const second = await runInstall(project, cache, {});
-  expect(installOutput(second.stdout).at(-1)).toBe("1 package installed");
-  expect(second.exitCode).toBe(0);
-  const installed = join(project, "node_modules", "demo-lib");
-  expect(readdirSync(installed).sort()).toEqual([".bun-tag", "dist", "entry.js", "package.json", "src"]);
-  expect(readFileSync(join(installed, "entry.js"), "utf8")).toBe("module.exports = 'b';\n");
+  const project = writeProject(join(root, "dup"), { "demo-lib": `git+${pathToFileURL(bare)}#dup` });
+  const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(installOutput(stdout).at(-1)).toBe("1 package installed");
+  expect(exitCode).toBe(0);
+  expect(treeOf(join(project, "node_modules", "demo-lib")).filter(path => path !== ".bun-tag")).toEqual([
+    "README",
+    "dist",
+    "dist/b.js",
+    "package.json",
+  ]);
 });
-
-// That backend links each file of the copy, package.json included, to the cache.
-test.concurrent.skipIf(isWindows)(
-  "a git dependency with a prepare script installed with the symlink backend keeps its files",
-  async () => {
-    using dir = tempDir("git-dep-published-files-symlink-backend", {});
-    const root = String(dir);
-    const bare = await makeSharedRepo(root, [
-      {
-        branch: "prepare",
-        files: {
-          "package.json": JSON.stringify({
-            name: "demo-lib",
-            version: "1.0.0",
-            main: "dist/a.js",
-            files: ["dist"],
-            scripts: { prepare: "exit 1" },
-          }),
-          "src/a.js": "a\n",
-          "dist/a.js": "module.exports = 'a';\n",
-        },
-      },
-    ]);
-    const project = writeProject(join(root, "app"), { "demo-lib": `git+${pathToFileURL(bare)}#prepare` });
-    const { stdout, exitCode } = await runInstall(project, join(root, "cache"), {}, "--backend", "symlink");
-    expect(stdout).toContain("1 package installed");
-    expect(exitCode).toBe(0);
-    const installed = join(project, "node_modules", "demo-lib");
-    const links = treeOf(installed).map(path => path.replace(/ -> .*$/, ""));
-    expect(links).toEqual([".bun-tag", "dist", "dist/a.js", "index.js", "package.json", "src", "src/a.js"]);
-    expect(readFileSync(join(installed, "dist", "a.js"), "utf8")).toBe("module.exports = 'a';\n");
-  },
-);
 
 test.concurrent("a git dependency keeps a normalized extensionless TypeScript main that files leaves out", async () => {
   using dir = tempDir("git-dep-published-files-main", {});

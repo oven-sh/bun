@@ -1196,23 +1196,6 @@ fn bundles_dependencies(json: &Expr) -> bool {
 /// package.json is missing or invalid, or the package has `prepare` scripts. `node_modules` is kept
 /// only if the package bundles its dependencies.
 pub fn prune_to_published_files(root_dir: &Dir) -> bun_sys::Maybe<()> {
-    prune(root_dir, Target::Cache)
-}
-
-/// For the copy of a Git or GitHub dependency in `node_modules` or the store, which an older Bun
-/// cached whole. A copy with symlinks, which the symlink backend makes and older caches can hold,
-/// stays whole, and so does its `node_modules`, which holds the package's nested dependencies.
-pub fn prune_installed_package(root_dir: &Dir) -> bun_sys::Maybe<()> {
-    prune(root_dir, Target::Installed)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Target {
-    Cache,
-    Installed,
-}
-
-fn prune(root_dir: &Dir, target: Target) -> bun_sys::Maybe<()> {
     use std::collections::HashSet;
     crate::initialize_mini_store();
     let Ok(contents) = root_dir
@@ -1244,31 +1227,22 @@ fn prune(root_dir: &Dir, target: Target) -> bun_sys::Maybe<()> {
     let has_prepare = json.get(b"scripts").is_some_and(|scripts| {
         [&b"preprepare"[..], b"prepare", b"postprepare"]
             .iter()
-            .any(|name| scripts.get(name).is_some())
+            .any(|name| {
+                scripts
+                    .get(name)
+                    .and_then(|script| script.as_string(bump))
+                    .is_some_and(|script| !script.is_empty())
+            })
     });
     if has_prepare {
         return Ok(());
     }
 
-    if target == Target::Cache && !bundles_dependencies(json) {
+    if !bundles_dependencies(json) {
         match root_dir.delete_file_z(bun_core::zstr!("node_modules")) {
             Ok(()) => {}
             Err(err) if err.get_errno() == bun_sys::E::ENOENT => {}
             Err(_) => root_dir.delete_tree(b"node_modules")?,
-        }
-    }
-    if target == Target::Installed {
-        let check = root_dir.open_dir(
-            b".",
-            bun_sys::OpenDirOptions {
-                iterate: true,
-                no_follow: false,
-            },
-        )?;
-        let has_no_links = crate::git_runner::has_no_links(&check);
-        check.close();
-        if !has_no_links {
-            return Ok(());
         }
     }
 
@@ -1423,8 +1397,9 @@ fn prune(root_dir: &Dir, target: Target) -> bun_sys::Maybe<()> {
     result
 }
 
-/// `main` relative to the package root, without `.` and `..` segments. `None` if it is empty or
-/// leaves the package. `lib\\entry.js` and `lib/./entry.js` name the same file as `lib/entry.js`.
+/// `main` relative to the package root, without `.` and `..` segments, and empty for the root
+/// itself. `None` if it leaves the package. `lib\\entry.js` and `lib/./entry.js` name the same file
+/// as `lib/entry.js`.
 fn normalize_main(main: &[u8]) -> Option<Vec<u8>> {
     let raw: Vec<u8> = main
         .iter()
@@ -1440,7 +1415,7 @@ fn normalize_main(main: &[u8]) -> Option<Vec<u8>> {
         }
     }
     let main = parts.join(&b'/');
-    (inside && !main.is_empty()).then_some(main)
+    inside.then_some(main)
 }
 
 /// Every file the resolver may load for `main`, extensionless or a directory.
@@ -1448,6 +1423,12 @@ fn main_candidates(main: &[u8]) -> Vec<Vec<u8>> {
     const EXTENSIONS: [&[u8]; 10] = [
         b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx", b".json", b".node",
     ];
+    if main.is_empty() {
+        return EXTENSIONS
+            .iter()
+            .map(|ext| [&b"index"[..], ext].concat())
+            .collect();
+    }
     let mut candidates: Vec<Vec<u8>> = vec![main.to_vec()];
     for ext in EXTENSIONS {
         candidates.push([main, ext].concat());

@@ -4457,13 +4457,16 @@ if (isBun) {
       });
 
       test.each(flavors)("%s: stays what it is, unless the test changes it", (_, isVitest, fn, spyOn) => {
-        for (const mocked of [fn(), fn(Date), spyOn({ key: three() }, "key")]) {
+        const mocks = () => [fn(), fn(Date), spyOn({ key: three() }, "key")];
+        for (const mocked of mocks()) {
           const length = mocked.length;
           mocked.mockImplementation((a, b) => {});
           mocked.mockReset();
           mocked.mockRestore();
           expect(mocked.length).toBe(length);
-
+        }
+        // New mocks, so that the spy is still in place when the test restores it.
+        for (const mocked of mocks()) {
           if (isVitest) {
             mocked.length = 11;
             mocked.mockClear();

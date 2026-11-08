@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, isASAN, tempDir, withoutAsanQuarantine } from "harness";
+import { bunEnv, bunExe, exampleSite, isASAN, isDebug, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
@@ -1292,8 +1292,8 @@ function arrayBuffer(buffer: Bun.BufferSource) {
 // permanently leak the whole body string (the adopted WTF::StringImpl +1 ref
 // was never released), so RSS grew *linearly and never plateaued* across
 // round-trips. The fix mirrors the Zig `defer str.deref()`. This asserts the
-// leak is bounded: after a warmup, a block of round-trips must not grow RSS
-// (a linear leak adds one body per round-trip; a bounded impl plateaus).
+// leak is bounded: after a warmup, more round-trips must not grow RSS (a
+// linear leak adds one body per round-trip; a bounded impl plateaus).
 // Absolute RSS is intentionally not asserted — only growth.
 describe.concurrent("string body consumption does not leak", () => {
   // NOTE: `.text()` is intentionally excluded. It produces a large JS string
@@ -1310,21 +1310,16 @@ describe.concurrent("string body consumption does not leak", () => {
     ["Request.json", "Request", "json"],
   ];
 
-  // Round-trips before the measured block, round-trips in it, and the bound in
-  // MB on the block's RSS growth. A leak adds ~2 MB per round-trip: ~80 MB
-  // against 50, or ~19 MB against 10.
+  // Round-trips between forced collections. RSS is read after each collection
+  // and must grow by less than `limit` MB from the first reading to the last.
+  // A leak adds ~2 MB per round-trip.
   //
-  // An ASAN build is slow: a debug one needs ~3.5 s for the 130 round-trips of
-  // a JSON case, and a plain `bun bd test` has the 5 s default timeout. It does
-  // 12, which is only enough because `env` makes its RSS exact.
-  const [WARM, BLOCK, LIMIT] = isASAN ? [2, 10, 10] : [90, 40, 50];
-
-  // Under ASAN, JSC allocates strings and buffers with libpas, which returns
-  // freed pages to the OS later, from its scavenger thread: right after
-  // Bun.gc(true), RSS is still up to 19 MB above the start of 10 round-trips
-  // that leak nothing. Malloc=1 moves them to the system allocator, and
-  // without ASAN's quarantine that unmaps a freed 2 MB body at once.
-  const env = isASAN ? { ...withoutAsanQuarantine(bunEnv), Malloc: "1" } : bunEnv;
+  // ASAN and debug builds are slow, so they do 13 round-trips, not 130. They
+  // collect after each one because libpas (ASAN builds) returns freed pages
+  // to the OS later: RSS after a collection depends on how much it freed.
+  const slow = isASAN || isDebug;
+  const rounds = slow ? Array(13).fill(1) : [90, 40];
+  const limit = slow ? 10 : 50;
 
   for (const [name, ctor, method] of cases) {
     test(name, async () => {
@@ -1340,19 +1335,19 @@ describe.concurrent("string body consumption does not leak", () => {
           ? `b => new Request("http://example.com/", { method: "POST", body: b })`
           : `b => new Response(b)`;
       const src = `
-        const SZ = 2_000_000, WARM = ${WARM}, BLOCK = ${BLOCK};
+        const SZ = 2_000_000;
         const rss = process.memoryUsage.rss;
         const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
         const make = ${make};
         const run = async n => { for (let i = 0; i < n; i++) await make(body())[${JSON.stringify(method)}](); };
-        await run(WARM); Bun.gc(true); const a = mb();
-        await run(BLOCK); Bun.gc(true); const b = mb();
-        console.log("GROWTH:" + (b - a));
+        const seen = [];
+        for (const n of ${JSON.stringify(rounds)}) { await run(n); Bun.gc(true); seen.push(mb()); }
+        console.log("GROWTH:" + (seen.at(-1) - seen[0]));
       `;
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", src],
-        env,
+        env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -1360,8 +1355,8 @@ describe.concurrent("string body consumption does not leak", () => {
       expect(stderr).toBe("");
       const m = stdout.match(/GROWTH:(-?\d+)/);
       expect(m).not.toBeNull();
-      // Bounded: ≈ 0 (plateaued). Leaking: ≈ BLOCK × 2 MB, well above LIMIT.
-      expect(Number(m![1])).toBeLessThan(LIMIT);
+      // Bounded: ≈ 0 (plateaued). Leaking: well above `limit`.
+      expect(Number(m![1])).toBeLessThan(limit);
       expect(exitCode).toBe(0);
     });
   }

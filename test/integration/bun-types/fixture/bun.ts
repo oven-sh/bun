@@ -103,3 +103,8 @@ tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer
 declare const webview: Bun.WebView;
 tsd.expectType(webview.goBack()).is<Promise<void>>();
 tsd.expectType(webview.goForward()).is<Promise<void>>();
+
+new Bun.WebView({ backend: "chrome", proxy: "http://proxy.internal:8080" });
+new Bun.WebView({ backend: "chrome", proxy: { server: "socks5://127.0.0.1:1080", bypass: ["*.internal"] } });
+// @ts-expect-error proxy.server is required
+new Bun.WebView({ backend: "chrome", proxy: { bypass: ["*.internal"] } });

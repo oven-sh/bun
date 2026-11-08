@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
+// Written against that file with the SHA-256 b193d24210dd78d099109bea822f2a2db1ea10994a6953ec80c11fbae3e365c8.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -2741,11 +2741,8 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
 
     _onTimeout() {
       const handle = this[kHandle];
-      const response = handle?.response;
-      // If there is a response, and it has pending data,
-      // we suppress the timeout because a write is in progress.
-      if (response && response.writableLength! > 0) {
-        // Re-arm so the timeout still fires once the write actually stalls.
+      // A write in progress holds 'timeout' back once: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
+      if ((this.writableLength > 0 || handle?.response?.bufferedAmount! > 0) && handle?.holdTimeoutBackOnce()) {
         this._unrefTimer();
         return;
       }
@@ -2968,6 +2965,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
           clearTimeout(existingTimer);
           this[kSocketTimeoutTimer] = undefined;
           this.$armedTimeout = 0;
+          this[kHandle]?.setInactivityTimer(undefined);
         }
         if (callback !== undefined) {
           validateFunction(callback, "callback");
@@ -2984,6 +2982,10 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
           timer.unref();
           this[kSocketTimeoutTimer] = timer;
           this.$armedTimeout = msecs;
+        }
+        // Server writes refresh it there (Node: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1019). Never the keep-alive timer: nothing writes under it.
+        if (!this[kKeepAliveTimeoutSet]) {
+          this[kHandle]?.setInactivityTimer(this[kSocketTimeoutTimer]);
         }
         if (callback !== undefined) {
           validateFunction(callback, "callback");
@@ -3881,13 +3883,18 @@ function onResponseFinishHandleSocket(
     // idle period started; onSocketTimeoutTimerExpired grants the remaining
     // budget if the timer fires early, so the socket still closes after
     // exactly `total` ms of idle.
-    if (socket.$armedTimeout === total || isArmedWith(socket, total)) {
+    // The native connection has the timer of a timeout that was armed for this request. Nothing writes under the keep-alive one.
+    const armed = socket.timeout !== 0;
+    if (armed) socket[kHandle]?.setInactivityTimer(undefined);
+    // Before setTimeout(), which hands any other timer to the native connection.
+    socket[kKeepAliveTimeoutSet] = true;
+    // The timer of an armed timeout can have fired, with a 'timeout' listener that kept the socket: setTimeout() starts it again.
+    if (!armed && (socket.$armedTimeout === total || isArmedWith(socket, total))) {
       socket.timeout = total;
     } else {
       socket.setTimeout(total);
     }
     socket[kKeepAliveIdleStart] = DateNow();
-    socket[kKeepAliveTimeoutSet] = true;
   }
 }
 
@@ -5067,13 +5074,19 @@ const finishConnection = function onResponseFinishHandleSocket(
     if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
   }
   const idleTimeout = exchange.idleTimeout;
-  if (socket.$armedTimeout === idleTimeout || isArmedWith(socket, idleTimeout)) socket.timeout = idleTimeout;
-  else {
+  // The native connection has the timer of a timeout that was armed for this request. Nothing writes under the keep-alive one.
+  const armed = socket.timeout !== 0;
+  if (armed) socket[kHandle]?.setInactivityTimer(undefined);
+  // Before setTimeout(), which hands any other timer to the native connection.
+  socket[kKeepAliveTimeoutSet] = true;
+  // The timer of an armed timeout can have fired, with a 'timeout' listener that kept the socket: setTimeout() starts it again.
+  if (!armed && (socket.$armedTimeout === idleTimeout || isArmedWith(socket, idleTimeout))) {
+    socket.timeout = idleTimeout;
+  } else {
     ("unlikely");
     socket.setTimeout(idleTimeout);
   }
   socket[kKeepAliveIdleStart] = DateNow();
-  socket[kKeepAliveTimeoutSet] = true;
   if (exchange.detachedFrom === null) {
     if (socket._httpMessage === res) {
       socket[kCloseCallback] = undefined;

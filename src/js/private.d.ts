@@ -2440,8 +2440,6 @@ declare namespace $Node {
     takeRequestTrailers(lenient: boolean): string[] | undefined;
     takeRawHeaders(headers: IncomingHttpHeaders | null): string[] | undefined;
     headersObject(): IncomingHttpHeaders | undefined;
-    /** No member of the native class. The server's socket asks for it in `_onTimeout()`. */
-    readonly writableLength?: number;
   }
 
   /** The native class `NodeHTTPServerSocket` (src/jsc/bindings/node/JSNodeHTTPServerSocket.cpp): one connection. */
@@ -2481,6 +2479,10 @@ declare namespace $Node {
     stopParsing(): void;
     closeWhenDrained(): void;
     closeIfIdle(): boolean;
+    /** Hands over the `Timeout` of an armed socket inactivity timeout, or takes it back. While the connection holds it, the writes of the server and their progress refresh it. */
+    setInactivityTimer(timer: Timeout | undefined): void;
+    /** For a timer that fired while a write is pending. True once, then false until a write or its progress refreshes the timer. Always false while the connection holds no timer, as under the keep-alive timeout. */
+    holdTimeoutBackOnce(): boolean;
   }
 
   interface Timeout {

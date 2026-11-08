@@ -65,6 +65,8 @@ public:
     unsigned heldWriteAwaitsDrain : 1 = 0;
     /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
+    /* holdTimeoutBackOnce() said yes, and nothing has refreshed m_inactivityTimer since. */
+    unsigned timeoutHeldBack : 1 = 0;
     int closeReadError = 0;
     /* Whether the connection closed before the kernel had taken everything, also after an upgrade to a WebSocket. */
     std::optional<bool> closedWithUnsentData;
@@ -103,6 +105,19 @@ public:
      * this connection has exceeded server.headersTimeout / server.requestTimeout
      * (ms; 0 disables a check). Reports a given message at most once. */
     bool isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs);
+
+    /* node:http: takes the Timeout of an armed socket inactivity timeout (never the keep-alive one), or null. Server writes and the progress of a pending write refresh it, like net.Socket in Node. */
+    void setInactivityTimer(JSC::VM& vm, JSC::JSObject* timer);
+    void touchInactivityTimer();
+    /* For a timer that fired with a write still pending, where Node looks at writeQueueSize. True once, then false until something refreshes the timer. */
+    bool holdTimeoutBackOnce()
+    {
+        if (!m_inactivityTimer || timeoutHeldBack) {
+            return false;
+        }
+        timeoutHeldBack = true;
+        return true;
+    }
 
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests
      * that were parsed while an earlier response on this connection was still
@@ -180,6 +195,7 @@ public:
     mutable JSC::WriteBarrier<JSC::JSObject> m_remoteAddress;
     mutable JSC::WriteBarrier<JSC::JSObject> m_localAddress;
     mutable JSC::WriteBarrier<JSC::JSObject> m_duplex;
+    mutable JSC::WriteBarrier<JSC::JSObject> m_inactivityTimer;
 
     /* Queued pipelined responses (see appendPipelinedResponse). The lock keeps
      * mutation on the JS thread coherent with the concurrent GC marker walking

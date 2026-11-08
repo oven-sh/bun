@@ -26,6 +26,7 @@ extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest,
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" int us_socket_is_ssl_handshake_finished(struct us_socket_t* s);
 extern "C" int us_socket_ssl_handshake_callback_has_fired(struct us_socket_t* s);
+extern "C" void Bun__Timer__refreshTimeout(JSC::JSGlobalObject*, JSC::EncodedJSValue timer);
 
 namespace Bun {
 
@@ -472,6 +473,37 @@ bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64
     return isRequestTimedOutImpl<false>(socket, headersTimeoutMs, requestTimeoutMs);
 }
 
+template<bool SSL>
+static void setTracksActivity(us_socket_t* socket, bool tracks)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
+    httpResponseData->setFlag(uWS::HttpResponseData<SSL>::HTTP_NODE_TRACKS_ACTIVITY, tracks);
+}
+
+void JSNodeHTTPServerSocket::setInactivityTimer(JSC::VM& vm, JSC::JSObject* timer)
+{
+    timeoutHeldBack = false;
+    // After an upgrade to a WebSocket the ext block is no HttpResponseData, and nothing refreshes the timer.
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
+        m_inactivityTimer.clear();
+        return;
+    }
+    m_inactivityTimer.setMayBeNull(vm, this, timer);
+    if (is_ssl) {
+        setTracksActivity<true>(socket, !!timer);
+    } else {
+        setTracksActivity<false>(socket, !!timer);
+    }
+}
+
+void JSNodeHTTPServerSocket::touchInactivityTimer()
+{
+    if (auto* timer = m_inactivityTimer.get()) {
+        Bun__Timer__refreshTimeout(globalObject(), JSValue::encode(timer));
+        timeoutHeldBack = false;
+    }
+}
+
 bool JSNodeHTTPServerSocket::isAuthorized() const
 {
     // is secure means that tls was established successfully
@@ -558,6 +590,7 @@ JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* stru
 void JSNodeHTTPServerSocket::detach()
 {
     this->m_duplex.clear();
+    this->m_inactivityTimer.clear();
     this->m_currentResponse.clear();
     {
         Locker locker { m_pipelinedResponsesLock };
@@ -755,6 +788,7 @@ void JSNodeHTTPServerSocket::onUpgraded(us_socket_t* adopted)
 {
     socket = adopted;
     upgraded = true;
+    m_inactivityTimer.clear();
     releaseTunnelReadsForUpgrade();
 
     // The HTTP connection is gone for the responses that did not upgrade it. They stay queued: the close still tells them.
@@ -914,12 +948,18 @@ void JSNodeHTTPServerSocket::onDrain()
     if (this->streamBuffer.bufferedSize() > 0) {
         auto* globalObject = defaultGlobalObject(this->globalObject());
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+        const size_t bufferedBefore = this->streamBuffer.bufferedSize();
         us_socket_buffered_js_write(this->socket, this->is_ssl, this->ended, this->hasUnsentResponseBytes(), this->flushesStreamBufferOnDrain(), &this->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
         if (auto* exception = scope.exception()) {
             (void)scope.tryClearException();
             globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
             RETURN_IF_EXCEPTION(scope, );
             return;
+        }
+
+        // The tunnel's bytes are not in the uWS buffer, whose flush HttpContext::onWritable reports.
+        if (this->streamBuffer.bufferedSize() < bufferedBefore) {
+            touchInactivityTimer();
         }
 
         if (this->streamBuffer.bufferedSize() > 0) {
@@ -1031,6 +1071,7 @@ void JSNodeHTTPServerSocket::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(fn->m_remoteAddress);
     visitor.append(fn->m_localAddress);
     visitor.append(fn->m_duplex);
+    visitor.append(fn->m_inactivityTimer);
     {
         Locker locker { fn->m_pipelinedResponsesLock };
         for (auto& entry : fn->m_pipelinedResponses) {
@@ -1072,6 +1113,14 @@ extern "C" JSC::EncodedJSValue Bun__getNodeHTTPServerSocketThisValue(bool is_ssl
         return JSValue::encode(getNodeHTTPServerSocket<true>(socket));
     }
     return JSValue::encode(getNodeHTTPServerSocket<false>(socket));
+}
+
+/* The server wrote to a connection with HTTP_NODE_TRACKS_ACTIVITY, or bytes of a pending write left it. */
+extern "C" void Bun__NodeHTTP__touchInactivityTimer(int ssl, us_socket_t* socket)
+{
+    if (auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket)) {
+        serverSocket->touchInactivityTimer();
+    }
 }
 
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)

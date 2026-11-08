@@ -250,11 +250,6 @@ void BignumPointer::reset(BIGNUM* bn)
     bn_.reset(bn);
 }
 
-void BignumPointer::reset(const unsigned char* data, size_t len)
-{
-    reset(BN_bin2bn(data, len, nullptr));
-}
-
 BIGNUM* BignumPointer::release()
 {
     return bn_.release();

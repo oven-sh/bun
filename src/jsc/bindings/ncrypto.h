@@ -549,7 +549,6 @@ public:
     inline operator bool() const { return bn_ != nullptr; }
     inline BIGNUM* get() const noexcept { return bn_.get(); }
     void reset(BIGNUM* bn = nullptr);
-    void reset(const unsigned char* data, size_t len);
     BIGNUM* release();
 
     bool setWord(unsigned long w); // NOLINT(runtime/int)

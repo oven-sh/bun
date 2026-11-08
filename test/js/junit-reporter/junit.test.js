@@ -1160,7 +1160,11 @@ describe("junit reporter", () => {
       // Without JSC's own limit of 5 MB, the recursion takes the whole stack of the thread.
       const env = { BUN_JSC_maxPerThreadStackUsage: String(2 ** 30) };
       const [{ cases, counted, exitCode }] = await reports(files, [[]], env);
-      expect(cases["deep.test.js"].map(testcase => testcase.name)).toEqual(["(unhandled error)", "runs"]);
+      // The failure has no type or message where the printer gave up, and those of the TypeError where it did not.
+      expect(cases["deep.test.js"]).toEqual([
+        { name: "(unhandled error)", failure: [expect.anything()] },
+        { name: "runs" },
+      ]);
       expect({ counted, exitCode }).toEqual({ counted: 1, exitCode: 1 });
     });
   });

@@ -97,8 +97,7 @@ public:
     WTF::String m_sessionId;
     WTF::String m_targetId;
     WTF::String m_pendingChromeNavigateUrl;
-    // Chrome: a browser context of the view's own (cookies, storage, proxy).
-    // m_ownBrowserContext sits in the byte cluster below.
+    // Chrome: a browser context of the view's own (cookies, storage, proxy); the flag is in the byte cluster below.
     WTF::String m_browserContextId;
     WTF::String m_proxyServer;
     WTF::String m_proxyBypass; // comma-separated, CDP's proxyBypassList shape

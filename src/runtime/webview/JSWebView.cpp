@@ -122,9 +122,9 @@ void JSWebView::finishCreation(VM& vm)
 JSWebView::~JSWebView()
 {
     // We do NOT send Close from here. The destructor runs during GC;
-    // JSPromise::create is unsafe (allocating in collection), so no slot
-    // can be settled. The peer-side view/target leaks for process
-    // lifetime — bounded, and the user was supposed to call close().
+    // JSPromise::create is unsafe (allocating in collection). The peer-side
+    // view/target leaks for process lifetime — bounded, and the user was
+    // supposed to call close().
     if (m_closed) return;
     if (m_backend == WebViewBackend::Chrome) {
         auto& t = CDP::transport();
@@ -133,9 +133,7 @@ JSWebView::~JSWebView()
             auto it = t.m_sessions.find(m_sessionId);
             if (it != t.m_sessions.end() && it->value == m_viewId) t.m_sessions.remove(it);
         }
-        // A context of this view's own (and its tab) is a plain write on
-        // the transport, no JS heap. Before updateKeepAlive, which may
-        // close the socket once the last view goes.
+        // Before updateKeepAlive, which may close the socket once the last view goes.
         if (!m_browserContextId.isEmpty()) t.disposeBrowserContext(m_browserContextId);
         if (m_viewId) t.m_views.remove(m_viewId);
         t.updateKeepAlive();

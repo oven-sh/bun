@@ -804,9 +804,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     auto& vm = g->vm();
     JSWebView* view = viewFor(entry.viewId);
     if (!view) {
-        // The view closed or was collected while this reply was on the
-        // wire. A context it asked for has no other owner: this reply is
-        // the only place its id ever appears.
+        // The view is gone; this reply is the only place its context's id appears.
         if (entry.method == Method::TargetCreateBrowserContext) {
             auto cid = jsonString(jsonField(result, { "browserContextId", 16 }));
             if (!cid.empty()) disposeBrowserContext(WTF::String::fromUTF8(cid));
@@ -822,8 +820,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         if (errStr.isEmpty()) errStr = "CDP error"_s;
         switch (entry.method) {
         case Method::TargetCreateBrowserContext:
-            // Chrome's own reason, plus the way to the default context for
-            // a view that only needs storage, not a proxy.
+            // Chrome's reason, plus the way to the default context when no proxy is wanted.
             errStr = makeString("Target.createBrowserContext: "_s, errStr,
                 view->m_proxyServer.isEmpty() ? " (pass dataStore: { directory } to use Chrome's default context)"_s : ""_s);
             break;
@@ -1845,20 +1842,13 @@ void close(JSWebView* view)
     // PageEnable sends Page.navigate, the tab navigates after dispose.
     // removeIf breaks the chain at the next reply — handleResponse's
     // find(id)==end() early-return drops it.
-    // A sent Target.createBrowserContext stays: its reply is the only
-    // place the new context's id appears, and handleResponse disposes it
-    // once it finds no view.
+    // A sent Target.createBrowserContext stays: handleResponse disposes the context once it finds no view.
     t.m_pending.removeIf([&t, vid = view->m_viewId](auto& pair) {
         if (pair.value.viewId != vid) return false;
         return pair.value.method != Method::TargetCreateBrowserContext || t.isQueuedUnsent(pair.key);
     });
-    // Fire-and-forget teardown. Chrome tears down the tab; we ignore the
-    // Target.targetDestroyed event. Erase sessionId so late events drop.
-    // A view with a context of its own only disposes the context: that
-    // closes its tab too, even one whose createTarget reply is still on
-    // the wire. A view in the default context closes its tab. targetId
-    // is stashed at TargetCreateTarget's reply (before sessionId) so it
-    // is populated earlier in the chain.
+    // Fire-and-forget teardown; we ignore Target.targetDestroyed. Disposing a context
+    // closes its tab too, even one whose createTarget reply is still on the wire.
     if (!view->m_browserContextId.isEmpty()) {
         t.disposeBrowserContext(std::exchange(view->m_browserContextId, WTF::String()));
     } else if (!view->m_targetId.isEmpty()) {

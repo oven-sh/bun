@@ -88,7 +88,7 @@ describe("node:test", () => {
     });
   });
 
-  test.concurrent("should fail a suite whose before() or after() hook fails", async () => {
+  test("should fail a suite whose before() or after() hook fails", async () => {
     // No test under a failed before() runs.
     const { exitCode, stdout, stderr } = await runTests(["31-failing-suite-hooks.js"]);
     expect({ ...report(stdout, stderr), exitCode }).toEqual({
@@ -110,7 +110,7 @@ describe("node:test", () => {
     });
   });
 
-  test.concurrent("should run no test after a before() hook at the root of the file fails", async () => {
+  test("should run no test after a before() hook at the root of the file fails", async () => {
     const { exitCode, stdout, stderr } = await runTests(["31b-failing-root-before.js"]);
     expect({ ...report(stdout, stderr), exitCode }).toEqual({
       bodiesRan: [],
@@ -120,7 +120,7 @@ describe("node:test", () => {
     });
   });
 
-  test.concurrent("run() should emit no test:pass for a test under a failed suite before()", async () => {
+  test("run() should emit no test:pass for a test under a failed suite before()", async () => {
     const fixture = join(import.meta.dirname, "fixtures", "31-failing-suite-hooks.js");
     await using proc = spawn({
       cmd: [

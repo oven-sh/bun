@@ -1847,8 +1847,7 @@ void close(JSWebView* view)
         if (pair.value.viewId != vid) return false;
         return pair.value.method != Method::TargetCreateBrowserContext || t.isQueuedUnsent(pair.key);
     });
-    // Fire-and-forget teardown; we ignore Target.targetDestroyed. Disposing a context
-    // closes its tab too, even one whose createTarget reply is still on the wire.
+    // Fire-and-forget teardown. Disposing a context closes its tab too, even one still being created.
     if (!view->m_browserContextId.isEmpty()) {
         t.disposeBrowserContext(std::exchange(view->m_browserContextId, WTF::String()));
     } else if (!view->m_targetId.isEmpty()) {

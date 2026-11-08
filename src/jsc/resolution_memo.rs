@@ -53,7 +53,7 @@ pub enum Lookup {
     Kept(String),
     /// No answer. The pair was resolved just before, or its entry is from an older epoch: `put` the new answer.
     Repeated,
-    /// No answer, and the bucket remembers the pair from now on. Also for a string that is not WTF-backed: the key is the two impls.
+    /// No answer, and the bucket remembers the pair from now on. Also for a string that is not WTF-backed.
     New,
 }
 

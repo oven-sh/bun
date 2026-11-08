@@ -662,6 +662,7 @@ impl<'a> Converter<'a, '_> {
                     let object = B::Object {
                         properties: leak(properties),
                         is_single_line: false,
+                        close_brace_loc: Loc::EMPTY,
                     };
                     Binding::alloc(this.arena, object, loc)
                 }
@@ -1383,6 +1384,7 @@ impl<'a> Converter<'a, '_> {
                     test: self.expr(test)?,
                     yes: self.stmt(yes)?,
                     no: no.map(|it| self.stmt(it)).transpose()?,
+                    else_loc: Loc::EMPTY,
                 },
                 loc,
             ),
@@ -1513,10 +1515,14 @@ impl<'a> Converter<'a, '_> {
                     None => None,
                 };
                 let finally = match finalizer {
-                    Some(finalizer) => Some(Finally {
-                        loc: self.loc(finalizer.span()),
-                        stmts: self.block(finalizer)?,
-                    }),
+                    Some(finalizer) => {
+                        let loc = self.loc(finalizer.span());
+                        Some(Finally {
+                            loc,
+                            stmts: self.block(finalizer)?,
+                            body_loc: loc,
+                        })
+                    }
                     None => None,
                 };
                 JsStmt::alloc(

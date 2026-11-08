@@ -271,7 +271,7 @@ class ShareImpl {
         case "strict":
           throw $ERR_OUT_OF_RANGE("buffer size", `<= ${this.#options.highWaterMark}`, this.#buffer.length);
         case "block": {
-          const { promise, resolve } = Promise.withResolvers();
+          const { promise, resolve } = Promise.withResolvers<void>();
           this.#pullWaiters.push(resolve);
           await promise;
           break;
@@ -300,7 +300,7 @@ class ShareImpl {
     }
 
     if (this.#pulling) {
-      const { promise, resolve } = Promise.withResolvers();
+      const { promise, resolve } = Promise.withResolvers<void>();
       this.#pullWaiters.push(resolve);
       return promise;
     }
@@ -630,7 +630,7 @@ class SyncShareImpl {
   }
 }
 
-function onShareCancel(shareImpl, signal) {
+function onShareCancel(shareImpl: ShareImpl, signal: AbortSignal) {
   onSignalAbort(signal, () => shareImpl.cancel(signal.reason));
 }
 
@@ -682,11 +682,11 @@ function shareSync(source, options: ShareOptions = { __proto__: null }) {
   return new SyncShareImpl(normalized, opts);
 }
 
-function isShareable(value) {
+function isShareable(value): value is Record<symbol, (options?: unknown) => unknown> {
   return hasProtocol(value, shareProtocol);
 }
 
-function isSyncShareable(value) {
+function isSyncShareable(value): value is Record<symbol, (options?: unknown) => unknown> {
   return hasProtocol(value, shareSyncProtocol);
 }
 

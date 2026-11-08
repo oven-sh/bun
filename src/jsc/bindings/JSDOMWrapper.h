@@ -45,7 +45,7 @@ class ScriptExecutionContext;
 // offset | 7 | 6 | 5 | 4 | 3   2   1   0  |
 // value  | 1 | 1 | 1 | 1 |    NodeType    |
 
-// Only for a JSDestructibleObject: Bun::Bindgen::JSWrapper's cast reads classInfo() from any cell of this type.
+// Only for a JSDestructibleObject: Bun::Bindgen::InheritsTraits reads classInfo() from any cell of this type.
 inline constexpr uint8_t JSDOMWrapperType = 0b11101110;
 inline constexpr uint8_t JSEventType = 0b11101111;
 inline constexpr uint8_t JSNodeType = 0b11110000;

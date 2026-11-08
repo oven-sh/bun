@@ -122,7 +122,17 @@ module.exports = debugMode => {
       const obj = nativeModule.test_v8_define_own_property();
       for (const key of ["writable", "readonly", "hidden"]) {
         const d = Object.getOwnPropertyDescriptor(obj, key);
-        console.log(key, "=", d.value, "writable =", d.writable, "enumerable =", d.enumerable, "configurable =", d.configurable);
+        console.log(
+          key,
+          "=",
+          d.value,
+          "writable =",
+          d.writable,
+          "enumerable =",
+          d.enumerable,
+          "configurable =",
+          d.configurable,
+        );
       }
       console.log("enumerable keys =", JSON.stringify(Object.keys(obj).sort()));
     },
@@ -198,6 +208,15 @@ module.exports = debugMode => {
       } catch (e) {
         const own = Object.hasOwn(e, "message");
         console.log("caught", e.constructor.name, "message =", JSON.stringify(e.message), "own =", own);
+      }
+    },
+
+    test_v8_new_values_with_pending_exception() {
+      try {
+        nativeModule.test_v8_new_values_with_pending_exception();
+        console.log("did not throw");
+      } catch (e) {
+        console.log("caught", e.message);
       }
     },
 

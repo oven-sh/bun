@@ -275,26 +275,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         alias: &'a [u8],
         entry: &ReplaceableExport,
     ) {
-        let exported_name: &[u8] = match entry {
-            ReplaceableExport::Inject { name, .. } => name,
-            ReplaceableExport::Replace(_) | ReplaceableExport::Delete => alias,
-        };
         match entry {
-            ReplaceableExport::Replace(value) | ReplaceableExport::Inject { value, .. }
-                if exported_name == js_ast::ClauseItem::DEFAULT_ALIAS =>
-            {
-                let mut export_default = p.s(
-                    S::ExportDefault {
-                        default_name: js_ast::LocRef::default(),
-                        value: js_ast::StmtOrExpr::Expr(*value),
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                // Hide `replace_exports` from the visitor so it doesn't replace the export generated here.
-                let replace_exports = core::mem::take(&mut p.options.features.replace_exports);
-                p.visit_and_append_stmt(stmts, &mut export_default)
-                    .expect("unreachable");
-                p.options.features.replace_exports = replace_exports;
+            ReplaceableExport::Replace(value) if alias == js_ast::ClauseItem::DEFAULT_ALIAS => {
+                let _ = p.inject_default_export(stmts, *value, bun_ast::Loc::EMPTY);
             }
             ReplaceableExport::Replace(_) => {
                 // In TypeScript, `declare_symbol` lets a declaration replace an import with the same name.
@@ -491,15 +474,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     p.decorator_class_name = Some(js_ast::ClauseItem::DEFAULT_ALIAS);
                 }
-                if p.react_compiler.is_some()
-                    && let Some(in_hoc) = p.react_compiler_candidate_expr(expr)
-                {
-                    p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
-                    p.react_compiler_in_react_hoc = in_hoc;
+                // `--minify-syntax` drops an unused name. The value would then be named after the generated binding.
+                let expr_name = match expr.data {
+                    js_ast::ExprData::EFunction(func) => func.func.name,
+                    js_ast::ExprData::EClass(class) => class.class_name,
+                    _ => None,
                 }
+                .filter(|_| !p.options.features.minify_identifiers);
                 p.visit_expr(expr);
-                p.react_compiler_candidate_name = None;
-                p.react_compiler_in_react_hoc = false;
+                match expr.data {
+                    js_ast::ExprData::EFunction(mut func) if func.func.name.is_none() => {
+                        func.func.name = expr_name;
+                    }
+                    js_ast::ExprData::EClass(mut class) if class.class_name.is_none() => {
+                        class.class_name = expr_name;
+                    }
+                    _ => {}
+                }
                 p.decorator_class_name = prev_decorator_class_name;
 
                 if p.is_control_flow_dead {
@@ -674,13 +665,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Some(core::ptr::NonNull::from(&mut react_hook_data));
 
                         if p.react_compiler.is_some() {
-                            p.react_compiler_candidate_name = Some(
-                                func.func
-                                    .name
-                                    .filter(|_| name != js_ast::ClauseItem::DEFAULT_ALIAS)
-                                    .map(|n| n.ref_)
-                                    .unwrap_or(js_ast::Ref::NONE),
-                            );
+                            p.react_compiler_candidate_name = func
+                                .func
+                                .name
+                                .filter(|_| name != js_ast::ClauseItem::DEFAULT_ALIAS)
+                                .map(|n| n.ref_);
                         }
                         let open_parens_loc = func.func.open_parens_loc;
                         func.func =
@@ -988,7 +977,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_hook_storage = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
-        if p.react_compiler.is_some() && p.current_scope == p.module_scope {
+        if p.react_compiler.is_some() {
             p.react_compiler_candidate_name = data.func.name.map(|n| n.ref_);
         }
         let open_parens_loc = data.func.open_parens_loc;
@@ -1230,6 +1219,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let new_len = if !(data.is_export && p.options.features.replace_exports.entries.len() > 0) {
             p.visit_decls::<false>(data.decls.slice_mut(), data.kind, data.is_export)
         } else {
+            if p.enclosing_namespace_arg_ref.is_none() {
+                for decl in data.decls.slice() {
+                    if let js_ast::binding::Data::BIdentifier(id) = decl.binding.data
+                        && let Some(entry) = p
+                            .options
+                            .features
+                            .replace_exports
+                            .get_ptr(p.load_name_from_ref(id.r#ref))
+                        && entry.injects_default()
+                    {
+                        let entry = entry.clone();
+                        let _ =
+                            p.inject_replacement_export(stmts, Ref::NONE, decl.binding.loc, &entry);
+                    }
+                }
+            }
             p.visit_decls::<true>(data.decls.slice_mut(), data.kind, data.is_export)
         };
         // Drop the whole statement when every decl was
@@ -1248,12 +1253,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: in namespace"),
                     );
                     // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
-                    // ToExprWrapper is Copy; pass by value to avoid borrowing `*p`
-                    // across `p.s(...)`. The `*mut P` ctx is derived from the live `&mut Self`
-                    // here so its provenance is a child of the active Unique borrow.
-                    let wrapper = p.to_expr_wrapper_namespace;
-                    let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
-                    let lhs = Binding::to_expr(&d.binding, ctx, wrapper);
+                    let lhs =
+                        Binding::to_expr(&d.binding, p.arena, p, Self::wrap_identifier_namespace);
                     stmts.push(p.s(
                         S::SExpr {
                             value: Expr::assign(lhs, val),
@@ -1465,17 +1466,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
         }
 
-        if is_top_level
-            && p.react_compiler.is_some()
-            && let Some(in_hoc) = p.react_compiler_candidate_expr(&data.value)
-        {
-            p.react_compiler_candidate_name = Some(js_ast::Ref::NONE);
-            p.react_compiler_in_react_hoc = in_hoc;
-        }
         let this_expr_count_before = p.this_expr_count;
         p.visit_expr(&mut data.value);
-        p.react_compiler_candidate_name = None;
-        p.react_compiler_in_react_hoc = false;
 
         // `import(x);` / `await import(x);` / `[await] import(x).catch(..);` /
         // `require(x);` / `await require(x);` as a statement: the namespace is
@@ -1697,6 +1689,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        if let Some(returned) = data.value.as_mut()
+            && let Some(call) = p.keep_frame_for_returned_call(returned)
+        {
+            stmts.push(call);
+        }
+
         stmts.push(*stmt);
         Ok(())
     }
@@ -1796,6 +1794,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     data.test.loc,
                 );
+                // TypeScript does not treat `while (!0)` as an infinite loop.
+                let features = &p.options.features;
+                if result.value && features.minify_syntax && features.is_library {
+                    let infinite_loop = S::For {
+                        init: None,
+                        test: None,
+                        update: None,
+                        body: data.body,
+                    };
+                    stmts.push(p.s(infinite_loop, stmt.loc));
+                    return Ok(());
+                }
             }
         }
 
@@ -1875,7 +1885,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if p.options.features.minify_syntax {
+        if p.should_remove_dead_statements() {
             if let Some(effects) = effects {
                 if effects.value {
                     if data.no.is_none()
@@ -1949,8 +1959,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Ok(());
                     }
                 }
+                StmtData::SBlock(yes) if yes.stmts.is_empty() => {
+                    if data.no.is_none() && can_remove_test {
+                        return Ok(());
+                    }
+                }
                 _ => {}
             }
+        }
+
+        // `if (a);` is TS1313.
+        if p.options.features.is_library && matches!(data.yes.data, StmtData::SEmpty(_)) {
+            data.yes = p.s(S::Block::default(), data.yes.loc);
         }
 
         stmts.push(*stmt);

@@ -142,11 +142,10 @@ public:
     // sqlite3_next_stmt(), which also returns the private statements of virtual table modules (FTS5).
     void trackStatement(JSStatementSync&);
     void finalizeStatements(bool mayCallScript = true);
-    // ~JSStatementSync() can't finalize a statement whose commit would run JS, so it queues it here.
+    // ~JSStatementSync() queues a statement here if its commit would call the authorizer.
     // The next outermost BusyScope finalizes it, or whatever closes the connection does.
     void orphanStatement(sqlite3_stmt* stmt) { m_orphanedStatements.append(stmt); }
     void finalizeOrphanedStatements();
-    bool hasCallbacks() const { return m_authorizer || !m_callbacks.isEmpty(); }
     bool allowLoadExtension() const { return m_config.allowExtension; }
     bool enableLoadExtensionIsOn() const { return m_enableLoadExtension; }
     void setEnableLoadExtension(bool v) { m_enableLoadExtension = v; }
@@ -198,6 +197,7 @@ public:
                 // the depth bump so re-entrant calls from UDF/authorizer
                 // callbacks are skipped by the m_busyDepth guard.
                 db->sweepOrphanedSessions();
+                // This can run a callback that closes the database, so callers check that it's open after this.
                 if (++db->m_busyDepth == 1 && !db->m_orphanedStatements.isEmpty()) [[unlikely]]
                     db->finalizeOrphanedStatements();
             }

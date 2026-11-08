@@ -482,6 +482,10 @@ impl us_socket_t {
         c::us_socket_is_established(self) > 0
     }
 
+    pub(crate) fn ssl_send_rejected(&self) -> bool {
+        c::us_socket_ssl_send_rejected(self) > 0
+    }
+
     pub(crate) fn queued_input(&self) -> QueuedInput {
         match c::us_socket_queued_input(self) {
             LIBUS_QUEUED_INPUT_DATA => QueuedInput::Data,
@@ -596,6 +600,7 @@ mod c {
         pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_ssl_send_rejected(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
 
         /// ssl_ctx is required (the whole point); sni may be null.

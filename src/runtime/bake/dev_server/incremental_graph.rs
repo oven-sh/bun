@@ -16,8 +16,8 @@ use bun_core::strings;
 
 use super::{
     CLIENT_PREFIX, ChunkKind, DevServer, EntryPointList, FileKind, GraphTraceState,
-    SerializedFailure, TraceImportGoal, packed_map, route_bundle, serialized_failure,
-    source_map_store,
+    SerializedFailure, TraceImportGoal, packed_map, relative_path, route_bundle,
+    serialized_failure, source_map_store,
 };
 use crate::bake::dev_server::{CachedFileIndex, HotUpdateContext};
 use crate::bake::{self, Side};
@@ -249,6 +249,10 @@ pub(crate) enum ReceiveChunkContent {
 pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub(crate) kind: ChunkKind,
     pub(crate) script_id: source_map_store::Key,
+    /// `DevServer::root`. Only read for `ChunkKind::InitialResponse`.
+    pub(crate) root: &'a [u8],
+    /// `DevServer::configuration_hash_key`. Only read for `ChunkKind::InitialResponse`.
+    pub(crate) configuration_hash_key: &'a [u8; 16],
     pub(crate) initial_response_entry_point: &'a [u8],
     pub(crate) react_refresh_entry_point: &'a [u8],
     pub(crate) console_log: bool,
@@ -260,6 +264,8 @@ impl Default for TakeJSBundleOptionsClient<'_> {
         Self {
             kind: ChunkKind::InitialResponse,
             script_id: source_map_store::Key::init(0),
+            root: b"",
+            configuration_hash_key: &[0; 16],
             initial_response_entry_point: b"",
             react_refresh_entry_point: b"",
             route_page_files: None,
@@ -947,8 +953,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         debug_assert!(bundler_index.is_valid());
         debug_assert!(ctx.loaders[bundler_index.get() as usize].is_css());
 
-        // Queue avoids stack overflow; tracing bits in `process_edge_attachment`
-        // prevent infinite recursion.
+        // Queue avoids stack overflow; `process_edge_attachment` stops at a file
+        // this walk has already seen.
         let mut queue: Vec<bun_ast::Index> = Vec::new();
         queue.push(bundler_index);
 
@@ -1002,7 +1008,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
 
         // Locate the FileIndex from bundle_v2's Source.Index.
-        let (imported_file_index, kind): (FileIndex<SIDE>, FileKind) = 'brk: {
+        let imported_file_index: FileIndex<SIDE> = 'brk: {
             if ir_source_index.is_valid() {
                 let kind = if mode == EdgeAttachmentMode::Css {
                     if ctx.loaders[ir_source_index.get() as usize].is_css() {
@@ -1014,14 +1020,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     FileKind::Unknown
                 };
                 if let Some(i) = ctx.get_cached_index(SIDE, ir_source_index).unwrap::<SIDE>() {
-                    break 'brk (i, kind);
+                    break 'brk i;
                 } else if mode == EdgeAttachmentMode::Css {
                     let index = self.insert_empty(key, kind)?.index;
                     ctx.gts.resize(SIDE, index.get() as usize + 1)?;
                     if kind == FileKind::Css {
                         self.receive_css_child(index);
                     }
-                    break 'brk (index, kind);
+                    break 'brk index;
                 }
             }
             match mode {
@@ -1029,7 +1035,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 EdgeAttachmentMode::Css => return Ok(EdgeAttachmentResult::Stop),
                 // Check IncrementalGraph for a file from a prior build.
                 EdgeAttachmentMode::JsOrHtml => match self.bundled_files.get_index(key) {
-                    Some(i) => (FileIndex::<SIDE>::init(i as u32), FileKind::Unknown),
+                    Some(i) => FileIndex::<SIDE>::init(i as u32),
                     None => return Ok(EdgeAttachmentResult::Continue),
                 },
             }
@@ -1037,22 +1043,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         debug_assert!((imported_file_index.get() as usize) < self.bundled_files.count());
 
-        // For CSS visiting CSS, prevent infinite recursion via tracing bits.
-        if mode == EdgeAttachmentMode::Css && kind == FileKind::Css {
-            if ctx
-                .gts
-                .bits(SIDE)
-                .is_set(imported_file_index.get() as usize)
-            {
-                return Ok(EdgeAttachmentResult::Stop);
-            }
-            ctx.gts.bits(SIDE).set(imported_file_index.get() as usize);
-        }
-
         let gop = quick_lookup.get_or_put(imported_file_index)?;
         if gop.found_existing {
+            // Ends the walk of circular `@import`s. Each css root walks on its own, because two roots
+            // of one bundle can import the same file and both need the edge.
             if gop.value_ptr.seen {
-                return Ok(EdgeAttachmentResult::Continue);
+                return Ok(EdgeAttachmentResult::Stop);
             }
             gop.value_ptr.seen = true;
             let ei = gop.value_ptr.edge_index;
@@ -1393,7 +1389,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         Content::CssRoot(id) => Some(id),
                         _ => None,
                     };
-                    // The rebuild replaces a css root's asset (`replace_path`) or drops it (`insert_failure`).
+                    // The rebuild replaces a css root's asset (`replace_asset_path`) or drops it (`insert_failure`).
                     let css_mode = if prior_css_root.is_some() {
                         FreeCssMode::IgnoreCss
                     } else {
@@ -1806,7 +1802,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// `IncrementalGraph(.client).takeJSBundle` — client-side overload (kept
     /// under the side-agnostic name for existing call sites).
     pub(crate) fn take_js_bundle(
-        &mut self,
+        &self,
         opts: &TakeJSBundleOptionsClient,
     ) -> Result<Vec<u8>, crate::Error> {
         let mut chunk = Vec::new();
@@ -1816,7 +1812,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
     /// `IncrementalGraph(.client).takeJSBundleToList` (spec :1713).
     pub(crate) fn take_js_bundle_to_list(
-        &mut self,
+        &self,
         list: &mut Vec<u8>,
         options: &TakeJSBundleOptionsClient,
     ) -> Result<(), crate::Error> {
@@ -1833,17 +1829,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         };
 
         let mut end_list: Vec<u8> = Vec::with_capacity(256);
-        // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
         match kind {
             ChunkKind::InitialResponse => {
                 end_list.extend_from_slice(b"}, {\n  main: ");
                 if !options.initial_response_entry_point.is_empty() {
                     let mut buf = bun_paths::path_buffer_pool::get();
-                    // SAFETY: `relative_path` reads `dev.root` only.
-                    let rel = unsafe {
-                        (*dev).relative_path(&mut *buf, options.initial_response_entry_point)
-                    };
+                    let rel = relative_path(
+                        options.root,
+                        &mut *buf,
+                        options.initial_response_entry_point,
+                    );
                     bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                         rel,
                         &mut end_list,
@@ -1864,8 +1859,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     bun_core::fmt::hex_lower(&generation.to_ne_bytes())
                 );
                 end_list.extend_from_slice(b"\",\n  version: \"");
-                // SAFETY: sibling-field read.
-                end_list.extend_from_slice(unsafe { &(*dev).configuration_hash_key });
+                end_list.extend_from_slice(options.configuration_hash_key);
                 if options.console_log {
                     end_list.extend_from_slice(b"\",\n  console: true");
                 } else {
@@ -1874,10 +1868,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if !options.react_refresh_entry_point.is_empty() {
                     end_list.extend_from_slice(b",\n  refresh: ");
                     let mut buf = bun_paths::path_buffer_pool::get();
-                    // SAFETY: `relative_path` reads `dev.root` only.
-                    let rel = unsafe {
-                        (*dev).relative_path(&mut *buf, options.react_refresh_entry_point)
-                    };
+                    let rel =
+                        relative_path(options.root, &mut *buf, options.react_refresh_entry_point);
                     bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                         rel,
                         &mut end_list,
@@ -1886,8 +1878,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 if let Some(files) = options.route_page_files {
                     let write_id = |end_list: &mut Vec<u8>, abs: &[u8]| -> crate::Result<()> {
                         let mut buf = bun_paths::path_buffer_pool::get();
-                        // SAFETY: `relative_path` reads `dev.root` only.
-                        let rel = unsafe { (*dev).relative_path(&mut *buf, abs) };
+                        let rel = relative_path(options.root, &mut *buf, abs);
                         bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
                             rel, end_list,
                         )?;

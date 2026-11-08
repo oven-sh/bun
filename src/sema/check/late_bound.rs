@@ -2,7 +2,7 @@
 //! `lateBindMember`, `addDeclarationToLateBoundSymbol`, `mergeSymbol`, `getLateBoundSymbol`.
 
 use super::*;
-use crate::bind::{Decl, flags_of_member, flags_of_property, replaces_value_declaration};
+use crate::bind::{Decl, SymbolId, flags_of_member, flags_of_property, replaces_value_declaration};
 use crate::program::get_excluded_symbol_flags;
 
 /// An error that `lateBindMember` or `combineSymbolTables` reports.
@@ -50,6 +50,78 @@ pub(super) struct LateBoundSymbols {
 /// `None` if the container has no late-bound members on that side.
 pub(super) type LateBoundMembers = Option<std::rc::Rc<LateBoundSymbols>>;
 
+const RECENT_SIDES: usize = 64;
+
+const NO_SIDE: (Sym, bool) = (
+    Sym {
+        file: FileId(u32::MAX),
+        id: SymbolId::NONE,
+    },
+    false,
+);
+
+pub(super) struct LateBoundSides {
+    known: FxHashMap<(Sym, bool), LateBoundMembers>,
+    recent_without_members: [(Sym, bool); RECENT_SIDES],
+}
+
+impl Default for LateBoundSides {
+    fn default() -> Self {
+        LateBoundSides {
+            known: FxHashMap::default(),
+            recent_without_members: [NO_SIDE; RECENT_SIDES],
+        }
+    }
+}
+
+impl LateBoundSides {
+    #[inline]
+    fn recent_position_of(side: (Sym, bool)) -> usize {
+        (side.0.id.idx() * 2 + usize::from(side.1)) % RECENT_SIDES
+    }
+
+    #[inline]
+    fn find(&mut self, side: (Sym, bool)) -> Option<LateBoundMembers> {
+        let recent = &mut self.recent_without_members[Self::recent_position_of(side)];
+        if *recent == side {
+            return Some(None);
+        }
+        let known = self.known.get(&side)?;
+        if known.is_none() {
+            *recent = side;
+        }
+        Some(known.clone())
+    }
+
+    fn get(&self, side: (Sym, bool)) -> Option<&LateBoundMembers> {
+        self.known.get(&side)
+    }
+
+    fn contains(&self, side: (Sym, bool)) -> bool {
+        self.known.contains_key(&side)
+    }
+
+    fn insert(&mut self, side: (Sym, bool), members: LateBoundMembers) {
+        let recent = &mut self.recent_without_members[Self::recent_position_of(side)];
+        if *recent == side {
+            *recent = NO_SIDE;
+        }
+        self.known.insert(side, members);
+    }
+
+    pub(super) fn retain(
+        &mut self,
+        is_kept: impl FnMut(&(Sym, bool), &mut LateBoundMembers) -> bool,
+    ) {
+        self.recent_without_members = [NO_SIDE; RECENT_SIDES];
+        self.known.retain(is_kept);
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.known.len()
+    }
+}
+
 /// `SetValueDeclaration`
 fn set_value_declaration(value_declaration: &mut Option<(FileId, Decl)>, node: (FileId, Decl)) {
     if replaces_value_declaration(value_declaration.map(|it| it.1), node.1) {
@@ -65,11 +137,30 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         declaration: Decl,
     ) -> Option<(std::rc::Rc<LateBoundSymbols>, usize)> {
-        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        let bound = self.bound(file);
         let symbol = bound.symbol_of_declaration(declaration);
+        self.late_bound_symbol_among(file, declaration, bound, symbol)
+    }
+
+    #[inline]
+    fn sym_among(&self, file: FileId, bound: &Bound<'s>, id: SymbolId) -> Sym {
+        if bound.symbol(id).flags.contains(SymFlags::MERGED) {
+            return self.files().sym(file, id);
+        }
+        Sym { file, id }
+    }
+
+    fn late_bound_symbol_among(
+        &mut self,
+        file: FileId,
+        declaration: Decl,
+        bound: &'p Bound<'s>,
+        symbol: SymbolId,
+    ) -> Option<(std::rc::Rc<LateBoundSymbols>, usize)> {
         if symbol.is_none() {
             return None;
         }
+        let hir = self.hir(file);
         let (parent, name) = (bound.symbol(symbol).parent, bound.symbol(symbol).name);
         let is_static = match declaration {
             Decl::Member(member) => hir[member].flags.contains(Flags::STATIC),
@@ -94,7 +185,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        let side = (files.sym(file, parent), is_static);
+        let side = (self.sym_among(file, bound, parent), is_static);
         let requests_members_itself =
             name == known::computed && matches!(declaration, Decl::Member(_));
         if requests_members_itself {
@@ -114,11 +205,9 @@ impl<'p, 's> Checker<'p, 's> {
         &self,
         file: FileId,
         declaration: Decl,
+        symbol: SymbolId,
     ) -> List<'p, (FileId, Decl)> {
-        let (symbol, files) = (
-            self.bound(file).symbol_of_declaration(declaration),
-            self.files(),
-        );
+        let files = self.files();
         match declaration {
             _ if symbol.is_some() => files.decls_of(files.sym(file, symbol)),
             // "A symbol already exists, so don't add this as a declaration."
@@ -133,9 +222,11 @@ impl<'p, 's> Checker<'p, 's> {
         file: FileId,
         declaration: Decl,
     ) -> List<'p, (FileId, Decl)> {
-        match self.late_bound_symbol(file, declaration) {
+        let bound = self.bound(file);
+        let early = bound.symbol_of_declaration(declaration);
+        match self.late_bound_symbol_among(file, declaration, bound, early) {
             Some((late, symbol)) => List::Own(late.symbols[symbol].declarations.clone()),
-            None => self.declarations_of_early_bound_symbol(file, declaration),
+            None => self.declarations_of_early_bound_symbol(file, declaration, early),
         }
     }
 
@@ -153,19 +244,41 @@ impl<'p, 's> Checker<'p, 's> {
         sym: Sym,
     ) -> (SymFlags, Option<(FileId, Decl)>, List<'p, (FileId, Decl)>) {
         let files = self.files();
-        let Some(&(file, first)) = files.decls_of(sym).first() else {
-            return (files.flags(sym), None, List::default());
+        let bound_of_property = self.bound(sym.file);
+        let property = bound_of_property.symbol(sym.id);
+        let is_merged = property.flags.contains(SymFlags::MERGED);
+        let declarations = match property.decls {
+            [only] if !is_merged => List::One((sym.file, *only)),
+            _ => files.decls_of(sym),
         };
-        match self.late_bound_symbol(file, first) {
+        let Some(&(file, first)) = declarations.first() else {
+            return (property.flags, None, List::default());
+        };
+        let bound = match file == sym.file {
+            true => bound_of_property,
+            false => self.bound(file),
+        };
+        let early = bound.symbol_of_declaration(first);
+        match self.late_bound_symbol_among(file, first, bound, early) {
             Some((late, symbol)) => {
                 let symbol = &late.symbols[symbol];
                 let declarations = List::Own(symbol.declarations.clone());
                 (symbol.flags, symbol.value_declaration, declarations)
             }
             None => (
-                files.flags(sym),
-                files.value_declaration(sym),
-                self.declarations_of_early_bound_symbol(file, first),
+                property.flags,
+                match is_merged {
+                    true => files.value_declaration(sym),
+                    false => {
+                        let index = property.value_declaration as usize;
+                        property.decls.get(index).map(|&it| (sym.file, it))
+                    }
+                },
+                if early.is_some() && self.sym_among(file, bound, early) == sym {
+                    declarations
+                } else {
+                    self.declarations_of_early_bound_symbol(file, first, early)
+                },
             ),
         }
     }
@@ -185,7 +298,7 @@ impl<'p, 's> Checker<'p, 's> {
             let is_static = matches!(declaration, Decl::Member(member)
                 if self.hir(file)[member].flags.contains(Flags::STATIC));
             if parent.is_some()
-                && !(self.late_bound_members).contains_key(&(files.sym(file, parent), is_static))
+                && !(self.late_bound_members).contains((files.sym(file, parent), is_static))
             {
                 return files.decls_of(files.sym(file, symbol));
             }
@@ -257,10 +370,15 @@ impl<'p, 's> Checker<'p, 's> {
         container: Sym,
         is_static: bool,
     ) -> LateBoundMembers {
-        let side = (container, is_static);
-        if let Some(known) = self.late_bound_members.get(&side) {
-            return known.clone();
+        match self.late_bound_members.find((container, is_static)) {
+            Some(known) => known,
+            None => self.resolve_late_bound_members(container, is_static),
         }
+    }
+
+    #[inline(never)]
+    fn resolve_late_bound_members(&mut self, container: Sym, is_static: bool) -> LateBoundMembers {
+        let side = (container, is_static);
         let files = self.files();
         // `links[resolutionKind] = earlySymbols` runs before the late-bound members are added, so a
         // recursive query gets only the early-bound members. If `symbol.Members` is nil, the links
@@ -312,7 +430,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let hir = self.hir(file);
                 if let Decl::Expando(e) | Decl::ThisProperty(e) = decl
                     && let ExprKind::Assign { target, .. } = hir[e].kind
-                    && let ExprKind::Index { index, .. } = hir[target].kind
+                    && let ExprKind::Index { index, .. } = hir.checked_kind(target)
                 {
                     let bound = self.bound(file);
                     let flags = bound.symbol(bound.symbol_of_declaration(decl)).flags;
@@ -456,7 +574,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         // This table replaces the one from a call that started over, but keeps the conflicts that call reported.
-        if let Some(Some(replaced)) = self.late_bound_members.get(&side) {
+        if let Some(Some(replaced)) = self.late_bound_members.get(side) {
             conflicts.extend(replaced.conflicts.iter().cloned());
         }
         let is_empty = late.is_empty() && bound_by_another_call.is_empty();

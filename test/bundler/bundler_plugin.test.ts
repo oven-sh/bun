@@ -1108,6 +1108,49 @@ describe("bundler", () => {
     },
   });
 
+  test.concurrent("plugin/onLoad that returns nothing for an asset leaves it to the file loader", async () => {
+    using dir = tempDir("plugin-onload-declines-asset", {
+      "index.ts": `
+        import logo from "./logo.png";
+        console.log(logo);
+      `,
+      "logo.png": "png bytes",
+      "build.mjs": `
+        import { basename } from "node:path";
+        const result = await Bun.build({
+          entrypoints: ["./index.ts"],
+          outdir: "./out",
+          naming: { asset: "[name].[ext]" },
+          plugins: [
+            {
+              name: "yaml-only",
+              setup(build) {
+                build.onLoad({ filter: /.*/ }, args =>
+                  args.path.endsWith(".yaml") ? { contents: "export default 1", loader: "js" } : undefined,
+                );
+              },
+            },
+          ],
+        });
+        console.log(result.outputs.map(output => output.kind + " " + basename(output.path)).sort().join("\\n"));
+        console.log(await Bun.file("./out/logo.png").text());
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("asset logo.png\nentry-point index.js\npng bytes\n");
+    expect(exitCode).toBe(0);
+  });
+
   itBundled("plugin/OnEndBasic", ({ root }) => {
     let onEndCalled = false;
 

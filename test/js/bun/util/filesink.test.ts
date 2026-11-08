@@ -515,9 +515,8 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// The generated ${name}__doClose detached m_sinkPtr and then called __close,
-// so the wrapper's destructor skipped __finalize and the wrapper's +1 on the
-// native FileSink was never released.
+// close() takes the sink from the JS object, whose destructor then has none to
+// finalize, so close() itself has to release the object's +1 on the native FileSink.
 it("close() does not leak the native FileSink", async () => {
   const dir = tmpdirSync();
   const baseline = fileSinkInternals.liveCount();
@@ -1423,7 +1422,7 @@ it.skipIf(isWindows)("throws on invalid writer options instead of crashing", asy
     if (fileSinkInternals.liveCount() <= baseline) break;
     await Bun.sleep(10);
   }
-  // Each early return in get_writer must release the sink's +1 ref; a missing
+  // Each early return in Blob::writer must release the sink's +1 ref; a missing
   // deref leaks one native FileSink per failed call.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
@@ -1483,11 +1482,12 @@ describe.concurrent("start() on an open writer", () => {
     const { join } = require("node:path");
     const dir = join(process.argv[1], "files");
     fs.mkdirSync(dir);
-    function openFilesInDir() {
+    function openFiles() {
       if (process.platform !== "linux") return 0;
       return fs.readdirSync("/proc/self/fd").filter(fd => {
         try {
-          return fs.readlinkSync("/proc/self/fd/" + fd).includes(dir);
+          const path = fs.readlinkSync("/proc/self/fd/" + fd);
+          return path.includes(dir) || path.endsWith("/ptmx");
         } catch {
           return false;
         }
@@ -1504,8 +1504,8 @@ describe.concurrent("start() on an open writer", () => {
           await Bun.sleep(1);
         }
       }
-      while (openFilesInDir() > 0 && Date.now() < deadline) await Bun.sleep(1);
-      return openFilesInDir() === 0 ? "all" : "open: " + openFilesInDir();
+      while (openFiles() > 0 && Date.now() < deadline) await Bun.sleep(1);
+      return openFiles() === 0 ? "all" : "open: " + openFiles();
     }
     function read(path) {
       return fs.readFileSync(path, "utf8");
@@ -1537,6 +1537,49 @@ describe.concurrent("start() on an open writer", () => {
       console.log(JSON.stringify({ ...out, closed: await closed() }));
     `);
     expect(result).toEqual({ target: "short", initial: "", closed: "all" });
+  });
+
+  // /dev/ptmx is a TTY that opens by path with no terminal attached, and `closed()` sees it on Linux.
+  it.skipIf(!isLinux)("start({ path }) moves a writer from a TTY to a regular file", async () => {
+    const result = await run(`
+      const target = join(dir, "target.txt");
+      const writer = Bun.file("/dev/ptmx").writer();
+      writer.start({ path: target });
+      writer.write("short");
+      const buffered = read(target);
+      await writer.end();
+      const out = { buffered, target: read(target) };
+      console.log(JSON.stringify({ ...out, closed: await closed() }));
+    `);
+    expect(result).toEqual({ buffered: "", target: "short", closed: "all" });
+  });
+
+  it.skipIf(!isLinux).each([
+    ["open", `const path = join(dir, "missing", "target.txt");`],
+    [
+      "epoll_ctl",
+      // A FIFO with a reader opens for writing, but cannot take over the TTY's poll.
+      `const path = join(dir, "fifo");
+      Bun.spawnSync(["mkfifo", path]);
+      const reader = fs.openSync(path, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);`,
+    ],
+  ])("a TTY writer still writes synchronously after start({ path }) fails in %s", async (syscall, setup) => {
+    const result = await run(`
+      ${setup}
+      const writer = Bun.file("/dev/ptmx").writer();
+      let failed;
+      try {
+        writer.start({ path });
+      } catch (e) {
+        failed = e.syscall;
+      }
+      writer.write("short");
+      const buffered = writer.flush();
+      await writer.end();
+      if (typeof reader === "number") fs.closeSync(reader);
+      console.log(JSON.stringify({ failed, buffered, closed: await closed() }));
+    `);
+    expect(result).toEqual({ failed: syscall, buffered: 0, closed: "all" });
   });
 
   it("start({ path }) settles a queued write and flushes it to the new path", async () => {

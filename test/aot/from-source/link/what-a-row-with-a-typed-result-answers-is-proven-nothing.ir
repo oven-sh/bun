@@ -1,0 +1,9 @@
+# the row of JSON.parse is applied, and what it says of its result is not taken: at a written type the front end has objects of the program's own layouts made there
+# -- source: what-a-row-with-a-typed-result-answers-is-proven-nothing.ts
+# function read(text: string) {
+#   return JSON.parse(text);
+# }
+# console.log(read(process.argv[2]!));
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 callers-known one-callee cycle=1 rank=1 returns=

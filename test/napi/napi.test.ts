@@ -13,6 +13,7 @@ import {
   mergeWindowEnvs,
   nodeExeMatchingAbi,
   tempDir,
+  withoutAsanQuarantine,
 } from "harness";
 import { dirname, join } from "path";
 
@@ -279,6 +280,34 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
     it("keeps arguments moved off the stack alive", async () => {
       await checkSameOutput("test_napi_handle_scope_many_args", ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]);
+    });
+    it("exists when bun test --isolate calls a function that an earlier file created", async () => {
+      // The addon is loaded once per process, so its reference keeps the function of the first file for the second one.
+      const testFile = `
+        import { expect, test } from "bun:test";
+        const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+        test("keeps strings alive", () => {
+          let first;
+          try {
+            first = addon.get_object_from_ref();
+          } catch {
+            addon.create_wrap({ keepsStringsAlive: addon.test_napi_handle_scope_string }, true, true);
+            return;
+          }
+          expect(first.keepsStringsAlive(() => Bun.gc(true))).toBeUndefined();
+        });
+      `;
+      using dir = tempDir("napi-isolate", { "a.test.ts": testFile, "b.test.ts": testFile });
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -636,6 +665,16 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const result = await checkSameOutput("test_ungated_calls_worker_terminate", []);
       expect(result.split(/\r?\n/)).toEqual([...Array(2).fill("terminate() resolved with 1"), "resolved to undefined"]);
     }, 30_000);
+
+    // node-addon-api aborts the process if a refused call leaves an exception pending that it cannot clear.
+    it("worker.terminate() during a gated call leaves no exception pending", async () => {
+      const result = await checkSameOutput("test_gated_calls_worker_terminate", []);
+      expect(result.split(/\r?\n/)).toEqual([
+        "terminate() resolved with 1",
+        "napi_throw: 23 exception pending: 0",
+        "resolved to undefined",
+      ]);
+    });
   });
 
   describe("status code alignment with Node.js", () => {
@@ -734,6 +773,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       const output = await checkSameOutput("test_napi_async_work_cancel", [], { "UV_THREADPOOL_SIZE": "2" });
       expect(output).toContain("success!");
       expect(output).not.toContain("failure!");
+    });
+    it("worker.terminate() runs no finalizer while execute() runs", async () => {
+      const output = await checkSameOutput("test_async_work_worker_terminate", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "terminate() resolved with 1",
+        "finalized during execute(): 0",
+        "resolved to undefined",
+      ]);
     });
   });
 
@@ -2195,11 +2242,12 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
       process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
     `;
     // 300 iterations * 256 KiB = 75 MB if every WTFStringImpl leaks.
-    // ASAN's quarantine inflates RSS; widen the threshold there.
+    // ASAN's quarantine would hold all 75 MB of what was freed, as if it had leaked: it is off.
+    // What is left of ASAN inflates RSS; widen the threshold there.
     const thresholdMB = isASAN ? 48 : 24;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", fixture],
-      env: { ...bunEnv, THRESHOLD_MB: String(thresholdMB) },
+      env: { ...withoutAsanQuarantine(bunEnv), THRESHOLD_MB: String(thresholdMB) },
       stdout: "pipe",
       stderr: "pipe",
     });

@@ -73,7 +73,30 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
 
 /* Reports "Bun ran out of memory" through the crash handler and aborts. For
  * allocations this library has no way to fail gracefully from. */
-extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+#ifdef __cplusplus
+extern "C"
+#else
+extern
+#endif
+void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+
+/* With AddressSanitizer us_malloc and us_calloc are the C library's. Below bsd.h,
+ * which defines _GNU_SOURCE for the system headers. */
+#include <stdlib.h>
+
+/* mimalloc returns NULL when the system has no more memory or address space to
+ * give. These never do: use them where the caller can't report a failure. */
+static inline void *us_xmalloc(size_t size) {
+    void *p = us_malloc(size);
+    if (!p) Bun__outOfMemory();
+    return p;
+}
+
+static inline void *us_xcalloc(size_t count, size_t size) {
+    void *p = us_calloc(count, size);
+    if (!p) Bun__outOfMemory();
+    return p;
+}
 
 /* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
  * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
@@ -386,8 +409,10 @@ struct us_socket_t {
   unsigned char ssl_first_flight_before_fin : 1;
   /* us_internal_ssl_shutdown held its FIN back for that step. */
   unsigned char ssl_shutdown_after_first_flight : 1;
-  /* ssl_raw_write shut the write side down, not the owner. */
+  /* A send that no retry can save shut the write side down, not the owner. */
   unsigned char ssl_send_rejected : 1;
+  /* The same on a socket without TLS: loop.c closes it after its next event. */
+  unsigned char send_rejected : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.

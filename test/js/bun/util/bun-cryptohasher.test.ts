@@ -1,8 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { createHash, createHmac } from "node:crypto";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { createHash, createHmac, hash as nodeHash } from "node:crypto";
+import { join } from "node:path";
 
 // Every digest literal in this file was checked against python hashlib (openssl for md4).
+
+const fileBlob = expect.objectContaining({
+  name: "TypeError",
+  code: "ERR_INVALID_ARG_TYPE",
+  message: "File blob cannot be used here",
+});
 
 test.each([
   ["Bun.file", () => Bun.file(import.meta.path)],
@@ -12,17 +19,90 @@ test.each([
   ],
 ])("%s in CryptoHasher is not supported yet", (_, make) => {
   const file = make();
-  const fileBlob = expect.objectContaining({
-    name: "TypeError",
-    code: "ERR_INVALID_ARG_TYPE",
-    message: "File blob cannot be used here",
-  });
   expect(() => Bun.SHA1.hash(file)).toThrow(fileBlob);
   expect(() => Bun.CryptoHasher.hash("sha1", file)).toThrow(fileBlob);
   expect(() => new Bun.SHA1().update(file)).toThrow(fileBlob);
   expect(() => new Bun.CryptoHasher("sha1").update(file)).toThrow(fileBlob);
   expect(() => Bun.sha(file)).toThrow(fileBlob);
 });
+
+test("an output of Bun.build() is hashed as its bytes, and one written to outdir is refused", async () => {
+  using dir = tempDir("cryptohasher-build-output", { "entry.js": `console.log("hello");` });
+  const entrypoints = [join(String(dir), "entry.js")];
+  // `any`: the types of the static hashers do not list Blob.
+  const inMemory: any = (await Bun.build({ entrypoints })).outputs[0];
+  const written: any = (await Bun.build({ entrypoints, outdir: join(String(dir), "out") })).outputs[0];
+  const code = Buffer.from(await inMemory.arrayBuffer());
+  expect(code.length).toBeGreaterThan(0);
+
+  expect({
+    classStatic: Bun.SHA1.hash(inMemory, "hex"),
+    static: Bun.CryptoHasher.hash("sha1", inMemory, "hex"),
+    classInstance: new Bun.SHA1().update(inMemory).digest("hex"),
+    instance: new Bun.CryptoHasher("sha1").update(inMemory).digest("hex"),
+    sha: Bun.sha(inMemory, "hex"),
+    nodeCrypto: nodeHash("sha1", inMemory, "hex"),
+  }).toEqual({
+    classStatic: Bun.SHA1.hash(code, "hex"),
+    static: Bun.CryptoHasher.hash("sha1", code, "hex"),
+    classInstance: new Bun.SHA1().update(code).digest("hex"),
+    instance: new Bun.CryptoHasher("sha1").update(code).digest("hex"),
+    sha: Bun.sha(code, "hex"),
+    nodeCrypto: nodeHash("sha1", code, "hex"),
+  });
+
+  expect(() => Bun.SHA1.hash(written)).toThrow(fileBlob);
+  expect(() => Bun.CryptoHasher.hash("sha1", written)).toThrow(fileBlob);
+  expect(() => new Bun.SHA1().update(written)).toThrow(fileBlob);
+  expect(() => new Bun.CryptoHasher("sha1").update(written)).toThrow(fileBlob);
+  expect(() => Bun.sha(written)).toThrow(fileBlob);
+  expect(() => nodeHash("sha1", written)).toThrow(fileBlob);
+});
+describe("digest() into a TypedArray needs room for the digest", () => {
+  /** `expected(size)` is what an array of `size` bytes, all 0xee before, holds afterwards. */
+  function check(make: () => Bun.CryptoHasher, expected: (size: number) => Buffer) {
+    const { byteLength } = make();
+    for (const extra of [0, 1, 100]) {
+      const into = new Uint8Array(byteLength + extra).fill(0xee);
+      expect(make().digest(into)).toBe(into);
+      expect(Buffer.from(into).toString("hex")).toBe(expected(into.length).toString("hex"));
+    }
+    expect(() => make().digest(new Uint8Array(byteLength - 1))).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `TypedArray must be at least ${byteLength} bytes`,
+      }),
+    );
+  }
+  const thenUntouched = (digest: Buffer) => (size: number) =>
+    Buffer.concat([digest, Buffer.alloc(size - digest.length, 0xee)]);
+  const isXOF = (algorithm: string) => algorithm.startsWith("shake");
+  const takesKey = (algorithm: Bun.SupportedCryptoAlgorithms) => {
+    try {
+      return !!new Bun.CryptoHasher(algorithm, "key");
+    } catch {
+      return false;
+    }
+  };
+
+  test.each(Bun.CryptoHasher.algorithms.filter(algorithm => !isXOF(algorithm)))("%s writes nothing else", algorithm => {
+    const make = () => new Bun.CryptoHasher(algorithm).update("abc");
+    check(make, thenUntouched(make().digest()));
+  });
+
+  test.each(Bun.CryptoHasher.algorithms.filter(takesKey))("%s with a key writes nothing else", algorithm => {
+    const make = () => new Bun.CryptoHasher(algorithm, "key").update("abc");
+    check(make, thenUntouched(make().digest()));
+  });
+
+  test.each(Bun.CryptoHasher.algorithms.filter(isXOF))("%s fills it", algorithm => {
+    check(
+      () => new Bun.CryptoHasher(algorithm).update("abc"),
+      outputLength => createHash(algorithm, { outputLength }).update("abc").digest(),
+    );
+  });
+});
+
 test("CryptoHasher update should throw when no parameter/null/undefined is passed", () => {
   const expected = expect.objectContaining({
     name: "TypeError",

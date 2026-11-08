@@ -223,6 +223,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     test,
                     yes,
                     no: None,
+                    else_loc: bun_ast::Loc::EMPTY,
                 },
                 current_loc,
             );
@@ -249,6 +250,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(root_if.unwrap());
             }
 
+            current_if.unwrap().else_loc = p.lexer.loc();
             p.lexer.next()?;
 
             // Handle final else
@@ -466,12 +468,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let finally_loc = p.lexer.loc();
             let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, finally_loc)?;
             p.lexer.expect(T::TFinally)?;
+            let finally_body_loc = p.lexer.loc();
             p.lexer.expect(T::TOpenBrace)?;
             let stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut stmt_opts)?;
             p.lexer.next()?;
             finally = Some(js_ast::Finally {
                 loc: finally_loc,
                 stmts: bun_ast::StoreSlice::from_bump(stmts),
+                body_loc: finally_body_loc,
             });
             p.pop_scope();
         }
@@ -1188,8 +1192,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 p.lexer.expect_or_insert_semicolon()?;
 
-                // Use the expression name if present, since it's a better name
-                let default_name = p.default_name_for_expr(expr, default_loc);
+                // A function or class expression binds its name in its own scope, so that name
+                // can't be the module's binding for the default export.
+                let default_name = match expr.data {
+                    // Not a symbol yet. The visit pass makes the default name for an identifier.
+                    js_ast::ExprData::EIdentifier(ident) => LocRef {
+                        loc: default_loc,
+                        ref_: ident.ref_,
+                    },
+                    _ => p.create_default_name(default_loc),
+                };
                 Ok(p.s(
                     S::ExportDefault {
                         default_name,

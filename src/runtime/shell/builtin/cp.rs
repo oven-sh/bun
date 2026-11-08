@@ -5,22 +5,22 @@ use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
     ParseFlagResult, ShellTask, parse_flags, shell_join_path, shell_resolve_operand,
-    unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
+use core::ops::ControlFlow;
 
 #[derive(Default)]
 pub(crate) struct Cp {
     pub(crate) opts: Opts,
     pub(crate) state: State,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
     /// directly (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not
     /// `ExecState`) because `print_shell_cp_task` is also driven from
     /// `State::Ebusy` on Windows; both states must be able to stash/pop.
-    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
+    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Cp>>>,
 }
 
 #[derive(Default)]
@@ -56,8 +56,7 @@ pub(crate) struct ExecState {
 #[cfg(windows)]
 #[derive(Default)]
 pub(crate) struct EbusyState {
-    pub(crate) tasks: Vec<*mut ShellCpTask>,
-    pub(crate) idx: usize,
+    pub(crate) tasks: std::collections::VecDeque<Box<ShellCpTask>>,
     pub(crate) main_exit_code: ExitCode,
     /// Absolute target paths that some task copied successfully — used to
     /// suppress a sibling task's EBUSY on the same target.
@@ -159,7 +158,6 @@ impl Cp {
                     unreachable!()
                 };
                 let mut ebusy = core::mem::take(&mut exec.ebusy);
-                ebusy.idx = 0;
                 ebusy.main_exit_code = exit_code;
                 Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
                 Self::ignore_ebusy_error_if_possible(interp, cmd)
@@ -201,9 +199,7 @@ impl Cp {
             return Builtin::done(interp, cmd, 1);
         }
         if let Some(task) = Self::state_mut(interp, cmd).output_queue.pop_front() {
-            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
-            // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };
+            return OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e);
         }
         Self::next(interp, cmd)
     }
@@ -215,43 +211,26 @@ impl Cp {
     #[cfg(windows)]
     fn ignore_ebusy_error_if_possible(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
-            // Pop tasks one at a time; `idx` is bumped on the first
-            // non-ignorable hit so a re-entry resumes there.
+            // Pop tasks one at a time, so a re-entry after the first
+            // non-ignorable hit resumes behind it.
             let next = {
                 let State::Ebusy(eb) = &mut Self::state_mut(interp, cmd).state else {
                     unreachable!()
                 };
-                if eb.idx < eb.tasks.len() {
-                    let t = eb.tasks[eb.idx];
-                    eb.idx += 1;
-                    // SAFETY: `t` is a live heap-allocated task stashed in
-                    // `on_shell_cp_task_done`; not yet freed.
-                    let tref = unsafe { &*t };
-                    let ignorable = tref
+                eb.tasks.pop_front().map(|t| {
+                    let ignorable = t
                         .tgt_absolute
                         .as_ref()
                         .map_or(false, |p| eb.absolute_targets.contains(p))
-                        || tref
-                            .src_absolute
+                        || t.src_absolute
                             .as_ref()
                             .map_or(false, |p| eb.absolute_srcs.contains(p));
-                    Some((t, ignorable))
-                } else {
-                    None
-                }
+                    (t, ignorable)
+                })
             };
             match next {
-                Some((t, true)) => {
-                    // SAFETY: paired with `heap::alloc` in `create()`.
-                    drop(unsafe { bun_core::heap::take(t) });
-                }
-                // SAFETY: `t` is a live heap task stashed in
-                // `on_shell_cp_task_done`; reclaim ownership.
-                Some((t, false)) => {
-                    return Self::print_shell_cp_task(interp, cmd, unsafe {
-                        bun_core::heap::take(t)
-                    });
-                }
+                Some((t, true)) => drop(t),
+                Some((t, false)) => return Self::print_shell_cp_task(interp, cmd, t),
                 None => break,
             }
         }
@@ -259,19 +238,19 @@ impl Cp {
             unreachable!()
         };
         let exit_code = eb.main_exit_code;
-        // `Drop` frees the ebusy sets/vec here.
+        // `Drop` frees the ebusy sets/queue here.
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, exit_code)
     }
 
-    fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
+    fn on_shell_cp_task_done(
+        interp: &Interpreter,
+        cmd: NodeId,
+        #[cfg_attr(not(windows), allow(unused_mut))] mut task: Box<ShellCpTask>,
+    ) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
-        // SAFETY: `task` was heap-allocated in `create()`; ownership transfers
-        // to this completion callback. Re-leaked below only on the EBUSY-defer path.
-        #[cfg_attr(not(windows), allow(unused_mut))]
-        let mut task = unsafe { bun_core::heap::take(task) };
         #[cfg(windows)]
         {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -288,7 +267,7 @@ impl Cp {
                             || task.src_absolute.as_deref()
                                     .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
-                        exec.ebusy.tasks.push(bun_core::heap::into_raw(task));
+                        exec.ebusy.tasks.push_back(task);
                         return Self::next(interp, cmd).run(interp);
                     }
                 } else {
@@ -332,9 +311,9 @@ impl OutputTaskVTable for Cp {
     fn write_err(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
+        child: Box<OutputTask<Self>>,
         errbuf: &[u8],
-    ) -> Option<Yield> {
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
@@ -343,14 +322,14 @@ impl OutputTaskVTable for Cp {
             // machine and reclaim the box (stopgap for missing WriterTag).
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stderr
                     .enqueue(childptr, errbuf, safeguard),
             );
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_err(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -360,25 +339,24 @@ impl OutputTaskVTable for Cp {
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield> {
+        child: Box<OutputTask<Self>>,
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            let buf = child.output.slice().to_vec();
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stdout
                     .enqueue(childptr, &buf, safeguard),
             );
         }
-        let buf = output.slice().to_vec();
+        let buf = child.output.slice().to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_out(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -410,6 +388,22 @@ pub(crate) struct ShellCpTask {
     pub(crate) verbose_output: bun_threading::Guarded<Vec<u8>>,
     pub(crate) err: Option<ShellErr>,
     pub task: ShellTask,
+}
+
+/// Whether there is anything to copy for a source operand.
+enum Check {
+    Copy,
+    /// The destination stays as it is, and that is not an error.
+    Skip,
+    Fail(Box<ShellErr>),
+}
+
+impl Check {
+    fn fail(msg: String) -> Check {
+        Check::Fail(Box::new(ShellErr::Custom(
+            msg.into_bytes().into_boxed_slice(),
+        )))
+    }
 }
 
 impl ShellCpTask {
@@ -531,8 +525,8 @@ impl ShellCpTask {
     }
 
     /// Recover `*ShellCpTask` from the
-    /// intrusive `*WorkPoolTask`, run the impl, and on error post back
-    /// immediately (success path defers the post to `cp_on_finish`).
+    /// intrusive `*WorkPoolTask`, run the impl, and post back immediately
+    /// unless a copy was started (which defers the post to `cp_on_finish`).
     unsafe fn work_pool_callback(task: *mut crate::shell::interpreter::WorkPoolTask) {
         // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
         // is embedded in `ShellCpTask` at `TASK_OFFSET`. `this` is a live
@@ -550,15 +544,18 @@ impl ShellCpTask {
                 .poster
                 .take()
                 .expect("shell cp task on the pool is armed");
-            if let Some(e) = (*this).run_from_thread_pool_impl(&poster) {
-                (*this).err = Some(e);
-                (*this).task.poster = Some(poster);
-                Self::enqueue_to_event_loop(this);
-            } else {
+            match (*this).run_from_thread_pool_impl(&poster) {
                 // The copy now belongs to a `ShellAsyncCpTask` (holding its
                 // own poster, completing on the JS thread via `cp_on_finish`);
                 // this task's pool part is over.
-                drop(poster);
+                Check::Copy => drop(poster),
+                check => {
+                    if let Check::Fail(err) = check {
+                        (*this).err = Some(*err);
+                    }
+                    (*this).task.poster = Some(poster);
+                    Self::enqueue_to_event_loop(this);
+                }
             }
         }
     }
@@ -612,11 +609,10 @@ impl ShellCpTask {
         src: &bun_core::ZStr,
         tgt: &bun_core::ZStr,
         appended: Option<&[u8]>,
-    ) -> Option<ShellErr> {
+    ) -> Check {
         use bun_sys::S;
         use resolve_path::Platform;
 
-        let custom = |msg: String| Some(ShellErr::Custom(msg.into_bytes().into_boxed_slice()));
         let src_shown = bstr::BStr::new(&self.src);
         let tgt_shown = || -> Vec<u8> {
             let mut shown = self.tgt.clone();
@@ -631,26 +627,34 @@ impl ShellCpTask {
 
         // If lstat fails, let the copy report the error.
         let Ok(src_stat) = bun_sys::lstat(src) else {
-            return None;
+            return Check::Copy;
         };
         // A symlink to a directory is copied as a link, so don't treat it as a directory.
         let src_is_dir = S::ISDIR(src_stat.st_mode as _);
         if let Ok(tgt_stat) = bun_sys::lstat(tgt) {
+            // A directory is still merged into an existing one, without replacing its files.
+            if self.opts.no_clobber && !src_is_dir {
+                return Check::Skip;
+            }
             if Self::same_inode(&src_stat, &tgt_stat) || src.as_bytes() == tgt.as_bytes() {
-                return custom(format!(
+                // Only the same operand twice is an error. Scripts rely on `cp file .` exiting 0.
+                if self.opts.no_clobber || appended.is_some() || src.as_bytes() != tgt.as_bytes() {
+                    return Check::Skip;
+                }
+                return Check::fail(format!(
                     "{src_shown} and {} are identical (not copied)",
                     bstr::BStr::new(&tgt_shown()),
                 ));
             }
             let tgt_is_dir = S::ISDIR(tgt_stat.st_mode as _);
             if src_is_dir && !tgt_is_dir {
-                return custom(format!(
+                return Check::fail(format!(
                     "cannot overwrite non-directory {} with directory {src_shown}",
                     bstr::BStr::new(&tgt_shown()),
                 ));
             }
             if !src_is_dir && tgt_is_dir {
-                return custom(format!(
+                return Check::fail(format!(
                     "cannot overwrite directory {} with non-directory {src_shown}",
                     bstr::BStr::new(&tgt_shown()),
                 ));
@@ -658,10 +662,10 @@ impl ShellCpTask {
         }
 
         if !src_is_dir {
-            return None;
+            return Check::Copy;
         }
         let into_itself = || {
-            custom(format!(
+            Check::fail(format!(
                 "cannot copy a directory, '{src_shown}', into itself, '{}'",
                 bstr::BStr::new(&tgt_shown()),
             ))
@@ -687,27 +691,24 @@ impl ShellCpTask {
             }
             ancestor = parent;
         }
-        None
+        Check::Copy
     }
 
     /// Resolves src/tgt to absolute paths, classifies them per the three
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
     /// the node:fs async cp implementation.
-    fn run_from_thread_pool_impl(
-        &mut self,
-        poster: &bun_jsc::ConcurrentPoster,
-    ) -> Option<ShellErr> {
+    fn run_from_thread_pool_impl(&mut self, poster: &bun_jsc::ConcurrentPoster) -> Check {
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
         let src = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.src) {
             Ok(path) => path,
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
         };
         let mut tgt = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.tgt)
         {
             Ok(path) => path,
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
         };
 
         // Cases:
@@ -720,15 +721,14 @@ impl ShellCpTask {
         // need to create it.
         let src_is_dir = match Self::is_dir(&src) {
             Ok(x) => x,
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
         };
 
         // Any source directory without -R is an error.
         if src_is_dir && !self.opts.recursive {
-            return Some(ShellErr::Custom(
-                format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
-                    .into_bytes()
-                    .into_boxed_slice(),
+            return Check::fail(format!(
+                "{} is a directory (not copied)",
+                bstr::BStr::new(&self.src)
             ));
         }
 
@@ -738,7 +738,7 @@ impl ShellCpTask {
                 // If it has a trailing directory separator, it's a directory.
                 (Self::has_trailing_sep(tgt.as_bytes()), false)
             }
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
         };
 
         let mut _copying_many = false;
@@ -754,46 +754,41 @@ impl ShellCpTask {
                 let basename = resolve_path::basename(src.as_bytes());
                 tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
                     Ok(path) => path,
-                    Err(e) => return Some(ShellErr::new_sys(&e)),
+                    Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
                 };
                 appended = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
-                return Some(ShellErr::Custom(
-                    format!("directory {} does not exist", bstr::BStr::new(&self.tgt))
-                        .into_bytes()
-                        .into_boxed_slice(),
+                return Check::fail(format!(
+                    "directory {} does not exist",
+                    bstr::BStr::new(&self.tgt)
                 ));
             }
             _copying_many = true;
         } else {
             // 3rd synopsis: source_files... -> target.
             if src_is_dir {
-                return Some(ShellErr::Custom(
-                    format!("{} is a directory (not copied)", bstr::BStr::new(&self.src))
-                        .into_bytes()
-                        .into_boxed_slice(),
+                return Check::fail(format!(
+                    "{} is a directory (not copied)",
+                    bstr::BStr::new(&self.src)
                 ));
             }
             if !tgt_exists || !tgt_is_dir {
-                return Some(ShellErr::Custom(
-                    format!("{} is not a directory", bstr::BStr::new(&self.tgt))
-                        .into_bytes()
-                        .into_boxed_slice(),
-                ));
+                return Check::fail(format!("{} is not a directory", bstr::BStr::new(&self.tgt)));
             }
             let basename = resolve_path::basename(src.as_bytes());
             tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
                 Ok(path) => path,
-                Err(e) => return Some(ShellErr::new_sys(&e)),
+                Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
             };
             appended = Some(basename);
             _copying_many = true;
         }
 
-        if let Some(err) = self.check_paths(&src, &tgt, appended) {
-            return Some(err);
+        match self.check_paths(&src, &tgt, appended) {
+            Check::Copy => {}
+            stop => return stop,
         }
 
         let args = crate::node::fs::args::Cp::owned(
@@ -801,30 +796,30 @@ impl ShellCpTask {
             tgt.as_bytes().to_vec(),
             crate::node::fs::args::CpFlags {
                 recursive: self.opts.recursive,
-                force: true,
+                force: !self.opts.no_clobber,
                 error_on_exist: false,
             },
         );
 
         // Pool thread: hand the copy to an fs.cp task bound to the loop and
         // poster this shell task captured on its own thread.
-        let _ = crate::node::fs::ShellAsyncCpTask::create_for_shell(
+        crate::node::fs::ShellAsyncCpTask::create_for_shell(
             args,
             self.task.event_loop,
             poster.clone(),
-            std::ptr::from_mut::<ShellCpTask>(self),
+            bun_ptr::ParentRef::from_ref_mut(self),
         );
 
-        None
+        Check::Copy
     }
 
     /// # Safety
     /// `this` must be a live `heap::alloc`'d task (see [`create`](Self::create));
-    /// ownership is consumed via [`Cp::on_shell_cp_task_done`].
+    /// ownership is reclaimed here.
     fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
         // SAFETY: `this` is a live heap-allocated task per the caller's contract.
-        let cmd = unsafe { (*this).cmd };
-        Cp::on_shell_cp_task_done(interp, cmd, this);
+        let task = unsafe { bun_core::heap::take(this) };
+        Cp::on_shell_cp_task_done(interp, task.cmd, task);
     }
 }
 
@@ -870,31 +865,35 @@ pub(crate) struct Opts {
     pub(crate) recursive: bool,
     /// `-v` — verbose
     pub(crate) verbose: bool,
+    /// `-n` — do not overwrite an existing file
+    pub(crate) no_clobber: bool,
 }
 
 impl FlagParser for Opts {
-    fn parse_long(&mut self, _flag: &[u8]) -> Option<ParseFlagResult> {
+    fn parse_long<'a>(&mut self, _flag: &'a [u8]) -> Option<ParseFlagResult<'a>> {
         None
     }
 
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+    fn parse_short<'a>(
+        &mut self,
+        ch: u8,
+        smallflags: &'a [u8],
+        i: usize,
+    ) -> Option<ParseFlagResult<'a>> {
         match ch {
-            b'f' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-f"))),
-            b'H' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-H"))),
-            b'i' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-i"))),
-            b'L' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-L"))),
-            b'P' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            b'p' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-P"))),
-            b'R' => {
-                self.recursive = true;
-                Some(ParseFlagResult::ContinueParsing)
-            }
-            b'v' => {
-                self.verbose = true;
-                Some(ParseFlagResult::ContinueParsing)
-            }
-            b'n' => Some(ParseFlagResult::ContinueParsing),
-            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
+            b'R' => self.recursive = true,
+            b'v' => self.verbose = true,
+            b'n' => self.no_clobber = true,
+            // Only the first flag of a group is rejected. Scripts rely on `-Rp` and `-Rf` working.
+            _ if i > 0 => {}
+            b'f' => return Some(ParseFlagResult::Unsupported(b"-f")),
+            b'H' => return Some(ParseFlagResult::Unsupported(b"-H")),
+            b'i' => return Some(ParseFlagResult::Unsupported(b"-i")),
+            b'L' => return Some(ParseFlagResult::Unsupported(b"-L")),
+            b'P' => return Some(ParseFlagResult::Unsupported(b"-P")),
+            b'p' => return Some(ParseFlagResult::Unsupported(b"-P")),
+            _ => return Some(ParseFlagResult::IllegalOption(&smallflags[i..])),
         }
+        None
     }
 }

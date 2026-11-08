@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// This rule makes sure you always use `new` when throwing an error.
 pub struct ThrowNewError;
 
-const THROW_NEW_ERROR: Message = Message::new("", "Require `new` when throwing an error.");
+const THROW_NEW_ERROR: &Message = &Message::new("", "Require `new` when throwing an error.");
 
 impl Rule for ThrowNewError {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "throw-new-error", Kind::Suggestion).fixable(Fixable::Code);

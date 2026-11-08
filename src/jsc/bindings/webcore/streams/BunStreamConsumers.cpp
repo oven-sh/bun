@@ -8,6 +8,8 @@
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
 #include "ErrorCode.h"
+#include "GeneratedBlob.h"
+#include "GeneratedSink.h"
 #include "helpers.h"
 #include "JSDOMFormData.h"
 #include "JSDOMGlobalObject.h"
@@ -1094,7 +1096,7 @@ JSValue consumeDirectStreamToArrayBuffer(JSGlobalObject* globalObject, WebCore::
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
 
     MarkedArgumentBuffer noArguments;
-    JSObject* arrayBufferSink = JSC::construct(globalObject, domGlobalObject->ArrayBufferSink(), noArguments, "ArrayBufferSink is not constructible"_s);
+    JSObject* arrayBufferSink = JSC::construct(globalObject, Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSArrayBufferSink>(globalObject), noArguments, "ArrayBufferSink is not constructible"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
     stream->m_directSource.clear();
@@ -1532,7 +1534,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (J
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer arguments;
     arguments.append(callFrame->argument(0));
-    JSObject* blob = JSC::construct(globalObject, defaultGlobalObject(globalObject)->JSBlobConstructor(), arguments, "Blob is not constructible"_s);
+    JSObject* blob = JSC::construct(globalObject, Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSBlob>(globalObject), arguments, "Blob is not constructible"_s);
     RETURN_IF_EXCEPTION(scope, {});
     Bun::WebStreams::releaseInternalChunkArray(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});

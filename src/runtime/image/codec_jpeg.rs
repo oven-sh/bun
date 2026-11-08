@@ -12,7 +12,7 @@ type tjhandle = *mut c_void;
 
 // TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
 unsafe extern "C" {
-    fn tj3Init(init_type: c_int) -> tjhandle;
+    safe fn tj3Init(init_type: c_int) -> tjhandle;
     fn tj3Destroy(h: tjhandle);
     fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
     fn tj3Get(h: tjhandle, param: c_int) -> c_int;
@@ -38,7 +38,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
-    fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
+    safe fn tj3GetScalingFactors(n: &mut c_int) -> *const ScalingFactor;
     pub(crate) fn tj3Free(ptr: *mut c_void);
     // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
     // colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
@@ -58,8 +58,7 @@ impl Handle {
     /// `init_type`: `0` = compress, `1` = decompress.
     #[inline]
     pub(crate) fn init(init_type: c_int) -> Option<Self> {
-        // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
-        NonNull::new(unsafe { tj3Init(init_type) }).map(Self)
+        NonNull::new(tj3Init(init_type)).map(Self)
     }
 
     #[inline]
@@ -184,9 +183,7 @@ pub(crate) fn decode(
     if hint.target_w != 0 && hint.target_h != 0 && (hint.target_w < src_w || hint.target_h < src_h)
     {
         let mut n: c_int = 0;
-        // SAFETY: FFI — writes a count into `n` and returns a pointer to a
-        // static const table inside libjpeg-turbo; no handle required.
-        let sfs = unsafe { tj3GetScalingFactors(&raw mut n) };
+        let sfs = tj3GetScalingFactors(&mut n);
         if !sfs.is_null() {
             let mut best = ScalingFactor { num: 1, denom: 1 };
             // SAFETY: tj3GetScalingFactors returned `n` valid ScalingFactor entries at `sfs`.

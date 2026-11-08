@@ -14,7 +14,7 @@ use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
-use bun_paths::{self, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 
 use bun_http_types::URLPath::URLPath;
 
@@ -558,27 +558,13 @@ impl<'a> RouteLoader<'a> {
         // NOTE: the guard is dropped before this loop on purpose — the
         // `read_dir_info_ignore_error` recursion below re-acquires `entries_mutex`.
         'outer: for entry_ptr in entry_ptrs {
-            // NOTE: the snapshot yields raw `*mut Entry`. Reborrow locally for
-            // each access so `&` reads and the `kind()` call do not
-            // overlap; the lazy-stat rewrite inside `kind()` is serialized on
-            // the per-entry `Entry.mutex`.
             // SAFETY: EntryStore-owned, valid for process lifetime.
-            if unsafe { &*entry_ptr }.base()[0] == b'.' {
+            let entry: &Fs::Entry = unsafe { &*entry_ptr };
+            if entry.base()[0] == b'.' {
                 continue 'outer;
             }
 
-            // Thread the resolver's fs `Implementation` through —
-            // `Entry.kind` derefs it to lazily stat when `need_stat` is
-            // true, so null would be a latent crash / silent route-drop
-            // once the stub forwards it.
-            // SAFETY: no other live borrow of `*entry_ptr` here;
-            // `resolver.fs_impl()` points at the process-global RealFS.
-            let kind = unsafe { (&*entry_ptr).kind(resolver.fs_impl(), false) };
-            // SAFETY: shared read-only borrow for the match arms; the only
-            // subsequent mutation is via `Route::parse` which takes the raw
-            // pointer and reborrows internally.
-            let entry: &Fs::Entry = unsafe { &*entry_ptr };
-            match kind {
+            match entry.kind(&fs.fs, false) {
                 Fs::EntryKind::Dir => {
                     for banned_dir in BANNED_DIRS.iter() {
                         if entry.base() == *banned_dir {
@@ -617,18 +603,14 @@ impl<'a> RouteLoader<'a> {
                             // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
                             let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
-                            // SAFETY: `entry_ptr` is EntryStore-owned (process
-                            // lifetime) with no other live `&mut` borrow here.
-                            let route = unsafe {
-                                Route::parse(
-                                    entry.base(),
-                                    extname,
-                                    entry_ptr,
-                                    self.log,
-                                    public_dir,
-                                    self.route_dirname_len,
-                                )
-                            };
+                            let route = Route::parse(
+                                entry.base(),
+                                extname,
+                                entry,
+                                self.log,
+                                public_dir,
+                                self.route_dirname_len,
+                            );
                             if let Some(route) = route {
                                 self.append_route(route);
                             }
@@ -711,21 +693,31 @@ pub struct Route {
 impl Route {
     pub(crate) const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
-    /// # Safety
-    /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
-    /// other active `&mut` borrow for the duration of the call. `base_` and
-    /// `extname` may borrow `(*entry).base_`; see the NOTE below.
-    pub(crate) unsafe fn parse(
+    pub(crate) fn parse(
         base_: &[u8],
         extname: &[u8],
-        entry: *mut Fs::Entry,
+        entry: &Fs::Entry,
         log: &mut bun_ast::Log,
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // NOTE: `entry` is a raw `*mut Entry` because `base_`/`extname` may
-        // borrow `(*entry).base_` and a `&mut Entry` parameter would alias them.
         let base = &base_[0..base_.len() - extname.len()];
+
+        // The public path and the longer absolute path are both built in `route_file_buf`.
+        let dir = strings::without_trailing_slash(entry.dir());
+        if dir.len() + 1 + base_.len() >= MAX_PATH_BYTES {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "ENAMETOOLONG opening route: {}{}{}",
+                    bstr::BStr::new(dir),
+                    SEP_STR,
+                    bstr::BStr::new(base_)
+                ),
+            );
+            return None;
+        }
 
         let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
 
@@ -812,7 +804,7 @@ impl Route {
                 // lifetime arena), so rebinding here drops the borrow on
                 // `route_file_buf` and avoids needing lifetime transmutes
                 // below.
-                let dirname_store = FileSystem::instance().dirname_store();
+                let dirname_store = FileSystem::get().dirname_store();
                 let public_path: &'static [u8] =
                     dirname_store.append(public_path).expect("unreachable");
                 let name: &'static [u8] = &public_path[name_offset..][0..name_len];
@@ -831,11 +823,8 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            // SAFETY: caller passes an EntryStore-owned pointer valid for the
-            // process lifetime; no other live `&mut` to it during this call.
-            let entry_r = unsafe { &*entry };
             // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
-            let Ok(entry_abs_path) = entry_r.abs_path_or_try_fill(|| {
+            let Ok(entry_abs_path) = entry.abs_path_or_try_fill(|| {
                 let mut abs_path_str: &[u8] = b"";
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
@@ -852,12 +841,12 @@ impl Route {
                     }
                 });
 
-                if let Some(valid) = entry_r.cache().fd.unwrap_valid() {
+                if let Some(valid) = entry.cache().fd.unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {
-                    let parts = [entry_r.dir(), entry_r.base()];
-                    let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
+                    let parts = [entry.dir(), entry.base()];
+                    let abs_len = FileSystem::get().abs_buf(&parts, route_file_buf).len();
                     // Rebind so the later getFdPath error
                     // message prints the computed path instead of `b""`.
                     // SAFETY: lifetime-laundered raw view into route_file_buf
@@ -907,7 +896,7 @@ impl Route {
                 };
 
                 Ok(Interned::from_static(
-                    FileSystem::instance()
+                    FileSystem::get()
                         .dirname_store()
                         .append(_abs)
                         .expect("unreachable"),
@@ -925,7 +914,7 @@ impl Route {
                     abs_path_str,
                     &mut bufs.normalized_abs_path_buf,
                 );
-                let interned: &'static [u8] = FileSystem::instance()
+                let interned: &'static [u8] = FileSystem::get()
                     .dirname_store()
                     .append(normalized)
                     .expect("unreachable");
@@ -939,7 +928,7 @@ impl Route {
                 debug_assert!(!strings::index_of_char(name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
-                debug_assert!(!strings::index_of_char(entry_r.base(), b'\\').is_some());
+                debug_assert!(!strings::index_of_char(entry.base(), b'\\').is_some());
             }
 
             Some(Route {
@@ -1066,9 +1055,6 @@ pub trait ResolverLike {
     // `bun_resolver::fs::FileSystem` is a process-global singleton, so `'static`
     // here is faithful and avoids threading the resolver borrow into RouteLoader<'a>.
     fn fs(&self) -> &'static FileSystem;
-    /// The resolver's `Implementation` field, passed to
-    /// `Entry.kind` for lazy stat.
-    fn fs_impl(&self) -> *mut Fs::Implementation;
     /// Returns an arena handle (not a borrow) so the resolver's `&mut self`
     /// borrow ends before the recursive `load()` re-borrows it.
     fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef>;

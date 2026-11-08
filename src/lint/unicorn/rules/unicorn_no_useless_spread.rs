@@ -13,8 +13,8 @@ use smallvec::{SmallVec, smallvec};
 /// Disallow unnecessary spread.
 pub struct NoUselessSpread;
 
-const USELESS_SPREAD: Message = Message::new("", "Using a spread operator here creates a new {{noun}} unnecessarily.");
-const ITERABLE_TO_ARRAY: Message = Message::new(
+const USELESS_SPREAD: &Message = &Message::new("", "Using a spread operator here creates a new {{noun}} unnecessarily.");
+const ITERABLE_TO_ARRAY: &Message = &Message::new(
     "",
     "`{{ctor_name}}` accepts an iterable, so it's unnecessary to convert the iterable to an array.",
 );

@@ -1,15 +1,37 @@
 #include "root.h"
 
 #include "ErrorStackTrace.h"
+#include "GeneratedExpect.h"
 #include "GeneratedExpectDeferred.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
+#include <JavaScriptCore/AOTCompiledCaller.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/StackFrame.h>
+#include <JavaScriptCore/VMEntryRecord.h>
 
 using namespace JSC;
+
+static Bun::Bindgen::Generated::JSExpect* expectOfFrame(VM& vm, CallFrame* frame)
+{
+    if (!frame || AOT::isOperationFrameRecord(vm, frame))
+        return nullptr;
+    JSValue thisValue = frame->thisValue();
+    return thisValue.isCell() ? dynamicDowncast<Bun::Bindgen::Generated::JSExpect>(thisValue.asCell()) : nullptr;
+}
+
+// The `expect()` object whose matcher is running, or undefined. A matcher is a native function, so that is `this` of the top
+// frame. Under `this.equals()` in a matcher of `expect.extend()`, it is `this` of the native function that called the matcher.
+extern "C" EncodedJSValue Expect__ofRunningMatcher(JSGlobalObject* globalObject)
+{
+    auto& vm = getVM(globalObject);
+    auto* expect = expectOfFrame(vm, vm.topCallFrame);
+    if (!expect && vm.topEntryFrame)
+        expect = expectOfFrame(vm, vmEntryRecord(vm.topEntryFrame)->prevTopCallFrame());
+    return JSValue::encode(expect ? JSValue(expect) : jsUndefined());
+}
 
 extern "C" void ExpectDeferred__callWhenSettled(JSGlobalObject* globalObject, EncodedJSValue promise, EncodedJSValue function, EncodedJSValue deferred)
 {

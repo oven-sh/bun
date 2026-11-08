@@ -45,6 +45,7 @@ unsafe extern "C" {
         on_fulfilled: JSValue,
     ) -> JSValue;
     safe fn ExpectDeferred__takeThrown(global: &JSGlobalObject) -> JSValue;
+    safe fn Expect__ofRunningMatcher(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__isHandled(promise: JSValue) -> bool;
     safe fn ExpectDeferred__captureCallSite(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__continueStackAt(
@@ -541,6 +542,18 @@ impl Pass {
         js::awaited_set_cached(deferred, global, promise.as_value());
         js::journal_set_cached(deferred, global, journal);
         global.throw_value(deferred)
+    }
+}
+
+/// Called by C++ deep equality where Vitest and Jest disagree. With no matcher on the stack (an `equals()` kept from a
+/// matcher, `asymmetricMatch()` called directly), the entry that runs decides.
+#[inline(never)]
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Expect__comparesLikeVitest(global: &JSGlobalObject) -> bool {
+    bun_removable_features::removable_definition!(Test, Expect__comparesLikeVitest);
+    match Expect__ofRunningMatcher(global).as_class_ref::<Expect>() {
+        Some(expect) => expect.is_vitest(),
+        None => global.bun_vm().is_running_vitest_entry,
     }
 }
 

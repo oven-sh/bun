@@ -1,11 +1,15 @@
 // Internal bindings for node:os
 // The entrypoint for node:os is `src/js/node/os.ts`
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::node::os" });
 
+/** Plain objects and arrays of strings and numbers, made for the call. */
+const newPlainData = b.any.returning(table.plainData.fresh.spec);
+
 export const hostCpuCount = b.value({ returns: b.i32 });
-export const cpus = b.fn({ returns: b.any, capability: "js", throws: true });
+export const cpus = b.fn({ returns: newPlainData, capability: "js", throws: true });
 export const freemem = b.fn({ returns: b.u64 });
 export const getPriority = b.fn({
   args: {
@@ -16,9 +20,9 @@ export const getPriority = b.fn({
   throws: true,
 });
 export const homedir = b.fn({ returns: b.string, capability: "js", throws: true });
-export const hostname = b.fn({ returns: b.any, capability: "js", throws: true });
+export const hostname = b.fn({ returns: b.any.returning("string"), capability: "js", throws: true });
 export const loadavg = b.fn({ returns: b.array(b.f64) });
-export const networkInterfaces = b.fn({ returns: b.any, capability: "js", throws: true });
+export const networkInterfaces = b.fn({ returns: newPlainData, capability: "js", throws: true });
 export const release = b.fn({ returns: b.string });
 export const totalmem = b.fn({ returns: b.u64 });
 export const uptime = b.fn({ returns: b.f64, throws: true });
@@ -31,7 +35,7 @@ export const userInfo = b.fn({
   args: {
     options: UserInfoOptions.nullable.default({}),
   },
-  returns: b.any,
+  returns: newPlainData,
   capability: "js",
   throws: true,
 });

@@ -276,6 +276,58 @@ describe.concurrent("a way for unseen code to run has its place in the program",
       `${loadsByName} (Function) at main.ts:2:5`,
     ]);
   });
+
+  // A symbol can name no member of the table: `eval`, `Function` and `Bun` all have names that are texts. Not met yet: the
+  // compiler takes a read or a store under a symbol on a built-in object for one under a name that is only known at run time.
+  const underRegisteredSymbol = `const SLOT = Symbol.for("app.slot");\nconst slots = globalThis as unknown as Record<symbol, { count: number } | undefined>;\nconsole.log((slots[SLOT] ??= { count: 0 }).count);`;
+  const underCreatedSymbol = `const SLOT = Symbol("app.slot");\nconst slots = globalThis as unknown as Record<symbol, number | undefined>;\nslots[SLOT] = 1;\nconsole.log(slots[SLOT]);`;
+  const underSymbolHeldInConstant = `const tag = Symbol.toStringTag;\n(globalThis as Record<symbol, string>)[tag] = "app";\nconsole.log(String(globalThis));`;
+  for (const [title, text] of [
+    ["a slot of globalThis under a registered symbol", underRegisteredSymbol],
+    ["a slot of globalThis under a symbol made once", underCreatedSymbol],
+    ["a store on globalThis under a well-known symbol held in a constant", underSymbolHeldInConstant],
+  ] as const) {
+    test.failing(`${title} names no API of the program: not yet: the symbol counts as a name from run time`, async () => {
+      const { lines, whyOpen } = await report(text);
+      expect(whyOpen).toEqual([]);
+      expect(lines[0]).toBe(seesEveryApi);
+    });
+  }
+  test("a slot of globalThis under a registered symbol: what the report says today", async () => {
+    const { whyOpen } = await report(underRegisteredSymbol);
+    expect(whyOpen).toContain(`${evaluates} (Function) at main.ts:4:14`);
+    expect(whyOpen).toContain(`${evaluates} (eval) at main.ts:4:14`);
+  });
+  test("a store on globalThis under a well-known symbol held in a constant: what the report says today", async () => {
+    expect((await report(underSymbolHeldInConstant)).whyOpen).toEqual([`${evaluates} (Function)`, loadsByName]);
+  });
+  // A key that is one of two symbols, or a symbol that a loop makes anew, is a name from run time all the same.
+  test("a slot of globalThis under one of two symbols is a name from run time", async () => {
+    const { lines, whyOpen } = await report(
+      `const a = Symbol("a"), b = Symbol("b");\nconst slots = globalThis as unknown as Record<symbol, number>;\nconsole.log(slots[process.argv.length > 2 ? a : b]);`,
+    );
+    expect(whyOpen).toContain(`${evaluates} (Function) at main.ts:4:13`);
+    expect(lines).not.toContain(seesEveryApi);
+  });
+
+  // A function written without "use strict" that unseen code may call has the global object for `this` where the caller left the
+  // receiver out, beside whatever else the caller gave. A read through it hands nothing out. Not met yet: the join loses the global
+  // object, so every global is in reach, and the two lines have no place, because no call of the program made the loss.
+  const sloppyThis = {
+    "m.cjs": `const errors = { A: "a" };\nfor (const msg of Object.keys(errors)) exports[msg] = () => new Error(errors[msg]);\nexports.h = { toString: function () { return JSON.stringify(this); } };\n`,
+  };
+  const requiresSloppyThis = `const M = require("./m.cjs");\nconsole.log(typeof M.h);`;
+  test.failing(
+    "a sloppy function on an object that unseen code may call reads `this`: no unseen code can run: not yet: the global object is lost at the join",
+    async () => {
+      const { lines, whyOpen } = await report(requiresSloppyThis, sloppyThis);
+      expect(whyOpen).toEqual([]);
+      expect(lines[0]).toBe(seesEveryApi);
+    },
+  );
+  test("a sloppy function on an object that unseen code may call reads `this`: what the report says today", async () => {
+    expect((await report(requiresSloppyThis, sloppyThis)).whyOpen).toEqual([`${evaluates} (Function)`, loadsByName]);
+  });
 });
 
 describe.concurrent(

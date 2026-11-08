@@ -116,6 +116,18 @@ const usesOfGetterWithoutWrapper: readonly UseSpec[] = [b.readsContents(), b.wri
 
 const usesThatReachResult: readonly UseSpec[] = [b.returned, heldValuesAnswered];
 
+/**
+ * What `$bindgen(file, name)` answers is a constructor, a namespace or a value, never a function of its own: a call of the
+ * binding throws. Without the row the engine writes one that says a call may answer anything, and a module that only reads
+ * the binding is then taken to hold objects of every class.
+ */
+const callOfBindingThrows: b.FunctionField = {
+  returns: b.never,
+  capability: "heap",
+  throws: true,
+  implementation: b.generic,
+};
+
 /** The thunk of a member takes the cell of its receiver behind the realm. */
 const receiverParameter: DirectParameterSpec = { value: "Receiver", cppType: "JSC::JSCell*" };
 
@@ -902,6 +914,7 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
           capability: "heap",
           implementation: b.generic,
           runsUnseenCode: false,
+          call: callOfBindingThrows,
         })
       : []),
     ...setMemberParts(
@@ -953,6 +966,7 @@ function collectBoundNamespace(
       capability: "heap",
       implementation: b.generic,
       runsUnseenCode: false,
+      call: callOfBindingThrows,
     }),
   ];
 }
@@ -967,6 +981,7 @@ function collectValue(fn: FunctionDefinition, binding: BuiltinPath): Declaration
     capability: signature.capability === "none" ? "heap" : signature.capability,
     throws: signature.throws || isHeld(signature),
     implementation: b.generic,
+    call: callOfBindingThrows,
   });
 }
 

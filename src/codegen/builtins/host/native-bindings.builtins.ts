@@ -1,5 +1,6 @@
 // The objects that the host answers for `$cpp(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
+import { answers, bagOfFunctions, isNoFunction, undeclaredFunction } from "./native-bags.ts";
 import { answering, constructing, handedOver } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
@@ -7,27 +8,10 @@ const viewHeaps = ["TypedArrayStorage", "TypedArrayElements"];
 const operandCodeOnly = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
 const converted = [b.runs("ToPrimitive")];
 
-// An ordinary object that the host makes for the module that asks, with native functions of its own.
-const bagOfFunctions = (path: b.BuiltinPath, members: Readonly<Record<string, b.Field>>) => [
-  ...b.namespace(path, members, { scope: "Module", listsAllMembers: true }),
-  ...b.inherits(path, "Object.prototype"),
-];
-
-const answers = (binding: b.BuiltinPath, answer: b.TableType) =>
-  b.static(binding, { getter: answer, capability: "heap", implementation: b.generic });
-
-const isNoFunction = {
-  returns: b.never,
-  capability: "heap",
-  throws: true,
-  implementation: b.generic,
-} satisfies b.FunctionField;
-
 const ttyFunctions = "%BunTTYFunctions%";
 const httpFunctions = "%NodeHTTPInternalBinding%";
 const mimeClasses = "%MIMEBinding%";
 const vmBinding = "%NodeVMBinding%";
-const undeclaredFunction = b.otherwiseBy(b.generic);
 // The three functions lie in an array. No object stands for the holder, and each has the name that native code gives the function.
 const urlFunctions = "%NodeURLFunctions%";
 

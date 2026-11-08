@@ -25,7 +25,7 @@ const NativeZstd: $Bindgen.CompressionStreamConstructor<$Bindgen.NativeZstd> = $
   "node_zlib_binding.bind.ts",
   "NativeZstd",
 );
-const constants: Record<string, number> = process.binding("constants").zlib;
+const constants: Record<string, number> = $processBindingConstants.zlib;
 
 type OnError = (message: string, errno: number, code: string) => void;
 

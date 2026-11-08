@@ -7,8 +7,18 @@ export const bagOfFunctions = (path: b.BuiltinPath, members: Readonly<Record<str
   ...b.inherits(path, "Object.prototype"),
 ];
 
+// A call of the object itself throws: it is a bag, a constructor's holder or a value, not a function.
+export const isNoFunction = {
+  returns: b.never,
+  capability: "heap",
+  throws: true,
+  implementation: b.generic,
+} satisfies b.FunctionField;
+
+// What `$cpp(file, symbol)` answers. Without the call row the engine writes one that says a call may answer anything, and
+// a module that only reads the binding is then taken to hold objects of every class.
 export const answers = (binding: b.BuiltinPath, answer: b.TableType) =>
-  b.static(binding, { getter: answer, capability: "heap", implementation: b.generic });
+  b.static(binding, { getter: answer, capability: "heap", implementation: b.generic, call: isNoFunction });
 
 // A function of which the table says that it is there and is a function. A call hands its operands to native code that nothing describes.
 export const undeclaredFunction = b.otherwiseBy(b.generic);

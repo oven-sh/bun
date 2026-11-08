@@ -18,9 +18,10 @@ export const extractedSplitNewLinesFastPathStringsOnly = b.fn({
   returns: b.array(b.string).optional,
 });
 
+/** The canonical name of the encoding, or undefined for a name that is none. */
 export const normalizeEncoding = b.fn({
   args: { encoding: b.string.loose },
-  returns: b.any,
+  returns: b.any.returning("string", "undefined"),
   capability: "heap",
 });
 

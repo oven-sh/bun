@@ -1625,6 +1625,104 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
   );
 });
 
+// util.inspect prints a prototype object without a call of its hook, because the hook of a class
+// takes an instance. The test is `Object.getOwnPropertyDescriptor(value, "constructor")?.value?.prototype === value`.
+describe("[nodejs.util.inspect.custom] of a prototype object is not called", () => {
+  let calls = 0;
+  function hook() {
+    calls++;
+    return "from the hook";
+  }
+  // A constructor whose `prototype` is `object`.
+  function prototypeOf(object) {
+    function Class() {}
+    Class.prototype = object;
+    Object.defineProperty(object, "constructor", { value: Class, writable: true, configurable: true });
+    Object.defineProperty(object, Bun.inspect.custom, { value: hook, writable: true, configurable: true });
+    return object;
+  }
+  const manyFields = () => Object.fromEntries(Array.from({ length: 200 }, (_, index) => ["field" + index, index]));
+
+  it.each([
+    ["a plain object", () => ({ a: 1 }), "Class {\n  a: 1,\n}"],
+    ["an object with 200 fields", manyFields, /^Class \{\n  field0: 0,\n/],
+    ["a Buffer", () => Buffer.from("hi"), "Buffer(2) [ 104, 105 ]"],
+    ["a Uint16Array", () => new Uint16Array(2), "Uint16Array(2) [ 0, 0 ]"],
+    ["an array", () => [1, 2], "[ 1, 2 ]"],
+    ["a function", () => function named() {}, "[Function: named]"],
+    ["a Map", () => new Map([[1, 2]]), "Map(1) {\n  1: 2,\n}"],
+    ["a Date", () => new Date(0), "1970-01-01T00:00:00.000Z"],
+    ["a String object", () => new String("s"), '"s"'],
+  ])("when the prototype is %s", (_, make, printed) => {
+    calls = 0;
+    // With the hook and no own `constructor`, the value is an instance.
+    expect(Bun.inspect(Object.defineProperty(make(), Bun.inspect.custom, { value: hook }))).toBe("from the hook");
+    expect(calls).toBe(1);
+    expect(Bun.inspect(prototypeOf(make()))).toMatch(printed);
+    expect(calls).toBe(1);
+  });
+
+  it("when the hook is on String.prototype", () => {
+    calls = 0;
+    Object.defineProperty(String.prototype, Bun.inspect.custom, { value: hook, configurable: true });
+    try {
+      expect([Bun.inspect(new String("s")), Bun.inspect(String.prototype)]).toEqual(["from the hook", '""']);
+    } finally {
+      delete String.prototype[Bun.inspect.custom];
+    }
+    expect(calls).toBe(1);
+  });
+
+  it("and a hook that returns its String object prints that object", () => {
+    const returnsItself = Object.defineProperty(new String("s"), Bun.inspect.custom, {
+      value() {
+        return this;
+      },
+    });
+    expect(Bun.inspect(returnsItself)).toBe('"s"');
+  });
+
+  // Node reads `constructor.prototype` with a [[Get]], so it takes both of these for prototypes.
+  it("and no getter or Proxy trap of the constructor runs to find out", () => {
+    let ran = 0;
+    const withGetter = { [Bun.inspect.custom]: hook };
+    withGetter.constructor = {
+      get prototype() {
+        ran++;
+        return withGetter;
+      },
+    };
+    const withProxy = { [Bun.inspect.custom]: hook };
+    withProxy.constructor = new Proxy(function () {}, {
+      get(target, key, receiver) {
+        ran++;
+        return key === "prototype" ? withProxy : Reflect.get(target, key, receiver);
+      },
+      getOwnPropertyDescriptor(target, key) {
+        ran++;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+    });
+    expect([Bun.inspect(withGetter), Bun.inspect(withProxy), ran]).toEqual(["from the hook", "from the hook", 0]);
+  });
+
+  it("in the message of a matcher", () => {
+    class Money {
+      #cents = 150;
+      [Bun.inspect.custom]() {
+        return "Money<" + this.#cents + ">";
+      }
+    }
+    let message;
+    try {
+      expect(Object.getPrototypeOf(new Money())).toBeNull();
+    } catch (error) {
+      message = Bun.stripANSI(error.message);
+    }
+    expect(message).toBe("expect(received).toBeNull()\n\nReceived: Money {}\n");
+  });
+});
+
 it("expect.objectContaining(fn) prints the function when it has no properties to list", () => {
   const f = () => {};
   expect(Bun.inspect(expect.objectContaining(f))).toBe("ObjectContaining [Function: f]");

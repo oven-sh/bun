@@ -3179,9 +3179,10 @@ pub mod formatter {
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
     // params are by-value `JSValue`/scalars → `safe fn`.
     unsafe extern "C" {
-        /// C++ helper (`bindings.cpp`) — invokes a user-supplied
+        /// C++ helper (`UtilInspect.cpp`) — invokes a user-supplied
         /// `[util.inspect.custom]` function with the synthesized `(depth, opts,
-        /// inspect)` argument shape. Only called from `print_as`.
+        /// inspect)` argument shape. Only called from `print_as`. For a `this`
+        /// that is a prototype object it returns `this` and calls nothing.
         safe fn JSC__JSValue__callCustomInspectFunction(
             global: &JSGlobalObject,
             function: JSValue,
@@ -3805,6 +3806,19 @@ pub mod formatter {
                     C,
                 )
             })?;
+            // A custom inspector that returns its own `this` would recurse
+            // forever; re-tag without the custom hook so it falls through to
+            // default formatting (mirrors util.inspect's `ret !== context`).
+            // The shim also returns `this` for a prototype object, in place of
+            // a call of its hook.
+            if result == self.custom_formatted_object.this {
+                let tag = Tag::get_advanced(
+                    result,
+                    self.global_this,
+                    TagOptions::DISABLE_INSPECT_CUSTOM,
+                )?;
+                return self.format::<C>(tag, writer_, result, self.global_this);
+            }
             // Strings are printed directly, otherwise we recurse.
             if result.is_string() {
                 if writer_
@@ -3814,14 +3828,7 @@ pub mod formatter {
                     self.failed = true;
                 }
             } else {
-                // A custom inspector that returns its own `this` would recurse
-                // forever; re-tag without the custom hook so it falls through to
-                // default formatting (mirrors util.inspect's `ret !== context`).
-                let tag = if result == self.custom_formatted_object.this {
-                    Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
-                } else {
-                    Tag::get(result, self.global_this)?
-                };
+                let tag = Tag::get(result, self.global_this)?;
                 self.format::<C>(tag, writer_, result, self.global_this)?;
             }
             Ok(())

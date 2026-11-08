@@ -40,6 +40,35 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
     return options;
 }
 
+// Node's formatValue does not call the hook of a prototype object:
+//   ObjectGetOwnPropertyDescriptor(value, 'constructor')?.value?.prototype !== value
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L1150-L1154
+// Node reads `prototype` with a [[Get]]. This reads the own data property, so that no getter
+// and no Proxy trap of the constructor runs.
+static NEVER_INLINE bool isPrototypeOfItsConstructor(VM& vm, JSGlobalObject* globalObject, JSObject* object)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Through the method table: `constructor` of a WebCore prototype is a native custom value.
+    PropertySlot constructorSlot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool hasConstructor = object->methodTable()->getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, constructorSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasConstructor || constructorSlot.isAccessor() || (constructorSlot.attributes() & PropertyAttribute::CustomAccessor))
+        return false;
+    JSValue constructorValue = constructorSlot.getValue(globalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSObject* constructor = constructorValue.getObject();
+    if (!constructor)
+        return false;
+
+    PropertySlot prototypeSlot(constructor, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool hasPrototype = constructor->methodTable()->getOwnPropertySlot(constructor, globalObject, vm.propertyNames->prototype, prototypeSlot);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasPrototype || !prototypeSlot.isValue())
+        return false;
+    RELEASE_AND_RETURN(scope, prototypeSlot.getValue(globalObject, vm.propertyNames->prototype) == JSValue(object));
+}
+
 extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     Zig::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedFunctionValue,
@@ -52,6 +81,21 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     JSValue thisValue = JSValue::decode(encodedThisValue);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (JSObject* thisObject = thisValue.getObject()) {
+        // An instance has no own `constructor`. For an ordinary object and for a typed array
+        // (a Buffer) the Structure says so, with no PropertySlot and no method table call.
+        auto flags = thisObject->inlineTypeFlags();
+        bool structureListsOwnProperties = !TypeInfo::hasStaticPropertyTable(flags)
+            && (!TypeInfo::overridesGetOwnPropertySlot(flags) || isTypedArrayType(thisObject->type()));
+        if (!structureListsOwnProperties || thisObject->hasDirectProperty(globalObject, vm.propertyNames->constructor)) {
+            bool isPrototype = isPrototypeOfItsConstructor(vm, globalObject, thisObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            // The formatter prints a result that is the receiver itself without the hook.
+            if (isPrototype)
+                return JSValue::encode(thisValue);
+        }
+    }
 
     auto callData = JSC::getCallData(functionToCall);
     MarkedArgumentBuffer arguments;

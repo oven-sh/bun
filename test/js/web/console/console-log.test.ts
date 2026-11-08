@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 it("should log to console correctly", async () => {
@@ -248,4 +248,53 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new SharedArrayBuffer(0))).toBe("SharedArrayBuffer(0) []");
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
+});
+
+// The hook of a class takes an instance, and Node does not call it for the prototype object.
+// A legacy decorator gets that object as its target.
+it.concurrent("prints a prototype object without a call of its inspect.custom hook", async () => {
+  using dir = tempDir("console-log-prototype-hook", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+    "main.ts": `
+      const logged = (target: object, key: string) => console.log("decorating", key, "on", target);
+      class Money {
+        #cents = 150;
+        @logged add() {}
+        [Symbol.for("nodejs.util.inspect.custom")]() {
+          return "Money<" + this.#cents + ">";
+        }
+      }
+      console.log(new Money(), Object.getPrototypeOf(new Money()));
+      console.log(Object.getPrototypeOf(Buffer.alloc(1)));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stdout.replaceAll("\r\n", "\n").split("\n");
+  expect({ stdout: [...lines.slice(0, 3), ...lines.slice(-2)], stderr, exitCode }).toEqual({
+    stdout: ["decorating add on Money {}", "Money<150> Money {}", "Buffer {", "}", ""],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("bun -p prints a prototype object that has an inspect.custom hook", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-p", "CompressionStream.prototype"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ firstLine: stdout.split(/\r?\n/)[0], stderr, exitCode }).toEqual({
+    firstLine: "CompressionStream {",
+    stderr: "",
+    exitCode: 0,
+  });
 });

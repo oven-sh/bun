@@ -1,0 +1,13 @@
+status: 0
+oracle: none
+---
+list TypeError type is expected for SignalDict
+dict TypeError type is expected for SignalDict
+int TypeError type is expected for SignalDict
+str TypeError type is expected for SignalDict
+object TypeError type is expected for SignalDict
+type TypeError type is expected for SignalDict
+Exception TypeError type is expected for SignalDict
+five TypeError type is expected for SignalDict
+None TypeError type is expected for SignalDict
+Mine ['Mine', 'SignalDictMixin', 'Plain', 'object'] False 9 {<class 'decimal.InvalidOperation'>:True, <class 'decimal.FloatOperation'>:False, <class 'decimal.DivisionByZero'>:True, <class 'decimal.Overflow'>:True, <class 'decimal.Underflow'>:False, <class 'decimal.Subnormal'>:False, <class 'decimal.Inexact'>:False, <class 'decimal.Rounded'>:False, <class 'decimal.Clamped'>:False}

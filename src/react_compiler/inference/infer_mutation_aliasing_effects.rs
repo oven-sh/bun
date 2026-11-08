@@ -3193,6 +3193,8 @@ fn compute_effects_for_aliasing_signature_config(
     substitutions.insert(config.returns, vec![lvalue.clone()]);
 
     let mut mutable_spreads: HashSet<IdentifierId> = HashSet::default();
+    // Not in upstream, which only takes note of such a spread: the call takes from the iterator.
+    let mut spread_effects: Vec<AliasingEffect> = Vec::new();
 
     for (i, arg) in args.iter().enumerate() {
         match arg {
@@ -3214,6 +3216,9 @@ fn compute_effects_for_aliasing_signature_config(
                     if mutate_iterator.is_some() {
                         mutable_spreads.insert(place.identifier);
                     }
+                    if env.config.spread_arguments_run_iterators {
+                        spread_effects.extend(mutate_iterator);
+                    }
                 }
             }
         }
@@ -3230,6 +3235,7 @@ fn compute_effects_for_aliasing_signature_config(
     }
 
     let mut effects: Vec<AliasingEffect> = Vec::new();
+    effects.append(&mut spread_effects);
 
     for eff_config in &config.effects {
         match eff_config {
@@ -3467,6 +3473,8 @@ fn compute_effects_for_aliasing_signature(
     }
 
     let mut mutable_spreads: HashSet<IdentifierId> = HashSet::default();
+    // Not in upstream, which only takes note of such a spread: the call takes from the iterator.
+    let mut spread_effects: Vec<AliasingEffect> = Vec::new();
     let mut substitutions: HashMap<IdentifierId, Vec<Place>> = HashMap::default();
     substitutions.insert(signature.receiver, vec![receiver.clone()]);
     substitutions.insert(signature.returns, vec![lvalue.clone()]);
@@ -3495,6 +3503,9 @@ fn compute_effects_for_aliasing_signature(
                     if mutate_iterator.is_some() {
                         mutable_spreads.insert(place.identifier);
                     }
+                    if env.config.spread_arguments_run_iterators {
+                        spread_effects.extend(mutate_iterator);
+                    }
                 }
             }
         }
@@ -3512,6 +3523,7 @@ fn compute_effects_for_aliasing_signature(
     }
 
     let mut effects: Vec<AliasingEffect> = Vec::new();
+    effects.append(&mut spread_effects);
 
     for eff in &signature.effects {
         match eff {

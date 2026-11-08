@@ -1113,6 +1113,14 @@ static JSC::JSPromise* evaluationOfCompiledModuleThatMockLeftAlone(Zig::GlobalOb
         return nullptr;
     RELEASE_AND_RETURN(scope, JSC::AOT::evaluationOfModuleThatMockLeftAlone(globalObject, *loaded.compiledModule));
 }
+
+static JSValue errorOfCompiledModuleThatMockLeftAlone(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
+    RETURN_IF_EXCEPTION(scope, {});
+    return loaded.compiledModule ? JSC::AOT::errorOfModuleThatMockLeftAlone(globalObject, *loaded.compiledModule) : JSValue();
+}
 #endif
 
 static BunPlugin::OnLoad::RunningModuleMock* findRunningModuleMock(Zig::GlobalObject* globalObject, JSModuleMock* mock)
@@ -1613,9 +1621,19 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         RELEASE_AND_RETURN(scope, exportsOfModuleMockWithoutFactory(globalObject, this, dependency));
 
 #if ENABLE(AOT)
-    if (!factoryValue && !synchronous && globalObject->aotInstance()) {
+    if (!factoryValue && globalObject->aotInstance()) {
+        JSValue thrownByBody = errorOfCompiledModuleThatMockLeftAlone(globalObject, this);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (thrownByBody) {
+            throwException(globalObject, scope, thrownByBody);
+            return {};
+        }
         JSC::JSPromise* underWay = evaluationOfCompiledModuleThatMockLeftAlone(globalObject, this);
         RETURN_IF_EXCEPTION(scope, {});
+        if (underWay && synchronous) {
+            throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, specifier->tryGetValue().data));
+            return {};
+        }
         if (underWay) {
             waitsForBodyUnderWay = true;
             return underWay;
@@ -1723,6 +1741,9 @@ void JSModuleMock::abandon(Zig::GlobalObject* globalObject)
 {
     state = State::NotCalled;
     result.clear();
+#if ENABLE(AOT)
+    waitsForBodyUnderWay = false;
+#endif
     detach(globalObject);
 }
 
@@ -1922,6 +1943,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockFactoryDidReject, (JSC::JSGlobalObj
     pending->reject(vm, callframe->argument(0));
     return JSValue::encode(jsUndefined());
 }
+
+#if ENABLE(AOT)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionBodyThatAbandonedModuleMockWaitedForDidEnd, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto [mock, pending] = toModuleMockWith<JSC::JSPromise>(lexicalGlobalObject, scope, callframe->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!registeredModuleMock(defaultGlobalObject(lexicalGlobalObject), mock->specifier->tryGetValue().data))
+        pending->fulfill(vm, jsUndefined());
+    return JSValue::encode(jsUndefined());
+}
+#endif
 
 static String fileOfFunction(JSValue function)
 {
@@ -4860,9 +4894,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             previous->isDisplacedByMockOfTestFile = true;
             mock->wasLaidOverMockOfPreload = true;
             // Under `bun test` nothing is registered behind the end of the mock that had displaced it: a mock that patches saves the CommonJS module that came back, and its end restores it.
+            // It patches what lies in the require map. What import() alone has loaded of the preload's mock lies in the loader's registry: nothing is patched, and the end restores nothing.
             auto file = Bun::compiledModuleForPath(specifier);
             mock->hasSetMockOfPreloadAside = leavesLoadedModuleAlone && staysTheOriginal && !isKeyOfPreviousMockEmpty;
-            mock->patchesMockOfPreload = !leavesLoadedModuleAlone && previous->cameBackAtEndOfMockOfTestFile && file && !JSC::AOT::isESModule(*file);
+            mock->patchesMockOfPreload = !leavesLoadedModuleAlone && previous->cameBackAtEndOfMockOfTestFile && file && !JSC::AOT::isESModule(*file) && !(previous->compiledModuleThatNeverRan && JSC::AOT::wasOnlyImportedUnderMockLaidInPreload(globalObject, *file));
             previous->liesUnderKeyOfOriginal |= mock->hasSetMockOfPreloadAside;
             previous->cameBackAtEndOfMockOfTestFile = false;
 #endif
@@ -5486,6 +5521,17 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     while (!plugins.runningModuleMocks.isEmpty()) {
         auto* mock = uncheckedDowncast<JSModuleMock>(plugins.runningModuleMocks.last().mock.get());
         evict.abandonedModules.append(mock->specifier->tryGetValue().data);
+#if ENABLE(AOT)
+        // Under `bun test` whoever imports a module whose own body is under way joins that evaluation: a mock that ends meanwhile holds nobody up, and the import gets what the module is when the body ends.
+        JSC::JSPromise* bodyOfModuleItself = vm.hasCompiledCode() && mock->importsOriginal ? evaluationOfCompiledModuleThatMockLeftAlone(globalObject, mock) : nullptr;
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        auto* heldUp = bodyOfModuleItself && mock->state == JSModuleMock::State::Running && mock->result ? dynamicDowncast<JSC::JSPromise>(mock->result.get()) : nullptr;
+        if (heldUp) {
+            JSC::JSFunction* didEnd = JSC::JSFunction::create(vm, globalObject, 2, String(), jsFunctionBodyThatAbandonedModuleMockWaitedForDidEnd, ImplementationVisibility::Private);
+            bodyOfModuleItself->performPromiseThenWithContext(vm, globalObject, didEnd, didEnd, jsUndefined(), moduleMockWith(globalObject, mock, heldUp));
+        }
+#endif
         mock->abandon(globalObject);
 #if ENABLE(AOT)
         bool wasCalledByLoad = plugins.factoriesOfCompiledMocks.removeAllMatching([&](const auto& factory) { return factory.mock.get() == mock; });

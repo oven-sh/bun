@@ -169,6 +169,30 @@
     "windows": 10300,
     "windows-aarch64": 13900
   },
+  "aot/a-name-resolved-from-another-folder-is-not-written-down-under-the-own-one.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-name-that-a-made-require-only-resolves-leads-where-the-package-says.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/an-entry-point-that-lies-in-a-package-finds-other-packages-by-their-names.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-test-file-written-in-commonjs-runs-again-at-every-rerun.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/an-ask-without-a-type-does-not-find-a-file-that-the-executable-holds-under-a-type-alone.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-text-of-a-compiled-entry-point-is-not-read-as-data.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/one-file-asked-for-under-two-types-by-a-name-made-at-the-run-is-the-module-that-came-first.test.ts": {
     "default": 60000,
     "asan": 240000

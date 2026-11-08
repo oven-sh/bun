@@ -226,6 +226,12 @@ impl StandaloneModuleGraph {
         self.lookup_file(name)
     }
 
+    /// What a program reads as data: not the file of a compiled entry point, which is in the graph for its name alone.
+    pub fn find_data(&self, name: &[u8]) -> Option<&File> {
+        let file = self.find_ref(name)?;
+        (!self.is_file_of_compiled_entry_point(file)).then_some(file)
+    }
+
     pub fn contains_file(&self, name: &[u8]) -> bool {
         self.find_ref(name).is_some()
     }

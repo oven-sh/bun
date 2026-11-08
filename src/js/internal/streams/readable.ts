@@ -696,11 +696,8 @@ function howMuchToRead(n: number, state: ReadableState): number {
   return howManyBytesToRead(n, state);
 }
 
-// `state.length` is the sum of the lengths of what is buffered.
 function firstChunkLength(state: ReadableState): number {
-  const buffer = state.buffer;
-  const index = state.bufferIndex;
-  return buffer.length - index === 1 ? state.length : (buffer[index].length as number);
+  return state.buffer[state.bufferIndex].length as number;
 }
 
 function howManyBytesToRead(n: number, state: ReadableState): number {

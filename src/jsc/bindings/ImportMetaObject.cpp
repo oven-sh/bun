@@ -404,6 +404,16 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (!isESM && !isRequireDotResolve) {
         throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), from);
         RETURN_IF_EXCEPTION(scope, {});
+        if (Bun::hasCompiledModules()) [[unlikely]] {
+            String resolved = asString(JSC::JSValue::decode(result))->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            String written = asString(moduleName)->value(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            String importer = from.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            Bun::throwIfHeldUnderTypesAlone(globalObject, resolved, written, importer, true);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
     if (!isRequireDotResolve && globalObject->onLoadPlugins.hasVirtualModules()) [[unlikely]] {

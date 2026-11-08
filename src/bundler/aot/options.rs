@@ -408,7 +408,8 @@ fn root_directory(
             input.assets
         };
         let directory = widen_to_assets(input.working_directory, directory, assets);
-        return Some(real_directory_path(&directory).unwrap_or(directory));
+        let directory = real_directory_path(&directory).unwrap_or(directory);
+        return Some(widen_out_of_packages(directory));
     }
     let root_directory = absolute_path(input.working_directory, written);
     if root_directory.len() >= MAX_PATH_BYTES {
@@ -432,6 +433,17 @@ fn common_entry_directory(working_directory: &[u8], entry_points: &[Vec<u8>]) ->
         .collect();
     let common = absolute_path(working_directory, longest_common_path_of(&all));
     without_trailing_slash_windows_path(&common).to_vec()
+}
+
+fn widen_out_of_packages(directory: Vec<u8>) -> Vec<u8> {
+    let mut start = 0;
+    for folder in directory.split(|&byte| bun_paths::is_sep_any(byte)) {
+        if folder == b"node_modules" && start > 1 {
+            return directory[..start - 1].to_vec();
+        }
+        start += folder.len() + 1;
+    }
+    directory
 }
 
 /// Never above the working directory: the executable would name the folders of the machine that built it.

@@ -608,6 +608,43 @@ fn single_entry_point_directory_is_root() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn root_does_not_lie_inside_node_modules() {
+    let cases: [(&[u8], &[u8], &[u8]); 5] = [
+        (
+            b"node_modules/kit/dist/main.mjs",
+            b"/project",
+            b"node_modules/kit/dist/main.mjs",
+        ),
+        (
+            b"node_modules/main.mjs",
+            b"/project",
+            b"node_modules/main.mjs",
+        ),
+        (
+            b"apps/x/node_modules/a/node_modules/kit/main.mjs",
+            b"/project/apps/x",
+            b"node_modules/a/node_modules/kit/main.mjs",
+        ),
+        (
+            b"not_node_modules/kit/main.mjs",
+            b"/project/not_node_modules/kit",
+            b"main.mjs",
+        ),
+        (
+            b"/node_modules/kit/main.mjs",
+            b"/node_modules/kit",
+            b"main.mjs",
+        ),
+    ];
+    for (entry_point, root_directory, name) in cases {
+        let paths = convert_paths(&[entry_point], |_| {});
+        assert_eq!(paths.root_directory, root_directory);
+        assert_eq!(paths.entry_point_names[0], name);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn common_entry_point_directory_is_root() {
     let cases: [(&[&[u8]], &[u8]); 6] = [
         (&[b"src/a.ts", b"lib/b.ts"], b"/project"),

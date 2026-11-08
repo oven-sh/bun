@@ -219,6 +219,13 @@ pub(super) fn find(input: &FindInput<'_, '_>) -> FileHelpers {
     finder.finish()
 }
 
+#[derive(Clone, Copy)]
+enum Alternative {
+    Function(HeldFunction),
+    Undefined,
+    Other,
+}
+
 impl<'a, 's> Finder<'a, 's> {
     fn quiet(&self) -> Quiet<'a, 's> {
         Quiet {
@@ -619,7 +626,7 @@ impl<'a, 's> Finder<'a, 's> {
     fn collect_alternatives(
         &self,
         expression: ExprId,
-        alternatives: &mut SmallVec<[Option<HeldFunction>; 4]>,
+        alternatives: &mut SmallVec<[Alternative; 4]>,
     ) {
         let hir = self.file.hir;
         if self.file.decisions.is_dead_expr(expression) {
@@ -627,7 +634,7 @@ impl<'a, 's> Finder<'a, 's> {
         }
         let expression = hir.skip_type_assertions(expression);
         match hir[expression].kind {
-            ExprKind::Fn(function) => alternatives.push(Some(HeldFunction {
+            ExprKind::Fn(function) => alternatives.push(Alternative::Function(HeldFunction {
                 definition: function,
                 closure: function,
             })),
@@ -636,13 +643,34 @@ impl<'a, 's> Finder<'a, 's> {
                 left,
                 right,
             } if self.is_undefined_this(hir.skip_type_assertions(left))
-                || self.reads_untouched_exports(left, right) => {}
+                || self.reads_untouched_exports(left, right) =>
+            {
+                alternatives.push(Alternative::Undefined)
+            }
             ExprKind::Binary {
-                op: BinOp::Or | BinOp::And | BinOp::Nullish,
+                op: BinOp::And,
                 left,
                 right,
             } => {
+                let first_of_left = alternatives.len();
                 self.collect_alternatives(left, alternatives);
+                let is_undefined = |held: &Alternative| matches!(held, Alternative::Undefined);
+                if !alternatives[first_of_left..].iter().all(is_undefined) {
+                    self.collect_alternatives(right, alternatives);
+                }
+            }
+            ExprKind::Binary {
+                op: BinOp::Or | BinOp::Nullish,
+                left,
+                right,
+            } => {
+                let first_of_left = alternatives.len();
+                self.collect_alternatives(left, alternatives);
+                let mut place = 0;
+                alternatives.retain(|held| {
+                    place += 1;
+                    place <= first_of_left || !matches!(held, Alternative::Undefined)
+                });
                 self.collect_alternatives(right, alternatives);
             }
             ExprKind::Binary {
@@ -659,17 +687,17 @@ impl<'a, 's> Finder<'a, 's> {
             }
             ExprKind::Call(call) if hir[call].args.is_empty() => {
                 alternatives.push(match hir[hir.skip_type_assertions(hir[call].callee)].kind {
-                    ExprKind::Fn(definition) => {
-                        let returned = self.returned_function(definition);
-                        returned.map(|closure| HeldFunction {
+                    ExprKind::Fn(definition) => match self.returned_function(definition) {
+                        Some(closure) => Alternative::Function(HeldFunction {
                             definition,
                             closure,
-                        })
-                    }
-                    _ => None,
+                        }),
+                        None => Alternative::Other,
+                    },
+                    _ => Alternative::Other,
                 });
             }
-            _ => alternatives.push(None),
+            _ => alternatives.push(Alternative::Other),
         }
     }
 
@@ -731,8 +759,12 @@ impl<'a, 's> Finder<'a, 's> {
         let mut has_other = definition.is_stored_again;
         for held in alternatives {
             match held {
-                Some(held) if self.verify(held.definition) => values.functions.push(held),
-                Some(_) | None => has_other = true,
+                Alternative::Function(held) if self.verify(held.definition) => {
+                    values.functions.push(held)
+                }
+                Alternative::Function(_) | Alternative::Undefined | Alternative::Other => {
+                    has_other = true
+                }
             }
         }
         let recorded = bound.binding_stability_ignoring(symbol, &|_| true);

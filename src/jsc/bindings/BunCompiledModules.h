@@ -57,6 +57,7 @@ const WTF::String& askerOfImportCallInCodeThatIsNotCompiled(const WTF::String& o
 const WTF::String& referrerOfImportCallInCodeThatIsNotCompiled(const WTF::String& origin);
 // The loader answers an import from what it holds and asks nobody, and it holds the entry point. Throws where the importer is refused the file under the key.
 void willResolveImport(Zig::GlobalObject*, const WTF::String& key, JSC::JSValue importer);
+void throwIfHeldUnderTypesAlone(Zig::GlobalObject*, const WTF::String& key, const WTF::String& specifier, const WTF::String& importer, bool isForRequire);
 bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool isTypeScriptLoader);
 // require() has handed the object that it made for a compiled file to the program's loader of the extension, and that loader goes on to a default one.
 bool goOnWithRequireHandedToLoaderOfProgram(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path);

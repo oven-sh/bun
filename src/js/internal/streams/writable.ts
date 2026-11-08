@@ -523,10 +523,9 @@ function errorBuffer(state: WritableState): void {
     return;
   }
 
-  const buffered = (state[kState] & Flag.Buffered) !== 0 ? state[kBufferedValue] : null;
-  if (buffered !== null) {
-    for (let n = state.bufferedIndex; n < buffered.length; ++n) {
-      const { chunk, callback } = buffered[n]!;
+  if ((state[kState] & Flag.Buffered) !== 0) {
+    for (let n = state.bufferedIndex; n < state.buffered.length; ++n) {
+      const { chunk, callback } = state[kBufferedValue]![n]!;
       const len = (state[kState] & Flag.ObjectMode) !== 0 ? 1 : (chunk.length as number);
       state.length -= len;
       callback(((state[kState] & Flag.Errored) !== 0 ? state[kErroredValue] : null) ?? $ERR_STREAM_DESTROYED("write"));

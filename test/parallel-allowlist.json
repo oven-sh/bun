@@ -1644,6 +1644,12 @@
     "aot/a-public-field-laid-by-the-bundlers-helper-sees-what-a-test-lays-above-every-object.test.ts",
     "aot/hello-world-keeps-few-families-of-operations.test.ts",
     "aot/a-file-that-one-test-file-alone-reaches-is-compiled-alike-wherever-the-test-file-stands.test.ts",
-    "aot/one-file-asked-for-under-two-types-by-a-name-made-at-the-run-is-the-module-that-came-first.test.ts"
+    "aot/one-file-asked-for-under-two-types-by-a-name-made-at-the-run-is-the-module-that-came-first.test.ts",
+    "aot/a-test-file-written-in-commonjs-runs-again-at-every-rerun.test.ts",
+    "aot/an-ask-without-a-type-does-not-find-a-file-that-the-executable-holds-under-a-type-alone.test.ts",
+    "aot/the-text-of-a-compiled-entry-point-is-not-read-as-data.test.ts",
+    "aot/a-name-resolved-from-another-folder-is-not-written-down-under-the-own-one.test.ts",
+    "aot/a-name-that-a-made-require-only-resolves-leads-where-the-package-says.test.ts",
+    "aot/an-entry-point-that-lies-in-a-package-finds-other-packages-by-their-names.test.ts"
   ]
 }

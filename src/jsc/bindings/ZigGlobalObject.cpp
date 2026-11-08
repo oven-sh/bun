@@ -4261,6 +4261,12 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (Bun::hasCompiledModules()) [[unlikely]] {
         Bun::willResolveImport(globalObject, resolved, referrer);
         RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+        if (JSC::AOT::isResolvingImportCallWithoutAttributes(vm)) {
+            Bun::throwIfHeldUnderTypesAlone(globalObject, resolved, keyString, referrerString, false);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+#endif
     }
     return resolvedKey;
 }

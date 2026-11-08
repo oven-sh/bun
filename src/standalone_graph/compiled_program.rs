@@ -1147,6 +1147,20 @@ impl StandaloneModuleGraph {
             && program.preserves_source_paths != is_bun_standalone_file_path(name)
     }
 
+    /// The file of an entry point is empty: its text is on the disk or nowhere.
+    pub(crate) fn is_file_of_compiled_entry_point(&self, file: &File) -> bool {
+        let Some(program) = self.compiled_program.as_ref() else {
+            return false;
+        };
+        if !file.loader.is_javascript_like() || !file.contents.as_bytes().is_empty() {
+            return false;
+        }
+        let mut files = self.files.values().iter();
+        let index = files.position(|each| core::ptr::eq(each, file));
+        let index = index.and_then(|index| u32::try_from(index).ok());
+        index.is_some_and(|index| program.entry_point_by_file_index(index).is_some())
+    }
+
     pub fn find_refused_data(&self, name: &[u8]) -> Option<RefusedData<'static>> {
         self.compiled_program.as_ref()?.find_refused_data(name)
     }

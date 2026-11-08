@@ -1669,56 +1669,155 @@ describe("deno_task", () => {
       .stdout("SPLIT=[hello]\n")
       .runAsTest("export splits a non-assignment word");
 
-    TestBuilder.command`export 1abc a-b=5 =x "" ok=1; ${BUN} -e ${"console.log(JSON.stringify([process.env['1abc'], process.env['a-b'], process.env.ok]))"}`
-      .stdout('[null,null,"1"]\n')
-      .stderr(
-        "export: `1abc`: not a valid identifier\n" +
-          "export: `a-b=5`: not a valid identifier\n" +
-          "export: `=x`: not a valid identifier\n" +
-          "export: ``: not a valid identifier\n",
-      )
-      .testMini()
-      .runAsTest("export rejects invalid identifiers and keeps the valid ones");
+    describe("export refuses a name that is not an identifier", () => {
+      const notValid = (name: string) => `export: \`${name}\`: not a valid identifier\n`;
+      const invalidOption = (word: string) => `export: ${word}: invalid option\n`;
+      const env = { A: "one" };
 
-    TestBuilder.command`export 1abc`
-      .stderr("export: `1abc`: not a valid identifier\n")
-      .exitCode(1)
-      .testMini()
-      .runAsTest("export exits 1 on an invalid identifier");
+      // [script, stderr, exit code, the exported variables after the script]
+      const rows: [string, string, number, Record<string, string>][] = [
+        ["export a-b", notValid("a-b"), 1, { A: "one" }],
+        ["export 1a", notValid("1a"), 1, { A: "one" }],
+        ['export "a b"', notValid("a b"), 1, { A: "one" }],
+        ["export a.b", notValid("a.b"), 1, { A: "one" }],
+        ["export é", notValid("é"), 1, { A: "one" }],
+        ["export aé", notValid("aé"), 1, { A: "one" }],
+        ["export -", notValid("-"), 1, { A: "one" }],
+        ["X=a-b; export $X", notValid("a-b"), 1, { A: "one" }],
+        ["export $(echo a-b)", notValid("a-b"), 1, { A: "one" }],
+        ["export b{-c,=1}", notValid("b-c"), 1, { A: "one", b: "1" }],
+        ['"export" a-b', notValid("a-b"), 1, { A: "one" }],
+        ["E=export; $E a-b", notValid("a-b"), 1, { A: "one" }],
+        ["(export a-b)", notValid("a-b"), 1, { A: "one" }],
+        ["export a-b | cat", notValid("a-b"), 0, { A: "one" }],
+        ["export a-b 2> /dev/null", "", 1, { A: "one" }],
 
-    // `.quiet()` keeps stderr as an in-memory buffer, so the builtin takes the
-    // synchronous write path instead of the async fd write the other runs use.
-    TestBuilder.command`export 1abc`
-      .stderr("export: `1abc`: not a valid identifier\n")
-      .exitCode(1)
-      .quiet()
-      .runAsTest("export exits 1 on an invalid identifier with quiet output");
+        // An empty name is refused. The message does not have the value.
+        ["export =x", notValid("="), 1, { A: "one" }],
+        ["export $UNSET=1", notValid("="), 1, { A: "one" }],
+        ['export =$(echo "x B=2")', notValid("="), 1, { A: "one", B: "2" }],
 
-    TestBuilder.command`export _ok OK2=1 && echo done`.stdout("done\n").runAsTest("export accepts valid identifiers");
+        // A refused word does not stop the `NAME=value` operands around it.
+        ["export B=1 a-b D=2", notValid("a-b"), 1, { A: "one", B: "1", D: "2" }],
+        ["export a-b A=", notValid("a-b"), 1, { A: "" }],
 
-    TestBuilder.command`export -- FOO=bar && echo $FOO && export -- && echo done`
-      .stdout(stdout => {
-        expect(stdout).toStartWith("bar\n");
-        expect(stdout).toContain("FOO=bar\n");
-        expect(stdout).not.toContain("--=");
-        expect(stdout).toEndWith("done\n");
-      })
-      .runAsTest("export treats a leading -- as the end of options");
+        // A bare NAME stores an empty value. After a refused word it is left alone.
+        ["export a-b A", notValid("a-b"), 1, { A: "one" }],
+        ["export B=1 -n A", notValid("-n"), 1, { A: "one", B: "1" }],
+        ["X=5; export a-b X", notValid("a-b"), 1, { A: "one" }],
 
-    TestBuilder.command`export ""`
-      .stderr("export: ``: not a valid identifier\n")
-      .exitCode(1)
-      .runAsTest("export exits 1 on an empty word");
+        // `export` has no options. A leading option refuses the whole command.
+        ["export -x", invalidOption("-x"), 1, { A: "one" }],
+        ["export -n A", invalidOption("-n"), 1, { A: "one" }],
+        ["export -x B=1", invalidOption("-x"), 1, { A: "one" }],
+        ["export -X=1", invalidOption("-X"), 1, { A: "one" }],
+        ["export -- B=1", "", 0, { A: "one", B: "1" }],
+        ["export -- -n A", notValid("-n"), 1, { A: "one" }],
 
-    TestBuilder.command`export A=1 2B C=3 3D || echo "failed A=$A C=$C"`
-      .stdout("failed A=1 C=3\n")
-      .stderr("export: `2B`: not a valid identifier\nexport: `3D`: not a valid identifier\n")
-      .runAsTest("export exits 1 when a bare name is invalid and still exports the valid ones");
+        // Valid input. The name of a `NAME=value` operand is not checked, only that it is not empty.
+        ["export _b=1 B2=2", "", 0, { A: "one", _b: "1", B2: "2" }],
+        ["export B= C=a=b", "", 0, { A: "one", B: "", C: "a=b" }],
+        ["export a-b=1 a.b=c=d", "", 0, { A: "one", "a-b": "1", "a.b": "c=d" }],
+        ['export "" B=1', "", 0, { A: "one", B: "1" }],
+        ['export ""', "", 0, { A: "one" }],
+        ['export -- ""', "", 0, { A: "one" }],
+      ];
 
-    TestBuilder.command`export a-b=5 1FOO=bar OK=1 || echo "failed OK=$OK"`
-      .stdout("failed OK=1\n")
-      .stderr("export: `a-b=5`: not a valid identifier\nexport: `1FOO=bar`: not a valid identifier\n")
-      .runAsTest("export exits 1 when an assignment name is invalid and still exports the valid ones");
+      test.each(rows)("%s", async (script, stderr, exitCode, exported) => {
+        // Without `.quiet()` stderr is a file descriptor: the builtin finishes
+        // in the callback of the write. With `.quiet()` stderr is a buffer.
+        for (const quiet of [false, true]) {
+          const shell = $`${{ raw: script }}`.env(env).nothrow();
+          const result = await (quiet ? shell.quiet() : shell);
+          expect({
+            stdout: result.stdout.toString(),
+            stderr: result.stderr.toString(),
+            exitCode: result.exitCode,
+          }).toEqual({ stdout: "", stderr, exitCode });
+        }
+
+        // `export` with no operand prints each exported variable as `NAME=value`.
+        // PWD is in the list because this file calls `$.cwd()`.
+        const { stdout } = await $`${{ raw: script }}; export`.env(env).nothrow().quiet();
+        const { PWD, ...listed } = Object.fromEntries(
+          stdout
+            .toString()
+            .split("\n")
+            .filter(line => line.length > 0)
+            .map(line => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+        );
+        expect(listed).toEqual(exported);
+      });
+
+      test("a child process does not get a refused name", async () => {
+        const printEnv = `console.log(JSON.stringify(["a-b", "a b", "-n", "A", "D"].map(name => [name, process.env[name]])))`;
+        const { stdout, stderr } = await $`export a-b D=1 ${"a b"}; export -n A; ${BUN} -e ${printEnv}`
+          .env({ ...bunEnv, A: "one" })
+          .nothrow()
+          .quiet();
+        expect(stderr.toString()).toBe(notValid("a-b") + notValid("a b") + invalidOption("-n"));
+        expect(JSON.parse(stdout.toString())).toEqual([
+          ["a-b", null],
+          ["a b", null],
+          ["-n", null],
+          ["A", "one"],
+          ["D", "1"],
+        ]);
+      });
+
+      test("the message follows a redirect of stderr", async () => {
+        using dir = tempDir("export-stderr", {});
+        const toStdout = await $`export a-b 2>&1`.env(env).nothrow().quiet();
+        expect({
+          stdout: toStdout.stdout.toString(),
+          stderr: toStdout.stderr.toString(),
+          exitCode: toStdout.exitCode,
+        }).toEqual({ stdout: notValid("a-b"), stderr: "", exitCode: 1 });
+
+        const substituted = await $`echo "$(export a-b 2>&1)"`.env(env).nothrow().quiet();
+        expect(substituted.stdout.toString()).toBe(notValid("a-b"));
+
+        const toFile = await $`export a-b 2> err.txt`.env(env).cwd(String(dir)).nothrow().quiet();
+        expect(await Bun.file(join(String(dir), "err.txt")).text()).toBe(notValid("a-b"));
+        expect(toFile.exitCode).toBe(1);
+      });
+
+      test("an empty word from a JavaScript value is skipped", async () => {
+        const { stdout, stderr } = await $`export ${""} B=1 && echo $B`.env(env).quiet();
+        expect({ stdout: stdout.toString(), stderr: stderr.toString() }).toEqual({ stdout: "1\n", stderr: "" });
+      });
+
+      test("`export --` prints the exported variables", async () => {
+        const { stdout, stderr } = await $`export --`.env(env).quiet();
+        expect(stdout.toString()).toStartWith("A=one\n");
+        expect(stderr.toString()).toBe("");
+      });
+
+      TestBuilder.command`export 1abc`
+        .stderr(notValid("1abc"))
+        .exitCode(1)
+        .testMini({ onlyMini: true })
+        .runAsTest("in a script that `bun run` executes");
+
+      TestBuilder.command`export A=1 2B C=3 3D || echo "failed A=$A C=$C"`
+        .stdout("failed A=1 C=3\n")
+        .stderr(notValid("2B") + notValid("3D"))
+        .runAsTest("the next command of an || list runs");
+
+      TestBuilder.command`export NODE_ENV = test && echo ran`
+        .stderr(notValid("="))
+        .exitCode(1)
+        .runAsTest("spaces around = stop an && list");
+
+      TestBuilder.command`B=2 export -x B; echo "[$B]"`
+        .stdout("[]\n")
+        .stderr(invalidOption("-x"))
+        .runAsTest("a refused option does not apply a prefix assignment");
+
+      TestBuilder.command`export _ok OK2=1 && echo done`
+        .stdout("done\n")
+        .runAsTest("a valid bare name and a valid assignment exit 0");
+    });
   });
 
   describe("pipeline", async () => {

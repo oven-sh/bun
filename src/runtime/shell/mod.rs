@@ -130,9 +130,7 @@ pub(crate) mod subproc;
 
 // ─── shell escaping (canonical impl lives in bun_shell_parser) ───────────────
 // Re-export so `crate::shell::*` callers resolve without duplicating the table.
-pub(crate) use bun_shell_parser::{
-    escape_8bit, is_valid_var_name, needs_escape_utf8_ascii_latin1,
-};
+pub(crate) use bun_shell_parser::{escape_8bit, needs_escape_utf8_ascii_latin1};
 
 // ─── AST surface (lifetime-erased aliases over `bun_shell_parser::ast`) ──────
 // State nodes hold `*const ast::*` raw pointers into the bumpalo-allocated AST

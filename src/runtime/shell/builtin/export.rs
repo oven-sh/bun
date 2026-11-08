@@ -2,8 +2,9 @@ use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
-use crate::shell::{EnvStr, ExitCode, is_valid_var_name};
+use crate::shell::{EnvStr, ExitCode};
 use bun_collections::index_sort;
+use bun_shell_parser::is_valid_var_name;
 
 #[derive(Default)]
 pub(crate) struct Export {
@@ -22,25 +23,39 @@ enum State {
 impl Export {
     pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let argc = Builtin::of(interp, cmd).args_slice().len();
-        // POSIX end-of-options marker: `export -- NAME=value`.
-        let start = usize::from(argc > 0 && Builtin::of(interp, cmd).arg_bytes(0) == b"--");
-        if start >= argc {
-            // No args: print all exported vars.
-            return Self::print_all(interp, cmd);
-        }
+        let mut has_operand = false;
         let mut errors = Vec::new();
-        for i in start..argc {
+        for i in 0..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
-            let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
-                Some(eq) => (&s[..eq], &s[eq + 1..]),
-                None => (s, &b""[..]),
-            };
-            if !is_valid_var_name(name) {
-                errors.extend_from_slice(b"export: `");
-                errors.extend_from_slice(s);
-                errors.extend_from_slice(b"`: not a valid identifier\n");
+            if i == 0 && s.len() > 1 && s[0] == b'-' {
+                if s == b"--" {
+                    continue;
+                }
+                // No option is supported. `export -n NAME` must not reach NAME.
+                let end = bun_core::strings::index_of_char_usize(s, b'=').unwrap_or(s.len());
+                let msg = [b"export: ".as_slice(), &s[..end], b": invalid option\n"].concat();
+                return Self::fail(interp, cmd, &msg);
+            }
+            has_operand = true;
+            if s.is_empty() {
                 continue;
             }
+            let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
+                Some(eq) if eq > 0 => (&s[..eq], &s[eq + 1..]),
+                None if is_valid_var_name(s) => {
+                    // A bare NAME stores an empty value (#45371). Do not do that after a refused word.
+                    if !errors.is_empty() {
+                        continue;
+                    }
+                    (s, &b""[..])
+                }
+                refused => {
+                    errors.extend_from_slice(b"export: `");
+                    errors.extend_from_slice(if refused.is_some() { b"=" } else { s });
+                    errors.extend_from_slice(b"`: not a valid identifier\n");
+                    continue;
+                }
+            };
             // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
             // `init_slice` here would leave dangling EnvStr in `export_env`.
@@ -55,11 +70,20 @@ impl Export {
             label.deref();
             val.deref();
         }
+        if !has_operand {
+            // No operand: print all exported vars.
+            return Self::print_all(interp, cmd);
+        }
         if errors.is_empty() {
             return Builtin::done(interp, cmd, 0);
         }
+        Self::fail(interp, cmd, &errors)
+    }
+
+    /// Write `msg` to stderr, then finish with exit code 1.
+    fn fail(interp: &Interpreter, cmd: NodeId, msg: &[u8]) -> Yield {
         Self::state_mut(interp, cmd).state = State::Err;
-        Builtin::write_failing_error(interp, cmd, &errors, 1)
+        Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {

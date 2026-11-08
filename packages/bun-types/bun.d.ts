@@ -10012,8 +10012,13 @@ declare module "bun" {
      * row-major straight-alpha RGBA8 after `autoOrient`, `rotate`, `flip`,
      * `flop`, `resize` and `modulate`. A chained format setter is ignored.
      *
+     * No colour transform is applied: the bytes are in the colour space of
+     * the source's ICC profile, which is not returned. Formats the system
+     * backend decodes (HEIC, AVIF, TIFF) arrive as sRGB.
+     *
      * The sharp equivalent is
-     * `.ensureAlpha().raw().toBuffer({ resolveWithObject: true })`.
+     * `.ensureAlpha().raw().toBuffer({ resolveWithObject: true })`, except
+     * that sharp converts to sRGB by default.
      *
      * ```ts
      * const { data, width, height } = await new Bun.Image("photo.jpg")

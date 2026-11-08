@@ -1034,3 +1034,165 @@ def of_another_class():
     ],
   ],
 );
+
+// A program of its own again, for the same reason.
+const read = program();
+
+// A function that reads the bytes of an argument holds them until it is through, as it holds a buffer that it writes to.
+read(
+  "the bytes of an argument, which JavaScript would take away before they are read",
+  {
+    setup: `
+import js, pickle, re, threading, _operator
+# The memory of the first few does not move when it grows.
+others = [js.WebAssembly.Memory(initial=1, maximum=400) for _ in range(16)]
+class Memory:
+    "A typed array, and a function that has JS take its memory away and make other things where it was."
+    def __init__(self, kind, size):
+        self.kind, self.size, self.said = kind, size, None
+        if kind == 'wasm':
+            self.memory = js.WebAssembly.Memory(initial=1, maximum=400)
+            self.array = js.Uint8Array(self.memory.buffer, 0, size)
+        elif kind == 'resizable': self.array = js.Uint8Array(js.ArrayBuffer(size, maxByteLength=2 * size))
+        else: self.array = js.Uint8Array(size)
+        self.array.fill(0x31)
+    def take(self):
+        if self.said is not None: return
+        try:
+            if self.kind == 'wasm': self.memory.grow(300)
+            elif self.kind == 'resizable': self.array.buffer.resize(0)
+            else: self.array.buffer.transfer()
+            self.said = 'done'
+        except Exception as e: self.said = str(e).split(':')[0]
+        js.Bun.gc(True)
+        self.later = [js.Uint8Array(self.size).fill(0x5a) for _ in range(20)]
+class Releases:
+    "__buffer__() gives a view of the memory; __release_buffer__() has JS take it away."
+    def __init__(self, memory): self.memory = memory
+    def __buffer__(self, flags): return memoryview(self.memory.array)
+    def __release_buffer__(self, view): self.memory.take()
+class Second:
+    "An exporter of its own bytes, whose __buffer__() does something first."
+    def __init__(self, data, act): self.data, self.act = data, act
+    def __buffer__(self, flags):
+        self.act()
+        return memoryview(self.data)
+class Index:
+    def __init__(self, value, act): self.value, self.act = value, act
+    def __index__(self):
+        self.act()
+        return self.value
+class File:
+    def __init__(self, data): self.data = data
+    def read(self, n): return self.data
+    def readline(self): return self.data
+def added(s, x):
+    s += x
+    return s
+def extended(s, x):
+    s.extend(x)
+    return s
+def assigned(s, x):
+    s[1:2] = x
+    return s
+one = {
+    'find': lambda s, x: s.find(x), 'rfind': lambda s, x: s.rfind(x), 'index': lambda s, x: s.index(x), 'count': lambda s, x: s.count(x),
+    'in': lambda s, x: x in s, 'startswith': lambda s, x: s[1:].startswith(x), 'endswith': lambda s, x: s[:-1].endswith(x),
+    'startswith tuple': lambda s, x: s[1:].startswith((x,)), 'removeprefix': lambda s, x: s[1:].removeprefix(x), 'removesuffix': lambda s, x: s[:-1].removesuffix(x),
+    'split': lambda s, x: s.split(x), 'rsplit': lambda s, x: s.rsplit(x), 'partition': lambda s, x: s.partition(x)[::2], 'rpartition': lambda s, x: s.rpartition(x)[::2],
+    'strip': lambda s, x: s[1:].strip(x), '+': lambda s, x: s + x, 'join': lambda s, x: s.join([x]), 'join 2': lambda s, x: s.join([x, b'-']),
+    'translate': lambda s, x: s.translate(None, x), 'bytearray ==': lambda s, x: bytearray(s[1:-1]) == x, 'bytearray <': lambda s, x: bytearray(s[1:-1]) < x,
+    'bytearray +': lambda s, x: bytearray(s) + x, 'bytearray partition': lambda s, x: bytearray(s).partition(x), '+=': lambda s, x: added(bytearray(s), x),
+    'extend': lambda s, x: extended(bytearray(s), x), '[1:2] =': lambda s, x: assigned(bytearray(s), x), 'from_bytes': lambda s, x: int.from_bytes(x) % 1000003,
+    'fromhex': lambda s, x: bytes.fromhex(x), 'UnicodeDecodeError': lambda s, x: UnicodeDecodeError('u', x, 0, 1, 'r').object,
+    'compile': lambda s, x: compile(x, 'f', 'eval').co_consts, 'float': lambda s, x: float(x), 'pickle.load': lambda s, x: pickle.load(File(x)),
+}
+two = {
+    'replace': lambda s, x, y: s.replace(x, y), 'maketrans': lambda s, x, y: bytes.maketrans(x, y), 'compare_digest': lambda s, x, y: _operator._compare_digest(x, y),
+    'startswith tuple': lambda s, x, y: s.startswith((x, y)), 'join': lambda s, x, y: s.join([x, y]), 'translate': lambda s, x, y: s.translate(bytes(range(256)), x) + bytes(y),
+}
+def outcome(f):
+    try: return repr(f())
+    except BaseException as e: return f'{type(e).__name__}: {e}'
+# The functions that, with the memory taken away in the middle, do something else than with bytes that hold the same; and what JS was told.
+def released(kind, size):
+    differ, said = [], set()
+    for name, f in one.items():
+        memory = Memory(kind, size)
+        plain = bytes(memory.array)
+        s = b'<' + plain + b'>'
+        if outcome(lambda: f(s, Releases(memory))) != outcome(lambda: f(s, plain)): differ.append(name)
+        said.add(memory.said)
+    return differ, sorted(said)
+def taken_by_the_next_argument(kind, size):
+    differ, said = [], set()
+    for name, f in two.items():
+        memory = Memory(kind, size)
+        plain = bytes(memory.array)
+        s, other = b'<' + plain + b'>', b'2' * size
+        if outcome(lambda: f(s, memory.array, Second(other, memory.take))) != outcome(lambda: f(s, plain, other)): differ.append(name)
+        said.add(memory.said)
+    memory = Memory(kind, size)
+    plain = bytes(memory.array)
+    if (b'<' + plain + b'>').replace(memory.array, b'!', Index(1, memory.take)) != b'<!>': differ.append('the count of replace')
+    said.add(memory.said)
+    return differ, sorted(said)
+def fails(): 1 / 0
+def waits_for_a_thread():
+    go = threading.Event()
+    thread = threading.Thread(target=go.wait)
+    thread.start()
+    go.set()
+    thread.join(10)
+    alive.append(thread.is_alive())
+`,
+  },
+  [
+    // __release_buffer__() is called when the function is through: the memory goes then.
+    ["released('plain', 1 << 16)", "([], ['done'])"],
+    ["released('plain', 16)", "([], ['done'])"],
+    ["released('resizable', 1 << 16)", "([], ['done'])"],
+    ["released('wasm', 1 << 16)", "([], ['done'])"],
+    // In the middle, JS gets a copy; a buffer cannot shrink. (startswith() is through with an item of the tuple before it asks the next.)
+    ["taken_by_the_next_argument('plain', 1 << 16)", "([], ['done'])"],
+    ["taken_by_the_next_argument('plain', 16)", "([], ['done'])"],
+    ["taken_by_the_next_argument('resizable', 1 << 16)", "([], ['RangeError', 'done'])"],
+    // Memory of WebAssembly cannot be held where it is: these functions take a copy. (join() does not.)
+    ["taken_by_the_next_argument('wasm', 1 << 16)", "(['join'], ['done'])"],
+    // So no thread is kept out while code of the program runs, which may wait for one.
+    [
+      "alive = []\nb'<1111>'.replace(Memory('wasm', 4).array, Second(b'!', waits_for_a_thread)), alive",
+      "(b'<!>', [False])",
+    ],
+    [
+      "alive = []\nb'<1111>'.replace(Memory('plain', 4).array, Second(b'!', waits_for_a_thread)), alive",
+      "(b'<!>', [False])",
+    ],
+    // Memory that another thread of JS can write to is copied when it is asked for: what is written there later is not seen.
+    [
+      "u = js.Uint8Array(js.SharedArrayBuffer(4)).fill(0x31)\nb'<1111>'.replace(u, Second(b'!', lambda: u.fill(0x32))), b'<1111>'.replace(memoryview(u)[1:], b'!', Index(1, lambda: u.fill(0x31))), bytes(u)",
+      "(b'<!>', b'<1111>', b'1111')",
+    ],
+    // Afterwards the memory is as free as before, however the call has ended.
+    [
+      "memory = Memory('plain', 64)\nb'x'.replace(memory.array, b'y'), b'x' + memory.array == b'x' + b'1' * 64, memory.array.buffer.transfer().byteLength, len(memory.array)",
+      "(b'x', True, 64, 0)",
+    ],
+    ...(
+      [
+        ["b'x'.replace(memory.array, Second(b'', fails))", "ZeroDivisionError"],
+        ["b'x'.replace(memory.array, 1)", "TypeError"],
+        ["b'x'.replace(memory.array, b'y', Index(1, fails))", "ZeroDivisionError"],
+        ["b'x'.replace(memoryview(memory.array), b'y', Index(1, fails))", "ZeroDivisionError"],
+        ["bytes.maketrans(memory.array, b'y')", "ValueError"],
+        ["_operator._compare_digest(memory.array, 'y')", "TypeError"],
+        ["b'x'.index(memory.array)", "ValueError"],
+        ["bytes.fromhex(memory.array[:3])", "ValueError"],
+        ["b''.join([memory.array, 1])", "TypeError"],
+      ] as const
+    ).map(([call, error]): [string, string] => [
+      `memory = Memory('plain', 64)\noutcome(lambda: ${call}).split(':')[0], memory.array.buffer.transfer().byteLength, len(memory.array)`,
+      `('${error}', 64, 0)`,
+    ]),
+  ],
+);

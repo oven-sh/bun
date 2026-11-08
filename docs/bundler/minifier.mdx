@@ -671,7 +671,7 @@ console.log(used);
 Renames local variables to shorter names based on usage frequency.
 
 ```ts Input
-function calculateSum(firstNumber, secondNumber) {
+function calculateSum(firstNumber: number, secondNumber: number) {
   const result = firstNumber + secondNumber;
   return result;
 }
@@ -679,11 +679,11 @@ console.log(calculateSum(1, 2));
 ```
 
 ```js Output
-function o(c, l) {
-  const n = c + l;
-  return n;
+function c(n, u) {
+  const e = n + u;
+  return e;
 }
-console.log(o(1, 2));
+console.log(c(1, 2));
 ```
 
 **Naming strategy:**
@@ -707,7 +707,7 @@ console.log(o(1, 2));
 Removes all unnecessary whitespace.
 
 ```ts Input
-function add(a, b) {
+function add(a: number, b: number) {
     return a + b;
 }
 console.log(add(1, 2));
@@ -816,10 +816,10 @@ if(condition){doSomething()}for(let i=0;i<10;i++){console.log(i)}
 Removes whitespace in function declarations.
 
 ```ts Input
-function myFunction(param1, param2) {
+function myFunction(param1: number, param2: number) {
     return param1 + param2;
 }
-console.log(myFunction, (a, b) => a + b);
+console.log(myFunction, (a: number, b: number) => a + b);
 ```
 
 ```js Output
@@ -1097,7 +1097,7 @@ Uses expression body syntax when an arrow function only returns a value.
 
 ```ts Input
 console.log(() => { return x; });
-console.log((a) => { return a + 1; });
+console.log((a: number) => { return a + 1; });
 ```
 
 ```js Output

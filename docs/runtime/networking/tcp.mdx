@@ -219,7 +219,7 @@ sink.write("l");
 sink.write("o");
 
 queueMicrotask(() => {
-  const data = sink.flush();
+  const data = sink.flush() as Uint8Array;
   const wrote = socket.write(data);
   if (wrote < data.byteLength) {
     // put it back in the sink if the socket is full

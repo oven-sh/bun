@@ -64,8 +64,8 @@ function joinArray(list: ArrayLike<unknown>, first: number, separator: string): 
   for (let i = first; i < list.length; i++) {
     // join() takes null and undefined as "".
     const item = list[i] ?? "";
-    // One template is one rope, and an empty separator would be a third of it.
-    joined = i === first ? `${item}` : separator === "" ? `${joined}${item}` : `${joined}${separator}${item}`;
+    // One template is one rope.
+    joined = i === first ? `${item}` : `${joined}${separator}${item}`;
   }
   return joined;
 }
@@ -280,6 +280,8 @@ type ExecCallback = (error: ExecException | null, stdout: string | Buffer, stder
 
 function execFile(file, args, options?, callback?: ExecCallback) {
   ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
+  // A failure names the arguments, and it comes later: the message shows them as they are now.
+  args = copyArray(args);
 
   options = {
     __proto__: null,
@@ -934,7 +936,7 @@ function getSignalsToNamesMapping() {
 
 function normalizeExecFileArgs(file, args, options, callback?) {
   if ($isJSArray(args)) {
-    args = copyArray(args);
+    // No copy here: spawn() and spawnSync() make theirs. execFile() makes one more, for the message of a later failure.
   } else if (args != null && typeof args === "object") {
     callback = options;
     options = args;

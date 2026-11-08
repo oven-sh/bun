@@ -50,7 +50,9 @@ If the report starts with `blocked by`, your program or a dependency could reach
 | `external-import` | Imports an `--external` package or a URL                          |
 | `build-option`    | Is built with `--compile-inspector`                               |
 
-The name `constructor` blocks `--trim` as well. The `constructor` of a function is `Function`, so `fn[key](code)` makes code from a string when `key` is `"constructor"`. If code that your program can run holds the string `"constructor"`, the report shows `eval` and `dynamic-import`. Code in a dependency counts too. A read of `.constructor` can do the same, as in `v.constructor === Object` or `this.constructor.name` in a subclass of `Error`. The `constructor()` method of a class blocks nothing. With [`--disallow-code-generation-from-strings`](#turn-off-code-from-strings), the name `constructor` blocks nothing.
+The name `constructor` blocks `--trim` as well. The `constructor` of a function is `Function`, so `fn[key](code)` makes code from a string when `key` is `"constructor"`. If code that your program can run holds the string `"constructor"`, the report shows `eval` and `dynamic-import`. Code in a dependency counts too. A read of `.constructor` can do the same, as in `v.constructor === Object` or `this.constructor.name` in a subclass of `Error`. The `constructor()` method of a class blocks nothing.
+
+[`--disallow-code-generation-from-strings`](#turn-off-code-from-strings) clears these lines. The executable can still be larger than it is without the name.
 
 For a read of `Bun` under a name that the build can't work out, as in `Bun[name]`, the report shows `runtime-code`, `native-code` and `dynamic-import`. The read [counts as a use of every member](#using-a-removed-feature) of `Bun`, and `Bun.plugin` and `Bun.build` are among them.
 

@@ -5061,6 +5061,51 @@
      }
     ],
     "suppressed": []
+   },
+   "zeros/equal.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n   6 |   if (flag) zero = 0;\n   7 |   else zero = -0;\n>  8 |   if (zero === 0) setState(1);\n     |                   ^^^^^^^^ Found setState() in render\n   9 |   return <div>{state}</div>;\n  10 | }\n  11 |",
+      "line": 8,
+      "column": 19,
+      "endLine": 8,
+      "endColumn": 27,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "zeros/first.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n   6 |   if (flag) zero = 0;\n   7 |   else zero = -0;\n>  8 |   if (1 / zero > 0) setState(1);\n     |                     ^^^^^^^^ Found setState() in render\n   9 |   return <div>{state}</div>;\n  10 | }\n  11 |",
+      "line": 8,
+      "column": 21,
+      "endLine": 8,
+      "endColumn": 29,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "zeros/same.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n   6 |   if (flag) zero = 0;\n   7 |   else zero = 0;\n>  8 |   if (1 / zero > 0) setState(1);\n     |                     ^^^^^^^^ Found setState() in render\n   9 |   return <div>{state}</div>;\n  10 | }\n  11 |",
+      "line": 8,
+      "column": 21,
+      "endLine": 8,
+      "endColumn": 29,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
    }
   }
  }

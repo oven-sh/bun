@@ -262,7 +262,7 @@ export function Component({ flag }) {
  * the other is the zero of the first path, so a test of it is a constant. facebook/react#37995, after which it is not,
  * is later than both. What Bun builds follows it. `bun lint` does not, while these are the tools it is compared with.
  */
-export const zeros: Files = {
+const zeros: Files = {
   "same.jsx": zeroOnEachPath("0", "0", "1 / zero > 0"),
   "equal.jsx": zeroOnEachPath("0", "-0", "zero === 0"),
   "first.jsx": zeroOnEachPath("0", "-0", "1 / zero > 0"),
@@ -770,6 +770,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   return <div>{value}</div>;
 });
 `,
+  ...Object.fromEntries(Object.entries(zeros).map(([name, text]) => [`zeros/${name}`, text])),
 };
 
 type EslintMessage = {

@@ -1683,29 +1683,54 @@ describe("bundler", () => {
     run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
   });
 
+  // One memo cache per mount, kept between its renders, as a fiber keeps it.
+  const reactWithMounts = {
+    "/node_modules/react/index.js": /* js */ `
+      let current;
+      exports.mount = Component => {
+        const fiber = { cache: null };
+        return props => {
+          current = fiber;
+          return Component(props);
+        };
+      };
+      exports.memoCache = size =>
+        (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+    `,
+    "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+
   // `0 === -0`, but a local that is `0` on one path and `-0` on another is not a constant. Constant propagation took
-  // the zero of one path for it, also of a path that is never taken (facebook/react#37995). Each component renders
-  // three times on one memo cache, with `flag` true, false and true, and has to render what the plain build renders.
-  // A memo block does not run again for a dependency of which only the sign changes (its guard is `!==`), so each
-  // component reads its zero in a division, which no memo block holds.
+  // the zero of one path for it, also of a path that is never taken (facebook/react#37995). Each component is mounted
+  // twice and renders three times on the memo cache of each mount, with `flag` true, false, true and then false, true,
+  // false, so that each zero is the first one once. A compiled build has to render what the plain build renders.
+  // Each component reads its zero in a division, which no memo block holds: see the case after this one.
   const zeroOrMinusZero: Record<string, string> = {
-    ZeroOrMinusZero: "Infinity -Infinity Infinity",
-    MinusZeroOrZero: "-Infinity Infinity -Infinity",
-    ZeroFromATernary: "true false true",
-    ZeroUnlessAssigned: "-Infinity Infinity -Infinity",
-    ZeroFromASwitch: "Infinity -Infinity Infinity",
-    ZeroInACallback: "Infinity -Infinity Infinity",
+    ZeroOrMinusZero: "Infinity -Infinity Infinity | -Infinity Infinity -Infinity",
+    MinusZeroOrZero: "-Infinity Infinity -Infinity | Infinity -Infinity Infinity",
+    ZeroFromATernary: "true false true | false true false",
+    ZeroUnlessAssigned: "-Infinity Infinity -Infinity | Infinity -Infinity Infinity",
+    ZeroFromASwitch: "Infinity -Infinity Infinity | -Infinity Infinity -Infinity",
+    ZeroInACallback: "Infinity -Infinity Infinity | -Infinity Infinity -Infinity",
     ZeroBesideADeadPath: "Infinity",
     SameZeroOnBothPaths: "Infinity,-Infinity,42,true",
   };
   const zeroOrMinusZeroFiles = {
     "/entry.js": /* js */ `
-      import { render } from "react";
+      import { mount } from "react";
       import * as forms from "./forms.jsx";
       const show = value => (Object.is(value, -0) ? "-0" : String(value));
+      const orders = [[true, false, true], [false, true, false]];
       for (const [name, Form] of Object.entries(forms)) {
-        const renders = [true, false, true].map(flag => [render(Form, { flag }).children].flat().map(show).join());
-        console.log(name + "=" + (new Set(renders).size === 1 ? renders[0] : renders.join(" ")));
+        const mounts = orders.map(flags => {
+          const render = mount(Form);
+          return flags.map(flag => [render({ flag }).children].flat().map(show).join());
+        });
+        const same = new Set(mounts.flat()).size === 1;
+        console.log(name + "=" + (same ? mounts[0][0] : mounts.map(renders => renders.join(" ")).join(" | ")));
       }
     `,
     "/forms.jsx": /* jsx */ `
@@ -1772,22 +1797,7 @@ describe("bundler", () => {
         return <i>{[1 / zero, 1 / minusZero, other, 0 === -0]}</i>;
       }
     `,
-    // One memo cache per component, kept between renders, as a fiber keeps it.
-    "/node_modules/react/index.js": /* js */ `
-      const fibers = new Map();
-      let current;
-      exports.render = (Component, props) => {
-        current = fibers.get(Component);
-        if (!current) fibers.set(Component, (current = { cache: null }));
-        return Component(props);
-      };
-      exports.memoCache = size =>
-        (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
-    `,
-    "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
-    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
-    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
-    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    ...reactWithMounts,
   };
   const zeroOrMinusZeroBuilds = {
     plain: { reactCompiler: false, backend: "api" },
@@ -1815,6 +1825,32 @@ describe("bundler", () => {
       },
     });
   }
+
+  // A memo block compares a dependency with `!==`, and `0 !== -0` is false. So a block that holds the zero itself
+  // does not run again when only its sign changes: a compiled build prints `true true true`. Upstream prints the same
+  // guard.
+  itBundled("react-compiler/MemoBlockRunsAgainForTheOtherZero", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { mount } from "react";
+        import { IsMinusZero } from "./forms.jsx";
+        const render = mount(IsMinusZero);
+        console.log([false, true, false].map(flag => render({ flag }).children).join(" "));
+      `,
+      "/forms.jsx": /* jsx */ `
+        export function IsMinusZero({ flag }) {
+          const z = flag ? 0 : -0;
+          return <i>{Object.is(z, -0)}</i>;
+        }
+      `,
+      ...reactWithMounts,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: "true false true" },
+  });
 
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {

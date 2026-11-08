@@ -5,6 +5,7 @@
 #include "ErrorStackTrace.h"
 #include "GeneratedExpectDeferred.h"
 #include "ModuleGraph.h"
+#include "NodeAsyncHooks.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/ErrorInstance.h>
@@ -116,7 +117,7 @@ extern "C" EncodedJSValue ExpectDeferred__bindToAttempt(JSGlobalObject* lexicalG
     auto* bound = dynamicDowncast<AsyncContextFrame>(callback);
     JSValue outer = bound ? bound->context.get() : globalObject->m_asyncContextData.get()->getInternalField(0);
     // Promise reactions only capture the async context once tracking is on.
-    globalObject->setAsyncContextTrackingEnabled(true);
+    Bun::beginTrackingAsyncContexts(globalObject);
     JSObject* frame = Bun::createAsyncContextFrame(globalObject, globalObject->lazyTestModuleObject(), outer, jsNumber(attempt));
     return JSValue::encode(AsyncContextFrame::create(globalObject, bound ? bound->callback.get() : callback, frame));
 }

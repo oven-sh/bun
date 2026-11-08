@@ -5,7 +5,7 @@ use super::vi_utils;
 use bun_core::lexer::end_of_run;
 use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::strings;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
@@ -220,16 +220,23 @@ pub(crate) fn is_in_preload() -> bool {
 /// Without `--isolate`, the `vi.stubGlobal()` stubs of a preload stay from file to file. Each keeps what it replaced on
 /// the global, which is only right for the names the global had at that time. So environment.ts takes them off before it
 /// changes the names of a window on the global (`on` is false), and puts them on what is there afterwards.
-pub(crate) fn move_replacements(cx: &mut JsScope<'_>, on: bool) {
+/// `covered_stubs` is what the last call returned: see `vi_utils::move_stubs_of_preloads`.
+pub(crate) fn move_replacements(
+    cx: &mut JsScope<'_>,
+    on: bool,
+    covered_stubs: JsLocal<'_>,
+) -> JSValue {
     let global = cx.global();
+    let mut covered_stubs = covered_stubs.to_js();
     // What a stub throws is the file's error. The names of the window still move.
-    if let Err(err) = vi_utils::move_stubs_of_preloads(global, on) {
+    if let Err(err) = vi_utils::move_stubs_of_preloads(global, on, &mut covered_stubs) {
         let error = global.take_exception(err);
         let _ = global
             .bun_vm()
             .as_mut()
             .uncaught_exception(global, error, false);
     }
+    covered_stubs
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

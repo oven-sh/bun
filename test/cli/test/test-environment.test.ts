@@ -1498,12 +1498,63 @@ describe.concurrent("test environment", () => {
         );
       });
 
-      test("a stub that the preload turned fake timers on over stays under them", async () => {
+      const spy = `vi.spyOn(globalThis, "matchMedia");`;
+      const covered = `(vi.isMockFunction(globalThis.matchMedia) ? "spy of " : "") + media()`;
+      test.each([
+        ["a spy", spy, ["--environment=happy-dom"], inNode, "spy of stub", "undefined", "happy-dom#1 media"],
+        [
+          "an assignment",
+          `globalThis.matchMedia = () => "assigned";`,
+          ["--environment=happy-dom"],
+          inNode,
+          "assigned",
+          "undefined",
+          "happy-dom#1 media",
+        ],
+        ["a spy in a project without a window", spy, [], inWindow, "spy of stub", "happy-dom#1 media", "undefined"],
+      ])(
+        "what the preload put over a stub stays in the preload's environment, and other files have the stub alone: %s",
+        async (_, cover, args, other, ofPreload, underOther, underPreload) => {
+          const ran = await run(
+            {
+              "preload.js": `${stub} ${cover}`,
+              "1.test.js": `${other}${unstubs("1", covered)}`,
+              "2.test.js": unstubs("2", covered),
+              "3.test.js": `${other}${unstubs("3", covered)}`,
+            },
+            ...args,
+          );
+          expect(ran).toEqual(
+            passed("1 stub", `1 ${underOther}`, `2 ${ofPreload}`, `2 ${underPreload}`, "3 stub", `3 ${underOther}`),
+          );
+        },
+      );
+
+      test("fake timers that the preload turned on over a stub stay over it in a window", async () => {
         const ran = await run({
           "preload.js": `import { vi } from "bun:test"; vi.stubGlobal("setTimeout", () => "stub"); vi.useFakeTimers();`,
-          "1.test.js": `${inWindow}${logs("1", `where(), Object.hasOwn(setTimeout, "clock")`)}`,
+          "1.test.js": `${inWindow}${file(
+            "1",
+            `console.log("1", where(), Object.hasOwn(setTimeout, "clock"));
+            vi.useRealTimers();
+            console.log("1", setTimeout());
+            vi.unstubAllGlobals();
+            console.log("1", setTimeout.name);`,
+          )}`,
         });
-        expect(ran).toEqual(passed("1 happy-dom#1 true"));
+        expect(ran).toEqual(passed("1 happy-dom#1 true", "1 stub", "1 setTimeout"));
+      });
+
+      test("a stub that the preload deleted is made again like any other, and the window keeps its own", async () => {
+        const ran = await run(
+          {
+            "preload.js": `import { vi } from "bun:test"; vi.stubGlobal("fetch", () => "stub"); delete globalThis.fetch;`,
+            "1.test.js": `${inNode}${logs("1", "fetched()")}`,
+            "2.test.js": unstubs("2", "fetched()"),
+          },
+          "--environment=happy-dom",
+        );
+        expect(ran).toEqual(passed("1 stub", "2 stub", "2 happy-dom#1 fetch"));
       });
 
       test("a stub that can't be made again is an error, and the file still gets its environment", async () => {

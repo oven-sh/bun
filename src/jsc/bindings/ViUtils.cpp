@@ -142,10 +142,13 @@ static void stubGlobal(Zig::GlobalObject* globalObject, JSValue key, JSValue val
     RELEASE_AND_RETURN(scope, didStub(globalObject, globalObject->mockModule.globalsOfPreload, key, value));
 }
 
-// A stub that globalThis no longer has stays. The preload put something over it, and undoing the stub would take that off.
-static void unstubGlobalOfPreload(Zig::GlobalObject* globalObject, JSMap* originals, JSValue key, JSValue stub)
+// What a preload put over its stub (a spy, an assignment, fake timers) stays, and the test environment moves it like any
+// other property of globalThis. Only the record of the stub comes off. `coveredStubs` keeps it, as a descriptor of what
+// covers the stub plus `original`, until stubGlobalOfPreload finds that property on globalThis again.
+static void unstubGlobalOfPreload(Zig::GlobalObject* globalObject, JSMap* originals, JSMap*& coveredStubs, JSValue key, JSValue stub)
 {
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     bool isRemembered = hasOriginal(globalObject, originals, key);
     RETURN_IF_EXCEPTION(scope, );
@@ -157,28 +160,49 @@ static void unstubGlobalOfPreload(Zig::GlobalObject* globalObject, JSMap* origin
     PropertyDescriptor current;
     bool exists = target->getOwnPropertyDescriptor(globalObject, name, current);
     RETURN_IF_EXCEPTION(scope, );
-    if (!exists || !current.isDataDescriptor())
-        return;
-    bool isOnGlobal = sameValue(globalObject, current.value(), stub);
+    bool isCovered = exists && !(current.isDataDescriptor() && sameValue(globalObject, current.value(), stub));
     RETURN_IF_EXCEPTION(scope, );
-    if (!isOnGlobal)
-        return;
     JSValue original = JSValue::decode(JSC__JSMap__get(originals, globalObject, JSValue::encode(key)));
     RETURN_IF_EXCEPTION(scope, );
     JSC__JSMap__remove(originals, globalObject, JSValue::encode(key));
     RETURN_IF_EXCEPTION(scope, );
-    RELEASE_AND_RETURN(scope, restoreGlobal(globalObject, target, key, original));
+    if (!isCovered)
+        RELEASE_AND_RETURN(scope, restoreGlobal(globalObject, target, key, original));
+
+    JSObject* record = constructObjectFromPropertyDescriptor(globalObject, current);
+    RETURN_IF_EXCEPTION(scope, );
+    record->setPrototypeDirect(vm, jsNull());
+    record->putDirect(vm, Identifier::fromString(vm, "original"_s), original);
+    if (!coveredStubs)
+        coveredStubs = JSMap::create(vm, globalObject->mapStructure());
+    RELEASE_AND_RETURN(scope, JSC__JSMap__set(coveredStubs, globalObject, JSValue::encode(key), JSValue::encode(record)));
 }
 
-static void stubGlobalOfPreload(Zig::GlobalObject* globalObject, JSValue key, JSValue stub)
+static void stubGlobalOfPreload(Zig::GlobalObject* globalObject, JSMap* coveredStubs, JSValue key, JSValue stub)
 {
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (JSValue originals = globalObject->mockModule.stubbedGlobals.get()) {
-        bool isInPlace = hasOriginal(globalObject, uncheckedDowncast<JSMap>(originals), key);
+    JSValue record = coveredStubs ? JSValue::decode(JSC__JSMap__get(coveredStubs, globalObject, JSValue::encode(key))) : jsUndefined();
+    RETURN_IF_EXCEPTION(scope, );
+    if (record.isObject()) {
+        auto name = propertyKeyOf(globalObject, key);
         RETURN_IF_EXCEPTION(scope, );
-        if (isInPlace)
-            return;
+        PropertyDescriptor current;
+        bool exists = globalObject->globalThis()->getOwnPropertyDescriptor(globalObject, name, current);
+        RETURN_IF_EXCEPTION(scope, );
+        PropertyDescriptor cover;
+        toPropertyDescriptor(globalObject, record, cover);
+        RETURN_IF_EXCEPTION(scope, );
+        bool isCovered = exists && current.equalTo(globalObject, cover);
+        RETURN_IF_EXCEPTION(scope, );
+        if (isCovered) {
+            JSC__JSMap__remove(coveredStubs, globalObject, JSValue::encode(key));
+            RETURN_IF_EXCEPTION(scope, );
+            JSValue original = asObject(record)->getDirect(vm, Identifier::fromString(vm, "original"_s));
+            JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedGlobals);
+            RELEASE_AND_RETURN(scope, JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original)));
+        }
     }
     RELEASE_AND_RETURN(scope, stubGlobal(globalObject, key, stub));
 }
@@ -478,19 +502,25 @@ extern "C" void ViUtils__stubWhatPreloadStubbed(Zig::GlobalObject* globalObject)
 }
 
 // The test environment is about to change the names that globalThis has. A name then moves with what the stub replaced.
-extern "C" void ViUtils__unstubGlobalsOfPreload(Zig::GlobalObject* globalObject)
+// `coveredStubs` is a JSMap or undefined. It becomes a JSMap when the first record goes into it.
+extern "C" void ViUtils__unstubGlobalsOfPreload(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* coveredStubs)
 {
     JSC::JSValue stubs = globalObject->mockModule.globalsOfPreload.get();
     JSC::JSValue originals = globalObject->mockModule.stubbedGlobals.get();
-    if (stubs && originals)
-        Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(stubs), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::unstubGlobalOfPreload(globalObject, uncheckedDowncast<JSC::JSMap>(originals), name, stub); });
+    if (!stubs || !originals)
+        return;
+    auto* covered = dynamicDowncast<JSC::JSMap>(JSC::JSValue::decode(*coveredStubs));
+    Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(stubs), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::unstubGlobalOfPreload(globalObject, uncheckedDowncast<JSC::JSMap>(originals), covered, name, stub); });
+    if (covered)
+        *coveredStubs = JSC::JSValue::encode(covered);
 }
 
 // Makes the stubs that ViUtils__unstubGlobalsOfPreload took off again, over what globalThis has now.
-extern "C" void ViUtils__stubGlobalsOfPreload(Zig::GlobalObject* globalObject)
+extern "C" void ViUtils__stubGlobalsOfPreload(Zig::GlobalObject* globalObject, JSC::EncodedJSValue coveredStubs)
 {
+    auto* covered = dynamicDowncast<JSC::JSMap>(JSC::JSValue::decode(coveredStubs));
     if (JSC::JSValue stubs = globalObject->mockModule.globalsOfPreload.get())
-        Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(stubs), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::stubGlobalOfPreload(globalObject, name, stub); });
+        Bun::forEachEntry(globalObject, uncheckedDowncast<JSC::JSMap>(stubs), [&](JSC::JSValue name, JSC::JSValue stub) { Bun::stubGlobalOfPreload(globalObject, covered, name, stub); });
 }
 
 extern "C" void ViUtils__forgetDynamicImports(Zig::GlobalObject* globalObject)

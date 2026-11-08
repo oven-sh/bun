@@ -5,7 +5,10 @@ const types = require("node:util/types");
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 const isInPreload = $bindgen("environment.bind.ts", "isInPreload");
-const moveReplacements: (on: boolean) => void = $bindgen("environment.bind.ts", "moveReplacements");
+const moveReplacements: (on: boolean, coveredStubs: unknown) => unknown = $bindgen(
+  "environment.bind.ts",
+  "moveReplacements",
+);
 // This module's copy in a global that outlives the test files.
 const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
   "TestEnvironment.cpp",
@@ -478,17 +481,20 @@ let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unk
 // Without --isolate. A preload's vi.stubGlobal() stubs stay from file to file, and each keeps what it replaced on
 // globalThis. So they come off before a window's names move, and go on what globalThis has afterwards.
 let areReplacementsOff = false;
+// What a preload put over its stub, like a spy, stays on globalThis, and moves with the window like any other property.
+// This keeps what that stub replaced, until the spy is on globalThis again.
+let coveredStubs: unknown;
 
 function takeOffReplacements() {
   if (areReplacementsOff) return;
   areReplacementsOff = true;
-  moveReplacements(false);
+  coveredStubs = moveReplacements(false, coveredStubs);
 }
 
 function putOnReplacements() {
   if (!areReplacementsOff) return;
   areReplacementsOff = false;
-  moveReplacements(true);
+  moveReplacements(true, coveredStubs);
 }
 
 function enter(name: string, environment: Environment, keep: boolean) {

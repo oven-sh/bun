@@ -2286,27 +2286,38 @@ describe("a body over an unread stream of a file", () => {
   });
 
   // A reader returns a promise. When the stream cannot start, that promise rejects.
+  async function codeOfRejection(
+    body: ReadableStream,
+    method: "text" | "bytes" | "arrayBuffer" | "json" | "blob" | "formData",
+  ) {
+    const response = new Response(body, { headers: { "content-type": "application/x-www-form-urlencoded" } });
+    let promise: Promise<unknown> | undefined;
+    expect(() => {
+      promise = response[method]();
+    }).not.toThrow();
+    return promise!.then(
+      () => "resolved",
+      error => error.code,
+    );
+  }
+
   describe.skipIf(isWindows)("over a stream of the descriptor of a directory", () => {
     test.each(["text", "bytes", "arrayBuffer", "json", "blob", "formData"] as const)("%s() rejects", async method => {
       using dir = tempDir("body-directory-fd-stream", {});
       const fd = openSync(String(dir), "r");
       try {
-        const response = new Response(file(fd).stream(), {
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-        });
-        let promise: Promise<unknown> | undefined;
-        expect(() => {
-          promise = response[method]();
-        }).not.toThrow();
-        expect(
-          await promise!.then(
-            () => "resolved",
-            error => error.code,
-          ),
-        ).toBe("EISDIR");
+        expect(await codeOfRejection(file(fd).stream(), method)).toBe("EISDIR");
       } finally {
         closeSync(fd);
       }
+    });
+  });
+
+  // blob() is not in this list. It gives the Blob of the path, and each read of that Blob rejects.
+  describe("over a stream of a path that does not exist", () => {
+    test.each(["text", "bytes", "arrayBuffer", "json", "formData"] as const)("%s() rejects", async method => {
+      using dir = tempDir("body-missing-path-stream", {});
+      expect(await codeOfRejection(file(join(String(dir), "none.txt")).stream(), method)).toBe("ENOENT");
     });
   });
 });

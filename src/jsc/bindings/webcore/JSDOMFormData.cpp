@@ -573,6 +573,11 @@ const JSC::ClassInfo DOMFormDataIterator::s_info = { "FormData Iterator"_s, &Bas
 template<>
 const JSC::ClassInfo DOMFormDataIteratorPrototype::s_info = { "FormData Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(DOMFormDataIteratorPrototype) };
 
+JSC::JSObject* domFormDataIteratorPrototype(JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<DOMFormDataIterator>(globalObject.vm(), globalObject);
+}
+
 static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSDOMFormData* thisObject)
 {
     return JSValue::encode(iteratorCreate<DOMFormDataIterator>(*thisObject, IterationKind::Entries));

@@ -1,12 +1,14 @@
 #include "JSHash.h"
 #include "CryptoUtil.h"
 #include "BunClientData.h"
+#include "Bindgen/JSBytesView.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
+#include <JavaScriptCore/StringObject.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <openssl/evp.h>
 #include <JavaScriptCore/Error.h>
@@ -318,6 +320,110 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     }
 
     RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span<const uint8_t> { reinterpret_cast<const uint8_t*>(hash->m_digest.data()), len }, encoding));
+}
+
+// oneShotDigest(algorithm, input, outputEncoding, outputLength, hasDigestOptions), which crypto.hash() has validated.
+// https://github.com/nodejs/node/blob/v26.12.1/src/crypto/crypto_hash.cc#L362-L501
+JSC_DEFINE_HOST_FUNCTION(jsOneShotDigest, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
+    // Not in Node: a String object, an ArrayBuffer or a Blob, which Bun.CryptoHasher.hash() takes too.
+    JSValue inputValue = callFrame->argument(1);
+    if (auto* stringObject = dynamicDowncast<StringObject>(inputValue)) [[unlikely]] {
+        inputValue = stringObject->internalValue();
+    }
+    if (!inputValue.isString() && !inputValue.inherits<JSArrayBufferView>() && !inputValue.inherits<JSArrayBuffer>()) [[unlikely]] {
+        bool isBlob = Bindgen::checkInMemoryBlob(*lexicalGlobalObject, inputValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isBlob) {
+            return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "input"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, inputValue);
+        }
+    }
+
+    WTF::String algorithm = callFrame->argument(0).toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // The message holds `algorithm`, which can be as long as a string gets.
+    auto throwError = [&](WTF::String&& message) -> EncodedJSValue {
+        if (message.isNull()) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+        } else {
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, message));
+        }
+        return {};
+    };
+
+    const EVP_MD* md = ncrypto::getDigestByName(algorithm);
+    std::unique_ptr<ExternZigHash::Hasher, decltype(&ExternZigHash::destroy)> zigHasher(md ? nullptr : ExternZigHash::getByName(algorithm), ExternZigHash::destroy);
+    if (!md && !zigHasher) [[unlikely]] {
+        return throwError(tryMakeString("Digest method "_s, algorithm, " is not supported"_s));
+    }
+
+    auto encoding = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, callFrame->argument(2)).value_or(BufferEncodingType::buffer);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    uint32_t digestSize = md ? EVP_MD_size(md) : ExternZigHash::getDigestSize(zigHasher.get());
+    uint32_t outputLength = digestSize;
+    JSValue outputLengthValue = callFrame->argument(3);
+    if (!outputLengthValue.isUndefined()) {
+        outputLength = outputLengthValue.toUInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool isXof = !md && ExternZigHash::isXof(zigHasher.get());
+        if (!isXof && outputLength != digestSize) {
+            return throwError(tryMakeString("Output length "_s, outputLength, " is invalid for "_s, algorithm, ", which does not support XOF"_s));
+        }
+    }
+
+    // They are for cSHAKE, which BoringSSL does not have.
+    if (callFrame->argument(4).isTrue()) {
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Digest options are not supported"_s);
+        return {};
+    }
+
+    if (outputLength == 0) {
+        RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, {}, encoding));
+    }
+
+    auto digest = [&](std::span<const uint8_t> input) -> EncodedJSValue {
+        if (md) {
+            std::array<uint8_t, EVP_MAX_MD_SIZE> output;
+            if (!EVP_Digest(input.data(), input.size(), output.data(), nullptr, md, nullptr)) {
+                throwCryptoError(lexicalGlobalObject, scope, ERR_get_error());
+                return {};
+            }
+            RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, std::span { output }.first(outputLength), encoding));
+        }
+
+        auto output = ncrypto::DataPointer::Alloc(std::max<size_t>(EVP_MAX_MD_SIZE, outputLength));
+        if (!output) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return {};
+        }
+        std::span<uint8_t> bytes { output.get<uint8_t>(), output.size() };
+        if ((!input.empty() && !ExternZigHash::update(zigHasher.get(), input)) || ExternZigHash::digest(zigHasher.get(), bytes) < outputLength) {
+            throwCryptoError(lexicalGlobalObject, scope, ERR_get_error());
+            return {};
+        }
+        RELEASE_AND_RETURN(scope, StringBytes::encode(lexicalGlobalObject, scope, bytes.first(outputLength), encoding));
+    };
+
+    if (!inputValue.isString()) {
+        return digest(Bindgen::bytesOfBlobOrBuffer(inputValue));
+    }
+
+    auto inputView = asString(inputValue)->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (inputView->is8Bit() && WTF::charactersAreAllASCII(inputView->span8())) {
+        return digest(byteCast<uint8_t>(inputView->span8()));
+    }
+
+    JSValue converted = JSValue::decode(WebCore::constructFromEncoding(lexicalGlobalObject, inputView, BufferEncodingType::utf8));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::EnsureStillAliveScope keepAlive(converted);
+    return digest(uncheckedDowncast<JSArrayBufferView>(converted)->span());
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

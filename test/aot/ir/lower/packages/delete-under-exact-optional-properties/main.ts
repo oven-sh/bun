@@ -1,6 +1,9 @@
-// a package with a tsconfig.json of its own stays typed where only the application's exactOptionalPropertyTypes forbids a delete
+// a package whose own tsconfig.json lacks the application's exactOptionalPropertyTypes has unverified types: what it declares is only expected
 // RUN: link
-// STATISTIC: SourceFilesDemoted = 0
+// STATISTIC: SourceFilesDemoted = 1
+// CHECK: layout [[box]] {{*}}fields=[{key="size" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="value" declared={type=undefined|number flags=[IsExpected]} flags=[IsRequired]}]
+// CHECK: function {{*}}name="clear" {{*}}flags=[HasExplicitName] {{*}}parameters=[{type=undefined|null|[[box]] flags=[IsExpected]}] results=[{type=anything}]
+// CHECK: = PropDelete {{*}}key="value"
 // CHECK: entry
 
 import { clear, type Box } from "ships-typescript";

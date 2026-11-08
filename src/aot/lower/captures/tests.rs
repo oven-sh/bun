@@ -49,6 +49,9 @@ impl Fixture {
                 creator: None,
                 created_at: 0,
                 hoisted_to: None,
+                is_made_late: false,
+                is_only_called_directly: false,
+                is_laid_in_literal: false,
             }],
             bindings: Vec::new(),
             uses: Vec::new(),
@@ -65,6 +68,9 @@ impl Fixture {
             creator: Some(creator),
             created_at,
             hoisted_to: None,
+            is_made_late: false,
+            is_only_called_directly: false,
+            is_laid_in_literal: false,
         });
         WalkedFunctionId(index)
     }
@@ -164,14 +170,12 @@ fn owner_captures_nothing() {
         let plan = fixture.solve(NO_LIMIT);
         assert!(captures_of(&plan, ROOT).is_empty());
         assert!(plan.fields.is_empty());
-        assert!(plan.functions_over_limit.is_empty());
     }
 }
 
 #[test]
 fn single_user_copies_what_is_immutable_and_initialized_before_its_creation() {
     let at_entry = Some(Initialization::AT_SCOPE_ENTRY);
-    // The time of the user's creation, is the binding immutable, its initialization, is it copied.
     let rows = [
         (5, true, initialized_at(3), true),
         (5, true, initialized_at(7), false),
@@ -234,7 +238,7 @@ fn need_travels_through_creators() {
 }
 
 #[test]
-fn environment_travels_through_a_creator_that_copies() {
+fn creator_that_hands_the_environment_on_copies_nothing_out_of_it() {
     let mut fixture = Fixture::new();
     let binding = fixture.add_root_constant(5);
     let creator = fixture.add_function(ROOT, 9);
@@ -243,10 +247,7 @@ fn environment_travels_through_a_creator_that_copies() {
     fixture.uses.push((created, binding));
     let plan = fixture.solve(NO_LIMIT);
     assert_eq!(captures_of(&plan, created), [ENVIRONMENT]);
-    assert_eq!(
-        captures_of(&plan, creator),
-        [ENVIRONMENT, Capture::Value(binding)]
-    );
+    assert_eq!(captures_of(&plan, creator), [ENVIRONMENT]);
     assert_eq!(plan.fields, [binding]);
 }
 
@@ -427,7 +428,6 @@ fn limit_turns_copies_into_environments() {
     }
     let plan = fixture.solve(3);
     assert_eq!(captures_of(&plan, user), [ENVIRONMENT]);
-    assert_eq!(plan.functions_over_limit, [user]);
     assert_eq!(plan.fields, bindings);
 }
 
@@ -442,8 +442,8 @@ fn limit_of_one_function_leaves_others() {
     }
     fixture.uses.push((other, bindings[0]));
     let plan = fixture.solve(3);
+    assert_eq!(captures_of(&plan, over_limit), [ENVIRONMENT]);
     assert_eq!(captures_of(&plan, other), [Capture::Value(bindings[0])]);
-    assert_eq!(plan.functions_over_limit, [over_limit]);
 }
 
 #[test]
@@ -457,7 +457,6 @@ fn list_at_the_limit_stays() {
     let plan = fixture.solve(3);
     let copies: Vec<Capture> = bindings.iter().copied().map(Capture::Value).collect();
     assert_eq!(captures_of(&plan, user), copies);
-    assert!(plan.functions_over_limit.is_empty());
     assert!(plan.fields.is_empty());
 }
 
@@ -475,19 +474,19 @@ fn entry_capture_stays_a_value_over_the_limit() {
         captures_of(&plan, method),
         [ENVIRONMENT, Capture::Value(home_object)]
     );
-    assert_eq!(plan.functions_over_limit, [method]);
 }
 
 #[test]
 fn lists_are_sorted_environments_first() {
     let mut fixture = Fixture::new();
     let inner_scope = ScopeId(3);
-    let first_constant = fixture.add_root_constant(1);
+    let (scope_of_constants, scope_of_home_object) = (ScopeId(7), ScopeId(8));
+    let first_constant = fixture.add_symbol(ROOT, scope_of_constants, true, initialized_at(1));
     let outer_variable = fixture.add_root_variable(2);
-    let second_constant = fixture.add_root_constant(3);
+    let second_constant = fixture.add_symbol(ROOT, scope_of_constants, true, initialized_at(3));
     let outer = fixture.add_function(ROOT, 4);
     let inner_variable = fixture.add_symbol(outer, inner_scope, false, initialized_at(5));
-    let home_object = fixture.add_home_object(outer, inner_scope);
+    let home_object = fixture.add_home_object(outer, scope_of_home_object);
     let inner = fixture.add_function(outer, 6);
     let used = [
         home_object,
@@ -544,7 +543,6 @@ fn time_inside_a_later_function() {
     assert!(!fixture.is_initialized_before(binding, late, 5));
 }
 
-// `declare` writes the variable of a level, `use_each` what the innermost function does with the variable of each level.
 fn nest_functions(
     depth: usize,
     declare: impl Fn(usize) -> String,
@@ -561,7 +559,6 @@ fn nest_functions(
     source + "}\nf0();\n"
 }
 
-// The most captures of a function, and the most fields of an environment.
 fn lower_nested_functions(source: &str) -> (usize, usize) {
     let lowered = lower_program_with_limits(&[("main.js", source)], LimitValues::for_host());
     let fragment = &lowered[0].1.fragment;
@@ -582,7 +579,6 @@ fn function_that_reaches_too_many_scopes_gets_its_captures_in_one_object() {
             |level| format!("v{level}++;"),
         )
     };
-    // The innermost function has a variable of its own and captures an environment for each level around it.
     assert_eq!(
         lower_nested_functions(&stored(max_captures() + 1)),
         (max_captures(), 1)
@@ -625,6 +621,6 @@ fn function_that_is_left_out_copies_a_constant_that_is_left_out_with_it() {
         ),
     ];
     let settings = default_settings();
-    let entry_count = lower_and_link_program(&files, &settings, |program, _| program.entries.len());
+    let entry_count = lower_and_link_program(&files, &settings, |program| program.entries.len());
     assert_eq!(entry_count, 1);
 }

@@ -804,7 +804,8 @@ export function either(n: number, c: boolean) { const kept = c ? { last: null } 
 { "extends": "../../tsconfig.json", "compilerOptions": { "strict": false } }
 //// non-strict-empty-literals/main.queries.txt
 # `inner/` is written without `strictNullChecks`, the program with it. There `[]` is `any[]` and `null` is `any` wherever a declaration, a member of a literal or a result starts from one, as for a local variable.
-inner/empty-literals.ts:0 role `` = Checked
+# The one checker of a build has `strictNullChecks` once, so the file is not checked: nothing is reported in it.
+inner/empty-literals.ts:0 role `` = Inferred
 inner/empty-literals.ts:1 class member `Queue` = items Field Member 1 unwritten checked any[]
 inner/empty-literals.ts:1 class member `Queue` = last Field Member 1 unwritten checked any
 inner/empty-literals.ts:2 binding `shared` = any[]
@@ -825,7 +826,7 @@ absent: inner/empty-literals.ts:8 diagnostic TS2322 = Semantic StopsBuild
 import { Queue, remember, collect, one, state, either } from "./inner/empty-literals.ts";
 console.log(new Queue().add(1), remember(1), collect(1), one(1), state(1), either(1, true));
 //// null-checks-off-alone/inner/only-reported.ts
-// What `strictNullChecks` only reports, and makes no type of, is asked of the file.
+// The folder turns `strictNullChecks` off, which the one checker of a build has once: nothing is reported here.
 export function half(n: number): number { if (n < 0) return; return n / 2; }
 export class Point { x: number; }
 export class Early { y: number; constructor() { console.log(this.y); this.y = 1; } }
@@ -835,9 +836,9 @@ export class Early { y: number; constructor() { console.log(this.y); this.y = 1;
 # `inner/` turns `strictNullChecks` off and keeps the rest of `strict`, the program has all of it.
 main.ts:0 option strictPropertyInitialization `` = true
 inner/only-reported.ts:0 option strictPropertyInitialization `` = true
-inner/only-reported.ts:0 role `` = Checked
+inner/only-reported.ts:0 role `` = Inferred
 
-# TypeScript asks for `strictNullChecks` in front of each of these three. They make no type: the function returns `number`, the fields are `number`.
+# The file is not checked, so none of these three is reported. They make no type: the function returns `number`, the fields are `number`.
 inner/only-reported.ts:2 returns `half` = number
 absent: inner/only-reported.ts:2 diagnostic TS2322 = Semantic StopsBuild
 absent: inner/only-reported.ts:3 diagnostic TS2564 = Style StopsBuild
@@ -1327,7 +1328,7 @@ export function read(holder: Holder) {
 interface Handler { (value: number): string; (value: string): string }
 export const describe: Handler = value => value.toFixed(1);
 //// two-call-signatures/lenient-folder/inner/tsconfig.json
-{ "extends": "../../../tsconfig.json", "compilerOptions": { "strict": false } }
+{ "extends": "../../../tsconfig.json", "compilerOptions": { "noImplicitAny": false } }
 //// two-call-signatures/lenient-folder/main.queries.txt
 # `noImplicitAny` decides whether a function under a type with two call signatures gets one signature made of both. `inner/` is written without it, the program with it.
 main.ts:0 option noImplicitAny `` = true
@@ -2095,6 +2096,11 @@ conditional-types.ts:10 shape `Ping<T>` = TypeVariable(none)
 
 # The members of a mapped type are evaluated when they are asked for: that recursion ends by itself.
 absent: conditional-types.ts:11 shape `Deep<T>` = TypeVariable(none)
+
+# It is as costly as what its type parameters stand for.
+conditional-types.ts:13 shape `Same<Plain<T>>` = TypeVariable("text" | 0)
+conditional-types.ts:13 shape `Same<Nest<N>>` = TypeVariable(none)
+conditional-types.ts:13 shape `Second<T, Nest<N>>` = TypeVariable(none)
 //// type-shape/conditional-types.ts
 // A deferred conditional type is a type variable. Its constraint is what the checker computes, except where evaluating the type can come back to the type itself.
 type Wrap<T> = { value: T };
@@ -2107,6 +2113,8 @@ function plain<T>(value: Plain<T>) {}
 function nest<N extends number>(value: Nest<N>, keys: keyof Nest<N>) {}
 function ping<T extends number>(value: Ping<T>) {}
 function deep<T>(value: Deep<T>) {}
+type Same<T> = T extends infer R ? R : never; type Second<A, B> = A extends string ? B : never;
+function same<T, N extends number>(plain: Same<Plain<T>>, nest: Same<Nest<N>>, second: Second<T, Nest<N>>) {}
 export {};
 //// type-shape/empty-object.queries.txt
 # A type without members says nothing; an optional member is enough to be an object.
@@ -2329,8 +2337,8 @@ type-parameter-of-declaration-file.ts:3 written `T` = T
 type-parameter-of-declaration-file.ts:3 shape `T` = TypeVariable(none) untrusted
 absent: type-parameter-of-declaration-file.ts:3 shape `T` = TypeVariable(none)
 
-type-parameter-of-declaration-file.ts:4 shape `T` = TypeVariable(none; type-parameter-of-declaration-file.ts:1)
-type-parameter-of-declaration-file.ts:5 shape `T` = TypeVariable(string; type-parameter-of-declaration-file.ts:2)
+type-parameter-of-declaration-file.ts:4 shape `T` = TypeVariable(none)
+type-parameter-of-declaration-file.ts:5 shape `T` = TypeVariable(string)
 absent: type-parameter-of-declaration-file.ts:4 shape `T` = TypeVariable(none) untrusted
 //// type-shape/type-parameter-of-declaration-file.ts
 // A type parameter has the trust of the file that declares it. The declarations of a merged interface share one type parameter, which is that of the first declaration.
@@ -2364,7 +2372,7 @@ union-with-type-parameter.ts:2 shape `T | string` = Union(string | T)
 union-with-type-parameter.ts:2 shape `T | undefined` = Union(undefined | T)
 union-with-type-parameter.ts:2 shape `T | T[]` = Union(T | T[])
 union-with-type-parameter.ts:3 shape `T | string` = Union(string | T)
-union-with-type-parameter.ts:3 shape `T` = TypeVariable(number; union-with-type-parameter.ts:1)
+union-with-type-parameter.ts:3 shape `T` = TypeVariable(number)
 //// type-shape/union-with-type-parameter.ts
 // A type parameter in a union stays a member of it.
 function f<T>(x: T | string, y: T | undefined, z: T | T[]) {}
@@ -2406,8 +2414,9 @@ export function first(c: boolean) { return c ? { data: 1 } : { error: "x" }; }
 const n = 1;
 export const total = [n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n].length;
 //// undefined-property/main.queries.txt
-# The `error?: undefined` that `{ data: 1 }` gets beside `{ error: e }` is declared by that union, not by the first file of the same checker that used the name. heavy.ts makes a task hold more than one of the small files.
-untyped.js:1 returns `make` = { data: number; error?: undefined; } | { data?: undefined; error: any; }
+# The `error?: undefined` that `{ data: 1 }` gets beside `{ error: "x" }` is declared by that union, not by the first file of the same checker that used the name. In a file without types a build widens such literals each by itself. heavy.ts makes a task hold more than one of the small files.
+untyped.js:1 returns `make` = { data: number; } | { error: any; }
+first.ts:1 returns `first` = { data: number; error?: undefined; } | { data?: undefined; error: string; }
 different: main.ts:4 identity `first(true)` <=> main.ts:5 identity `make(true, "e")`
 same: untyped.js:2 identity `make(true, 1)` <=> main.ts:5 identity `make(true, "e")`
 //// undefined-property/main.ts
@@ -2588,94 +2597,12 @@ K.X;
 L["X"];
 all.K.X;
 all.F.X;
-//// written-type/enum-member-const-prefix-export-from.queries.txt
-# `bun run` ends the const local prefix of a file where it parses `export { .. } from`. The prefix of a function in it is not affected.
-enum-member-const-prefix-export-from.ts:6 enum member `FromLeading = leading` = 5 reads other file or variable
-enum-member-const-prefix-export-from.ts:6 enum member `FromInner = inner` = 3
-//// written-type/enum-member-const-prefix-export-from.ts
-// `bun run` ends the const local prefix of a file where it parses `export { .. } from`, so it inlines no `const` of the file's own statement list, not even one above that statement.
-const leading = 5;
-function reads() {
-  const inner = 3;
-  {
-    enum E { FromLeading = leading, FromInner = inner }
-  }
-}
-export { Other } from "./enum-member-origin-other";
-//// written-type/enum-member-const-prefix.queries.txt
-# `bun run` inlines a `const` of the const local prefix of a scope into what it visits later, so an enum member that reads one is a constant.
-enum-member-const-prefix.ts:11 enum member `FromLeading = leading` = 5
-enum-member-const-prefix.ts:12 enum member `AfterLeading` = 6
-enum-member-const-prefix.ts:13 enum member `FromText = leadingText` = "w"
-enum-member-const-prefix.ts:14 enum member `FromSum = leadingSum` = 6
-enum-member-const-prefix.ts:16 enum member `FromFilled = filled` = "w-5"
-enum-member-const-prefix.ts:23 enum member `FromInner = inner` = 3
-enum-member-const-prefix.ts:38 enum member `FromEarly = early` = 2
-enum-member-const-prefix.ts:38 enum member `FromOuter = outer` = 1
-enum-member-const-prefix.ts:46 enum member `FromLocal = local` = 4
-
-# A string rope, a `const` after the prefix, in the statement list of the enum, and below the reader.
-enum-member-const-prefix.ts:15 enum member `FromJoined = joined` = "ab" reads other file or variable
-enum-member-const-prefix.ts:17 enum member `FromAfterLet = afterLet` = 7 reads other file or variable
-enum-member-const-prefix.ts:18 enum member `AfterAfterLet` = 8 reads other file or variable
-enum-member-const-prefix.ts:21 enum member `FromInner = inner` = 3 reads other file or variable
-enum-member-const-prefix.ts:28 enum member `FromBelow = below` = 6 reads other file or variable
-enum-member-const-prefix.ts:40 enum member `FromLate = late` = 3 reads other file or variable
-//// written-type/enum-member-const-prefix.ts
-// `bun run` inlines a `const` of the const local prefix of a scope into what it visits later, so an enum member that reads one is a constant. A `const` after the prefix, one in the statement list of the enum, one below the reader and one that holds a string rope are variables.
-const leading = 5;
-const leadingText = "w", leadingSum = leading + 1;
-const joined = "a" + "b";
-const filled = `${leadingText}-${leading}`;
-interface Erased {}
-let count = 0;
-const afterLet = 7;
-function reads() {
-  enum E {
-    FromLeading = leading,
-    AfterLeading,
-    FromText = leadingText,
-    FromSum = leadingSum,
-    FromJoined = joined,
-    FromFilled = filled,
-    FromAfterLet = afterLet,
-    AfterAfterLet,
-  }
-  const inner = 3;
-  enum SameList { FromInner = inner }
-  {
-    enum Nested { FromInner = inner }
-  }
-}
-function order() {
-  function before() {
-    enum E { FromBelow = below }
-  }
-  const below = 6;
-}
-function clauses(selector: number) {
-  const outer = 1;
-  switch (selector) {
-    case 0:
-      const early = 2;
-    case 1:
-      enum InLaterClause { FromEarly = early, FromOuter = outer }
-      const late = 3;
-      enum InOwnClause { FromLate = late }
-  }
-}
-namespace Space {
-  const local = 4;
-  function inside() {
-    enum E { FromLocal = local }
-  }
-}
-export {};
 //// written-type/enum-member-inexact-power-other.ts
 export enum Other { Inexact = 3 ** 100 }
 //// written-type/enum-member-inexact-power.queries.txt
 # An enum member whose value rests on a power that is not exact is no constant of the build: its digits are those of the engine's arithmetic, so the program computes it.
-enum-member-inexact-power.ts:6 enum member `A = inlined` = 5.153775207320113e+47 rests on inexact power
+# The compiler lowers the tree that it has checked: nothing lays the value of `inlined` in the place of the name first, so the member reads a variable.
+enum-member-inexact-power.ts:6 enum member `A = inlined` = 5.153775207320113e+47 reads other file or variable rests on inexact power
 enum-member-inexact-power.ts:11 enum member `Exact = 2 ** 10` = 1024
 enum-member-inexact-power.ts:12 enum member `AfterExact` = 1025
 enum-member-inexact-power.ts:13 enum member `Inexact = 3 ** 100` = 5.153775207320113e+47 rests on inexact power

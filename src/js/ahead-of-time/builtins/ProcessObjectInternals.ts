@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c04013f35805b259d3a3a3695b5fc2ca1d68661700de46d269856f8c15a97a4e.
+// Written against that file with the SHA-256 67924c84318d613d8925f0baaf34e9eb3a1a9885d17c2c806b933d18fd0bafad.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*

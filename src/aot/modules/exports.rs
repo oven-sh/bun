@@ -1470,6 +1470,14 @@ impl ExportTables {
         !self.some_file_may_be_mocked && self.has_dynamic_names(exporter)
     }
 
+    fn is_barrel_where_a_file_may_be_mocked(&self, exporter: ModuleRef) -> bool {
+        let table = self.find_table(exporter).map(|table| &self.tables[table]);
+        self.some_file_may_be_mocked
+            && table.is_some_and(|table| {
+                !table.may_be_mocked && !matches!(table.dynamic_targets, DynamicStarTargets::Empty)
+            })
+    }
+
     pub(super) fn follows_every_star(&self, module: FileId) -> bool {
         let table = self.table_of(module);
         table.is_some_and(|table| table.follows_every_star)
@@ -1536,13 +1544,38 @@ pub(super) fn finish_exports(
             _ => None,
         }
     };
+    let barrel_under_mocks = |position: usize| {
+        if position >= own_count {
+            return None;
+        }
+        let (site, name) = tables.find_indirect_name(file, position)?;
+        match scans.of(file).sites[site as usize] {
+            ScannedSite::Module(exporter)
+                if tables.is_barrel_where_a_file_may_be_mocked(exporter) =>
+            {
+                Some((exporter, name))
+            }
+            _ => None,
+        }
+    };
+    let barrel_that_is_searched_here = |position: usize| match barrel_under_mocks(position)? {
+        (ModuleRef::File(barrel), name)
+            if tables.files_searched_for(barrel, name).contains(&file) =>
+        {
+            Some((ModuleRef::File(barrel), name))
+        }
+        _ => None,
+    };
     let finish = |(position, &(exported_name, resolved)): (usize, &(Atom, ResolvedName))| {
         let own_statement = match position < own_count {
             true => tables.find_statement_ahead_of_stars(file, exported_name),
             false => None,
         };
         let binding = match own_statement.unwrap_or(resolved.resolution) {
-            Resolution::Variable(symbol) => ExportBinding::Variable(symbol),
+            Resolution::Variable(symbol) => match barrel_that_is_searched_here(position) {
+                Some((module, name)) => ExportBinding::Indirect { module, name },
+                None => ExportBinding::Variable(symbol),
+            },
             Resolution::Namespace { module, phase } => ExportBinding::Namespace { module, phase },
             Resolution::Synthetic { module, name } => {
                 ExportBinding::Synthetic(synthetic.id_of(module, name))
@@ -1553,7 +1586,8 @@ pub(super) fn finish_exports(
             Resolution::LiveName { module, name } => ExportBinding::Indirect { module, name },
             Resolution::DynamicStar { module, name } if position < own_count => {
                 let representative = (ModuleRef::File(module), name);
-                let (module, name) = written_barrel(position).unwrap_or(representative);
+                let written = written_barrel(position).or_else(|| barrel_under_mocks(position));
+                let (module, name) = written.unwrap_or(representative);
                 ExportBinding::Indirect { module, name }
             }
             Resolution::Ambiguous => {

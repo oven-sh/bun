@@ -234,8 +234,6 @@ pub fn load_program<'s>(
     })
 }
 
-/// Makes the checker's program in a frame of its own. The program is large and is moved into the
-/// arena once, so nothing of it lies on the stack under the rest of `load_program`.
 #[inline(never)]
 fn make_checker<'s>(
     session: &'s Session,

@@ -207,7 +207,7 @@ ObjectDefineProperty(Writable, SymbolHasInstance, {
     if (FunctionPrototypeSymbolHasInstance.$call(this, object)) return true;
     if (this !== Writable) return false;
 
-    return object && isWritableState(object._writableState);
+    return object && object._writableState instanceof WritableState;
   },
 });
 

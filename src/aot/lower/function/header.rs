@@ -119,7 +119,7 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn compute_text_range(&self, function: FnId) -> SourceRange {
+    pub(super) fn compute_text_range(&self, function: FnId) -> SourceRange {
         let Some(end) = self.find_end_of_function(function) else {
             return SourceRange::default();
         };
@@ -172,6 +172,7 @@ pub(crate) fn create_header(
         body: Body::default(),
         function_types: Vec::new(),
         builtin_members: Vec::new(),
+        originals_asked_for: Vec::new(),
     }
 }
 
@@ -267,6 +268,12 @@ fn create_source_header(
         header.syntax |= FunctionSyntax::HAS_WRITTEN_AWAIT;
     }
     header.text = file.compute_text_range(function);
+    let asked = file.find_originals_asked_for(function, header.text);
+    if asked.may_be_own {
+        header.syntax |= FunctionSyntax::MAY_ASK_FOR_OWN_ORIGINAL;
+    }
+    let names = asked.names.into_iter();
+    header.originals_asked_for = names.map(|name| file.intern_atom(name)).collect();
     header.length = func
         .params
         .iter()

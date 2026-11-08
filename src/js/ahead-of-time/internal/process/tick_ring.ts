@@ -47,8 +47,12 @@ class Tick {
 interface Ring {
   read: Tick | undefined;
   write: Tick | undefined;
-  /** The nodes made since a tick that drops the free ones was last queued. */
-  made: number;
+  /** By how many nodes the ring is larger than it stays once no tick waits. */
+  spare: number;
+  /** Whether the tick that drops the free nodes waits. */
+  willDropFreeTicks: boolean;
+  /** A node of the ring. queueTickInFront moves it on to the node in front of `read`. */
+  beforeRead: Tick | undefined;
   /** What queues a tick while an `init` hook is enabled. node:async_hooks puts it here with the first hook. */
   pushWithInitHooks: typeof pushWithInitHooks | undefined;
 }
@@ -57,11 +61,12 @@ function growRing(after: Tick): Tick {
   const tick = new Tick();
   tick.next = after.next;
   after.next = tick;
-  const made = (ring.made + 1) | 0;
-  ring.made = made;
-  if (made === kFreeTicksKept) {
+  const spare = (ring.spare + 1) | 0;
+  ring.spare = spare;
+  if (spare > 0 && !ring.willDropFreeTicks) {
     ("unlikely");
-    ring.made = 0;
+    ring.willDropFreeTicks = true;
+    ring.spare = (spare + 1) | 0;
     tick.callback = dropFreeTicks;
     const write = new Tick();
     write.next = tick.next;
@@ -71,36 +76,56 @@ function growRing(after: Tick): Tick {
   return tick;
 }
 
-// Runs as a tick of the ring's own. What still refers to a dropped node holds no node that is dropped later.
+// Runs as a tick of the ring's own, again behind the ticks that wait until none does. What still refers to a dropped node holds no node that is dropped later.
 function dropFreeTicks(): void {
   const read = ring.read!;
   const write = ring.write!;
+  if (read !== write) {
+    takeTick(dropFreeTicks, undefined).count = 0;
+    return;
+  }
+  ring.willDropFreeTicks = false;
   let ahead = write.next;
   for (let kept = 0; kept < kFreeTicksKept; kept++) {
     if (ahead === read) return;
     ahead = ahead.next;
   }
   let last = write;
+  let dropped = 0;
   while (ahead !== read) {
     ahead = ahead.next;
     last = last.next;
+    dropped++;
   }
   const firstKept = last.next;
   last.next = last;
   write.next = firstKept;
+  ring.spare = (ring.spare - dropped) | 0;
+  ring.beforeRead = write;
 }
 
 // Queues a tick with one or two arguments ahead of the ticks that wait, in the async context that is current.
 function queueTickInFront(callback: TickCallback, count: number, first: unknown, second: unknown): void {
   const read = ring.read!;
-  let free = ring.write!;
-  if (free.next === read) {
-    const tick = new Tick();
-    tick.next = read;
-    free.next = tick;
+  const write = ring.write!;
+  // A step for each tick that was queued or has run since the last time.
+  let before = ring.beforeRead!;
+  while (before.next !== read) before = before.next;
+  let free = write.next;
+  const grows = free === read;
+  if (grows) {
+    free = new Tick();
+    ring.spare = (ring.spare + 1) | 0;
+    write.next = free;
+    free.next = read;
+  } else if (free === before) {
+    before = write;
+  } else {
+    write.next = free.next;
+    before.next = free;
+    free.next = read;
   }
-  do free = free.next;
-  while (free.next !== read);
+  ring.beforeRead = before;
   free.callback = callback;
   free.frame = $getInternalField(asyncContext, 0);
   free.count = count;
@@ -108,6 +133,10 @@ function queueTickInFront(callback: TickCallback, count: number, first: unknown,
   free.second = second;
   ring.read = free;
   $putInternalField(nextTickQueue, 0, 1);
+  if (grows && ring.spare > 0 && !ring.willDropFreeTicks) {
+    ring.willDropFreeTicks = true;
+    takeTick(dropFreeTicks, undefined).count = 0;
+  }
 }
 
 function newTickObject(callback: TickCallback, args: unknown[] | undefined, frame: Frame): TickObject {
@@ -157,7 +186,8 @@ function pushWithInitHooks(cb: TickCallback, args: unknown[] | undefined, frame:
 }
 
 function start(process: NodeJS.Process, marker: any, processTicksAndRejections: () => void): void {
-  ring.read = ring.write = new Tick();
+  ring.read = ring.write = ring.beforeRead = new Tick();
+  ring.spare = -kFreeTicksKept;
   tickingProcess = process;
   nextTickQueue = marker;
   $putInternalField(marker, 2, processTicksAndRejections);

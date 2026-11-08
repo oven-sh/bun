@@ -20,12 +20,17 @@ pub(super) struct FlowDominators {
     conditions: Option<Vec<(u32, u32)>>,
     calls: Vec<(u32, u32)>,
     last_busy_call: Vec<u32>,
-    last_dominated: Vec<u32>,
-    dominated: Vec<u32>,
+    below: Vec<BelowNode>,
     ascending_edges_end: Vec<u32>,
     invocations_up_to: Vec<u32>,
-    most_invocations_below: Vec<u32>,
-    longest_turn_below: Vec<u32>,
+}
+
+#[derive(Clone, Copy)]
+struct BelowNode {
+    last: u32,
+    count: u32,
+    most_invocations: u32,
+    longest_turn: u32,
 }
 
 struct OpenLoop {
@@ -335,22 +340,23 @@ impl Checker<'_, '_> {
         index.about_anything.shared_sort_unstable();
         index.calls.shared_sort_unstable();
         index.last_busy_call = (0..index.calls.len() as u32).collect();
-        index.last_dominated = (0..count as u32).collect();
-        index.dominated = vec![1; count];
-        index
-            .most_invocations_below
-            .clone_from(&index.invocations_up_to);
-        index.longest_turn_below = vec![0; count];
+        index.below = (0..count)
+            .map(|node| BelowNode {
+                last: node as u32,
+                count: 1,
+                most_invocations: index.invocations_up_to[node],
+                longest_turn: 0,
+            })
+            .collect();
         for node in (0..count).rev() {
             let up = index.nodes[node].dominator as usize;
             if up != node {
-                index.most_invocations_below[up] =
-                    index.most_invocations_below[up].max(index.most_invocations_below[node]);
-                index.longest_turn_below[up] = index.longest_turn_below[up]
-                    .max(index.longest_turn_below[node])
-                    .max(turns[node]);
-                index.last_dominated[up] = index.last_dominated[up].max(index.last_dominated[node]);
-                index.dominated[up] += index.dominated[node];
+                let inner = index.below[node];
+                let outer = &mut index.below[up];
+                outer.last = outer.last.max(inner.last);
+                outer.count += inner.count;
+                outer.most_invocations = outer.most_invocations.max(inner.most_invocations);
+                outer.longest_turn = outer.longest_turn.max(inner.longest_turn).max(turns[node]);
             }
         }
         let edges = &bound.flow_edges;
@@ -534,14 +540,15 @@ impl Checker<'_, '_> {
             }
         }
         let dominator = index.find_highest_from(edge.0, least) as usize;
-        let last_dominated = index.last_dominated[dominator];
-        if last_dominated - dominator as u32 + 1 != index.dominated[dominator] {
+        let below = index.below[dominator];
+        if below.last - dominator as u32 + 1 != below.count {
             return None;
         }
-        let deeper = index.most_invocations_below[dominator]
+        let deeper = below
+            .most_invocations
             .saturating_sub(index.invocations_up_to[edge.idx()])
-            + index.longest_turn_below[dominator];
-        let count = later.partition_point(|later| later.0 < limit && later.0 <= last_dominated);
+            + below.longest_turn;
+        let count = later.partition_point(|later| later.0 < limit && later.0 <= below.last);
         Some((count, deeper))
     }
 
@@ -554,7 +561,7 @@ impl Checker<'_, '_> {
         let up_to = &index.invocations_up_to;
         (
             up_to[flow.idx()].saturating_sub(up_to[arrived_at.idx()]),
-            index.longest_turn_below[arrived_at.idx()],
+            index.below[arrived_at.idx()].longest_turn,
         )
     }
 

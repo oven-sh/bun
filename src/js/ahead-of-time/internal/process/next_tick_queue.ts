@@ -11,7 +11,14 @@ function listOf(...list: unknown[]): unknown[] {
   return list;
 }
 
-const ring: import("./tick_ring").Ring = { read: undefined, write: undefined, made: 0, pushWithInitHooks: undefined };
+const ring: import("./tick_ring").Ring = {
+  read: undefined,
+  write: undefined,
+  spare: 0,
+  willDropFreeTicks: false,
+  beforeRead: undefined,
+  pushWithInitHooks: undefined,
+};
 let growRing!: TickRing["growRing"];
 let pushWithList!: TickRing["pushWithList"];
 let tickInitHooks!: TickRing["tickInitHooks"];

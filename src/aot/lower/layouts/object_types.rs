@@ -1259,7 +1259,65 @@ impl FileLowering<'_, '_, '_, '_> {
             )
         {
             self.collect_names_listed_by(ty, members);
+        } else if let Some(ty) = self.find_literal_type_expected_of_parameter(source) {
+            self.collect_names_listed_by(ty, members);
         }
+    }
+
+    pub(in crate::lower) fn find_literal_type_expected_of_parameter(
+        &mut self,
+        source: ExprId,
+    ) -> Option<CheckerTypeId> {
+        if self.is_checked() || !matches!(self.hir[source].kind, ExprKind::Ident(_)) {
+            return None;
+        }
+        let named = self.bound.symbol_of_expr(source);
+        if named.is_none() {
+            return None;
+        }
+        let [Decl::Param(pattern)] = *self.bound.symbol(named).decls else {
+            return None;
+        };
+        let expected = self.queries.binding_type(pattern).ok()?;
+        let expected = self.queries.without_nullish(expected).ok()?;
+        let is_written_literal = matches!(
+            self.queries.object_origin(expected),
+            ObjectOrigin::ObjectLiteral { .. }
+        );
+        is_written_literal.then_some(expected)
+    }
+
+    pub(in crate::lower) fn adds_names_to_literal_expected_of_parameter(
+        &mut self,
+        literal: ExprId,
+    ) -> bool {
+        let hir = self.hir;
+        let ExprKind::Object(properties) = hir[literal].kind else {
+            return false;
+        };
+        let mut rest = properties.iter();
+        let Some(first) = rest.next().map(|first| hir[first]) else {
+            return false;
+        };
+        if first.kind != PropKind::Spread {
+            return false;
+        }
+        let Some(expected) = self.find_literal_type_expected_of_parameter(first.value) else {
+            return false;
+        };
+        let mut copied = Members::new();
+        self.collect_names_listed_by(expected, &mut copied);
+        let copied: FxHashSet<PropertyKeyId> = copied.iter().map(|&(listed, _)| listed).collect();
+        rest.any(|property| {
+            let is_written_value = matches!(
+                hir[property].kind,
+                PropKind::Init | PropKind::Shorthand | PropKind::Method
+            );
+            match hir.runtime_property_key(property) {
+                PropKey::Name(name) if is_written_value => !copied.contains(&self.name_key(name)),
+                _ => false,
+            }
+        })
     }
 
     fn collect_literal_members(&mut self, literal: ExprId) -> Members {

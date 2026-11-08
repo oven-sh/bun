@@ -910,6 +910,32 @@ export const shapes: Shape[] = [
         `console.log(s);\n`,
     }),
   },
+  // A read of a name that no receiver has as a field asked every class at or below the receiver's whether a statement lays the name above it, and climbed from each through all classes above: classes x classes for a read. 4,000 classes in a chain took 644 G instructions, then 27. What is left is a step for each class below the receiver's at each read.
+  {
+    name: "classes in a chain, a method of each read off its own object",
+    counted: "classes",
+    size: 250,
+    entry: "main.js",
+    growsSoFar: "4.13 times in ClassesClimbedAboveMembersOfFamilies",
+    write: size => ({
+      "main.js": `let count = 0;\n` + lines(size, index => `class C${index}${index ? ` extends C${index - 1}` : ""} { m${index}() { return ${index}; } }\ncount += new C${index}().m${index}() & 1;`) + `console.log(count);\n`,
+    }),
+  },
+  // A read by name through a family made a field beside the fields of every member that has a class above it, and an edge from what is found beside each: classes x names in nodes, entries and edges. 8,000 of each took 245 G instructions and 18.5 GB, then 98 G and 3 GB. From 1,000 on it still grows 2.4 times and more: each member is tied to each read.
+  {
+    name: "classes below one base, a value of the family read under a name of each",
+    growsSoFar: "4.00 times in ClassesClimbedAboveMembersOfFamilies",
+    counted: "classes, and names",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `let count = 0;\nclass Base { common() { return 1; } }\nconst all = [];\nfunction pick(i) { return all[i % all.length]; }\n` +
+        lines(size, index => `class C${index} extends Base { m${index}() { return ${index}; } }\nall.push(new C${index}());`) +
+        lines(size, index => `count += pick(${index}).m${index} ? 1 : 0;`) +
+        `console.log(count);\n`,
+    }),
+  },
   // `module.exports = { .. }`: for each key that another file reads, all stores so far were gone through to drop an earlier one of the same name: 16,000 keys took 2.8 G instructions.
   {
     name: "keys of a literal that a CommonJS file exports, each read in another file",
@@ -1164,6 +1190,68 @@ export const shapes: Shape[] = [
             `total += weigh${index}({ kind: "k${index}", id: total, name: String(total) });`,
         ) +
         "console.log(total);\n",
+    }),
+  },
+  {
+    name: "functions that each spread a parameter of one written type and add a name",
+    counted: "functions",
+    size: 1200,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        "type Start = { first: number; second: number };\nlet sum = 0;\n" +
+        lines(size, index => `function widen${index}(given: Start) { return { ...given, more${index}: ${index} }; }`) +
+        "const start: Start = { first: 1, second: 2 };\n" +
+        lines(size, index => `sum += widen${index}(start).more${index} + widen${index}(start).first;`) +
+        "console.log(sum);\n",
+    }),
+  },
+  {
+    name: "functions without types that each spread a parameter and add a name",
+    counted: "functions",
+    size: 1200,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "let sum = 0;\n" +
+        lines(size, index => `function widen${index}(given) { return { ...given, more${index}: ${index} }; }`) +
+        "const start = { first: 1, second: 2 };\n" +
+        lines(size, index => `sum += widen${index}(start).more${index} + widen${index}(start).first;`) +
+        "console.log(sum);\n",
+    }),
+  },
+  {
+    name: "literals in one function without types that each spread its parameter and add a name",
+    counted: "literals",
+    size: 1200,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        "let sum = 0;\nfunction widen(given) {\n  let held = given;\n" +
+        lines(size, index => `  held = { ...given, more: ${index} }; sum += held.more + held.first;`) +
+        "  return held;\n}\nwiden({ first: 1, second: 2 });\nconsole.log(sum);\n",
+    }),
+  },
+  {
+    name: "names of the source written over behind the spread of a parameter, and one added at the end",
+    counted: "names",
+    size: 3000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function step(state, i) {\n  return {\n    ...state,\n${lines(size, index => `    name${index}: i,`)}    added: i,\n  };\n}\n` +
+        `const made = step({\n${lines(size, index => `  name${index}: ${index},`)}}, 7);\nconsole.log(made.name0 + made.added);\n`,
+    }),
+  },
+  {
+    name: "names behind a spread that are each written twice",
+    counted: "names",
+    size: 3000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function step(state, i) {\n  return {\n    ...state,\n${lines(size, index => `    name${index}: i,`)}${lines(size, index => `    name${index}: i + ${index % 7},`)}    added: i,\n  };\n}\n` +
+        `const made = step({ first: 1 }, 7);\nconsole.log(made.name0 + made.name5 + made.added, Object.keys(made).length);\n`,
     }),
   },
   {
@@ -3109,6 +3197,30 @@ export const shapes: Shape[] = [
       };
     },
   },
+  // A loop that reckons with an element of a list is built twice whatever its size. When that mark climbed to every loop around it, each loop of a nest was bought behind its plain walk, and what
+  // the loops inside had bought during that walk was thrown away and bought again: twice the work a level: 14 deep took 32,482 M instructions where 1,366 M do, and 30 deep stopped the build.
+  // Twelve nests: one adds little over a million instructions a level, less than is judged.
+  {
+    name: "loops nested in one another over a chain that begins at an element of a list",
+    counted: "loops",
+    size: 16,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `const held = JSON.parse("[[1,2],[3,4]]");\n` +
+        lines(
+          12,
+          nest =>
+            `function run${nest}(rows) {\n  let sum = 0;\n` +
+            lines(size, index => `for (let i${index} = 0; i${index} < 1; i${index}++) {`) +
+            `let k = rows[0][0];\n` +
+            lines(40, () => `k = k * 2 - 1;`) +
+            lines(20, index => `sum += rows[k][${index & 1}];`) +
+            `${"}".repeat(size)}\n  return sum;\n}`,
+        ) +
+        `console.log(${Array.from({ length: 12 }, (_, nest) => `run${nest}(held)`).join(" + ")});\n`,
+    }),
+  },
   // Loops with their test in front, nested in one another: ../parallel/what-a-build-takes-grows-with-its-program/loops-nested-hundreds-deep.js, which holds them to the square that they are today.
   // Each loop went through all that lies in it, the loops inside included, a dozen times: blocks x depth: 400 deep added 267 M instructions where 200 deep added 92.
   // Four nests: one adds 99 M instructions at 400 deep, less than is judged.
@@ -3208,9 +3320,11 @@ export const shapes: Shape[] = [
   {
     // The sums lie in an environment and the loop around carries a product for each loop inside. For each store into the environment the walk scanned every block of the loop around;
     // leaving each loop inside, the allocator searched back over all the blocks in front of it, and kept the list of each search. 9,600 loops took 58.8 G instructions and 5,873 MB.
+    // 600 loops: once the one function passes half a megabyte its bytes grow faster than its loops on arm64 for a while (2.15 times from 1,200 loops to 2,400, 2.30 to 4,800, 2.22 to 9,600;
+    // 2.00 throughout on x64). What is judged here rings at this size as well: 3.42 times the instructions.
     name: "loops in a row inside one loop under a try that each build a product of their own in front of the loop around",
     counted: "loops",
-    size: 2400,
+    size: 600,
     entry: "main.cjs",
     write: size => ({
       "main.cjs":
@@ -4326,6 +4440,9 @@ console.log(typeof outmost.inner);
   {
     name: "sums of unknown kind that one loop carries, each behind a branch that is never taken",
     counted: "sums",
+    // On x64 a sum takes 241 machine operations and 1,036 bytes of code at every size from 1,000 to 32,000. For arm64 an operation takes more bytes the larger the function: a word of the frame takes one
+    // instruction up to 32,760 bytes above the stack pointer, two up to 65,535 and three from there on, and a sum spills 20 values; a conditional branch takes two past 1 MB. Which it is has not been measured.
+    growsSoFarOnLinuxArm64: "2.30 times in FunctionBytesEmitted",
     size: 4000,
     entry: "main.cjs",
     write: size => ({
@@ -6404,7 +6521,6 @@ export {};
     counted: "functions, and layouts",
     size: 1500,
     entry: "main.js",
-    growsSoFarInInstructions: "2.91 times in instructions",
     write: size => ({
       "main.js":
         `const things = [\n${lines(size, index => `  { shared: ${index}, own${index}: ${index} },`)}];\n` +
@@ -6412,6 +6528,118 @@ export {};
         `let sum = 0;\n` +
         lines(size, index => `sum += read${index}(things[${index}]);`) +
         `console.log(sum);\n`,
+    }),
+  },
+  // A parameter `options = {}` of a file without types is asked for its use, as one without a default is.
+  {
+    name: "functions with an empty default that each read two names off it and hand it on to the next",
+    counted: "functions",
+    size: 600,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `"use strict";\n` +
+        lines(size, index => `function step${index}(width, options = {}) { return (options.name${index} === undefined ? 1 : 0) + (options.shared | 0) + ${index + 1 < size ? `step${index + 1}(width, options)` : "0"}; }`) +
+        `console.log(${size ? "step0(1, { shared: 2, name0: 1 }) + step0(1)" : "0"});\n`,
+    }),
+  },
+  {
+    name: "names read off one parameter with an empty default, a statement each",
+    counted: "names",
+    size: 1600,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `"use strict";\nfunction take(width, options = {}) {\n  let sum = width;\n` +
+        lines(size, index => `  sum += options.name${index} | 0;`) +
+        `  return sum;\n}\nconsole.log(take(1) + take(2, { name0: 1 }));\n`,
+    }),
+  },
+  {
+    name: "functions with an empty default, each handed a literal of its own names and one shared name through a table",
+    counted: "functions, and layouts",
+    size: 600,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `"use strict";\n` +
+        lines(size, index => `function take${index}(width, options = {}) { return width + (options.first${index} | 0) + (options.second${index} === undefined ? 1 : 0) + (options.shared | 0); }`) +
+        `const table = { ${upTo(size, index => `take${index}`).join(", ")} }; const keys = JSON.parse(JSON.stringify(Object.keys(table))); let sum = 0;\n` +
+        lines(size, index => `sum += table[keys[${index}]](${index}, { first${index}: 1, shared: 2 }) + table[keys[${index}]](${index});`) +
+        `console.log(sum);\n`,
+    }),
+  },
+  {
+    name: "calls in a row of a helper whose head asks bits that a helper called at the top has asked of the same object",
+    counted: "calls",
+    size: 700,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `class Notes { marks: number; constructor(marks: number) { this.marks = marks; } }\nclass Item { bits: number; id: number; notes: Notes | undefined; constructor(bits: number, id: number) { this.bits = bits; this.id = id; this.notes = bits & 32 ? new Notes(id) : undefined; } }\nconst shelf: Notes[] = [];\nfunction marksOf(item: Item): number { return item.bits & 32 ? item.notes!.marks : 0; }\nfunction notesOf(item: Item): Notes { if (item.bits & 32) return item.notes!; const id = item.id; return shelf[id] ?? (shelf[id] = new Notes(0)); }\nfunction weigh(item: Item): number {\n  let sum = marksOf(item);\n` +
+        lines(size, index => `  sum += notesOf(item).marks + ${index};`) +
+        `  return sum;\n}\n(globalThis as any).kept = [weigh, notesOf, marksOf];\nconsole.log((globalThis as any).kept[0](new Item(32, 3)));\n`,
+    }),
+  },
+  {
+    name: "conditions in a row that each ask bits of another parameter and call a helper whose head asks them again",
+    counted: "conditions",
+    size: 200,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `class Notes { marks: number; constructor(marks: number) { this.marks = marks; } }\nclass Item { bits: number; id: number; notes: Notes | undefined; constructor(bits: number, id: number) { this.bits = bits; this.id = id; this.notes = bits & 32 ? new Notes(id) : undefined; } }\nconst shelf: Notes[] = [];\nfunction notesOf(item: Item): Notes { if (item.bits & 32) return item.notes!; const id = item.id; return shelf[id] ?? (shelf[id] = new Notes(0)); }\nfunction weigh(${upTo(size, index => `item${index}: Item`).join(", ")}): number {\n  let sum = 0;\n` +
+        lines(size, index => `  if (item${index}.bits & 32) sum += notesOf(item${index}).marks;`) +
+        `  return sum;\n}\n(globalThis as any).kept = [weigh, notesOf];\nconst one = new Item(32, 3);\nconsole.log((globalThis as any).kept[0](${upTo(size, () => "one").join(", ")}));\n`,
+    }),
+  },
+  // Whether a read is evaluated for some values only was asked by climbing every parent of the read, anew for each read: reads x the depth of the sum. 12,800 took 3.9 G instructions, 1.6 now.
+  {
+    name: "reads of names off one parameter without a type, all in one sum",
+    counted: "reads",
+    size: 6400,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `"use strict";\nfunction take(width, options) { return width${upTo(size, index => ` + (options.name${index} | 0)`).join("")}; }\nconsole.log(take(2, { name0: 1 }));\n`,
+    }),
+  },
+  // Whether a name is given a product somewhere was asked of every store to the name, anew for each read of it as an int32: reads x stores. 6,400 of each took 23.9 G instructions, 12,800 took 93 G; 1.6 now.
+  {
+    name: "stores to one parameter without a type, each read as an int32",
+    counted: "stores, and reads",
+    size: 6400,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `"use strict";\nfunction take(width, value) {\n  let sum = 0;\n` +
+        lines(size, index => `  value = width + ${index};\n  sum += value | 0;`) +
+        `  return sum;\n}\nconsole.log(take(2, 1));\n`,
+    }),
+  },
+  {
+    name: "conditions in a row that hand another element on, once with nothing read between and once with a name of its own read behind each",
+    counted: "conditions",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class Shape { constructor(w, h) { this.width = w; this.height = h; } }\nfunction pick(flags, other) {\n  let x = other[0];\n  let y = other[0];\n  let sum = 0;\n` +
+        lines(size, index => `  if (flags[${index + 1}]) x = other[${index + 1}];`) +
+        lines(size, index => `  if (flags[${index + 1}]) y = other[${index + 1}];\n  sum += y.n${index + 1} | 0;`) +
+        `  return x.width + x.height + sum;\n}\nconsole.log(new Shape(1, 2).width + pick(JSON.parse("[]"), JSON.parse('[{"width":1,"height":2}]')));\n`,
+    }),
+  },
+  {
+    name: "conditions in a row in a loop that hand another element on, once with nothing read between and once with a name of its own read behind each",
+    counted: "conditions",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class Shape { constructor(w, h) { this.width = w; this.height = h; } }\nfunction pick(flags, other, turns) {\n  let x = other[0];\n  let y = other[0];\n  let sum = 0;\n  for (let turn = 0; turn < turns; turn++) {\n` +
+        lines(size, index => `    if (flags[${index + 1}]) x = other[${index + 1}];`) +
+        lines(size, index => `    if (flags[${index + 1}]) y = other[${index + 1}];\n    sum += y.n${index + 1} | 0;`) +
+        `  }\n  return x.width + x.height + sum;\n}\nconsole.log(new Shape(1, 2).width + pick(JSON.parse("[]"), JSON.parse('[{"width":1,"height":2}]'), 2));\n`,
     }),
   },
 ];

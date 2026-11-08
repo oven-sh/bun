@@ -1102,7 +1102,8 @@ impl Checker<'_, '_> {
         }
         // `allPropertiesTable`, which excludes accessors: `prop.Name` and `prop.ValueDeclaration`, which is that of the
         // symbol that all declarations of the name share.
-        let mut explicit_props: Vec<(Atom, PropId)> = Vec::new();
+        let mut explicit_props: Vec<Option<(Atom, PropId)>> = Vec::new();
+        let mut places = crate::util::FxHashMap::<Atom, usize>::default();
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind != PropKind::Spread {
@@ -1112,8 +1113,10 @@ impl Checker<'_, '_> {
                 ) && let Some(name) = self.member_name(file, prop.key)
                 {
                     let value_declaration = self.first_declaration_of_literal_member(file, p);
-                    explicit_props.retain(|w| w.0 != name);
-                    explicit_props.push((name, value_declaration));
+                    if let Some(earlier) = places.insert(name, explicit_props.len()) {
+                        explicit_props[earlier] = None;
+                    }
+                    explicit_props.push(Some((name, value_declaration)));
                 }
                 continue;
             }
@@ -1128,7 +1131,7 @@ impl Checker<'_, '_> {
             // `tryMergeUnionOfObjectTypeAndEmptyObject`
             let merged = self.try_merge_union_of_object_type_and_empty_object(ty);
             let parts = self.parts(merged);
-            for &(name, overwritten) in &explicit_props {
+            for &(name, overwritten) in explicit_props.iter().flatten() {
                 // Neither optional nor partial: every constituent is guaranteed to have it.
                 let mut always = !parts.is_empty();
                 for &part in parts {

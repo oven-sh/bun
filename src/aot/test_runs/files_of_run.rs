@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::cmp::Reverse;
 use std::mem::replace;
 
 use bun_ast::import_record::is_test_module;
@@ -27,6 +28,7 @@ use crate::load::contents::load_names::resolve_loads_through_imported_loaders;
 use crate::load::sources::parsed_source;
 use crate::load::{is_in_node_modules, read_file_bytes};
 use crate::options::Options;
+use crate::test_run_report::{CodeOutsideRun, say_code_outside_run};
 
 pub(super) fn find_files_loaded_from(
     files: &Files<'_>,
@@ -228,10 +230,16 @@ fn list_code_that_run_does_not_reach(disk: &CodeOnDisk<'_>) -> Vec<Vec<u8>> {
     let root = disk.root;
     let mut unread: Vec<Vec<u8>> = Vec::new();
     let mut folders = vec![root.to_vec()];
-    while let Some(folder) = folders.pop() {
-        let listed = list(to_native(&folder));
-        folders.extend(listed.folders.iter().map(|name| inside(&folder, name)));
-        unread.extend(listed.files.iter().map(|name| inside(&folder, name)));
+    while !folders.is_empty() {
+        let list_one = |folder: Vec<u8>| {
+            let listed = list(to_native(&folder));
+            (folder, listed)
+        };
+        let level = std::mem::take(&mut folders);
+        for (folder, listed) in map_each(level, disk.in_parallel, &list_one) {
+            folders.extend(listed.folders.iter().map(|name| inside(&folder, name)));
+            unread.extend(listed.files.iter().map(|name| inside(&folder, name)));
+        }
     }
     let in_memory = disk.in_memory_files.iter();
     unread.extend(in_memory.map(|held| from_native(&held.0)).filter(|path| {
@@ -394,7 +402,7 @@ struct WordsWritten {
 
 enum FirstReading {
     Words(WordsWritten),
-    Parsed(Written),
+    WritesWordAskedAbout(Vec<u8>),
 }
 
 type ImportersBySpelling = FxHashMap<Vec<u8>, Vec<(usize, bool)>>;
@@ -433,7 +441,7 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
         };
         match find_last_words_written(&text, &words) {
             Some(written) => FirstReading::Words(written),
-            None => FirstReading::Parsed(read_what_file_writes(path, &text)),
+            None => FirstReading::WritesWordAskedAbout(text),
         }
     };
     let first_readings = map_each(unread.iter().collect(), disk.in_parallel, &read_first);
@@ -442,6 +450,7 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
     let mut is_parsed = vec![false; unread.len()];
     let mut takes_from_test_runner = vec![false; unread.len()];
     let mut importers_by_spelling: ImportersBySpelling = FxHashMap::default();
+    let mut texts_to_parse: Vec<(u32, Vec<u8>)> = Vec::new();
     for (file, reading) in first_readings.into_iter().enumerate() {
         match reading {
             FirstReading::Words(written) => {
@@ -456,12 +465,23 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
                     }
                 }
             }
-            FirstReading::Parsed(written) => {
-                is_parsed[file] = true;
-                takes_from_test_runner[file] = written.takes_from_test_runner;
-                note_paths_written(&mut importers_by_spelling, file, written);
-            }
+            FirstReading::WritesWordAskedAbout(text) => texts_to_parse.push((file as u32, text)),
         }
+    }
+    let mut counts = CodeOutsideRun {
+        files: unread.len(),
+        parsed_at_first: texts_to_parse.len(),
+        ..CodeOutsideRun::default()
+    };
+    texts_to_parse.shared_sort_unstable_by_key(|(file, text)| (Reverse(text.len()), *file));
+    let parse_text =
+        |(file, text): (u32, Vec<u8>)| (file, read_what_file_writes(&unread[file as usize], &text));
+    let mut parsed_at_first = map_each(texts_to_parse, disk.in_parallel, &parse_text);
+    parsed_at_first.shared_sort_unstable_by_key(|(file, _)| *file);
+    for (file, written) in parsed_at_first {
+        is_parsed[file as usize] = true;
+        takes_from_test_runner[file as usize] = written.takes_from_test_runner;
+        note_paths_written(&mut importers_by_spelling, file as usize, written);
     }
     let mut first_unread = 0;
     while first_unread < sought.len() && !unread.is_empty() {
@@ -478,6 +498,7 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
         }
         to_parse.sort_unstable();
         to_parse.retain(|&file| !replace(&mut is_parsed[file as usize], true));
+        counts.parsed_later += to_parse.len();
         let parse = |file: u32| -> Option<Written> {
             let path = &unread[file as usize];
             let text = read_file(in_memory_files, path)?;
@@ -518,6 +539,10 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
             imports[place].push((imported, takes_for_itself));
         }
     }
+    let is_importer = |file: &usize| place_in_sought[*file].is_some();
+    counts.import_what_is_sought = (0..unread.len()).filter(is_importer).count();
+    counts.take_from_test_runner = takes_from_test_runner.iter().filter(|it| **it).count();
+    say_code_outside_run(asked.len(), &counts);
     let mut taken_by: Vec<Option<usize>> = vec![None; sought.len()];
     let roots = (asked.len()..sought.len())
         .filter(|&place| !is_imported[place] || disk.ways_into_project.contains(&sought[place]));
@@ -849,8 +874,68 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
 
 #[cfg(test)]
 mod tests {
-    use super::{LastWords, find_last_words_written, list_spellings, without_extension};
-    use bun_sema::util::FxHashMap;
+    use super::{
+        CodeOnDisk, LastWords, find_importers_outside_run, find_last_words_written, list_spellings,
+        without_extension,
+    };
+    use crate::ir::parallel::run_serially;
+    use bun_sema::util::{FxHashMap, FxHashSet};
+
+    #[test]
+    fn importers_outside_the_run_do_not_hang_on_the_sizes_of_the_files() {
+        let filler = "export const filler = [1, 2, 3].map(item => item + 1);\n".repeat(2000);
+        let texts = [
+            (
+                "/made-up/other/one.test.ts",
+                "import { test } from \"bun:test\";\nimport { utils } from \"../support/utils\";\ntest(\"one\", () => { utils(1); });\n".to_string(),
+            ),
+            ("/made-up/other/word-alone.ts", "export const name = \"fixtures\";\n".to_string()),
+            (
+                "/made-up/tools/uses-taken.ts",
+                "import { taken } from \"../support/taken\";\nexport const used = taken(1);\n".to_string(),
+            ),
+            ("/made-up/zz/hands-on.ts", "export * from \"../support/shapes\";\n".to_string()),
+            (
+                "/made-up/zz/long.ts",
+                format!("{filler}export const here = require(\"../support/clock\");\n"),
+            ),
+            (
+                "/made-up/zz/takes-what-is-handed-on.ts",
+                "import { shapes } from \"./hands-on\";\nexport const seen = shapes;\n".to_string(),
+            ),
+        ];
+        let in_memory_files: Vec<(Vec<u8>, Vec<u8>)> = texts
+            .into_iter()
+            .map(|(path, text)| (path.as_bytes().to_vec(), text.into_bytes()))
+            .collect();
+        let no_ways = FxHashSet::default();
+        let disk = CodeOnDisk {
+            root: b"/made-up",
+            in_memory_files: &in_memory_files,
+            is_compiled: &|_| false,
+            ways_into_project: &no_ways,
+            in_parallel: &run_serially,
+        };
+        let asked: Vec<Vec<u8>> = ["clock", "fixtures", "shapes", "taken", "utils"]
+            .iter()
+            .map(|name| format!("/made-up/support/{name}.ts").into_bytes())
+            .collect();
+        let importers = find_importers_outside_run(&disk, &asked);
+        let importers: Vec<Option<&str>> = importers
+            .iter()
+            .map(|it| it.as_deref().map(|path| std::str::from_utf8(path).unwrap()))
+            .collect();
+        assert_eq!(
+            importers,
+            [
+                Some("/made-up/zz/long.ts"),
+                None,
+                Some("/made-up/zz/takes-what-is-handed-on.ts"),
+                Some("/made-up/tools/uses-taken.ts"),
+                None,
+            ]
+        );
+    }
 
     fn spells(written: &[u8], file: &[u8]) -> bool {
         written == file

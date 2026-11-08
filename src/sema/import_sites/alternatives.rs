@@ -25,7 +25,7 @@ use crate::util::{FxBuild, FxHashMap, FxHashSet, SharedSort};
 use bun_core::strings;
 use std::cell::{Cell, OnceCell, RefCell};
 use std::hash::{BuildHasher, Hash, Hasher};
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 use std::rc::Rc;
 
 const EXPRESSIONS_FOLLOWED_IN_ANY_FILE: u32 = 4096;
@@ -263,7 +263,11 @@ fn keep_last_of_each_key(written: &mut Vec<(Vec<u8>, ExprId)>) {
 }
 
 #[derive(Default)]
-pub(super) struct WrittenNames(OnceCell<Vec<(Atom, ExprId)>>, MembersBehindNames);
+pub(super) struct WrittenNames(
+    OnceCell<Vec<(Atom, ExprId)>>,
+    MembersBehindNames,
+    OnceCell<Vec<u32>>,
+);
 
 impl WrittenNames {
     fn find(&self, hir: &File<'_>, name: Atom) -> &[(Atom, ExprId)] {
@@ -1907,10 +1911,9 @@ impl Follower<'_, '_, '_> {
                 PatParent::None => return false,
             }
         };
-        let text = match bound.fns[function.idx()].owner {
-            FnOwner::Expr(written) => hir[written].pos..hir[written].end,
-            FnOwner::Stmt(declared) => hir[declared].loc.pos..hir[declared].loc.end,
-            _ => return false,
+        let owner = bound.fns[function.idx()].owner;
+        let Some(text) = owner.text_of_expression_or_declaration(hir) else {
+            return false;
         };
         let mut spelled = self.written_names.find(hir, written).iter();
         spelled.all(|it| !text.contains(&hir[it.1].pos))
@@ -1926,7 +1929,11 @@ impl Follower<'_, '_, '_> {
                     bound.pat_parent[pattern.idx()],
                     PatParent::Var(_) | PatParent::Param(_)
                 );
-                if self.is_exported(name) {
+                let is_copied = (bound.runtime.parameter_var_copies().iter())
+                    .any(|copy| copy.parameter == name || copy.variable == name);
+                let fills_another = matches!(decl(pattern), Decl::Var(_))
+                    && bound.initialized_binding(pattern) != Binding::Symbol(name);
+                if self.is_exported(name) || is_copied || fills_another {
                     return false;
                 }
                 let is_seen_here_alone =
@@ -2022,11 +2029,20 @@ impl Follower<'_, '_, '_> {
 
     fn is_answer_only_tested(&mut self, function: FnId) -> bool {
         let walk = self.find_walk_that_calls(function);
-        walk.is_some_and(|(_, _, name)| self.inputs.atoms.bytes(name) != b"map")
+        self.answers_its_caller(function)
+            && walk.is_some_and(|(_, _, name)| self.inputs.atoms.bytes(name) != b"map")
+    }
+
+    fn answers_its_caller(&self, function: FnId) -> bool {
+        let flags = self.inputs.hir[function].flags;
+        !flags.intersects(Flags::ASYNC | Flags::GENERATOR)
     }
 
     fn asks_who_takes_answer_of(&mut self, function: FnId, layers: u32) -> bool {
         let &ScanInputs { hir, bound, .. } = self.inputs;
+        if !self.answers_its_caller(function) {
+            return false;
+        }
         if let Some((walk, _, name)) = self.find_walk_that_calls(function) {
             return self.inputs.atoms.bytes(name) != b"map"
                 || self.asks_who_takes(walk, layers + 1);
@@ -2668,17 +2684,26 @@ impl Follower<'_, '_, '_> {
             Held::Text(_) | Held::Primitive(_) => return true,
             _ => return false,
         };
-        let text = match bound.fns[function.idx()].owner {
-            FnOwner::Expr(written) => hir[written].pos..hir[written].end,
-            FnOwner::Stmt(declared) => hir[declared].loc.pos..hir[declared].loc.end,
-            _ => return false,
+        let owner = bound.fns[function.idx()].owner;
+        let Some(text) = owner.text_of_expression_or_declaration(hir) else {
+            return false;
         };
-        let mut expressions = hir.exprs.iter();
-        !bound.fns[function.idx()].contains_this
-            && !bound
-                .function_flags(function)
-                .contains(FunctionFlags::HAS_DIRECT_EVAL)
-            && !expressions.any(|it| matches!(it.kind, ExprKind::Super) && text.contains(&it.pos))
+        !bound
+            .function_flags(function)
+            .contains(FunctionFlags::HAS_DIRECT_EVAL)
+            && !self.says_this_or_super(text)
+    }
+
+    fn says_this_or_super(&self, text: Range<u32>) -> bool {
+        let said = self.written_names.2.get_or_init(|| {
+            let said = self.inputs.hir.exprs.iter();
+            let said = said.filter(|it| matches!(it.kind, ExprKind::This | ExprKind::Super));
+            let mut places: Vec<u32> = said.map(|it| it.pos).collect();
+            places.shared_sort_unstable();
+            places
+        });
+        let first = said.partition_point(|&place| place < text.start);
+        said.get(first).is_some_and(|&place| place < text.end)
     }
 
     fn keys_of_object_out_of_sight_of_its_functions(
@@ -2693,14 +2718,13 @@ impl Follower<'_, '_, '_> {
         }
         let &ScanInputs { hir, bound, .. } = self.inputs;
         let text = hir[literal].pos..hir[literal].end;
-        let mut expressions = hir.exprs.iter();
-        let mentions_super =
-            expressions.any(|it| matches!(it.kind, ExprKind::Super) && text.contains(&it.pos));
+        let mentions_itself = self.says_this_or_super(text);
         let written = self.properties_of(literal).filter(|written| {
-            !mentions_super
+            !mentions_itself
                 && written.iter().all(|it| {
-                    matches!(hir[hir.skip_type_assertions(it.1)].kind, ExprKind::Fn(function)
-                        if !bound.fns[function.idx()].contains_this
+                    let value = hir.skip_type_assertions(it.1);
+                    matches!(hir[value].kind, ExprKind::Fn(function)
+                        if !self.says_this_or_super(hir[value].pos..hir[value].end)
                             && !bound.function_flags(function).contains(FunctionFlags::HAS_DIRECT_EVAL))
                 })
         });

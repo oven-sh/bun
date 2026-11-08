@@ -183,6 +183,15 @@ impl<'s> Program<'s> {
             });
         &of_files[file.idx()]
     }
+
+    pub(in crate::check) fn release_prototype_links(&mut self) {
+        let Some(of_files) = self.aot_prototype_links.get() else {
+            return;
+        };
+        for links in of_files.iter().filter_map(OnceLock::get) {
+            *links.links_of_parameters_followed.lock() = FxHashMap::default();
+        }
+    }
 }
 
 pub(super) fn list_in<'s, T: Copy>(arena: &'s Arena, items: &[T]) -> &'s [T] {

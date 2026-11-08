@@ -412,6 +412,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-mock-laid-over-a-file-of-a-load-that-was-refused-waits-for-its-first-import.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-module-that-a-test-takes-out-of-the-cache-runs-again-whoever-imports-it.test.ts": {
     "default": 11600,
     "asan": 46400
@@ -448,9 +452,21 @@
     "default": 14100,
     "asan": 56400
   },
+  "aot/a-name-resolved-from-another-folder-is-not-written-down-under-the-own-one.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-name-resolved-through-a-require-of-another-folder-leads-where-that-folder-says.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-name-taken-out-of-rows-or-filled-into-a-text-opens-no-test-run.test.ts": {
     "default": 7900,
     "asan": 31600
+  },
+  "aot/a-name-that-a-made-require-only-resolves-leads-where-the-package-says.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-name-that-a-test-lays-on-object-prototype-is-read-by-the-library-as-in-bun-test.test.ts": {
     "default": 60000,
@@ -771,6 +787,10 @@
   "aot/a-walk-after-a-name-that-meets-itself-ends.test.ts": {
     "default": 41700,
     "asan": 166800
+  },
+  "aot/a-way-that-leaves-by-a-tail-call-ahead-of-the-frame-answers-as-plain-bun.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-wider-record-arrives-where-a-narrower-one-is-written.test.ts": {
     "default": 11100,
@@ -2440,6 +2460,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-files-that-a-file-has-asked-for-are-all-shown-behind-a-script-that-is-cut-short.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-first-error-of-every-form-costs-the-same-in-one-long-line-of-a-test-run.test.ts": {
     "default": 3400,
     "asan": 13600
@@ -2497,6 +2521,14 @@
     "asan": 240000
   },
   "aot/the-module-object-of-a-file-that-turns-to-the-host-takes-its-exports-along.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-names-behind-layers-of-files-that-take-a-name-back-are-gathered-in-one-walk.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-namespaces-of-a-ring-of-mocked-files-of-a-package-lack-no-name.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -2581,6 +2613,10 @@
     "asan": 2800
   },
   "aot/the-text-that-an-error-quotes-is-read-out-of-compressed-blocks.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-ticks-of-a-burst-are-let-go-as-they-run.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -2781,6 +2817,10 @@
     "asan": 240000
   },
   "aot/what-the-build-makes-for-the-folder-of-a-database-shows-nowhere.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/what-the-build-wrote-down-for-a-name-answers-the-question-that-the-build-asked.test.ts": {
     "default": 60000,
     "asan": 240000
   },

@@ -1241,10 +1241,17 @@ impl<'a, 's> FileBinder<'a, 's> {
                 }
                 _ => None,
             };
-            let name_of_es_module =
-                self.find_exported_name_that_a_mock_of_an_es_module_may_leave_out(position);
-            let name_that_no_link_finds = self.find_name_that_no_link_finds(position, resolved);
             let tables = self.context.tables;
+            let is_found_by_mocks_alone = tables
+                .find_name_that_mock_may_settle(self.file, export_name)
+                .is_some();
+            let name_of_es_module = self
+                .find_exported_name_that_a_mock_of_an_es_module_may_leave_out(position)
+                .map(|required| RequiredName {
+                    is_found_unless_mocked: !is_found_by_mocks_alone,
+                    ..required
+                });
+            let name_that_no_link_finds = self.find_name_that_no_link_finds(position, resolved);
             if tables
                 .find_statement_ahead_of_stars(self.file, export_name)
                 .is_some()

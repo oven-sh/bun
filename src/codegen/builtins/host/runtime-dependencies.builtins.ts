@@ -320,6 +320,8 @@ const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFun
   // In an executable the getter is native code.
   "%ModuleRequirePrototype%.main": moduleChildrenFunctions,
   "%ModuleRequirePrototype%.resolve": functionsIn("builtins/CommonJS", "requireResolve"),
+  "Math.max": functionsIn("prelude/written-lists", "maxOfList"),
+  "Math.min": functionsIn("prelude/written-lists", "minOfList"),
   "Array.prototype.sort": functionsIn("prelude/array-sort", "sort", "sortByDifference", "sortByReversedDifference").map(
     called => ({
       ...called,

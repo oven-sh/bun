@@ -17,7 +17,9 @@ use bun_sema::hir::{
     BinOp, ExportSpecId, ExprId, ExprKind, File, Flags, FnKind, MemberKey, NodeData, PatId,
     PatKind, PropKey, StmtKind, UnOp, VarDeclId,
 };
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_module_call_of_plugin};
+use bun_sema::import_sites::{
+    ImportSiteKind, ImportSpecifier, is_module_call_of_plugin, may_spell_word_that_mock_looks_for,
+};
 use bun_sema::util::SharedSort;
 use core::ops::Range;
 use std::sync::OnceLock;
@@ -711,11 +713,8 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
 ) -> bool {
     let text_names_original = |factory: ExprId| {
         let written = hir[factory].pos as usize..hir[factory].end as usize;
-        hir.text.get(written).is_none_or(|text| {
-            [&b"importOriginal"[..], b"importActual", b"requireActual"]
-                .iter()
-                .any(|word| bun_core::strings::contains(text, word))
-        })
+        let text = hir.text.get(written);
+        text.is_none_or(may_spell_word_that_mock_looks_for)
     };
     let takes_nothing = |factory: ExprId| {
         let factory = hir.skip_type_assertions(factory);

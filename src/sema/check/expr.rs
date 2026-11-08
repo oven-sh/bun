@@ -61,6 +61,35 @@ struct ObjectLiteralContext {
     in_const_context: bool,
 }
 
+#[derive(Default)]
+struct ReplacedMembers {
+    places: crate::util::FxHashMap<Atom, usize>,
+    replaced: Vec<usize>,
+}
+
+impl ReplacedMembers {
+    fn note_member(&mut self, name: Atom, place: usize) {
+        if let Some(earlier) = self.places.insert(name, place) {
+            self.replaced.push(earlier);
+        }
+    }
+
+    fn drop_from(&mut self, members: &mut Shape<'_>) {
+        self.places.clear();
+        if self.replaced.is_empty() {
+            return;
+        }
+        self.replaced.sort_unstable();
+        let mut replaced = self.replaced.drain(..).peekable();
+        let mut place = 0;
+        members.props.retain(|_| {
+            let is_replaced = replaced.next_if_eq(&place).is_some();
+            place += 1;
+            !is_replaced
+        });
+    }
+}
+
 /// `getAssignmentTargetKind`
 #[derive(Copy, Clone)]
 pub(super) struct TargetKind {
@@ -1402,7 +1431,9 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return (held, may_short_circuit);
             }
-            if !is_unchecked_js && self.is_js_literal_type(left) {
+            if (!is_unchecked_js || self.p.files.is_compile_build())
+                && self.is_js_literal_type(left)
+            {
                 return (TypeId::ANY, may_short_circuit);
             }
             // `leftType.symbol == c.globalThisSymbol`
@@ -4130,12 +4161,14 @@ impl<'p, 's> Checker<'p, 's> {
         let mut result = TypeId::EMPTY_OBJECT;
         let mut rank = 0;
         let mut pending = Shape::new_in(self.arena);
+        let mut replaced = ReplacedMembers::default();
         // Start of the members that follow the last spread.
         let mut run = props.start;
         for p in props.iter() {
             let prop = &hir[p];
             if prop.kind == PropKind::Spread {
                 let members = Span::new(run, p.0 - run);
+                replaced.drop_from(&mut pending);
                 if let Some(segment) =
                     self.create_object_literal_segment(file, members, &mut pending, is_const)
                 {
@@ -4179,7 +4212,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             };
             let (source, flags) = self.property_of_literal_member_in(file, p, name, context);
-            pending.props.retain(|x| x.name != name);
+            replaced.note_member(name, pending.props.len());
             let is_written = self.has_read_unfinished_type_since(reads);
             let (source, source_flags) =
                 self.source_of_literal_member_in(file, source, name, is_written);
@@ -4202,6 +4235,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let symbol = symbol_with(object_flags);
         let members = Span::new(run, props.start + props.len - run);
+        replaced.drop_from(&mut pending);
         if let Some(segment) =
             self.create_object_literal_segment(file, members, &mut pending, is_const)
         {

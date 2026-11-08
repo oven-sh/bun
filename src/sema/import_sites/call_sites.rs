@@ -27,6 +27,19 @@ use crate::hir::{
 };
 use crate::util::SharedSort;
 
+pub const WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY: [&[u8]; 3] =
+    [b"importOriginal", b"importActual", b"requireActual"];
+
+pub fn names_word_that_mock_looks_for(text: &[u8]) -> bool {
+    WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY
+        .iter()
+        .any(|word| bun_core::strings::contains(text, word))
+}
+
+pub fn may_spell_word_that_mock_looks_for(text: &[u8]) -> bool {
+    names_word_that_mock_looks_for(text) || bun_core::strings::contains_char(text, b'\\')
+}
+
 pub(crate) fn call_site_kind(
     hir: &File<'_>,
     bound: &Bound<'_>,

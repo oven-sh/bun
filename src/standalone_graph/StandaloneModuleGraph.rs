@@ -34,7 +34,7 @@ use crate::executable_request::{
 };
 pub use crate::executable_request::{
     ExecutableDetails, ExecutableOutcome, ExecutableRequest, GraphRequest, to_graph_bytes,
-    write_executable,
+    with_graph_slices, write_executable,
 };
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);

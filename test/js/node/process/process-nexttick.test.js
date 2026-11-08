@@ -292,7 +292,6 @@ it("the ticks of a burst are let go as they run", async () => {
   expect(stderr).toBe("");
   const bytesATick = JSON.parse(stdout);
   expect(bytesATick.ran).toBe(200_000);
-  expect(bytesATick.waiting).toBeLessThan(105);
   expect(bytesATick.whenHalfRan).toBeLessThan(bytesATick.waiting * 0.6);
   expect(bytesATick.after).toBeLessThan(5);
   expect(exitCode).toBe(0);

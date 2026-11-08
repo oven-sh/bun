@@ -128,7 +128,15 @@ pub(super) struct Memo<'c> {
     pub(super) unions_without_nullish: FxHashMap<TypeId, TypeId>,
     pub(super) types_in_progress: TypesInProgress,
     pub(super) sums_used_as_int32: FxHashMap<ExprId, bool>,
+    pub(super) symbols_given_products: FxHashMap<SymbolId, GivenProduct>,
+    pub(super) evaluated_for_some_values_only: FxHashMap<ExprId, bool>,
     pub(super) declared_signatures: Option<Rc<DeclaredSignatures>>,
+}
+
+#[derive(Copy, Clone)]
+pub(super) struct GivenProduct {
+    pub(super) is_given: bool,
+    pub(super) ran_out_of_terms: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

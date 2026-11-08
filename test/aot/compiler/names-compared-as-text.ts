@@ -68,6 +68,11 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       "the class of a name (an index, a number as JavaScript prints it, a word that the schema lists) is read off its text once",
   },
   {
+    paths: /^src\/aot\/lower\/function\/original_asked_for\.rs$/,
+    reason:
+      "what `bun test` finds by searching the printed text of a mock's factory for three words is said at the build: the words are that search's own",
+  },
+  {
     paths: /^src\/aot\/options\.rs$/,
     reason: "option words are the build's own, not the program's",
   },
@@ -105,6 +110,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   {
     paths: /^src\/aot\/lower\/module\/loads\.rs$/,
     lines: /match bytes\.ends_with\(b"\/"\)/,
+    reason:
+      "whether the base that is written for createRequire() ends as a folder: the last byte of a path, and a path is bound to nothing",
+  },
+  {
+    paths: /^src\/aot\/compile\/summary\.rs$/,
+    lines: /_ if path\.ends_with\(b"\/"\) =>/,
     reason:
       "whether the base that is written for createRequire() ends as a folder: the last byte of a path, and a path is bound to nothing",
   },

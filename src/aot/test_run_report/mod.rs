@@ -121,6 +121,34 @@ pub(crate) fn say_es_packages_that_mocks_name(count: usize) {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct CodeOutsideRun {
+    pub files: usize,
+    pub parsed_at_first: usize,
+    pub parsed_later: usize,
+    pub import_what_is_sought: usize,
+    pub take_from_test_runner: usize,
+}
+
+fn line_of_code_outside_run(asked: usize, counts: &CodeOutsideRun) -> String {
+    let CodeOutsideRun {
+        files,
+        parsed_at_first,
+        parsed_later,
+        import_what_is_sought,
+        take_from_test_runner,
+    } = counts;
+    format!(
+        "AOT test run | files on disk that the run does not reach {files}, asked about {asked} files of the run | parsed because they write the last word of one {parsed_at_first}, later {parsed_later} | of those parsed {take_from_test_runner} take from the test runner | {import_what_is_sought} take nothing from it and import what is sought"
+    )
+}
+
+pub(crate) fn say_code_outside_run(asked: usize, counts: &CodeOutsideRun) {
+    if logs_stages() {
+        say(&line_of_code_outside_run(asked, counts));
+    }
+}
+
 fn line_of_whose_files(
     of_tests: usize,
     behind_helpers: usize,

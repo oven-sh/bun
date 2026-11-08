@@ -629,6 +629,24 @@ fn exports_name_itself(
     place.is_ok_and(|place| !exports[place].is_from_star_export)
 }
 
+fn find_file_that_entry_comes_from(
+    graph: &modules::ModuleGraph,
+    atoms: &Interner<'_>,
+    file: FileId,
+    name: Atom,
+) -> Option<FileId> {
+    let (exports, name) = (graph.exports(file), atoms.bytes(name));
+    let place = exports.binary_search_by(|it| compare_code_units(atoms.bytes(it.name), name));
+    match exports[place.ok()?].binding {
+        ExportBinding::Variable(declared) => Some(declared.file),
+        ExportBinding::Indirect {
+            module: ModuleRef::File(source),
+            ..
+        } => Some(source),
+        _ => None,
+    }
+}
+
 fn takes_name_back_from_path(
     graph: &modules::ModuleGraph,
     answers: &mut AnswersOfMocks,
@@ -745,6 +763,29 @@ fn mock_may_answer_ahead_of_declaration(
         graph.is_named_by_mock(ModuleRef::File(declaring_file))
             && requests[..place].iter().any(may_bring_unlisted_name)
     };
+    let is_listed_for_run_alone = |listing: FileId| {
+        if !graph.is_named_by_mock(ModuleRef::File(declaring_file)) {
+            return false;
+        }
+        let mut taken = (listing, name);
+        let mut met = FxHashSet::default();
+        while let Some((ModuleRef::File(source), name_in_source)) =
+            graph.find_what_hands_on_names(taken.0, taken.1)
+        {
+            if graph.has_dynamic_names(source)
+                && !exports_name_itself(graph, atoms, source, name_in_source)
+            {
+                let comes_from =
+                    find_file_that_entry_comes_from(graph, atoms, source, name_in_source);
+                return comes_from != Some(declaring_file);
+            }
+            taken = (source, name_in_source);
+            if !met.insert(taken) {
+                return false;
+            }
+        }
+        false
+    };
     let mut answer = false;
     let first_that_lists = stars
         .as_ref()
@@ -808,9 +849,15 @@ fn mock_may_answer_ahead_of_declaration(
             continue;
         }
         if has_name(answers) {
-            answer = is_behind_unlisted_names(place);
+            answer = is_behind_unlisted_names(place) || is_listed_for_run_alone(target);
             break;
         }
+    }
+    let end = last.filter(|_| !answer && is_found_by_run && !is_ring_met_below);
+    let end = end.filter(|_| graph.is_named_by_mock(ModuleRef::File(declaring_file)));
+    if let Some((place, ModuleRef::File(target))) = end.map(|end| (end, requests[end].target)) {
+        answer = (target == declaring_file || requests[place].is_dynamic_star_export)
+            && (is_behind_unlisted_names(place) || is_listed_for_run_alone(target));
     }
     answers.on_path.remove(&file.file);
     let mut found_off_path = answers.files_found_off_path.split_off(first_found_off_path);

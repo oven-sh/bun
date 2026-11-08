@@ -795,6 +795,7 @@ impl<'s> Program<'s> {
         self.diagnostics_of_re_resolved_calls = ByNodeIndirect::new_in(&no_nodes, session);
         self.key_properties = ByIdIndirect::new_in(session);
         self.distributed_intersections = ByKey::new_in(session);
+        self.release_prototype_links();
     }
 
     /// `GetGlobalDiagnostics`. Returns the errors that don't belong to a file, sorted and

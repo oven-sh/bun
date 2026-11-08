@@ -36,6 +36,7 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/ScriptFetchParameters.h>
@@ -1010,8 +1011,13 @@ static bool ranBesideMockThatWaits(Zig::GlobalObject* globalObject, AOT::ModuleI
 
 void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key)
 {
-    if (auto module = reloadsFilesFromDisk() ? compiledModuleForPath(key) : std::nullopt; module && ranBesideMockThatWaits(globalObject, *module))
+    auto module = reloadsFilesFromDisk() ? compiledModuleForPath(key) : std::nullopt;
+    if (module && ranBesideMockThatWaits(globalObject, *module))
         return AOT::didDeleteEntryUnderMockThatWaits(globalObject, *module);
+    // Under a mock the original lies under a key of its own and outlives the entry; so it does behind an end that brought nothing back. Where the end of the mock has moved it back under this key, it goes with the entry.
+    auto* mocks = globalObject->onLoadPlugins.virtualModules;
+    if (module && AOT::isEvictedFile(globalObject, *module) && AOT::didOriginalComeBackUnderOwnKey(globalObject, *module) && !(mocks && mocks->contains(key)))
+        AOT::forgetOriginalOfFileThatLeftProgram(globalObject, *module);
     takeOutOfProgram(globalObject, key, [](JSGlobalObject* realm, AOT::ModuleID module) {
         if (AOT::isSetAsideByMock(realm, module))
             AOT::didDeleteEntryOfMockOverFileSetAside(realm, module);
@@ -1040,6 +1046,7 @@ bool willUnmockCompiledFile(Zig::GlobalObject* globalObject, const String& key, 
     auto module = reloadsFilesFromDisk() ? compiledModuleForPath(key) : std::nullopt;
     if (!module)
         return false;
+    AOT::setOriginalCameBackUnderOwnKey(globalObject, *module, bringsBack);
     bool liesUnderKeyOfOriginal = AOT::liesUnderKeyOfOriginal(globalObject, *module) || ranBesideMockThatWaits(globalObject, *module);
     bool leavesProgram = liesUnderKeyOfOriginal && !bringsBack && !isReplacedByLaterMock && AOT::isEvaluatedFile(globalObject, *module) && !AOT::refusesToLoadAgain(globalObject, *module);
     AOT::setLiesUnderKeyOfOriginal(globalObject, *module, liesUnderKeyOfOriginal && !bringsBack && !leavesProgram);
@@ -1098,9 +1105,12 @@ void willResetModules(Zig::GlobalObject* globalObject, ASCIILiteral call, bool k
     String packages = makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP);
     // isExternalizedByVitest(): Vitest loads an ES module that Node would read as CommonJS like the project's modules, and resets it with them.
     auto isKept = [&](const String& path) {
+        auto module = moduleThatAnswersToPath(path);
+        // It stands as evaluated, and goes with what failed, behind what the reset takes out.
+        if (module && AOT::errorThrownByBodyOfMockedModule(globalObject, *module))
+            return true;
         if (!keepsPackages || !path.contains(packages))
             return false;
-        auto module = moduleThatAnswersToPath(path);
         if (!module || !AOT::isESModule(*module))
             return true;
         BunString borrowedPath = Bun::toString(path);
@@ -1162,7 +1172,8 @@ static std::optional<AOT::ModuleID> evaluatedFileOfProgram(Zig::GlobalObject* gl
         return std::nullopt;
     auto module = compiledModuleForPath(key);
     // `bun test` takes a file that imported a mock out of its loader with the mock, and loads it anew when a graph comes by.
-    if (!module || !AOT::isEvaluatedFile(globalObject, *module) || AOT::wasLetGoByLoader(globalObject, *module) || AOT::hasMockThatWaitsOrRuns(globalObject, *module) || AOT::isKeyOfMockInPlaceEmpty(globalObject, *module))
+    // A mock that was loaded since lies under the key.
+    if (!module || !AOT::isEvaluatedFile(globalObject, *module) || (AOT::wasLetGoByLoader(globalObject, *module) && !AOT::hasMockInPlace(globalObject, *module)) || AOT::hasMockThatWaitsOrRuns(globalObject, *module) || AOT::isKeyOfMockInPlaceEmpty(globalObject, *module))
         return std::nullopt;
     return AOT::isLeftAloneByMock(globalObject, *module) && !AOT::hasMockInPlace(globalObject, *module) ? std::nullopt : module;
 }
@@ -1807,7 +1818,16 @@ static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, cons
 // What holds for the statements of the importer, which are linked, does not hold for a call of import() in it, which asks anew.
 static bool staysLinkedToFileAheadOfMock(JSGlobalObject* globalObject, const String& path, const String& importer)
 {
-    return defaultGlobalObject(globalObject)->onLoadPlugins.compiledImportersLinkedAheadOfMocks.containsIf([&](const auto& pair) { return pair.first == path && pair.second == importer; });
+    Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+    for (const auto& linked : zigGlobalObject->onLoadPlugins.compiledImportersLinkedAheadOfMocks) {
+        if (linked.mocked != path || linked.importer != importer)
+            continue;
+        for (auto& [mapKey, entry] : testFileModuleLoader(zigGlobalObject)->moduleMap()) {
+            if (entry.get() == linked.entryOfImporter.get())
+                return true;
+        }
+    }
+    return false;
 }
 
 static bool givesOriginalBesideMock(JSGlobalObject* globalObject, const String& path, const String& importer, bool isImport)

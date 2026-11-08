@@ -119,6 +119,8 @@ allows src/aot/builtins/table/members.rs the table of built-ins
     return member == b"push";
 allows src/aot/ir/name_class.rs the class of a name, read off its text once
     return name.starts_with(b"#");
+allows src/aot/lower/function/original_asked_for.rs a word that `bun test` searches the printed text of a factory for
+    return name == known::importActual;
 allows src/aot/options.rs option words, which are the build's own
     return key == "threads";
 allows src/aot/load/test_runner_names.rs a name that no program can write
@@ -304,3 +306,6 @@ allows src/aot/lower/member.rs a member of a function that plain Bun answers whi
     return name != known::arguments && name != known::caller;
 allows src/sema/import_sites/touched_exports.rs a member that leads from one module to the others
     matches!(member, b"parent" | b"children" | b"require")
+allows src/aot/compile/summary.rs the end of a written path
+    let path = files.atoms.bytes(path);
+    _ if path.ends_with(b"/") => [&own_name[..end], b"/", path, b"noop.js"].concat(),

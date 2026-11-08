@@ -1175,7 +1175,7 @@ impl<'a> Resolver<'a> {
                 is_require(kind),
             )
         });
-        if let Some(file_name) = followed {
+        if let Some(file_name) = followed.filter(|_| self.custom_dir_paths.is_none()) {
             return PackageLookup::Found(file_name);
         }
         let is_left_outside = graph.compiled_program().is_some_and(|program| {

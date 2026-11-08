@@ -108,6 +108,8 @@ pub(crate) fn compile_to_executable(
         CompileProduct::ReportsOnly => None,
         CompileProduct::Executable { .. } if options.writes_no_executable => None,
         CompileProduct::GraphBytes => Some(None),
+        #[cfg(unix)]
+        CompileProduct::UnnamedFile => Some(None),
         CompileProduct::Executable { outfile } => Some(Some(outfile)),
     };
     if let Some(outfile) = outfile {
@@ -191,6 +193,8 @@ fn write_product(
         }
         _ => None,
     };
+    #[cfg(unix)]
+    let writes_unnamed_file = matches!(request.product, CompileProduct::UnnamedFile);
     let settings = &mut request.executable;
     let (image, symbols) = build.engine.image_mut_and_symbols();
     let graph = GraphRequest {
@@ -228,11 +232,27 @@ fn write_product(
         }),
     };
     let Some(outfile) = product.outfile else {
-        outcome.graph_bytes = Some(to_graph_bytes(&graph).map_err(CompileFailure::Graph)?);
+        #[cfg(unix)]
+        if writes_unnamed_file {
+            use bun_standalone_graph::StandaloneModuleGraph::with_graph_slices;
+            let write = crate::cli::run_compiled::write_program_or_exit;
+            let written = with_graph_slices(&graph, write).map_err(CompileFailure::Graph)?;
+            outcome.unnamed_file = Some(written);
+        }
+        #[cfg(unix)]
+        let length_of_file = outcome.unnamed_file.map(|written| written.length);
+        #[cfg(not(unix))]
+        let length_of_file = None;
+        let length = match length_of_file {
+            Some(length) => length,
+            None => {
+                let bytes = to_graph_bytes(&graph).map_err(CompileFailure::Graph)?;
+                outcome.graph_bytes.insert(bytes).len()
+            }
+        };
         log_part_outside_stages("behind the engine: the payload");
         if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
-            let bytes = outcome.graph_bytes.as_ref().map_or(0, |bytes| bytes.len());
-            bun_core::print_errorln!("AOT test build | program bytes {}", bytes);
+            bun_core::print_errorln!("AOT test build | program bytes {}", length);
         }
         outcome.executable_time = started.elapsed();
         return Ok(());
@@ -471,7 +491,7 @@ fn build_program(
     };
     let outfile = match request.product {
         CompileProduct::Executable { outfile } => to_absolute(outfile),
-        CompileProduct::GraphBytes | CompileProduct::ReportsOnly => None,
+        _ => None,
     };
     let maps = outfile
         .iter()

@@ -477,6 +477,21 @@ fn package_takes_from_test_runner() {
 }
 
 #[test]
+fn the_line_on_code_outside_the_run_says_each_count() {
+    let counts = CodeOutsideRun {
+        files: 6052,
+        parsed_at_first: 4502,
+        parsed_later: 3,
+        import_what_is_sought: 1,
+        take_from_test_runner: 1500,
+    };
+    assert_eq!(
+        line_of_code_outside_run(26, &counts),
+        "AOT test run | files on disk that the run does not reach 6052, asked about 26 files of the run | parsed because they write the last word of one 4502, later 3 | of those parsed 1500 take from the test runner | 1 take nothing from it and import what is sought"
+    );
+}
+
+#[test]
 fn code_that_build_does_not_see() {
     let line = line_of_code_that_build_does_not_see([0, 1, 2, 3, 4, 5]);
     assert_eq!(

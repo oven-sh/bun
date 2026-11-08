@@ -5671,9 +5671,12 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 under_nodes,
                 found,
                 waited_long,
+                held_long,
+                long_holds,
+                stored_in_long_holds,
             ] = std::array::from_fn(|index| totals[index] - commit_totals_before[index]);
             bun_core::print_errorln!(
-                "AOT round of the checker | its commits | {} commits stored {} entries | the tasks held the mutex for {} ms and waited for it for {} ms, all together | {} of the entries stand under nodes and symbols, and a task other than the one that stored it has found {} of those | {} of the commits waited for the mutex for longer than 50 us",
+                "AOT round of the checker | its commits | {} commits stored {} entries | the tasks held the mutex for {} ms and waited for it for {} ms, all together | {} of the entries stand under nodes and symbols, and a task other than the one that stored it has found {} of those | {} of the commits waited for the mutex for longer than 50 us | {} held it for longer than 1 ms: {} ms together, storing {} entries",
                 commits,
                 stored,
                 held / 1_000_000,
@@ -5681,6 +5684,9 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 under_nodes,
                 found,
                 waited_long,
+                held_long,
+                long_holds / 1_000_000,
+                stored_in_long_holds,
             );
             let [looks, candidates, held, waited] = looks_for_lost_files
                 .each_ref()

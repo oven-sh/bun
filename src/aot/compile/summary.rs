@@ -7,11 +7,13 @@ use crate::load::sources::SourceKind;
 use crate::load::{
     EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, is_host_path, read_file_bytes,
 };
-use crate::modules::{ModuleGraph, ModuleRef};
+use crate::modules::{ModuleGraph, ModuleRef, SiteAnswer};
 use crate::report::{ModuleOrigin, ModuleSource, SourceTexts};
 use crate::statistics::{Stage, StepClock};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::erasure::PackedTypeRanges;
+use bun_sema::hir::ExprKind;
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, ResolvedFrom};
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
@@ -74,6 +76,70 @@ pub(super) fn collect_program_file_paths(
         .collect()
 }
 
+fn list_folders(path_of_file: &[u8]) -> Vec<&[u8]> {
+    let mut folders: Vec<&[u8]> = Vec::new();
+    for part in bun_core::strings::split(path_of_file, b"/") {
+        match part {
+            b"" if folders.is_empty() => folders.push(part),
+            b"" | b"." => {}
+            b".." if folders.len() > 1 => {
+                folders.pop();
+            }
+            _ => folders.push(part),
+        }
+    }
+    folders.pop();
+    folders
+}
+
+fn find_public_folder(looked_from: &[u8], found: &[u8], found_public: &[u8]) -> Option<Vec<u8>> {
+    let (from, found) = (list_folders(looked_from), list_folders(found));
+    let mut public = list_folders(found_public);
+    let shared = (from.iter().zip(&found))
+        .take_while(|(a, b)| a == b)
+        .count();
+    for folder in found[shared..].iter().rev() {
+        if public.pop() != Some(*folder) {
+            return None;
+        }
+    }
+    public.extend_from_slice(&from[shared..]);
+    Some(public.join(&b'/'))
+}
+
+fn find_folder_looked_from(
+    files: &Files<'_>,
+    sources: &Sources,
+    file: FileId,
+    site: ImportSiteKind,
+    found: FileId,
+) -> Option<Vec<u8>> {
+    let analysis = files.analysis(file);
+    let index = analysis
+        .import_sites
+        .iter()
+        .position(|it| it.kind == site)?;
+    let own_name = files.module(file).file_name();
+    let looked_from = match analysis.path_to_resolve_from(index) {
+        None => own_name.to_vec(),
+        Some(ResolvedFrom::File(path)) => files.atoms.bytes(path).to_vec(),
+        Some(ResolvedFrom::PathFromOwnFolder(path)) => {
+            let path = files.atoms.bytes(path);
+            let end = bun_core::strings::last_index_of_char(own_name, b'/').unwrap_or(0);
+            match path {
+                b"" => own_name[..end].to_vec(),
+                _ if path.ends_with(b"/") => [&own_name[..end], b"/", path, b"noop.js"].concat(),
+                _ => [&own_name[..end], b"/", path].concat(),
+            }
+        }
+    };
+    let from_file = |known: FileId| {
+        let name = files.module(known).file_name();
+        find_public_folder(&looked_from, name, sources.public_path(known))
+    };
+    from_file(file).or_else(|| from_file(found))
+}
+
 pub(super) fn collect_names_followed(
     files: &Files<'_>,
     sources: &Sources,
@@ -82,20 +148,44 @@ pub(super) fn collect_names_followed(
 ) -> Vec<FollowedName> {
     let mut names = Vec::new();
     for &file in files.compiled_files() {
-        let importer = sources.public_path(file);
-        let folder =
-            &importer[..bun_core::strings::last_index_of_char(importer, b'/').unwrap_or(0)];
-        for (spelled, is_required) in graph.names_left_to_loader(file) {
-            if let ModuleRef::File(target) = spelled.module
-                && left_out.binary_search(&target).is_err()
+        let mut write_down = |site: ImportSiteKind, name: &[u8], target: FileId| {
+            let is_required = !matches!(
+                site,
+                ImportSiteKind::ImportCall(_) | ImportSiteKind::ImportMetaResolve(_)
+            );
+            if left_out.binary_search(&target).is_ok() {
+                return;
+            }
+            let Some(folder) = find_folder_looked_from(files, sources, file, site, target) else {
+                return;
+            };
+            let found = || Some(sources.public_path(target).to_vec());
+            names.push(FollowedName {
+                folder_and_name_as_written: [&folder[..], b"//", name].concat(),
+                public_path_for_require: is_required.then(found).flatten(),
+                public_path_for_import: (!is_required).then(found).flatten(),
+            });
+        };
+        for (spelled, site) in graph.names_left_to_loader(file) {
+            if let ModuleRef::File(target) = spelled.module {
+                write_down(site, files.atoms.bytes(spelled.spelling), target);
+            }
+        }
+        let hir = files.hir(file);
+        for site in files.analysis(file).import_sites {
+            let names_parent = match site.kind {
+                ImportSiteKind::RequireResolve(_) => false,
+                ImportSiteKind::ImportMetaResolve(call) => {
+                    !matches!(hir[call].kind, ExprKind::Call(call) if hir[call].args.len() == 1)
+                }
+                _ => continue,
+            };
+            if !names_parent
+                && let ImportSpecifier::Constant(written) = site.specifier
+                && let Some(SiteAnswer::Module(ModuleRef::File(target))) =
+                    graph.find_site_answer(file, site.kind)
             {
-                let found = || Some(sources.public_path(target).to_vec());
-                let name = files.atoms.bytes(spelled.spelling);
-                names.push(FollowedName {
-                    folder_and_name_as_written: [folder, b"//", name].concat(),
-                    public_path_for_require: is_required.then(found).flatten(),
-                    public_path_for_import: (!is_required).then(found).flatten(),
-                });
+                write_down(site.kind, files.atoms.bytes(written), target);
             }
         }
     }

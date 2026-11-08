@@ -4,17 +4,18 @@
 // # its type, so that the counter of a turn laid out is the sum of the first counter and a written number. The last low half is taken wherever the builder would find it again: in its block and where that block alone leads.
 // # f1 = inOneBlock, f2 = byThrees, f8 = leavesBetween
 // # Eight turns laid out and the loop as written: two products where there were nine; by threes c * 3 is made once; where a test of the index leaves between the turns each turn is a block of its own.
+// # The products are counted at the place of `%` itself: where the machine has no remainder (arm64) the remainder of two whole numbers that is made in line beside the loop is a quotient, a product and a difference, at another place.
 // # RUN(FORM): emit f1 f2 f8 mechanisms=all
 // # REQUIRES(FORM): as-written
 // # FORM-LABEL: unit f1:Body
-// # FORM-COUNT-2: Int64 @{{*}} = Mul(
-// # FORM-NOT: Int64 @{{*}} = Mul(
+// # FORM-COUNT-2: Int64 @{{*}} = Mul({{*}}origin = 253)
+// # FORM-NOT: Int64 @{{*}} = Mul({{*}}origin = 253)
 // # FORM-LABEL: unit f2:Body
-// # FORM-COUNT-3: Int64 @{{*}} = Mul(
-// # FORM-NOT: Int64 @{{*}} = Mul(
+// # FORM-COUNT-3: Int64 @{{*}} = Mul({{*}}origin = 259)
+// # FORM-NOT: Int64 @{{*}} = Mul({{*}}origin = 259)
 // # FORM-LABEL: unit f8:Body
-// # FORM-COUNT-2: Int64 @{{*}} = Mul(
-// # FORM-NOT: Int64 @{{*}} = Mul(
+// # FORM-COUNT-2: Int64 @{{*}} = Mul({{*}}origin = 161)
+// # FORM-NOT: Int64 @{{*}} = Mul({{*}}origin = 161)
 // # Written sums upward and downward over one counter, another divisor in between, an unsigned reading of a counter that begins below zero, arms and what stands behind them.
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

@@ -1,0 +1,35 @@
+# In a file without types a literal that begins with the spread of a parameter, of which the callers' text lets one written literal be expected, and that ADDS a name behind
+# the spread is born with a layout that lists the names of that literal and the names written. A literal that only writes over names of the source stays a copy of the source.
+# Wherever else a parameter is spread into a literal that has a layout, behind names that are written or behind another spread, the names of the literal expected of it are
+# listed too: `{ kind: "plain", ...props }` and `{ ...defaults, ...props }` hold what the callers write in slots.
+# -- source: main.js
+# function step(state, i) { return { ...state, busy: i > 1, more: i }; }
+# function same(state, i) { return { ...state, count: i }; }
+# function lead(state, i) { return { ahead: i, ...state }; }
+# function twice(state, rest, i) { return { ...state, busy: i, ...rest }; }
+# var sum = 0; for (var i = 0; i < 4; i++) sum += step({ id: i, text: "t", count: 2, open: true }, i).more + same({ id: i, text: "t", count: 2, open: true }, i).count;
+# var other = Reflect.apply(step, undefined, [JSON.parse('{"more":5,"zeta":1,"count":2}'), 9]);
+# print(sum, Object.keys(step({ id: 1, text: "t", count: 2, open: true }, 1)).join(), Object.keys(other).join(), other.more, Object.keys(same({ id: 1, text: "t", count: 2, open: true }, 1)).join());
+# print(Object.keys(lead({ id: 1, text: "t", count: 2, open: true }, 1)).join(), Object.keys(twice({ id: 1, text: "t", count: 2, open: true }, { wide: 1, busy: 2, tall: 3 }, 1)).join());
+# -- end of source
+# RUN(LITERAL): print f1
+# LITERAL: = NewObject layout=L{{*}}
+# LITERAL: CopyDataProperties
+# LITERAL: PropDefine {{*}} key="busy"
+# LITERAL: PropDefine {{*}} key="more"
+# LITERAL: = FinishObject
+# RUN(OUT): print f1
+# OUT-NOT: = CopyObject
+# RUN(SAME): print f2
+# SAME: = CopyObject
+# SAME: PropDefine {{*}} key="count"
+# RUN(LISTED): print
+# LISTED: layout L{{*}}key="busy"{{*}}key="count"{{*}}key="id"{{*}}key="more"{{*}}key="open"{{*}}key="text"
+# RUN(AHEAD): print
+# AHEAD: layout L{{*}}key="ahead"{{*}}key="count"{{*}}key="id"{{*}}key="open"{{*}}key="text"
+# RUN(SECOND): print
+# SECOND: layout L{{*}}key="busy"{{*}}key="count"{{*}}key="id"{{*}}key="open"{{*}}key="tall"{{*}}key="text"{{*}}key="wide"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 12 id,text,count,open,busy,more more,zeta,count,busy 9 id,text,count,open
+# ANSWERS-NEXT: ahead,id,text,count,open id,text,count,open,busy,wide,tall
+# ANSWERS-NEXT: exited with 0

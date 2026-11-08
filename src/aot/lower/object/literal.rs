@@ -121,6 +121,9 @@ impl FileLowering<'_, '_, '_, '_> {
         if first.kind != PropKind::Spread {
             return false;
         }
+        if self.adds_names_to_literal_expected_of_parameter(literal) {
+            return false;
+        }
         if self.has_names_known_only_at_run_time(first.value) {
             return true;
         }

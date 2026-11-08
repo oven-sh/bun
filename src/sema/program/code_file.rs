@@ -108,7 +108,8 @@ pub(super) fn load_code_file<'s, 'r>(
     }
     let (bound, analyzed) = analyze(context, arena, key, settings, stored_by_mocks, &mut tree);
     if !tree.request.options.keeps_comments {
-        crate::erasure::keep_only_comments_beside_types(&mut tree.hir, arena);
+        let is_read_later = crate::import_sites::may_spell_word_that_mock_looks_for;
+        crate::erasure::keep_only_comments_beside_types_and(&mut tree.hir, arena, is_read_later);
     }
     rename_private_names_with(&mut tree.hir, &bound, atoms, path, |reference, _| {
         bound.runtime.private_class(reference)

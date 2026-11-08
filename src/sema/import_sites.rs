@@ -15,10 +15,11 @@ mod touched_exports;
 mod written_arms;
 
 pub use call_sites::{
-    RequireCall, RequireCallForm, does_import_meta_resolve_ask_resolver,
-    ends_in_call_that_reads_frame_of_caller, find_module_printed_as_require, find_require_call,
-    is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
-    is_name_written_out,
+    RequireCall, RequireCallForm, WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY,
+    does_import_meta_resolve_ask_resolver, ends_in_call_that_reads_frame_of_caller,
+    find_module_printed_as_require, find_require_call, is_linked_by_bundler,
+    is_module_call_of_plugin, is_name_read_by_transpiler, is_name_written_out,
+    may_spell_word_that_mock_looks_for, names_word_that_mock_looks_for,
 };
 pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope, is_process,

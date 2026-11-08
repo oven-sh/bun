@@ -62,6 +62,8 @@ pub(super) fn collect_reports(
     CompileOutcome {
         output_files: Vec::new(),
         graph_bytes: None,
+        #[cfg(unix)]
+        unnamed_file: None,
         metafile: None,
         summary,
         report_messages,

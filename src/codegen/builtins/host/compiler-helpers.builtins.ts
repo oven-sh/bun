@@ -44,6 +44,19 @@ const arrayMaker = (name: string, returns: b.TableType, uses: UsesByParameter) =
     implementation: b.compiled("prelude/written-lists", name),
   }) satisfies b.FunctionField;
 
+// Math.max(...list) and Math.min(...list) of a list of numbers. Undefined of anything else, which the call as written gets.
+const extremumOfList = (name: string) =>
+  ({
+    args: { list: b.any },
+    returns: b.union(b.f64, b.undefined),
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    runsUnseenCode: false,
+    uses: { list: [b.readsContents()] },
+    implementation: b.compiled("prelude/written-lists", name),
+  }) satisfies b.FunctionField;
+
 // What Array.prototype.sort does with a list and a comparator.
 const sortInPlace = (name: string) =>
   ({
@@ -360,6 +373,8 @@ export default b.declarations(
       runInitializers: { initializers: calledOrChanged, receiver: calledOrChanged },
       runValueInitializers: { initializers: calledOrChanged, receiver: calledOrChanged, value: calledOrChanged },
     }),
+    maxOfList: extremumOfList("maxOfList"),
+    minOfList: extremumOfList("minOfList"),
     checkedArrayLength: arrayMaker("checkedArrayLength", b.operand("length"), { length: [b.returned] }),
     // The front end writes arrayOfUndefined where the mapper is undefined, so this one never gets that.
     arrayFromLength: arrayMaker("arrayFromLength", newArrayOf(b.callbackResult("mapper")), {

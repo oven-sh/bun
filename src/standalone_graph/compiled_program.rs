@@ -1319,7 +1319,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::StandaloneModuleGraph::{
         BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, CompileTarget, Flags, GraphRequest, Offsets,
-        RuntimeOptions, to_bytes, to_graph_bytes,
+        RuntimeOptions, to_bytes, to_graph_bytes, with_graph_slices,
     };
     use crate::executable_request::graph_bytes;
 
@@ -2241,6 +2241,28 @@ pub(crate) mod tests {
         assert_eq!(joined.bytes.len(), with_room.bytes.len());
         assert!(joined.bytes[..start] == with_room.bytes[..start]);
         assert!(joined.bytes[end..] == with_room.bytes[end..]);
+    }
+
+    #[test]
+    fn slices_of_a_graph_follow_one_another_as_its_bytes_do() {
+        let folder = TemporaryFolder::create("slices");
+        let (graph, slices, bytes) = with_request(&folder, false, |request| {
+            let slices = with_graph_slices(request, |slices| {
+                assert!(core::ptr::eq(
+                    slices[2].as_ptr(),
+                    request.compiled_program.as_ref().unwrap().image.as_ptr()
+                ));
+                slices.concat()
+            });
+            (
+                graph_bytes(request).unwrap().bytes,
+                slices.unwrap(),
+                to_graph_bytes(request).unwrap(),
+            )
+        });
+        assert_eq!(slices[..8], (graph.len() as u64).to_le_bytes());
+        assert!(slices[8..] == graph[..]);
+        assert!(slices == bytes);
     }
 
     #[test]

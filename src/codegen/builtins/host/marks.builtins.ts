@@ -168,6 +168,14 @@ export default b.declarations(
     "process.kill",
     "process.reallyExit",
   ]),
+  marked("MayLayListenerForUncaughtExceptions", [
+    "%EventEmitter%.prototype.addListener",
+    "%EventEmitter%.prototype.on",
+    "%EventEmitter%.prototype.once",
+    "%EventEmitter%.prototype.prependListener",
+    "%EventEmitter%.prototype.prependOnceListener",
+    "process.setUncaughtExceptionCaptureCallback",
+  ]),
   marked("RunsWaitingJobs", [
     "%Expect%",
     "Bun.jest",

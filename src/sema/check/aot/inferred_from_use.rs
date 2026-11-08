@@ -1,7 +1,7 @@
 use super::answers::{CheckedType, ClassRef, GaveUp, MemberLookup, QueryLimit};
 use super::builtin_types::BuiltinClassIndex;
 use super::prototype_links::{NamedValue, PrototypeOperation};
-use super::queries::Queries;
+use super::queries::{GivenProduct, Queries};
 use super::type_identity::ObjectOrigin;
 use super::type_shape::ShapeKind;
 use crate::atom::{Atom, known};
@@ -1711,27 +1711,45 @@ fn find_alternatives(hir: &hir::File<'_>, expression: ExprId) -> SmallVec<[ExprI
     alternatives
 }
 
+fn has_empty_default(hir: &hir::File<'_>, parameter: ParamId) -> bool {
+    let default = hir[parameter].default;
+    !default.is_none()
+        && matches!(hir[default].kind, ExprKind::Object(members) if members.is_empty())
+}
+
 fn is_evaluated_for_some_values_only(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
     expression: ExprId,
+    answers: &mut FxHashMap<ExprId, bool>,
 ) -> bool {
+    let mut climbed: SmallVec<[ExprId; 8]> = SmallVec::new();
     let mut inner = expression;
-    while let Parent::Expr(parent) = bound.parent_of_expr(inner) {
+    let answer = loop {
+        if let Some(&known) = answers.get(&inner) {
+            break known;
+        }
+        climbed.push(inner);
+        let Parent::Expr(parent) = bound.parent_of_expr(inner) else {
+            break false;
+        };
         let Some(parent) = parent.some() else {
-            return false;
+            break false;
         };
         match hir[parent].kind {
             ExprKind::Binary {
                 op: BinOp::And | BinOp::Or | BinOp::Nullish,
                 right,
                 ..
-            } if right == inner => return true,
-            ExprKind::Cond { test, .. } if test != inner => return true,
+            } if right == inner => break true,
+            ExprKind::Cond { test, .. } if test != inner => break true,
             _ => inner = parent,
         }
+    };
+    for expression in climbed {
+        answers.insert(expression, answer);
     }
-    false
+    answer
 }
 
 fn is_int32_value(value: f64) -> bool {
@@ -1810,15 +1828,9 @@ fn is_sum_with_product(hir: &hir::File<'_>, value: ExprId, read: &TermsRead) -> 
 fn is_given_product(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
-    reference: ExprId,
+    symbol: SymbolId,
     read: &TermsRead,
 ) -> bool {
-    let ExprKind::Ident(_) = hir[reference].kind else {
-        return false;
-    };
-    let Binding::Symbol(symbol) = bound.binding(reference) else {
-        return false;
-    };
     let starts_as_product = bound.symbol(symbol).decls.iter().any(|&declaration| {
         let Decl::Var(name) = declaration else {
             return false;
@@ -1987,6 +1999,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 && self.is_null_or_undefined_alone(checked)
     }
 
+    fn says_nothing_of_what_is_handed(&mut self, checked: TypeId) -> bool {
+        self.says_nothing_of_what_is_stored_later(checked)
+            || self.are_positions_only_expected(self.file)
+                && self.c.is_empty_anonymous_object_type(checked)
+    }
+
     pub(super) fn infer_parameter_type(
         &mut self,
         of: FileId,
@@ -2013,7 +2031,16 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if checked == TypeId::NUMBER {
             return self.inferred_type_or(Subject::Number(symbol), checked);
         }
-        if !self.says_nothing_of_what_is_stored_later(checked) {
+        let says_nothing = match bound.pat_parent[pattern.idx()] {
+            PatParent::Param(parameter) if has_empty_default(hir, parameter) => {
+                self.says_nothing_of_what_is_handed(checked)
+            }
+            PatParent::Param(_) => self.says_nothing_of_what_is_stored_later(checked),
+            PatParent::None | PatParent::Var(_) | PatParent::Prop(..) | PatParent::Elem(..) => {
+                self.says_nothing_of_what_is_stored_later(checked)
+            }
+        };
+        if !says_nothing {
             return checked;
         }
         match bound.pat_parent[pattern.idx()] {
@@ -2219,7 +2246,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn find_parameter_subject(
-        &self,
+        &mut self,
         of: FileId,
         parameter: ParamId,
         checked: TypeId,
@@ -2233,7 +2260,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         }
         match hir[node.pat].kind {
-            PatKind::Ident(_) if self.says_nothing_of_what_is_stored_later(checked) => {
+            PatKind::Ident(_)
+                if match has_empty_default(hir, parameter) {
+                    true => self.says_nothing_of_what_is_handed(checked),
+                    false => self.says_nothing_of_what_is_stored_later(checked),
+                } =>
+            {
                 find_initialized_symbol(bound, node.pat).map(Subject::Binding)
             }
             PatKind::Object(_) if self.is_implied_by_pattern(checked, node.pat) => {
@@ -3619,8 +3651,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return;
         };
         if !self.c.is_any(checked) {
-            self.add_arm(usage, checked);
-            if checked != TypeId::NEVER && !self.says_nothing_of_what_is_stored_later(checked) {
+            let says_nothing = self.says_nothing_of_what_is_handed(checked);
+            if !says_nothing || self.is_null_or_undefined_alone(checked) {
+                self.add_arm(usage, checked);
+            }
+            if checked != TypeId::NEVER && !says_nothing {
                 return;
             }
         }
@@ -3683,14 +3718,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             Use::Number => usage.facts |= self.number_fact_of_operand(value),
             Use::Int32 => {
                 usage.facts |= self.number_fact_of_operand(value);
-                let read = TermsRead {
-                    most: self.limit(QueryLimit::TermsReadForProduct),
-                    ran_out: Cell::new(false),
-                };
-                if !is_given_product(self.hir(), self.bound(), value, &read) {
+                let given = self.find_product_given_to(value);
+                if !given.is_given {
                     usage.facts |= Facts::INT32;
                 }
-                if read.ran_out.get() {
+                if given.ran_out_of_terms {
                     self.note_walk_ended_by(QueryLimit::TermsReadForProduct);
                 }
             }
@@ -3803,8 +3835,35 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             })
     }
 
-    fn number_fact_of_operand(&self, operand: ExprId) -> Facts {
-        match is_evaluated_for_some_values_only(self.hir(), self.bound(), operand) {
+    fn find_product_given_to(&mut self, reference: ExprId) -> GivenProduct {
+        let (hir, bound) = (self.hir(), self.bound());
+        let (ExprKind::Ident(_), Binding::Symbol(symbol)) =
+            (hir[reference].kind, bound.binding(reference))
+        else {
+            return GivenProduct {
+                is_given: false,
+                ran_out_of_terms: false,
+            };
+        };
+        if let Some(&known) = self.memo.symbols_given_products.get(&symbol) {
+            return known;
+        }
+        let read = TermsRead {
+            most: self.limit(QueryLimit::TermsReadForProduct),
+            ran_out: Cell::new(false),
+        };
+        let given = GivenProduct {
+            is_given: is_given_product(hir, bound, symbol, &read),
+            ran_out_of_terms: read.ran_out.get(),
+        };
+        self.memo.symbols_given_products.insert(symbol, given);
+        given
+    }
+
+    fn number_fact_of_operand(&mut self, operand: ExprId) -> Facts {
+        let (hir, bound) = (self.hir(), self.bound());
+        let answers = &mut self.memo.evaluated_for_some_values_only;
+        match is_evaluated_for_some_values_only(hir, bound, operand, answers) {
             true => Facts::NUMBER,
             false => Facts::NUMBER_AT_EVERY_VALUE,
         }

@@ -978,6 +978,16 @@ pub enum FnOwner {
     Type(TypeNodeId),
 }
 
+impl FnOwner {
+    pub fn text_of_expression_or_declaration(self, hir: &File<'_>) -> Option<std::ops::Range<u32>> {
+        match self {
+            FnOwner::Expr(written) => Some(hir[written].pos..hir[written].end),
+            FnOwner::Stmt(declared) => Some(hir[declared].loc.pos..hir[declared].loc.end),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum MemberOwner {
     None,

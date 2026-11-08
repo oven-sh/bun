@@ -851,7 +851,7 @@ impl ModuleGraph {
     pub fn names_left_to_loader(
         &self,
         file: FileId,
-    ) -> impl Iterator<Item = (SpelledModule, bool)> + '_ {
+    ) -> impl Iterator<Item = (SpelledModule, ImportSiteKind)> + '_ {
         let sites = self.find_row(file).into_iter().flat_map(|row| {
             row.sites
                 .iter()
@@ -861,9 +861,8 @@ impl ModuleGraph {
                 })
         });
         sites.flat_map(|(kind, spelled)| {
-            let is_required = !matches!(kind, ImportSiteKind::ImportCall(_));
             let left = spelled.iter().filter(|it| it.is_left_to_loader);
-            left.map(move |&it| (it, is_required))
+            left.map(move |&it| (it, kind))
         })
     }
 

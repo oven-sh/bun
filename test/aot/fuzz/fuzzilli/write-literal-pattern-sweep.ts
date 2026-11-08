@@ -14,12 +14,19 @@ import { mkdirSync, writeFileSync } from "node:fs";
 
 const letters = "ghijklmnopqrstuvwxy";
 const classes = ["\\d", "[^z]", "[a-f]", "."];
+// Characters that have no case, as a pattern writes them and as a text holds them.
+const marks = ["-", "\\.", "_", "5"];
+const marksInTexts = "-._5";
 const rotations = ["digits-first", "all-but-one-first", "a-range-first", "any-first"];
 const flags: [name: string, text: string][] = [
   ["no-flag", ""],
   ["ignoring-case", "i"],
   ["sticky", "y"],
   ["global", "g"],
+  ["unicode", "u"],
+  ["ignoring-case-and-unicode", "iu"],
+  ["sets", "v"],
+  ["ignoring-case-and-sets", "iv"],
 ];
 const most = 4096;
 
@@ -63,7 +70,12 @@ type Kind = {
   lead?: string;
   odd?: string;
   digits?: true;
+  /** A place that is no letter holds a character without a case, not a class. */
+  marks?: true;
+  /** The pattern is written as \`new RegExp(text, flags)\`: of written texts, or with its text, the two halves of its text or its flags parsed out of data. */
+  made?: "written" | "text-from-data" | "halves-from-data" | "flags-from-data";
 };
+const allSplits = (places: number) => () => lengths(0, 2 ** places - 1).map((split): Run => [places, split, -1]);
 const kindsOfPrograms: Kind[] = [
   ...lengths(5, 15).map(places => ({
     name: `${places}-places`,
@@ -88,6 +100,46 @@ const kindsOfPrograms: Kind[] = [
   { name: "a-zero-among-the-letters", runs: withAnOddOne, odd: "\\x00" },
   { name: "the-last-narrow-character-among-the-letters", runs: withAnOddOne, odd: "\\xff" },
   { name: "a-wide-character-among-the-letters", runs: withAnOddOne, odd: "\\u0100" },
+  ...lengths(5, 15).map(
+    (places): Kind => ({ name: `${places}-places-of-letters-and-marks`, runs: allSplits(places), marks: true }),
+  ),
+  ...lengths(16, 27).map(
+    (places): Kind => ({
+      name: `${places}-places-of-letters-and-few-marks`,
+      runs: () => withFew(places, 4).map((split): Run => [places, split, -1]),
+      marks: true,
+    }),
+  ),
+  ...lengths(5, 15).map(
+    (places): Kind => ({ name: `${places}-places-made-from-a-text`, runs: allSplits(places), made: "written" }),
+  ),
+  ...lengths(5, 15).map(
+    (places): Kind => ({
+      name: `${places}-places-of-letters-and-marks-made-from-a-text`,
+      runs: allSplits(places),
+      marks: true,
+      made: "written",
+    }),
+  ),
+  ...lengths(5, 15).map(
+    (places): Kind => ({
+      name: `${places}-places-made-from-a-text-out-of-data`,
+      runs: allSplits(places),
+      made: "text-from-data",
+    }),
+  ),
+  ...lengths(5, 15).map(
+    (places): Kind => ({
+      name: `${places}-places-of-letters-and-marks-made-from-a-text-out-of-data`,
+      runs: allSplits(places),
+      marks: true,
+      made: "text-from-data",
+    }),
+  ),
+  { name: "made-from-two-halves-out-of-data", runs: short, made: "halves-from-data" },
+  { name: "letters-and-marks-made-from-two-halves-out-of-data", runs: short, marks: true, made: "halves-from-data" },
+  { name: "made-with-flags-out-of-data", runs: short, made: "flags-from-data" },
+  { name: "letters-and-marks-made-with-flags-out-of-data", runs: short, marks: true, made: "flags-from-data" },
 ];
 const parts: [kind: Kind, part: number][] = kindsOfPrograms.flatMap(kind =>
   lengths(0, Math.ceil(kind.runs().length / most) - 1).map((part): [Kind, number] => [kind, part]),
@@ -150,12 +202,30 @@ function write(at: number) {
       for (let i = 0; i < places; i++) {
         const which = (i + rotation) % classes.length;
         const letter = kind.digits && i & 1 ? String(i % 10) : letters[i % letters.length];
-        source += (split >> i) & 1 ? classes[which] : i === odd ? kind.odd : letter;
+        source += (split >> i) & 1 ? (kind.marks ? marks : classes)[which] : i === odd ? kind.odd : letter;
         spec +=
-          (split >> i) & 1 ? "ABCD"[which] : i === odd ? JSON.parse(`"${kind.odd!.replace("\\x", "\\u00")}"`) : letter;
+          (split >> i) & 1
+            ? (kind.marks ? marksInTexts : "ABCD")[which]
+            : i === odd
+              ? JSON.parse(`"${kind.odd!.replace("\\x", "\\u00")}"`)
+              : letter;
       }
       const lead = kind.lead ? `, "${kind.lead}"` : "";
-      return `  run(/${kind.before ?? ""}${source}${kind.behind ?? ""}/${text}, ${JSON.stringify(spec)}${lead});`;
+      const whole = `${kind.before ?? ""}${source}${kind.behind ?? ""}`;
+      const written = (one: string) => JSON.stringify(one);
+      const parsed = (one: string) => `JSON.parse(${JSON.stringify(JSON.stringify(one))})`;
+      const middle = whole.length >> 1;
+      const pattern =
+        kind.made === undefined
+          ? `/${whole}/${text}`
+          : kind.made === "written"
+            ? `new RegExp(${written(whole)}, ${written(text)})`
+            : kind.made === "text-from-data"
+              ? `new RegExp(${parsed(whole)}, ${written(text)})`
+              : kind.made === "halves-from-data"
+                ? `new RegExp(${parsed(whole.slice(0, middle))} + ${parsed(whole.slice(middle))}, ${written(text)})`
+                : `new RegExp(${written(whole)}, ${parsed(text)})`;
+      return `  run(${pattern}, ${JSON.stringify(spec)}${lead});`;
     });
   let body = "";
   for (let from = 0; from < lines.length; from += 256)

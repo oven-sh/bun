@@ -2390,3 +2390,112 @@ describe.concurrent("a built-in module that needs one stream class does not load
     expect(exitCode).toBe(0);
   });
 });
+
+// A program that has loaded node:stream may store a class or a function of its own under a name there. A built-in module
+// takes what lies under the name when that module loads, and never asks again. It does so without loading node:stream.
+describe.concurrent("a built-in module uses what a program stored on node:stream before the module loaded", () => {
+  // around(load) runs `load` with the program's classes stored before it or behind it.
+  const script = (when, text) => `{
+    const stream = require("node:stream");
+    const mine = {};
+    let finishedCalls = 0;
+    function store() {
+      for (const name of ["Stream", "Readable", "Writable", "Duplex", "Transform"]) {
+        const Was = stream[name];
+        function Mine(...given) {
+          return Was.apply(this, given);
+        }
+        Object.setPrototypeOf(Mine.prototype, Was.prototype);
+        Object.setPrototypeOf(Mine, Was);
+        stream[name] = mine[name] = Mine;
+      }
+      const finished = stream.finished;
+      stream.finished = function (...given) {
+        finishedCalls++;
+        return finished.apply(this, given);
+      };
+    }
+    function around(load) {
+      if (${JSON.stringify(when)} === "before") store();
+      const loaded = load();
+      if (${JSON.stringify(when)} === "after") store();
+      return loaded;
+    }
+    const print = uses => console.log(JSON.stringify({ uses, finishedCalls }));
+    ${text}
+  }`;
+  // [what loads, what the program asks of it, how often that calls the program's finished(), the program]
+  const modules = [
+    [
+      "node:fs and the standard streams",
+      ["fs.createWriteStream()", "fs.createReadStream()", "process.stdout", "process.stdin"],
+      1,
+      `const nodeFs = around(() => {
+        const nodeFs = require("node:fs");
+        void nodeFs.ReadStream;
+        void nodeFs.WriteStream;
+        void process.stdout;
+        void process.stdin;
+        return nodeFs;
+      });
+      const readStream = nodeFs.createReadStream(process.execPath);
+      const writeStream = nodeFs.createWriteStream(require("node:os").devNull);
+      const uses = {
+        "fs.createWriteStream()": writeStream instanceof mine.Writable,
+        "fs.createReadStream()": readStream instanceof mine.Readable,
+        "process.stdout": process.stdout instanceof mine.Writable,
+        "process.stdin": process.stdin instanceof mine.Readable,
+      };
+      readStream.close(() => {
+        writeStream.destroy();
+        print(uses);
+      });`,
+    ],
+    [
+      "node:zlib",
+      ["zlib.createGzip()"],
+      1,
+      `const gzip = around(() => require("node:zlib")).createGzip();
+      const uses = { "zlib.createGzip()": gzip instanceof mine.Transform };
+      gzip.close(() => print(uses));`,
+    ],
+    [
+      "node:http",
+      ["http.OutgoingMessage", "the socket of a ServerResponse"],
+      0,
+      `const nodeHttp = around(() => require("node:http"));
+      const response = new nodeHttp.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 });
+      print({
+        "http.OutgoingMessage": Object.getPrototypeOf(nodeHttp.OutgoingMessage.prototype) === mine.Stream.prototype,
+        "the socket of a ServerResponse": response.socket instanceof mine.Duplex,
+      });`,
+    ],
+    [
+      "node:http2",
+      ["http2.Http2ServerRequest"],
+      0,
+      `const nodeHttp2 = around(() => require("node:http2"));
+      print({ "http2.Http2ServerRequest": Object.getPrototypeOf(nodeHttp2.Http2ServerRequest) === mine.Readable });`,
+    ],
+  ];
+  it.each(
+    modules.flatMap(([module, names, finishedCalls, text]) => [
+      [module, "before", names, true, finishedCalls, text],
+      [module, "after", names, false, 0, text],
+    ]),
+  )("%s, stored %s", async (module, when, names, used, finishedCalls, text) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script(when, text)],
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: JSON.stringify({ uses: Object.fromEntries(names.map(name => [name, used])), finishedCalls }) + "\n",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+});

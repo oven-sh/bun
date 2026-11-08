@@ -1,6 +1,10 @@
 // process.stdout is a WriteStream: the Writable class and finished() load here, not node:stream, Readable or node:fs.
-const Writable = require("internal/streams/writable");
-const finished = require("internal/streams/end-of-stream");
+// node:stream is `Stream` with its members. Where a program has loaded it, the classes here stand below what it has stored there.
+const { Stream } = require("internal/streams/legacy");
+const ReadableOfProgram = $getByIdDirect(Stream, "Readable") as $Node.ReadableConstructor | undefined;
+const Writable: $Node.WritableConstructor = $getByIdDirect(Stream, "Writable") ?? require("internal/streams/writable");
+const finished: typeof Stream.finished =
+  $getByIdDirect(Stream, "finished") ?? require("internal/streams/end-of-stream");
 const fileHandles = require("internal/fs/file_handles");
 type FileHandleInternals = NonNullable<typeof fileHandles.internals>;
 type FileHandle = $Node.FileHandle;
@@ -344,7 +348,7 @@ function ReadStream(
   // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
   if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
-  require("internal/streams/readable").$call(this, options);
+  (ReadableOfProgram ?? require("internal/streams/readable")).$call(this, options);
   return this as unknown as void;
 }
 $toClass(ReadStream, "ReadStream");
@@ -353,7 +357,7 @@ const readStreamPrototype = ReadStream.prototype;
 // The class goes below Readable at its first use (`new`, `instanceof`, a read of `prototype`), so a WriteStream loads no Readable.
 Object.defineProperty(ReadStream, "prototype", {
   get() {
-    const Readable = require("internal/streams/readable");
+    const Readable = ReadableOfProgram ?? require("internal/streams/readable");
     Object.setPrototypeOf(readStreamPrototype, Readable.prototype);
     Object.setPrototypeOf(ReadStream, Readable);
     Object.defineProperty(ReadStream, "prototype", { value: readStreamPrototype, writable: true });

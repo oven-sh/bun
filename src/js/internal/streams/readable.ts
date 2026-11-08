@@ -2026,8 +2026,8 @@ function installOperator(key: string, length: number, returnsPromise: boolean) {
       });
     }
     op ??= (operators ??= require("internal/streams/operators")).streamReturningOperators[key] as Operator;
-    // node:stream sets Stream.Readable when it loads.
-    return (Stream.Readable ?? Readable).from(op.$apply(this, args));
+    // node:stream is `Stream` with its members: what a program has stored under `Readable` there, once node:stream is loaded.
+    return ($getByIdDirect(Stream, "Readable") ?? Readable).from(op.$apply(this, args));
   };
   ObjectDefineProperty(fn, "name", { __proto__: null, value: key });
   ObjectDefineProperty(fn, "length", { __proto__: null, value: length });

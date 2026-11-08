@@ -1,0 +1,30 @@
+# `pick` returns at once what one of its two parameters gives: it ends its tail calls if what arrives at both does.
+# both arrows of `sum` make no tail call: the call stays a call, and both lie in the frame.
+# the second arrow of `down` returns at once what `down` gives, a ring; that of `blind` returns at once what an element of a list gives, and nobody knows where that goes. One condition of two is not met: the jump is owed, the frame goes, and both arrows are made in the heap.
+# f1 = pick, f3 = sum, f2 = down, f4 = blind
+# -- source: closures-taken-by-the-call-that-ends-the-unit-are-made-in-the-heap-where-one-of-them-may-go-on-without-end.ts
+# declare function sink(...values: unknown[]): void;
+# function pick(n: number, stop: (x: number) => number, go: (x: number) => number): number { if (n <= 0) return stop(n); return go(n); }
+# function sum(n: number, k: number) { return pick(n, x => x - k, x => x + k); }
+# function down(n: number, k: number): number { return pick(n, x => x - k, x => down(x - 1, k + 1)); }
+# function blind(n: number, k: number, table: Array<(x: number) => number>) { return pick(n, x => x - k, x => table[x & 1](x)); }
+# sink(sum(1, 2), sum(0, 3), down(3, 0), blind(1, 2, [x => x, x => -x]));
+# -- end of source
+# RUN: bytes f3 mechanisms=all-Inlining
+# CHECK-NOT: NewSlimClosure.Plain
+# RUN(WALK): walk f3 mechanisms=all-Inlining
+# WALK-NOT: ReturnCall
+# RUN(RING): walk f2 mechanisms=all-Inlining
+# RING: ReturnCall
+# RUN(OWED): walk f2 f4 mechanisms=all-Inlining
+# OWED-NOT: requirement=Allowed
+# RUN(HEAP): bytes f2 mechanisms=all-Inlining
+# HEAP: NewSlimClosure.Plain
+# RUN(NONE): bytes f2 mechanisms=all-Inlining
+# NONE-NOT: NewSlimClosureInFrame
+# RUN(WORD): plan units mechanisms=all
+# WORD: unit f1:Body {{*}}ends-tail-calls-if-arguments-do=[1, 2]
+# WORD: unit f3:Body {{*}}ends-its-tail-calls
+# RUN(NOWORD): plan units mechanisms=all
+# NOWORD-NOT: unit f2:Body {{*}}tail-calls
+# NOWORD-NOT: unit f4:Body {{*}}tail-calls

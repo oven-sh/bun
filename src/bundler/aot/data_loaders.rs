@@ -4,13 +4,14 @@ use bstr::BStr;
 use bun_alloc::Arena;
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
-use bun_aot::load::source_provider::{Failed, SourceFile};
+use bun_aot::load::source_provider::{DataFailure, SourceFile};
 use bun_ast::{Expr, Loader, Loc, Log, Source};
 use bun_core::strings;
 use bun_sema::atom::Interner;
-use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::hir_from_data::{DataModule, DataValue, DatabasePlace};
 
 use super::assets::EmbeddedFiles;
+use super::css_modules;
 use super::data_values::{data_value_from_expr, report_not_data};
 use super::services::{BuildContext, with_ast_scope};
 
@@ -33,7 +34,7 @@ pub(crate) fn parse_data<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
     log: &mut Log,
-) -> Result<DataModule<'s>, Failed> {
+) -> Result<DataModule<'s>, DataFailure> {
     let source = Source::init_path_string(file.path, file.contents);
     match file.loader {
         Loader::Json => parse_structured(StructuredFormat::Json, &source, arena, atoms, log),
@@ -59,16 +60,19 @@ pub(crate) fn parse_data<'s>(
                     Loc::EMPTY,
                     b"Failed to render markdown to HTML",
                 );
-                Err(Failed)
+                Err(DataFailure::InvalidText)
             }
         },
         Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
             Ok(create_string_module(b"", arena, atoms))
         }
-        Loader::Css => Ok(DataModule::Value {
-            default: arena.alloc(DataValue::Object(&[])),
-            exports_keys: false,
+        Loader::Css if css_modules::is_module_path(file.path) => Ok(DataModule::Value {
+            default: css_modules::exported_names(context, file, arena, atoms, log)?,
+            exports_keys: true,
         }),
+        Loader::Css => Ok(DataModule::MarkedDefault(
+            arena.alloc(DataValue::Object(&[])),
+        )),
         Loader::File | Loader::Wasm => {
             let path = embedded.embed_file(context, file, log)?;
             let runs_in_place = context.module_prefix.is_empty();
@@ -85,17 +89,21 @@ pub(crate) fn parse_data<'s>(
         }
         Loader::SqliteEmbedded => Ok(DataModule::Database {
             path: atoms.intern(&embedded.embed_file(context, file, log)?),
-            is_embedded: true,
+            place: DatabasePlace::Executable,
         }),
         Loader::Sqlite => Ok(DataModule::Database {
             path: atoms.intern(file.path),
-            is_embedded: false,
+            // A file of the build has its whole path. `PluginModules::add_database` names the others as the program does.
+            place: match bun_paths::is_absolute(file.path) {
+                true => DatabasePlace::Disk,
+                false => DatabasePlace::WorkingDirectory,
+            },
         }),
         Loader::Html => Ok(DataModule::Page),
         Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx => {
             debug_assert!(false, "the host never asks for a script loader as data");
             log_diagnostic(log, Code::UnsupportedOption, &[b"a script loader as data"]);
-            Err(Failed)
+            Err(DataFailure::Build)
         }
     }
 }
@@ -107,7 +115,8 @@ fn decode_utf8_lossy(contents: &[u8]) -> Cow<'_, [u8]> {
     let mut decoded = Vec::with_capacity(contents.len() + REPLACEMENT_CHARACTER.len());
     for chunk in contents.utf8_chunks() {
         decoded.extend_from_slice(chunk.valid().as_bytes());
-        if !chunk.invalid().is_empty() {
+        // The bundler puts the character in the place of each byte, of a sequence that is cut off too.
+        for _ in chunk.invalid() {
             decoded.extend_from_slice(REPLACEMENT_CHARACTER);
         }
     }
@@ -120,7 +129,7 @@ fn parse_structured<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
     log: &mut Log,
-) -> Result<DataModule<'s>, Failed> {
+) -> Result<DataModule<'s>, DataFailure> {
     let default: &'s DataValue<'s> = if strings::is_all_whitespace(source.contents()) {
         arena.alloc(DataValue::Object(&[]))
     } else {
@@ -138,7 +147,7 @@ fn parse_structured_value<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
     log: &mut Log,
-) -> Result<&'s DataValue<'s>, Failed> {
+) -> Result<&'s DataValue<'s>, DataFailure> {
     let errors_before = log.errors;
     with_ast_scope(|scratch| {
         let Some(root) = parse_tree(format, source, log, scratch) else {
@@ -150,11 +159,11 @@ fn parse_structured_value<'s>(
                     format_args!("\"{path}\" could not be parsed"),
                 );
             }
-            return Err(Failed);
+            return Err(DataFailure::InvalidText);
         };
         data_value_from_expr(&root, scratch, arena, atoms).map_err(|error| {
             report_not_data(log, source.path.text, "the value", error);
-            Failed
+            DataFailure::Build
         })
     })
 }
@@ -219,7 +228,7 @@ mod tests {
         atoms: &'c Interner<'s>,
         log: &'c Log,
         embedded: EmbeddedFiles,
-        result: Result<DataModule<'s>, Failed>,
+        result: Result<DataModule<'s>, DataFailure>,
     }
 
     impl Outcome<'_, '_> {
@@ -231,13 +240,6 @@ mod tests {
             };
             let name = embedded_name(self.context, &file, ContentHasher::run(contents));
             embedded_path(&self.context.module_prefix, &name)
-        }
-
-        fn has_message_prefix(&self, prefix: &[u8]) -> bool {
-            self.log
-                .msgs
-                .iter()
-                .any(|message| message.data.text.starts_with(prefix))
         }
     }
 
@@ -273,7 +275,7 @@ mod tests {
 
     fn assert_fails_with_error(loader: Loader, contents: &[u8]) {
         load(loader, contents, |outcome| {
-            assert!(outcome.result.is_err());
+            assert!(matches!(outcome.result, Err(DataFailure::InvalidText)));
             assert!(outcome.log.errors >= 1);
         });
     }
@@ -378,10 +380,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn css_is_empty_object_without_embedded_file() {
         load(Loader::Css, b".c { color: red }", |outcome| {
-            let module = DataModule::Value {
-                default: &DataValue::Object(&[]),
-                exports_keys: false,
-            };
+            let module = DataModule::MarkedDefault(&DataValue::Object(&[]));
             assert_eq!(outcome.result.unwrap(), module);
             assert!(outcome.embedded.into_output_files().is_empty());
         });
@@ -429,7 +428,8 @@ mod tests {
     fn text_replaces_ill_formed_sequences() {
         assert_string_module(Loader::Text, b"plain", b"plain");
         assert_string_module(Loader::Text, b"a\xFFb", "a\u{FFFD}b".as_bytes());
-        assert_eq!(&*decode_utf8_lossy(b"a\xE2\x82b"), "a\u{FFFD}b".as_bytes());
+        let replaced = "a\u{FFFD}\u{FFFD}b\u{FFFD}\u{FFFD}\u{FFFD}".as_bytes();
+        assert_eq!(&*decode_utf8_lossy(b"a\xE2\x82b\xF0\x9F\x98"), replaced);
         assert!(matches!(decode_utf8_lossy(b"valid"), Cow::Borrowed(_)));
     }
 
@@ -483,7 +483,7 @@ mod tests {
             let path = outcome.embedded_path_of(b"database", Loader::SqliteEmbedded);
             let module = DataModule::Database {
                 path: outcome.atoms.intern(&path),
-                is_embedded: true,
+                place: DatabasePlace::Executable,
             };
             assert_eq!(outcome.result.unwrap(), module);
         });
@@ -495,7 +495,7 @@ mod tests {
         load(Loader::Sqlite, b"database", |outcome| {
             let module = DataModule::Database {
                 path: outcome.atoms.intern(PATH),
-                is_embedded: false,
+                place: DatabasePlace::Disk,
             };
             assert_eq!(outcome.result.unwrap(), module);
         });
@@ -511,10 +511,20 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn toml_date_is_unsupported() {
-        load(Loader::Toml, b"d = 1979-05-27\n", |outcome| {
-            assert!(outcome.has_message_prefix(b"TS100050"));
-            assert!(outcome.result.is_err());
+    fn toml_time_below_a_list_is_carried() {
+        load(Loader::Toml, b"list = [{ at = 07:32:00 }]\n", |outcome| {
+            let time = DataValue::Temporal {
+                class: outcome.atoms.intern(b"PlainTime"),
+                text: outcome.atoms.intern(b"07:32:00"),
+            };
+            let inner = [(outcome.atoms.intern(b"at"), time)];
+            let list = [DataValue::Object(&inner)];
+            let properties = [(outcome.atoms.intern(b"list"), DataValue::Array(&list))];
+            let module = DataModule::Value {
+                default: &DataValue::Object(&properties),
+                exports_keys: true,
+            };
+            assert_eq!(outcome.result.unwrap(), module);
         });
     }
 

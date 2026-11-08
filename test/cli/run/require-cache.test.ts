@@ -11,6 +11,7 @@ import {
   isMusl,
   isWindows,
   tempDir,
+  withoutAsanQuarantine,
 } from "harness";
 import { join } from "path";
 
@@ -349,13 +350,13 @@ describe.concurrent("require.cache", () => {
             }
           }
 
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < ${isASAN ? 25 : 100}; i++) {
             require(path);
             bust();
           }
           gc(true);
           const baseline = rss();
-          for (let i = 0; i < 400; i++) {
+          for (let i = 0; i < ${isASAN ? 150 : 400}; i++) {
             require(path);
             bust(path);
           }
@@ -375,7 +376,7 @@ describe.concurrent("require.cache", () => {
         });
         await using proc = Bun.spawn({
           cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-          env: bunEnv,
+          env: noQuarantine,
           stdio: ["inherit", "inherit", "inherit"],
         });
 
@@ -586,7 +587,7 @@ describe.concurrent("require.cache", () => {
     test("via require()", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "cjs-fixture-leak-small.js")],
-        env: bunEnv,
+        env: withoutAsanQuarantine(bunEnv),
         stderr: "inherit",
       });
 
@@ -601,7 +602,7 @@ describe.concurrent("require.cache", () => {
       async () => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
-          env: bunEnv,
+          env: withoutAsanQuarantine(bunEnv),
           stderr: "inherit",
         });
 

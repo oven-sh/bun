@@ -1,0 +1,15 @@
+# f1 = makeRows, f2 = countHits
+# `wanted` is of no known type and does not change in the loop: what it reads as a number, or NaN, is asked once, in front; the turn compares two numbers.
+# -- source: what-a-value-reads-as-a-number-stands-in-front-of-the-loop-that-compares-with-it.ts
+# declare function sink(...values: unknown[]): void;
+# type Row = { id: number };
+# function makeRows(): Row[] { const rows: Row[] = []; for (let i = 0; i < 12; i++) rows.push({ id: i }); return rows; }
+# function countHits(wanted: unknown) { const list = makeRows(); let n = 0; for (let i = 0; i < list.length; i++) n += list[i]!.id === wanted ? 1 : 0; return n; }
+# sink(makeRows, countHits);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK: [[wanted]]: number @Double = NumberOrNaN
+# CHECK: isLoopHead=true
+# CHECK: = StrictEq {{*}}[[wanted]] form=Numbers
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: NumberAndValue

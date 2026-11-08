@@ -118,6 +118,12 @@ fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
     join_abs_string::<Auto>(working_directory, &[path]).to_vec()
 }
 
+// `absolute_path` with no separator at its end.
+fn absolute_folder(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
+    let folder = join_abs_string::<Auto>(working_directory, &[path]);
+    without_trailing_slash_windows_path(folder).to_vec()
+}
+
 // `path` is `folder` or is inside it. Case is not ignored: the real path settles a name in another case.
 fn is_or_holds(folder: &[u8], path: &[u8]) -> bool {
     // Only a root has a separator at its end.
@@ -149,9 +155,8 @@ impl Outdir {
         as_written: &[u8],
         project: &Project,
     ) -> Result<Outdir, LibraryError> {
-        let folder = join_abs_string::<Auto>(working_directory, &[as_written]);
         let mut outdir = Outdir {
-            folder: without_trailing_slash_windows_path(folder).to_vec(),
+            folder: absolute_folder(working_directory, as_written),
             real: None,
             as_written: as_written.to_vec(),
         };
@@ -270,12 +275,25 @@ impl Library {
         ctx.bundler_options.outdir = self.outdir.folder.as_slice().into();
     }
 
-    // `folder` is the real path of the folder that the entry points share.
+    // `root_directory` is the real path of `--root`, or of the folder that the entry points share.
     #[cold]
-    pub(crate) fn check_folder_of_entry_points(&self, folder: &[u8], entry_points: &[Box<[u8]>]) {
-        if let Some(entry_point) = entry_points.first()
-            && self.outdir.holds(folder)
-        {
+    pub(crate) fn check_root_directory(
+        &self,
+        ctx: &ContextData,
+        root_directory: &[u8],
+        entry_points: &[Box<[u8]>],
+    ) {
+        if !self.outdir.holds(root_directory) {
+            return;
+        }
+        let working_directory = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
+        let root = &ctx.bundler_options.root_dir;
+        // An entry point that is not below `--root` is not in the root directory.
+        let is_in_root = |entry_point: &[u8]| {
+            let absolute = |path: &[u8]| absolute_folder(working_directory, path);
+            root.is_empty() || is_or_holds(&absolute(root), &absolute(entry_point))
+        };
+        if let Some(entry_point) = entry_points.iter().find(|it| is_in_root(it)) {
             let entry_point = entry_point.to_vec();
             LibraryError::EntryPointInsideOutdir { entry_point }.exit();
         }

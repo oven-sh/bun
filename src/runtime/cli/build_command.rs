@@ -548,12 +548,9 @@ impl BuildCommand {
             break 'brk1 &*result;
         };
 
-        // With `--root`, the root directory is not the folder of the entry points.
-        if let Some(library) = &library
-            && ctx.bundler_options.root_dir.is_empty()
-        {
+        if let Some(library) = &library {
             let entry_points = &this_transpiler.options.entry_points;
-            library.check_folder_of_entry_points(src_root_dir, entry_points);
+            library.check_root_directory(ctx, src_root_dir, entry_points);
         }
 
         this_transpiler.options.root_dir = src_root_dir.into();

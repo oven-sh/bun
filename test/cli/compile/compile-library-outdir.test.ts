@@ -196,11 +196,13 @@ describe.concurrent("bun compile --library --outdir", () => {
     await expectRefused(String(dir), project, args, entryPointInsideOutdir("src/index.js"));
   });
 
-  test("the folder of an entry point is refused when a link leads to the entry point", async () => {
+  test.each([
+    [["sources/index.js", "--outdir", "src"]],
+    [["sources/index.js", "--root", "sources", "--outdir", "src"]],
+  ])("the folder of an entry point is refused when a link leads to the entry point: %j", async args => {
     using dir = workspace();
     const project = join(String(dir), "packages/shapes");
     linkFolder(join(project, "src"), join(project, "sources"));
-    const args = ["sources/index.js", "--outdir", "src"];
     await expectRefused(String(dir), project, args, entryPointInsideOutdir("sources/index.js"));
   });
 
@@ -253,8 +255,8 @@ describe.concurrent("bun compile --library --outdir", () => {
     expect(readFileSync(join(project, "package.json"), "utf8")).toBe(packageJson);
   });
 
-  // Only without `--root` is the root directory of the build the folder of the entry points.
-  test("a --root inside --outdir is not taken for the folder of the entry points", async () => {
+  // The run ends with the error about the root directory, as without this check.
+  test("an entry point outside --root is not taken to be inside an --outdir that holds --root", async () => {
     using dir = workspace();
     const project = join(String(dir), "packages/shapes");
     mkdirSync(join(project, "out/root"), { recursive: true });

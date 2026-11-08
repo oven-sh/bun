@@ -78,8 +78,7 @@ const spyOn = {
 } satisfies b.FunctionField;
 
 const stubbedName = b.keyFrom("name");
-// jsJestReplaceProperty keeps what the data property holds, weakly, and defines or assigns `value` under the name on the object itself.
-// An assignment to process.env or a typed array converts the value.
+// jsJestReplaceProperty keeps what the data property holds, weakly, and defines or assigns `value` under the name, which process.env converts.
 const replacedName = b.keyFrom("name");
 const replaceProperty = {
   args: { object: b.object, name: b.propertyKey.loose, value: b.any },

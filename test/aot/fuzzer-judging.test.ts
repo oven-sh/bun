@@ -445,7 +445,8 @@ process.exit(0);`,
   timeout,
 );
 
-// Every executable that it builds sleeps for longer than a case may take. Where collections are forced, its own runs sleep too, if asked to.
+// Every executable that it builds sleeps for longer than a case may take. Where collections are forced, its own runs sleep too, if asked to, and end at once if not: how long Bun itself takes under them is
+// not what is asked here.
 function buildsWhatNeverEnds(folder: string, sleepsTooWhereSlowed: boolean): string {
   const path = join(folder, "stand-in");
   writeFileSync(
@@ -457,7 +458,7 @@ build)
   printf '#!/bin/sh\\nexec sleep 3000\\n' > "$2"
   chmod +x "$2" ;;
 *)
-  ${sleepsTooWhereSlowed ? '[ -z "$BUN_JSC_slowPathAllocsBetweenGCs" ] || exec sleep 3000' : ":"}
+  [ -z "$BUN_JSC_slowPathAllocsBetweenGCs" ] || ${sleepsTooWhereSlowed ? "exec sleep 3000" : "exit 0"}
   exec "${bunExe()}" "$@" ;;
 esac
 `,

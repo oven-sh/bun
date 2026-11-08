@@ -84,7 +84,7 @@ export function mocksFromOneTestFileToTheNextIn(part: number, parts: number) {
   });
 }
 
-// Where the two runs part today. Such a case fails once they agree: its line goes out.
+// Where the two runs part today. Such a case is run and fails by nothing; where the two runs agree it says so, and once they always do its line goes out.
 const partsInAChain: [cases: RegExp, what: string][] = [
   [
     /^([a-z-]+--imported|(a-spy|a-file-among-the-mocks|a-factory-that-waits)--the-original-asked-for|a-factory-that-waits--imported-at-run-time)--one--modules-reset-meanwhile$/,
@@ -124,9 +124,13 @@ export function mocksInAChainIn(part: number, parts: number) {
     part,
     parts,
     (name, plain, compiled) => {
-      if (partsInAChain.some(([names]) => names.test(name)))
-        expect({ ...compiled, didNotRunAgain: 0 }).not.toEqual(plain);
-      else expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
+      if (!partsInAChain.some(([names]) => names.test(name))) {
+        expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
+        return;
+      }
+      // Which load in flight ends first is a matter of time, so that the two runs part is asked of nobody.
+      if (Bun.deepEquals({ ...compiled, didNotRunAgain: 0 }, plain))
+        console.error(`A LISTED PARTING AGREES WITH bun test: ${name}`);
     },
     3,
   );

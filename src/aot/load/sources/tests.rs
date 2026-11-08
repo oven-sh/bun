@@ -524,6 +524,46 @@ fn equal_public_paths_are_internal_error() {
 }
 
 #[test]
+fn coverage_report_has_the_files_of_the_project_and_no_package() {
+    let files = [
+        (
+            "main.ts",
+            "import './node_modules/nested/index.js';\nimport './beside.js';\n",
+        ),
+        ("node_modules/nested/index.js", "export {};\n"),
+        ("beside.js", "export {};\n"),
+    ];
+    with_loaded_build(&files, &default_settings(), |_, loaded| {
+        let projects = loaded.projects.as_ref();
+        let (files, sources) = projects
+            .map(|_, project| (project.loaded.files(), &project.sources))
+            .application;
+        let names = ["main.ts", "node_modules/nested/index.js", "beside.js"];
+        let [main, nested, beside] = names.map(|name| file_at(files, name));
+        let in_report = |sources: &Sources| {
+            [main, nested, beside].map(|file| sources.is_in_coverage_report(file))
+        };
+        assert_eq!(in_report(sources), [true, false, true]);
+
+        // The project is a package folder of `node_modules`. The packages below and beside it are still packages.
+        let mut in_package_folder = sources.clone();
+        in_package_folder.project_root = b"/p/node_modules/my-pkg"[..].into();
+        let moved: [(FileId, &[u8]); 3] = [
+            (main, b"/p/node_modules/my-pkg/main.ts"),
+            (
+                nested,
+                b"/p/node_modules/my-pkg/node_modules/nested/index.js",
+            ),
+            (beside, b"/p/node_modules/hoisted/index.js"),
+        ];
+        for (file, path) in moved {
+            in_package_folder.entries[file.idx()].diagnostic_path = path.into();
+        }
+        assert_eq!(in_report(&in_package_folder), [true, false, false]);
+    });
+}
+
+#[test]
 fn projects_cannot_share_a_public_path() {
     let files = [("main.ts", "import 'node:os';")];
     with_loaded_build(&files, &default_settings(), |_, loaded| {

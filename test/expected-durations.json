@@ -412,6 +412,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-mock-laid-below-a-compiled-file-that-the-loader-holds-as-text-is-seen-by-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-mock-laid-over-a-file-of-a-load-that-was-refused-waits-for-its-first-import.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1823,6 +1827,10 @@
   "aot/mock-vitest-missing-name.test.ts": {
     "default": 1000,
     "asan": 4000
+  },
+  "aot/mock-ways.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/mock-without-default.test.ts": {
     "default": 4200,

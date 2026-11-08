@@ -18,6 +18,23 @@ const commonJs = {
   "panel.cjs": `const { reading } = require("./meter.cjs");\nexports.show = () => reading;\n`,
 };
 const lay = (file: string) => `  vi.doMock("./${file}", () => ({ level: "deep" }));\n`;
+// The test holds the door, so the second call reaches the panel by the require() in it and by nothing else.
+const door = { "door.cjs": `exports.show = () => require("./panel.cjs").show();\n` };
+const throughDoor = (body: string) => inTest(`  const door = await import("./door.cjs");\n` + body);
+const call = (at: string) => `  console.log("SAID", "${at}", door.show());\n`;
+// The desk makes its require() while the program runs, so its calls reach the gauge from outside the compiled code.
+const desk = {
+  "floor.cjs": `exports.level = "low";\n`,
+  "gauge.cjs": `let reads = 0;\nexports.show = () => require("./floor.cjs").level + " " + ++reads;\n`,
+  "desk.cjs": `const Module = require("node:module");\nconst ask = Module.createRequire(__filename);\nexports.show = () => ask("./gauge.cjs").show();\n`,
+};
+const atDesk = (body: string) =>
+  `${head}const { doMock, doUnmock } = vi;\ntest("t", async () => {\n  const door = await import("./desk.cjs");\n${body}});\n`;
+const layOverLoaded =
+  call("first") +
+  `  doMock("./floor.cjs", () => ({ level: "deep" }));\n` +
+  call("under") +
+  `  doUnmock("./floor.cjs");\n`;
 const runs = {
   "the next test file asks for a module above the mock": {
     files: {
@@ -51,6 +68,30 @@ const runs = {
       "z.test.mjs": inTest(ask("second", "panel.cjs")),
     },
     named: ["meter.cjs, while z.test.mjs ran", "panel.cjs, while z.test.mjs ran"],
+  },
+  "the mock is removed and the same test asks again by require()": {
+    files: {
+      ...commonJs,
+      ...door,
+      "b.test.mjs": throughDoor(lay("floor.cjs") + call("first") + `  vi.doUnmock("./floor.cjs");\n` + call("second")),
+    },
+    named: ["meter.cjs, while b.test.mjs ran", "panel.cjs, while b.test.mjs ran"],
+  },
+  "the mock is removed and nobody asks again by require()": {
+    files: {
+      ...commonJs,
+      ...door,
+      "b.test.mjs": throughDoor(lay("floor.cjs") + call("first") + `  vi.doUnmock("./floor.cjs");\n`),
+    },
+    named: [],
+  },
+  "the mock is removed and a require() that was made while the program ran asks again": {
+    files: { ...desk, "b.test.mjs": atDesk(layOverLoaded + call("second")) },
+    named: ["gauge.cjs, while b.test.mjs ran"],
+  },
+  "the mock is removed and nobody asks again by a require() that was made while the program ran": {
+    files: { ...desk, "b.test.mjs": atDesk(layOverLoaded) },
+    named: [],
   },
   "three test files in workers of their own name a file once": {
     files: {

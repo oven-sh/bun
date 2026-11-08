@@ -495,7 +495,7 @@ pub(super) fn move_records(
     );
     mover.add_variables_without_unit(&variables, synthetic_exports);
     declared_records.sort_unstable_by(|one, other| {
-        let place = |it: &DeclaredRecord| (it.module, it.start, it.parameter);
+        let place = |it: &DeclaredRecord| (it.module, it.position, it.parameter);
         place(one)
             .cmp(&place(other))
             .then_with(|| one.names.cmp(&other.names))

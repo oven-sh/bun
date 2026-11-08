@@ -76,9 +76,14 @@
 //                                      nor where no instructions are counted
 //   // Todo under --aot-erase-types: <why>   its build with those flags does not pass today. The others are held as ever. It fails once that one passes: the line goes out.
 //   // Todo under a check: <why>       the same for every build with --aot-check= among its flags
-//   // Skip under --aot-harden=proof-checks: <why>   its build with those flags is made and run, and what it prints is compared with nothing: `ways` says
-//                                      "built and run, not compared" of it. The others are held as ever. For a program that asks the collector whether an object is gone
+//   // Skip on linux arm64 under --aot-harden=proof-checks: <why>   where process.platform and process.arch are those two, its build with those flags is made and run, and what
+//                                      it prints is compared with nothing: `ways` says "built and run, not compared" of it. A failed build, a limit, a signal and another
+//                                      exit code than `// Exit code:` says fail it all the same. Everywhere else, and in its other builds, it is held as ever.
+//                                      For a program that asks the collector whether an object is gone
 //   // No build under --aot-harden=proof-checks: <why>   it is not built with those flags. The others are held as ever. For a build that outgrows the machine: <why> says how large it is
+//                                      Both name one of the ways in which every program is built whatever the build of CI, or one of the program's own `// Under:`, stand in
+//                                      the head and say why: a line that does not fails the program. stderr lists what they leave out behind the counts of the builds, and
+//                                      every-stored-program-is-built-once-more-where-guesses-fail.test.ts holds the list of all of them
 //   // Under: <flags>: <why>           it is built once more with those flags, and held to the same. A line for each such build
 //   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. What it prints is compared in the first build alone, and not under --more-flags.
 //                                      Every other build is made and run: `ways` says "built and run, not compared" of it, not "pass"
@@ -166,6 +171,8 @@ type Program = {
   skipOfBuildWith: (flags: readonly string[]) => string | undefined;
   isNotBuiltWith: (flags: readonly string[]) => boolean;
   marksNotRead: string[];
+  /** The lines `// Skip on .. under ..:` and `// No build under ..:` that name no way, say no reason or stand below the head. */
+  linesThatLeaveOutNotRead: string[];
   /** The flags of each further build that it asks for. */
   under: string[][];
   statistics: Bound[];
@@ -923,7 +930,19 @@ function read(file: string): Program {
     ).flat(),
     todoOfBuildWith: flags =>
       lines(`Todo under ${flags.join(" ")}`)[0] ?? (flags.some(isCheck) ? lines("Todo under a check")[0] : undefined),
-    skipOfBuildWith: flags => lines(`Skip under ${flags.join(" ")}`)[0],
+    skipOfBuildWith: flags => lines(`Skip on ${process.platform} ${process.arch} under ${flags.join(" ")}`)[0],
+    linesThatLeaveOutNotRead: Array.from(
+      text.matchAll(/^\/\/ (?:Skip(?: on \w+ \w+)? under(?! ASAN:)|No build under) (.*?):(?:[ \t]+(.*))?$/gm),
+      ({ 0: line, 1: flags, 2: why, index }) =>
+        index < head.length &&
+        line.startsWith("// Skip under") === false &&
+        why?.trim() &&
+        [...waysBehindTheFirst, whereProofsAreChecked, ...lines("Under").map(said => said.split(": ", 1)[0].split(/\s+/))].some(
+          way => way.join(" ") === flags,
+        )
+          ? []
+          : [line.slice(0, 120)],
+    ).flat(),
     isNotBuiltWith: flags => lines(`No build under ${flags.join(" ")}`).length > 0,
     under: lines("Under").map(line => line.split(": ", 1)[0].split(/\s+/).filter(Boolean)),
     statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
@@ -1211,6 +1230,13 @@ async function run(program: Program): Promise<void> {
       'not of the form `// Todo..: it grows: <why>`, `// Todo..: "<a word>" | "<the word for it>": <why>` or `// Todo: only frames (..): <why>`: ' +
         program.marksNotRead.join("; "),
     );
+  if (program.linesThatLeaveOutNotRead.length)
+    return fail(
+      program,
+      "read",
+      "not of the form `// Skip on <platform> <arch> under <flags>: <why>` or `// No build under <flags>: <why>` in the head, with the flags of a way of every build: " +
+        program.linesThatLeaveOutNotRead.join("; "),
+    );
   if ("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER" in { ...program.env, ...program.envOfExecutable })
     return fail(program, "read", "no user sets BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: what is run runs without it");
   const cwd = dirname(program.path);
@@ -1385,8 +1411,11 @@ async function run(program: Program): Promise<void> {
       runMB: compiled.peakMB,
       plainMB: plain?.peakMB,
     };
-    if ((moreFlags.length || !runsAreAsUsersRunThem || program.way !== "compiled") && program.printsWhatIsSaved)
+    if ((moreFlags.length || !runsAreAsUsersRunThem || program.way !== "compiled") && program.printsWhatIsSaved) {
+      if (compiled.output.exitCode !== program.exitCode)
+        return fail(program, "run", `it ended with ${describeEnd(compiled.output)}, not with ${program.exitCode}`, compiled.output, plain?.output);
       return settle(program, { ...passes, isCompared: false });
+    }
     const passesButForFrames = () => (programsWhoseFramesDiffer++, settle(program, { ...passes, framesDiffer: true }));
     if (stored !== undefined) {
       if (asText(compared(compiled.output)) === stored) return settle(program, passes);
@@ -1499,6 +1528,7 @@ const all = [
         todoOfWay: program.todoOfBuildWith(flags),
         printsWhatIsSaved: program.printsWhatIsSaved || program.skipOfBuildWith(flags) !== undefined,
         marksNotRead: [program.todoOfBuildWith(flags) ?? []].flat().filter(said => !readMark(said)),
+        linesThatLeaveOutNotRead: [],
         flags: [...program.flags, ...flags.filter(flag => !program.flags.includes(flag))],
         statistics: [],
         counts: [],
@@ -1531,6 +1561,21 @@ for (const { way } of all) buildsOfWays.set(way, (buildsOfWays.get(way) ?? 0) + 
 console.error(
   `builds by way: ${Array.from(buildsOfWays, ([way, builds]) => `${way} ${builds}`).join(" | ")}` +
     (takesTheFirstBuildAlone ? " | --no-erased leaves out every build behind the first" : ""),
+);
+const notCompared = all.filter(
+  ({ way, skipOfBuildWith }) => way !== "compiled" && skipOfBuildWith(way.slice("under ".length).split(" ")) !== undefined,
+);
+const notBuilt = asWritten.flatMap(program =>
+  furtherBuilds({ ...program, isNotBuiltWith: () => false })
+    .filter(program.isNotBuiltWith)
+    .map(flags => ({ file: program.file, way: `under ${flags.join(" ")}` })),
+);
+console.error(
+  [
+    `left out by a line: ${notCompared.length} not compared | ${notBuilt.length} not built`,
+    ...notCompared.map(({ file, way }) => `  not compared: ${file} ${way}`),
+    ...notBuilt.map(({ file, way }) => `  not built: ${file} ${way}`),
+  ].join("\n"),
 );
 if (programsWhoseFramesDiffer || programsMarkedForFramesAlone)
   console.error(

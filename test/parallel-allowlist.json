@@ -1693,6 +1693,8 @@
     "aot/a-written-import-of-a-file-that-was-only-required-while-a-factory-has-yet-to-settle.test.ts",
     "aot/the-text-of-a-function-of-a-file-that-bears-buns-mark-in-a-test-run.test.ts",
     "aot/what-a-factory-that-ended-its-own-mock-over-a-preloads-returned-stays-out-of-the-next-test-file.test.ts",
+    "aot/mock-ways.test.ts",
+    "aot/a-mock-laid-below-a-compiled-file-that-the-loader-holds-as-text-is-seen-by-it.test.ts",
     "aot/a-class-of-buns-modules-over-a-constructor-function-names-it-as-its-base.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",

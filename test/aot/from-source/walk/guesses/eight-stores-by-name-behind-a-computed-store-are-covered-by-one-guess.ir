@@ -1,0 +1,33 @@
+# Behind a computed store nothing is known of the slots of `all`: one guess covers the eight stores by name that follow and looks at each slot in front of the first.
+# The twin of nine-stores-..: the last size at which the search goes through its short lists. Both sizes are compiled alike.
+# f1 = fill
+# -- source: main.js
+# function fill(key) {
+#   const all = {};
+#   all[key] = 1;
+#   all.f0 = 0;
+#   all.f1 = 1;
+#   all.f2 = 2;
+#   all.f3 = 3;
+#   all.f4 = 4;
+#   all.f5 = 5;
+#   all.f6 = 6;
+#   all.f7 = 7;
+#   return all;
+# }
+# globalThis.kept = fill;
+# print(Object.keys(fill("x")).length);
+# -- end of source
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: = IsNotFrozen
+# WALK-NOT: = IsNotFrozen
+# WALK: = PutSlot {{*}}key="f0"
+# WALK: = PutSlot {{*}}key="f1"
+# WALK: = PutSlot {{*}}key="f2"
+# WALK: = PutSlot {{*}}key="f3"
+# WALK: = PutSlot {{*}}key="f4"
+# WALK: = PutSlot {{*}}key="f5"
+# WALK: = PutSlot {{*}}key="f6"
+# WALK: = PutSlot {{*}}key="f7"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 9

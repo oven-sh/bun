@@ -428,12 +428,6 @@ impl FragmentBuilder {
         }
     }
 
-    pub(crate) fn map_starts_of_declared_records(&mut self, mut map: impl FnMut(u32) -> u32) {
-        for declared in &mut self.declared_records {
-            declared.start = map(declared.start);
-        }
-    }
-
     pub(crate) fn define_layout(&mut self, id: LayoutId, layout: Layout) {
         debug_assert!(
             layout.supertypes.is_empty(),

@@ -1488,8 +1488,8 @@ function setName(fn, value) {
     configurable: true,
   });
 }
-if (!IS_COMPILED_AHEAD_OF_TIME) setName(Dirent, "Dirent");
-if (!IS_COMPILED_AHEAD_OF_TIME) setName(Stats, "Stats");
+setName(Dirent, "Dirent");
+setName(Stats, "Stats");
 setName(_toUnixTimestamp, "_toUnixTimestamp");
 setName(access, "access");
 setName(accessSync, "accessSync");

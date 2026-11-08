@@ -221,6 +221,8 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) written_path: Vec<u8>,
     pub(in crate::lower) known_helpers_lowered: KnownHelpersLowered,
     pub(in crate::lower) texts_read_back: u64,
+    pub(in crate::lower) declared_records_without_position:
+        Vec<(hir::FnId, crate::ir::generated::DeclaredRecord)>,
     scratch: BuilderScratch,
 }
 
@@ -332,6 +334,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             written_path: Vec::new(),
             known_helpers_lowered: KnownHelpersLowered::default(),
             texts_read_back: 0,
+            declared_records_without_position: Vec::new(),
             scratch: BuilderScratch::default(),
         }
     }

@@ -1037,9 +1037,8 @@ export const shapes: Shape[] = [
   // A call by name through a family is tied for every member: a field beside the fields of each is made and watched, and what is found beside each is watched: classes x names in nodes and observers. 4,000 of each: 82 G instructions, 6,454 MB.
   {
     name: "classes below one base, a method of each called on a value of the family where it is there",
-    growsSoFar: "3.95 times in FactEdges",
     counted: "classes, and names",
-    size: 500,
+    size: 1000,
     entry: "main.js",
     write: size => ({
       "main.js":
@@ -3067,6 +3066,19 @@ export const shapes: Shape[] = [
     }),
   },
   {
+    name: "parameters of one function that each declare a type",
+    counted: "parameters",
+    size: 2000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        `function count(first: number, ${upTo(size, index => `e${index}?: number`).join(", ")}) {\n  return first;\n}\n` +
+        `console.log(count(1));\n`,
+    }),
+  },
+  {
     name: "arguments of one call, each a sum",
     counted: "arguments",
     size: 16000,
@@ -3539,8 +3551,8 @@ export const shapes: Shape[] = [
     counted: "loops",
     size: 200,
     entry: "main.js",
-    // In six builds running it read 2.10, 2.07, 2.08, 2.08, 2.09 and 2.11 times, on both sides of the bound of all shapes: what 200 loops add is a fifth of the build, and a million instructions move the reading by 0.015.
-    // A straight line would read 2.00: a small square is still there. TODO: the change that takes it out gives the row the bound of all shapes again. The fault above read 2.9.
+    // Judged under musl alone: there 400 loops add just over what is judged (310 M instructions), under glibc 257 M. In six builds running musl read 2.10, 2.07, 2.08, 2.08, 2.09 and 2.11 times, on both sides of the bound of all shapes, where glibc read 2.01: why musl weighs it more is not known.
+    // Since then a loop no longer fills and copies the types of all that lies in it, climbs to the outermost loop, or asks about every walk around it: 1.98 under glibc, and 2.00 from 500 to 1,000 deep. TODO: once musl reads 2.05 or less the row takes the bound of all shapes again. The fault above read 2.9.
     mostGrowthInInstructions: 2.15,
     write: size => ({
       "main.js":
@@ -3672,6 +3684,20 @@ export const shapes: Shape[] = [
         `const unseen = x => [x][JSON.parse("0")];\nconst m = unseen(3);\nlet sum = 0${upTo(size, index => `, x${index} = 0`).join("")};\ntry {\nfor (let r = 0; r < m; r++) {\n` +
         lines(size, index => `  for (let i = 0; i < m; i++) x${index} += i * 0.5;`) +
         `}\n} catch (error) { sum = -1; }\nconsole.log(sum${upTo(size, index => ` + x${index}`).join("")});\n`,
+    }),
+  },
+  // All the names that are used off an object say what is expected of it. Every read of the variable asked anew, and each ask went through all the names three times: reads x names.
+  // 4,000 fields took 21 G instructions.
+  {
+    name: "loops in a row inside one loop under a try at the top of a file that each add fractions to a field of their own of one literal",
+    counted: "loops, and fields",
+    size: 1200,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `const unseen = x => [x][JSON.parse("0")];\nconst m = unseen(3);\nlet sum = 0;\nconst o = {${upTo(size, index => `x${index}: 0`).join(", ")}};\ntry {\nfor (let r = 0; r < m; r++) {\n` +
+        lines(size, index => `  for (let i = 0; i < m; i++) o.x${index} += i * 0.5;`) +
+        `}\n} catch (error) { sum = -1; }\nconsole.log(sum${upTo(size, index => ` + o.x${index}`).join("")});\n`,
     }),
   },
   {
@@ -5785,7 +5811,6 @@ console.log(typeof outmost.inner);
       counted: "branches",
       size: 250,
       entry: "main.js",
-      growsSoFarInInstructions: inLoop ? "2.88 times in instructions" : "3.08 times in instructions",
       write: size => ({
         "main.js":
           `class Shape { constructor(w) {\n${lines(Math.max(size, 1), index => `    this.a${index} = w;`)}  } }\nfunction pick(flags, other) {\n  let x = other[0], s = 0;\n` +
@@ -7100,6 +7125,18 @@ export {};
         `function makeReader() {\n  var letters: string;\n  var place: number;\n  var limit: number;\n  function codeAt(at: number) { return letters.charCodeAt(at); }\n  function pointAt(at: number) { return letters.codePointAt(at) as number; }\n  function skim(): number {\n    let sum = 0;\n` +
         lines(size, index => `    for (let code = codeAt(place); place < limit && code !== ${index + 200}; code = pointAt(++place)) {\n      if (code === 123) break;\n    }\n    sum += place;\n    place = 0;`) +
         `    return sum;\n  }\n  function reset(next: string) { letters = next; place = 0; limit = next.length; }\n  return { skim, reset };\n}\n(globalThis as any).kept = makeReader();\n(globalThis as any).kept.reset("abc");\nconsole.log((globalThis as any).kept.skim());\n`,
+    }),
+  },
+  {
+    name: "functions that each loop over a list whose rows have the names of a literal that stays in its own function",
+    counted: "functions",
+    size: 400,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `const crates = JSON.parse('[{"wide":1.5,"tall":2.5,"drift":0.5,"sink":0.25},{"wide":2.5,"tall":3.5,"drift":0.75,"sink":0.5}]');\nfunction weighOne(i) { const crate = { wide: i + 0.5, tall: i * 0.5, drift: i * 0.25, sink: 0.5 }; return crate.wide + crate.tall + crate.drift + crate.sink; }\nlet sum = weighOne(3);\n` +
+        lines(size, index => `function shift${index}(list, by) { for (let i = 0; i < list.length; i++) { const c = list[i]; c.sink += ${index + 1} * by; c.wide += c.drift * by; c.tall += c.sink * by; } }\nshift${index}(crates, 0.5);`) +
+        `console.log(sum + crates[0].wide + crates[1].tall);\n`,
     }),
   },
   // A walk of a loop that believes a variable as it stood in front folds away the test behind which a helper stores the next variable, so each walk learned one store more:

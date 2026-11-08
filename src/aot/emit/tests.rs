@@ -232,7 +232,7 @@ fn create_full_program() -> Program {
     });
     program.declared_records.push(DeclaredRecord {
         module: MODULE,
-        start: 7,
+        position: 7,
         parameter: 1,
         names: vec![names.key],
     });

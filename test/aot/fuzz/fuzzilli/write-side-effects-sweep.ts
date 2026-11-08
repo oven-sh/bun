@@ -13,32 +13,37 @@ import { mkdirSync, writeFileSync } from "fs";
 const fields: [string, string, string, string, [string, string][]][] = [
   [
     "the-package-says-it-has-none",
-    "node_modules/pkg/index.mjs",
-    "pkg",
+    "node_modules/@made-up/pkg/index.mjs",
+    "@made-up/pkg",
     "./OWNER",
     [
       [
-        "node_modules/pkg/package.json",
-        '{ "name": "pkg", "version": "1.0.0", "main": "./index.mjs", "sideEffects": false }',
+        "node_modules/@made-up/pkg/package.json",
+        '{ "name": "@made-up/pkg", "version": "1.0.0", "main": "./index.mjs", "sideEffects": false }',
       ],
     ],
   ],
   [
     "the-package-says-nothing",
-    "node_modules/pkg/index.mjs",
-    "pkg",
-    "./OWNER",
-    [["node_modules/pkg/package.json", '{ "name": "pkg", "version": "1.0.0", "main": "./index.mjs" }']],
-  ],
-  [
-    "the-package-lists-no-file",
-    "node_modules/pkg/index.mjs",
-    "pkg",
+    "node_modules/@made-up/pkg/index.mjs",
+    "@made-up/pkg",
     "./OWNER",
     [
       [
-        "node_modules/pkg/package.json",
-        '{ "name": "pkg", "version": "1.0.0", "main": "./index.mjs", "sideEffects": [] }',
+        "node_modules/@made-up/pkg/package.json",
+        '{ "name": "@made-up/pkg", "version": "1.0.0", "main": "./index.mjs" }',
+      ],
+    ],
+  ],
+  [
+    "the-package-lists-no-file",
+    "node_modules/@made-up/pkg/index.mjs",
+    "@made-up/pkg",
+    "./OWNER",
+    [
+      [
+        "node_modules/@made-up/pkg/package.json",
+        '{ "name": "@made-up/pkg", "version": "1.0.0", "main": "./index.mjs", "sideEffects": [] }',
       ],
     ],
   ],
@@ -46,10 +51,10 @@ const fields: [string, string, string, string, [string, string][]][] = [
     "the-application-says-it-has-none",
     "barrel.mjs",
     "./barrel.mjs",
-    "pkg",
+    "@made-up/pkg",
     [
       ["package.json", '{ "name": "application", "version": "1.0.0", "sideEffects": false }'],
-      ["node_modules/pkg/package.json", '{ "name": "pkg", "version": "1.0.0", "main": "./OWNER" }'],
+      ["node_modules/@made-up/pkg/package.json", '{ "name": "@made-up/pkg", "version": "1.0.0", "main": "./OWNER" }'],
     ],
   ],
 ];
@@ -118,7 +123,7 @@ function write(at: number): { name: string; text: string } {
   const rest: [string, string][] = [
     ...says.map(([path, text]): [string, string] => [path, text.replace("OWNER", ownerFile)]),
     [indexPath, handsOn.replaceAll('"O"', `"${behind.replace("OWNER", ownerFile)}"`)],
-    [`node_modules/pkg/${ownerFile}`, owned],
+    [`node_modules/@made-up/pkg/${ownerFile}`, owned],
   ];
   return {
     name: `${field}--${index}--${owner}--${statement}--${reach}.mjs`,

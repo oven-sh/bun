@@ -253,14 +253,6 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
       "return IS_COMPILED_AHEAD_OF_TIME ? fs.existsSync(_path) : fs.existsSync.$apply(fs, arguments);",
       arm("exists-sync-with-no-operand-and-with-two.mjs"),
     ],
-    [
-      `if (!IS_COMPILED_AHEAD_OF_TIME) setName(Dirent, "Dirent");`,
-      arm("the-names-of-the-two-native-classes-of-node-fs.cjs"),
-    ],
-    [
-      `if (!IS_COMPILED_AHEAD_OF_TIME) setName(Stats, "Stats");`,
-      arm("the-name-of-stats-is-deleted-ahead-of-node-fs.mjs"),
-    ],
   ],
   "ahead-of-time/node/path.ts": [
     [
@@ -280,7 +272,7 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
   ],
   "ahead-of-time/node/net.ts": [
     [
-      "if (IS_COMPILED_AHEAD_OF_TIME) netSymbols.resumeOfSocket = Socket.prototype.resume;",
+      "if (IS_COMPILED_AHEAD_OF_TIME) netSymbols.resumeOfSocket = resumeOfSocket;",
       arm("a-getter-under-resume-above-the-prototype-of-sockets.cjs"),
     ],
     [

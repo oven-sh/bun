@@ -3070,7 +3070,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         for (auto& loaded : record->loadedModules().values()) {
             auto* imported = loaded.m_module.get();
 #if ENABLE(AOT)
-            if (vm.hasCompiledCode() && imported->hasLiveExports() && !registeredKeys.contains(imported) && JSC::AOT::isCompiledModuleRecord(imported))
+            if (vm.hasCompiledCode() && !registeredKeys.contains(imported) && JSC::AOT::isCompiledModuleRecord(imported))
                 addImporter(importersOf, key, imported->moduleKey().string());
 #endif
             if (auto registered = registeredKeys.find(imported); registered != registeredKeys.end())
@@ -5123,6 +5123,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (wasLoadedAheadOfThisTestFile) {
             forgetFailuresKeptByCompiledProgram(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
+            // The loader holds no compiled file, but it may hold what it made of the text of a file that imports one: code from disk, or a compiled file that was loaded a second time.
+            if (!previous) {
+                ModulesToEvict evict;
+                evict.keepsFailuresOfCompiledProgram = true;
+                evict.modules.append(specifier);
+                evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
 #endif
     }

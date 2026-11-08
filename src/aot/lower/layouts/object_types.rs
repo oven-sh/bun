@@ -487,13 +487,14 @@ impl FileLowering<'_, '_, '_, '_> {
         let names: Vec<PropertyKeyId> = required.map(|field| self.find_key(field.0)).collect();
         if !names.is_empty() {
             let module = self.module_id();
-            let start = self.hir[function].text_start;
-            self.fragment.add_declared_record(DeclaredRecord {
+            let declared = DeclaredRecord {
                 module,
-                start,
+                position: 0,
                 parameter,
                 names,
-            });
+            };
+            self.declared_records_without_position
+                .push((function, declared));
         }
     }
 

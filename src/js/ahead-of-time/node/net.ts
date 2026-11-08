@@ -3053,7 +3053,7 @@ function drainOnreadTailNT(socket: $Node.Socket) {
   }
 }
 
-Socket.prototype.resume = function resume(this: $Node.Socket) {
+const resumeOfSocket = function resume(this: $Node.Socket) {
   // Schedule the Readable flow tick first so its read() runs while
   // kOnreadDraining is still set and does not queue a second drain: Node's
   // override sets handle.reading synchronously for the same reason.
@@ -3068,7 +3068,8 @@ Socket.prototype.resume = function resume(this: $Node.Socket) {
   restorePausedHold(this, this._handle);
   return ret;
 };
-if (IS_COMPILED_AHEAD_OF_TIME) netSymbols.resumeOfSocket = Socket.prototype.resume;
+Socket.prototype.resume = resumeOfSocket;
+if (IS_COMPILED_AHEAD_OF_TIME) netSymbols.resumeOfSocket = resumeOfSocket;
 
 // Only a connected onread socket stops reading here: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L817-L827
 Socket.prototype.pause = function pause(this: $Node.Socket) {

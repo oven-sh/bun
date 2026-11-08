@@ -1,7 +1,7 @@
 // Objects and closures over large arrays are made as arguments of calls; the argument behind each of them throws, so the call is never made, and the function catches.
 // Each closure holds two names fewer than the one before it, and each object two fields fewer, so a smaller one never covers what a larger one left.
 // Behind each catch nobody can reach the array any more: a full collection behind the last finds them gone.
-// Skip under --aot-harden=proof-checks: on Linux arm64 that build found what was lent still held behind a full collection, where plain Bun and every other build find it gone; on x64 that build finds it gone too. Why is not known: seen in the log of CI, not run on arm64 by hand
+// Skip on linux arm64 under --aot-harden=proof-checks: there that build prints "5 true 5 true": two of the four arrays are still held at the collection; plain Bun and every other build print "5 false 5 false", and so does that build on x64. Where the caller asks for the collection, behind the return of closures() and objects(), that build prints "false" there too: what holds them lies in the frame and the registers of the function itself. Under the flag what is lent is made in the heap; objects() moves the second object into x22 in front of the call that throws, and nothing writes x22 again: a dead copy, which the collector reads
 const unseen = <T,>(x: T): T => [x][JSON.parse("0")];
 
 function make(n: number): any {

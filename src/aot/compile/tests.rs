@@ -1561,14 +1561,16 @@ fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
 }
 
 #[test]
-fn declared_record_stands_where_the_kept_text_of_its_function_starts() {
+fn declared_record_bears_the_position_of_its_function() {
     let library = "export const first = value => value;\n\
-        export function aborted(payload) { return payload.issues.length > 0; }\n";
+        export function aborted(payload) { return payload.issues.length > 0; }\n\
+        export class Kept { constructor(payload) { this.payload = payload; } }\n";
     let declarations = "export interface Payload { value: unknown; issues: unknown[] }\n\
         export declare const first: <T>(value: T) => T;\n\
-        export declare function aborted(payload: Payload): boolean;\n";
-    let main = "import { aborted, first } from \"./library.js\";\n\
-        console.log(aborted(first({ value: 1, issues: [] })));";
+        export declare function aborted(payload: Payload): boolean;\n\
+        export declare class Kept { constructor(payload: Payload); payload: Payload }\n";
+    let main = "import { Kept, aborted, first } from \"./library.js\";\n\
+        console.log(aborted(first(new Kept({ value: 1, issues: [] }).payload)));";
     let files = [
         ("main.ts", main),
         ("library.js", library),
@@ -1576,11 +1578,11 @@ fn declared_record_stands_where_the_kept_text_of_its_function_starts() {
         GLOBALS,
     ];
     let program = &link_successfully(&files).program;
-    assert!(!program.declared_records.is_empty());
+    assert_eq!(program.declared_records.len(), 2);
     for declared in &program.declared_records {
-        let place = (declared.module, declared.start);
+        let place = (declared.module, declared.position);
         let mut functions = program.functions.iter();
-        assert!(functions.any(|function| (function.module, function.text.start) == place));
+        assert!(functions.any(|function| (function.module, function.position) == place));
     }
 }
 

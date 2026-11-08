@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use bun_sema::erasure::ReplacedText;
 use bun_sema::hir::{
     Chain, ExprId, ExprKind, File, Flags, FnBody, FnKind, Func, PatId, PatKind, PropKey,
@@ -63,6 +65,7 @@ pub(super) fn find_text_of_heads(
         text: &hir.text,
         types: &removed,
         first_type: 0,
+        types_that_end_by: Cell::new((0, 0)),
         expressions: Vec::new(),
         tokens: Vec::new(),
         parts: Vec::new(),
@@ -193,6 +196,7 @@ struct Head<'a, 's> {
     text: &'a [u8],
     types: &'a [(u32, u32)],
     first_type: usize,
+    types_that_end_by: Cell<(usize, usize)>,
     expressions: Vec<(u32, u32)>,
     tokens: Vec<Token>,
     parts: Vec<ReplacedText>,
@@ -208,8 +212,14 @@ fn is_part_of_word(byte: u8) -> bool {
 
 impl Head<'_, '_> {
     fn removes(&self, at: usize) -> bool {
-        let mut behind = self.types[self.first_type..].iter();
-        let next = behind.find(|range| range.1 as usize > at);
+        let (asked, passed) = self.types_that_end_by.get();
+        let from = if asked <= at { passed } else { self.first_type };
+        let ended = self.types[from..]
+            .iter()
+            .take_while(|range| range.1 as usize <= at);
+        let next = from + ended.count();
+        self.types_that_end_by.set((at, next));
+        let next = self.types.get(next);
         next.is_some_and(|range| range.0 as usize <= at)
     }
 
@@ -398,6 +408,7 @@ impl Head<'_, '_> {
         self.first_type = self
             .types
             .partition_point(|range| range.1 as usize <= start);
+        self.types_that_end_by.set((0, self.first_type));
         self.expressions.clear();
         for parameter in &hir.params[function.params.range()] {
             self.add_pattern(parameter.pat);

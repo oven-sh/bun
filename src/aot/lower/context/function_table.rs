@@ -62,6 +62,18 @@ impl FileLowering<'_, '_, '_, '_> {
         if !self.inputs.options.embeds_function_text {
             header.text = SourceRange::default();
         }
+        if let FunctionKey::Source(source) = key {
+            let waiting = core::mem::take(&mut self.declared_records_without_position);
+            for (function, mut declared) in waiting {
+                if function == source.function {
+                    declared.position = header.position;
+                    self.fragment.add_declared_record(declared);
+                } else {
+                    self.declared_records_without_position
+                        .push((function, declared));
+                }
+            }
+        }
         self.functions.add(function, header);
         function
     }

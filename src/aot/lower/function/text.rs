@@ -190,8 +190,6 @@ impl FileLowering<'_, '_, '_, '_> {
                     end: ranges.map_end(text.end),
                 }
             });
-            self.fragment
-                .map_starts_of_declared_records(|start| ranges.map_start(start));
             if let Some(changes) = changes {
                 self.read_function_texts_back(&ranges, texts, changes);
             }

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -151,6 +152,17 @@ describe("fs.Dir", () => {
       }); // </when closed>
     }); // </when an empty directory is opened>
   }); // </given an empty temp directory>
+
+  it("a read with a non-function callback takes no entry", () => {
+    using tmp = tempDir("dir-read-invalid-callback", { "a.txt": "", "b.txt": "" });
+    using dir = fs.opendirSync(String(tmp));
+    // The first read loads both entries.
+    const first = dir.readSync();
+    expect(() => dir.read(null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    const second = dir.readSync();
+    expect([first?.name, second?.name].sort()).toEqual(["a.txt", "b.txt"]);
+    expect(dir.readSync()).toBeNull();
+  });
 }); // </fs.Dir>
 
 describe("fs.opendir async validation", () => {

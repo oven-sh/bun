@@ -33,7 +33,7 @@ describe.concurrent("bunfig.toml type-mismatch error messages", () => {
   });
 });
 
-// Only a string is a define. Every other value is skipped, and used to be skipped with no message.
+// Only a string is a define. Every other value is skipped with a warning.
 describe.concurrent("a define value that is not a string", () => {
   const PRINT_DEFINES = `console.log(typeof K === "undefined" ? "no K" : JSON.stringify(K), typeof L === "undefined" ? "no L" : JSON.stringify(L));`;
 
@@ -75,6 +75,8 @@ describe.concurrent("a define value that is not a string", () => {
     // No header made these tables.
     [`define = { L = "1", K = false }`, "K", notString("boolean"), "1:25"],
     [`define.L = "1"\ndefine.K = false`, "K", notString("boolean"), "2:12"],
+    [`[define]\nL = "1"\n[[define.K]]\na = 1`, "K", notString("array"), "3:10"],
+    [`[define]\nL = "1"\n[define.process.env]`, "process", notString("object"), "3:9"],
     [`[define]\nL = "1"\n[serve.static]\ndefine = { K = 1 }`, "K", notString("number"), "4:16"],
     // TOML reads an unquoted dotted key, and a header, as nested tables.
     [`[define]\nL = "1"\nprocess.env.SECRET = "'sk_live_abc123'"`, "process.env.SECRET", DOTTED, "3:13"],
@@ -111,6 +113,15 @@ describe.concurrent("a define value that is not a string", () => {
         ...ignored("config.json", "M", notString("null"), "5:10"),
         ...ignored("config.json", "N", notString("object"), "6:10"),
       ],
+      exitCode: 0,
+    });
+  });
+
+  test("a line of a JSON config that starts with [ is not a header", async () => {
+    const config = `{ "zz":\n[1], "define": { "K": false, "L": "1" } }\n`;
+    expect(await run({ "config.json": config }, ["--config=./config.json", "k.js"])).toEqual({
+      stdout: "no K 1\n",
+      stderr: ignored("config.json", "K", notString("boolean"), "2:23"),
       exitCode: 0,
     });
   });

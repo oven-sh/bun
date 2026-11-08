@@ -143,6 +143,19 @@ fn dotted_table(key: &Expr, value: &Expr) -> Option<bun_ast::StoreRef<E::Object>
     value.data.e_object().filter(|_| value.loc == key.loc)
 }
 
+/// Whether `loc` is in a table header: its line starts with `[`, and no `]` comes before it.
+fn is_in_header(source: &bun_ast::Source, loc: bun_ast::Loc) -> bool {
+    usize::try_from(loc.start)
+        .ok()
+        .and_then(|at| source.contents.get(..at))
+        .is_some_and(|before| {
+            let line = bun_core::strings::last_index_of_char(before, b'\n')
+                .map_or(before, |newline| &before[newline + 1..]);
+            bun_core::trim_left(line, b" \t").first() == Some(&b'[')
+                && !bun_core::strings::contains_char(line, b']')
+        })
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
@@ -422,15 +435,8 @@ impl<'a> Parser<'a, '_> {
             return;
         }
 
-        // Only a header line starts with `[`, and a header takes every key up to the next one.
-        let below_header = usize::try_from(table.loc.start)
-            .ok()
-            .and_then(|at| source.contents.get(..at))
-            .is_some_and(|before| {
-                let line = bun_core::strings::last_index_of_char(before, b'\n')
-                    .map_or(before, |newline| &before[newline + 1..]);
-                bun_core::trim_left(line, b" \t").first() == Some(&b'[')
-            });
+        // A header takes every key up to the next header, but not a key of a header itself.
+        let below_header = is_in_header(source, table.loc) && !is_in_header(source, key.loc);
         let name = escape_control_chars(name);
         let received = value.data.tag_name();
         if below_header {

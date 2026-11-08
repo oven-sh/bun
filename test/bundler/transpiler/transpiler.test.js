@@ -2771,7 +2771,7 @@ export const after = { a: 1 };
       return value;
     };
 
-    // One value for each first byte that is read as JSON, and each keyword.
+    // Each keyword, and values of each kind that is read as JSON.
     it.each([
       ["false", "x(false);"],
       ["true", "x(true);"],
@@ -2837,7 +2837,7 @@ export const after = { a: 1 };
       expect(texts.map(([text]) => [text, valueOf(text)])).toEqual(texts);
     });
 
-    // The other doors to the define table. Each gets a value, and three texts that stay strings.
+    // The other doors to the define table. Each gets two values, and three texts that stay strings.
     const values = [false, 41, " 7 days", " 1.2.3", " production"];
     const program = `console.log(JSON.stringify([OFF, COUNT, DAYS, VERSION, NAME]));`;
     const defines = (separator, flag = "--define") =>
@@ -2898,14 +2898,16 @@ export const after = { a: 1 };
       });
     });
 
-    // With nothing before it this value is an error too. Without the blank it must not become a string.
-    it.concurrent("a value nested too deep behind whitespace is an error", async () => {
+    // The parser ends at its stack limit before it can tell if the text is one whole value. Behind whitespace
+    // that is the error that it is with nothing before the text, and not a string.
+    it.concurrent("a text nested too deep behind whitespace is an error, closed or not", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
           `
-            const nested = Buffer.alloc(100_000, "[").toString() + Buffer.alloc(100_000, "]").toString();
+            const open = Buffer.alloc(100_000, "[").toString();
+            const closed = open + Buffer.alloc(100_000, "]").toString();
             const read = text => {
               try {
                 new Bun.Transpiler({ define: { K: text } });
@@ -2914,7 +2916,7 @@ export const after = { a: 1 };
                 return error.message;
               }
             };
-            console.log(JSON.stringify([read(nested), read(" " + nested)]));
+            console.log(JSON.stringify([closed, " " + closed, open, " " + open].map(read)));
           `,
         ],
         env: bunEnv,
@@ -2924,7 +2926,7 @@ export const after = { a: 1 };
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const message = "JSON document is too deeply nested";
       expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: JSON.stringify([message, message]) + "\n",
+        stdout: JSON.stringify([message, message, message, message]) + "\n",
         stderr: "",
         exitCode: 0,
       });

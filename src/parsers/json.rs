@@ -657,6 +657,10 @@ fn whole_value_after_whitespace(
     if !leads_json {
         return Ok(None);
     }
+    // JSON is UTF-8, and `parse_classic` does not check the bytes of a string.
+    if !bun_core::strings::is_valid_utf8(contents) {
+        return Ok(None);
+    }
 
     let mut attempt = bun_ast::Log::init();
     attempt.level = log.level;

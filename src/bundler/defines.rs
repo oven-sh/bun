@@ -462,13 +462,16 @@ mod tests {
         '\u{feff}',
     ];
 
-    /// What `text` is as the value of a define, and how many messages it logged.
-    fn parse(text: &str) -> (String, usize) {
+    /// What `text` is as the value of a define, and how many messages it logged at `level`.
+    fn parse_at(level: bun_ast::Level, text: &[u8]) -> (String, usize) {
         bun_ast::initialize_store_or_reset();
         let _reset = bun_ast::StoreResetGuard::new();
         let arena = bun_alloc::Arena::new();
-        let mut log = bun_ast::Log::default();
-        let parsed = DefineData::parse(b"K", text.as_bytes(), false, false, &mut log, &arena);
+        let mut log = bun_ast::Log {
+            level,
+            ..Default::default()
+        };
+        let parsed = DefineData::parse(b"K", text, false, false, &mut log, &arena);
         let value = match parsed.map(|data| data.value) {
             Err(_) => "error".to_owned(),
             Ok(ExprData::EBoolean(boolean)) => boolean.value.to_string(),
@@ -478,15 +481,20 @@ mod tests {
             Ok(ExprData::EString(string)) if string.is_utf16 => {
                 format!("\"{}\"", String::from_utf16_lossy(string.slice16()))
             }
-            Ok(ExprData::EString(string)) => {
-                format!("\"{}\"", String::from_utf8_lossy(string.slice8()))
-            }
+            Ok(ExprData::EString(string)) => match bun_core::strings::str_utf8(string.slice8()) {
+                Some(text) => format!("\"{text}\""),
+                None => format!("not UTF-8: {:?}", string.slice8()),
+            },
             Ok(ExprData::EArray(array)) => format!("array of {}", array.items.len()),
             Ok(ExprData::EObject(object)) => format!("object of {}", object.properties.len()),
             Ok(ExprData::EIdentifier(_)) => "identifier".to_owned(),
             Ok(_) => "another kind".to_owned(),
         };
         (value, log.msgs.len())
+    }
+
+    fn parse(text: &str) -> (String, usize) {
+        parse_at(bun_ast::Level::Warn, text.as_bytes())
     }
 
     fn read(text: &str) -> String {
@@ -601,6 +609,23 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn text_that_is_not_utf8_behind_whitespace_is_the_string_it_was() {
+        let read = |text: &[u8]| parse_at(bun_ast::Level::Warn, text);
+        // The JSON parser keeps such bytes as they are. The implicit string has U+FFFD for each.
+        assert_eq!(
+            read(b" \"Jos\xe9 M\""),
+            ("\" \"Jos\u{fffd} M\"\"".to_owned(), 0)
+        );
+        assert_eq!(
+            read(b" {\"k\xc2\":\"v\xe9\"}"),
+            ("\" {\"k\u{fffd}\":\"v\u{fffd}\"}\"".to_owned(), 0)
+        );
+        // A byte that is whitespace in Latin-1 is not whitespace.
+        assert_ne!(read(b"\xa0false").0, "false");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn only_a_whole_value_behind_whitespace_logs_its_warning() {
         assert_eq!(parse("{\"a\":1,\"a\":2}"), ("object of 2".to_owned(), 1));
         assert_eq!(parse(" {\"a\":1,\"a\":2}"), ("object of 2".to_owned(), 1));
@@ -609,5 +634,13 @@ mod tests {
             parse(" {\"a\":1,\"a\":2} x"),
             ("\" {\"a\":1,\"a\":2} x\"".to_owned(), 0)
         );
+        // The caller's level decides, as with nothing before the value.
+        for text in ["{\"a\":1,\"a\":2}", " {\"a\":1,\"a\":2}"] {
+            assert_eq!(
+                parse_at(bun_ast::Level::Err, text.as_bytes()),
+                ("object of 2".to_owned(), 0),
+                "{text:?}"
+            );
+        }
     }
 }

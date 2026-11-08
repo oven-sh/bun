@@ -118,8 +118,7 @@ fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
     join_abs_string::<Auto>(working_directory, &[path]).to_vec()
 }
 
-// `path` is `folder` or is inside it. The bytes are compared as they are, so a name in another case is another
-// folder. Where the file system takes the two for one, the real path of the folder shows it.
+// `path` is `folder` or is inside it. Case is not ignored: the real path settles a name in another case.
 fn is_or_holds(folder: &[u8], path: &[u8]) -> bool {
     // Only a root has a separator at its end.
     let folder = folder.strip_suffix(&[bun_paths::SEP]).unwrap_or(folder);

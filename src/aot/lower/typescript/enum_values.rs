@@ -1,19 +1,26 @@
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Decl, InitialState, SymbolId};
+use bun_sema::check::aot::ShapeKind;
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{BinOp, EnumId, EnumMemberId, ExprId, ExprKind, UnOp};
 use bun_sema::program::Sym;
 use bun_sema::types::EnumValue;
 use smallvec::SmallVec;
 
-use crate::lower::FileLowering;
+use crate::lower::{CheckerTypeId, FileLowering};
 use crate::modules::{ImportBinding, KnownObjects, Validity};
+
+const MAX_DEPTH_OF_UNION_MEMBERS: u32 = 8;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) enum EnumMemberValue {
     Number(f64),
     String(Atom),
+    /// A run-time value that is known not to be a string.
     Computed(ExprId),
+    /// A run-time value whose type is not known. Whether it gets a reverse
+    /// mapping is decided at run time.
+    ComputedUnknown(ExprId),
     ComputedNumber(ExprId),
     ComputedString(ExprId),
     PreviousPlusOne,
@@ -27,7 +34,9 @@ enum KnownPrimitive {
     String,
     Null,
     Undefined,
-    Other,
+    /// A number, boolean or bigint.
+    NotString,
+    Unknown,
 }
 
 impl KnownPrimitive {
@@ -37,9 +46,16 @@ impl KnownPrimitive {
             Constant::Null => KnownPrimitive::Null,
             Constant::Undefined => KnownPrimitive::Undefined,
             Constant::Boolean(_) | Constant::Number(_) | Constant::BigInt(_) => {
-                KnownPrimitive::Other
+                KnownPrimitive::NotString
             }
         }
+    }
+
+    fn is_known_not_string(self) -> bool {
+        matches!(
+            self,
+            KnownPrimitive::Null | KnownPrimitive::Undefined | KnownPrimitive::NotString
+        )
     }
 }
 
@@ -163,6 +179,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     Some(
                         EnumMemberValue::String(_)
                         | EnumMemberValue::Computed(_)
+                        | EnumMemberValue::ComputedUnknown(_)
                         | EnumMemberValue::ComputedString(_)
                         | EnumMemberValue::Missing,
                     ) => EnumMemberValue::Missing,
@@ -217,18 +234,80 @@ impl FileLowering<'_, '_, '_, '_> {
             Some(TranspilerConstant::Known(
                 Constant::Undefined | Constant::Null | Constant::Boolean(_) | Constant::BigInt(_),
             ))
-            | None => match self.find_known_primitive(initializer) {
-                KnownPrimitive::String => EnumMemberValue::ComputedString(initializer),
-                KnownPrimitive::Null | KnownPrimitive::Undefined | KnownPrimitive::Other => {
-                    EnumMemberValue::Computed(initializer)
+            | None => {
+                let mut known = self.find_known_primitive(initializer);
+                if known == KnownPrimitive::Unknown {
+                    known = self.find_typed_primitive(initializer);
                 }
-            },
+                match known {
+                    KnownPrimitive::String => EnumMemberValue::ComputedString(initializer),
+                    KnownPrimitive::Null
+                    | KnownPrimitive::Undefined
+                    | KnownPrimitive::NotString => EnumMemberValue::Computed(initializer),
+                    KnownPrimitive::Unknown => EnumMemberValue::ComputedUnknown(initializer),
+                }
+            }
+        }
+    }
+
+    /// What the checker knows about the initializer, when its type comes from
+    /// checked code. tsc decides the reverse mapping from this type.
+    fn find_typed_primitive(&mut self, initializer: ExprId) -> KnownPrimitive {
+        match self.queries.expression_type(initializer) {
+            Ok(ty) => self.find_primitive_of_type(ty, 0),
+            Err(_) => KnownPrimitive::Unknown,
+        }
+    }
+
+    fn find_primitive_of_type(&mut self, ty: CheckerTypeId, depth: u32) -> KnownPrimitive {
+        if depth > MAX_DEPTH_OF_UNION_MEMBERS {
+            return KnownPrimitive::Unknown;
+        }
+        let Ok(shape) = self.queries.type_shape(ty) else {
+            return KnownPrimitive::Unknown;
+        };
+        if !shape.trust.is_trusted() {
+            return KnownPrimitive::Unknown;
+        }
+        match shape.kind {
+            ShapeKind::String | ShapeKind::StringLiteral(_) | ShapeKind::TemplateLiteral { .. } => {
+                KnownPrimitive::String
+            }
+            ShapeKind::Undefined => KnownPrimitive::Undefined,
+            ShapeKind::Null => KnownPrimitive::Null,
+            ShapeKind::Boolean
+            | ShapeKind::BooleanLiteral(_)
+            | ShapeKind::Number
+            | ShapeKind::NumberLiteral(_)
+            | ShapeKind::NumericEnumMember(_)
+            | ShapeKind::BigInt
+            | ShapeKind::BigIntLiteral { .. } => KnownPrimitive::NotString,
+            ShapeKind::Int32 { base } => self.find_primitive_of_type(base, depth + 1),
+            ShapeKind::Union(members) => {
+                let mut found = None;
+                for &member in members {
+                    let primitive = self.find_primitive_of_type(member, depth + 1);
+                    found = Some(match found {
+                        None => primitive,
+                        Some(KnownPrimitive::Unknown) => return KnownPrimitive::Unknown,
+                        Some(earlier) if earlier == primitive => earlier,
+                        Some(earlier)
+                            if earlier.is_known_not_string() && primitive.is_known_not_string() =>
+                        {
+                            KnownPrimitive::NotString
+                        }
+                        Some(_) => return KnownPrimitive::Unknown,
+                    });
+                }
+                found.unwrap_or(KnownPrimitive::Unknown)
+            }
+            _ => KnownPrimitive::Unknown,
         }
     }
 
     fn find_known_primitive(&mut self, expression: ExprId) -> KnownPrimitive {
         if self.queries.is_stack_low() {
-            return KnownPrimitive::Other;
+            return KnownPrimitive::Unknown;
         }
         match self.decisions().decision(expression) {
             Decision::Constant(constant) => return KnownPrimitive::of_constant(constant),
@@ -240,10 +319,21 @@ impl FileLowering<'_, '_, '_, '_> {
         match self.hir[expression].kind {
             ExprKind::String(_) | ExprKind::Template { .. } => KnownPrimitive::String,
             ExprKind::Null => KnownPrimitive::Null,
+            ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::BigInt(_) => {
+                KnownPrimitive::NotString
+            }
             ExprKind::Unary { op, .. } => match op {
                 UnOp::Typeof => KnownPrimitive::String,
                 UnOp::Void => KnownPrimitive::Undefined,
-                _ => KnownPrimitive::Other,
+                UnOp::Plus
+                | UnOp::Minus
+                | UnOp::BitNot
+                | UnOp::Not
+                | UnOp::Delete
+                | UnOp::PreInc
+                | UnOp::PreDec
+                | UnOp::PostInc
+                | UnOp::PostDec => KnownPrimitive::NotString,
             },
             ExprKind::Binary { op, left, right } => self.find_binary_primitive(op, left, right),
             ExprKind::Assign {
@@ -264,10 +354,11 @@ impl FileLowering<'_, '_, '_, '_> {
                         KnownPrimitive::of_constant(constant)
                     }
                     Some(TranspilerConstant::StringLeftToRunTime) => KnownPrimitive::String,
-                    Some(TranspilerConstant::NumberLeftToRunTime) | None => KnownPrimitive::Other,
+                    Some(TranspilerConstant::NumberLeftToRunTime) => KnownPrimitive::NotString,
+                    None => KnownPrimitive::Unknown,
                 }
             }
-            _ => KnownPrimitive::Other,
+            _ => KnownPrimitive::Unknown,
         }
     }
 
@@ -275,9 +366,12 @@ impl FileLowering<'_, '_, '_, '_> {
         match op {
             BinOp::Add => {
                 let sides = [left, right].map(|side| self.find_known_primitive(side));
-                match sides.contains(&KnownPrimitive::String) {
-                    true => KnownPrimitive::String,
-                    false => KnownPrimitive::Other,
+                if sides.contains(&KnownPrimitive::String) {
+                    KnownPrimitive::String
+                } else if sides.iter().all(|side| side.is_known_not_string()) {
+                    KnownPrimitive::NotString
+                } else {
+                    KnownPrimitive::Unknown
                 }
             }
             BinOp::Comma => self.find_known_primitive(right),
@@ -289,10 +383,31 @@ impl FileLowering<'_, '_, '_, '_> {
                 let [left, right] = [left, right].map(|side| self.find_known_primitive(side));
                 match left {
                     KnownPrimitive::Null | KnownPrimitive::Undefined => right,
-                    KnownPrimitive::String | KnownPrimitive::Other => left,
+                    KnownPrimitive::String | KnownPrimitive::NotString => left,
+                    KnownPrimitive::Unknown => KnownPrimitive::Unknown,
                 }
             }
-            _ => KnownPrimitive::Other,
+            BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::Pow
+            | BinOp::Shl
+            | BinOp::Shr
+            | BinOp::UShr
+            | BinOp::BitAnd
+            | BinOp::BitOr
+            | BinOp::BitXor
+            | BinOp::Lt
+            | BinOp::Le
+            | BinOp::Gt
+            | BinOp::Ge
+            | BinOp::EqEq
+            | BinOp::NotEq
+            | BinOp::EqEqEq
+            | BinOp::NotEqEq
+            | BinOp::In
+            | BinOp::Instanceof => KnownPrimitive::NotString,
         }
     }
 
@@ -306,9 +421,13 @@ impl FileLowering<'_, '_, '_, '_> {
             (false, true) => self.find_known_primitive(first),
             (false, false) => {
                 let first = self.find_known_primitive(first);
-                match first == self.find_known_primitive(second) {
-                    true => first,
-                    false => KnownPrimitive::Other,
+                let second = self.find_known_primitive(second);
+                if first == second {
+                    first
+                } else if first.is_known_not_string() && second.is_known_not_string() {
+                    KnownPrimitive::NotString
+                } else {
+                    KnownPrimitive::Unknown
                 }
             }
         }

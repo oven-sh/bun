@@ -8,10 +8,10 @@ import { bunEnv, bunExe, tempDir } from "harness";
 describe.concurrent("enum member referencing an enum from another module", () => {
   test("string member gets no reverse mapping", async () => {
     using dir = tempDir("enum-cross-module-string", {
-      "enum1.ts": `export enum Enum1 { K1 = "V" }`,
+      "enum1.ts": `export enum Enum1 { K1 = "V", K2 = "W" }`,
       "main.ts": `
         import { Enum1 } from "./enum1";
-        enum Enum2 { K2 = Enum1.K1 }
+        enum Enum2 { K2 = Enum1.K1, K3 = Enum1.K1 + Enum1.K2 }
         console.log(JSON.stringify({
           entries: Object.entries(Enum2),
           keys: Object.keys(Enum2),
@@ -28,9 +28,12 @@ describe.concurrent("enum member referencing an enum from another module", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
-      entries: [["K2", "V"]],
-      keys: ["K2"],
-      values: ["V"],
+      entries: [
+        ["K2", "V"],
+        ["K3", "VW"],
+      ],
+      keys: ["K2", "K3"],
+      values: ["V", "VW"],
     });
     expect(exitCode).toBe(0);
   });

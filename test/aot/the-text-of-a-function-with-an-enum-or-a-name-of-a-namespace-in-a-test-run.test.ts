@@ -47,3 +47,13 @@ runsAsPlain(
   `export namespace Box { export let side = 4; export let count = 0; export function area() { count++; return [side * side, count]; } }`,
   `attempt(() => { const other = { side: 3, count: 10 }; return [again(typed.Box.area, other)(), other]; })`,
 );
+
+// An initializer whose type is only known at run time: a string gets no reverse mapping, a number keeps one.
+runsAsPlain(
+  "an initializer that runs and turns out to be a string",
+  `["7,A,B","s","B","A,T","s"]`,
+  `function key() { return "s" as any; }
+   export enum Top { A = key(), T = key() + key().length }
+   export function pick(f = key) { enum Inner { A = f(), B = 7 } return [Object.keys(Inner).join(), Inner.A, Inner[7]]; }`,
+  `attempt(() => [...again(typed.pick)(() => "s"), Object.keys(typed.Top).join(), typed.Top.A])`,
+);

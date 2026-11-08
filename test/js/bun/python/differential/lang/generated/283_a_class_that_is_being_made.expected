@@ -1,0 +1,312 @@
+status: 0
+script: c0ce58495adb5c83
+source: 16f12a370ba8a591
+---
+the same [] | TypeError: __bases__ assignment: 'X' object layout differs from 'X'
+    short(N.__bases__) [what='the same', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='the same', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='the same', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='the same', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='the same', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='the same', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='the same', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='the same', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='the same', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='the same', choose=function, namespace=dict] => ['N']
+the same ['__slots__'] | TypeError: __bases__ assignment: 'X' object layout differs from 'X'
+    short(N.__bases__) [what='the same', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='the same', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='the same', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='the same', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='the same', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='the same', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='the same', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='the same', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='the same', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='the same', choose=function, namespace=dict] => ['N']
+the same ['__slots__'] | TypeError: __bases__ assignment: 'X' object layout differs from 'X'
+    short(N.__bases__) [what='the same', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='the same', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='the same', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='the same', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='the same', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='the same', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='the same', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='the same', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='the same', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='the same', choose=function, namespace=dict] => ['N']
+another [] | TypeError: __bases__ assignment: 'Y' object layout differs from 'X'
+    short(N.__bases__) [what='another', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='another', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='another', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='another', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='another', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='another', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='another', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='another', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='another', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='another', choose=function, namespace=dict] => ['N']
+another ['__slots__'] | TypeError: __bases__ assignment: 'Y' object layout differs from 'X'
+    short(N.__bases__) [what='another', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='another', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='another', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='another', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='another', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='another', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='another', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='another', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='another', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='another', choose=function, namespace=dict] => ['N']
+another ['__slots__'] | TypeError: __bases__ assignment: 'Y' object layout differs from 'X'
+    short(N.__bases__) [what='another', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='another', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='another', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='another', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='another', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='another', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='another', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='another', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='another', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='another', choose=function, namespace=dict] => ['N']
+one derived from it [] | TypeError: __bases__ assignment: 'Z' object layout differs from 'X'
+    short(N.__bases__) [what='one derived from it', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='one derived from it', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='one derived from it', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='one derived from it', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='one derived from it', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => ['N']
+one derived from it ['__slots__'] | TypeError: __bases__ assignment: 'Z' object layout differs from 'X'
+    short(N.__bases__) [what='one derived from it', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='one derived from it', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='one derived from it', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='one derived from it', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='one derived from it', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => ['N']
+one derived from it ['__slots__'] | TypeError: __bases__ assignment: 'Z' object layout differs from 'X'
+    short(N.__bases__) [what='one derived from it', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='one derived from it', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='one derived from it', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='one derived from it', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='one derived from it', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='one derived from it', choose=function, namespace=dict] => ['N']
+two [] | TypeError: __bases__ assignment: 'X' object layout differs from 'X'
+    short(N.__bases__) [what='two', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='two', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='two', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='two', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='two', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='two', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='two', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='two', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='two', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='two', choose=function, namespace=dict] => ['N']
+two ['__slots__'] | TypeError: __bases__ assignment: 'X' object layout differs from 'X'
+    short(N.__bases__) [what='two', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='two', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='two', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='two', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='two', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='two', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='two', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='two', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='two', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='two', choose=function, namespace=dict] => ['N']
+two ['__slots__'] | TypeError: __bases__ assignment: 'X' object layout differs from 'X'
+    short(N.__bases__) [what='two', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='two', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='two', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='two', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='two', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='two', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='two', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='two', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='two', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='two', choose=function, namespace=dict] => ['N']
+two, the other way [] | TypeError: __bases__ assignment: 'Y' object layout differs from 'X'
+    short(N.__bases__) [what='two, the other way', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='two, the other way', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='two, the other way', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='two, the other way', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='two, the other way', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => ['N']
+two, the other way ['__slots__'] | TypeError: __bases__ assignment: 'Y' object layout differs from 'X'
+    short(N.__bases__) [what='two, the other way', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='two, the other way', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='two, the other way', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='two, the other way', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='two, the other way', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => ['N']
+two, the other way ['__slots__'] | TypeError: __bases__ assignment: 'Y' object layout differs from 'X'
+    short(N.__bases__) [what='two, the other way', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='two, the other way', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='two, the other way', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='two, the other way', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='two, the other way', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='two, the other way', choose=function, namespace=dict] => ['N']
+itself [] | TypeError: a __bases__ item causes an inheritance cycle
+    short(N.__bases__) [what='itself', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='itself', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='itself', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='itself', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='itself', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='itself', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='itself', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='itself', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='itself', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='itself', choose=function, namespace=dict] => ['N']
+itself ['__slots__'] | TypeError: a __bases__ item causes an inheritance cycle
+    short(N.__bases__) [what='itself', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='itself', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='itself', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='itself', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='itself', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='itself', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='itself', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='itself', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='itself', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='itself', choose=function, namespace=dict] => ['N']
+itself ['__slots__'] | TypeError: a __bases__ item causes an inheritance cycle
+    short(N.__bases__) [what='itself', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='itself', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='itself', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='itself', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='itself', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='itself', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='itself', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='itself', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='itself', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='itself', choose=function, namespace=dict] => ['N']
+none [] | TypeError: can only assign non-empty tuple to N.__bases__, not ()
+    short(N.__bases__) [what='none', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='none', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='none', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='none', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='none', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='none', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='none', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='none', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='none', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='none', choose=function, namespace=dict] => ['N']
+none ['__slots__'] | TypeError: can only assign non-empty tuple to N.__bases__, not ()
+    short(N.__bases__) [what='none', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='none', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='none', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='none', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='none', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='none', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='none', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='none', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='none', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='none', choose=function, namespace=dict] => ['N']
+none ['__slots__'] | TypeError: can only assign non-empty tuple to N.__bases__, not ()
+    short(N.__bases__) [what='none', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='none', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='none', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='none', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='none', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='none', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='none', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='none', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='none', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='none', choose=function, namespace=dict] => ['N']
+no class [] | TypeError: N.__bases__ must be tuple of classes, not 'int'
+    short(N.__bases__) [what='no class', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='no class', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='no class', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='no class', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='no class', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='no class', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='no class', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='no class', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='no class', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='no class', choose=function, namespace=dict] => ['N']
+no class ['__slots__'] | TypeError: N.__bases__ must be tuple of classes, not 'int'
+    short(N.__bases__) [what='no class', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='no class', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='no class', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='no class', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='no class', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='no class', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='no class', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='no class', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='no class', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='no class', choose=function, namespace=dict] => ['N']
+no class ['__slots__'] | TypeError: N.__bases__ must be tuple of classes, not 'int'
+    short(N.__bases__) [what='no class', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='no class', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='no class', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='no class', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='no class', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='no class', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='no class', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='no class', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='no class', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='no class', choose=function, namespace=dict] => ['N']
+no tuple [] | TypeError: can only assign tuple to N.__bases__, not list
+    short(N.__bases__) [what='no tuple', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='no tuple', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='no tuple', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='no tuple', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='no tuple', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => ['N']
+no tuple ['__slots__'] | TypeError: can only assign tuple to N.__bases__, not list
+    short(N.__bases__) [what='no tuple', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='no tuple', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='no tuple', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='no tuple', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='no tuple', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => ['N']
+no tuple ['__slots__'] | TypeError: can only assign tuple to N.__bases__, not list
+    short(N.__bases__) [what='no tuple', choose=function, namespace=dict] => ['X']
+short(N.__mro__) [what='no tuple', choose=function, namespace=dict] => ['N', 'X', 'object']
+N.__base__.__name__ [what='no tuple', choose=function, namespace=dict] => X
+short(X.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => ['Z', 'N']
+short(Y.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => []
+short(Z.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => []
+    afterwards: assign(N, (Y,)) [what='no tuple', choose=function, namespace=dict] => assigned
+short(N.__mro__) [what='no tuple', choose=function, namespace=dict] => ['N', 'Y', 'object']
+short(X.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => ['Z']
+short(Y.__subclasses__()) [what='no tuple', choose=function, namespace=dict] => ['N']
+__new__ | from the key, C1.__bases__ = (C3,): assigned
+    short(N.__mro__) [name='__new__'] => ['N', 'C1', 'C0', 'object']
+short(C1.__mro__) [name='__new__'] => ['C1', 'C3', 'object']
+short(C0.__subclasses__()) [name='__new__'] => []
+short(C1.__subclasses__()) [name='__new__'] => ['N']
+    getattr(N, 'w', 'none') [name='__new__'] => first
+getattr(n, 'w', 'none') [name='__new__'] => first
+    getattr(N, 'w', 'none') [name='__new__'] => second
+getattr(n, 'w', 'none') [name='__new__'] => second
+    getattr(N, 'w', 'none') [name='__new__'] => none
+getattr(n, 'w', 'none') [name='__new__'] => none

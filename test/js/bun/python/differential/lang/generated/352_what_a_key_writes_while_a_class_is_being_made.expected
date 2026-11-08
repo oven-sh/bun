@@ -1,0 +1,244 @@
+status: 0
+script: 336153869d721af8
+source: dbf6b2c9c4641160
+---
+where [where='base', reads=False, into='T', what='w', value=2] => base
+reads [where='base', reads=False, into='T', what='w', value=2] => False
+into [where='base', reads=False, into='T', what='w', value=2] => T
+what [where='base', reads=False, into='T', what='w', value=2] => w
+seen [where='base', reads=False, into='T', what='w', value=2] => [(1, [])]
+N.w [where='base', reads=False, into='T', what='w', value=2] => 2
+getattr(N, what) is getattr(F, what) [where='base', reads=False, into='T', what='w', value=2] => True
+N.__new__ is F.__new__ [where='base', reads=False, into='T', what='w', value=2] => True
+type(o).__name__ [where='base', reads=False, into='T', what='w', value=2] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=False, into='T', what='w', value=2] => []
+where [where='base', reads=False, into='T', what='v', value=3] => base
+reads [where='base', reads=False, into='T', what='v', value=3] => False
+into [where='base', reads=False, into='T', what='v', value=3] => T
+what [where='base', reads=False, into='T', what='v', value=3] => v
+seen [where='base', reads=False, into='T', what='v', value=3] => [(1, [])]
+N.w [where='base', reads=False, into='T', what='v', value=3] => 1
+getattr(N, what) is getattr(F, what) [where='base', reads=False, into='T', what='v', value=3] => True
+N.__new__ is F.__new__ [where='base', reads=False, into='T', what='v', value=3] => True
+type(o).__name__ [where='base', reads=False, into='T', what='v', value=3] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=False, into='T', what='v', value=3] => []
+where [where='base', reads=False, into='T', what='__new__', value=function] => base
+reads [where='base', reads=False, into='T', what='__new__', value=function] => False
+into [where='base', reads=False, into='T', what='__new__', value=function] => T
+what [where='base', reads=False, into='T', what='__new__', value=function] => __new__
+seen [where='base', reads=False, into='T', what='__new__', value=function] => [(1, [])]
+N.w [where='base', reads=False, into='T', what='__new__', value=function] => 1
+getattr(N, what) is getattr(F, what) [where='base', reads=False, into='T', what='__new__', value=function] => True
+N.__new__ is F.__new__ [where='base', reads=False, into='T', what='__new__', value=function] => True
+type(o).__name__ [where='base', reads=False, into='T', what='__new__', value=function] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=False, into='T', what='__new__', value=function] => ['N']
+where [where='base', reads=False, into='F', what='w', value=2] => base
+reads [where='base', reads=False, into='F', what='w', value=2] => False
+into [where='base', reads=False, into='F', what='w', value=2] => F
+what [where='base', reads=False, into='F', what='w', value=2] => w
+seen [where='base', reads=False, into='F', what='w', value=2] => [(1, [])]
+N.w [where='base', reads=False, into='F', what='w', value=2] => 2
+getattr(N, what) is getattr(F, what) [where='base', reads=False, into='F', what='w', value=2] => True
+N.__new__ is F.__new__ [where='base', reads=False, into='F', what='w', value=2] => True
+type(o).__name__ [where='base', reads=False, into='F', what='w', value=2] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=False, into='F', what='w', value=2] => []
+where [where='base', reads=False, into='F', what='v', value=3] => base
+reads [where='base', reads=False, into='F', what='v', value=3] => False
+into [where='base', reads=False, into='F', what='v', value=3] => F
+what [where='base', reads=False, into='F', what='v', value=3] => v
+seen [where='base', reads=False, into='F', what='v', value=3] => [(1, [])]
+N.w [where='base', reads=False, into='F', what='v', value=3] => 1
+getattr(N, what) is getattr(F, what) [where='base', reads=False, into='F', what='v', value=3] => True
+N.__new__ is F.__new__ [where='base', reads=False, into='F', what='v', value=3] => True
+type(o).__name__ [where='base', reads=False, into='F', what='v', value=3] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=False, into='F', what='v', value=3] => []
+where [where='base', reads=False, into='F', what='__new__', value=function] => base
+reads [where='base', reads=False, into='F', what='__new__', value=function] => False
+into [where='base', reads=False, into='F', what='__new__', value=function] => F
+what [where='base', reads=False, into='F', what='__new__', value=function] => __new__
+seen [where='base', reads=False, into='F', what='__new__', value=function] => [(1, [])]
+N.w [where='base', reads=False, into='F', what='__new__', value=function] => 1
+getattr(N, what) is getattr(F, what) [where='base', reads=False, into='F', what='__new__', value=function] => True
+N.__new__ is F.__new__ [where='base', reads=False, into='F', what='__new__', value=function] => True
+type(o).__name__ [where='base', reads=False, into='F', what='__new__', value=function] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=False, into='F', what='__new__', value=function] => ['N']
+where [where='base', reads=True, into='T', what='w', value=2] => base
+reads [where='base', reads=True, into='T', what='w', value=2] => True
+into [where='base', reads=True, into='T', what='w', value=2] => T
+what [where='base', reads=True, into='T', what='w', value=2] => w
+seen [where='base', reads=True, into='T', what='w', value=2] => [(1, [])]
+N.w [where='base', reads=True, into='T', what='w', value=2] => 2
+getattr(N, what) is getattr(F, what) [where='base', reads=True, into='T', what='w', value=2] => True
+N.__new__ is F.__new__ [where='base', reads=True, into='T', what='w', value=2] => True
+type(o).__name__ [where='base', reads=True, into='T', what='w', value=2] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=True, into='T', what='w', value=2] => []
+where [where='base', reads=True, into='T', what='v', value=3] => base
+reads [where='base', reads=True, into='T', what='v', value=3] => True
+into [where='base', reads=True, into='T', what='v', value=3] => T
+what [where='base', reads=True, into='T', what='v', value=3] => v
+seen [where='base', reads=True, into='T', what='v', value=3] => [(1, [])]
+N.w [where='base', reads=True, into='T', what='v', value=3] => 1
+getattr(N, what) is getattr(F, what) [where='base', reads=True, into='T', what='v', value=3] => True
+N.__new__ is F.__new__ [where='base', reads=True, into='T', what='v', value=3] => True
+type(o).__name__ [where='base', reads=True, into='T', what='v', value=3] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=True, into='T', what='v', value=3] => []
+where [where='base', reads=True, into='T', what='__new__', value=function] => base
+reads [where='base', reads=True, into='T', what='__new__', value=function] => True
+into [where='base', reads=True, into='T', what='__new__', value=function] => T
+what [where='base', reads=True, into='T', what='__new__', value=function] => __new__
+seen [where='base', reads=True, into='T', what='__new__', value=function] => [(1, [])]
+N.w [where='base', reads=True, into='T', what='__new__', value=function] => 1
+getattr(N, what) is getattr(F, what) [where='base', reads=True, into='T', what='__new__', value=function] => True
+N.__new__ is F.__new__ [where='base', reads=True, into='T', what='__new__', value=function] => True
+type(o).__name__ [where='base', reads=True, into='T', what='__new__', value=function] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=True, into='T', what='__new__', value=function] => ['N']
+where [where='base', reads=True, into='F', what='w', value=2] => base
+reads [where='base', reads=True, into='F', what='w', value=2] => True
+into [where='base', reads=True, into='F', what='w', value=2] => F
+what [where='base', reads=True, into='F', what='w', value=2] => w
+seen [where='base', reads=True, into='F', what='w', value=2] => [(1, [])]
+N.w [where='base', reads=True, into='F', what='w', value=2] => 2
+getattr(N, what) is getattr(F, what) [where='base', reads=True, into='F', what='w', value=2] => True
+N.__new__ is F.__new__ [where='base', reads=True, into='F', what='w', value=2] => True
+type(o).__name__ [where='base', reads=True, into='F', what='w', value=2] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=True, into='F', what='w', value=2] => []
+where [where='base', reads=True, into='F', what='v', value=3] => base
+reads [where='base', reads=True, into='F', what='v', value=3] => True
+into [where='base', reads=True, into='F', what='v', value=3] => F
+what [where='base', reads=True, into='F', what='v', value=3] => v
+seen [where='base', reads=True, into='F', what='v', value=3] => [(1, [])]
+N.w [where='base', reads=True, into='F', what='v', value=3] => 1
+getattr(N, what) is getattr(F, what) [where='base', reads=True, into='F', what='v', value=3] => True
+N.__new__ is F.__new__ [where='base', reads=True, into='F', what='v', value=3] => True
+type(o).__name__ [where='base', reads=True, into='F', what='v', value=3] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=True, into='F', what='v', value=3] => []
+where [where='base', reads=True, into='F', what='__new__', value=function] => base
+reads [where='base', reads=True, into='F', what='__new__', value=function] => True
+into [where='base', reads=True, into='F', what='__new__', value=function] => F
+what [where='base', reads=True, into='F', what='__new__', value=function] => __new__
+seen [where='base', reads=True, into='F', what='__new__', value=function] => [(1, [])]
+N.w [where='base', reads=True, into='F', what='__new__', value=function] => 1
+getattr(N, what) is getattr(F, what) [where='base', reads=True, into='F', what='__new__', value=function] => True
+N.__new__ is F.__new__ [where='base', reads=True, into='F', what='__new__', value=function] => True
+type(o).__name__ [where='base', reads=True, into='F', what='__new__', value=function] => N
+calls if (where, into) != ('top', 'F') else None [where='base', reads=True, into='F', what='__new__', value=function] => ['N']
+where [where='top', reads=False, into='T', what='w', value=2] => top
+reads [where='top', reads=False, into='T', what='w', value=2] => False
+into [where='top', reads=False, into='T', what='w', value=2] => T
+what [where='top', reads=False, into='T', what='w', value=2] => w
+seen [where='top', reads=False, into='T', what='w', value=2] => [(1, [])]
+N.w [where='top', reads=False, into='T', what='w', value=2] => 2
+getattr(N, what) is getattr(F, what) [where='top', reads=False, into='T', what='w', value=2] => True
+N.__new__ is F.__new__ [where='top', reads=False, into='T', what='w', value=2] => True
+type(o).__name__ [where='top', reads=False, into='T', what='w', value=2] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=False, into='T', what='w', value=2] => []
+where [where='top', reads=False, into='T', what='v', value=3] => top
+reads [where='top', reads=False, into='T', what='v', value=3] => False
+into [where='top', reads=False, into='T', what='v', value=3] => T
+what [where='top', reads=False, into='T', what='v', value=3] => v
+seen [where='top', reads=False, into='T', what='v', value=3] => [(1, [])]
+N.w [where='top', reads=False, into='T', what='v', value=3] => 1
+getattr(N, what) is getattr(F, what) [where='top', reads=False, into='T', what='v', value=3] => True
+N.__new__ is F.__new__ [where='top', reads=False, into='T', what='v', value=3] => True
+type(o).__name__ [where='top', reads=False, into='T', what='v', value=3] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=False, into='T', what='v', value=3] => []
+where [where='top', reads=False, into='T', what='__new__', value=function] => top
+reads [where='top', reads=False, into='T', what='__new__', value=function] => False
+into [where='top', reads=False, into='T', what='__new__', value=function] => T
+what [where='top', reads=False, into='T', what='__new__', value=function] => __new__
+seen [where='top', reads=False, into='T', what='__new__', value=function] => [(1, [])]
+N.w [where='top', reads=False, into='T', what='__new__', value=function] => 1
+getattr(N, what) is getattr(F, what) [where='top', reads=False, into='T', what='__new__', value=function] => True
+N.__new__ is F.__new__ [where='top', reads=False, into='T', what='__new__', value=function] => True
+type(o).__name__ [where='top', reads=False, into='T', what='__new__', value=function] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=False, into='T', what='__new__', value=function] => ['N']
+where [where='top', reads=False, into='F', what='w', value=2] => top
+reads [where='top', reads=False, into='F', what='w', value=2] => False
+into [where='top', reads=False, into='F', what='w', value=2] => F
+what [where='top', reads=False, into='F', what='w', value=2] => w
+seen [where='top', reads=False, into='F', what='w', value=2] => [(1, [])]
+N.w [where='top', reads=False, into='F', what='w', value=2] => 2
+getattr(N, what) is getattr(F, what) [where='top', reads=False, into='F', what='w', value=2] => True
+N.__new__ is F.__new__ [where='top', reads=False, into='F', what='w', value=2] => True
+type(o).__name__ [where='top', reads=False, into='F', what='w', value=2] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=False, into='F', what='w', value=2] => None
+where [where='top', reads=False, into='F', what='v', value=3] => top
+reads [where='top', reads=False, into='F', what='v', value=3] => False
+into [where='top', reads=False, into='F', what='v', value=3] => F
+what [where='top', reads=False, into='F', what='v', value=3] => v
+seen [where='top', reads=False, into='F', what='v', value=3] => [(1, [])]
+N.w [where='top', reads=False, into='F', what='v', value=3] => 1
+getattr(N, what) is getattr(F, what) [where='top', reads=False, into='F', what='v', value=3] => True
+N.__new__ is F.__new__ [where='top', reads=False, into='F', what='v', value=3] => True
+type(o).__name__ [where='top', reads=False, into='F', what='v', value=3] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=False, into='F', what='v', value=3] => None
+where [where='top', reads=False, into='F', what='__new__', value=function] => top
+reads [where='top', reads=False, into='F', what='__new__', value=function] => False
+into [where='top', reads=False, into='F', what='__new__', value=function] => F
+what [where='top', reads=False, into='F', what='__new__', value=function] => __new__
+seen [where='top', reads=False, into='F', what='__new__', value=function] => [(1, [])]
+N.w [where='top', reads=False, into='F', what='__new__', value=function] => 1
+getattr(N, what) is getattr(F, what) [where='top', reads=False, into='F', what='__new__', value=function] => True
+N.__new__ is F.__new__ [where='top', reads=False, into='F', what='__new__', value=function] => True
+type(o).__name__ [where='top', reads=False, into='F', what='__new__', value=function] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=False, into='F', what='__new__', value=function] => None
+where [where='top', reads=True, into='T', what='w', value=2] => top
+reads [where='top', reads=True, into='T', what='w', value=2] => True
+into [where='top', reads=True, into='T', what='w', value=2] => T
+what [where='top', reads=True, into='T', what='w', value=2] => w
+seen [where='top', reads=True, into='T', what='w', value=2] => [(1, [])]
+N.w [where='top', reads=True, into='T', what='w', value=2] => 2
+getattr(N, what) is getattr(F, what) [where='top', reads=True, into='T', what='w', value=2] => True
+N.__new__ is F.__new__ [where='top', reads=True, into='T', what='w', value=2] => True
+type(o).__name__ [where='top', reads=True, into='T', what='w', value=2] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=True, into='T', what='w', value=2] => []
+where [where='top', reads=True, into='T', what='v', value=3] => top
+reads [where='top', reads=True, into='T', what='v', value=3] => True
+into [where='top', reads=True, into='T', what='v', value=3] => T
+what [where='top', reads=True, into='T', what='v', value=3] => v
+seen [where='top', reads=True, into='T', what='v', value=3] => [(1, [])]
+N.w [where='top', reads=True, into='T', what='v', value=3] => 1
+getattr(N, what) is getattr(F, what) [where='top', reads=True, into='T', what='v', value=3] => True
+N.__new__ is F.__new__ [where='top', reads=True, into='T', what='v', value=3] => True
+type(o).__name__ [where='top', reads=True, into='T', what='v', value=3] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=True, into='T', what='v', value=3] => []
+where [where='top', reads=True, into='T', what='__new__', value=function] => top
+reads [where='top', reads=True, into='T', what='__new__', value=function] => True
+into [where='top', reads=True, into='T', what='__new__', value=function] => T
+what [where='top', reads=True, into='T', what='__new__', value=function] => __new__
+seen [where='top', reads=True, into='T', what='__new__', value=function] => [(1, [])]
+N.w [where='top', reads=True, into='T', what='__new__', value=function] => 1
+getattr(N, what) is getattr(F, what) [where='top', reads=True, into='T', what='__new__', value=function] => True
+N.__new__ is F.__new__ [where='top', reads=True, into='T', what='__new__', value=function] => True
+type(o).__name__ [where='top', reads=True, into='T', what='__new__', value=function] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=True, into='T', what='__new__', value=function] => ['N']
+where [where='top', reads=True, into='F', what='w', value=2] => top
+reads [where='top', reads=True, into='F', what='w', value=2] => True
+into [where='top', reads=True, into='F', what='w', value=2] => F
+what [where='top', reads=True, into='F', what='w', value=2] => w
+seen [where='top', reads=True, into='F', what='w', value=2] => [(1, [])]
+N.w [where='top', reads=True, into='F', what='w', value=2] => 2
+getattr(N, what) is getattr(F, what) [where='top', reads=True, into='F', what='w', value=2] => True
+N.__new__ is F.__new__ [where='top', reads=True, into='F', what='w', value=2] => True
+type(o).__name__ [where='top', reads=True, into='F', what='w', value=2] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=True, into='F', what='w', value=2] => None
+where [where='top', reads=True, into='F', what='v', value=3] => top
+reads [where='top', reads=True, into='F', what='v', value=3] => True
+into [where='top', reads=True, into='F', what='v', value=3] => F
+what [where='top', reads=True, into='F', what='v', value=3] => v
+seen [where='top', reads=True, into='F', what='v', value=3] => [(1, [])]
+N.w [where='top', reads=True, into='F', what='v', value=3] => 1
+getattr(N, what) is getattr(F, what) [where='top', reads=True, into='F', what='v', value=3] => True
+N.__new__ is F.__new__ [where='top', reads=True, into='F', what='v', value=3] => True
+type(o).__name__ [where='top', reads=True, into='F', what='v', value=3] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=True, into='F', what='v', value=3] => None
+where [where='top', reads=True, into='F', what='__new__', value=function] => top
+reads [where='top', reads=True, into='F', what='__new__', value=function] => True
+into [where='top', reads=True, into='F', what='__new__', value=function] => F
+what [where='top', reads=True, into='F', what='__new__', value=function] => __new__
+seen [where='top', reads=True, into='F', what='__new__', value=function] => [(1, [])]
+N.w [where='top', reads=True, into='F', what='__new__', value=function] => 1
+getattr(N, what) is getattr(F, what) [where='top', reads=True, into='F', what='__new__', value=function] => True
+N.__new__ is F.__new__ [where='top', reads=True, into='F', what='__new__', value=function] => True
+type(o).__name__ [where='top', reads=True, into='F', what='__new__', value=function] => N
+calls if (where, into) != ('top', 'F') else None [where='top', reads=True, into='F', what='__new__', value=function] => None

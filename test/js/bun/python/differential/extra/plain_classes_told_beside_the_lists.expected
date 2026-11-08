@@ -1,0 +1,56 @@
+status: 0
+oracle: none
+---
+--- what it looks like
+['N', 'C1', 'C0', 'G', 'object'] ['C1', 'Z', 'object'] ['C0'] [] ['N']
+--- the class that is named changes
+G G
+G again G again
+C0 C0
+G again G again
+--- the class in between is given another base: its walk does not come to N, which goes on naming G
+G
+['N', 'C1', 'C0', 'G', 'object'] ['C0', 'G2', 'object'] [] ['C0']
+G
+G again G again
+G again G2 again
+none
+--- the same for a class derived from N, made afterwards
+['D', 'N', 'C1', 'C0', 'G', 'object'] G
+G again G again
+--- twice, and back
+G
+G, 2
+G, 3 G, 3
+--- an assignment that is refused changes nothing of that
+G
+TypeError
+G again
+--- special methods go by the MRO too
+3
+from G
+--- when N itself gets its turn, G goes from its MRO, and is no longer listened to
+G
+['N', 'C1', 'Z', 'object'] none
+none
+--- a class that is left out of the list of its base: the base is given another base
+'the outermost fails'
+  A ['B'] ['A', 'B', 'E', 'object'] ['S']
+  B ['E'] ['B', 'E', 'object'] []
+  S ['A'] ['S', 'A', 'B', 'E', 'object'] []
+  X ['Q'] ['X', 'Q', 'object'] ['A']
+  E ['object'] ['E', 'object'] ['B']
+  A ['B'] ['A', 'B', 'E', 'object'] ['S']
+  B ['F'] ['B', 'F', 'object'] []
+  S ['A'] ['S', 'A', 'B', 'E', 'object'] []
+  E ['object'] ['E', 'object'] []
+  F ['object'] ['F', 'object'] ['B']
+E E E
+E again E again E again | by its MRO: E again
+none none none
+none F | by its MRO: none
+--- the same, and the assignment to the base is refused in the end
+'the outermost fails'
+E
+TypeError
+E again E again | by its MRO: E again

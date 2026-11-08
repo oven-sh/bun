@@ -1,0 +1,20 @@
+status: 0
+script: ff56d692cb439a0c
+source: 056c670875ba67c5
+---
+  from inside, ['G1'] assigned
+  from inside, ['B'] assigned
+KeyError: 'fails'
+  A ['B'] ['A', 'G1', 'S1', 'object'] ['S']
+  B ['S1'] ['B', 'S1', 'object'] []
+  G1 ['S1'] ['G1', 'S1', 'object'] ['A']
+  S ['A'] ['S', 'A', 'G1', 'S1', 'object'] []
+assigned
+  A ['B'] ['A', 'G1', 'S1', 'object'] ['S']
+  B ['S2'] ['B', 'S2', 'object'] []
+  G1 ['S1'] ['G1', 'S1', 'object'] ['A']
+  S ['A'] ['S', 'A', 'G1', 'S1', 'object'] []
+Z(A, S2): attempt(lambda: Hooked('Z', (A, S2), {})) => TypeError: Z.mro() returned base with unsuitable layout ('G1')
+Y(A, S1): attempt(lambda: Hooked('Y', (A, S1), {})) => TypeError: multiple bases have instance lay-out conflict
+Z(S, S2): attempt(lambda: Hooked('Z', (S, S2), {})) => TypeError: Z.mro() returned base with unsuitable layout ('G1')
+Y(S, S1): attempt(lambda: Hooked('Y', (S, S1), {})) => TypeError: multiple bases have instance lay-out conflict

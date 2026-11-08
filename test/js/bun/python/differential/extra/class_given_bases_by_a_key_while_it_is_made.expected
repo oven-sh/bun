@@ -1,0 +1,39 @@
+status: 0
+oracle: none
+---
+the same base | ['ok'] | ['A'] ['C', 'A', 'object'] | A: ['C'] | B: []
+    1 None
+    ['D', 'C', 'A', 'object'] ['D']
+another | ['ok'] | ['B'] ['C', 'B', 'object'] | A: [] | B: ['C']
+    None 2
+    ['D', 'C', 'B', 'object'] ['D']
+both | ['ok'] | ['A', 'B'] ['C', 'A', 'B', 'object'] | A: ['C'] | B: ['C']
+    1 2
+    ['D', 'C', 'A', 'B', 'object'] ['D']
+both, the other way round | ['ok'] | ['B', 'A'] ['C', 'B', 'A', 'object'] | A: ['C'] | B: ['C']
+    1 2
+    ['D', 'C', 'B', 'A', 'object'] ['D']
+the tuple that it has | ['ok'] | ['A'] ['C', 'A', 'object'] | A: ['C'] | B: []
+    1 None
+    ['D', 'C', 'A', 'object'] ['D']
+twice | ['ok', 'ok'] | ['A'] ['C', 'A', 'object'] | A: ['C'] | B: []
+    1 None
+    ['D', 'C', 'A', 'object'] ['D']
+refused | ['TypeError'] | ['A'] ['C', 'A', 'object'] | A: ['C'] | B: []
+    1 None
+    ['D', 'C', 'A', 'object'] ['D']
+nothing | [] | ['A'] ['C', 'A', 'object'] | A: ['C'] | B: []
+    1 None
+    ['D', 'C', 'A', 'object'] ['D']
+--- the key brings about an assignment that fails, cannot give the old bases back, and leaves the class its MRO
+['P.__bases__ = (T,): ok', 'T.__bases__ = (New,): ValueError: the mro() of T', 'Old.__bases__ = (P,): ValueError: the mro() of Old']
+    Base ['object'] ['Base', 'object'] ['Old', 'New']
+    Old ['Base'] ['Old', 'Base', 'object'] []
+    New ['Base'] ['New', 'Base', 'object'] ['T']
+    T ['New'] ['T', 'Old', 'Base', 'object'] ['P']
+    P ['T'] ['P', 'T', 'Old', 'Base', 'object'] []
+--- the mro() of the metaclass leaves the class out of its own MRO
+nothing | TypeError | ['A'] ['A', 'object'] | A lists ['C'] | B lists []
+C.__bases__ = (B,) | TypeError | ['B'] ['B', 'object'] | A lists [] | B lists ['C']
+C.__bases__ = (A,) | TypeError | ['A'] ['A', 'object'] | A lists ['C'] | B lists []
+A.w = 2 | TypeError | ['A'] ['A', 'object'] | A lists ['C'] | B lists []

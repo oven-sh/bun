@@ -1,0 +1,53 @@
+status: 0
+oracle: none
+---
+--- bases that have an MRO
+['P.__bases__ = (T,): ok', 'T.__bases__ = ...: ValueError: the mro() of T', 'Old.__bases__ = (P,): ValueError: the mro() of Old']
+    Base ['object'] ['Base', 'object'] ['Old', 'New']
+    Old ['Base'] ['Old', 'Base', 'object'] []
+    New ['Base'] ['New', 'Base', 'object'] ['T']
+    T ['New'] ['T', 'Old', 'Base', 'object'] ['P']
+    P ['T'] ['P', 'T', 'Old', 'Base', 'object'] []
+    T.w: none | P.w: none
+    T.w: old | P.w: old
+    T.w: old again | P.w: old again
+an assignment whose walk comes to T: ok
+    Base ['object'] ['Base', 'object'] ['Old', 'New']
+    Old ['Base'] ['Old', 'Base', 'object'] []
+    New ['Base'] ['New', 'Base', 'object'] ['T']
+    T ['New'] ['T', 'New', 'Base', 'object'] ['P']
+    P ['T'] ['P', 'T', 'New', 'Base', 'object'] []
+    T.w: new | P.w: new
+T is given bases: ok
+    Base ['object'] ['Base', 'object'] ['Old', 'New']
+    Old ['Base'] ['Old', 'Base', 'object'] []
+    New ['Base'] ['New', 'Base', 'object'] ['T']
+    T ['New'] ['T', 'New', 'Base', 'object'] ['P']
+    P ['T'] ['P', 'T', 'New', 'Base', 'object'] []
+    T.w: new | P.w: new
+    T.w: new again | P.w: new again
+--- bases that have none
+['P.__bases__ = (T,): ok', 'T.__bases__ = ...: ValueError: the mro() of T', 'Old.__bases__ = (P,): ValueError: the mro() of Old']
+    Base ['object'] ['Base', 'object'] ['Old', 'New']
+    Old ['Base'] ['Old', 'Base', 'object'] []
+    New ['Base'] ['New', 'Base', 'object'] ['T']
+    T ['New', 'New'] ['T', 'Old', 'Base', 'object'] ['P']
+    P ['T'] ['P', 'T', 'Old', 'Base', 'object'] []
+    T.w: none | P.w: none
+    T.w: old | P.w: old
+    T.w: old again | P.w: old again
+an assignment whose walk comes to T: TypeError: duplicate base class New
+    Base ['object'] ['Base', 'object'] ['Old', 'New']
+    Old ['Base'] ['Old', 'Base', 'object'] []
+    New ['Base'] ['New', 'Base', 'object'] ['T']
+    T ['New', 'New'] ['T', 'Old', 'Base', 'object'] ['P']
+    P ['T'] ['P', 'T', 'Old', 'Base', 'object'] []
+    T.w: old again | P.w: old again
+T is given bases: ok
+    Base ['object'] ['Base', 'object'] ['Old', 'New']
+    Old ['Base'] ['Old', 'Base', 'object'] []
+    New ['Base'] ['New', 'Base', 'object'] ['T']
+    T ['New'] ['T', 'New', 'Base', 'object'] ['P']
+    P ['T'] ['P', 'T', 'New', 'Base', 'object'] []
+    T.w: new | P.w: new
+    T.w: new again | P.w: new again

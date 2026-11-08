@@ -952,31 +952,6 @@ async function stoppedAtAnUnusedReadBeforeTheDeclaration(
   return agree(ran.get(0)!, reference);
 }
 
-/**
- * Whether the two runs print the same but for the names of functions that the program declares in blocks, and of classes and functions in constants that are used once.
- * `bun run` makes a variable with a function expression of such a declaration, and puts such a constant in place of its use. Neither has a name of its own then.
- */
-async function agreesButForFunctionsDeclaredInBlocks(
-  folder: string,
-  extension: string,
-  text: string,
-  compiled: Ended,
-  reference: Ended,
-) {
-  layOut(folder, [text], extension, 1);
-  const rewritten = await spawn("rewrite", [bun, "build", "--no-bundle", `./programs/0${extension}`], folder, {}, 30);
-  const names = [...rewritten.stdout.matchAll(/\blet ([\w$]+) = (?:async )?function\b/g)]
-    .map(([, name]) => name.replaceAll("$", "\\$"))
-    .filter(name => new RegExp(`\\bfunction\\*? ?${name}\\b`).test(text));
-  for (const [, name] of text.matchAll(/\bconst ([\w$]+) = (?:class|(?:async )?function)\b/g))
-    if (text.split(new RegExp(`\\b${name.replaceAll("$", "\\$")}\\b`)).length === 3)
-      names.push(name.replaceAll("$", "\\$"));
-  if (names.length === 0 || compiled.end !== reference.end) return false;
-  const withoutThem = (output: string) =>
-    removeDetailsOfErrors(output).replace(new RegExp(`\\b(?:${names.join("|")})\\b ?`, "g"), "");
-  return withoutThem(compiled.stdout) === withoutThem(reference.stdout);
-}
-
 /** Where the bracket that opens at `open` closes, or -1. Strings are passed over. */
 function closingBracket(text: string, open: number) {
   let depth = 0;
@@ -2203,8 +2178,6 @@ for (
       )
         kind = "documented difference";
       else if (await stoppedAtAnUnusedReadBeforeTheDeclaration(alone, extension, texts[index], said, referenceAgain))
-        kind = "documented difference";
-      else if (await agreesButForFunctionsDeclaredInBlocks(alone, extension, texts[index], second, referenceAgain))
         kind = "documented difference";
       rmSync(alone, { recursive: true, force: true });
     }

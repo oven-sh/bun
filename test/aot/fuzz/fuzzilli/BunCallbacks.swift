@@ -305,7 +305,7 @@ extension ProgramBuilder {
 
     fileprivate func buildCallThatCallsBack(_ counter: Variable, _ objects: [Variable]) {
         let call = chooseUniform(from: callsThatCallBack)
-        // A function that is declared in a block has another name under `bun run`, so the arguments stand in front of the try block.
+        // A function that is declared in a block has another text under `bun run`, so the arguments stand in front of the try block.
         let arguments = call.arguments.map { buildArgument($0, counter, objects) }
         let receiver = ["", "new"].contains(call.receiver) ? createNamedVariable(forBuiltin: call.name) : buildReceiver(call.receiver, objects)
         printOutcome(of: call.name, counter) {

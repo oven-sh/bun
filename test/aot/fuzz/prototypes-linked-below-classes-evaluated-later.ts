@@ -125,8 +125,7 @@ export function generate(random: Random): string {
       "for (let i = 0; i < 300; i++) new Lowest();",
       'told(() => "greet" in first);',
     ]);
-    // Each scene has names of its own: a bundler renames what two blocks declare alike, and the names are printed. The
-    // function is named twice at least, or plain Bun puts it where its one use stands and it takes that variable's name.
+    // Each scene has names of its own: a bundler renames what two blocks declare alike, and the names are printed.
     const text = `{
   ${random.pick(lowers)}
   kept.push(typeof Emitter);

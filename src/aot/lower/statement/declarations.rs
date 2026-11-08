@@ -9,7 +9,6 @@ use bun_sema::program::Sym;
 use smallvec::SmallVec;
 
 use super::statements_behind;
-use crate::builtins::SourceDialect;
 use crate::builtins::id::BuiltinId;
 use crate::ir::{BlockId, DeclaredType, ValueId, VariableKey};
 use crate::lower::call::emit_call;
@@ -40,19 +39,16 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    /// Whether plain Bun leaves the `let` or `const` of `initializer` in front of a `return` of its name, because the declaration gives the `name`. Bun's own modules are a bundle, which moves the value.
     fn is_named_by_its_declaration(&mut self, initializer: ExprId) -> bool {
         let hir = self.hir;
-        let is_bundled = self.source.dialect() == SourceDialect::Runtime;
         match hir[initializer].kind {
-            ExprKind::Fn(function) if !is_bundled => match hir[function].kind {
+            ExprKind::Fn(function) => match hir[function].kind {
                 FnKind::Arrow => true,
                 FnKind::Expr => hir[function].name.is_none(),
                 _ => false,
             },
             ExprKind::Class(class) => {
-                (!is_bundled && hir[class].name.is_none())
-                    || self.has_standard_class_decorators(class)
+                hir[class].name.is_none() || self.has_standard_class_decorators(class)
             }
             _ => false,
         }

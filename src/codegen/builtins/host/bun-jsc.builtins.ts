@@ -1,6 +1,7 @@
 // The functions of bun:jsc, each from its code in src/jsc/modules/BunJSCModule.h. collect-modules.ts finds that they are functions.
 // codeCoverageForFile, getProtectedObjects and profile have no row: a call of one is a call of native code of which nothing is written down.
 import * as b from "bun-builtins-table";
+import { cloned, heapsReadByClone, heapsWrittenByClone } from "./native-code.ts";
 
 const externalState = ["ExternalState"];
 const parsedJSON = b.union(b.plainData, b.strictNull, b.bool, b.f64, b.string);
@@ -55,28 +56,6 @@ const setsTimeZone = {
 const describes = looksAt(b.union(b.string, b.undefined));
 const countsForFunction = looksAt(b.union(b.f64, b.undefined));
 const marksFunction = looksAt(b.undefined);
-
-// SerializedScriptValue::create() walks the value as structuredClone does, and nothing is transferred.
-const heapsReadByClone = [
-  "TypedArrayStorage",
-  "TypedArrayElements",
-  "CollectionStorage",
-  "CollectionEntries",
-  "InternalFields",
-  "ExternalState",
-];
-// A view that keeps its bytes in its cell gets a buffer.
-const heapsWrittenByClone = ["TypedArrayStorage", "ExternalState"];
-const cloned = [
-  b.readsContents(),
-  b.runsTransitively(
-    "OwnKeys",
-    "OwnValues",
-    "PrototypeChain",
-    "ToPrimitive",
-    b.named("name", "message", "stack", "cause"),
-  ),
-];
 
 const functions = {
   bytecodeOrderStats: readsCounter(b.union(b.plainData.fresh, b.strictNull)),

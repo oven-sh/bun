@@ -390,10 +390,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn emit_injected_steps(&mut self, class: ClassId, plan: &ClassPlan, this: ValueId) {
         let (first, last): (&[ClassElement], &[ClassElement]) = match plan.field_semantics {
-            FieldSemantics::Define if plan.transform == ClassTransform::Legacy => {
-                (&plan.injected_elements, &[])
-            }
-            FieldSemantics::Define | FieldSemantics::Assign => (&[], &plan.injected_elements),
+            FieldSemantics::Define => (&plan.injected_elements, &[]),
+            FieldSemantics::Assign => (&[], &plan.injected_elements),
         };
         for &element in first {
             self.emit_class_element(class, element, this);

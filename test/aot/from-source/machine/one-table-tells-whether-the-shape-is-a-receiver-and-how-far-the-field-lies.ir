@@ -1,7 +1,7 @@
 # `holder.it.v`: `it` is declared of an interface that 18 classes meet, and what a field of an object that has left holds is proven of nothing. `v` lies behind one, two or three inherited fields: the read looks up how
 # far it lies by the shape. The flat table of distances holds a byte for "no member", so it also tells whether the shape is a receiver at all: no second table of bits is asked and the shape word is loaded once.
 # Three interfaces, each met by two of three groups of classes: however the shapes are numbered, one of the three tables has the third group in its middle: objects of every group go to every reader.
-# The count is of the whole build: three in this program, one in a closure of the library whose capture is written as a family (this program has no closure that captures).
+# The count is of the whole build: three in this program, the others in the library that rides along: a closure whose capture is written as a family, and the streams, which ask a state that is not as it was born by name.
 # f1 = readV
 # -- source: main.ts
 # declare function print(...values: unknown[]): void;
@@ -33,7 +33,7 @@
 # print(sum);
 # -- end of source
 # RUN(COUNT): compile ReceiversToldByTablesOfOffsets mechanisms=all
-# COUNT: statistic ReceiversToldByTablesOfOffsets 4
+# COUNT: statistic ReceiversToldByTablesOfOffsets 62
 # RUN(RIGHT): run-in-shell mechanisms=all
 # RIGHT: 316512
 # RIGHT-NEXT: exited with 0

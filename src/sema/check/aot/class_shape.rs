@@ -17,8 +17,9 @@ use crate::hir::{
 use crate::program::{FileId, Sym};
 use crate::types::TypeId;
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
+use std::cell::OnceCell;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum StorePlace {
     Instance,
     Prototype,
@@ -368,22 +369,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let methods_of_prototype: FxHashSet<Atom> =
             methods_of_prototype.map(|store| store.name).collect();
         let hir = self.c.hir(file);
+        let mut only_declared: FxHashMap<MemberName, Vec<usize>> = FxHashMap::default();
+        for (place, member) in members.iter().enumerate().rev() {
+            let is_only_declared = match member.source {
+                ClassMemberSource::Member(id) => hir[id].flags.contains(Flags::AMBIENT),
+                _ => false,
+            };
+            if is_only_declared && !member.is_static && member.kind == ObjectMemberKind::Field {
+                only_declared.entry(member.name).or_default().push(place);
+            }
+        }
+        let values_stored = OnceCell::new();
         for candidate in &stores {
             let name = self.member_name(candidate.name);
             let is_static = candidate.place == StorePlace::Class;
             if candidate.place == StorePlace::Instance && candidate.kind == ObjectMemberKind::Field
             {
-                let only_declared = members.iter_mut().find(|member| {
-                    let is_only_declared = match member.source {
-                        ClassMemberSource::Member(id) => hir[id].flags.contains(Flags::AMBIENT),
-                        _ => false,
-                    };
-                    is_only_declared
-                        && member.name == name
-                        && !member.is_static
-                        && member.kind == ObjectMemberKind::Field
-                });
-                if let Some(member) = only_declared {
+                let place = only_declared.get_mut(&name).and_then(Vec::pop);
+                if let Some(member) = place.map(|place| &mut members[place]) {
                     member.source = candidate.source();
                     member.is_optional = !in_every_construction.contains(&candidate.name);
                     member.is_made_at_birth = made_at_birth.contains(&candidate.name);
@@ -402,7 +405,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             if !is_new {
                 continue;
             }
-            let checked = match find_stored_value(&stores, candidate) {
+            let checked = match find_stored_value(&stores, &values_stored, candidate) {
                 Some(value) if file == self.file => self.ask(|queries| {
                     let ty = queries.c.type_of_expr(file, value);
                     let ty = queries.c.widen_literal(ty);
@@ -610,15 +613,29 @@ fn forms_of_instance_fields(stores: &[StoreCandidate]) -> FxHashMap<Atom, Member
     forms
 }
 
-fn find_stored_value(stores: &[StoreCandidate], candidate: &StoreCandidate) -> Option<ExprId> {
+fn find_stored_value(
+    stores: &[StoreCandidate],
+    values_stored: &OnceCell<FxHashMap<(Atom, StorePlace), ExprId>>,
+    candidate: &StoreCandidate,
+) -> Option<ExprId> {
     match candidate.form {
         StoreForm::Plain | StoreForm::Logical => candidate.value.some(),
         StoreForm::Compound => {
-            let mut to_same_place = stores
-                .iter()
-                .filter(|other| other.name == candidate.name && other.place == candidate.place);
-            let other = to_same_place.find(|other| other.form != StoreForm::Compound)?;
-            Some(other.value)
+            let list_first_of_each = || {
+                let mut first_of_each = FxHashMap::default();
+                for other in stores {
+                    if other.form != StoreForm::Compound {
+                        first_of_each
+                            .entry((other.name, other.place))
+                            .or_insert(other.value);
+                    }
+                }
+                first_of_each
+            };
+            let first_of_each = values_stored.get_or_init(list_first_of_each);
+            first_of_each
+                .get(&(candidate.name, candidate.place))
+                .copied()
         }
     }
 }

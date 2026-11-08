@@ -48,6 +48,8 @@ const engine = [
   "%BlockList%.prototype[kBlockListHandle]: is not in the table",
   "%NativeZlib%.prototype.jsref: is not in the table",
   "%SocketAddress%.prototype[kSocketAddressHandle]: is not in the table",
+  // src/js/internal/quic/quic.ts lays this one, and these four ways run that text. A compiled program runs src/js/ahead-of-time/internal/quic/quic.ts, which hands the Blob on itself and lays nothing, so the table says what is so there.
+  "Blob.prototype[kBlobHandle]: is not in the table",
   // injectFakeEmitter() in src/js/node/worker_threads.ts lays an object with `on`, `emit` and their kin between the prototype object and EventTarget.prototype. Two paths lead to the class.
   // The class comes to the library out of a native binding, so the compiler does not see whose prototype object that statement moves. It need not: BuiltinTable::hasLockedPrototypeLink() is false of this object,
   // no lookup of Link or of the walk climbs past an object of which it is false, and the run time locks a link by the same question: in an executable the statement moves this one and throws at Map.prototype.

@@ -82,6 +82,8 @@ pub struct AotBuild {
     pub further_package_names: Vec<FurtherPackageName>,
     /// `CompiledProgram::refused_data`
     pub refused_data: Vec<u8>,
+    /// `CompiledProgram::loaders_given_to_build`
+    pub loaders_given_to_build: Vec<u8>,
     pub output_files: Vec<OutputFile>,
     pub engine: EngineResult,
     /// `Compilation::starts_workers_from_unseen_code`
@@ -276,6 +278,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             build.package_names = package_names;
             build.further_package_names = further_package_names;
             build.refused_data = refused_data;
+            build.loaders_given_to_build =
+                bun_aot::module_keys::encode_loaders_given_to_build(&options.load.loaders);
             build.path_aliases = path_aliases;
             build.root_directory = options.paths.root_directory;
             Ok(build)

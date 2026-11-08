@@ -2949,6 +2949,7 @@ pub struct FileIn<S: Storage> {
     pub imported_file_changers: S::Few<ImportedFileChanger>,
     /// Among those that `FileAnalysis::asked_of_other_files` names. Set by the loader.
     pub texts_of_other_files: S::Few<TextOfOtherFile>,
+    pub exports_that_others_touch: S::Few<Atom>,
     pub texts_written_by_loader: S::Few<TextWrittenByLoader>,
     pub functions_written_by_loader: S::Few<FunctionWrittenByLoader>,
     /// Has a top-level `import` or `export`.
@@ -3673,6 +3674,7 @@ macro_rules! file_in_storage {
             texts_of_data_files: $few!($this.texts_of_data_files),
             imported_file_changers: $few!($this.imported_file_changers),
             texts_of_other_files: $few!($this.texts_of_other_files),
+            exports_that_others_touch: $few!($this.exports_that_others_touch),
             texts_written_by_loader: $few!($this.texts_written_by_loader),
             functions_written_by_loader: $few!($this.functions_written_by_loader),
             has_module_syntax: $this.has_module_syntax,
@@ -3825,6 +3827,7 @@ impl FileBuilder {
             texts_of_data_files,
             imported_file_changers,
             texts_of_other_files,
+            exports_that_others_touch,
             texts_written_by_loader,
             functions_written_by_loader,
             has_module_syntax,
@@ -3933,6 +3936,7 @@ impl FileBuilder {
         texts_of_data_files.clear();
         imported_file_changers.clear();
         texts_of_other_files.clear();
+        exports_that_others_touch.clear();
         texts_written_by_loader.clear();
         functions_written_by_loader.clear();
         *has_module_syntax = Default::default();

@@ -17,9 +17,173 @@ use crate::link::testing::{
 };
 use crate::load::EntryPointKind;
 use crate::modules::ModuleFailure;
-use crate::modules::testing::with_graph;
+use crate::modules::testing::{file_named, with_graph, with_test_run_graph};
 
 const PLUGIN_URL: &str = "https://example.com/plugin.js";
+
+fn ask_walks_of(files: &[(String, String)], mocked: &[&str]) -> [Vec<String>; 2] {
+    let mut test_file = String::from("import { mock } from 'bun:test';\n");
+    for path in mocked {
+        test_file.push_str(&format!("mock.module('./{path}', () => ({{}}));\n"));
+    }
+    for (place, (name, _)) in files.iter().enumerate() {
+        test_file.push_str(&format!(
+            "import * as all{place} from './{name}';\nconsole.log(all{place});\n"
+        ));
+    }
+    let mut sources = vec![("main.test.js", test_file.as_str())];
+    sources.extend(
+        files
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str())),
+    );
+    with_test_run_graph(&sources, |graph, input| {
+        let atoms = &input.files.atoms;
+        [false, true].map(|walks_every_path| {
+            let mut answers = AnswersOfMocks::default();
+            let mut said = Vec::new();
+            for (path, _) in files {
+                let file = file_named(input, path);
+                if !graph.has_record(file) {
+                    continue;
+                }
+                for export in graph
+                    .exports(file)
+                    .iter()
+                    .filter(|it| it.is_from_star_export)
+                {
+                    let comes_from = match export.binding {
+                        ExportBinding::Variable(declared) => declared.file,
+                        ExportBinding::Indirect {
+                            module: ModuleRef::File(source),
+                            ..
+                        } => source,
+                        _ => continue,
+                    };
+                    if walks_every_path {
+                        answers = AnswersOfMocks::default();
+                        answers.walks_every_path = true;
+                    }
+                    let asking = ProgramFile {
+                        project: ProjectId::Application,
+                        file,
+                    };
+                    let asked = (export.name, comes_from);
+                    let answer = mock_may_answer_ahead_of_declaration(
+                        graph,
+                        atoms,
+                        asking,
+                        asked,
+                        &mut answers,
+                    );
+                    let name = String::from_utf8_lossy(atoms.bytes(export.name)).into_owned();
+                    said.push(format!("{path} {name} {answer}"));
+                }
+            }
+            said
+        })
+    })
+}
+
+const CLUSTERS_DRAWN: usize = 200;
+
+struct Drawn(u64);
+
+impl Drawn {
+    fn below(&mut self, bound: usize) -> usize {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((self.0 >> 33) as usize) % bound
+    }
+}
+
+fn draw_cluster(drawn: &mut Drawn, cluster: usize, files: &mut Vec<(String, String)>) {
+    let count = 3 + drawn.below(4);
+    for place in 0..count {
+        let mut text = String::new();
+        for _ in 0..1 + drawn.below(3) {
+            match drawn.below(12) {
+                0 => text.push_str("export * from './mocked.mjs';\n"),
+                1 => text.push_str("export * from './leaf.mjs';\n"),
+                2 => text.push_str("export * from './loose.cjs';\n"),
+                3 => text.push_str("export { a } from './leaf.mjs';\n"),
+                4 => text.push_str("export { b as a } from './leaf.mjs';\n"),
+                _ => text.push_str(&format!(
+                    "export * from './c{cluster}f{}.mjs';\n",
+                    drawn.below(count)
+                )),
+            }
+        }
+        files.push((format!("c{cluster}f{place}.mjs"), text));
+    }
+}
+
+#[test]
+fn a_walk_that_keeps_answers_says_what_a_walk_of_every_path_says() {
+    let mut drawn = Drawn(1);
+    for mocked in [
+        &["mocked.mjs"][..],
+        &["mocked.mjs", "leaf.mjs"],
+        &["leaf.mjs"],
+    ] {
+        let mut files = vec![
+            (
+                String::from("leaf.mjs"),
+                String::from("export const a = 1;\nexport const b = 2;\n"),
+            ),
+            (
+                String::from("mocked.mjs"),
+                String::from("export const a = 3;\nexport const c = 4;\n"),
+            ),
+            (
+                String::from("loose.cjs"),
+                String::from("module.exports = globalThis.made;\n"),
+            ),
+        ];
+        for cluster in 0..CLUSTERS_DRAWN {
+            draw_cluster(&mut drawn, cluster, &mut files);
+        }
+        let [kept, every_path] = ask_walks_of(&files, mocked);
+        for answer in ["true", "false"] {
+            assert!(
+                kept.iter().filter(|said| said.ends_with(answer)).count() > CLUSTERS_DRAWN / 4,
+                "{answer}"
+            );
+        }
+        let parted: Vec<_> = kept
+            .iter()
+            .zip(&every_path)
+            .filter(|(kept, every_path)| kept != every_path)
+            .collect();
+        let texts_of = |said: &str| {
+            let cluster = &said[..said.find('f').unwrap_or(0) + 1];
+            let of_cluster = files.iter().filter(|(name, _)| name.starts_with(cluster));
+            of_cluster
+                .map(|(name, text)| format!("{name}: {text:?}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let shown: Vec<String> = parted
+            .iter()
+            .take(4)
+            .map(|(kept, every_path)| {
+                format!(
+                    "kept: {kept} | every path: {every_path}\n{}",
+                    texts_of(kept)
+                )
+            })
+            .collect();
+        assert!(
+            parted.is_empty(),
+            "{} of {} part under {mocked:?}\n{}",
+            parted.len(),
+            kept.len(),
+            shown.join("\n\n")
+        );
+    }
+}
 
 fn program_with_functions(mut linked: Linked) -> Program {
     if linked.program.functions.is_empty() {
@@ -808,9 +972,11 @@ fn names_resolved_at_run_time_are_required() {
         export_name,
         specifier,
         drops_export_if_absent,
+        is_asked_for_by_star,
     } = *required;
     assert!(!may_be_absent);
     assert!(!drops_export_if_absent);
+    assert!(!is_asked_for_by_star);
     assert_eq!((export_name, specifier), (None, None));
     assert_eq!(module, module_named(&program, "barrel.js"));
     assert_eq!(program.strings.get(name), b"x");

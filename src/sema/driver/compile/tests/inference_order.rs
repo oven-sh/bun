@@ -316,6 +316,60 @@ fn what_a_walk_found_before_its_budget_ended_does_not_depend_on_which_is_asked_f
     }
 }
 
+fn write_function_that_mentions_its_parameters(times: usize) -> String {
+    let mut text = String::from("export function fill(list, other, box) {\n");
+    for index in 0..times {
+        let (to, from) = (index % 7, index % 5);
+        writeln!(text, "  list[{to}] = other[{from}] + box.size + {index};").unwrap();
+    }
+    text.push_str("  return list[0];\n}\n");
+    text
+}
+
+#[test]
+fn what_is_inferred_of_a_parameter_does_not_depend_on_how_often_it_is_mentioned() {
+    let ask = |times| {
+        let text = write_function_that_mentions_its_parameters(times);
+        ask_for_parameters(&text, Order::AsWritten)
+    };
+    let mentioned_seldom = ask(8);
+    let says_nothing = mentioned_seldom.iter().any(|answer| answer == "any");
+    assert!(!says_nothing, "{mentioned_seldom:?}");
+    for times in [1_000, 3_000, 20_000] {
+        assert_eq!(mentioned_seldom, ask(times), "{times} mentions");
+    }
+}
+
+fn write_row_of_functions_that_each_lay_a_name_of_their_own(length: usize) -> String {
+    let mut text = String::new();
+    for index in 0..length {
+        let next = index + 1;
+        writeln!(
+            text,
+            "export function f{index}(p, q) {{ p.m{index} = 0; return f{next}(p.next || q, q.next || p); }}"
+        )
+        .unwrap();
+    }
+    writeln!(text, "export function f{length}(p, q) {{ return p; }}").unwrap();
+    text
+}
+
+#[test]
+fn what_the_bound_on_a_tree_of_uses_cuts_short_does_not_depend_on_which_is_asked_for_first() {
+    let text = write_row_of_functions_that_each_lay_a_name_of_their_own(60);
+    for max_inference_nodes in [16, 64, 256, 4096] {
+        let ask = |order| ask_for_parameters_and_count(&text, order, max_inference_nodes).0;
+        let as_written = ask(Order::AsWritten);
+        for order in [Order::LastFirst, Order::Scattered] {
+            assert_eq!(
+                as_written,
+                ask(order),
+                "{max_inference_nodes} nodes, {order:?}"
+            );
+        }
+    }
+}
+
 #[test]
 fn every_function_of_a_cycle_knows_what_the_others_read() {
     let answers = ask_for_parameters(&write_visitors(48), Order::AsWritten);
@@ -331,6 +385,18 @@ fn the_first_of_a_long_chain_of_calls_knows_what_the_last_reads() {
     let text = write_chain(20_000);
     for order in [Order::AsWritten, Order::LastFirst, Order::Scattered] {
         let answers = ask_for_parameters(&text, order);
+        let last = answers.last().unwrap();
+        assert!(last.contains("size"), "{last}");
+        let differing = answers.iter().filter(|&answer| answer != last).count();
+        assert_eq!(differing, 0);
+    }
+}
+
+#[test]
+fn a_chain_of_calls_deeper_than_the_stack_is_solved_under_an_allowance_that_does_not_end() {
+    let text = write_chain(20_000);
+    for order in [Order::AsWritten, Order::LastFirst, Order::Scattered] {
+        let (answers, _) = ask_for_parameters_and_count(&text, order, 1 << 20);
         let last = answers.last().unwrap();
         assert!(last.contains("size"), "{last}");
         let differing = answers.iter().filter(|&answer| answer != last).count();

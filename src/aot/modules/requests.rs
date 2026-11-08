@@ -19,7 +19,9 @@ use crate::load::Sources;
 use crate::load::contents::load_names::{
     NamedModule, is_followed_further_than_bundler, mentions_plugin, modules_named_in, names_plugin,
 };
+use crate::load::plugin_modules::FOLDER_OF_DATABASE_NAMESPACE;
 use crate::load::sources::{SourceKind, parsed_source};
+use crate::module_keys::DATABASE_NAMESPACE;
 use bun_core::strings;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Atom;
@@ -109,6 +111,60 @@ pub(super) fn scan_files(input: &BindInput<'_, '_>) -> Scans {
         by_file[file.idx()] = scan;
     }
     Scans { by_file }
+}
+
+pub(super) fn request_folders_of_databases_first(
+    input: &BindInput<'_, '_>,
+    scans: &mut Scans,
+) -> Vec<FileId> {
+    let files = input.files;
+    let namespace_of = |file: FileId| {
+        let module = parsed_source(files, file)?.plugin_module.as_ref()?;
+        Some(&*module.namespace)
+    };
+    let mut folders = Vec::new();
+    for &database in files.compiled_files() {
+        if namespace_of(database) != Some(DATABASE_NAMESPACE) {
+            continue;
+        }
+        let sites = scans.find(database).map_or(&[][..], |scan| &scan.sites);
+        let folder = sites.iter().find_map(|site| match *site {
+            ScannedSite::Module(ModuleRef::File(file))
+                if namespace_of(file) == Some(FOLDER_OF_DATABASE_NAMESPACE) =>
+            {
+                Some(file)
+            }
+            _ => None,
+        });
+        let Some(folder) = folder else {
+            continue;
+        };
+        let is_imported_by_statement = files.compiled_files().iter().any(|&importer| {
+            let requests = scans.find(importer).map_or(&[][..], |scan| &scan.requests);
+            (requests.iter()).any(|request| request.target == ModuleRef::File(database))
+        });
+        folders.push((folder, is_imported_by_statement));
+    }
+    for entry_point in input.sources.entry_points() {
+        let Some(scan) = scans.find_mut(entry_point.file) else {
+            continue;
+        };
+        if !matches!(
+            scan.interop.kind,
+            ModuleKind::SourceText | ModuleKind::CommonJs
+        ) {
+            continue;
+        }
+        let run_first = folders.iter().filter(|folder| folder.1);
+        let first = run_first.map(|&(folder, _)| RequestDraft {
+            target: ModuleRef::File(folder),
+            phase: ImportPhase::Evaluation,
+            is_star_export: false,
+            star_place: NO_STAR_PLACE,
+        });
+        scan.requests.splice(0..0, first);
+    }
+    folders.iter().map(|folder| folder.0).collect()
 }
 
 fn leave_calls_of_test_run_to_loader(input: &BindInput<'_, '_>, scans: &mut Scans) {

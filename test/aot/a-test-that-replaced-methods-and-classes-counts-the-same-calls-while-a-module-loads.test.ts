@@ -41,7 +41,6 @@ const differs = {
   "the texts that the compiler reads make another number of symbols while these load": [
     "node:_http_common: Symbol",
     "node:_http_outgoing: Symbol",
-    "node:stream: Symbol",
   ],
   "the second text of internal/primordials is written out, where the first goes through the members of each class": [
     "node:stream: Function.prototype.bind",
@@ -51,6 +50,8 @@ const differs = {
   "the functions of node:fs that node:net calls are written out for a compiled program, where `bun test` binds them": [
     "node:fs: Function.prototype.bind",
   ],
+  "the first text of node:path binds functions of its native half, and these are it or load it, or internal/fs/streams, while they load; the second texts are written out or load them later":
+    ["node:path: Function.prototype.bind", "node:test: Function.prototype.bind", "node:util: Function.prototype.bind"],
 };
 
 // A compiled test replaces only what it spells out. What stands in has the length and the name of what it stands for:

@@ -2,7 +2,7 @@
 // Attribution: derived from Node.js, MIT licensed (Node.js contributors).
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
-var __node_module__ = { exports: {} as Exports };
+var __node_module__ = { exports: {} };
 
 const {
   ArrayPrototypeToSorted,
@@ -13,13 +13,14 @@ const {
   StringPrototypeSlice,
   StringPrototypeSplit,
   StringPrototypeToLowerCase,
+  Symbol,
 } = primordials;
 
 const kUTF16SurrogateThreshold = 0x10000; // 2 ** 16
 const kEscape = "\x1b";
 const kSubstringSearch = Symbol("kSubstringSearch");
 
-function CSI(strings: TemplateStringsArray, ...args: (string | number)[]) {
+function CSI(strings, ...args) {
   let ret = `${kEscape}[`;
   for (let n = 0; n < strings.length; n++) {
     ret += strings[n];
@@ -38,24 +39,24 @@ CSI.kClearScreenDown = CSI`0J`;
 // 'a\u0301' and '\u0301a' (both have the same visual output).
 // Check Canonical_Combining_Class in
 // http://userguide.icu-project.org/strings/properties
-function charLengthLeft(str: string, i: number) {
+function charLengthLeft(str, i) {
   if (i <= 0) return 0;
   if (
-    (i > 1 && StringPrototypeCodePointAt(str, i - 2)! >= kUTF16SurrogateThreshold) ||
-    StringPrototypeCodePointAt(str, i - 1)! >= kUTF16SurrogateThreshold
+    (i > 1 && StringPrototypeCodePointAt(str, i - 2) >= kUTF16SurrogateThreshold) ||
+    StringPrototypeCodePointAt(str, i - 1) >= kUTF16SurrogateThreshold
   ) {
     return 2;
   }
   return 1;
 }
 
-function charLengthAt(str: string, i: number) {
+function charLengthAt(str, i) {
   if (str.length <= i) {
     // Pretend to move to the right. This is necessary to autocomplete while
     // moving to the right.
     return 1;
   }
-  return StringPrototypeCodePointAt(str, i)! >= kUTF16SurrogateThreshold ? 2 : 1;
+  return StringPrototypeCodePointAt(str, i) >= kUTF16SurrogateThreshold ? 2 : 1;
 }
 
 /*
@@ -85,26 +86,12 @@ function charLengthAt(str: string, i: number) {
                 (right_alt * 8)
   - two leading ESCs apparently mean the same as one leading ESC
 */
-declare global {
-  namespace $Node {
-    /** What a "keypress" event says about the key. */
-    interface ReadlineKey {
-      sequence: string | null;
-      name: string | undefined;
-      ctrl: boolean;
-      meta: boolean;
-      shift: boolean;
-      code?: string;
-    }
-  }
-}
-
-function* emitKeys(stream: $Node.EventEmitter) {
+function* emitKeys(stream) {
   while (true) {
     let ch = yield;
     let s = ch;
     let escaped = false;
-    const key: $Node.ReadlineKey = {
+    const key = {
       sequence: null,
       name: undefined,
       ctrl: false,
@@ -563,7 +550,7 @@ function* emitKeys(stream: $Node.EventEmitter) {
 }
 
 // This runs in O(n log n).
-function commonPrefix(strings: string[]) {
+function commonPrefix(strings) {
   if (strings.length === 0) {
     return "";
   }
@@ -581,7 +568,7 @@ function commonPrefix(strings: string[]) {
   return min;
 }
 
-function reverseString(line: string, from = "\r", to = "\r") {
+function reverseString(line, from = "\r", to = "\r") {
   const parts = StringPrototypeSplit(line, from);
 
   // This implementation should be faster than
@@ -593,16 +580,6 @@ function reverseString(line: string, from = "\r", to = "\r") {
   result += parts[0];
 
   return result;
-}
-
-interface Exports {
-  charLengthAt: typeof charLengthAt;
-  charLengthLeft: typeof charLengthLeft;
-  commonPrefix: typeof commonPrefix;
-  emitKeys: typeof emitKeys;
-  reverseString: typeof reverseString;
-  kSubstringSearch: typeof kSubstringSearch;
-  CSI: typeof CSI;
 }
 
 __node_module__.exports = {

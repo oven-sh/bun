@@ -217,7 +217,15 @@ impl<'a, 's> TextsOfFile<'a, 's> {
 
     fn find_one(&self, value: ExprId) -> Option<(Atom, bool, Option<ResolvedForm>)> {
         let (names, asked) = (&self.written_names, &self.asked);
-        let found = find_alternatives(&self.inputs, names, asked, value, Folder::OfFile, None)?;
+        let found = find_alternatives(
+            &self.inputs,
+            names,
+            asked,
+            value,
+            Folder::OfFile,
+            None,
+            None,
+        )?;
         match found.alternatives[..] {
             [ImportSpecifier::Constant(text)] if !found.is_out_of_data_file => {
                 Some((text, found.start_at_own_directory, found.resolved_form))

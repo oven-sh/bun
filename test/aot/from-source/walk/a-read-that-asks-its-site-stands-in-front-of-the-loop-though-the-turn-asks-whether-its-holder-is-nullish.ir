@@ -1,0 +1,12 @@
+# -- source: main.cjs
+# class Board { constructor(options) { this.options = options; } at(i) { const { span = 10, inset = 3 } = this.options; return i * span + inset; } }
+# const board = new Board(JSON.parse('{"span":4}'));
+# function run(turns) { let s = 0; for (let i = 0; i < turns; i++) s += board.at(i & 7); return s; }
+# console.log(run(9), run(0));
+# -- end of source
+# A pattern asks whether its subject is undefined or null before it reads a name, so the reads took the value as that test of the turn had narrowed it, and that stands in the loop: a call of a stub for each
+# name in each turn, where `this.options.span` written out had none. The read that asks its site alone runs no code, throws nothing and answers "absent" for what is no object, so it takes the holder from in
+# front of the test.
+# RUN: compile ReadsThatAskTheirSitesBuiltInFrontOfLoops mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: statistic ReadsThatAskTheirSitesBuiltInFrontOfLoops 2

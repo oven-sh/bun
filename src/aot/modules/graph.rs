@@ -63,6 +63,7 @@ pub struct ModuleGraph {
     pub(super) member_stores: Vec<OnceLock<MemberStores>>,
     pub(super) data_linked_by_names_alone: Box<[FileId]>,
     pub(super) forms_require_checks_first: Vec<(FileId, FileId)>,
+    pub(super) folders_of_databases: Vec<FileId>,
     pub(super) star_names_left_out: StarNamesLeftOut,
     pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
 }
@@ -110,6 +111,7 @@ pub(super) struct FileRow {
     pub handed_on: Vec<(Atom, (ModuleRef, Atom))>,
     pub named_by_stars: Vec<FileId>,
     pub names_from_stars: Vec<Atom>,
+    pub names_of_unlisted_stars: Vec<(Atom, FileId)>,
     pub reaches_mock: bool,
 }
 
@@ -279,6 +281,12 @@ impl ModuleGraph {
         let is_namespace =
             accessed.is_imported || self.interop(accessed.module).kind != ModuleKind::CommonJs;
         is_namespace.then_some(members[index].1)
+    }
+
+    pub fn is_member_of_import(&self, file: FileId, member: ExprId) -> bool {
+        let accessed = &self.row(file).accessed;
+        let index = accessed.binary_search_by_key(&member, |&(member, _)| member);
+        index.is_ok_and(|index| accessed[index].1.is_imported)
     }
 
     pub fn find_module_accessed(&self, file: FileId, member: ExprId) -> Option<ModuleRef> {
@@ -629,6 +637,17 @@ impl ModuleGraph {
         names.binary_search_by_key(&name.0, |it| it.0).is_ok()
     }
 
+    pub fn unlisted_stars_that_bring(&self, file: FileId, name: Atom) -> &[(Atom, FileId)] {
+        let names = &self.row(file).names_of_unlisted_stars;
+        let start = names.partition_point(|it| it.0.0 < name.0);
+        let end = names.partition_point(|it| it.0.0 <= name.0);
+        &names[start..end]
+    }
+
+    pub fn names_from_stars(&self, file: FileId) -> &[Atom] {
+        &self.row(file).names_from_stars
+    }
+
     pub fn names_handed_on(&self, file: FileId) -> &[(Atom, (ModuleRef, Atom))] {
         &self.row(file).handed_on
     }
@@ -646,6 +665,10 @@ impl ModuleGraph {
     pub fn is_laid_on_object_prototype(&self, name: &[u8]) -> bool {
         let laid = &self.names_laid_on_object_prototype;
         laid.binary_search_by(|laid| (**laid).cmp(name)).is_ok()
+    }
+
+    pub fn folders_of_databases(&self) -> &[FileId] {
+        &self.folders_of_databases
     }
 
     pub fn forms_require_checks_first(&self, module: ModuleRef) -> &[(FileId, FileId)] {

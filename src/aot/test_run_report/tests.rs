@@ -353,6 +353,13 @@ fn what_tests_replace() {
 }
 
 #[test]
+fn es_packages_that_mocks_name() {
+    let line = line_of_es_packages_that_mocks_name(2);
+    let expected = "AOT modules | ES packages that mocks name, which may run again 2";
+    assert_eq!(line, expected);
+}
+
+#[test]
 fn files_that_may_run_again() {
     let line = line_of_files_that_may_run_again(0);
     assert_eq!(line, "AOT modules | CommonJS files that may run again 0");

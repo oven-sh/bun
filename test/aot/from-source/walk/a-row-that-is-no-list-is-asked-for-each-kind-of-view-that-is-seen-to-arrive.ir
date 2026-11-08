@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# function turn(rows, at, sine, cosine) { let held; for (let k = 0; k < rows.length; k++) { held = rows[k][at + 1]; rows[k][at + 1] = sine * rows[k][at] + cosine * held; rows[k][at] = cosine * rows[k][at] - sine * held; } }
+# const numbers = JSON.parse("[[0.25,1.25,2.25,3.25],[4.25,5.25,6.25,0.25],[1.25,2.25,3.25,4.25]]");
+# const rows = numbers.map(r => Float32Array.from(r));
+# for (let at = 0; at < 3; at++) turn(rows, at, 0.5, 0.25);
+# console.log(rows.map(row => row.join()).join(";"));
+# -- end of source
+# A row that is no list was asked for a Float64Array alone; rows that are Float32Arrays ran the stretch as written, five accesses by stubs. Behind the Float64Array the row is asked for each kind of view that is
+# seen to arrive at the read, and each kind has an arm of its own: the row's length is read once in it.
+# REQUIRES: entries-of-bun
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Float64Array
+# CHECK: = TypeTest {{*}} testedType=Float32Array
+# CHECK: = GetTypedArrayLength {{*}} typedArrayType=9
+# CHECK: = PutTypedArrayElement {{*}} typedArrayType=9 {{*}}level=Proven
+# CHECK: = PutTypedArrayElement {{*}} typedArrayType=9 {{*}}level=Proven
+# RUN(COUNT): compile RowsThatAreNoListsAskedForViews mechanisms=all
+# Two copies of the loop, two kinds of views in each.
+# COUNT: statistic RowsThatAreNoListsAskedForViews 4

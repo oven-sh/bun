@@ -39,6 +39,8 @@ const NAMES_PLUGIN: u32 = 512;
 const HAS_LEVELS_ABOVE_ROOT: u32 = 1024;
 /// Behind the further names of packages: the length of `CompiledProgramInput::refused_data`, then the records.
 const HAS_REFUSED_DATA: u32 = 2048;
+/// Behind the refused data: the length of `CompiledProgramInput::loaders_given_to_build`, then the bytes.
+const HAS_LOADERS_GIVEN_TO_BUILD: u32 = 4096;
 /// The length of the path, what `require` and what `import` find, and what the name hides.
 const PACKAGE_NAME_SIZE: usize = 4 * size_of::<u32>();
 const HIDES_OTHER_PATHS: u32 = 1;
@@ -132,6 +134,8 @@ pub struct CompiledProgramInput<'a> {
     pub assets_named_at_root: &'a [u8],
     /// `CompiledProgram::refused_data`. Empty where no parser refused a file.
     pub refused_data: &'a [u8],
+    /// `CompiledProgram::loaders_given_to_build`. Empty where the build was given none.
+    pub loaders_given_to_build: &'a [u8],
     /// `CompiledProgram::levels_above_root`
     pub levels_above_root: u32,
     /// Ascending by path.
@@ -179,6 +183,8 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
         + input.assets_named_at_root.len()
         + size_of::<u32>()
         + input.refused_data.len()
+        + size_of::<u32>()
+        + input.loaders_given_to_build.len()
         + size_of::<u32>()
         + encode_further_package_names(input.further_package_names).len()
 }
@@ -288,7 +294,8 @@ pub(crate) fn append_record(
             | (u32::from(!input.assets_named_at_root.is_empty()) * HAS_ASSETS_NAMED_AT_ROOT)
             | (u32::from(input.levels_above_root != 0) * HAS_LEVELS_ABOVE_ROOT)
             | (u32::from(!input.further_package_names.is_empty()) * HAS_FURTHER_PACKAGE_NAMES)
-            | (u32::from(!input.refused_data.is_empty()) * HAS_REFUSED_DATA),
+            | (u32::from(!input.refused_data.is_empty()) * HAS_REFUSED_DATA)
+            | (u32::from(!input.loaders_given_to_build.is_empty()) * HAS_LOADERS_GIVEN_TO_BUILD),
     };
     let root = match input.root_below_working_directory {
         Some(root) => [
@@ -354,6 +361,16 @@ pub(crate) fn append_record(
         ]
         .concat(),
     };
+    let loaders_given_to_build = match input.loaders_given_to_build {
+        b"" => Vec::new(),
+        loaders => [
+            &u32::try_from(loaders.len())
+                .map_err(|_| CORRUPTED)?
+                .to_le_bytes()[..],
+            loaders,
+        ]
+        .concat(),
+    };
     let _ = builder.add_concat(&[
         bytes_of(&header),
         slice_as_bytes(&records),
@@ -369,6 +386,7 @@ pub(crate) fn append_record(
         &levels_above_root,
         &encode_further_package_names(input.further_package_names),
         &refused_data,
+        &loaders_given_to_build,
     ]);
     Ok(())
 }
@@ -688,6 +706,14 @@ fn try_read(
         refused_data = payload.bytes(end, length)?;
         end += length;
     }
+    let mut loaders_given_to_build: &'static [u8] = b"";
+    if header.flags & HAS_LOADERS_GIVEN_TO_BUILD != 0 {
+        let length = payload.bytes(end, size_of::<u32>())?;
+        let length = u32::from_le_bytes(length.try_into().ok()?) as usize;
+        end += size_of::<u32>();
+        loaders_given_to_build = payload.bytes(end, length)?;
+        end += length;
+    }
     *record_at = end;
     let backing_file = payload.file.map(|file| ImageFile {
         descriptor: file.descriptor,
@@ -709,6 +735,7 @@ fn try_read(
     let program = program.with_root_on_build_machine(root_on_build_machine);
     let program = program.with_assets_named_at_root(assets_named_at_root);
     let program = program.with_refused_data(refused_data);
+    let program = program.with_loaders_given_to_build(loaders_given_to_build);
     let program = program.with_levels_above_root(levels_above_root);
     let program = program.with_further_package_names(further_package_names.into_boxed_slice());
     Some(program.with_path_aliases(path_aliases))
@@ -1331,6 +1358,7 @@ pub(crate) mod tests {
             root_on_build_machine: None,
             assets_named_at_root: b"",
             refused_data: b"",
+            loaders_given_to_build: b"",
             levels_above_root: 0,
             further_package_names: &[],
             preserves_source_paths,
@@ -1646,6 +1674,17 @@ pub(crate) mod tests {
         assert_eq!(find(b"/$bunfs/root/data/odd.txt"), None);
         assert_eq!(find(b"/$bunfs/root/data/bad.toml?toml"), None);
         assert_eq!(find(b""), None);
+    }
+
+    #[test]
+    fn loaders_given_to_build_round_trip() {
+        let entry_points = [entry_point(10, b"/$bunfs/root/main.js")];
+        let mut input = program(&IMAGE, ALIGNMENT, &entry_points, false);
+        input.loaders_given_to_build = b".pic\0text\0";
+        let (bytes, record_at, _) = write(&input, &[Some(0)], 5).unwrap();
+        let (program, record_end) = read_back(bytes.clone(), record_at).unwrap();
+        assert_eq!(record_end, bytes.len());
+        assert_eq!(program.loaders_given_to_build(), b".pic\0text\0");
     }
 
     #[test]

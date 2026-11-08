@@ -309,6 +309,7 @@ fn text_file_answers_its_text_only_where_the_bundler_links_every_require() {
         ("main.mjs", "import.meta.require('./notes.txt');"),
         ("main.cjs", "const load = require; load('./notes.txt');"),
         ("main.cjs", "require.call(null, './notes.txt');"),
+        ("main.cjs", "require('./notes.txt', {});"),
         (
             "main.cjs",
             "for (const name of ['notes']) require('./' + name + '.txt');",

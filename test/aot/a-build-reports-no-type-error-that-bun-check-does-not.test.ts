@@ -27,6 +27,42 @@ const withoutTypes = (library: string) =>
     files: ["main.ts"],
   });
 
+const scriptWithTypesOfBunInstalled = (more: string) => ({
+  "main.ts": `/// <reference path="./shared.d.ts" />
+class Crate {
+  weight = 1;
+}
+enum Grade {
+  Fine = 4,
+}
+function describe(grade: Grade): string {
+  return grade + " " + Grade[grade];
+}
+console.log(new Crate().weight, new Crate().label, describe(Grade.Fine), describe(3));
+${more}`,
+  "shared.d.ts": `interface Crate {
+  label?: string;
+}
+declare enum Grade {
+  Coarse = 1,
+  Middling = 3,
+}
+`,
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: {
+      strict: true,
+      module: "preserve",
+      target: "esnext",
+      moduleDetection: "auto",
+      noEmit: true,
+      types: ["bun"],
+    },
+    files: ["main.ts"],
+  }),
+  "node_modules/@types/bun/package.json": `{ "name": "@types/bun", "version": "1.3.0", "types": "index.d.ts" }\n`,
+  "node_modules/@types/bun/index.d.ts": `declare module "bun" {\n  export const version: string;\n}\n`,
+});
+
 const rows: Record<string, Row> = {
   "a function of the program where `typeof fetch` is wanted: Bun's declarations add a member to fetch": {
     files: {
@@ -275,6 +311,15 @@ console.log(new Held().own, new Held().declared, show(Level.Own), show(3));
     },
     errors: [],
     stdout: "string object\n",
+  },
+  "a script of a project that has Bun's types installed: its class and its enum go on in a declaration file": {
+    files: scriptWithTypesOfBunInstalled(""),
+    errors: [],
+    stdout: "1 undefined 4 Fine 3 undefined\n",
+  },
+  "a script of a project that has Bun's types installed: a mistake of its own still stops the build": {
+    files: scriptWithTypesOfBunInstalled(`const wrong: number = "text";\nconsole.log(wrong);\n`),
+    errors: ["TS2322"],
   },
 };
 

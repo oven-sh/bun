@@ -6,7 +6,8 @@ use super::plan::Plan;
 use super::requests::{ScannedSite, Scans};
 use super::{BindInput, ModuleRef};
 use crate::builtins::RuntimeModule;
-use crate::load::SourceKind;
+use crate::load::{SourceKind, is_in_node_modules};
+use crate::test_run_report::say_es_packages_that_mocks_name;
 use bun_core::strings::{contains, last_index_of_char};
 use bun_sema::bind::{Bound, FnOwner, Parent};
 use bun_sema::hir::{ExprId, ExprKind, File, StmtId, StmtKind};
@@ -139,6 +140,37 @@ fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
     }
     found.throwers.clear();
     found
+}
+
+pub(super) fn find_es_packages_that_mocks_name(
+    input: &BindInput<'_, '_>,
+    scans: &Scans,
+) -> Vec<ModuleRef> {
+    if !input.runner_starts_entry_points {
+        return Vec::new();
+    }
+    let files = input.files;
+    let is_es_package = |named: FileId| {
+        let scan = scans.find(named);
+        scan.is_some_and(|scan| scan.interop.kind == ModuleKind::SourceText)
+            && is_in_node_modules(files.module(named).file_name())
+    };
+    let mut found: Vec<FileId> = Vec::new();
+    for &file in files.compiled_files() {
+        let sites = files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scans.of(file).sites) {
+            let &ScannedSite::Module(ModuleRef::File(named)) = answer else {
+                continue;
+            };
+            if matches!(site.kind, ImportSiteKind::MockModule(_)) && is_es_package(named) {
+                found.push(named);
+            }
+        }
+    }
+    found.shared_sort_unstable();
+    found.dedup();
+    say_es_packages_that_mocks_name(found.len());
+    found.into_iter().map(ModuleRef::File).collect()
 }
 
 pub(super) fn find_files_that_leave(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<ModuleRef> {

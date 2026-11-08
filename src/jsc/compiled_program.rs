@@ -227,7 +227,8 @@ pub extern "C" fn Bun__AOT__pathOfForm(
     is_form_without_attributes: &mut bool,
 ) -> bun_core::String {
     let (path, type_attribute) = (path.to_utf8(), type_attribute.to_utf8());
-    match bun_aot::module_keys::places_of_form(path.slice(), type_attribute.slice()) {
+    let given = compiled_program().map_or(&b""[..], |it| it.loaders_given_to_build());
+    match bun_aot::module_keys::places_of_form(path.slice(), type_attribute.slice(), given) {
         Some(places) => {
             *is_form_without_attributes = places.is_form_without_attributes;
             bun_core::String::clone_utf8(&places.path_of_form)

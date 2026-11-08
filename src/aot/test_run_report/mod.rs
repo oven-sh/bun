@@ -111,6 +111,16 @@ pub(crate) fn say_files_that_may_run_again(count: usize) {
     }
 }
 
+fn line_of_es_packages_that_mocks_name(count: usize) -> String {
+    format!("AOT modules | ES packages that mocks name, which may run again {count}")
+}
+
+pub(crate) fn say_es_packages_that_mocks_name(count: usize) {
+    if logs_stages() {
+        say(&line_of_es_packages_that_mocks_name(count));
+    }
+}
+
 fn line_of_whose_files(
     of_tests: usize,
     behind_helpers: usize,

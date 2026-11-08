@@ -2,7 +2,7 @@
 // Attribution: derived from Node.js, MIT licensed (Node.js contributors).
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
-var __node_module__ = { exports: {} as Exports };
+var __node_module__ = { exports: {} };
 
 const { NumberIsNaN } = primordials;
 
@@ -19,10 +19,7 @@ const { kClearLine, kClearScreenDown, kClearToLineBeginning, kClearToLineEnd } =
  * moves the cursor to the x and y coordinate on the given stream
  */
 
-type Stream = $Node.Writable | null | undefined;
-type Callback = $Node.ErrorCallback;
-
-function cursorTo(stream: Stream, x: number, y?: number | Callback, callback?: Callback) {
+function cursorTo(stream, x, y, callback) {
   if (callback !== undefined) {
     validateFunction(callback, "callback");
   }
@@ -50,7 +47,7 @@ function cursorTo(stream: Stream, x: number, y?: number | Callback, callback?: C
  * moves the cursor relative to its current location
  */
 
-function moveCursor(stream: Stream, dx: number, dy: number, callback?: Callback) {
+function moveCursor(stream, dx, dy, callback) {
   if (callback !== undefined) {
     validateFunction(callback, "callback");
   }
@@ -84,7 +81,7 @@ function moveCursor(stream: Stream, dx: number, dy: number, callback?: Callback)
  *    0 for the entire line
  */
 
-function clearLine(stream: Stream, dir?: number, callback?: Callback) {
+function clearLine(stream, dir, callback) {
   if (callback !== undefined) {
     validateFunction(callback, "callback");
   }
@@ -94,7 +91,7 @@ function clearLine(stream: Stream, dir?: number, callback?: Callback) {
     return true;
   }
 
-  const type = dir! < 0 ? kClearToLineBeginning : dir! > 0 ? kClearToLineEnd : kClearLine;
+  const type = dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
   return stream.write(type, callback);
 }
 
@@ -102,7 +99,7 @@ function clearLine(stream: Stream, dir?: number, callback?: Callback) {
  * clears the screen from the current position of the cursor down
  */
 
-function clearScreenDown(stream: Stream, callback?: Callback) {
+function clearScreenDown(stream, callback) {
   if (callback !== undefined) {
     validateFunction(callback, "callback");
   }
@@ -115,31 +112,11 @@ function clearScreenDown(stream: Stream, callback?: Callback) {
   return stream.write(kClearScreenDown, callback);
 }
 
-interface Published {
-  clearLine: typeof clearLine;
-  clearScreenDown: typeof clearScreenDown;
-  cursorTo: typeof cursorTo;
-  moveCursor: typeof moveCursor;
-}
-
-interface Exports extends Published {
-  // The exports of `node:readline` once that module has been loaded, so that a function a program stores there is the one that runs. Until then, these four.
-  published: Published;
-}
-
-const published: Published = {
-  clearLine,
-  clearScreenDown,
-  cursorTo,
-  moveCursor,
-};
-
 __node_module__.exports = {
   clearLine,
   clearScreenDown,
   cursorTo,
   moveCursor,
-  published,
 };
 
 export default __node_module__.exports;

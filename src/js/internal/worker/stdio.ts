@@ -11,13 +11,7 @@
 
 const kFlushSync = Symbol("kFlushSync");
 
-interface PortReadable extends $Node.Readable {
-  endFromOwner?(): void;
-}
-
-interface PortWritable extends $Node.Writable {
-  [kFlushSync]: () => void;
-}
+type PortReadable = import("node:stream").Readable & { endFromOwner?(): void };
 
 // Readable fed by a MessagePort (worker.stdout/stderr on the parent, process.stdin
 // in the worker). The peer posts arrays of Buffers; null signals EOF.
@@ -96,7 +90,7 @@ function makePortWritable(port: MessagePort) {
   // event loop; release that immediately — the port is re-ref'd only while a
   // batch is awaiting its ack, so unflushed data keeps the writer alive
   // (node's kWaitingStreams) but an idle stream never pins the loop.
-  let pendingWriteCallback: $Node.ErrorCallback | null = null;
+  let pendingWriteCallback: ((error?: Error | null) => void) | null = null;
   function onAck() {
     const cb = pendingWriteCallback;
     if (cb !== null) {
@@ -109,11 +103,11 @@ function makePortWritable(port: MessagePort) {
   port.unref();
   const stream = new Writable({
     decodeStrings: false,
-    writev(chunks: $Node.ChunkToWrite[], cb: $Node.ErrorCallback) {
+    writev(chunks, cb) {
       const payload = new Array(chunks.length);
       for (let i = 0; i < chunks.length; i++) {
         const { chunk, encoding } = chunks[i];
-        payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding as BufferEncoding) : chunk;
+        payload[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
       }
       port.postMessage(payload);
       if (process._exiting) {
@@ -126,11 +120,11 @@ function makePortWritable(port: MessagePort) {
         port.ref();
       }
     },
-    final(cb: $Node.ErrorCallback) {
+    final(cb) {
       port.postMessage(null);
       cb();
     },
-    destroy(err: Error | null, cb: $Node.ErrorCallback) {
+    destroy(err, cb) {
       // Discharge an in-flight batch: the reader may never ack a destroyed
       // stream, so release the loop ref taken in writev and complete the
       // parked callback; drop the ack listener so a late ack can't fire
@@ -144,7 +138,7 @@ function makePortWritable(port: MessagePort) {
       port.removeEventListener("message", onAck);
       cb(err);
     },
-  }) as PortWritable;
+  });
   // On a synchronous exit no ack can arrive; completing the parked writev lets
   // the Writable clear its buffer through writev, which now completes
   // synchronously because process._exiting is set (node's flushSync).
@@ -156,7 +150,7 @@ function makePortWritable(port: MessagePort) {
 function makeEndedReadable() {
   const Readable = require("internal/streams/readable");
   return new Readable({
-    read(this: $Node.Readable) {
+    read() {
       this.push(null);
     },
   });
@@ -167,4 +161,4 @@ export default {
   makePortReadable,
   makePortWritable,
   makeEndedReadable,
-} as const;
+};

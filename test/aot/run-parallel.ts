@@ -49,6 +49,7 @@
 //   // Env of the executable: A=b       the same, for the executable alone
 //   // Env of the build: A=b            the same, for the build alone
 //   // Build prints: 2 x <line>         how often the build prints exactly that line
+//   // Build prints on x64: 2 x <line>  the same where process.arch is that word, and nothing anywhere else: what a compiler says of its machine code
 //   // Reference: bun build --compile  it is compared with an executable built without --aot, with the flags that do not begin with --aot
 //   // Exit code: 3                    what both runs end with. Without the line a reference that does not end with 0 fails the program: two runs that
 //                                      stop at the same error agree and show nothing
@@ -66,7 +67,8 @@
 //                                      for a program whose reference, `bun <file>`, answers now one way, now the other there. It is built and run all the same,
 //                                      and its line says in which lines the two differed in this run
 //                                      Nothing anywhere else. There is no such line for every platform
-//   // Skip under ASAN: <why>          the same where Bun is built with the address sanitizer
+//   // Skip under ASAN: <why>          the same where Bun is built with the address sanitizer: for a program that asks the collector whether an object is gone:
+//                                      native frames are larger there and keep words that nobody overwrites, and the collector reads them
 //   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
 //                                      How a program or its build grows is not asked under ASAN, so no `// Todo:` of a program that says `// Grows:` is held to fail there,
 //                                      nor where no instructions are counted
@@ -886,7 +888,7 @@ function read(file: string): Program {
       ...Object.fromEntries(lines("Env of the executable").map(line => line.split(/=(.*)/s).slice(0, 2))),
     },
     envOfBuild: Object.fromEntries(lines("Env of the build").map(line => line.split(/=(.*)/s).slice(0, 2))),
-    buildPrints: lines("Build prints").map(line => {
+    buildPrints: [...lines("Build prints"), ...lines(`Build prints on ${process.arch}`)].map(line => {
       const [, times, text] = /^(\d+) x (.*)$/.exec(line)!;
       return { times: Number(times), line: text };
     }),

@@ -4,6 +4,8 @@
 // The test files of a project end in _test, which `bun test` finds: scripts/runner.node.ts takes every name that holds ".test" for a test of the repository.
 // The packages of a project lie in a folder `installed`, which the copy has as `node_modules`: git ignores a folder of that name, and so does whatever carries this tree to another machine.
 // A file flags.txt in the folder holds flags for both runs: `--isolate`.
+// A file todo.txt in the folder, `"<words>" | "<the words for them>": <why>`: the two runs part today, and in that alone: one says the first words where the other says the second.
+// The project is run all the same. It fails by any other difference, and once the two runs agree: the file goes out.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
@@ -12,10 +14,14 @@ import { test } from "../supported";
 import { run } from "./run";
 
 const root = join(import.meta.dir, "..", "parallel-test-runs");
+const holdsFile = (folder: string): boolean =>
+  readdirSync(folder, { withFileTypes: true }).some(
+    entry => !entry.isDirectory() || holdsFile(join(folder, entry.name)),
+  );
 const foldersIn = (folder: string) =>
   readdirSync(folder, { withFileTypes: true })
-    // git holds no empty folder: one that is left behind in a working tree is no project.
-    .filter(entry => entry.isDirectory() && readdirSync(join(folder, entry.name)).length > 0)
+    // git holds no folder without a file: one that is left behind in a working tree is no project, nor is one that holds such folders alone.
+    .filter(entry => entry.isDirectory() && holdsFile(join(folder, entry.name)))
     .map(entry => entry.name)
     .sort();
 // `bun test` runs the files of a folder as the file system lists them. A project whose second file looks at what the first has left needs them in the order of their names.
@@ -30,6 +36,16 @@ const flagsOf = (folder: string) =>
   existsSync(join(folder, "flags.txt"))
     ? readFileSync(join(folder, "flags.txt"), "utf8").split(/\s+/).filter(Boolean)
     : [];
+
+const literalPackagesIn = (folder: string) =>
+  (readdirSync(folder, { recursive: true }) as string[]).filter(path => path.split(/[\\/]/).includes("node_modules"));
+
+function markOf(folder: string) {
+  if (!existsSync(join(folder, "todo.txt"))) return undefined;
+  const [, one, other] = /^"([^"]+)" \| "([^"]+)": \S/.exec(readFileSync(join(folder, "todo.txt"), "utf8")) ?? [];
+  if (other === undefined) throw new Error(`${folder}/todo.txt is not of the form \`"<words>" | "<the words for them>": <why>\``);
+  return (outcome: unknown) => JSON.parse(JSON.stringify(outcome).replaceAll(one, other));
+}
 
 function layPackages(folder: string) {
   for (const entry of readdirSync(folder, { withFileTypes: true })) {
@@ -71,6 +87,8 @@ export function testRunsInFolders(part: number, parts: number) {
   const stretch = Math.ceil(projects.length / parts);
   for (const [area, project] of projects.slice((part - 1) * stretch, part * stretch)) {
     test(`${area}/${project}`, async () => {
+      // See the head of this file: such a folder stays behind where the tree is carried, and the project then runs without its packages.
+      expect(literalPackagesIn(join(root, area, project)).slice(0, 3)).toEqual([]);
       // A folder for each run: a build leaves files beside what it reads.
       using plainDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       using compiledDir = tempDir("aot-test-run-in-folder", join(root, area, project));
@@ -82,7 +100,8 @@ export function testRunsInFolders(part: number, parts: number) {
       // `bun test` itself answers otherwise once in some hundred runs of some folders. Where the two part it is run again,
       // twice at most, and the run that says what the compiled run said is the one that counts. The compiled run is not run again: what it said stands.
       let plain = first;
-      for (let asked = 0; asked < 2 && !Bun.deepEquals(compiled, plain); asked++) {
+      const butForItsMark = markOf(join(root, area, project));
+      for (let asked = 0; asked < 2 && !butForItsMark && !Bun.deepEquals(compiled, plain); asked++) {
         using againDir = tempDir("aot-test-run-in-folder", join(root, area, project));
         const again = await outcomeOf(String(againDir), "", ...flags);
         if (!Bun.deepEquals(compiled, again)) continue;
@@ -92,6 +111,11 @@ export function testRunsInFolders(part: number, parts: number) {
       // A run in which plain says nothing would pass for the wrong reason: it prints, or a test of it passes by what it expects.
       expect(plain.printed.length + plain.tests.filter(line => line.startsWith("(pass) ")).length).toBeGreaterThan(0);
       expect(plain.tests.length).toBeGreaterThan(0);
+      if (butForItsMark) {
+        expect(butForItsMark(compiled)).toEqual(butForItsMark(plain));
+        expect(compiled, "the two runs agree: todo.txt goes out").not.toEqual(plain);
+        return;
+      }
       expect(compiled).toEqual(plain);
       if (!existsSync(join(root, area, project, "under.txt"))) return;
       using checkedDir = tempDir("aot-test-run-in-folder", join(root, area, project));

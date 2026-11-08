@@ -2,6 +2,7 @@
 //! import resolves to, which declarations in different files merge into one symbol, what an alias
 //! resolves to.
 
+mod aliases_in_progress;
 mod code_barrels;
 mod code_file;
 mod code_finish;
@@ -3297,9 +3298,7 @@ impl<'s> Resolve<'s> for Linked<'_, 's> {
 /// the result depends on the order in which a resolver is queried.
 struct AliasResolver<'a, 's> {
     files: &'a Files<'s>,
-    /// `typeResolutions` and `resolutionResults`: each alias in progress, and whether no cycle
-    /// through it has been found.
-    in_flight: std::cell::RefCell<Vec<(Sym, bool)>>,
+    in_flight: std::cell::RefCell<aliases_in_progress::AliasesInProgress>,
     /// How many of `in_flight`, from the first, were in progress when the stack ran out.
     out_of_stack: std::cell::Cell<usize>,
     /// The number of times an alias was read while in progress, or was rejected because the stack
@@ -11334,15 +11333,13 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
         // pushed since.
         let is_pushed = {
             let mut in_flight = self.in_flight.borrow_mut();
-            let start = in_flight.iter().position(|begun| begun.0 == sym);
+            let start = in_flight.place_of(sym);
             if let Some(start) = start {
-                for begun in &mut in_flight[start..] {
-                    begun.1 = false;
-                }
+                in_flight.note_cycle_from(start);
             }
             let is_pushed = start.is_none() && bun_core::StackCheck::init().is_safe_to_recurse();
             if is_pushed {
-                in_flight.push((sym, true));
+                in_flight.push(sym);
             } else if start.is_none() {
                 self.out_of_stack.set(in_flight.len());
             }
@@ -11376,13 +11373,13 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
             };
         }
         // `popTypeResolution`
-        let begun = self.in_flight.borrow_mut().pop();
+        let is_in_cycle = self.in_flight.borrow_mut().pop();
         let left = self.in_flight.borrow().len();
         if left < self.out_of_stack.get() {
             self.out_of_stack.set(left);
             links.ran_out_of_stack = true;
         }
-        if links.ran_out_of_stack || !begun.is_some_and(|begun| begun.1) {
+        if links.ran_out_of_stack || is_in_cycle {
             links.alias_target = None;
             links.is_circular = true;
         }
@@ -11459,7 +11456,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
     }
 
     fn is_alias_in_progress(&self, sym: Sym) -> bool {
-        self.in_flight.borrow().iter().any(|begun| begun.0 == sym)
+        self.in_flight.borrow().place_of(sym).is_some()
     }
 
     fn has_resolved_symbol(&self, file: FileId, e: ExprId) -> bool {
@@ -11474,7 +11471,7 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
     fn note_failed_lookup(&self, file: FileId, e: ExprId) {
         if let Some(buffer) = &self.buffer {
             let in_flight = self.in_flight.borrow();
-            let in_progress: SmallVec<[Sym; 4]> = in_flight.iter().map(|begun| begun.0).collect();
+            let in_progress: SmallVec<[Sym; 4]> = in_flight.aliases().iter().copied().collect();
             buffer.borrow_mut().failed_lookups.push(FailedLookup {
                 file,
                 identifier: e,

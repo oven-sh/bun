@@ -8,7 +8,7 @@
 //
 //   growth     (cost at twice the size - cost at size 0) / (cost at the size - cost at size 0)     may not pass 2.1
 //
-// The bound is the same for every shape, on every platform, but for what a shape says of its own.
+// The bound is the same for every shape, on every platform.
 //
 // By default the allocator returns freed memory to the system after a delay, by the clock, so a build has resident what it needs plus whatever is still
 // waiting to be returned. Two runs of one compiler then differ by up to 40 MB, and the growth of one shape by up to 28%. A build runs with
@@ -78,7 +78,7 @@ const taskset = isLinux ? Bun.which("taskset") : null;
 const onOneProcessor = taskset
   ? [taskset, "-c", /^Cpus_allowed_list:\s*(\d+)/m.exec(readFileSync("/proc/self/status", "utf8"))![1]]
   : [];
-const printsCounts = (shape: Shape) => !shape.isTestRun && !shape.isRefused;
+const printsCounts = (shape: Shape) => !shape.isTestRun && !shape.isRefused && !shape.isCheckedAlone;
 const judgesCountsAlone = isMacOS;
 // A later name is longer (e9999, e10000), so twice as many names are more than twice the characters: 2.13 times from 16,000 names to 32,000.
 // A file that is read again shows in SourceLines and its like, and a text that is written again in TableBytesEmitted, which counts the text of the image too.
@@ -114,9 +114,11 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<B
   try {
     const cost = await measureCommandWithMemory(
       cwd,
-      shape.isTestRun
-        ? [...onOneProcessor, bunExe(), "test", "--aot", ...(shape.flags ?? []), entry]
-        : [
+      shape.isCheckedAlone
+        ? [bunExe(), "check", "--threads=1", ...(shape.flags ?? []), entry]
+        : shape.isTestRun
+          ? [...onOneProcessor, bunExe(), "test", "--aot", ...(shape.flags ?? []), entry]
+          : [
             bunExe(),
             "build",
             "--compile",

@@ -626,18 +626,19 @@ impl<'a, 's> Finder<'a, 's> {
     fn collect_alternatives(
         &self,
         expression: ExprId,
+        drops_undefined: bool,
         alternatives: &mut SmallVec<[Alternative; 4]>,
-    ) {
+    ) -> bool {
         let hir = self.file.hir;
         if self.file.decisions.is_dead_expr(expression) {
-            return;
+            return false;
         }
         let expression = hir.skip_type_assertions(expression);
-        match hir[expression].kind {
-            ExprKind::Fn(function) => alternatives.push(Alternative::Function(HeldFunction {
+        let held = match hir[expression].kind {
+            ExprKind::Fn(function) => Alternative::Function(HeldFunction {
                 definition: function,
                 closure: function,
-            })),
+            }),
             ExprKind::Binary {
                 op: BinOp::And,
                 left,
@@ -645,48 +646,47 @@ impl<'a, 's> Finder<'a, 's> {
             } if self.is_undefined_this(hir.skip_type_assertions(left))
                 || self.reads_untouched_exports(left, right) =>
             {
-                alternatives.push(Alternative::Undefined)
+                if !drops_undefined {
+                    alternatives.push(Alternative::Undefined);
+                }
+                return false;
             }
             ExprKind::Binary {
                 op: BinOp::And,
                 left,
                 right,
             } => {
-                let first_of_left = alternatives.len();
-                self.collect_alternatives(left, alternatives);
-                let is_undefined = |held: &Alternative| matches!(held, Alternative::Undefined);
-                if !alternatives[first_of_left..].iter().all(is_undefined) {
-                    self.collect_alternatives(right, alternatives);
+                let mut of_left = SmallVec::<[Alternative; 4]>::new();
+                let reaches_right = self.collect_alternatives(left, drops_undefined, &mut of_left);
+                let may_be_falsy = |held: &Alternative| !matches!(held, Alternative::Function(_));
+                alternatives.extend(of_left.into_iter().filter(may_be_falsy));
+                if reaches_right {
+                    self.collect_alternatives(right, drops_undefined, alternatives);
                 }
+                return reaches_right;
             }
             ExprKind::Binary {
                 op: BinOp::Or | BinOp::Nullish,
                 left,
                 right,
             } => {
-                let first_of_left = alternatives.len();
-                self.collect_alternatives(left, alternatives);
-                let mut place = 0;
-                alternatives.retain(|held| {
-                    place += 1;
-                    place <= first_of_left || !matches!(held, Alternative::Undefined)
-                });
-                self.collect_alternatives(right, alternatives);
+                let left = self.collect_alternatives(left, true, alternatives);
+                return self.collect_alternatives(right, drops_undefined, alternatives) || left;
             }
             ExprKind::Binary {
                 op: BinOp::Comma,
                 right,
                 ..
-            } => self.collect_alternatives(right, alternatives),
+            } => return self.collect_alternatives(right, drops_undefined, alternatives),
             ExprKind::Cond { test, branches } => {
                 let branches = hir.branches(branches);
-                self.collect_alternatives(branches.yes, alternatives);
-                if !self.quiet().names_locked_object(test) {
-                    self.collect_alternatives(branches.no, alternatives);
-                }
+                let yes = self.collect_alternatives(branches.yes, drops_undefined, alternatives);
+                return (!self.quiet().names_locked_object(test)
+                    && self.collect_alternatives(branches.no, drops_undefined, alternatives))
+                    || yes;
             }
             ExprKind::Call(call) if hir[call].args.is_empty() => {
-                alternatives.push(match hir[hir.skip_type_assertions(hir[call].callee)].kind {
+                match hir[hir.skip_type_assertions(hir[call].callee)].kind {
                     ExprKind::Fn(definition) => match self.returned_function(definition) {
                         Some(closure) => Alternative::Function(HeldFunction {
                             definition,
@@ -695,10 +695,12 @@ impl<'a, 's> Finder<'a, 's> {
                         None => Alternative::Other,
                     },
                     _ => Alternative::Other,
-                });
+                }
             }
-            _ => alternatives.push(Alternative::Other),
-        }
+            _ => Alternative::Other,
+        };
+        alternatives.push(held);
+        true
     }
 
     fn returned_function(&self, function: FnId) -> Option<FnId> {
@@ -754,7 +756,7 @@ impl<'a, 's> Finder<'a, 's> {
             return BindingValues::default();
         };
         let mut alternatives = SmallVec::new();
-        self.collect_alternatives(definition.value, &mut alternatives);
+        self.collect_alternatives(definition.value, false, &mut alternatives);
         let mut values = BindingValues::default();
         let mut has_other = definition.is_stored_again;
         for held in alternatives {

@@ -12,5 +12,4 @@ holdProgramsOfSuites(
   ...(totalmem() < 10 * 1024 ** 3 ? [] : ["test/js/bun/test/expect/huge-failure-message.test.ts"]),
   "test/js/bun/test/expect/toHaveReturnedWith.test.ts",
   "test/js/bun/test/pretty-format-overridden-size.test.ts",
-  "test/js/bun/test/require-bun-test-ignores-bun-jest.test.ts",
 );

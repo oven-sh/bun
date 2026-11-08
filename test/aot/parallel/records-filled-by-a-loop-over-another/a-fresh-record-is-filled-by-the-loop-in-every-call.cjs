@@ -1,4 +1,5 @@
 // STATISTIC: FlowAppendedFields >= 8
+// STATISTIC: FieldsOutOfLine = 0
 "use strict";
 const make = at => ({ id: 7, name: "row", kind: "c" + at, x: 2, done: true, title: "t", w: 5, z: 0 });
 const rows = []; for (let at = 0; at < 12; at++) rows.push(make(at));

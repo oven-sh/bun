@@ -197,6 +197,9 @@ pub(super) struct FlowMemo {
     /// reference whose walk went too deep. A check of the file has the analysis off for the rest of that body. A question
     /// begins with it on, so each reference behind that one would walk as deep again.
     too_deep_since: FxHashMap<(FileId, Option<FnId>), u32>,
+    /// In a check: a walk of this file that took `skip_to_dominator` or leapt over antecedents below a dominator got too
+    /// deep by what those add, and an exact walk had to decide. The walks after it do without the two.
+    far_short_cuts_get_too_deep_in: Option<FileId>,
     /// The flow nodes at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<(u32, ResolvesKey)>,
     /// The call statements and the clauses of a `switch (true)` with a union
@@ -292,6 +295,7 @@ pub(super) struct FlowMemo {
     pub(super) parents_of_long_expressions: FxHashMap<(FileId, Node), Node>,
     /// See `check_testing_known_truthy_left_operand`.
     pub(super) parents_of_logical_chains: FxHashMap<(FileId, ExprId), Parent>,
+    pub(super) instance_types_of_constructor_functions: FxHashMap<(FileId, FnId), Option<TypeId>>,
 }
 
 /// Not in tsgo. The runs of a file's flow graph: assignments, call statements and array mutations,
@@ -792,6 +796,12 @@ struct Walk {
     shared_flows: SharedFlows,
     furthest_from_shared_flows: u32,
     furthest_left_unpushed: u32,
+    /// What `skip_to_dominator` has passed in a check and the walk has not yet counted. See
+    /// `count_invocations_passed_by_skip`.
+    invocations_passed_by_skip: (u32, u32),
+    /// The highest `depth` since a mark that `flow_type` sets at an antecedent of a label, with what
+    /// the walk has found in `sharedFlows` taken as found. tsgo has found it there too.
+    reached: u32,
     first_label_reduced: u32,
     /// `reduceLabels`: the start of each `finally` block being traversed backwards, and the label
     /// whose antecedents are used instead.
@@ -1299,6 +1309,8 @@ impl Walk {
             shared_flows: SharedFlows::default(),
             furthest_from_shared_flows: 0,
             furthest_left_unpushed: 0,
+            invocations_passed_by_skip: (0, 0),
+            reached: 0,
             first_label_reduced: u32::MAX,
             reduced: Vec::new(),
             reduced_out_of_order: 0,
@@ -4572,7 +4584,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.is_type_derived_from(constructor, function) {
             return ty;
         }
-        let instance = self.map_type(constructor, |c, m| c.instance_type(m));
+        let instance = self.map_type(constructor, |c, m| c.instance_type(file, m));
         // `any` isn't narrowed to `Object` or `Function`. The false branch narrows only if the
         // instance type is a non-empty object type.
         if self.is_any(ty) && (instance == object || instance == function)
@@ -4586,7 +4598,10 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getInstanceType`
-    fn instance_type(&mut self, constructor: TypeId) -> TypeId {
+    fn instance_type(&mut self, file: FileId, constructor: TypeId) -> TypeId {
+        if let Some(instance) = self.instance_type_of_constructor_function(file, constructor) {
+            return instance;
+        }
         if let Some(prototype) = self.type_of_property_of_type(constructor, known::prototype)
             && !self.is_any(prototype)
         {
@@ -4636,6 +4651,9 @@ impl<'p, 's> Checker<'p, 's> {
         let base = match *self.data(target) {
             TypeData::Ref { target: base, .. } => base,
             TypeData::Tuple { .. } => return self.has_tuple_base(source, target),
+            TypeData::Synth(ref shape) if shape.constructed_by.0.is_some() => {
+                return source == target;
+            }
             _ => return false,
         };
         if self.has_base(source, base) {
@@ -6841,6 +6859,9 @@ impl<'p, 's> Checker<'p, 's> {
         let mut evolved = self.flow_type(walk, flow);
         if walk.too_deep && walk.may_be_too_deep {
             cold_path();
+            if !self.reads_types_alone {
+                self.flow_memo.far_short_cuts_get_too_deep_in = Some(file);
+            }
             walk.start_over();
             evolved = self.flow_type(walk, flow);
         }
@@ -7612,6 +7633,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             walk.may_be_too_deep = true;
             walk.deepest = walk.deepest.max(walk.depth + invocations);
+            walk.reached = walk.reached.max(walk.depth + invocations);
             if walk.depth + invocations > MAX_FLOW_DEPTH {
                 cold_path();
                 walk.too_deep = true;
@@ -7641,6 +7663,7 @@ impl<'p, 's> Checker<'p, 's> {
             walk.has_left_finally_block = true;
             walk.furthest_left_unpushed = walk.furthest_left_unpushed.max(known.furthest);
             walk.deepest = walk.deepest.max(walk.depth + known.invocations);
+            walk.reached = walk.reached.max(walk.depth + known.invocations);
             if walk.depth + known.invocations > MAX_FLOW_DEPTH {
                 cold_path();
                 walk.too_deep = true;
@@ -7729,6 +7752,19 @@ impl<'p, 's> Checker<'p, 's> {
             if (walk.steps > walk.next_skip || walk.has_far_skipped(flow))
                 && let Some((arrived_at, last_shared)) = self.try_to_skip(walk, flow)
             {
+                let (in_a_row, in_a_turn) = std::mem::take(&mut walk.invocations_passed_by_skip);
+                if in_a_row + in_a_turn != 0 {
+                    passed += in_a_row;
+                    walk.may_be_too_deep = true;
+                    let most = walk.depth + in_a_row + in_a_turn;
+                    walk.deepest = walk.deepest.max(most);
+                    walk.reached = walk.reached.max(most);
+                    if most > MAX_FLOW_DEPTH {
+                        cold_path();
+                        walk.too_deep = true;
+                        break TypeId::ERROR;
+                    }
+                }
                 if last_shared.is_some() {
                     above_shared_node = pending.len();
                     if let Some((known, invocations)) = walk.shared_flows.get(last_shared) {
@@ -7967,7 +8003,10 @@ impl<'p, 's> Checker<'p, 's> {
                             bypass = Some((edge, stmt));
                             continue;
                         }
+                        let reached_so_far = std::mem::take(&mut walk.reached);
                         let t = self.flow_type_after_finally_block(walk, edge);
+                        let reached_from_edge = walk.reached;
+                        walk.reached = reached_from_edge.max(reached_so_far);
                         if t.ty == walk.declared && self.starts_as_declared(walk) {
                             types.clear();
                             types.push(t.ty);
@@ -7981,7 +8020,27 @@ impl<'p, 's> Checker<'p, 's> {
                         incomplete |= t.incomplete;
                         if antecedents.len() - next >= MANY_ANTECEDENTS {
                             let (at, end) = (first_edge + next as u32 - 1, first_edge + len);
-                            next += self.count_antecedents_with_type_of(walk, at, end);
+                            let in_run = self.count_antecedents_with_type_of(walk, at, end);
+                            // A check pays for the index where a walk is long, as for `skip_to_dominator`.
+                            let leaps = self.takes_far_short_cuts(walk)
+                                && (self.reads_types_alone
+                                    || walk.steps > self.steps_before_far_skip(walk));
+                            let (below, deeper) = match leaps {
+                                true => self
+                                    .count_antecedents_below_dominator_with_type_of(walk, at, end),
+                                false => (0, 0),
+                            };
+                            let deepest = reached_from_edge + deeper;
+                            next += match below > in_run {
+                                true if self.reads_types_alone => below,
+                                true if deepest <= MAX_FLOW_DEPTH => {
+                                    walk.may_be_too_deep = true;
+                                    walk.deepest = walk.deepest.max(deepest);
+                                    walk.reached = walk.reached.max(deepest);
+                                    below
+                                }
+                                _ => in_run,
+                            };
                         }
                     }
                     if !settled && let Some((edge, stmt)) = bypass {
@@ -8140,6 +8199,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         };
+        // It only rose in the loop.
+        walk.reached = walk.reached.max(walk.depth);
         (walk.depth, walk.crossed) = (depth, crossed);
         let (deepest, steps) = (walk.deepest, walk.steps);
         walk.deepest = deepest.max(deepest_before);
@@ -9362,13 +9423,21 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
+    /// Whether the walk may take `skip_to_dominator` and leap over antecedents below a dominator.
+    #[inline]
+    fn takes_far_short_cuts(&self, walk: &Walk) -> bool {
+        self.reads_types_alone
+            || !walk.is_exact
+                && self.flow_memo.far_short_cuts_get_too_deep_in != Some(walk.reference.file)
+    }
+
     /// Waits twice as long after each try in a row that passed few nodes, so that a walk through
     /// nodes that can't be skipped doesn't pay for a search at each of them. The steps it takes in
     /// between are at most as many as it had to take before.
     fn try_to_skip(&mut self, walk: &mut Walk, flow: FlowId) -> Option<(FlowId, FlowId)> {
         let steps = walk.steps;
         let has_far_skipped = walk.has_far_skipped(flow);
-        if self.reads_types_alone
+        if self.takes_far_short_cuts(walk)
             && (has_far_skipped || steps > walk.next_far_skip.max(self.steps_before_far_skip(walk)))
         {
             let skipped = self.skip_to_dominator(walk, flow);
@@ -9387,6 +9456,10 @@ impl<'p, 's> Checker<'p, 's> {
             };
             walk.next_far_skip = steps.saturating_add(walk.steps_between_far_skips);
             if let Some((arrived_at, _)) = skipped {
+                if !self.reads_types_alone {
+                    walk.invocations_passed_by_skip =
+                        self.count_invocations_passed_by_skip(flow, arrived_at);
+                }
                 // The stretch may have shared nodes in it, and nobody knows which.
                 walk.is_unshareable |= self.is_automatic_type(walk.declared);
                 return Some((arrived_at, FlowId::NONE));

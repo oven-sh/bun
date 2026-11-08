@@ -11,6 +11,7 @@ mod scan;
 mod statements;
 #[cfg(all(test, not(miri)))]
 mod tests;
+mod touched_exports;
 mod written_arms;
 
 pub use call_sites::{
@@ -49,6 +50,9 @@ pub use parameters::{
 };
 pub(crate) use scan::collect_import_sites;
 pub(crate) use statements::is_runtime_import;
+pub(crate) use touched_exports::{
+    is_module_that_reaches_modules, reaches_modules_unnamed, touches_export,
+};
 pub use written_arms::{
     find_names_folded_by_transpiler, find_names_read_by_transpiler, find_written_arms,
 };
@@ -190,6 +194,7 @@ pub(crate) struct ImportScan<'s> {
     pub exported_file_changers: &'s [ExportedFileChanger],
     pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],
+    pub asked_of_own_exports: &'s [Atom],
     pub names_out_of_data_files: &'s [(Atom, ExprId)],
     pub keys_stored_in_caches: &'s [(ExprId, ImportSpecifier)],
     pub first_call_site: u32,

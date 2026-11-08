@@ -79,6 +79,7 @@ fn source_text_file(file: FileId) -> FileRow {
         handed_on: Vec::new(),
         named_by_stars: Vec::new(),
         names_from_stars: Vec::new(),
+        names_of_unlisted_stars: Vec::new(),
         reaches_mock: false,
     }
 }
@@ -125,6 +126,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: Vec::new(),
+        folders_of_databases: Vec::new(),
         star_names_left_out: StarNamesLeftOut::default(),
         names_laid_on_object_prototype: Vec::new(),
     }

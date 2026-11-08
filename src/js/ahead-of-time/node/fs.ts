@@ -1,0 +1,1583 @@
+// What the compiler reads in place of src/js/node/fs.ts, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 391a2c740c17c25977978983b86383138f13e17050b6604e60e5d49a7aad8ea1.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
+
+// Hardcoded module "node:fs"
+// This module has a variable named `exports`. An import, even of nothing, tells the bundler that it is not CommonJS.
+import type {} from "fs";
+type DirentType = $Node.Dirent;
+type PathLike = $Node.PathLike;
+type StatsType = $Node.Stats;
+/** A callback of the program's, or one that `guardCallback` made of it. */
+type Callback<Results extends unknown[] = []> = (error: Error | null, ...results: Partial<Results>) => unknown;
+const types = require("node:util/types");
+const {
+  validateFunction,
+  validateInteger,
+  validateEncoding,
+  getValidatedPath,
+  throwIfNullBytesInFileName,
+} = require("internal/validators");
+
+const kEmptyObject = Object.freeze(Object.create(null));
+
+const isDate = types.isDate;
+
+// The native `node:fs` binding, shared via `internal/fs/binding`.
+const fs = require("internal/fs/binding");
+
+const constants = $processBindingConstants.fs;
+
+const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
+
+// Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
+const nextTick = process.nextTick;
+
+// guardCallback reroutes a throw inside the user callback to the
+// uncaughtException path.
+function wrapFsCallback(callback: (...args: any[]) => unknown) {
+  return guardCallback(callback);
+}
+
+// Validates and returns the wrapped callback.
+// Callers must use the return value, not the argument.
+function ensureCallback(callback: ((...args: any[]) => unknown) | undefined) {
+  if (!$isCallable(callback)) {
+    throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+  }
+
+  return wrapFsCallback(callback);
+}
+
+// Via nextTick: called from the reaction itself (a microtask), a callback's microtasks would run before its nextTicks.
+function settleCallback<T>(promise: Promise<T>, callback: Callback<[T]>) {
+  promise.then(
+    value => nextTick(callback, null, value),
+    err => nextTick(callback, err),
+  );
+}
+function settleCallbackWithNull(promise: Promise<unknown>, callback: Callback) {
+  promise.then(
+    () => nextTick(callback, null),
+    err => nextTick(callback, err),
+  );
+}
+
+function openAsBlob(path, options?) {
+  return Promise.$resolve(Bun.file(path, options));
+}
+
+interface WriteSyncErrorContext {
+  errno?: number;
+  syscall?: string;
+  code?: string;
+}
+
+var access = function access(path: PathLike, mode?: number | Callback, callback?: Callback) {
+    if ($isCallable(mode)) {
+      callback = mode;
+      mode = undefined;
+    }
+
+    callback = ensureCallback(callback);
+    fs.accessCb(err => callback!(err), path, mode);
+  },
+  appendFile = function appendFile(path, data, options, callback?) {
+    if (!$isCallable(callback)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.appendFileCb(callback, path, data, options);
+  },
+  close = function close(fd: number, callback?: Callback) {
+    if ($isCallable(callback)) {
+      callback = wrapFsCallback(callback);
+      fs.closeCb(err => callback!(err), fd);
+    } else if (callback === undefined) {
+      fs.close(fd).then(() => {});
+    } else {
+      callback = ensureCallback(callback);
+    }
+  },
+  rm = function rm(path, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = ensureCallback(callback);
+    // route through promises.rm for the JS-side ERR_FS_EISDIR validation
+    settleCallback(require("node:fs/promises").rm(path, options), callback);
+  },
+  rmdir = function rmdir(path, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+    callback = ensureCallback(callback);
+
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
+    if (options?.recursive) settleCallback(require("node:fs/promises").rm(path, options), callback);
+    else fs.rmdirCb(callback, path, options);
+  },
+  copyFile = function copyFile(src, dest, mode, callback?) {
+    if ($isCallable(mode)) {
+      callback = mode;
+      mode = 0;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.copyFileCb(callback, src, dest, mode);
+  },
+  exists = function exists(path: PathLike, callback: (exists: boolean) => unknown) {
+    callback = ensureCallback(callback);
+
+    try {
+      fs.existsCb((err, existed) => callback(err ? false : existed), path);
+    } catch {
+      callback(false);
+    }
+  },
+  chown = function chown(path, uid, gid, callback) {
+    callback = ensureCallback(callback);
+
+    fs.chownCb(callback, path, uid, gid);
+  },
+  chmod = function chmod(path, mode, callback) {
+    callback = ensureCallback(callback);
+
+    fs.chmodCb(callback, path, mode);
+  },
+  fchmod = function fchmod(fd, mode, callback) {
+    callback = ensureCallback(callback);
+
+    fs.fchmodCb(callback, fd, mode);
+  },
+  fchown = function fchown(fd, uid, gid, callback) {
+    callback = ensureCallback(callback);
+
+    fs.fchownCb(callback, fd, uid, gid);
+  },
+  fstat = function fstat(fd, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = wrapFsCallback(callback);
+    fs.fstatCb(callback, fd, options);
+  },
+  fsync = function fsync(fd, callback) {
+    callback = ensureCallback(callback);
+
+    fs.fsyncCb(callback, fd);
+  },
+  ftruncate = function ftruncate(fd, len = 0, callback?) {
+    if ($isCallable(len)) {
+      callback = len;
+      len = 0;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.ftruncateCb(callback, fd, len);
+  },
+  futimes = function futimes(fd, atime, mtime, callback) {
+    callback = ensureCallback(callback);
+
+    fs.futimesCb(callback, fd, atime, mtime);
+  },
+  lchmod =
+    constants.O_SYMLINK !== undefined
+      ? function lchmod(path, mode, callback) {
+          callback = ensureCallback(callback);
+
+          fs.lchmodCb(callback, path, mode);
+        }
+      : undefined, // lchmod is only available on macOS
+  lchown = function lchown(path, uid, gid, callback) {
+    callback = ensureCallback(callback);
+
+    fs.lchownCb(callback, path, uid, gid);
+  },
+  link = function link(existingPath, newPath, callback) {
+    callback = ensureCallback(callback);
+
+    fs.linkCb(callback, existingPath, newPath);
+  },
+  mkdir = function mkdir(path, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.mkdirCb(callback, path, options);
+  },
+  mkdtemp = function mkdtemp(prefix, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.mkdtempCb(callback, prefix, options);
+  },
+  open = function open(path, flags, mode?, callback?) {
+    if (arguments.length < 3) {
+      callback = flags;
+      // The shifted-out slot has to be cleared: flags default to "r".
+      flags = undefined;
+    } else if ($isCallable(mode)) {
+      callback = mode;
+      mode = undefined;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.openCb(callback, path, flags, mode);
+  },
+  fdatasync = function fdatasync(fd, callback) {
+    callback = ensureCallback(callback);
+
+    fs.fdatasyncCb(callback, fd);
+  },
+  read = function read<T extends ArrayBufferView = Buffer>(
+    fd: number,
+    buffer?,
+    offsetOrOptions?,
+    length?,
+    position?,
+    callback?: Callback<[bytesRead: number, buffer: T]>,
+  ) {
+    // fd = getValidatedFd(fd); DEFERRED TO NATIVE
+    let offset = offsetOrOptions;
+    let params: any = null;
+    const argc = arguments.length;
+    if (argc <= 4) {
+      if (argc === 4) {
+        // This is fs.read(fd, buffer, options, callback)
+        // validateObject(params, 'options', kValidateObjectAllowNullable);
+        if (typeof params !== "object" || $isArray(params)) {
+          throw $ERR_INVALID_ARG_TYPE("options", "object", params);
+        }
+        callback = length;
+        params = offsetOrOptions;
+      } else if (argc === 3) {
+        // This is fs.read(fd, bufferOrParams, callback)
+        if (!types.isArrayBufferView(buffer)) {
+          // fs.read(fd, bufferOrParams, callback)
+          params = buffer;
+          ({ buffer = Buffer.alloc(16384) } = params ?? {});
+        }
+        callback = offsetOrOptions;
+      } else {
+        // This is fs.read(fd, callback)
+        callback = buffer;
+        buffer = Buffer.alloc(16384);
+      }
+
+      if (params !== undefined) {
+        // validateObject(params, 'options', kValidateObjectAllowNullable);
+        if (typeof params !== "object" || $isArray(params)) {
+          throw $ERR_INVALID_ARG_TYPE("options", "object", params);
+        }
+      }
+      ({ offset = 0, length = buffer?.byteLength - offset, position = null } = params ?? {});
+    }
+    if (!callback) {
+      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    }
+    callback = wrapFsCallback(callback);
+    fs.readCb(
+      (err, bytesRead) => (err ? callback!(err, 0, buffer) : callback!(null, bytesRead, buffer)),
+      fd,
+      buffer,
+      offset,
+      length,
+      position,
+    );
+  },
+  write = function write<T extends string | ArrayBufferView>(
+    fd: number,
+    buffer: T,
+    offsetOrOptions?,
+    length?,
+    position?,
+    callback?: Callback<[bytesWritten: number, buffer: T]>,
+  ) {
+    function onWritten(err: Error | null, bytesWritten: number) {
+      if (err) callback!(err, 0, buffer);
+      else callback!(null, bytesWritten, buffer);
+    }
+
+    // $isTypedArrayView excludes DataView, so a DataView would fall through
+    // to the string signature. Use Node's predicate, like writeSync below.
+    if (types.isArrayBufferView(buffer)) {
+      callback ||= position || length || offsetOrOptions;
+      callback = ensureCallback(callback);
+
+      if (typeof offsetOrOptions === "object") {
+        ({
+          offset: offsetOrOptions = 0,
+          length = buffer.byteLength - offsetOrOptions,
+          position = null,
+        } = offsetOrOptions ?? {});
+      }
+
+      fs.writeCb(onWritten, fd, buffer, offsetOrOptions, length, position);
+      return;
+    }
+
+    if (typeof buffer !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+    }
+
+    if (!$isCallable(position)) {
+      if ($isCallable(offsetOrOptions)) {
+        position = offsetOrOptions;
+        offsetOrOptions = undefined;
+      } else {
+        position = length;
+      }
+      length = "utf8";
+    }
+
+    // Node validates the encoding (synchronously) before the callback.
+    validateEncoding(buffer, length);
+    callback = position;
+    callback = ensureCallback(callback);
+
+    fs.writeCb(onWritten, fd, buffer, offsetOrOptions, length);
+  },
+  readdir = function readdir(path, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.readdirCb(callback, path, options);
+  },
+  readFile = function readFile(path, options, callback?) {
+    callback ||= options;
+    callback = ensureCallback(callback);
+
+    fs.readFileCb(callback, path, options);
+  },
+  writeFile = function writeFile(path, data, options, callback?) {
+    callback ||= options;
+    callback = ensureCallback(callback);
+
+    fs.writeFileCb(callback, path, data, options);
+  },
+  readlink = function readlink(path, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.readlinkCb(callback, path, options);
+  },
+  rename = function rename(oldPath, newPath, callback) {
+    callback = ensureCallback(callback);
+
+    fs.renameCb(callback, oldPath, newPath);
+  },
+  lstat = function lstat(path, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.lstatCb(callback, path, options);
+  },
+  stat = function stat(path, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = ensureCallback(callback);
+
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
+      return;
+    }
+
+    fs.statCb(callback, path, options);
+  },
+  statfs = function statfs(path, options, callback?) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.statfsCb(callback, path, options);
+  },
+  symlink = function symlink(target, path, type, callback?) {
+    if (callback === undefined) {
+      callback = ensureCallback(type);
+      type = undefined;
+    } else if ($isCallable(callback)) {
+      // Not ensureCallback: node does not validate the 4-argument overload's
+      // callback, and a non-callable one must stay an ignored `.then` handler.
+      callback = wrapFsCallback(callback);
+    }
+
+    if ($isCallable(callback)) fs.symlinkCb(err => callback(err === null ? undefined : err), target, path, type);
+    else fs.symlink(target, path, type).then(callback, callback);
+  },
+  truncate = function truncate(path, len, callback?) {
+    if (typeof path === "number") {
+      // Apparently, node supports this
+      ftruncate(path, len, callback);
+      return;
+    }
+
+    if ($isCallable(len)) {
+      callback = len;
+      len = 0;
+    } else if (len === undefined) {
+      len = 0;
+    }
+
+    callback = ensureCallback(callback);
+    fs.truncateCb(callback, path, len);
+  },
+  unlink = function unlink(path, callback) {
+    callback = ensureCallback(callback);
+
+    fs.unlinkCb(callback, path);
+  },
+  utimes = function utimes(path, atime, mtime, callback) {
+    callback = ensureCallback(callback);
+
+    fs.utimesCb(callback, path, atime, mtime);
+  },
+  lutimes = function lutimes(path, atime, mtime, callback) {
+    callback = ensureCallback(callback);
+
+    fs.lutimesCb(callback, path, atime, mtime);
+  },
+  accessSync = fs.accessSync.bind(fs),
+  appendFileSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        appendFileSync(_path, _data, _options) {
+          return fs.appendFileSync.$apply(fs, arguments);
+        },
+      }.appendFileSync as never)
+    : fs.appendFileSync.bind(fs),
+  closeSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        closeSync(_fd) {
+          return fs.closeSync.$apply(fs, arguments);
+        },
+      }.closeSync as never)
+    : fs.closeSync.bind(fs),
+  copyFileSync = fs.copyFileSync.bind(fs),
+  // This behavior - never throwing -- matches Node.js behavior.
+  // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
+  existsSync = function existsSync(_path: string) {
+    try {
+      return IS_COMPILED_AHEAD_OF_TIME ? fs.existsSync(_path) : fs.existsSync.$apply(fs, arguments);
+    } catch {
+      return false;
+    }
+  },
+  chownSync = fs.chownSync.bind(fs),
+  chmodSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        chmodSync(_path, _mode) {
+          return fs.chmodSync.$apply(fs, arguments);
+        },
+      }.chmodSync as never)
+    : fs.chmodSync.bind(fs),
+  fchmodSync = fs.fchmodSync.bind(fs),
+  fchownSync = fs.fchownSync.bind(fs),
+  fstatSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        fstatSync(_fd) {
+          return fs.fstatSync.$apply(fs, arguments);
+        },
+      }.fstatSync as never)
+    : fs.fstatSync.bind(fs),
+  fsyncSync = fs.fsyncSync.bind(fs),
+  ftruncateSync = fs.ftruncateSync.bind(fs),
+  futimesSync = fs.futimesSync.bind(fs),
+  lchmodSync = constants.O_SYMLINK !== undefined ? fs.lchmodSync.bind(fs) : undefined, // lchmod is only available on macOS
+  lchownSync = fs.lchownSync.bind(fs),
+  linkSync = fs.linkSync.bind(fs),
+  lstatSync = fs.lstatSync.bind(fs),
+  mkdirSync = fs.mkdirSync.bind(fs),
+  mkdtempSync = fs.mkdtempSync.bind(fs),
+  mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options?) {
+    const path = mkdtempSync(prefix, options);
+    // Stash the full path in case of process.chdir()
+    const fullPath = require("node:path").resolve(path);
+    function remove() {
+      // force makes repeated removal a no-op; real failures (EACCES) still throw
+      fs.rmSync(fullPath, { recursive: true, force: true });
+    }
+    return { path, remove, [Symbol.dispose]: remove };
+  },
+  openSync = fs.openSync.bind(fs),
+  readSync = function readSync(fd, buffer, offsetOrOptions?, length?, position?) {
+    let offset = offsetOrOptions;
+    if (arguments.length <= 3 || typeof offsetOrOptions === "object") {
+      if (offsetOrOptions !== undefined) {
+        // validateObject(offsetOrOptions, 'options', kValidateObjectAllowNullable);
+        if (typeof offsetOrOptions !== "object" || $isArray(offsetOrOptions)) {
+          throw $ERR_INVALID_ARG_TYPE("options", "object", offsetOrOptions);
+        }
+      }
+
+      ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions ?? {});
+    }
+
+    return fs.readSync(fd, buffer, offset, length, position);
+  },
+  writeSync = function writeSync(fd, buffer, offsetOrOptions?, length?, position?) {
+    try {
+      if (types.isArrayBufferView(buffer)) {
+        let offset = offsetOrOptions;
+        if (typeof offset === "object" && offset !== null) {
+          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions);
+          return fs.writeSync(fd, buffer, offset, length, position);
+        }
+        return arguments.length <= 2 ? fs.writeSync(fd, buffer) : fs.writeSync(fd, buffer, offset, length, position);
+      }
+      if (typeof buffer !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+      }
+      // writeSync(fd, string[, position[, encoding]]): `length` is the encoding.
+      validateEncoding(buffer, length);
+      return fs.writeSync(fd, buffer, offsetOrOptions, length);
+    } catch (err: any) {
+      // Node's fs binding reports sync write failures by assigning the error
+      // context onto a plain object with ordinary assignment semantics, so
+      // accessors installed on Object.prototype observe (and can replace) the
+      // error instead of crashing the process. Replicate that contract.
+      const ctx: WriteSyncErrorContext = {};
+      ctx.errno = err?.errno;
+      ctx.syscall = err?.syscall;
+      ctx.code = err?.code;
+      throw err;
+    }
+  },
+  readdirSync = fs.readdirSync.bind(fs),
+  readFileSync = fs.readFileSync.bind(fs),
+  fdatasyncSync = fs.fdatasyncSync.bind(fs),
+  writeFileSync = fs.writeFileSync.bind(fs),
+  readlinkSync = fs.readlinkSync.bind(fs),
+  renameSync = fs.renameSync.bind(fs),
+  statSync = IS_COMPILED_AHEAD_OF_TIME
+    ? ({
+        statSync(_path) {
+          return fs.statSync.$apply(fs, arguments);
+        },
+      }.statSync as never)
+    : fs.statSync.bind(fs),
+  statfsSync = fs.statfsSync.bind(fs),
+  symlinkSync = fs.symlinkSync.bind(fs),
+  truncateSync = fs.truncateSync.bind(fs),
+  unlinkSync = fs.unlinkSync.bind(fs),
+  utimesSync = fs.utimesSync.bind(fs),
+  lutimesSync = fs.lutimesSync.bind(fs),
+  rmSync = function rmSync(path, options?) {
+    if (typeof options === "object" && options !== null) {
+      // Node merges the caller's options over the defaults with a spread, which
+      // copies own enumerable keys only -- including ones holding `undefined`.
+      // Normalize here so the native parser sees exactly that set.
+      options = { ...options };
+    }
+    if (!options?.recursive) {
+      // node validates in JS and reports ERR_FS_EISDIR for directories
+      let stats: StatsType | undefined;
+      try {
+        stats = fs.lstatSync(path);
+      } catch {
+        // let the native call produce the error (respects force/ENOENT)
+      }
+      if (stats?.isDirectory()) {
+        throw require("internal/fs/cp-sync").fsEisdirError({
+          code: "EISDIR",
+          message: "is a directory",
+          path,
+          syscall: "rm",
+          errno: $processBindingConstants.os.errno.EISDIR,
+        });
+      }
+    }
+    return fs.rmSync(path, options);
+  },
+  rmdirSync = function rmdirSync(path, options?) {
+    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
+    if (options?.recursive) return rmSync(path, options);
+    return fs.rmdirSync(path, options);
+  },
+  writev = function writev<T extends ArrayBufferView>(
+    fd: number,
+    buffers: T[],
+    position?: number | null | Callback<[bytesWritten: number, buffers: T[]]>,
+    callback?: Callback<[bytesWritten: number, buffers: T[]]>,
+  ) {
+    if (typeof position === "function") {
+      callback = position;
+      position = null;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.writevCb(
+      (err, bytesWritten) => (err ? callback!(err, 0, buffers) : callback!(null, bytesWritten, buffers)),
+      fd,
+      buffers,
+      position,
+    );
+  },
+  writevSync = fs.writevSync.bind(fs),
+  readv = function readv<T extends ArrayBufferView>(
+    fd: number,
+    buffers: T[],
+    position?: number | null | Callback<[bytesRead: number, buffers: T[]]>,
+    callback?: Callback<[bytesRead: number, buffers: T[]]>,
+  ) {
+    if (typeof position === "function") {
+      callback = position;
+      position = null;
+    }
+
+    callback = ensureCallback(callback);
+
+    fs.readvCb(
+      (err, bytesRead) => (err ? callback!(err, 0, buffers) : callback!(null, bytesRead, buffers)),
+      fd,
+      buffers,
+      position,
+    );
+  },
+  readvSync = fs.readvSync.bind(fs),
+  Dirent = fs.Dirent,
+  Stats = fs.Stats,
+  watch = function watch(path, options?, listener?) {
+    return require("internal/fs/watch").watch(path, options, listener);
+  },
+  opendir = function opendir(path, options, callback?) {
+    // TODO: validatePath
+    // validateString(path, "path");
+    if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    }
+    validateFunction(callback, "callback");
+    // Argument validation errors throw synchronously (node does the same);
+    // the eager path check runs on an async stat so the JS thread isn't
+    // blocked and the callback never fires synchronously.
+    const result = new Dir(1, path, options, kAlreadyValidated);
+    callback = wrapFsCallback(callback);
+    // Invoke the callback from process.nextTick so an exception thrown by it
+    // surfaces as an uncaught exception instead of rejecting this internal
+    // promise chain (same convention as glob() below).
+    fs.stat(path).then(
+      onOpendirStatFulfilled.bind(null, callback, path, result),
+      onOpendirStatRejected.bind(null, callback, path),
+    );
+  };
+
+var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
+const existsCb = exists;
+exists[kCustomPromisifiedSymbol] = {
+  exists(path) {
+    return new Promise(resolve => existsCb(path, resolve));
+  },
+}.exists;
+function defineCustomPromisifyArgs(target, args) {
+  Object.defineProperty(target, kCustomPromisifyArgsSymbol, { value: args, enumerable: false });
+}
+defineCustomPromisifyArgs(read, ["bytesRead", "buffer"]);
+defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
+defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
+defineCustomPromisifyArgs(writev, ["bytesWritten", "buffers"]);
+
+// The implementation (StatWatcher and friends) is lazily loaded from "internal/fs/watchfile"
+// the first time fs.watchFile or fs.unwatchFile is called.
+function watchFile(filename, options, listener?) {
+  return require("internal/fs/watchfile").watchFile(filename, options, listener);
+}
+function unwatchFile(filename, listener?) {
+  return require("internal/fs/watchfile").unwatchFile(filename, listener);
+}
+
+function createReadStream(path, options?) {
+  return new exports.ReadStream(path, options);
+}
+
+function createWriteStream(path, options?) {
+  return new exports.WriteStream(path, options);
+}
+
+const splitRootWindowsRe = /^(?:[a-zA-Z]:|[\\/]{2}[^\\/]+[\\/][^\\/]+)?[\\/]*/;
+function splitRootWindows(str: string) {
+  return splitRootWindowsRe.exec(str)![0];
+}
+function nextPartWindows(p: string, i: number) {
+  for (; i < p.length; ++i) {
+    const ch = p.$charCodeAt(i);
+
+    // Check for a separator character
+    if (ch === "\\".charCodeAt(0) || ch === "/".charCodeAt(0)) return i;
+  }
+  return -1;
+}
+
+function encodeRealpathResult(result: string, encoding: string | null | undefined) {
+  if (!encoding || encoding === "utf8") return result;
+  const asBuffer: Buffer = Buffer.from(result);
+  if (encoding === "buffer") {
+    return asBuffer;
+  }
+  return asBuffer.toString(encoding);
+}
+
+type RealpathSync = $Node.NodeJSFS["realpathSync"] & { native: $Node.NodeJSFS["realpathNativeSync"] };
+type RealpathCallback = Callback<[resolvedPath: string | Buffer]>;
+interface Realpath {
+  (path: PathLike, callback: RealpathCallback): void;
+  (path: PathLike, options: $Node.EncodingOption | undefined, callback: RealpathCallback): void;
+  native: Realpath;
+}
+
+const realpathSync: RealpathSync =
+  process.platform !== "win32"
+    ? (fs.realpathSync.bind(fs) as RealpathSync)
+    : (function realpathSync(p, options?: $Node.EncodingOption) {
+        let encoding: string | null | undefined;
+        if (options) {
+          if (typeof options === "string") encoding = options;
+          else encoding = options?.encoding;
+          if (encoding) {
+            ($bindgen("node_util_binding.bind.ts", "assertEncodingValid") as (encoding: unknown) => void)(encoding);
+          }
+        }
+        // This function is ported 1:1 from node.js, to emulate how it is unable to
+        // resolve subst drives to their underlying location. The native call is
+        // able to see through that.
+        if (typeof p !== "string" && require("internal/url").isURL(p)) {
+          const pathname = p.pathname;
+          if (pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
+          }
+          p = require("internal/url").toPathIfFileURL(p);
+        } else {
+          if (typeof p !== "string") {
+            p += "";
+          }
+          p = getValidatedPath(p);
+        }
+        throwIfNullBytesInFileName(p);
+        const knownHard = new Set<string>();
+
+        // Current character position in p
+        let pos: number;
+        // The partial p so far, including a trailing slash if any
+        let current: string;
+        // The partial p without a trailing slash (except when pointing at a root)
+        let base: string;
+        // The partial p scanned in the previous round, with slash
+        let previous: string;
+
+        // Skip over roots
+        current = base = splitRootWindows(p);
+        pos = current.length;
+
+        // On windows, check that the root exists. On unix there is no need.
+        let lastStat: StatsType = lstatSync(base, { throwIfNoEntry: true });
+        if (lastStat === undefined) return;
+        knownHard.$add(base);
+
+        const pathModule = require("node:path");
+
+        // Walk down the p, swapping out linked p parts for their real
+        // values
+        // NB: p.length changes.
+        while (pos < p.length) {
+          // find the next part
+          const result = nextPartWindows(p, pos);
+          previous = current;
+          if (result === -1) {
+            const last = p.slice(pos);
+            current += last;
+            base = previous + last;
+            pos = p.length;
+          } else {
+            current += p.slice(pos, result + 1);
+            base = previous + p.slice(pos, result);
+            pos = result + 1;
+          }
+
+          // Continue if not a symlink, break if a pipe/socket
+          if (knownHard.$has(base)) {
+            if (lastStat.isFIFO() || lastStat.isSocket()) {
+              break;
+            }
+            continue;
+          }
+
+          let resolvedLink: string;
+          lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+          if (lastStat === undefined) return;
+
+          if (!lastStat.isSymbolicLink()) {
+            knownHard.$add(base);
+            continue;
+          }
+
+          lastStat = fs.statSync(base, { throwIfNoEntry: true });
+          const linkTarget = fs.readlinkSync(base);
+          resolvedLink = pathModule.resolve(previous, linkTarget);
+
+          // Resolve the link, then start over
+          p = pathModule.resolve(resolvedLink, p.slice(pos));
+
+          // Skip over roots
+          current = base = splitRootWindows(p);
+          pos = current.length;
+
+          // On windows, check that the root exists. On unix there is no need.
+          if (!knownHard.$has(base)) {
+            lastStat = fs.lstatSync(base, { throwIfNoEntry: true });
+            if (lastStat === undefined) return;
+            knownHard.$add(base);
+          }
+        }
+
+        return encodeRealpathResult(p, encoding);
+      } as unknown as RealpathSync);
+const realpath: Realpath =
+  process.platform !== "win32"
+    ? (function realpath(p, options, callback) {
+        if ($isCallable(options)) {
+          callback = options;
+          options = undefined;
+        }
+        callback = ensureCallback(callback);
+
+        fs.realpathCb(callback, p, options);
+      } as Realpath)
+    : (function realpath(p, options, callback: RealpathCallback) {
+        if ($isCallable(options)) {
+          callback = options;
+          options = undefined;
+        }
+        callback = ensureCallback(callback);
+        let encoding;
+        if (options) {
+          if (typeof options === "string") encoding = options;
+          else encoding = options?.encoding;
+          if (encoding) {
+            ($bindgen("node_util_binding.bind.ts", "assertEncodingValid") as (encoding: unknown) => void)(encoding);
+          }
+        }
+        if (typeof p !== "string" && require("internal/url").isURL(p)) {
+          const pathname = p.pathname;
+          if (pathname.indexOf("%00") != -1) {
+            throw $ERR_INVALID_ARG_VALUE("path", "string without null bytes", pathname);
+          }
+          p = require("internal/url").toPathIfFileURL(p);
+        } else {
+          if (typeof p !== "string") {
+            p += "";
+          }
+          p = getValidatedPath(p);
+        }
+        throwIfNullBytesInFileName(p);
+
+        const knownHard = new Set();
+        const pathModule = require("node:path");
+
+        // Current character position in p
+        let pos;
+        // The partial p so far, including a trailing slash if any
+        let current;
+        // The partial p without a trailing slash (except when pointing at a root)
+        let base;
+        // The partial p scanned in the previous round, with slash
+        let previous;
+
+        current = base = splitRootWindows(p);
+        pos = current.length;
+
+        let lastStat!: StatsType;
+
+        // On windows, check that the root exists. On unix there is no need.
+        if (!knownHard.has(base)) {
+          lstat(base, (err, s) => {
+            lastStat = s;
+            if (err) return callback(err);
+            knownHard.add(base);
+            LOOP();
+          });
+        } else {
+          nextTick(LOOP);
+        }
+
+        // Walk down the p, swapping out linked p parts for their real
+        // values
+        function LOOP() {
+          while (true) {
+            // Stop if scanned past end of p
+            if (pos >= p.length) {
+              return callback(null, encodeRealpathResult(p, encoding));
+            }
+
+            // find the next part
+            const result = nextPartWindows(p, pos);
+            previous = current;
+            if (result === -1) {
+              const last = p.slice(pos);
+              current += last;
+              base = previous + last;
+              pos = p.length;
+            } else {
+              current += p.slice(pos, result + 1);
+              base = previous + p.slice(pos, result);
+              pos = result + 1;
+            }
+
+            // Continue if not a symlink, break if a pipe/socket
+            if (knownHard.has(base)) {
+              if (lastStat.isFIFO() || lastStat.isSocket()) {
+                return callback(null, encodeRealpathResult(p, encoding));
+              }
+              continue;
+            }
+
+            return lstat(base, { bigint: true }, gotStat);
+          }
+        }
+
+        function gotStat(err: Error | null, stats: $Node.BigIntStats) {
+          if (err) return callback(err);
+
+          // If not a symlink, skip to the next p part
+          if (!stats.isSymbolicLink()) {
+            knownHard.add(base);
+            return nextTick(LOOP);
+          }
+
+          // Stat & read the link if not read before.
+          // Call `gotTarget()` as soon as the link target is known.
+          // `dev`/`ino` always return 0 on windows, so skip the check.
+          stat(base, (err, s) => {
+            if (err) return callback(err);
+            lastStat = s;
+
+            readlink(base, (err, target) => {
+              gotTarget(err, target);
+            });
+          });
+        }
+
+        function gotTarget(err, target) {
+          if (err) return callback(err);
+          gotResolvedLink(pathModule.resolve(previous, target));
+        }
+
+        function gotResolvedLink(resolvedLink) {
+          // Resolve the link, then start over
+          p = pathModule.resolve(resolvedLink, p.slice(pos));
+          current = base = splitRootWindows(p);
+          pos = current.length;
+
+          // On windows, check that the root exists. On unix there is no need.
+          if (!knownHard.has(base)) {
+            lstat(base, err => {
+              if (err) return callback(err);
+              knownHard.add(base);
+              LOOP();
+            });
+          } else {
+            nextTick(LOOP);
+          }
+        }
+      } as unknown as Realpath);
+realpath.native = function realpath(p, options, callback?) {
+  if ($isCallable(options)) {
+    callback = options;
+    options = undefined;
+  }
+
+  callback = ensureCallback(callback);
+
+  fs.realpathNativeCb(callback, p, options);
+} as Realpath;
+realpathSync.native = fs.realpathNativeSync.bind(fs);
+
+// attempt to use the native code version if possible
+// and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
+// using filter and other options uses a lazily loaded js fallback ported from node.js
+function cpSync(src, dest, options?) {
+  const { cpSyncFn, validateCpOptions, tryNativeFastPathSync } = require("internal/fs/cp-sync");
+  const { getValidatedFsPath } = require("internal/validators");
+  options = validateCpOptions(options);
+  src = getValidatedFsPath(src, "src");
+  dest = getValidatedFsPath(dest, "dest");
+  const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
+  if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
+    const { ok, checked } = tryNativeFastPathSync(src, dest, options);
+    if (ok) {
+      return fs.cpSync(src, dest, recursive, errorOnExist, force, mode);
+    }
+    return cpSyncFn(src, dest, options, checked);
+  }
+  return cpSyncFn(src, dest, options);
+}
+
+function cp(src, dest, options, callback) {
+  if ($isCallable(options)) {
+    callback = options;
+    options = undefined;
+  }
+
+  if (!$isCallable(callback)) {
+    throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+  }
+
+  // node's callback form throws synchronously on invalid options/paths
+  const { validateCpOptions } = require("internal/fs/cp-sync");
+  const { getValidatedFsPath } = require("internal/validators");
+  options = validateCpOptions(options);
+  src = getValidatedFsPath(src, "src");
+  dest = getValidatedFsPath(dest, "dest");
+  callback = guardCallback(callback);
+
+  settleCallbackWithNull(require("node:fs/promises").cp(src, dest, options), callback);
+}
+
+function _toUnixTimestamp(time: any, name = "time") {
+  // @ts-ignore
+  if (typeof time === "string" && +time == time) {
+    return +time;
+  }
+  // @ts-ignore
+  if ($isFinite(time)) {
+    if (time < 0) {
+      return Date.now() / 1000;
+    }
+    return time;
+  }
+  if (isDate(time)) {
+    // Convert to 123.456 UNIX timestamp
+    return time.getTime() / 1000;
+  }
+  throw $ERR_INVALID_ARG_TYPE(name, "number or Date", time);
+}
+
+function onOpendirStatFulfilled(callback: Callback<[Dir]>, path: PathLike, result: Dir, stats: StatsType) {
+  if (!stats.isDirectory()) {
+    nextTick(callback, opendirNotDirError(path));
+    return;
+  }
+  nextTick(callback, null, result);
+}
+function onOpendirStatRejected(callback: Callback<[Dir]>, path: PathLike, err: SystemError | null | undefined) {
+  nextTick(callback, typeof err?.errno === "number" ? opendirStatError(err, path) : err);
+}
+
+function opendirSync(path, options?) {
+  // TODO: validatePath
+  // validateString(path, "path");
+  return new Dir(1, path, options);
+}
+
+// Reshape a stat error as node's eager opendir error. Stat errors arrive as
+// "ECODE: <description>, stat '<path>'"; pull out just the description before
+// re-prefixing (avoids "EACCES: EACCES: ...").
+interface SystemError extends Error {
+  errno?: number;
+  syscall?: string;
+  path?: PathLike;
+}
+
+function opendirStatError(err: SystemError, path: PathLike) {
+  err.syscall = "opendir";
+  const description = err.message.replace(/^[A-Z]+: /, "").replace(/, l?stat '.*'$/, "");
+  err.message = `${err.code}: ${description}, opendir '${path}'`;
+  return err;
+}
+
+function opendirNotDirError(path: PathLike) {
+  const err: SystemError = new Error(`ENOTDIR: not a directory, opendir '${path}'`);
+  err.code = "ENOTDIR";
+  // libuv's UV_ENOTDIR: -ENOTDIR on POSIX, -4052 on Windows
+  err.errno = process.platform === "win32" ? -4052 : -20;
+  err.syscall = "opendir";
+  err.path = path;
+  return err;
+}
+
+// Passed as the Dir constructor's 4th argument by the async opendir paths,
+// which run the eager path check with an async stat instead.
+const kAlreadyValidated = Symbol("kAlreadyValidated");
+
+class Dir {
+  /**
+   * `-1` when closed. stdio handles (0, 1, 2) don't actually get closed by
+   * {@link close} or {@link closeSync}.
+   */
+  #handle: number;
+  #path: PathLike;
+  #options;
+  #entries: DirentType[] | null = null;
+  #entriesIdx = 0;
+
+  constructor(handle, path: PathLike, options, validated?) {
+    if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
+    validateInteger(handle, "handle", 0);
+    if (options != null && typeof options !== "object" && typeof options !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    }
+    // node's getOptions: a string is encoding shorthand
+    if (typeof options === "string") options = { encoding: options };
+    const encoding = options?.encoding;
+    if (encoding != null && encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
+      throw $ERR_INVALID_ARG_VALUE("encoding", encoding, "is invalid encoding");
+    }
+    if (options?.bufferSize !== undefined) {
+      validateInteger(options.bufferSize, "options.bufferSize", 1);
+    }
+    if (handle === 1 && validated !== kAlreadyValidated) {
+      // node's opendir opens the directory eagerly and reports ENOTDIR/ENOENT
+      let stats: StatsType;
+      try {
+        stats = fs.statSync(path);
+      } catch (err: any) {
+        if (typeof err?.errno !== "number") throw err; // argument validation errors throw as-is
+        throw opendirStatError(err, path);
+      }
+      if (!stats.isDirectory()) {
+        throw opendirNotDirError(path);
+      }
+    }
+    this.#handle = $toLength(handle);
+    this.#path = path;
+    this.#options = options;
+  }
+
+  // Number of in-flight async operations; sync ops are forbidden while > 0,
+  // and async ops queue behind #pendingOp like node's operation queue.
+  #pendingCount = 0;
+  #pendingOp: Promise<any> | null = null;
+
+  #dirConcurrentError() {
+    return $ERR_DIR_CONCURRENT_OPERATION(
+      "Cannot do synchronous work on directory handle with concurrent asynchronous operations",
+    );
+  }
+
+  #enqueue<T>(run: () => T | Promise<T>): Promise<T> {
+    const prev = this.#pendingOp;
+    let p: Promise<T>;
+    if (prev) {
+      p = prev.then(run, run);
+    } else {
+      try {
+        const r = run();
+        p = $isPromise(r) ? r : Promise.$resolve(r);
+      } catch (e) {
+        p = Promise.$reject(e);
+      }
+    }
+    this.#pendingCount++;
+    this.#pendingOp = p;
+    const done = this.#opDone.bind(this);
+    p.then(done, done);
+    return p;
+  }
+
+  readSync() {
+    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
+    if (this.#pendingCount > 0) throw this.#dirConcurrentError();
+
+    let entries = (this.#entries ??= fs.readdirSync(this.#path, {
+      withFileTypes: true,
+      encoding: this.#options?.encoding,
+      recursive: this.#options?.recursive,
+    }));
+    return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
+  }
+
+  read(cb?: Callback<[entry: DirentType | null]>): any {
+    if (!$isUndefinedOrNull(cb)) {
+      validateFunction(cb, "callback");
+      cb = guardCallback(cb);
+      // node's callback overload returns undefined (like close(cb) above)
+      settleCallback(this.read(), cb);
+      return;
+    }
+
+    return this.#enqueue(this.#readOp.bind(this));
+  }
+
+  #opDone() {
+    if (--this.#pendingCount === 0) this.#pendingOp = null;
+  }
+
+  #readOp() {
+    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
+    const entries = this.#entries;
+    if (entries) return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
+    return fs
+      .readdir(this.#path, {
+        withFileTypes: true,
+        encoding: this.#options?.encoding,
+        recursive: this.#options?.recursive,
+      })
+      .then(this.#onReaddir.bind(this));
+  }
+
+  #onReaddir(entries: DirentType[]) {
+    this.#entries = entries;
+    this.#entriesIdx = 0;
+    return this.#entriesIdx < entries.length ? entries[this.#entriesIdx++] : null;
+  }
+
+  #closeOp() {
+    const handle = this.#handle;
+    if (handle < 0) throw $ERR_DIR_CLOSED();
+    if (handle > 2) fs.closeSync(handle);
+    this.#handle = -1;
+  }
+
+  close(cb?: Callback) {
+    if (!$isUndefinedOrNull(cb)) {
+      validateFunction(cb, "callback");
+      cb = guardCallback(cb);
+      settleCallbackWithNull(this.close()!, cb);
+      return;
+    }
+    return this.#enqueue(this.#closeOp.bind(this));
+  }
+
+  closeSync() {
+    const handle = this.#handle;
+    if (handle < 0) throw $ERR_DIR_CLOSED();
+    if (this.#pendingCount > 0) throw this.#dirConcurrentError();
+    if (handle > 2) fs.closeSync(handle);
+    this.#handle = -1;
+  }
+
+  // Like node, disposing an already-closed Dir is a no-op rather than
+  // ERR_DIR_CLOSED so `using`/`await using` compose with an explicit close().
+  [Symbol.dispose]() {
+    if (this.#handle < 0) return;
+    this.closeSync();
+  }
+
+  async [Symbol.asyncDispose]() {
+    if (this.#handle < 0) return;
+    await this.close();
+  }
+
+  get path() {
+    if (!(#path in this)) throw $ERR_INVALID_THIS("Dir");
+    return this.#path;
+  }
+
+  async *[Symbol.asyncIterator]() {
+    try {
+      let entry;
+      while ((entry = await this.read()) !== null) {
+        yield entry;
+      }
+    } finally {
+      // node closes the directory when iteration ends or exits early. Use the
+      // queued async close() so a concurrent in-flight operation doesn't make
+      // teardown throw ERR_DIR_CONCURRENT_OPERATION.
+      if (this.#handle >= 0) await this.close();
+    }
+  }
+}
+
+function glob(pattern: string | string[], options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = undefined;
+  }
+  validateFunction(callback, "callback");
+
+  // Invoke the callback from process.nextTick so that an exception thrown by
+  // the callback surfaces as an uncaught exception instead of rejecting the
+  // internal promise chain (and is never routed back into `callback` as an
+  // error), matching Node.js.
+  settleCallback(Array.fromAsync(require("internal/fs/glob").glob(pattern, options ?? kEmptyObject)), callback);
+}
+
+function globSync(pattern: string | string[], options?) {
+  return Array.from(require("internal/fs/glob").globSync(pattern, options ?? kEmptyObject));
+}
+
+// The stream classes are accessors on `exports` so that loading node:fs does not load node:stream. The first read, or
+// an assignment, replaces the accessor with a data property. Once user code has sealed or frozen `exports` the accessor
+// is not configurable: Reflect.defineProperty returns false instead of throwing and the accessor stays in place.
+function materializeStream<T>(name: string, value: T): T {
+  Reflect.defineProperty(exports, name, { value, writable: true, configurable: true });
+  return value;
+}
+
+var exports = {
+  appendFile,
+  appendFileSync,
+  access,
+  accessSync,
+  chown,
+  chownSync,
+  chmod,
+  chmodSync,
+  close,
+  closeSync,
+  copyFile,
+  copyFileSync,
+  cp,
+  cpSync,
+  createReadStream,
+  createWriteStream,
+  exists,
+  existsSync,
+  fchown,
+  fchownSync,
+  fchmod,
+  fchmodSync,
+  fdatasync,
+  fdatasyncSync,
+  fstat,
+  fstatSync,
+  fsync,
+  fsyncSync,
+  ftruncate,
+  ftruncateSync,
+  futimes,
+  futimesSync,
+  glob,
+  globSync,
+  lchown,
+  lchownSync,
+  lchmod,
+  lchmodSync,
+  link,
+  linkSync,
+  lstat,
+  lstatSync,
+  lutimes,
+  lutimesSync,
+  mkdir,
+  mkdirSync,
+  mkdtemp,
+  mkdtempSync,
+  mkdtempDisposableSync,
+  open,
+  openSync,
+  read,
+  readFile,
+  readFileSync,
+  readSync,
+  readdir,
+  readdirSync,
+  readlink,
+  readlinkSync,
+  readv,
+  readvSync,
+  realpath,
+  realpathSync,
+  rename,
+  renameSync,
+  rm,
+  rmSync,
+  rmdir,
+  rmdirSync,
+  stat,
+  statfs,
+  statSync,
+  statfsSync,
+  symlink,
+  symlinkSync,
+  truncate,
+  truncateSync,
+  unlink,
+  unlinkSync,
+  unwatchFile,
+  utimes,
+  utimesSync,
+  watch,
+  watchFile,
+  write,
+  writeFile,
+  writeFileSync,
+  writeSync,
+  writev,
+  writevSync,
+  _toUnixTimestamp,
+  openAsBlob,
+  // Dir
+  Dirent,
+  opendir,
+  opendirSync,
+  F_OK: 0,
+  R_OK: 4,
+  W_OK: 2,
+  X_OK: 1,
+  constants,
+  Dir,
+  Stats,
+  get ReadStream() {
+    return materializeStream("ReadStream", require("internal/fs/streams").ReadStream);
+  },
+  set ReadStream(value) {
+    materializeStream("ReadStream", value);
+  },
+  get WriteStream() {
+    return materializeStream("WriteStream", require("internal/fs/streams").WriteStream);
+  },
+  set WriteStream(value) {
+    materializeStream("WriteStream", value);
+  },
+  get FileReadStream() {
+    return materializeStream("FileReadStream", require("internal/fs/streams").ReadStream);
+  },
+  set FileReadStream(value) {
+    materializeStream("FileReadStream", value);
+  },
+  get Utf8Stream() {
+    return materializeStream("Utf8Stream", require("internal/streams/fast-utf8-stream"));
+  },
+  set Utf8Stream(value) {
+    materializeStream("Utf8Stream", value);
+  },
+  get FileWriteStream() {
+    return materializeStream("FileWriteStream", require("internal/fs/streams").WriteStream);
+  },
+  set FileWriteStream(value) {
+    materializeStream("FileWriteStream", value);
+  },
+  get promises() {
+    return require("node:fs/promises");
+  },
+};
+export default exports;
+
+// Preserve the names
+function setName(fn, value) {
+  Object.$defineProperty(fn, "name", {
+    value,
+    enumerable: false,
+    configurable: true,
+  });
+}
+if (!IS_COMPILED_AHEAD_OF_TIME) setName(Dirent, "Dirent");
+if (!IS_COMPILED_AHEAD_OF_TIME) setName(Stats, "Stats");
+setName(_toUnixTimestamp, "_toUnixTimestamp");
+setName(access, "access");
+setName(accessSync, "accessSync");
+setName(appendFile, "appendFile");
+setName(appendFileSync, "appendFileSync");
+setName(chmod, "chmod");
+setName(chmodSync, "chmodSync");
+setName(chown, "chown");
+setName(chownSync, "chownSync");
+setName(close, "close");
+setName(closeSync, "closeSync");
+setName(copyFile, "copyFile");
+setName(copyFileSync, "copyFileSync");
+setName(cp, "cp");
+setName(cpSync, "cpSync");
+setName(createReadStream, "createReadStream");
+setName(createWriteStream, "createWriteStream");
+setName(exists, "exists");
+setName(existsSync, "existsSync");
+setName(fchmod, "fchmod");
+setName(fchmodSync, "fchmodSync");
+setName(fchown, "fchown");
+setName(fchownSync, "fchownSync");
+setName(fstat, "fstat");
+setName(fstatSync, "fstatSync");
+setName(fsync, "fsync");
+setName(fsyncSync, "fsyncSync");
+setName(ftruncate, "ftruncate");
+setName(ftruncateSync, "ftruncateSync");
+setName(futimes, "futimes");
+setName(futimesSync, "futimesSync");
+if (lchmod) setName(lchmod, "lchmod");
+if (lchmodSync) setName(lchmodSync, "lchmodSync");
+setName(lchown, "lchown");
+setName(lchownSync, "lchownSync");
+setName(link, "link");
+setName(linkSync, "linkSync");
+setName(lstat, "lstat");
+setName(lstatSync, "lstatSync");
+setName(lutimes, "lutimes");
+setName(lutimesSync, "lutimesSync");
+setName(mkdir, "mkdir");
+setName(mkdirSync, "mkdirSync");
+setName(mkdtemp, "mkdtemp");
+setName(mkdtempSync, "mkdtempSync");
+setName(mkdtempDisposableSync, "mkdtempDisposableSync");
+setName(open, "open");
+setName(openSync, "openSync");
+setName(read, "read");
+setName(readFile, "readFile");
+setName(readFileSync, "readFileSync");
+setName(readSync, "readSync");
+setName(readdir, "readdir");
+setName(readdirSync, "readdirSync");
+setName(readlink, "readlink");
+setName(readlinkSync, "readlinkSync");
+setName(readv, "readv");
+setName(readvSync, "readvSync");
+setName(realpath, "realpath");
+setName(realpathSync, "realpathSync");
+setName(rename, "rename");
+setName(renameSync, "renameSync");
+setName(rm, "rm");
+setName(rmSync, "rmSync");
+setName(rmdir, "rmdir");
+setName(rmdirSync, "rmdirSync");
+setName(stat, "stat");
+setName(statfs, "statfs");
+setName(statSync, "statSync");
+setName(statfsSync, "statfsSync");
+setName(symlink, "symlink");
+setName(symlinkSync, "symlinkSync");
+setName(truncate, "truncate");
+setName(truncateSync, "truncateSync");
+setName(unlink, "unlink");
+setName(unlinkSync, "unlinkSync");
+setName(unwatchFile, "unwatchFile");
+setName(utimes, "utimes");
+setName(utimesSync, "utimesSync");
+setName(watch, "watch");
+setName(watchFile, "watchFile");
+setName(write, "write");
+setName(writeFile, "writeFile");
+setName(writeFileSync, "writeFileSync");
+setName(writeSync, "writeSync");
+setName(writev, "writev");
+setName(writevSync, "writevSync");
+setName(fdatasync, "fdatasync");
+setName(fdatasyncSync, "fdatasyncSync");
+setName(openAsBlob, "openAsBlob");
+setName(opendir, "opendir");

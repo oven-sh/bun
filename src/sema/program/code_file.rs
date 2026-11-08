@@ -55,6 +55,7 @@ pub(super) struct LoadInputs<'a, 's> {
     pub(super) texts_of_data_files: &'a [TextOfDataFile],
     pub(super) imported_file_changers: &'a [ImportedFileChanger],
     pub(super) texts_of_other_files: &'a [TextOfOtherFile],
+    pub(super) exports_that_others_touch: &'a [Atom],
 }
 
 pub(super) fn load_code_file<'s, 'r>(
@@ -139,6 +140,8 @@ fn write_what_other_files_say<'s>(
         ArenaFew::from_iter_in(inputs.imported_file_changers.iter().copied(), arena);
     hir.texts_of_other_files =
         ArenaFew::from_iter_in(inputs.texts_of_other_files.iter().copied(), arena);
+    hir.exports_that_others_touch =
+        ArenaFew::from_iter_in(inputs.exports_that_others_touch.iter().copied(), arena);
 }
 
 fn fold_inputs_of<'c, 's: 'c>(

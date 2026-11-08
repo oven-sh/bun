@@ -519,7 +519,11 @@ const writings: [string, string][] = [
 ];
 const headsOfTexts: [string, (turn: string) => string][] = [
   ["up", turn => `for (let c = 0; c < n; c++) { ${turn} }`],
-  ["long", turn => `for (let c = 0; c < n * 40; c++) { ${turn} if (t.length > 400) t = t.slice(0, 7); }`],
+  [
+    "long",
+    turn =>
+      `for (let c = 0; c < n * 40; c++) { ${turn} if (t.length > 400) t = t.slice(0, 7); if (u.length > 400) u = u.slice(0, 7); }`,
+  ],
   ["letters", turn => `let c = -1; for (const letter of word) { c++; u = letter; ${turn} }`],
 ];
 function programOfTexts(at: number, isTypeScript: boolean) {

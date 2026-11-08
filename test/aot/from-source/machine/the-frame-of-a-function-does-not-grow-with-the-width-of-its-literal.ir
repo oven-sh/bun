@@ -13,8 +13,7 @@
 # f1 = copyNine, f2 = copySixteen, f3 = copySixtyFour
 # REQUIRES(FRAMES): x86_64
 # RUN(FRAMES): frame f1 f2 f3 mechanisms=all
-# FRAMES: unit f1:Body
-# FRAMES: size = [[frame]]
+# copyNine is small enough to be copied into itself once: its frame serves two levels and is asked for nothing here.
 # FRAMES: unit f2:Body
 # FRAMES: size = [[frame]]
 # FRAMES: unit f3:Body

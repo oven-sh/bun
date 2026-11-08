@@ -18,9 +18,8 @@
 # -- end of source
 # Nothing is declared in these files. What is expected of a place is what the text writes into it: of the parameter `table` the record of the literal that the one call written in the function's own file hands over;
 # of the fields `handler` and `bias` the arrow and the number that the literals written in the files in sight of the reader lay there; of the constant `kept` the record that its own file stores into it.
-# All of it is only expected: each is tested, here in front of the loops. A file that the reader's text does not name says nothing: stranger.js hands over a text under `bias` and another arrow, and run() is compiled as without it.
+# All of it is only expected: each is tested. Of `table.handler`, which is the same in every turn, the whole program was seen to lay two arrows, stranger.js's among them: in the typed copy of run()'s loop each has its arm, and there is none as written.
 # Where one of the values written is not told by its own text (`globalThis.seen.length`), nothing is said of the place.
-# TODO: what the file of a function says: the guess here rested on what the whole program was seen to hand over, store or return; it comes back with what the calls and stores written in the function's own file say
 # RUN: walk f2 mechanisms=all
 # CHECK: b0(v0: L1?{{*}}
 # CHECK: TypeTest {{*}} testedType=f7

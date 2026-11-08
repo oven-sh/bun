@@ -129,7 +129,7 @@ const withoutDetails = (output: string) =>
     .join("\n");
 const agree = (a: Ended, b: Ended) => a.end === b.end && withoutDetails(a.stdout) === withoutDetails(b.stdout);
 /** The two runs differ in where the lines of a function's text break and in parentheses that change nothing. As in run-batch.ts. */
-const withoutLayout = (output: string) => withoutDetails(output).replace(/\\n|[\s()]/g, "");
+const withoutLayout = (output: string) => withoutDetails(output).replace(/\\n|%20|%0A|%09|[\s()]/g, "");
 /** Where a program lies: the folder of the run, and the root inside an executable. A program that asks hears another folder there. That alone is declared: what still parts with the two taken out is a difference like any other. */
 const withoutRoots = (output: string) =>
   withoutDetails(output)
@@ -211,7 +211,7 @@ function keepFind(kind: string, summary: string, files: Record<string, string>) 
 type Family = (
   seed: number,
   bed: unknown,
-) => { text: string; extension: string; flags?: string[]; files?: unknown } | undefined;
+) => { text: string; extension: string; flags?: string[]; files?: unknown; meant?: Drawn["meant"] } | undefined;
 let families: [string, Family][] = [];
 if (Number(options.families) > 0) {
   const { allSources } = await import("../sources.ts");
@@ -278,6 +278,8 @@ type Drawn = {
   extension: string;
   isKin?: boolean;
   from?: { name: string; text: string };
+  /** Why the two runs may print these two texts, where the source of the program knows of an intended difference. */
+  meant?: (plain: string, compiled: string) => string | undefined;
   /** The programs that this one imports in a row. */
   members?: Drawn[];
   /** The ways to build it, where they are not drawn. */
@@ -326,7 +328,11 @@ function drawAScene(): Drawn | undefined {
     try {
       const drawn = family(seed % 2 ** 31, bed);
       if (drawn && !drawn.flags?.length && !drawn.files && drawn.extension.endsWith(options.draws))
-        return { text: `${drawn.text}\n// ${name} ${seed % 2 ** 31}\n`, extension: "." + drawn.extension };
+        return {
+          text: `${drawn.text}\n// ${name} ${seed % 2 ** 31}\n`,
+          extension: "." + drawn.extension,
+          meant: drawn.meant,
+        };
     } catch {}
   }
   const start = `const printValue = console.log;\n// ${seed.toString(36)}\nexport {};\n`;
@@ -525,7 +531,7 @@ while (performance.now() < lastStart || waiting.length) {
     waiting.shift() ?? (Number(options.together) > 1 ? await drawTogether(Number(options.together)) : draw());
   if (!program) break;
   if (program.isCompany) program = await withoutBystanders(program, program.arms![0]);
-  const { text, extension, members, isCompany, company } = program;
+  const { text, extension, members, isCompany, company, meant } = program;
   const hasFiles = lay(program);
   if (!program.arms) counts.taken += members?.length ?? 1;
   const inCompany = isCompany ? "together-" : "";
@@ -592,7 +598,9 @@ while (performance.now() < lastStart || waiting.length) {
         await spawn([join(folder, "executable")], 80),
       ];
       rmSync(join(folder, "executable"), { force: true });
-      const kind = kindOfDifference(text, plain, plainAgain, oursAgain);
+      const kind = meant?.(plainAgain.stdout, oursAgain.stdout)
+        ? "documented difference"
+        : kindOfDifference(text, plain, plainAgain, oursAgain);
       ours = oursAgain;
       // Where `bun build --compile` without --aot parts from `bun <file>` too, and in the same way, the bundler and the runner read something differently: a tsconfig.json in a folder, the path of
       // a file, when an `import()` settles. That is no fault of the compiler.

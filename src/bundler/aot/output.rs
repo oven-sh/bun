@@ -127,6 +127,7 @@ pub(crate) fn finish_build(
         names_added_to_builtins,
         further_package_names: Vec::new(),
         refused_data: Vec::new(),
+        loaders_given_to_build: Vec::new(),
         package_names: Vec::new(),
         path_aliases: Vec::new(),
         texts,

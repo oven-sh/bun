@@ -46,7 +46,8 @@ struct PendingLists<'a> {
 }
 
 impl FunctionBuilder {
-    pub fn finish(self) -> (Function, BuilderScratch) {
+    pub fn finish(mut self) -> (Function, BuilderScratch) {
+        self.order_late_parameters_as_declared();
         let FunctionBuilder {
             mut function,
             words: pending_words,

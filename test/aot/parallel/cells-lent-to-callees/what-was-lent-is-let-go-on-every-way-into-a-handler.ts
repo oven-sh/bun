@@ -1,6 +1,8 @@
 // An object or a closure over a large array is lent, and the callee throws. The ways into a handler: a catch that reads what it caught . a finally that a throw enters and leaves again .
 // a loan made in a handler's own block, which throws on to the outer handler . a loop in which every other turn throws. Behind each of them nobody can reach the array any more, not even the last one. (The fourteen sums that live across a call use up the registers and places in which a dead copy of its address might lie.)
-// Skip under ASAN: two of the eight ways say "stays" there where plain Bun says "gone"; the cause is not known.
+// Skip under ASAN: the executable printed "aFinally | 297 stays" and "aLoop | 741 stays" where plain Bun printed "gone". Without the sanitizer the same build lets go at the head of every handler, also with a collection forced there: what stays is a word in a native frame.
+// This program says "gone" only while the fourteen sums overwrite such a dead copy. Make them doubles (plus(0.5, s)), or give the loop of plus() nine turns or more so that it is no longer written out, and they lie in
+// other places of the frame: aLoanInAHandler then says "stays" for the object, until the function returns. That is no loan that is kept: the words of what was lent are zeroed all the same. `bun <file>` has such copies too.
 const unseen = <T,>(x: T): T => [x][JSON.parse("0")];
 const w: any = unseen("w");
 

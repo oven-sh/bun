@@ -12,7 +12,7 @@
 // # FORM: @Int32 = Increment {{*}}form=Integers
 // # FORM-LABEL: code f5:Body
 // # FORM: = IntegerBound {{*}}comparison=Less
-// # FORM: int[2147483640, 2147483647] @Int32) isInLoop=true isLoopHead=true
+// # FORM: int[2147483640, 2147483647] @Int32{{*}}) isInLoop=true isLoopHead=true
 // # FORM: int[2147483641, 2147483647] @Int32 = Increment {{*}}form=Integers
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL

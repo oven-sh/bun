@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tty.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c39a1da3a2d3a0eb8c52983b287e1ece0f9afe418dedb34114a3bdd865ae6c47.
+// Written against that file with the SHA-256 1aba2ca6465dcb511765a365f0da95fc016a9879b7f273896015657b62cf0b20.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 // Hardcoded module "node:tty"
 
@@ -21,6 +21,8 @@ const {
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
+// As `bun run`: what internal/fs/streams keeps of node:fs while it loads, it keeps as it stands when this module loads.
+require("internal/fs/streams");
 
 // libuv stores the mode and the saved termios on each uv_tty_t, so a stream
 // going back to cooked never disturbs another one on the same terminal. Keep
@@ -70,14 +72,9 @@ function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
   this.isTTY = isatty(fd);
 }
 
-// The class stands below fs.ReadStream, and internal/fs/streams loads node:stream. So it is put there when it is first read.
-function setUpReadStream() {
-  $toClass(ReadStream, "ReadStream", require("internal/fs/streams").ReadStream);
-  Object.defineProperty(ReadStream, "prototype", prototypeOfReadStream);
-  return ReadStream;
-}
+$toClass(ReadStream, "ReadStream", require("internal/fs/streams").ReadStream);
 
-const prototypeOfReadStream = {
+Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(require("internal/fs/streams").ReadStream.prototype);
 
@@ -161,7 +158,7 @@ const prototypeOfReadStream = {
   },
   enumerable: true,
   configurable: true,
-};
+});
 
 type Self = $Node.TTYWriteStream;
 function WriteStream(this: Self, fd: number): void {
@@ -280,19 +277,4 @@ function isStdio(fd: number | null) {
   return fd != null && fd <= 2;
 }
 
-function materializeReadStream<T>(value: T): T {
-  Reflect.defineProperty(tty, "ReadStream", { value, writable: true, configurable: true });
-  return value;
-}
-
-const tty = {
-  get ReadStream() {
-    return materializeReadStream(setUpReadStream());
-  },
-  set ReadStream(value) {
-    materializeReadStream(value);
-  },
-  WriteStream,
-  isatty,
-};
-export default tty;
+export default { ReadStream, WriteStream, isatty };

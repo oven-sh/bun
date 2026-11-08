@@ -26,7 +26,8 @@
 # -- end of source
 # The twin: of the two names asked one is a name of lists and maps: it chooses nobody, one name is left.
 # RUN(HELD): link held fields mechanisms=all
-# HELD-NOT: "inner" appended proven=L
+# Every class that is handed through the table of listeners is held of the field; the names asked narrow that to none of them.
+# HELD: "inner" appended proven=L0|L1 writers-known
 # RUN(COUNTS): link held counts mechanisms=all
 # COUNTS: counts cells of fields expected by the names asked of what lies in them | 0
 # RUN(PROVING): link fields mechanisms=all

@@ -202,6 +202,20 @@ const programs: Record<string, Program> = {
     warnings: [],
     stdout: "1\n",
   },
+  "an entry is stored in require.cache under the path of a compiled file": {
+    source: `require.cache[require.resolve("./part.cjs")] = { exports: { a: 2 } };\nconsole.log(require("./part.cjs").a);\n`,
+    files: { "part.cjs": "exports.a = 1;\n" },
+    code: "TS100092",
+    warnings: ["main.mjs:1:1"],
+    stdout: "1\n",
+  },
+  "an entry is stored in require.cache where nothing comes, and under a path outside": {
+    source: `function nobodyCalls() {\n  require.cache[require.resolve("./part.cjs")] = { exports: { a: 2 } };\n}\nrequire.cache["/made-up/outside.cjs"] = { exports: { a: 3 } };\nconsole.log(require("./part.cjs").a);\n`,
+    files: { "part.cjs": "exports.a = 1;\n" },
+    code: "TS100092",
+    warnings: [],
+    stdout: "1\n",
+  },
   "the functions that the loader asks are read, and stored where nothing comes": {
     source: `import Module from "node:module";\nfunction nobodyCalls() {\n  Module.prototype.require = () => {};\n}\nconsole.log(typeof Module.prototype.require, typeof Module._resolveFilename);\n`,
     code: "TS100080",

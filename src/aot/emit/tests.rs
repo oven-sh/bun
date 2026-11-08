@@ -140,6 +140,7 @@ fn create_module(names: &Names) -> Module {
             export_name: Some(names.name),
             specifier: Some(names.text),
             drops_export_if_absent: false,
+            is_asked_for_by_star: false,
         }],
         positions: SourcePositions {
             quoted_texts: vec![QuotedText {

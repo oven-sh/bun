@@ -1,7 +1,7 @@
 import { test } from "bun:test";
 import path from "node:path";
 
-test("the first matchesGlob() loads the module that tests its operands", () => {
+test("matchesGlob() tests its operands while Object.defineProperty is replaced", () => {
   const real = Object.defineProperty;
   let calls = 0;
   Object.defineProperty = function (...all) {
@@ -14,5 +14,11 @@ test("the first matchesGlob() loads the module that tests its operands", () => {
   } finally {
     Object.defineProperty = real;
   }
-  console.log(answer, "calls of Object.defineProperty:", calls);
+  let refused;
+  try {
+    path.matchesGlob(1, "a/*.js");
+  } catch (error) {
+    refused = error.code;
+  }
+  console.log(answer, refused, "calls of Object.defineProperty:", calls);
 });

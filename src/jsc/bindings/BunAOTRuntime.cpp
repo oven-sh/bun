@@ -238,7 +238,7 @@ static void recordRefusedChange(JSC::JSGlobalObject* globalObject, const String&
 {
     JSC::CallFrame* callFrame = globalObject->vm().topCallFrame;
     // The loader starts a module from no frame, and what is said of a file that runs names no place.
-    bool namesPlace = !refusal.startsWith("Ran from source "_s);
+    bool namesPlace = !refusal.startsWith("Ran from source "_s) && !refusal.startsWith("Kept the run of "_s);
     if (!callFrame && namesPlace)
         return;
     BunString sourceURL = Bun::BunStringEmpty;

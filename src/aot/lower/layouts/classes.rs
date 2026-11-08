@@ -497,7 +497,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn declare_constructor_function_layout(&mut self, function: FunctionRef) -> Option<LayoutId> {
+    pub(in crate::lower) fn declare_constructor_function_layout(
+        &mut self,
+        function: FunctionRef,
+    ) -> Option<LayoutId> {
         let node = &self.queries.files().hir(function.file)[function.function];
         if !matches!(node.kind, FnKind::Decl | FnKind::Expr)
             || !hir::has_body(node)

@@ -35,6 +35,30 @@ const _: () = assert!(PropertyKeyKind::COUNT <= 1 << u8::BITS);
 const _: () = assert!(WellKnownSymbol::COUNT <= 1 << u8::BITS);
 
 const KIND_OF_TEXT: u8 = PropertyKeyKind::Text.to_wire() as u8;
+const KIND_OF_CREATED_SYMBOL: u8 = PropertyKeyKind::CreatedSymbol.to_wire() as u8;
+
+fn split_home(key: &[u8]) -> Option<(&[u8], FileId)> {
+    let [KIND_OF_CREATED_SYMBOL, ..] = key else {
+        return None;
+    };
+    let (rest, home) = key.split_last_chunk()?;
+    Some((rest, FileId(u32::from_be_bytes(*home))))
+}
+
+fn identity_of_keys<'a>(
+    keys: impl Iterator<Item = (&'a [u8], ObjectMemberKind)> + Clone,
+    mark: Option<&'a [u8]>,
+) -> TypeIdentity {
+    let mark = mark.map(|mark| (mark, ObjectMemberKind::Field));
+    let whole = TypeIdentity::of_untyped_members(keys.clone().chain(mark));
+    let Some((_, home)) = keys.clone().find_map(|(key, _)| split_home(key)) else {
+        return whole;
+    };
+    let without_home = |key| split_home(key).map_or(key, |(rest, _)| rest);
+    let text = keys.map(|(key, kind)| (without_home(key), kind));
+    let TypeIdentity([first, _]) = TypeIdentity::of_untyped_members(text.chain(mark));
+    TypeIdentity([first, whole.0[1]]).in_file(home)
+}
 
 fn literal_writes_functions_alone(hir: &File<'_>, literal: ExprId) -> bool {
     let ExprKind::Object(properties) = hir[literal].kind else {
@@ -392,11 +416,8 @@ impl FileLowering<'_, '_, '_, '_> {
             .filter(|(name, _)| name.is_described())
             .map(|(name, field)| (name.description(&described.text), field.1.kind));
         let is_empty = descriptions.clone().next().is_none();
-        let names = descriptions.chain(
-            has_other_optional_members
-                .then_some((bytes_of_flags.as_slice(), ObjectMemberKind::Field)),
-        );
-        (TypeIdentity::of_untyped_members(names), is_empty)
+        let flags = has_other_optional_members.then_some(bytes_of_flags.as_slice());
+        (identity_of_keys(descriptions, flags), is_empty)
     }
 
     fn describe_sorted_names(&mut self, ty: CheckerTypeId, fields: &[SortedMember]) {
@@ -1103,8 +1124,11 @@ impl FileLowering<'_, '_, '_, '_> {
                 let ModuleRef::File(home) = self.fragment.module_ref(key.module?) else {
                     return None;
                 };
-                description.extend_from_slice(&home.0.to_be_bytes());
                 description.extend_from_slice(&key.call_number?.to_be_bytes());
+                if let Some(text) = key.text {
+                    description.extend_from_slice(self.fragment.strings.get(text));
+                }
+                description.extend_from_slice(&home.0.to_be_bytes());
             }
             PropertyKeyKind::PrivateName => return None,
         }
@@ -1154,14 +1178,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let site = site.map(|site| [b"\xffmade at ".as_slice(), &site.0.to_le_bytes()].concat());
         let descriptions = sorted
             .iter()
-            .map(|member| (member.description.as_slice(), member.kind))
-            .chain(
-                site.iter()
-                    .map(|site| (site.as_slice(), ObjectMemberKind::Field)),
-            );
+            .map(|member| (member.description.as_slice(), member.kind));
         let layout = self.fragment.declare_layout(LayoutKey::UntypedLiteral {
             file: self.file,
-            members: TypeIdentity::of_untyped_members(descriptions),
+            members: identity_of_keys(descriptions, site.as_deref()),
         });
         if self.fragment.is_layout_defined(layout) {
             return layout;

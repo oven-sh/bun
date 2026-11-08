@@ -498,9 +498,12 @@ impl Build<'_> {
         let in_parallel = self.parallel_runner();
         report::count_files(&mut self.statistics, view, roles, &in_parallel);
         let mut found = checked.diagnostics;
-        if loaded.project(project).loaded.files().brings_declarations() {
-            self.keep_what_project_itself_reports(&mut found);
-        }
+        let files = loaded.project(project).loaded.files();
+        let brings_declarations = files.brings_declarations();
+        self.keep_what_project_itself_reports(&mut found, |it| {
+            let file = it.diagnostic.file;
+            brings_declarations || file.is_some_and(|file| files.hir(file).is_script_for_project)
+        });
         self.report_check_diagnostics(found, &checked.incomplete);
         self.diagnostics.add_load_messages(loaded.messages);
 
@@ -549,7 +552,11 @@ impl Build<'_> {
         }
     }
 
-    fn keep_what_project_itself_reports(&self, diagnostics: &mut Vec<BuildDiagnostic>) {
+    fn keep_what_project_itself_reports(
+        &self,
+        diagnostics: &mut Vec<BuildDiagnostic>,
+        is_seen_otherwise_by_project: impl Fn(&BuildDiagnostic) -> bool,
+    ) {
         let is_asked = |it: &BuildDiagnostic| {
             matches!(
                 it.diagnostic.class,
@@ -558,6 +565,7 @@ impl Build<'_> {
                     | DiagnosticClass::Style
             ) && matches!(it.effect, Effect::StopsBuild | Effect::Warns)
                 && !it.diagnostic.path.is_empty()
+                && is_seen_otherwise_by_project(it)
         };
         let asked = diagnostics.iter().filter(|it| is_asked(it));
         let mut paths: Vec<Vec<u8>> = asked.map(|it| it.diagnostic.path.clone()).collect();

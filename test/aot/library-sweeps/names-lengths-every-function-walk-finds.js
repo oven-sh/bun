@@ -101,6 +101,8 @@ visit(require("node:string_decoder"), "node:string_decoder");
 visit(require("node:timers"), "node:timers");
 visit(require("node:timers/promises"), "node:timers/promises");
 visit(require("node:tls"), "node:tls");
+// A compiled node:tty holds an accessor under this name until somebody reads it: parallel/builtin-modules/node-tty-holds-read-stream-before-anybody-reads-it.cjs.
+void require("node:tty").ReadStream;
 visit(require("node:tty"), "node:tty");
 visit(require("node:url"), "node:url");
 visit(require("node:util"), "node:util");

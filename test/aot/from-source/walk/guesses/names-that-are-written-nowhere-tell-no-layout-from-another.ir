@@ -1,0 +1,17 @@
+# -- source: main.cjs
+# "use strict";
+# function shape(width, { label = "", depth, tint, edge = width } = {}) { return width + label.length + (edge === width ? 1 : 0) + (depth | 0) + (tint ? 1 : 0); }
+# const table = { count(s) { return s.length + 1; }, text(s) { return String(s); }, wrap(s) { return [s]; }, kind(s) { return typeof s; }, none(s) { return s === null; }, shape }, key = JSON.parse('"shape"');
+# console.log(table[key](1, { label: "q", depth: 2 }), table[key](2));
+# -- end of source
+# The pattern's own default `{}` has a layout that lists the four names; `tint` and `edge` are written nowhere, and nothing but the default makes such an object. It was the one layout that answers all the names,
+# so it alone was expected of the argument, and the guess failed at every call that hands an object. Names that are never written tell no layout from another: the literal's layout, which answers the names that are
+# written, is expected beside it, and the names that it lacks are found absent behind two looks at the cell.
+# REQUIRES: entries-of-bun
+# RUN: walk f1 mechanisms=all
+# CHECK: = GetSlot {{*}} key="label"
+# CHECK: = HasNoExtraProperties
+# CHECK: = HasLayoutPrototype
+# RUN(COUNT): compile LayoutsExpectedBesideOneWhoseOtherNamesAreNeverWritten mechanisms=all
+# COUNT-NOT: LayoutsExpectedBesideOneWhoseOtherNamesAreNeverWritten 0
+# COUNT: statistic LayoutsExpectedBesideOneWhoseOtherNamesAreNeverWritten

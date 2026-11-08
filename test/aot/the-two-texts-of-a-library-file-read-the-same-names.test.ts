@@ -2,13 +2,36 @@
 // Nobody held one against the other: a name that the first reads off an object and the second reads no more is a difference that a program can see.
 // This lists each such name. A name that is not expected here fails, and so does an expected one that is found no more: its line goes out.
 // A read that has moved into another of the ahead-of-time files is a read still. TypeScript's `!` and the names of types behind import("..") are no reads.
+// Each link of `a.b.c` is a read.
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 
 const library = join(import.meta.dir, "..", "..", "src", "js");
 
-const expected: string[] = [];
+const expected: string[] = [
+  // Names of types.
+  "builtins/BundlerPlugin.ts BuildOutput",
+  "builtins/ProcessObjectInternals.ts process",
+  // Read off an object of Bun's own that no program gets hold of. The ahead-of-time text asks for each function by itself.
+  "bun/ffi.ts linkSymbols",
+  "bun/ffi.ts viewSource",
+  "node/path.ts extname",
+  "node/path.ts relative",
+  "node/path.ts toNamespacedPath",
+  // `Bun.jest`: to name it would keep the test runner in every executable with a computed `require()`. A function of its own gives the same module.
+  "builtins/CommonJS.ts jest",
+  // A getter under a symbol of its own that the first text lays on `Blob.prototype`. It answers `this`.
+  "internal/quic/quic.ts kBlobHandle",
+  // It answers false, always.
+  "internal/repl/history.ts isEnabled",
+  // `globalThis.TypeError` and `Function.prototype.call`, each kept in a variable.
+  "node/child_process.ts TypeError",
+  "node/v8.ts call",
+  // Read by a pattern: `const { subject, subjectaltname: altNames } = cert`.
+  "node/tls.ts subject",
+  "node/tls.ts subjectaltname",
+];
 
 function namesReadIn(file: string): Set<string> {
   const text = readFileSync(file, "utf8")
@@ -17,7 +40,7 @@ function namesReadIn(file: string): Set<string> {
     .replace(/import\("[^"]*"\)(\.\w+)+/g, "")
     .replace(/(?<=[\w)\]])!(?=\??\.|\[)/g, "");
   const names = new Set<string>();
-  for (const [, name] of text.matchAll(/[\w)\]]\??\.([A-Za-z_]\w*)\b(?!\s*=(?!=))/g)) names.add(name);
+  for (const [, name] of text.matchAll(/(?<=[\w)\]])\??\.([A-Za-z_]\w*)\b(?!\s*=(?!=))/g)) names.add(name);
   for (const [, name] of text.matchAll(/[\w)]\??\.?\[(k[A-Z]\w*)\](?!\s*=(?!=))/g)) names.add(name);
   return names;
 }

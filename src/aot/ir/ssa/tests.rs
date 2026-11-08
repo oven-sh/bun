@@ -375,7 +375,7 @@ fn loop_parameter_only_for_modified_variable() {
     let entry = builder.current_block();
     let [header, body, exit] = create_blocks(&mut builder);
     builder.declare_loop_header(header, &[modified]);
-    assert_eq!(variable_parameters(&builder, header).len(), 1);
+    assert!(variable_parameters(&builder, header).is_empty());
     builder.jump(Edge::to(header));
     builder.switch_to(header);
     let counter = builder.read_variable(modified);
@@ -395,6 +395,133 @@ fn loop_parameter_only_for_modified_variable() {
     assert_eq!(variable_parameters(&builder, header), [counter]);
     assert_eq!(variable_arguments(&builder, entry, 0), [initial]);
     assert_eq!(variable_arguments(&builder, body, 0), [updated]);
+}
+
+fn write_loop_that_stores(
+    builder: &mut FunctionBuilder,
+    variable: LocalVariable,
+    [condition, initial, updated]: [ValueId; 3],
+) -> [BlockId; 4] {
+    builder.write_variable(variable, initial);
+    let entry = builder.current_block();
+    let [header, body, exit] = create_blocks(builder);
+    builder.declare_loop_header(header, &[variable]);
+    builder.jump(Edge::to(header));
+    builder.switch_to(header);
+    builder.branch(condition, Edge::to(body), Edge::to(exit));
+    builder.seal(body);
+    builder.switch_to(body);
+    builder.write_variable(variable, updated);
+    builder.jump(Edge::to(header));
+    builder.seal(header);
+    builder.seal(exit);
+    builder.switch_to(exit);
+    [entry, header, body, exit]
+}
+
+#[test]
+fn modified_variable_that_nothing_reads_has_no_loop_parameter() {
+    let number = TypeTable::NUMBER;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, number, number]);
+    let values = [0, 1, 2].map(|index| builder.parameter(index));
+    let variable = builder.create_variable(None);
+    let [entry, header, body, _] = write_loop_that_stores(&mut builder, variable, values);
+    assert!(variable_parameters(&builder, header).is_empty());
+    assert!(variable_arguments(&builder, entry, 0).is_empty());
+    assert!(variable_arguments(&builder, body, 0).is_empty());
+}
+
+#[test]
+fn loop_parameters_stand_in_the_order_of_the_declaration_whichever_is_read_first() {
+    let number = TypeTable::NUMBER;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, number, number]);
+    let [condition, initial, updated] = [0, 1, 2].map(|index| builder.parameter(index));
+    let [first, unread, second] = [(); 3].map(|()| builder.create_variable(None));
+    for variable in [first, unread, second] {
+        builder.write_variable(variable, initial);
+    }
+    let entry = builder.current_block();
+    let [header, body, exit] = create_blocks(&mut builder);
+    builder.declare_loop_header(header, &[first, unread, second]);
+    builder.jump(Edge::to(header));
+    builder.switch_to(header);
+    let read_first = builder.read_variable(second);
+    let read_second = builder.read_variable(first);
+    builder.branch(condition, Edge::to(body), Edge::to(exit));
+    builder.seal(body);
+    builder.switch_to(body);
+    builder.write_variable(second, updated);
+    builder.write_variable(unread, updated);
+    builder.jump(Edge::to(header));
+    builder.seal(header);
+    builder.seal(exit);
+    assert_eq!(
+        variable_parameters(&builder, header),
+        [read_second, read_first]
+    );
+    assert_eq!(variable_arguments(&builder, entry, 0), [initial, initial]);
+    assert_eq!(
+        variable_arguments(&builder, body, 0),
+        [read_second, updated]
+    );
+}
+
+#[test]
+fn modified_variable_read_only_behind_the_loop_gets_its_parameter_there() {
+    let number = TypeTable::NUMBER;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, number, number]);
+    let values = [0, 1, 2].map(|index| builder.parameter(index));
+    let variable = builder.create_variable(None);
+    let [entry, header, body, _] = write_loop_that_stores(&mut builder, variable, values);
+    enter_blocks(&mut builder, 5);
+    let counter = builder.read_variable(variable);
+    assert_eq!(variable_parameters(&builder, header), [counter]);
+    assert_eq!(variable_arguments(&builder, entry, 0), [values[1]]);
+    assert_eq!(variable_arguments(&builder, body, 0), [values[2]]);
+    assert_eq!(builder.read_variable(variable), counter);
+}
+
+#[test]
+fn parameter_made_behind_the_sealed_loop_stands_where_its_variable_is_declared() {
+    let number = TypeTable::NUMBER;
+    let mut builder = create_builder(&[TypeTable::BOOLEAN, number, number, number, number]);
+    let [
+        condition,
+        first_enters,
+        second_enters,
+        first_stored,
+        second_stored,
+    ] = [0, 1, 2, 3, 4].map(|index| builder.parameter(index));
+    let [read_behind, read_inside] = [(); 2].map(|()| builder.create_variable(None));
+    builder.write_variable(read_behind, first_enters);
+    builder.write_variable(read_inside, second_enters);
+    let entry = builder.current_block();
+    let [header, body, exit] = create_blocks(&mut builder);
+    builder.declare_loop_header(header, &[read_behind, read_inside]);
+    builder.jump(Edge::to(header));
+    builder.switch_to(header);
+    builder.branch(condition, Edge::to(body), Edge::to(exit));
+    builder.seal(body);
+    builder.switch_to(body);
+    let inside = builder.read_variable(read_inside);
+    builder.write_variable(read_behind, first_stored);
+    builder.write_variable(read_inside, second_stored);
+    builder.jump(Edge::to(header));
+    builder.seal(header);
+    builder.seal(exit);
+    builder.switch_to(exit);
+    let behind = builder.read_variable(read_behind);
+    assert_eq!(variable_parameters(&builder, header), [inside, behind]);
+    builder.order_late_parameters_as_declared();
+    assert_eq!(variable_parameters(&builder, header), [behind, inside]);
+    assert_eq!(
+        variable_arguments(&builder, entry, 0),
+        [first_enters, second_enters]
+    );
+    assert_eq!(
+        variable_arguments(&builder, body, 0),
+        [first_stored, second_stored]
+    );
 }
 
 fn write_empty_loop(builder: &mut FunctionBuilder, condition: ValueId) -> BlockId {
@@ -466,16 +593,14 @@ fn variable_stored_once_above_a_loop_that_modifies_it_is_the_parameter_in_the_bo
     write_empty_loop(&mut builder, condition);
     let [header, body, exit] = create_blocks(&mut builder);
     builder.declare_loop_header(header, &[variable]);
-    let [counter] = variable_parameters(&builder, header)[..] else {
-        panic!("the header has one parameter");
-    };
     builder.jump(Edge::to(header));
     builder.switch_to(header);
     builder.branch(condition, Edge::to(body), Edge::to(exit));
     builder.seal(body);
     builder.switch_to(body);
     enter_blocks(&mut builder, 5);
-    assert_eq!(builder.read_variable(variable), counter);
+    let counter = builder.read_variable(variable);
+    assert_eq!(variable_parameters(&builder, header), [counter]);
     builder.write_variable(variable, updated);
     builder.jump(Edge::to(header));
     builder.seal(header);
@@ -553,6 +678,8 @@ fn variable_listed_twice_as_modified_has_one_parameter() {
     let variable = builder.create_variable(None);
     let header = builder.create_block(None);
     builder.declare_loop_header(header, &[variable, variable]);
+    builder.switch_to(header);
+    builder.read_variable(variable);
     assert_eq!(variable_parameters(&builder, header).len(), 1);
 }
 

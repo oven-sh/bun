@@ -95,6 +95,7 @@ pub(crate) struct ProgramContents {
     pub any_module_loads_again: bool,
     pub loads_by_unknown_name: bool,
     pub loads_by_unknown_path: bool,
+    pub loads_code_on_disk_by_unknown_path: bool,
     pub embeds_addon_as_file: bool,
     pub names_worker_constructor: bool,
     pub hands_worker_constructor_on: bool,
@@ -106,6 +107,10 @@ pub(crate) struct ProgramContents {
 impl ProgramContents {
     pub(crate) fn can_replace_builtins(&self) -> bool {
         !self.replaced_builtins.is_empty() || !self.names_added_to_builtins.is_empty()
+    }
+
+    pub(crate) fn can_replace_builtin_functions(&self) -> bool {
+        !self.replaced_builtins.is_empty()
     }
 }
 
@@ -126,6 +131,7 @@ struct LookInput<'a, 's> {
     files: &'a Files<'s>,
     is_test_run: bool,
     whose: &'a [WhoseFile],
+    loads_compiled_files_alone: &'a [bool],
 }
 
 fn mocks_module_that_it_does_not_spell(files: &Files<'_>, file: FileId) -> bool {
@@ -145,6 +151,7 @@ bitflags::bitflags! {
     struct LoadsByUnknown: u8 {
         const NAME = 1 << 0;
         const PATH = 1 << 1;
+        const PATH_OF_CODE_ON_DISK = 1 << 2;
     }
 }
 
@@ -152,7 +159,10 @@ impl LoadsByUnknown {
     fn new(by_name: bool, by_path: bool) -> LoadsByUnknown {
         let mut loads = LoadsByUnknown::empty();
         loads.set(LoadsByUnknown::NAME, by_name);
-        loads.set(LoadsByUnknown::PATH, by_path);
+        loads.set(
+            LoadsByUnknown::PATH | LoadsByUnknown::PATH_OF_CODE_ON_DISK,
+            by_path,
+        );
         loads
     }
 }
@@ -228,7 +238,14 @@ impl FoundInFiles {
         let names = &contents.names;
         let loads_by_unknown = match resolve_loads_through_imported_loaders(files, file) {
             true => LoadsByUnknown::all(),
-            false => LoadsByUnknown::new(names.loads_by_unknown_name, names.loads_by_unknown_path),
+            false => {
+                let loads =
+                    LoadsByUnknown::new(names.loads_by_unknown_name, names.loads_by_unknown_path);
+                match input.loads_compiled_files_alone.get(file.idx()) {
+                    Some(true) => loads - LoadsByUnknown::PATH_OF_CODE_ON_DISK,
+                    Some(false) | None => loads,
+                }
+            }
         };
         self.append(FoundInFiles {
             replaced_members: Vec::new(),
@@ -456,6 +473,7 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         files,
         is_test_run,
         whose: whose_files.as_ref().map_or(&[], |(whose, _)| whose),
+        loads_compiled_files_alone: whose_files.as_ref().map_or(&[], |(_, alone)| alone),
     };
     let runs = files.compiled_files().chunks(FILES_LOOKED_AT_IN_A_RUN);
     let mut runs: Vec<(&[FileId], FoundInFiles)> =
@@ -575,6 +593,9 @@ pub(crate) fn collect_program_contents(input: ContentsInput<'_, '_>) -> ProgramC
         },
         loads_by_unknown_name: all.loads_by_unknown.contains(LoadsByUnknown::NAME),
         loads_by_unknown_path: all.loads_by_unknown.contains(LoadsByUnknown::PATH),
+        loads_code_on_disk_by_unknown_path: all
+            .loads_by_unknown
+            .contains(LoadsByUnknown::PATH_OF_CODE_ON_DISK),
         embeds_addon_as_file: embeds_addon_as_file(files),
         names_worker_constructor: all.names_worker_constructor,
         hands_worker_constructor_on: all.hands_worker_constructor_on,

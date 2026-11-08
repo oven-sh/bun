@@ -7,7 +7,9 @@ use smallvec::SmallVec;
 pub(in crate::lower) use self::builder::set_prototype;
 pub(in crate::lower) use self::emitted_enum::EnumsThatStayAsBorn;
 pub(crate) use self::literal::lower_object_literal;
-pub(in crate::lower) use self::literal::{ListsInside, is_born_level_by_level};
+pub(in crate::lower) use self::literal::{
+    ListsInside, is_born_level_by_level, is_empty_without_prototype,
+};
 use super::FunctionLowering;
 use crate::ir::{LayoutId, PropertyKeyId, ValueId};
 

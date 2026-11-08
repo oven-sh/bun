@@ -2,7 +2,8 @@
 // # The body that runs where a parameter is not what its type says is written straight: every value has a word of the frame, and a word is given back
 // # at the value's last read. But the frame was sized in front of that by ALL the values of a block that are read once in it, not by the most that are
 // # alive at once: a literal of two dozen sums took 528 bytes a call where 192 do, and a recursion that `bun <file>` runs overflowed at half its depth.
-// # The objects come from JSON.parse, so they have no layout of the compiler's and the guard of `shift` sends every call to that body.
+// # The objects come from JSON.parse, so they have no layout of the compiler's and the guard of `shift` sends every call of the first run to that body.
+// # What `shift` has made is handed to it once more: a function is expected to be handed a literal of its own only where one is seen to arrive.
 // # f1 = shift
 // # RUN(FRAME): bytes f1:SlowBody mechanisms=all
 // # REQUIRES(FRAME): x86_64 as-written
@@ -18,10 +19,11 @@ const deep: number = JSON.parse("300");
 let tree: Node | null = null;
 for (let i = 0; i < deep; i++) { const o = parse(i & 7); o.body = tree; tree = o; }
 const moved: Node | null = tree && shift(tree, 3);
+const again: Node | null = moved && shift(moved, 0);
 let levels = 0;
 let sum = 0;
 for (let at = moved; at; at = at.body) { levels++; sum += at.start + at.end * 2 + at.flags * 3 + at.index * 5 + at.last * 7 + at.kind.length + at.text.length; }
 report(levels);
 report(sum);
-report(moved ? Object.keys(moved).join() : "");
+report(again ? Object.keys(again).join() : "");
 report("end");

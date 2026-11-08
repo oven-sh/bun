@@ -10,8 +10,8 @@
 # for (let turn = 0; turn < input; turn++) (globalThis as any).answer = sum({ x: +input, y: +input, z: +input });
 # -- end of source
 # The compiler before this one: 5 instructions, 0 of them patches.
-# When the bound was taken: steps: operations 48, patches 4, moves 11, unlikely or rare 88.
-# RUN(X64): steps most:59 f1 mechanisms=all-Inlining
+# When the bound was taken: steps: operations 91, patches 7, moves 11, unlikely or rare 160 (the key, written keyof Point, is told apart by its three names in one switch: a call 351 > 285 instructions).
+# RUN(X64): steps most:102 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: steps: at most 59
+# X64-NEXT: steps: at most 102

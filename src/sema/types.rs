@@ -857,6 +857,9 @@ pub enum InstantiationExpression {
     TypeNode(FileId, TypeNodeId),
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
+pub struct ConstructedBy(pub Option<(FileId, FnId)>);
+
 /// The members of an object type.
 #[derive(PartialEq, Eq, Hash, Debug)]
 pub struct Shape<'s> {
@@ -916,6 +919,7 @@ pub struct Shape<'s> {
     /// call, and for the `getWidenedTypeOfObjectLiteral` of such a type: the pattern's file and
     /// position.
     pub pattern_at: Option<(FileId, u32)>,
+    pub constructed_by: ConstructedBy,
     /// `t.mapper` of a type that `getObjectTypeInstantiation` instantiates no matter what its members
     /// mention, because it has the symbol of an object literal (`getSpreadType`,
     /// `getWidenedTypeOfObjectLiteral`), `ObjectFlagsObjectRestType` or
@@ -1191,6 +1195,7 @@ impl<'s> Shape<'s> {
             single_signature_arguments: None,
             has_no_instantiable_symbol: false,
             pattern_at: None,
+            constructed_by: ConstructedBy(None),
             mapper: MapperId::IDENTITY,
         }
     }
@@ -1219,6 +1224,7 @@ impl<'s> Shape<'s> {
             single_signature_arguments,
             has_no_instantiable_symbol,
             pattern_at,
+            constructed_by,
             mapper,
         } = self;
         let flags = [
@@ -1240,6 +1246,7 @@ impl<'s> Shape<'s> {
             && properties_of.is_none()
             && single_signature_arguments.is_none()
             && pattern_at.is_none()
+            && constructed_by.0.is_none()
             && *mapper == MapperId::IDENTITY
     }
 }
@@ -5026,6 +5033,15 @@ follow_enum!(InstantiationExpression {
     InstantiationExpression::Expr(a, b) => (a, b),
     InstantiationExpression::TypeNode(a, b) => (a, b),
 });
+impl Follow for ConstructedBy {
+    #[inline]
+    fn visit<V: Visitor>(&self, visitor: &mut V) {
+        if let Some(function) = self.0 {
+            function.visit(visitor);
+        }
+    }
+}
+
 follow_struct!(Shape<'_> {
     symbol_declared_at,
     symbol,
@@ -5047,6 +5063,7 @@ follow_struct!(Shape<'_> {
     single_signature_arguments,
     has_no_instantiable_symbol,
     pattern_at,
+    constructed_by,
     mapper
 });
 follow_struct!(Listed<'_> {
@@ -5145,6 +5162,7 @@ clone_in_is_copy!(
     IndexInfo,
     SigParam,
     Literalness,
+    ConstructedBy,
     InstantiationExpression,
     DeferredTypeArguments,
     InstantiationKey,
@@ -5324,6 +5342,7 @@ clone_in_struct!(Shape {
     single_signature_arguments,
     has_no_instantiable_symbol,
     pattern_at,
+    constructed_by,
     mapper
 });
 impl CloneIn for Listed<'_> {

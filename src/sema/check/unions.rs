@@ -1651,7 +1651,11 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_class_instance(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Ref { target, .. } if self.files().flags(*target).contains(SymFlags::CLASS))
+        match self.data(ty) {
+            TypeData::Ref { target, .. } => self.files().flags(*target).contains(SymFlags::CLASS),
+            TypeData::Synth(shape) => shape.constructed_by.0.is_some(),
+            _ => false,
+        }
     }
 
     /// The result of `filter` for the union `ty` of `members`, of which `kept` remain.

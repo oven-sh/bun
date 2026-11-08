@@ -1,0 +1,573 @@
+// What the compiler reads in place of src/js/internal/streams/pipeline.ts, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 666cd503a1ca0d3ec0e2acfd00c8861aa4d026d815da69e6a265da31e79b1b49.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
+
+// Ported from https://github.com/mafintosh/pump with
+// permission from the author, Mathias Buus (@mafintosh).
+
+"use strict";
+
+const eos = require("internal/streams/end-of-stream");
+const { once } = require("internal/shared");
+const destroyImpl = require("internal/streams/destroy");
+const Duplex = require("internal/streams/duplex");
+const { aggregateTwoErrors } = require("internal/errors");
+const { validateFunction, validateAbortSignal } = require("internal/validators");
+const {
+  isIterable,
+  isReadable,
+  isReadableNodeStream,
+  isNodeStream,
+  isTransformStream,
+  isWebStream,
+  isReadableStream,
+  isReadableFinished,
+} = require("internal/streams/utils");
+
+const { isReadableState } = require("internal/streams/state");
+
+const SymbolAsyncIterator: typeof Symbol.asyncIterator = Symbol.asyncIterator;
+const ArrayIsArray = Array.isArray;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const SymbolDispose: typeof Symbol.dispose = Symbol.dispose;
+
+let PassThrough: $BunModules["internal/streams/passthrough"] | undefined;
+let Readable: $BunModules["internal/streams/readable"] | undefined;
+let addAbortListener: $BunModules["internal/abort_listener"]["addAbortListener"] | undefined;
+
+type AnyIterable = Iterable<unknown> | AsyncIterable<unknown>;
+type PipelineCallback = (error?: Error | null, value?: unknown) => void;
+type Then = ((onFulfilled: (value: unknown) => unknown, onRejected: (error: Error) => unknown) => unknown) | undefined;
+
+interface PipelineOptions {
+  signal?: AbortSignal;
+  end?: boolean;
+}
+
+const readableSide =
+  IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+    ? { readable: true, writable: false, error: undefined, signal: undefined }
+    : undefined;
+const writableSide =
+  IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+    ? { readable: false, writable: true, error: undefined, signal: undefined }
+    : undefined;
+const bothSides =
+  IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
+    ? { readable: true, writable: true, error: undefined, signal: undefined }
+    : undefined;
+
+// A pipeline of streams alone hands the signal of its controller to nobody. While a program cannot see a controller made, asked for its signal
+// or aborted, or a signal asked whether it is aborted, none is made until a stage is handed the signal.
+let Controller: typeof AbortController | undefined;
+let signalOfController: ((this: AbortController) => AbortSignal) | undefined;
+let abortController: ((this: AbortController) => void) | undefined;
+
+function isAbortOfControllersAsBuilt(): boolean {
+  return IS_COMPILED_AHEAD_OF_TIME &&
+    !CAN_REPLACE_BUILT_IN_FUNCTIONS &&
+    $findsDeclaredMember(globalThis, "AbortController") &&
+    $findsDeclaredMember(AbortController.prototype, "abort")
+    ? true
+    : false;
+}
+
+function isAbortedOfSignalsAsBuilt(): boolean {
+  return IS_COMPILED_AHEAD_OF_TIME &&
+    !CAN_REPLACE_BUILT_IN_FUNCTIONS &&
+    $findsDeclaredMember(globalThis, "AbortSignal") &&
+    $findsDeclaredMember(AbortSignal.prototype, "aborted")
+    ? true
+    : false;
+}
+
+function areControllersAsBuilt(): boolean {
+  if (!(
+    isAbortOfControllersAsBuilt() &&
+    $findsDeclaredMember(AbortController.prototype, "signal") &&
+    isAbortedOfSignalsAsBuilt()
+  ))
+    return false;
+  if (Controller === undefined) {
+    Controller = AbortController;
+    signalOfController = ObjectGetOwnPropertyDescriptor(Controller.prototype, "signal")!.get;
+    abortController = Controller.prototype.abort;
+  }
+  return true;
+}
+
+function destroyer(stream: $Node.AnyStream, reading: boolean, writing: boolean) {
+  let finished = false;
+  stream.on("close", () => {
+    finished = true;
+  });
+
+  const cleanup = eos(
+    stream,
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS && (reading || writing)
+      ? (reading ? (writing ? bothSides : readableSide) : writableSide)!
+      : { readable: reading, writable: writing },
+    err => {
+      finished = !err;
+    },
+  );
+
+  return {
+    destroy: (err?: Error | null) => {
+      if (finished) return;
+      finished = true;
+      destroyImpl.destroyer(stream, err || $ERR_STREAM_DESTROYED("pipe"));
+    },
+    cleanup,
+  };
+}
+
+function popCallback(streams: unknown[]) {
+  // Streams should never be an empty array. It should always contain at least
+  // a single stream. Therefore optimize for the average case instead of
+  // checking for length === 0 as well.
+  validateFunction(streams[streams.length - 1], "streams[stream.length - 1]");
+  return streams.pop() as PipelineCallback;
+}
+
+function makeAsyncIterable(val) {
+  if (isIterable(val)) {
+    return val;
+  } else if (isReadableNodeStream(val)) {
+    // Legacy streams are not Iterable.
+    return fromReadable(val);
+  }
+  throw $ERR_INVALID_ARG_TYPE("val", ["Readable", "Iterable", "AsyncIterable"], val);
+}
+
+async function* fromReadable(val: $Node.Readable) {
+  Readable ??= require("internal/streams/readable");
+  yield* Readable.prototype[SymbolAsyncIterator].$call(val);
+}
+
+async function pumpToNode(
+  iterable: AnyIterable,
+  writable: $Node.AnyStream,
+  finish: $Node.ErrorCallback,
+  { end }: { end: boolean },
+) {
+  let error: Error | undefined;
+  let onresolve: (() => void) | null = null;
+
+  const resume = (err?: Error | null) => {
+    if (err) {
+      error = err;
+    }
+
+    if (onresolve) {
+      const callback = onresolve;
+      onresolve = null;
+      callback();
+    }
+  };
+
+  const wait = () =>
+    new Promise<void>((resolve, reject) => {
+      if (error) {
+        reject(error);
+      } else {
+        onresolve = () => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve();
+          }
+        };
+      }
+    });
+
+  writable.on("drain", resume);
+  const cleanup = eos(writable, { readable: false }, resume);
+
+  try {
+    if (writable.writableNeedDrain) {
+      await wait();
+    }
+
+    for await (const chunk of iterable) {
+      if (!writable.write!(chunk)) {
+        await wait();
+      }
+    }
+
+    if (end) {
+      writable.end!();
+      await wait();
+    }
+
+    finish();
+  } catch (err) {
+    finish(error !== err ? aggregateTwoErrors(error, err as Error) : (err as Error));
+  } finally {
+    cleanup();
+    writable.off("drain", resume);
+  }
+}
+
+async function pumpToWeb(
+  readable: AnyIterable,
+  writable: WritableStream | TransformStream,
+  finish: $Node.ErrorCallback,
+  { end }: { end: boolean },
+) {
+  if (isTransformStream(writable)) {
+    writable = writable.writable;
+  }
+  // https://streams.spec.whatwg.org/#example-manual-write-with-backpressure
+  const writer = writable.getWriter();
+  try {
+    for await (const chunk of readable) {
+      await writer.ready;
+      writer.write(chunk).catch(() => {});
+    }
+
+    await writer.ready;
+
+    if (end) {
+      await writer.close();
+    }
+
+    finish();
+  } catch (err) {
+    try {
+      await writer.abort(err);
+      finish(err as Error);
+    } catch (err) {
+      finish(err as Error);
+    }
+  }
+}
+
+function pipeline(...streams) {
+  return pipelineImpl(streams, once(popCallback(streams)));
+}
+
+function pipelineImpl(streams, callback: PipelineCallback, opts?: PipelineOptions) {
+  if (streams.length === 1 && ArrayIsArray(streams[0])) {
+    streams = streams[0];
+  }
+
+  if (streams.length < 2) {
+    throw $ERR_MISSING_ARGS("streams");
+  }
+
+  let ac: AbortController | undefined;
+  let signal: AbortSignal | undefined;
+  let isAborted = false;
+  if (!areControllersAsBuilt()) {
+    ac = new AbortController();
+    signal = ac.signal;
+  }
+  const outerSignal = opts?.signal;
+
+  // What was not made above, by the functions that stood there then.
+  function makeController(): AbortSignal {
+    ac = new Controller!();
+    if (isAborted) abortController!.$call(ac);
+    return (signal = signalOfController!.$call(ac));
+  }
+
+  // Need to cleanup event listeners if last stream is readable
+  // https://github.com/nodejs/node/issues/35452
+  const lastStreamCleanup: (() => void)[] = [];
+
+  validateAbortSignal(outerSignal, "options.signal");
+
+  function abort() {
+    finishImpl($makeAbortError(undefined, { cause: outerSignal?.reason }));
+  }
+
+  addAbortListener ??= require("internal/abort_listener").addAbortListener;
+  let disposable: Disposable | undefined;
+  if (outerSignal) {
+    disposable = addAbortListener(outerSignal, abort);
+  }
+
+  let error: Error | null | undefined;
+  let value: unknown;
+  const destroys: ((err?: Error | null) => void)[] = [];
+
+  let finishCount = 0;
+
+  function finish(err?: Error | null) {
+    finishImpl(err, --finishCount === 0);
+  }
+
+  function finishOnlyHandleError(err?: Error | null) {
+    finishImpl(err, false);
+  }
+
+  function finishImpl(err?: Error | null, final?: boolean) {
+    if (err && (!error || error.code === "ERR_STREAM_PREMATURE_CLOSE" || error.name === "AbortError")) {
+      error = err;
+    }
+
+    if (!error && !final) {
+      return;
+    }
+
+    while (destroys.length) {
+      destroys.shift()?.(error);
+    }
+
+    disposable?.[SymbolDispose]();
+    if (ac === undefined && !isAbortOfControllersAsBuilt()) makeController();
+    isAborted = true;
+    ac?.abort();
+
+    if (final) {
+      if (!error) {
+        lastStreamCleanup.forEach(fn => fn());
+      }
+      process.nextTick(callback, error, value);
+    }
+  }
+
+  let ret;
+  for (let i = 0; i < streams.length; i++) {
+    const stream = streams[i];
+    const reading = i < streams.length - 1;
+    const writing = i > 0;
+    const next = i + 1 < streams.length ? streams[i + 1] : null;
+    const end = reading || opts?.end !== false;
+    const isLastStream = i === streams.length - 1;
+
+    if (isNodeStream(stream)) {
+      if (next !== null && (next?.closed || next?.destroyed)) {
+        throw $ERR_STREAM_UNABLE_TO_PIPE();
+      }
+
+      if (end) {
+        const { destroy, cleanup } = destroyer(stream, reading, writing);
+        destroys.push(destroy);
+
+        if (isReadable(stream) && isLastStream) {
+          lastStreamCleanup.push(cleanup);
+        }
+      }
+
+      // Catch stream errors that occur after pipe/pump has completed.
+      function onError(err: Error | null | undefined) {
+        if (err && err.name !== "AbortError" && err.code !== "ERR_STREAM_PREMATURE_CLOSE") {
+          finishOnlyHandleError(err);
+        }
+      }
+      stream.on("error", onError);
+      if (isReadable(stream) && isLastStream) {
+        lastStreamCleanup.push(() => {
+          stream.removeListener("error", onError);
+        });
+      }
+    }
+
+    if (i === 0) {
+      if (typeof stream === "function") {
+        ret = (stream as (options: { signal: AbortSignal | undefined }) => unknown)({
+          signal: ac === undefined ? makeController() : signal,
+        });
+        if (!isIterable(ret)) {
+          throw $ERR_INVALID_RETURN_VALUE("Iterable, AsyncIterable or Stream", "source", ret);
+        }
+      } else if (isIterable(stream) || isReadableNodeStream(stream) || isTransformStream(stream)) {
+        ret = stream;
+      } else {
+        ret = Duplex.from(stream);
+      }
+    } else if (typeof stream === "function") {
+      if (isTransformStream(ret)) {
+        ret = makeAsyncIterable(ret?.readable);
+      } else {
+        ret = makeAsyncIterable(ret);
+      }
+      ret = (stream as (source: AnyIterable, options: { signal: AbortSignal | undefined }) => unknown)(ret, {
+        signal: ac === undefined ? makeController() : signal,
+      });
+
+      if (reading) {
+        if (!isIterable(ret, true)) {
+          throw $ERR_INVALID_RETURN_VALUE("AsyncIterable", `transform[${i - 1}]`, ret);
+        }
+      } else {
+        PassThrough ??= require("internal/streams/passthrough");
+
+        // If the last argument to pipeline is not a stream
+        // we must create a proxy stream so that pipeline(...)
+        // always returns a stream which can be further
+        // composed through `.pipe(stream)`.
+
+        const pt = new PassThrough({
+          objectMode: true,
+        });
+
+        // Handle Promises/A+ spec, `then` could be a getter that throws on
+        // second use.
+        const then: Then = ret?.then;
+        if (typeof then === "function") {
+          finishCount++;
+          then.$call(
+            ret,
+            val => {
+              value = val;
+              if (val != null) {
+                pt.write(val);
+              }
+              if (end) {
+                pt.end();
+              }
+              process.nextTick(finish);
+            },
+            err => {
+              pt.destroy(err);
+              process.nextTick(finish, err);
+            },
+          );
+        } else if (isIterable(ret, true)) {
+          finishCount++;
+          pumpToNode(ret, pt, finish, { end });
+        } else if (isReadableStream(ret) || isTransformStream(ret)) {
+          const toRead = (ret as any).readable || ret;
+          finishCount++;
+          pumpToNode(toRead, pt, finish, { end });
+        } else {
+          throw $ERR_INVALID_RETURN_VALUE("AsyncIterable or Promise", "destination", ret);
+        }
+
+        ret = pt;
+
+        const { destroy, cleanup } = destroyer(ret, false, true);
+        destroys.push(destroy);
+        if (isLastStream) {
+          lastStreamCleanup.push(cleanup);
+        }
+      }
+    } else if (isNodeStream(stream)) {
+      if (isReadableNodeStream(ret)) {
+        finishCount += 2;
+        const cleanup = pipe(ret, stream, finish, finishOnlyHandleError, { end });
+        if (isReadable(stream) && isLastStream) {
+          lastStreamCleanup.push(cleanup);
+        }
+      } else if (isTransformStream(ret) || isReadableStream(ret)) {
+        const toRead = (ret as any).readable || ret;
+        finishCount++;
+        pumpToNode(toRead, stream, finish, { end });
+      } else if (isIterable(ret)) {
+        finishCount++;
+        pumpToNode(ret, stream, finish, { end });
+      } else {
+        throw $ERR_INVALID_ARG_TYPE(
+          "val",
+          ["Readable", "Iterable", "AsyncIterable", "ReadableStream", "TransformStream"],
+          ret,
+        );
+      }
+      ret = stream;
+    } else if (isWebStream(stream)) {
+      if (isReadableNodeStream(ret)) {
+        finishCount++;
+        pumpToWeb(makeAsyncIterable(ret), stream as WritableStream | TransformStream, finish, { end });
+      } else if (isReadableStream(ret) || isIterable(ret)) {
+        finishCount++;
+        pumpToWeb(ret, stream as WritableStream | TransformStream, finish, { end });
+      } else if (isTransformStream(ret)) {
+        finishCount++;
+        pumpToWeb(ret.readable, stream as WritableStream | TransformStream, finish, { end });
+      } else {
+        throw $ERR_INVALID_ARG_TYPE(
+          "val",
+          ["Readable", "Iterable", "AsyncIterable", "ReadableStream", "TransformStream"],
+          ret,
+        );
+      }
+      ret = stream;
+    } else {
+      ret = Duplex.from(stream);
+    }
+  }
+
+  if (
+    (ac !== undefined ? signal?.aborted : isAbortedOfSignalsAsBuilt() ? isAborted : makeController().aborted) ||
+    outerSignal?.aborted
+  ) {
+    process.nextTick(abort);
+  }
+
+  return ret;
+}
+
+function pipe(
+  src: $Node.Readable,
+  dst: $Node.AnyStream,
+  finish: $Node.ErrorCallback,
+  finishOnlyHandleError: $Node.ErrorCallback,
+  { end }: { end: boolean },
+) {
+  let ended = false;
+  dst.on("close", () => {
+    if (!ended) {
+      // Finish if the destination closes before the source has completed.
+      finishOnlyHandleError($ERR_STREAM_PREMATURE_CLOSE());
+    }
+  });
+
+  src.pipe(dst, { end: false }); // If end is true we already will have a listener to end dst.
+
+  if (end) {
+    // Compat. Before node v10.12.0 stdio used to throw an error so
+    // pipe() did/does not end() stdio destinations.
+    // Now they allow it but "secretly" don't close the underlying fd.
+
+    function endFn() {
+      ended = true;
+      dst.end!();
+    }
+
+    if (isReadableFinished(src)) {
+      // End the destination if the source has already ended.
+      process.nextTick(endFn);
+    } else {
+      src.once("end", endFn);
+    }
+  } else {
+    finish();
+  }
+
+  eos(
+    src,
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS ? readableSide! : { readable: true, writable: false },
+    err => {
+      const rState = src._readableState as $Node.ReadableState | $Node.ForeignState | undefined;
+      if (
+        err &&
+        err.code === "ERR_STREAM_PREMATURE_CLOSE" &&
+        (isReadableState(rState)
+          ? rState.ended && !rState.errored && !rState.errorEmitted
+          : rState?.ended && !rState.errored && !rState.errorEmitted)
+      ) {
+        // Some readable streams will emit 'close' before 'end'. However, since
+        // this is on the readable side 'end' should still be emitted if the
+        // stream has been ended and no error emitted. This should be allowed in
+        // favor of backwards compatibility. Since the stream is piped to a
+        // destination this should not result in any observable difference.
+        // We don't need to check if this is a writable premature close since
+        // eos will only fail with premature close on the reading side for
+        // duplex streams.
+        src.once("end", finish).once("error", finish);
+      } else {
+        finish(err);
+      }
+    },
+  );
+  return eos(
+    dst,
+    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS ? writableSide! : { readable: false, writable: true },
+    finish,
+  );
+}
+
+export default { pipelineImpl, pipeline };

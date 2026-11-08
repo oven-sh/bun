@@ -1108,6 +1108,38 @@ const ASKED_OF_DATA_FILES: &[(&str, &str, &[(&str, &str)])] = &[
     ("a.cjs", r#"require(require("./c.json")[key]);"#, &[]),
 ];
 
+const ASKED_OF_OWN_EXPORTS: &[(&str, &[&str])] = &[
+    (
+        "const table = (exports.table = { a: './a' }); require(table[x]);",
+        &["table"],
+    ),
+    (
+        "const table = (module.exports.table = { a: './a' }); require(table[x]);",
+        &["table"],
+    ),
+    (
+        "const table = (module.exports = { a: './a' }); require(table[x]);",
+        &["exports"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); this.table.a = other; require(table[x]);",
+        &[],
+    ),
+    ("const table = { a: './a' }; require(table[x]);", &[]),
+    ("exports.table = { a: './a' }; require('./a');", &[]),
+];
+
+#[test]
+fn what_is_followed_through_the_exports_asks_who_else_touches_them() {
+    for &(text, expected) in ASKED_OF_OWN_EXPORTS {
+        analyzed("a.cjs", text, |s| {
+            let asked = s.analysis.asked_of_own_exports.iter();
+            let asked: Vec<&str> = asked.map(|&it| s.workspace.text(it)).collect();
+            assert_eq!(asked, expected, "{text}");
+        });
+    }
+}
+
 #[test]
 fn names_of_loads_ask_for_texts_of_other_files() {
     for &(path, text, expected) in ASKED_OF_DATA_FILES {
@@ -1589,12 +1621,176 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
         &["./a.node", "./b.node"],
     ),
     (
-        "const table = { a: 1, b: 2 }; for (const name in table) require(name);",
-        &["a", "b"],
+        "var uses = { a(found) {}, b: found => found }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "var uses = { a(found) {}, b: found => found }; for (const name of Object.keys(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "var uses; uses = { a(found) {}, b: found => found }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const name of Object.getOwnPropertyNames(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const name of Reflect.ownKeys(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "var uses = { a(found) {}, b: found => found }; var names = Object.keys(uses); for (const name of names) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const [name, use] of Object.entries(uses)) use(require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const pair of Object.entries(uses)) pair[1](require(`./${pair[0]}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; Object.entries(uses).forEach(([name, use]) => use(require(`./${name}.node`)));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "var uses; function go() { for (const name of Object.keys(uses)) uses[name](require(`./${name}.node`)); } uses = { a(found) {} }; go(); uses = { b(found) {} }; go();",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const name in uses) if (uses.hasOwnProperty(name)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {}, b: found => found }; for (const name of Object?.keys(uses)) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "if (x) { var uses = { a(found) {} }; } else { var uses = { b(found) {} }; } for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
     ),
     (
         "const table = { a: 1, b: 2 }; for (const name in table) require(`./${name}.node`);",
         &["./a.node", "./b.node"],
+    ),
+    (
+        "const table = { a: 1, b: 2 }; for (const name in table) require(name);",
+        &["a", "b"],
+    ),
+    (
+        "const uses = { a: 1 }; const names = Object.keys(uses); require(`./${names.length}.node`);",
+        &["./*.node", "./a.node", "./undefined.node"],
+    ),
+    (
+        "const table = (module.exports = { a: './a', b: './b' }); require(table[x]);",
+        &["./a", "./b"],
+    ),
+    (
+        "function load({ files }) { for (const file of files) require(file); } load({ files: ['./a', './b'] });",
+        &["./a", "./b"],
+    ),
+    (
+        "let table; x && (table = { a: './a' }); require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const { plugins } = { plugins: ['./a', './b'] }; for (const plugin of plugins) require(plugin);",
+        &["./a", "./b"],
+    ),
+    (
+        "const found = [{ name: 'a', file: './a' }, { name: 'b', file: './b' }].find(it => it.name === x); require(found.file);",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const it of [x ? null : { name: './a' }, { name: './b' }].filter(it => it)) require(it.name);",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const it of [{ name: './a', tags: ['x'] }, { name: './b' }].filter(it => it.tags && it.tags.includes('x'))) require(it.name);",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const it of [{ name: './a', isOn: () => true }, { name: './b' }].filter(it => !it.isOn || it.isOn())) require(it.name);",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const it of [{ name: './a', on: 1 }, { name: './b' }].filter(it => it.hasOwnProperty('on'))) require(it.name);",
+        &["./a", "./b"],
+    ),
+    (
+        "function isFirst() { return x; } for (const it of [{ name: './a', matches: isFirst }].filter(it => it.matches())) require(it.name);",
+        &["./a"],
+    ),
+    (
+        "const isOn = it => it.on !== false; for (const it of [{ name: './a', on: x }].filter(it => isOn(it))) require(it.name);",
+        &["./a"],
+    ),
+    (
+        "const known = name => name.length > 3; for (const it of [{ name: './a' }].filter(({ name }) => known(name))) require(it.name);",
+        &["./a"],
+    ),
+    (
+        "let far; const uses = far = { a(found) {} }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node"],
+    ),
+    (
+        "const uses = { a() { uses.b = 1; } }; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const uses = { a(found) {} }; uses.b = found => found; for (const name in uses) uses[name](require(`./${name}.node`));",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const found = [{ name: 'a', file: './a' }].find(it => { it.seen = true; return it.name === x; }); require(found.file);",
+        &["./a"],
+    ),
+    (
+        "var helper = (this && this.helper) || function () {}; const table = (exports.table = { a: './a' }); require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); exports.load = function () { return arguments.length; }; (0, exports.load)(); require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); if (!module.parent && process.argv.length > x) require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (module.exports = { a: './a' }); if (require.main === module) this.ran = exports.ran = true; require(table.a);",
+        &["./a"],
+    ),
+    (
+        "function load() {} class Walk {} exports.a = exports.b = void 0; exports.load = load; exports.Walk = Walk; exports.size = 1; const table = (exports.table = { a: './a' }); require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); if (require.main === module) require(table.a);",
+        &["./a"],
+    ),
+    (
+        "const table = (exports.table = { a: './a' }); exports.load = () => require(table.a);",
+        &["./a"],
+    ),
+    (
+        "let table = null; table ||= { a: './a' }; require(table.a);",
+        &["./a"],
+    ),
+    (
+        "function load(files = ['./a', './b']) { for (const file of files) require(file); } load();",
+        &["./a", "./b"],
+    ),
+    (
+        "for (const [os, it] of [['one', { name: './a' }]].filter(([os]) => os !== x)) require(it.name);",
+        &["./a"],
+    ),
+    (
+        "function load({ files, log }) { for (const file of files) log(require(file)); } load({ files: ['./a'], log: x });",
+        &["./a"],
     ),
     (
         "const uses = { a(found) { return found; }, b: found => found }; for (const name in uses) uses[name](require(`./${name}.node`));",
@@ -1615,11 +1811,102 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
 ];
 
 const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "const Reflect = other; const uses = { a(found) {}, b: found => found }; for (const name of Reflect.ownKeys(uses)) require(name);",
+    "var uses = { a(found) {}, b: found => found }; uses = other; for (const name in uses) require(name);",
+    "const uses = { a(found) {}, b: found => found }; for (const name of Object.keys?.(uses)) require(name);",
+    "var names = ['a']; names = other; for (const name of names) require(name);",
+    "const uses = { a: {} }; for (const [name, use] of Object.entries(uses)) require(name);",
+    "const uses = { a(found) {}, b: found => found }; for (const [name = other] of Object.entries(uses)) require(name);",
+    "const uses = { a(found) {}, b: found => found }; for (const [...name] of Object.entries(uses)) require(name);",
+    "const uses = { a(found) {}, b: found => found }; for (const [name] of other) require(name);",
+    "const uses = { a() { this[0] = other; } }; for (const pair of Object.entries(uses)) pair[1](require(pair[0]));",
+    "const uses = { a(found) {} }; uses.__defineGetter__('b', () => other); for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses.__defineSetter__('b', other); for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses.valueOf()['b'] = other; for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses[other](); for (const name in uses) uses[name](require(name));",
+    "const uses = {}; uses.toLocaleString(); for (const name in uses) require(name);",
+    "const uses = { a(found) {} }; uses.valueOf``.b = other; for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; const same = uses.valueOf``; same.b = other; for (const name in uses) uses[name](require(name));",
+    "var uses = { a(found) {} }; var uses = other; for (const name in uses) require(name);",
+    "const Object = other; const uses = { a(found) {} }; for (const name of Object?.keys(uses)) require(name);",
+    "module.exports.b = other; if (x) { var exports = { a(found) {} }; } else if (y) { var exports = { c(found) {} }; } for (const name in exports) exports[name](require(name));",
+    "module.exports.b = other; if (x) { var exports = { a(found) {} }; } for (const name in exports) exports[name](require(name));",
+    "function load(uses = other) { if (x) { var uses = { a(found) {} }; } for (const name in uses) uses[name](require(name)); }",
+    "var uses = { a(found) {} }; { function uses() {} uses.b = other; } for (const name in uses) uses[name](require(name));",
+    "function load() { if (x) { var uses = { a(found) {} }; } { function uses() {} uses.b = other; } for (const name in uses) uses[name](require(name)); }",
+    "if (x) { var uses = { a(found) {} }; } for (var uses = { b(found) {} } in {}); for (const name in uses) uses[name](require(name));",
+    "const laid = '__defineGetter__'; var uses; uses = { [laid](found) {} }; uses = { a(found) {} }; uses.__defineGetter__('b', () => other); for (const name of Object.keys(uses)) uses[name](require(name));",
+    "var uses; uses = { __defineSetter__(found) {} }; uses = { a(found) {} }; uses.__defineSetter__('b', () => {}); for (const name of Object.keys(uses)) require(name);",
+    "const uses = { a(found) {} }; Object.defineProperty(uses.valueOf``, 'b', { enumerable: true, value: other }); for (const name of Object.keys(uses)) uses[name](require(name));",
+    "var uses = { a(found) {} }; switch (x) { case 1: function uses() {} uses.b = other; } for (const name in uses) uses[name](require(name));",
+    "[{ a(found, code) { eval(code); } }].forEach(uses => { for (const name in uses) uses[name](require(name), x); });",
+    "const uses = module.exports = { a(found) {} }; module.exports.b = other; for (const name in uses) uses[name](require(name));",
+    "let far; const uses = far = { a(found) {} }; far.b = other; for (const name in uses) uses[name](require(name));",
+    "let uses; const far = uses = { a(found) {} }; far.b = other; for (const name in uses) uses[name](require(name));",
+    "const names = module.exports = ['a']; module.exports.push(other); for (const name of names) require(name);",
+    "const uses = [{ a(found) {} }].find(table => { table.b = other; return true; }); for (const name in uses) uses[name](require(name));",
+    "const { table: uses, table: far } = { table: { a(found) {} } }; far.b = other; for (const name in uses) uses[name](require(name));",
+    "function load({ table: uses, table: far }) { far.b = other; for (const name in uses) uses[name](require(name)); } load({ table: { a(found) {} } });",
+    "new Set([{ a(found) {} }]).forEach((uses, far) => { far.b = other; for (const name in uses) uses[name](require(name)); });",
+    "[{ a(found) {} }].forEach((far, index, all) => { far.b = other; const uses = all[0]; for (const name in uses) uses[name](require(name)); });",
+    "let later; const far = [{ a(found) {} }].find(uses => { later = () => { for (const name in uses) uses[name](require(name)); }; return true; }); far.b = other;",
+    "let later; const far = [{ a(found) {} }].filter(uses => { later = () => { for (const name in uses) uses[name](require(name)); }; return true; }); far[0].b = other;",
+    "for (const it of [{ name: 'a' }].filter(it => { it.name = other; return true; })) require(it.name);",
+    "const isOn = it => { it.name = other; return true; }; for (const it of [{ name: 'a' }].filter(it => isOn(it))) require(it.name);",
+    "function grow() { this.name = other; } for (const it of [{ name: 'a', grow }].filter(it => it.grow())) require(it.name);",
+    "for (const it of [{ name: 'a' }].filter(it => it)) { change(it); require(it.name); }",
+    "const kept = [{ name: 'a' }].filter(it => it); kept[0].name = other; for (const it of kept) require(it.name);",
+    "const uses = { a(found) {} }; Object.entries(uses).filter(pair => { pair[0] = other; return true; }).forEach(([name, use]) => use(require(name)));",
+    "for (const [name] of (x ? [] : Object.entries({ a: 1 })).filter(pair => { pair[0] = other; return true; })) require(name);",
+    "const uses = { a: require('./change') }; for (const pair of Object.entries(uses)) { pair[1](x); require(pair[0]); }",
+    "const { use } = require('./use'); for (const row of [['./a', use]]) row[1](require(row[0]));",
+    "const uses = { name: 'a', self: ({}).valueOf }; const again = uses.self(); again.name = other; require(uses.name);",
+    "const uses = { a(found) {} }; uses.b = other; for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses[other] = found => found; for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; x(uses.b = found => found); for (const name in uses) uses[name](require(name));",
+    "const uses = { a(found) {} }; uses.b = function () { this.c = other; }; for (const name in uses) uses[name](require(name));",
+    "const table = (exports.table = { a: './a' }); exports.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); change(exports); require(table.a);",
+    "const names = (exports.listed = ['a']); this.listed.push(other); for (const name of names) require(name);",
+    "const names = (exports.listed = ['a']); exports.grow = function () { this.listed.push(other); }; exports.grow(); for (const name of names) require(name);",
+    "const names = (exports.listed = ['a']); Object.defineProperty(exports, 'grow', { get() { return this.listed.push(other); } }); exports.grow; for (const name of names) require(name);",
+    "const table = (exports.table = { a: './a' }); this.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); change(this); require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.valueOf().table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.change = require('./change'); exports.change(); require(table.a);",
+    "const table = (exports.table = { a: './a' }); Object.defineProperty(exports, 'change', require('./descriptor')); require(table.a);",
+    "const table = (exports.table = { a: './a' }); arguments[0].table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); (() => arguments[0])().table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); require(__filename).table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.change = require('./change'); exports.change``; require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.__proto__ = require('./proto'); exports.other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); process.mainModule.exports.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); change(process); require(table.a);",
+    "const table = (exports.table = { a: './a' }); globalThis.process.mainModule.exports.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); function change() { eval(x); } require(table.a);",
+    "const table = (exports.table = { a: './a' }); module.children[0].exports.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); !change(module); require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.change = require('./change'); require(table.a);",
+    "const table = (exports.table = { a: './a' }); exports.change = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); Object.defineProperty(exports, 'change', { value: require('./change') }); require(table.a);",
+    "const table = (exports.table = { a: './a' }); class Walk { step() { this.table.a = other; } } exports.step = Walk.prototype.step; require(table.a);",
+    "const table = (exports.table = { a: './a' }); class Walk { static step() { this.table.a = other; } } exports.step = Walk.step; require(table.a);",
+    "const table = (exports.table = { a: './a' }); class Walk { [(this.table.a = other, 'k')]() {} } require(table.a);",
+    "let kept; const table = (exports.table = { a: './a' }); !(kept = module); kept.exports.table.a = other; require(table.a);",
+    "const table = (module.exports = { a: './a' }); arguments[2].exports.a = other; require(table.a);",
+    "const table = (module.exports = { a: './a' }); require(__filename).a = other; require(table.a);",
+    "const table = (module.exports = { a: './a' }); require.main.exports.a = other; require(table.a);",
+    "const table = (module.exports = { a: './a' }); process.mainModule.exports.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); require.main.exports.table.a = other; require(table.a);",
+    "const table = (exports.table = { a: './a' }); require.cache[x].exports.table.a = other; require(table.a);",
+    "const table = { entry: { path: './b' } }; export const { entry } = table; import(table.entry.path);",
+    "const table = { entry: { path: './b' } }; try { throw 0; } catch (entry) { var { entry } = table; entry.path = other; } import(table.entry.path);",
+    "const table = { entry: { path: './b' } }; function change({ entry }, more = 0) { var entry; entry.path = other; } change(table); import(table.entry.path);",
+    "let kept; const [...[first]] = (kept = [{ path: './b' }]); first.path = other; import(kept[0].path);",
     "const uses = { a() { this.b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a() { (() => this)().b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a() { super.b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a: other }; for (const name in uses) uses[name](require(name));",
-    "const uses = { a() { uses.b = 1; } }; for (const name in uses) uses[name](require(name));",
     "const uses = { a() { eval(x); } }; for (const name in uses) uses[name](require(name));",
     "const table = { __proto__: more, a: 1 }; for (const name in table) require(name);",
     "const table = { a: 1, ...more }; for (const name in table) require(name);",

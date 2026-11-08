@@ -131,6 +131,7 @@ fn create_analysis<'s>(
         exported_file_changers: scan.exported_file_changers,
         asked_of_other_files: scan.asked_of_other_files,
         asked_of_data_files: scan.asked_of_data_files,
+        asked_of_own_exports: scan.asked_of_own_exports,
         names_out_of_data_files: scan.names_out_of_data_files,
         keys_stored_in_caches: scan.keys_stored_in_caches,
         jsx_imports: scan.jsx_imports,

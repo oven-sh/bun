@@ -1,12 +1,13 @@
 # -- source: a-kept-map-with-one-data-descriptor-is-let-go-behind-the-naming.js
 # const held = { count: 1 };
-# const accessors = { first: { get() { return 1; } }, box: { value: held, writable: true } };
+# const accessors = { first: { get() { return 1; } }, box: { value: held, writable: held.count > 0 } };
 # const internals = { kept: undefined, other: 1 };
 # function Writer() {}
 # Object.defineProperties(Writer.prototype, accessors);
 # internals.kept = accessors;
 # print(new Writer().first);
 # -- end of source
+# An entry that lays a value beside flags that are written constants is read as a descriptor in sight and keeps the map: the flag here is reckoned, so this entry is not read.
 # A literal map handed to Object.defineProperties() is not let go at the call: it waits until its entries have been named. One entry here is no accessor as written: it lays a value, and the flow of that
 # value to the name on the target is not what keeps the map in sight. So the whole map goes, behind the naming. That is late: the sinks of the scan have been applied by then, and an escape that were only
 # noted as a sink would be lost without a word, and Link would prove what does not hold. The edge has to stand in the summary.

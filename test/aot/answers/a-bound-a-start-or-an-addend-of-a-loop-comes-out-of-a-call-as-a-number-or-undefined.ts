@@ -14,7 +14,7 @@
 // # FORM: @OptionalDouble = CallDirect
 // # FORM: = TypeTest {{*}}testedType=i32
 // # FORM: = IntegerBound {{*}}comparison=Less
-// # FORM: @Int32) isInLoop=true isLoopHead=true
+// # FORM: @Int32{{*}}) isInLoop=true isLoopHead=true
 // # FORM-LABEL: code f6:Body
 // # FORM: @OptionalDouble = CallDirect
 // # FORM: = TypeTest {{*}}testedType=i32

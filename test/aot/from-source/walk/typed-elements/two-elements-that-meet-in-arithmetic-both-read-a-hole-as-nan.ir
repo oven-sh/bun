@@ -44,7 +44,11 @@
 # QUOTIENTS-NOT: readsHoleAsNaN
 # RUN(BITS): walk f5 mechanisms=all
 # BITS-LABEL: code f5:Body
-# BITS-NOT: readsHoleAsNaN
+# In bits() the list of anything, of which Link says numbers beside other things, is asked for numbers in front of a typed copy. Behind that question both lists hold numbers and holes alone, and both reads may give NaN.
+# BITS: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# BITS: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# BITS: @Double = GetArrayElement {{*}}readsHoleAsNaN
+# BITS: @Double = GetArrayElement {{*}}readsHoleAsNaN
 # RUN(RATIOS): walk f7 mechanisms=all
 # RATIOS-LABEL: code f7:Body
 # RATIOS: @Double = GetArrayElement {{*}}readsHoleAsNaN

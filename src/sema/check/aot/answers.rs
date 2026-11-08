@@ -36,17 +36,15 @@ impl GaveUp {
 #[repr(u8)]
 pub enum QueryLimit {
     ConstructorParentsFollowed,
-    HelpersFollowedToPrototypeLink,
     FunctionsGivenThis,
     TermsReadForProduct,
     DeclaredSignatureDepth,
 }
 
 impl QueryLimit {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 4;
     pub const ALL: [QueryLimit; QueryLimit::COUNT] = [
         QueryLimit::ConstructorParentsFollowed,
-        QueryLimit::HelpersFollowedToPrototypeLink,
         QueryLimit::FunctionsGivenThis,
         QueryLimit::TermsReadForProduct,
         QueryLimit::DeclaredSignatureDepth,
@@ -67,7 +65,6 @@ impl Default for QueryLimits {
     fn default() -> QueryLimits {
         QueryLimits(QueryLimit::ALL.map(|limit| match limit {
             QueryLimit::ConstructorParentsFollowed => 64,
-            QueryLimit::HelpersFollowedToPrototypeLink => 8,
             QueryLimit::FunctionsGivenThis => 32,
             QueryLimit::TermsReadForProduct => 16,
             QueryLimit::DeclaredSignatureDepth => 3,

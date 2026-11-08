@@ -5176,6 +5176,7 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     socket === null ||
     req == null ||
     requestState == null ||
+    !requestReadsUnseen(req) ||
     req._readableState !== requestState ||
     req._events == null ||
     res._closed ||

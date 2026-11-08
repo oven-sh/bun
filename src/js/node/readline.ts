@@ -1,15 +1,8 @@
 // Ported from Node.js v26.3.0 lib/readline.js for Bun's node:repl.
 // Attribution: derived from Node.js, MIT licensed (Node.js contributors).
 // prettier-ignore
-type CallbackCompleter = $Node.ReadlineCallbackCompleter;
-type CompleterResult = $Node.ReadlineCompleterResult;
-type InputStream = $Node.ReadlineInput;
-type InterfaceOptions = $Node.ReadlineOptions;
-type KeyLike = Partial<$Node.ReadlineKey>;
-type OutputStream = $Node.ReadlineOutput;
-
 const primordials = require("internal/repl/node-primordials");
-var __node_module__ = { exports: {} as Exports };
+var __node_module__ = { exports: {} };
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -94,66 +87,22 @@ const {
   kWordRight,
   kWriteToOutput,
 } = require("internal/readline/interface");
-let addAbortListener: $BunModules["internal/abort_listener"]["addAbortListener"] | undefined;
+let addAbortListener;
 
-type SyncCompleter = (line: string) => CompleterResult;
-type QuestionCallback = (answer: string) => void;
-
-interface QuestionOptions {
-  signal?: AbortSignal;
-}
-
-declare global {
-  namespace $Node {
-    /** An instance of `readline.Interface`: the internal class and the members with an underscore that users patch. */
-    interface ReadlineCallbackInterface extends InstanceType<typeof _Interface> {
-      completer: ReadlineCallbackCompleter | undefined;
-      question(query: string, options?: QuestionOptions | QuestionCallback | null, cb?: QuestionCallback): void;
-      _ttyWrite(s: string | null | undefined, key?: Partial<ReadlineKey>): void;
-      _line(): void;
-      _writeToOutput(stringToWrite: string): void;
-      _insertString(c: string): void;
-      _moveCursor(dx: number): void;
-      _refreshLine(): void;
-      _setRawMode(mode: boolean): boolean | undefined;
-      _getDisplayPos(str: string): { cols: number; rows: number };
-      _getCursorPos(): { cols: number; rows: number };
-      _historyPrev(): void;
-      _previousKey: Partial<ReadlineKey> | null;
-      _sawKeyPress: boolean;
-    }
-  }
-}
-
-type CallbackInterface = $Node.ReadlineCallbackInterface;
-
-function Interface(
-  this: CallbackInterface,
-  input: InputStream | InterfaceOptions,
-  output?: OutputStream | null,
-  completer?: CallbackCompleter | SyncCompleter,
-  terminal?: boolean,
-): void {
+function Interface(input, output, completer, terminal) {
   if (!(this instanceof Interface)) {
-    return new Interface(input, output, completer, terminal) as any;
+    return new Interface(input, output, completer, terminal);
   }
 
   if (input?.input && typeof input.completer === "function" && input.completer.length !== 2) {
     const { completer } = input;
-    input.completer = (v, cb) => cb(null, (completer as SyncCompleter)(v));
+    input.completer = (v, cb) => cb(null, completer(v));
   } else if (typeof completer === "function" && completer.length !== 2) {
-    const realCompleter = completer as SyncCompleter;
+    const realCompleter = completer;
     completer = (v, cb) => cb(null, realCompleter(v));
   }
 
-  FunctionPrototypeCall(
-    InterfaceConstructor,
-    this,
-    input,
-    output,
-    completer as CallbackCompleter | undefined,
-    terminal,
-  );
+  FunctionPrototypeCall(InterfaceConstructor, this, input, output, completer, terminal);
 
   if (process.env.TERM === "dumb") {
     this._ttyWrite = FunctionPrototypeBind(_ttyWriteDumb, this);
@@ -169,15 +118,10 @@ $toClass(Interface, "Interface", _Interface);
  * @param {Function} cb
  * @returns {void}
  */
-Interface.prototype.question = function question(
-  this: CallbackInterface,
-  query: string,
-  options?: QuestionOptions | QuestionCallback | null,
-  cb?: QuestionCallback,
-) {
+Interface.prototype.question = function question(query, options, cb) {
   cb = typeof options === "function" ? options : cb;
   if (options === null || typeof options !== "object") {
-    options = kEmptyObject as QuestionOptions;
+    options = kEmptyObject;
   }
 
   if (options.signal) {
@@ -187,48 +131,44 @@ Interface.prototype.question = function question(
     }
 
     const onAbort = () => {
-      (this[kQuestionCancel] as () => void)();
+      this[kQuestionCancel]();
     };
     addAbortListener ??= require("internal/abort_listener").addAbortListener;
     const disposable = addAbortListener(options.signal, onAbort);
-    const originalCb = cb!;
+    const originalCb = cb;
     cb =
       typeof cb === "function"
         ? answer => {
-            (disposable[SymbolDispose] as () => void)();
+            disposable[SymbolDispose]();
             return originalCb(answer);
           }
         : disposable[SymbolDispose];
   }
 
   if (typeof cb === "function") {
-    (this[kQuestion] as (query: string, cb: QuestionCallback) => void)(query, cb);
+    this[kQuestion](query, cb);
   }
 };
-Interface.prototype.question[kCustomPromisifiedSymbol] = function question(
-  this: CallbackInterface,
-  query: string,
-  options?: QuestionOptions | null,
-) {
+Interface.prototype.question[kCustomPromisifiedSymbol] = function question(query, options) {
   if (options === null || typeof options !== "object") {
-    options = kEmptyObject as QuestionOptions;
+    options = kEmptyObject;
   }
 
   if (options.signal?.aborted) {
     return PromiseReject(new AbortError(undefined, { cause: options.signal.reason }));
   }
 
-  return new Promise<string>((resolve, reject) => {
-    let cb: QuestionCallback = resolve;
+  return new Promise((resolve, reject) => {
+    let cb = resolve;
 
-    if (options!.signal) {
+    if (options.signal) {
       const onAbort = () => {
-        reject(new AbortError(undefined, { cause: options!.signal!.reason }));
+        reject(new AbortError(undefined, { cause: options.signal.reason }));
       };
       addAbortListener ??= require("internal/abort_listener").addAbortListener;
-      const disposable = addAbortListener(options!.signal, onAbort);
+      const disposable = addAbortListener(options.signal, onAbort);
       cb = answer => {
-        (disposable[SymbolDispose] as () => void)();
+        disposable[SymbolDispose]();
         resolve(answer);
       };
     }
@@ -258,12 +198,7 @@ Interface.prototype.question[kCustomPromisifiedSymbol] = function question(
  * @param {boolean} [terminal]
  * @returns {Interface}
  */
-function createInterface(
-  input: InputStream | InterfaceOptions,
-  output?: OutputStream | null,
-  completer?: CallbackCompleter | SyncCompleter,
-  terminal?: boolean,
-): CallbackInterface {
+function createInterface(input, output, completer, terminal) {
   return new Interface(input, output, completer, terminal);
 }
 
@@ -487,12 +422,12 @@ Interface.prototype._addHistory = _Interface.prototype[kAddHistory];
 Interface.prototype._refreshLine = _Interface.prototype[kRefreshLine];
 Interface.prototype._normalWrite = _Interface.prototype[kNormalWrite];
 Interface.prototype._insertString = _Interface.prototype[kInsertString];
-Interface.prototype._tabComplete = function (this: CallbackInterface, lastKeypressWasTab: boolean | null | undefined) {
+Interface.prototype._tabComplete = function (lastKeypressWasTab) {
   // Overriding parent method because `this.completer` in the legacy
   // implementation takes a callback instead of being an async function.
   this.pause();
   const string = StringPrototypeSlice(this.line, 0, this.cursor);
-  this.completer!(string, (err, value) => {
+  this.completer(string, (err, value) => {
     this.resume();
 
     if (err) {
@@ -500,10 +435,7 @@ Interface.prototype._tabComplete = function (this: CallbackInterface, lastKeypre
       return;
     }
 
-    (this[kTabCompleter] as (lastKeypressWasTab: boolean | null | undefined, value: CompleterResult) => void)(
-      lastKeypressWasTab,
-      value!,
-    );
+    this[kTabCompleter](lastKeypressWasTab, value);
   });
 };
 Interface.prototype._wordLeft = _Interface.prototype[kWordLeft];
@@ -522,8 +454,8 @@ Interface.prototype._getCursorPos = _Interface.prototype.getCursorPos;
 Interface.prototype._moveCursor = _Interface.prototype[kMoveCursor];
 Interface.prototype._ttyWrite = _Interface.prototype[kTtyWrite];
 
-function _ttyWriteDumb(this: CallbackInterface, s: string | null | undefined, key?: KeyLike) {
-  key ||= kEmptyObject as KeyLike;
+function _ttyWriteDumb(s, key) {
+  key ||= kEmptyObject;
   if (key.name === "escape") return;
 
   if (this[kSawReturnAt] && key.name !== "enter") this[kSawReturnAt] = 0;
@@ -552,7 +484,7 @@ function _ttyWriteDumb(this: CallbackInterface, s: string | null | undefined, ke
 
     case "enter":
       // When key interval > crlfDelay
-      if (this[kSawReturnAt] === 0 || DateNow() - (this[kSawReturnAt] as number) > this.crlfDelay) {
+      if (this[kSawReturnAt] === 0 || DateNow() - this[kSawReturnAt] > this.crlfDelay) {
         this._line();
       }
       this[kSawReturnAt] = 0;
@@ -567,16 +499,6 @@ function _ttyWriteDumb(this: CallbackInterface, s: string | null | undefined, ke
   }
 }
 
-interface Exports {
-  Interface: typeof Interface;
-  clearLine: typeof clearLine;
-  clearScreenDown: typeof clearScreenDown;
-  createInterface: typeof createInterface;
-  cursorTo: typeof cursorTo;
-  emitKeypressEvents: typeof emitKeypressEvents;
-  moveCursor: typeof moveCursor;
-}
-
 __node_module__.exports = {
   Interface,
   clearLine,
@@ -587,9 +509,7 @@ __node_module__.exports = {
   moveCursor,
 };
 
-require("internal/readline/callbacks").published = __node_module__.exports;
-
-let promises: $BunModules["node:readline/promises"] | undefined;
+let promises;
 Object.defineProperty(__node_module__.exports, "promises", {
   __proto__: null,
   configurable: true,
@@ -598,12 +518,7 @@ Object.defineProperty(__node_module__.exports, "promises", {
     return (promises ??= require("node:readline/promises"));
   },
   set(value) {
-    Object.defineProperty(__node_module__.exports, "promises", {
-      value,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
+    Object.defineProperty(__node_module__.exports, "promises", { value, writable: true, enumerable: true, configurable: true });
   },
 });
 

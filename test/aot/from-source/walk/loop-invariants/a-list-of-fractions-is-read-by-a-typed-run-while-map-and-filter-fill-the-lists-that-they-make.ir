@@ -22,8 +22,10 @@
 # print(raised(JSON.parse("3")));
 # print(mixed(JSON.parse("2")));
 # -- end of source
+# The loop of filter grows its target in the turn, and the list that the map of mixed values makes is born without a kind: both lean on the word that the loop fills only what is made here.
+# The list that `x => x + 1` fills is born for fractions. Its copy of map takes the run whose slow stores stand behind the loop, so its turns write the storage of no list and it needs no such word.
 # RUN(EVENT): compile LoopsOverTestedListsThatFillWhatIsMadeHere mechanisms=all
-# EVENT: statistic LoopsOverTestedListsThatFillWhatIsMadeHere 3
+# EVENT: statistic LoopsOverTestedListsThatFillWhatIsMadeHere 2
 # RUN(RIGHT): run-in-shell
 # RIGHT: 81
 # RIGHT-NEXT: 40:1.25,2.25,text,undefined,NaN;40:1.25,2.25,text,undefined,NaN;

@@ -1,5 +1,5 @@
 # a field that a constructor function stores takes the member of the written type of `this`: the front end sends it so. A name that the maker stores behind the construction has no record:
-# Link appends it, and the types that the objects are written as say what lies under it, where each of them is guarded. The reference is held; an enum and `number` are not, while a number stays boxed.
+# Link appends it, and the types that the objects are written as say what lies under it, where each of them is guarded. The reference and the enum are held; `number`, with which nothing reckons, stays boxed and is not.
 # f1 = Type, f2 = make
 # -- source: field-of-a-constructor-function-takes-the-member-of-the-written-this.ts
 # declare function sink(...values: unknown[]): void;

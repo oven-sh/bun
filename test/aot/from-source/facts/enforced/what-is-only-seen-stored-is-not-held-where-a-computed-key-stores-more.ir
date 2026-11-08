@@ -5,17 +5,18 @@
 # function Knot(tag, name) { this.tag = tag; this.name = name; this.up = null; }
 # function Plain(name) { this.name = name; this.up = null; }
 # function link(below, above) { below.up = above; }
+# function tie(below, above) { below.up = above; }
 # function fill(knot, word, value) { knot[word] = value; }
 # const first = new Knot(1, "a"), second = new Knot(2, "b"), third = new Plain("c"), fourth = new Plain("d");
 # link(first, second);
-# link(third, fourth);
+# tie(third, fourth);
 # fill(first, JSON.parse('"name"'), 7);
 # console.log(String(first.name) + String(first.up === second) + third.name + String(third.up === fourth));
 # -- end of source
 # RUN: facts enforced mechanisms=all
 # REQUIRES: entries-of-bun
-# CHECK: field L1.0 "name" source=seen type=undefined|null|string slot=OptionalCell32
-# CHECK-NEXT: field L1.1 "up" source=seen type=undefined|null|L0|L1 slot=OptionalCell32
+# CHECK: field L1.0 "name" source=seen type=undefined|null|string slot=JSValue held=undefined|null|string
+# CHECK-NEXT: field L1.1 "up" source=seen type=undefined|null|L1 slot=JSValue held=undefined|null|L1
 # CHECK: counts fields {{*}} | seen 2
 # RUN(MARKED): facts enforced mechanisms=all
 # REQUIRES(MARKED): entries-of-bun

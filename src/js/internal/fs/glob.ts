@@ -1,8 +1,12 @@
+// @ts-nocheck -- the bottom of this file embeds a vendored copy of minimatch
+// (compiled JS, not written for this tsconfig); see lazyMinimatch().
+//
 // Port of Node.js lib/internal/fs/glob.js (v26.3.0):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
-// embedded below lazyMinimatch(); the vendored block is third-party and not edited but for types — the port above it follows bun's style.
+// embedded verbatim below lazyMinimatch(); the vendored block is third-party
+// and not edited — only the port above it follows bun's style.
 //
 // This is not backed by Bun.Glob: the vendored test-fs-glob.mjs (448 cases)
 // exercises minimatch-specific semantics — withFileTypes Dirents, the
@@ -19,55 +23,50 @@ const isMacOS = process.platform === "darwin";
 
 // node:fs and node:fs/promises cannot be required at module scope:
 // node:fs/promises requires this module at its top level.
-
-type Dirent = $Node.Dirent;
-type Stats = $Node.Stats;
-/** One part of a pattern between two slashes: a name, what a name has to match, or `GLOBSTAR`. */
-type PatternPart = string | RegExp | symbol;
-
-interface GlobOptions {
-  cwd?: string | URL;
-  exclude?: string[] | ((entry: Dirent | string) => boolean);
-  followSymlinks?: boolean;
-  withFileTypes?: boolean;
+let _fs;
+function lazyFs() {
+  return (_fs ??= require("node:fs"));
+}
+let _fsPromises;
+function lazyFsPromises() {
+  return (_fsPromises ??= require("node:fs/promises"));
 }
 
-function compareDirentName(a: Dirent, b: Dirent) {
+function compareDirentName(a, b) {
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
-function identity<T>(v: T) {
+function identity(v) {
   return v;
 }
 function nullOnReject() {
   return null;
 }
-function emptyArrayOnReject(): Dirent[] {
+function emptyArrayOnReject() {
   return [];
 }
-function excludeNothing(_path: string) {
+function excludeNothing(_path) {
   return false;
 }
-function makeMatchersExclude(matchers: Minimatch[]) {
-  return function isExcludedByMatchers(value: string) {
+function makeMatchersExclude(matchers) {
+  return function isExcludedByMatchers(value) {
     for (const matcher of matchers) {
       if (matcher.match(value)) return true;
     }
     return false;
   };
 }
-function statForFileTypes(cache: Cache, root: string, path: string) {
+function statForFileTypes(cache, root, path) {
   return cache.statSync(isAbsolute(path) ? path : join(root, path));
 }
 
 const kStats = Symbol("stats");
-let _DirentFromStats: (new (name: string, stats: Stats, path: string) => Dirent) | undefined;
+let _DirentFromStats: any;
 function lazyDirentFromStats() {
   if (_DirentFromStats === undefined) {
-    const { Dirent } = require("node:fs");
+    const { Dirent } = lazyFs();
     class DirentFromStats extends Dirent {
-      declare [kStats]: Stats;
-      constructor(name: string, stats: Stats, path: string) {
-        super(name, null!, path);
+      constructor(name, stats, path) {
+        super(name, null, path);
         this[kStats] = stats;
       }
     }
@@ -79,8 +78,8 @@ function lazyDirentFromStats() {
       "isFile",
       "isSocket",
       "isSymbolicLink",
-    ] as const) {
-      DirentFromStats.prototype[key] = function (this: DirentFromStats) {
+    ]) {
+      DirentFromStats.prototype[key] = function () {
         return this[kStats][key]();
       };
     }
@@ -89,17 +88,17 @@ function lazyDirentFromStats() {
   return _DirentFromStats;
 }
 
-function toPathIfFileURL(url: string | URL | null | undefined): string | null | undefined {
+function toPathIfFileURL(url) {
   if (url == null || typeof url === "string") {
     return url;
   }
   return require("internal/url").toPathIfFileURL(url);
 }
 
-async function getDirent(path: string) {
-  let stat: Stats;
+async function getDirent(path) {
+  let stat;
   try {
-    stat = await require("node:fs/promises").lstat(path);
+    stat = await lazyFsPromises().lstat(path);
   } catch {
     return null;
   }
@@ -107,14 +106,14 @@ async function getDirent(path: string) {
   return new DirentFromStats(basename(path), stat, dirname(path));
 }
 
-function sortDirents(dirents: Dirent[]) {
+function sortDirents(dirents) {
   return dirents.sort(compareDirentName);
 }
 
-function getDirentSync(path: string) {
-  let stat: Stats;
+function getDirentSync(path) {
+  let stat;
   try {
-    stat = require("node:fs").lstatSync(path);
+    stat = lazyFs().lstatSync(path);
   } catch {
     return null;
   }
@@ -122,7 +121,7 @@ function getDirentSync(path: string) {
   return new DirentFromStats(basename(path), stat, dirname(path));
 }
 
-function validateStringArrayOrFunction(value: unknown, name: string) {
+function validateStringArrayOrFunction(value, name) {
   if ($isArray(value)) {
     for (let i = 0; i < value.length; ++i) {
       if (typeof value[i] !== "string") {
@@ -136,15 +135,15 @@ function validateStringArrayOrFunction(value: unknown, name: string) {
   }
 }
 
-function validateStringArray(value: string[], name: string) {
+function validateStringArray(value, name) {
   validateArray(value, name);
   for (let i = 0; i < value.length; ++i) {
     validateString(value[i], `${name}[${i}]`);
   }
 }
 
-function createMatcher(pattern: string, options: MinimatchOptions = kEmptyObject): Minimatch {
-  const opts: MinimatchOptions = {
+function createMatcher(pattern, options = kEmptyObject) {
+  const opts = {
     __proto__: null,
     nocase: isWindows || isMacOS,
     windowsPathsNoEscape: true,
@@ -158,8 +157,8 @@ function createMatcher(pattern: string, options: MinimatchOptions = kEmptyObject
   return new (lazyMinimatch().Minimatch)(pattern, opts);
 }
 
-function cloneSet(values: Set<string>) {
-  const cloned = new Set<string>();
+function cloneSet(values) {
+  const cloned = new Set();
   for (const value of values) {
     cloned.add(value);
   }
@@ -167,14 +166,13 @@ function cloneSet(values: Set<string>) {
 }
 
 class Cache {
-  // One `Glob` walks with promises or without, so a table holds promises or values.
-  #cache = new Map<string, Set<string>>();
-  #statsCache = new Map<string, Dirent | null | Promise<Dirent | null>>();
-  #followStatsCache = new Map<string, Stats | null | Promise<Stats | null>>();
-  #readdirCache = new Map<string, Dirent[] | Promise<Dirent[]>>();
-  #realpathCache = new Map<string, string | null | Promise<string | null>>();
+  #cache = new Map();
+  #statsCache = new Map();
+  #followStatsCache = new Map();
+  #readdirCache = new Map();
+  #realpathCache = new Map();
 
-  stat(path: string) {
+  stat(path) {
     const cached = this.#statsCache.get(path);
     if (cached) {
       return cached;
@@ -183,7 +181,7 @@ class Cache {
     this.#statsCache.set(path, promise);
     return promise;
   }
-  statSync(path: string) {
+  statSync(path) {
     const cached = this.#statsCache.get(path);
     // Do not return a promise from a sync function.
     if (cached && !(cached instanceof Promise)) {
@@ -193,61 +191,61 @@ class Cache {
     this.#statsCache.set(path, val);
     return val;
   }
-  followStat(path: string) {
+  followStat(path) {
     const cached = this.#followStatsCache.get(path);
     if (cached) {
       return cached;
     }
-    const promise = require("node:fs/promises").stat(path).then(identity, nullOnReject);
+    const promise = lazyFsPromises().stat(path).then(identity, nullOnReject);
     this.#followStatsCache.set(path, promise);
     return promise;
   }
-  followStatSync(path: string) {
+  followStatSync(path) {
     const cached = this.#followStatsCache.get(path);
     if (cached && !(cached instanceof Promise)) {
       return cached;
     }
-    let val: Stats | null;
+    let val;
     try {
-      val = require("node:fs").statSync(path);
+      val = lazyFs().statSync(path);
     } catch {
       val = null;
     }
     this.#followStatsCache.set(path, val);
     return val;
   }
-  realpath(path: string) {
+  realpath(path) {
     const cached = this.#realpathCache.get(path);
     if (cached) {
       return cached;
     }
-    const promise = require("node:fs/promises").realpath(path).then(identity, nullOnReject);
+    const promise = lazyFsPromises().realpath(path).then(identity, nullOnReject);
     this.#realpathCache.set(path, promise);
     return promise;
   }
-  realpathSync(path: string) {
+  realpathSync(path) {
     const cached = this.#realpathCache.get(path);
     if (cached && !(cached instanceof Promise)) {
       return cached;
     }
-    let val: string | null;
+    let val;
     try {
-      val = require("node:fs").realpathSync(path);
+      val = lazyFs().realpathSync(path);
     } catch {
       val = null;
     }
     this.#realpathCache.set(path, val);
     return val;
   }
-  addToStatCache(path: string, val: Dirent) {
+  addToStatCache(path, val) {
     this.#statsCache.set(path, val);
   }
-  async readdir(path: string) {
+  async readdir(path) {
     const cached = this.#readdirCache.get(path);
     if (cached) {
       return cached;
     }
-    const promise = require("node:fs/promises").readdir(path, { __proto__: null, withFileTypes: true }).then(
+    const promise = lazyFsPromises().readdir(path, { __proto__: null, withFileTypes: true }).then(
       // The traversal bookkeeping (the seen-cache and the "**/.." queueing)
       // is sensitive to the order directory entries are visited in; some
       // orders make it drop results (reproducible in node itself by feeding
@@ -259,22 +257,22 @@ class Cache {
     this.#readdirCache.set(path, promise);
     return promise;
   }
-  readdirSync(path: string) {
+  readdirSync(path) {
     const cached = this.#readdirCache.get(path);
     if (cached) {
-      return cached as Dirent[];
+      return cached;
     }
-    let val: Dirent[];
+    let val;
     try {
       // Sorted for deterministic traversal; see the comment in readdir().
-      val = sortDirents(require("node:fs").readdirSync(path, { __proto__: null, withFileTypes: true }));
+      val = sortDirents(lazyFs().readdirSync(path, { __proto__: null, withFileTypes: true }));
     } catch {
       val = [];
     }
     this.#readdirCache.set(path, val);
     return val;
   }
-  add(path: string, pattern: Pattern) {
+  add(path, pattern) {
     let cache = this.#cache.get(path);
     if (!cache) {
       cache = new Set();
@@ -286,26 +284,20 @@ class Cache {
     }
     return cache.size !== originalSize + pattern.indexes.size;
   }
-  seen(path: string, pattern: Pattern, index: number) {
+  seen(path, pattern, index) {
     return this.#cache.get(path)?.has(pattern.cacheKey(index));
   }
 }
 
 class Pattern {
-  #pattern: PatternPart[];
-  #globStrings: string[];
-  indexes: Set<number>;
-  symlinks: Set<number>;
-  realpaths: Set<string>;
-  last: number;
+  #pattern;
+  #globStrings;
+  indexes;
+  symlinks;
+  realpaths;
+  last;
 
-  constructor(
-    pattern: PatternPart[],
-    globStrings: string[],
-    indexes: Set<number>,
-    symlinks: Set<number>,
-    realpaths = new Set<string>(),
-  ) {
+  constructor(pattern, globStrings, indexes, symlinks, realpaths = new Set()) {
     this.#pattern = pattern;
     this.#globStrings = globStrings;
     this.indexes = indexes;
@@ -314,7 +306,7 @@ class Pattern {
     this.last = pattern.length - 1;
   }
 
-  isLast(isDirectory: boolean) {
+  isLast(isDirectory) {
     return (
       this.indexes.has(this.last) ||
       (this.at(-1) === "" && isDirectory && this.indexes.has(this.last - 1) && this.at(-2) === lazyMinimatch().GLOBSTAR)
@@ -329,13 +321,13 @@ class Pattern {
     }
     return false;
   }
-  at(index: number) {
+  at(index) {
     return this.#pattern.at(index);
   }
-  child(indexes: Set<number>, symlinks = new Set<number>(), realpaths = this.realpaths) {
+  child(indexes, symlinks = new Set(), realpaths = this.realpaths) {
     return new Pattern(this.#pattern, this.#globStrings, indexes, symlinks, realpaths);
   }
-  test(index: number, path: string) {
+  test(index, path) {
     if (index > this.#pattern.length) {
       return false;
     }
@@ -346,13 +338,13 @@ class Pattern {
     if (typeof pattern === "string") {
       return pattern === path;
     }
-    if (typeof (pattern as RegExp)?.test === "function") {
-      return (pattern as RegExp).test(path);
+    if (typeof pattern?.test === "function") {
+      return pattern.test(path);
     }
     return false;
   }
 
-  cacheKey(index: number) {
+  cacheKey(index) {
     let key = "";
     for (let i = index; i < this.#globStrings.length; i++) {
       key += this.#globStrings[i];
@@ -364,16 +356,16 @@ class Pattern {
   }
 }
 
-class ResultSet extends Set<string> {
+class ResultSet extends Set {
   #root = ".";
-  #isExcluded: (path: string) => boolean = excludeNothing;
+  #isExcluded = excludeNothing;
 
-  setup(root: string, isExcludedFn: (path: string) => boolean) {
+  setup(root, isExcludedFn) {
     this.#root = root;
     this.#isExcluded = isExcludedFn;
   }
 
-  add(value: string): any {
+  add(value): any {
     if (this.#isExcluded(resolve(this.#root, value))) {
       return false;
     }
@@ -383,18 +375,18 @@ class ResultSet extends Set<string> {
 }
 
 class Glob {
-  #root: string;
-  #exclude: ((entry: Dirent | string) => boolean) | undefined;
+  #root;
+  #exclude;
   #cache = new Cache();
   #results = new ResultSet();
-  #queue: Array<{ __proto__: null; path: string; patterns: Pattern[] }> = [];
-  #subpatterns = new Map<string, Pattern[]>();
-  #patterns: Pattern[];
-  #withFileTypes: boolean;
+  #queue: Array<{ path: string; patterns: Pattern[] }> = [];
+  #subpatterns = new Map();
+  #patterns;
+  #withFileTypes;
   #followSymlinks = false;
-  #isExcluded: (path: string) => boolean = excludeNothing;
-  matchers: Minimatch[];
-  constructor(pattern: string | string[], options: GlobOptions = kEmptyObject) {
+  #isExcluded = excludeNothing;
+  matchers;
+  constructor(pattern, options = kEmptyObject) {
     validateObject(options, "options");
     const { exclude, cwd, followSymlinks, withFileTypes } = options;
     this.#root = toPathIfFileURL(cwd) ?? process.cwd();
@@ -408,7 +400,7 @@ class Glob {
       if ($isArray(exclude)) {
         // Convert the path part of exclude patterns to absolute paths for
         // consistent comparison before instantiating matchers.
-        const matchers: Minimatch[] = [];
+        const matchers = [];
         for (const pat of exclude) {
           matchers.push(createMatcher(resolve(this.#root, pat)));
         }
@@ -418,7 +410,7 @@ class Glob {
         this.#exclude = exclude;
       }
     }
-    let patterns: string[];
+    let patterns;
     if (typeof pattern === "object") {
       validateStringArray(pattern, "patterns");
       patterns = pattern;
@@ -432,9 +424,7 @@ class Glob {
       const matcher = createMatcher(pat);
       this.matchers.push(matcher);
       for (let i = 0; i < matcher.set.length; i++) {
-        this.#patterns.push(
-          new Pattern(matcher.set[i], matcher.globParts[i], new Set<number>().add(0), new Set<number>()),
-        );
+        this.#patterns.push(new Pattern(matcher.set[i], matcher.globParts[i], new Set().add(0), new Set()));
       }
     }
   }
@@ -451,12 +441,12 @@ class Glob {
       }
       this.#subpatterns.clear();
     }
-    return Array.from<string, Dirent | string | null>(
+    return Array.from(
       this.#results,
-      this.#withFileTypes ? statForFileTypes.bind(null, this.#cache, this.#root) : undefined!,
+      this.#withFileTypes ? statForFileTypes.bind(null, this.#cache, this.#root) : undefined,
     );
   }
-  #isDirectorySync(path: string, stat: Dirent | null, pattern: Pattern) {
+  #isDirectorySync(path, stat, pattern) {
     if (stat?.isDirectory()) {
       return true;
     }
@@ -468,7 +458,7 @@ class Glob {
     }
     return pattern.hasSeenSymlinks;
   }
-  async #isDirectory(path: string, stat: Dirent | null, pattern: Pattern) {
+  async #isDirectory(path, stat, pattern) {
     if (stat?.isDirectory()) {
       return true;
     }
@@ -480,7 +470,7 @@ class Glob {
     }
     return pattern.hasSeenSymlinks;
   }
-  #nextRealpathsSync(path: string, isDirectory: boolean, pattern: Pattern) {
+  #nextRealpathsSync(path, isDirectory, pattern) {
     if (!this.#followSymlinks || !isDirectory) {
       return pattern.realpaths;
     }
@@ -492,7 +482,7 @@ class Glob {
     realpaths.add(real);
     return realpaths;
   }
-  async #nextRealpaths(path: string, isDirectory: boolean, pattern: Pattern) {
+  async #nextRealpaths(path, isDirectory, pattern) {
     if (!this.#followSymlinks || !isDirectory) {
       return pattern.realpaths;
     }
@@ -504,28 +494,28 @@ class Glob {
     realpaths.add(real);
     return realpaths;
   }
-  async #isCyclic(path: string, isDirectory: boolean, pattern: Pattern) {
+  async #isCyclic(path, isDirectory, pattern) {
     if (!this.#followSymlinks || !isDirectory) {
       return false;
     }
     const real = await this.#cache.realpath(path);
     return real !== null && pattern.realpaths.has(real);
   }
-  #isCyclicSync(path: string, isDirectory: boolean, pattern: Pattern) {
+  #isCyclicSync(path, isDirectory, pattern) {
     if (!this.#followSymlinks || !isDirectory) {
       return false;
     }
     const real = this.#cache.realpathSync(path);
     return real !== null && pattern.realpaths.has(real);
   }
-  #addSubpattern(path: string, pattern: Pattern) {
+  #addSubpattern(path, pattern) {
     if (this.#isExcluded(path)) {
       return;
     }
     const fullpath = resolve(this.#root, path);
 
     // If path is a directory, add trailing slash and test patterns again.
-    if (this.#isExcluded(`${fullpath}/`) && this.#cache.statSync(fullpath)!.isDirectory()) {
+    if (this.#isExcluded(`${fullpath}/`) && this.#cache.statSync(fullpath).isDirectory()) {
       return;
     }
 
@@ -549,10 +539,10 @@ class Glob {
     if (!this.#subpatterns.has(path)) {
       this.#subpatterns.set(path, [pattern]);
     } else {
-      this.#subpatterns.get(path)!.push(pattern);
+      this.#subpatterns.get(path).push(pattern);
     }
   }
-  #addSubpatterns(path: string, pattern: Pattern) {
+  #addSubpatterns(path, pattern) {
     const seen = this.#cache.add(path, pattern);
     if (seen) {
       return;
@@ -567,24 +557,24 @@ class Glob {
     if (this.#isExcluded(fullpath)) {
       return;
     }
-    if (isFirst && isWindows && typeof pattern.at(0) === "string" && (pattern.at(0) as string).endsWith(":")) {
+    if (isFirst && isWindows && typeof pattern.at(0) === "string" && pattern.at(0).endsWith(":")) {
       // Absolute path, go to root
-      this.#addSubpattern(`${pattern.at(0) as string}\\`, pattern.child(new Set<number>().add(1)));
+      this.#addSubpattern(`${pattern.at(0)}\\`, pattern.child(new Set().add(1)));
       return;
     }
     if (isFirst && pattern.at(0) === "") {
       // Absolute path, go to root
-      this.#addSubpattern("/", pattern.child(new Set<number>().add(1)));
+      this.#addSubpattern("/", pattern.child(new Set().add(1)));
       return;
     }
     if (isFirst && pattern.at(0) === "..") {
       // Start with .., go to parent
-      this.#addSubpattern("../", pattern.child(new Set<number>().add(1)));
+      this.#addSubpattern("../", pattern.child(new Set().add(1)));
       return;
     }
     if (isFirst && pattern.at(0) === ".") {
       // Start with ., proceed
-      this.#addSubpattern(".", pattern.child(new Set<number>().add(1)));
+      this.#addSubpattern(".", pattern.child(new Set().add(1)));
       return;
     }
 
@@ -614,8 +604,8 @@ class Glob {
 
     const nextRealpaths = this.#nextRealpathsSync(fullpath, isDirectory, pattern);
 
-    let children: Dirent[];
-    const firstPattern = pattern.indexes.size === 1 && pattern.at(pattern.indexes.values().next().value!);
+    let children;
+    const firstPattern = pattern.indexes.size === 1 && pattern.at(pattern.indexes.values().next().value);
     if (typeof firstPattern === "string") {
       const stat = this.#cache.statSync(join(fullpath, firstPattern));
       if (stat) {
@@ -637,8 +627,8 @@ class Glob {
         entry.isDirectory() ||
         (this.#followSymlinks && entry.isSymbolicLink() && !!this.#cache.followStatSync(entryFullpath)?.isDirectory());
 
-      const subPatterns = new Set<number>();
-      const nSymlinks = new Set<number>();
+      const subPatterns = new Set();
+      const nSymlinks = new Set();
       for (const index of pattern.indexes) {
         // For each child, check potential patterns
         if (this.#cache.seen(entryPath, pattern, index) || this.#cache.seen(entryPath, pattern, index + 1)) {
@@ -699,18 +689,18 @@ class Glob {
             const parent = join(path, "..");
             if (nextIndex < last) {
               if (!this.#subpatterns.has(path) && !this.#cache.seen(path, pattern, nextIndex + 1)) {
-                this.#subpatterns.set(path, [pattern.child(new Set<number>().add(nextIndex + 1))]);
+                this.#subpatterns.set(path, [pattern.child(new Set().add(nextIndex + 1))]);
               }
               if (!this.#subpatterns.has(parent) && !this.#cache.seen(parent, pattern, nextIndex + 1)) {
-                this.#subpatterns.set(parent, [pattern.child(new Set<number>().add(nextIndex + 1))]);
+                this.#subpatterns.set(parent, [pattern.child(new Set().add(nextIndex + 1))]);
               }
             } else {
               if (!this.#cache.seen(path, pattern, nextIndex)) {
-                this.#cache.add(path, pattern.child(new Set<number>().add(nextIndex)));
+                this.#cache.add(path, pattern.child(new Set().add(nextIndex)));
                 this.#results.add(path);
               }
               if (!this.#cache.seen(path, pattern, nextIndex) || !this.#cache.seen(parent, pattern, nextIndex)) {
-                this.#cache.add(parent, pattern.child(new Set<number>().add(nextIndex)));
+                this.#cache.add(parent, pattern.child(new Set().add(nextIndex)));
                 this.#results.add(parent);
               }
             }
@@ -760,7 +750,7 @@ class Glob {
       this.#subpatterns.clear();
     }
   }
-  async *#iterateSubpatterns(path: string, pattern: Pattern): AsyncGenerator<Dirent | string | null, void, unknown> {
+  async *#iterateSubpatterns(path, pattern) {
     const seen = this.#cache.add(path, pattern);
     if (seen) {
       return;
@@ -775,24 +765,24 @@ class Glob {
     if (this.#isExcluded(fullpath)) {
       return;
     }
-    if (isFirst && isWindows && typeof pattern.at(0) === "string" && (pattern.at(0) as string).endsWith(":")) {
+    if (isFirst && isWindows && typeof pattern.at(0) === "string" && pattern.at(0).endsWith(":")) {
       // Absolute path, go to root
-      this.#addSubpattern(`${pattern.at(0) as string}\\`, pattern.child(new Set<number>().add(1)));
+      this.#addSubpattern(`${pattern.at(0)}\\`, pattern.child(new Set().add(1)));
       return;
     }
     if (isFirst && pattern.at(0) === "") {
       // Absolute path, go to root
-      this.#addSubpattern("/", pattern.child(new Set<number>().add(1)));
+      this.#addSubpattern("/", pattern.child(new Set().add(1)));
       return;
     }
     if (isFirst && pattern.at(0) === "..") {
       // Start with .., go to parent
-      this.#addSubpattern("../", pattern.child(new Set<number>().add(1)));
+      this.#addSubpattern("../", pattern.child(new Set().add(1)));
       return;
     }
     if (isFirst && pattern.at(0) === ".") {
       // Start with ., proceed
-      this.#addSubpattern(".", pattern.child(new Set<number>().add(1)));
+      this.#addSubpattern(".", pattern.child(new Set().add(1)));
       return;
     }
 
@@ -831,8 +821,8 @@ class Glob {
 
     const nextRealpaths = await this.#nextRealpaths(fullpath, isDirectory, pattern);
 
-    let children: Dirent[];
-    const firstPattern = pattern.indexes.size === 1 && pattern.at(pattern.indexes.values().next().value!);
+    let children;
+    const firstPattern = pattern.indexes.size === 1 && pattern.at(pattern.indexes.values().next().value);
     if (typeof firstPattern === "string") {
       const stat = await this.#cache.stat(join(fullpath, firstPattern));
       if (stat) {
@@ -856,8 +846,8 @@ class Glob {
           entry.isSymbolicLink() &&
           !!(await this.#cache.followStat(entryFullpath))?.isDirectory());
 
-      const subPatterns = new Set<number>();
-      const nSymlinks = new Set<number>();
+      const subPatterns = new Set();
+      const nSymlinks = new Set();
       for (const index of pattern.indexes) {
         // For each child, check potential patterns
         if (this.#cache.seen(entryPath, pattern, index) || this.#cache.seen(entryPath, pattern, index + 1)) {
@@ -922,14 +912,14 @@ class Glob {
             const parent = join(path, "..");
             if (nextIndex < last) {
               if (!this.#subpatterns.has(path) && !this.#cache.seen(path, pattern, nextIndex + 1)) {
-                this.#subpatterns.set(path, [pattern.child(new Set<number>().add(nextIndex + 1))]);
+                this.#subpatterns.set(path, [pattern.child(new Set().add(nextIndex + 1))]);
               }
               if (!this.#subpatterns.has(parent) && !this.#cache.seen(parent, pattern, nextIndex + 1)) {
-                this.#subpatterns.set(parent, [pattern.child(new Set<number>().add(nextIndex + 1))]);
+                this.#subpatterns.set(parent, [pattern.child(new Set().add(nextIndex + 1))]);
               }
             } else {
               if (!this.#cache.seen(path, pattern, nextIndex)) {
-                this.#cache.add(path, pattern.child(new Set<number>().add(nextIndex)));
+                this.#cache.add(path, pattern.child(new Set().add(nextIndex)));
                 if (!this.#results.has(path)) {
                   if (this.#results.add(path)) {
                     yield this.#withFileTypes ? this.#cache.statSync(fullpath) : path;
@@ -937,7 +927,7 @@ class Glob {
                 }
               }
               if (!this.#cache.seen(path, pattern, nextIndex) || !this.#cache.seen(parent, pattern, nextIndex)) {
-                this.#cache.add(parent, pattern.child(new Set<number>().add(nextIndex)));
+                this.#cache.add(parent, pattern.child(new Set().add(nextIndex)));
                 if (!this.#results.has(parent)) {
                   if (this.#results.add(parent)) {
                     yield this.#withFileTypes ? this.#cache.statSync(join(this.#root, parent)) : parent;
@@ -988,7 +978,7 @@ class Glob {
 }
 
 // `name` may not be writable on native Dirent instances.
-function setDirentName(dirent: Dirent, name: string) {
+function setDirentName(dirent, name) {
   try {
     dirent.name = name;
   } catch {
@@ -1001,128 +991,39 @@ function setDirentName(dirent: Dirent, name: string) {
   }
 }
 
-function glob(pattern: string | string[], options?: GlobOptions) {
+function glob(pattern, options) {
   return new Glob(pattern, options).glob();
 }
 
-function globSync(pattern: string | string[], options?: GlobOptions) {
+function globSync(pattern, options) {
   return new Glob(pattern, options).globSync();
 }
 
 export default { glob, globSync, Glob };
 
-interface MinimatchOptions {
-  __proto__?: null;
-  nobrace?: boolean;
-  nocomment?: boolean;
-  nonegate?: boolean;
-  debug?: boolean;
-  noglobstar?: boolean;
-  noext?: boolean;
-  nonull?: boolean;
-  windowsPathsNoEscape?: boolean;
-  allowWindowsEscape?: boolean;
-  partial?: boolean;
-  dot?: boolean;
-  nocase?: boolean;
-  nocaseMagicOnly?: boolean;
-  magicalBraces?: boolean;
-  matchBase?: boolean;
-  flipNegate?: boolean;
-  preserveMultipleSlashes?: boolean;
-  optimizationLevel?: number;
-  platform?: string;
-  windowsNoMagicRoot?: boolean;
-  braceExpandMax?: number;
-  maxGlobstarRecursion?: number;
-  maxExtglobRecursion?: number;
-}
-
-interface BalancedMatchModule {
-  balanced(
-    a: string | RegExp,
-    b: string | RegExp,
-    str: string,
-  ): { start: number; end: number; pre: string; body: string; post: string } | false | undefined;
-  range(a: string, b: string, str: string): [number, number] | undefined;
-}
-
-interface BraceExpansionModule {
-  EXPANSION_MAX: number;
-  expand(str: string, options?: { max?: number }): string[];
-}
-
-type ParsedClass = [source: string, needsUnicodeFlag: boolean, consumed: number, hasMagic: boolean];
-
-type MinimatchRegExp = RegExp & { _src?: string };
-type MinimatchRegExpSource = [source: string, body: string, hasMagic: boolean, needsUnicodeFlag: boolean];
-
-interface MinimatchAST {
-  type: string | null;
-  toMMPattern(): string | MinimatchRegExp;
-}
-
-interface MinimatchASTConstructor {
-  new (type: string | null, parent?: MinimatchAST, options?: MinimatchOptions): MinimatchAST;
-  fromGlob(pattern: string, options?: MinimatchOptions): MinimatchAST;
-}
-
-interface Minimatch {
-  set: PatternPart[][];
-  globParts: string[][];
-  match(file: string, partial?: boolean): boolean;
-}
-
-interface MinimatchConstructor {
-  new (pattern: string, options?: MinimatchOptions): Minimatch;
-  defaults(options: MinimatchOptions): MinimatchConstructor;
-}
-
-interface MinimatchModule {
-  minimatch: MinimatchFunction;
-  sep: string;
-  GLOBSTAR: symbol;
-  filter(pattern: string, options?: MinimatchOptions): (path: string) => boolean;
-  defaults(options: MinimatchOptions): MinimatchFunction;
-  braceExpand(pattern: string, options?: MinimatchOptions): string[];
-  makeRe(pattern: string, options?: MinimatchOptions): false | MinimatchRegExp;
-  match(list: string[], pattern: string, options?: MinimatchOptions): string[];
-  Minimatch: MinimatchConstructor;
-  AST: MinimatchASTConstructor;
-  escape(s: string, options?: MinimatchOptions): string;
-  unescape(s: string, options?: MinimatchOptions): string;
-}
-
-interface MinimatchFunction extends Omit<MinimatchModule, "minimatch"> {
-  (path: string, pattern: string, options?: MinimatchOptions): boolean;
-}
-
-let _minimatch: MinimatchModule | undefined;
+let _minimatch: any;
 // ─────────────────────────────────────────────────────────────────────────
-// Vendored: Node.js deps/minimatch/index.js (v26.3.0, ISC license). The code is unmodified; the types are added.
+// Vendored: Node.js deps/minimatch/index.js (v26.3.0, ISC license), unmodified.
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
 // ─────────────────────────────────────────────────────────────────────────
-function lazyMinimatch(): MinimatchModule {
+function lazyMinimatch() {
   if (_minimatch) return _minimatch;
-  const exports = {} as MinimatchModule;
+  const exports: any = {};
   const module = { exports };
   // --- begin vendored minimatch (Node v26.3.0 deps/minimatch/index.js) ---
   var __getOwnPropNames = Object.getOwnPropertyNames;
-  var __commonJS = <T extends object>(
-    cb: Record<string, (exports: T, module: { exports: T }) => void>,
-    mod?: { exports: T },
-  ) =>
-    function __require(): T {
-      return (mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} as T }).exports, mod), mod.exports);
+  var __commonJS = (cb, mod) =>
+    function __require() {
+      return (mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports);
     };
 
   // node_modules/balanced-match/dist/commonjs/index.js
   var require_commonjs = __commonJS({
-    "node_modules/balanced-match/dist/commonjs/index.js"(exports2: BalancedMatchModule) {
+    "node_modules/balanced-match/dist/commonjs/index.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.range = exports2.balanced = (void 0)!;
-      var balanced = (a: string | RegExp, b: string | RegExp, str: string) => {
+      exports2.range = exports2.balanced = void 0;
+      var balanced = (a, b, str) => {
         const ma = a instanceof RegExp ? maybeMatch(a, str) : a;
         const mb = b instanceof RegExp ? maybeMatch(b, str) : b;
         const r = ma !== null && mb != null && (0, exports2.range)(ma, mb, str);
@@ -1137,16 +1038,16 @@ function lazyMinimatch(): MinimatchModule {
         );
       };
       exports2.balanced = balanced;
-      var maybeMatch = (reg: RegExp, str: string) => {
+      var maybeMatch = (reg, str) => {
         const m = str.match(reg);
         return m ? m[0] : null;
       };
-      var range = (a: string, b: string, str: string): [number, number] | undefined => {
-        let begs: number[],
-          beg: number | undefined,
-          left: number,
-          right: number | undefined = void 0,
-          result: [number, number] | undefined;
+      var range = (a, b, str) => {
+        let begs,
+          beg,
+          left,
+          right = void 0,
+          result;
         let ai = str.indexOf(a);
         let bi = str.indexOf(b, ai + 1);
         let i = ai;
@@ -1185,10 +1086,10 @@ function lazyMinimatch(): MinimatchModule {
 
   // node_modules/brace-expansion/dist/commonjs/index.js
   var require_commonjs2 = __commonJS({
-    "node_modules/brace-expansion/dist/commonjs/index.js"(exports2: BraceExpansionModule) {
+    "node_modules/brace-expansion/dist/commonjs/index.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.EXPANSION_MAX = (void 0)!;
+      exports2.EXPANSION_MAX = void 0;
       exports2.expand = expand;
       var balanced_match_1 = require_commonjs();
       var escSlash = "\0SLASH" + Math.random() + "\0";
@@ -1207,10 +1108,10 @@ function lazyMinimatch(): MinimatchModule {
       var commaPattern = /\\,/g;
       var periodPattern = /\\\./g;
       exports2.EXPANSION_MAX = 1e5;
-      function numeric(str: string) {
-        return !isNaN(str as unknown as number) ? parseInt(str, 10) : str.charCodeAt(0);
+      function numeric(str) {
+        return !isNaN(str) ? parseInt(str, 10) : str.charCodeAt(0);
       }
-      function escapeBraces(str: string) {
+      function escapeBraces(str) {
         return str
           .replace(slashPattern, escSlash)
           .replace(openPattern, escOpen)
@@ -1218,7 +1119,7 @@ function lazyMinimatch(): MinimatchModule {
           .replace(commaPattern, escComma)
           .replace(periodPattern, escPeriod);
       }
-      function unescapeBraces(str: string) {
+      function unescapeBraces(str) {
         return str
           .replace(escSlashPattern, "\\")
           .replace(escOpenPattern, "{")
@@ -1226,11 +1127,11 @@ function lazyMinimatch(): MinimatchModule {
           .replace(escCommaPattern, ",")
           .replace(escPeriodPattern, ".");
       }
-      function parseCommaParts(str: string): string[] {
+      function parseCommaParts(str) {
         if (!str) {
           return [""];
         }
-        const parts: string[] = [];
+        const parts = [];
         const m = (0, balanced_match_1.balanced)("{", "}", str);
         if (!m) {
           return str.split(",");
@@ -1246,7 +1147,7 @@ function lazyMinimatch(): MinimatchModule {
         parts.push(...p);
         return parts;
       }
-      function expand(str: string, options: { max?: number } = {}) {
+      function expand(str, options = {}) {
         if (!str) {
           return [];
         }
@@ -1256,20 +1157,20 @@ function lazyMinimatch(): MinimatchModule {
         }
         return expand_(escapeBraces(str), max, true).map(unescapeBraces);
       }
-      function embrace(str: string) {
+      function embrace(str) {
         return "{" + str + "}";
       }
-      function isPadded(el: string) {
+      function isPadded(el) {
         return /^-?0\d/.test(el);
       }
-      function lte(i: number, y: number) {
+      function lte(i, y) {
         return i <= y;
       }
-      function gte(i: number, y: number) {
+      function gte(i, y) {
         return i >= y;
       }
-      function expand_(str: string, max: number, isTop: boolean): string[] {
-        const expansions: string[] = [];
+      function expand_(str, max, isTop) {
+        const expansions = [];
         const m = (0, balanced_match_1.balanced)("{", "}", str);
         if (!m) return [str];
         const pre = m.pre;
@@ -1292,7 +1193,7 @@ function lazyMinimatch(): MinimatchModule {
             }
             return [str];
           }
-          let n: string[];
+          let n;
           if (isSequence) {
             n = m.body.split(/\.\./);
           } else {
@@ -1305,7 +1206,7 @@ function lazyMinimatch(): MinimatchModule {
               }
             }
           }
-          let N: string[];
+          let N;
           if (isSequence && n[0] !== void 0 && n[1] !== void 0) {
             const x = numeric(n[0]);
             const y = numeric(n[1]);
@@ -1320,7 +1221,7 @@ function lazyMinimatch(): MinimatchModule {
             const pad = n.some(isPadded);
             N = [];
             for (let i = x; test(i, y); i += incr) {
-              let c: string;
+              let c;
               if (isAlphaSequence) {
                 c = String.fromCharCode(i);
                 if (c === "\\") {
@@ -1364,12 +1265,12 @@ function lazyMinimatch(): MinimatchModule {
 
   // dist/commonjs/assert-valid-pattern.js
   var require_assert_valid_pattern = __commonJS({
-    "dist/commonjs/assert-valid-pattern.js"(exports2: { assertValidPattern(pattern: unknown): void }) {
+    "dist/commonjs/assert-valid-pattern.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.assertValidPattern = (void 0)!;
+      exports2.assertValidPattern = void 0;
       var MAX_PATTERN_LENGTH = 1024 * 64;
-      var assertValidPattern = (pattern: unknown) => {
+      var assertValidPattern = pattern => {
         if (typeof pattern !== "string") {
           throw new TypeError("invalid pattern");
         }
@@ -1383,11 +1284,11 @@ function lazyMinimatch(): MinimatchModule {
 
   // dist/commonjs/brace-expressions.js
   var require_brace_expressions = __commonJS({
-    "dist/commonjs/brace-expressions.js"(exports2: { parseClass(glob: string, position: number): ParsedClass }) {
+    "dist/commonjs/brace-expressions.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.parseClass = (void 0)!;
-      var posixClasses: Record<string, [unicodeClass: string, needsUnicodeFlag: boolean, negated?: boolean]> = {
+      exports2.parseClass = void 0;
+      var posixClasses = {
         "[:alnum:]": ["\\p{L}\\p{Nl}\\p{Nd}", true],
         "[:alpha:]": ["\\p{L}\\p{Nl}", true],
         "[:ascii:]": ["\\x00-\\x7f", false],
@@ -1403,16 +1304,16 @@ function lazyMinimatch(): MinimatchModule {
         "[:word:]": ["\\p{L}\\p{Nl}\\p{Nd}\\p{Pc}", true],
         "[:xdigit:]": ["A-Fa-f0-9", false],
       };
-      var braceEscape = (s: string) => s.replace(/[[\]\\-]/g, "\\$&");
-      var regexpEscape = (s: string) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
-      var rangesToString = (ranges: string[]) => ranges.join("");
-      var parseClass = (glob: string, position: number): ParsedClass => {
+      var braceEscape = s => s.replace(/[[\]\\-]/g, "\\$&");
+      var regexpEscape = s => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+      var rangesToString = ranges => ranges.join("");
+      var parseClass = (glob, position) => {
         const pos = position;
         if (glob.charAt(pos) !== "[") {
           throw new Error("not in a brace expression");
         }
-        const ranges: string[] = [];
-        const negs: string[] = [];
+        const ranges = [];
+        const negs = [];
         let i = pos + 1;
         let sawStart = false;
         let uflag = false;
@@ -1498,11 +1399,11 @@ function lazyMinimatch(): MinimatchModule {
 
   // dist/commonjs/unescape.js
   var require_unescape = __commonJS({
-    "dist/commonjs/unescape.js"(exports2: { unescape(s: string, options?: MinimatchOptions): string }) {
+    "dist/commonjs/unescape.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.unescape = (void 0)!;
-      var unescape = (s: string, { windowsPathsNoEscape = false, magicalBraces = true }: MinimatchOptions = {}) => {
+      exports2.unescape = void 0;
+      var unescape = (s, { windowsPathsNoEscape = false, magicalBraces = true } = {}) => {
         if (magicalBraces) {
           return windowsPathsNoEscape
             ? s.replace(/\[([^/\\])\]/g, "$1")
@@ -1518,16 +1419,16 @@ function lazyMinimatch(): MinimatchModule {
 
   // dist/commonjs/ast.js
   var require_ast = __commonJS({
-    "dist/commonjs/ast.js"(exports2: { AST: MinimatchASTConstructor }) {
+    "dist/commonjs/ast.js"(exports2) {
       "use strict";
-      var _a: typeof AST;
+      var _a;
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.AST = (void 0)!;
+      exports2.AST = void 0;
       var brace_expressions_js_1 = require_brace_expressions();
       var unescape_js_12 = require_unescape();
       var types = /* @__PURE__ */ new Set(["!", "?", "+", "*", "@"]);
-      var isExtglobType = (c: string | null) => types.has(c!);
-      var isExtglobAST = (c: { type: string | null }) => isExtglobType(c.type);
+      var isExtglobType = c => types.has(c);
+      var isExtglobAST = c => isExtglobType(c.type);
       var adoptionMap = /* @__PURE__ */ new Map([
         ["!", ["@"]],
         ["?", ["?", "@"]],
@@ -1579,29 +1480,28 @@ function lazyMinimatch(): MinimatchModule {
       var addPatternStart = /* @__PURE__ */ new Set(["[", "."]);
       var justDots = /* @__PURE__ */ new Set(["..", "."]);
       var reSpecials = new Set("().*{}+?[]^$\\!");
-      var regExpEscape2 = (s: string) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+      var regExpEscape2 = s => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
       var qmark2 = "[^/]";
       var star2 = qmark2 + "*?";
       var starNoEmpty = qmark2 + "+?";
       var ID = 0;
-      // The class has no name of its own: `this` is its type in a member, `(typeof this)["prototype"]` in a static one.
       var AST = class {
-        type: string | null;
-        #root: this;
-        #hasMagic: boolean | undefined;
+        type;
+        #root;
+        #hasMagic;
         #uflag = false;
-        #parts: (string | this)[] = [];
-        #parent: this | undefined;
-        #parentIndex: number;
-        #negs: this[];
+        #parts = [];
+        #parent;
+        #parentIndex;
+        #negs;
         #filledNegs = false;
-        #options: MinimatchOptions;
-        #toString: string | undefined;
+        #options;
+        #toString;
         // set to true if it's an extglob with no children
         // (which really means one child of '')
         #emptyExt = false;
         id = ++ID;
-        get depth(): number {
+        get depth() {
           return (this.#parent?.depth ?? -1) + 1;
         }
         [/* @__PURE__ */ Symbol.for("nodejs.util.inspect.custom")]() {
@@ -1616,17 +1516,17 @@ function lazyMinimatch(): MinimatchModule {
             parts: this.#parts,
           };
         }
-        constructor(type: string | null, parent?: MinimatchAST, options: MinimatchOptions = {}) {
+        constructor(type, parent, options = {}) {
           this.type = type;
           if (type) this.#hasMagic = true;
-          this.#parent = parent as this | undefined;
+          this.#parent = parent;
           this.#root = this.#parent ? this.#parent.#root : this;
           this.#options = this.#root === this ? options : this.#root.#options;
           this.#negs = this.#root === this ? [] : this.#root.#negs;
           if (type === "!" && !this.#root.#filledNegs) this.#negs.push(this);
           this.#parentIndex = this.#parent ? this.#parent.#parts.length : 0;
         }
-        get hasMagic(): boolean | undefined {
+        get hasMagic() {
           if (this.#hasMagic !== void 0) return this.#hasMagic;
           for (const p of this.#parts) {
             if (typeof p === "string") continue;
@@ -1635,7 +1535,7 @@ function lazyMinimatch(): MinimatchModule {
           return this.#hasMagic;
         }
         // reconstructs the pattern
-        toString(): string {
+        toString() {
           return this.#toString !== void 0
             ? this.#toString
             : !this.type
@@ -1647,7 +1547,7 @@ function lazyMinimatch(): MinimatchModule {
           if (this.#filledNegs) return this;
           this.toString();
           this.#filledNegs = true;
-          let n: this | undefined;
+          let n;
           while ((n = this.#negs.pop())) {
             if (n.type !== "!") continue;
             let p = n;
@@ -1667,7 +1567,7 @@ function lazyMinimatch(): MinimatchModule {
           }
           return this;
         }
-        push(...parts: (string | this)[]) {
+        push(...parts) {
           for (const p of parts) {
             if (p === "") continue;
             if (typeof p !== "string" && !(p instanceof _a && p.#parent === this)) {
@@ -1676,18 +1576,18 @@ function lazyMinimatch(): MinimatchModule {
             this.#parts.push(p);
           }
         }
-        toJSON(): unknown[] {
-          const ret: unknown[] =
+        toJSON() {
+          const ret =
             this.type === null
               ? this.#parts.slice().map(p => (typeof p === "string" ? p : p.toJSON()))
-              : [this.type, ...this.#parts.map(p => (p as this).toJSON())];
+              : [this.type, ...this.#parts.map(p => p.toJSON())];
           if (this.isStart() && !this.type) ret.unshift([]);
           if (this.isEnd() && (this === this.#root || (this.#root.#filledNegs && this.#parent?.type === "!"))) {
             ret.push({});
           }
           return ret;
         }
-        isStart(): boolean {
+        isStart() {
           if (this.#root === this) return true;
           if (!this.#parent?.isStart()) return false;
           if (this.#parentIndex === 0) return true;
@@ -1700,7 +1600,7 @@ function lazyMinimatch(): MinimatchModule {
           }
           return true;
         }
-        isEnd(): boolean {
+        isEnd() {
           if (this.#root === this) return true;
           if (this.#parent?.type === "!") return true;
           if (!this.#parent?.isEnd()) return false;
@@ -1708,24 +1608,18 @@ function lazyMinimatch(): MinimatchModule {
           const pl = this.#parent ? this.#parent.#parts.length : 0;
           return this.#parentIndex === pl - 1;
         }
-        copyIn(part: string | this) {
+        copyIn(part) {
           if (typeof part === "string") this.push(part);
           else this.push(part.clone(this));
         }
-        clone(parent?: this): this {
-          const c = new _a(this.type, parent) as this;
+        clone(parent) {
+          const c = new _a(this.type, parent);
           for (const p of this.#parts) {
             c.copyIn(p);
           }
           return c;
         }
-        static #parseAST(
-          str: string,
-          ast: (typeof this)["prototype"],
-          pos: number,
-          opt: MinimatchOptions,
-          extDepth: number,
-        ): number {
+        static #parseAST(str, ast, pos, opt, extDepth) {
           const maxDepth = opt.maxExtglobRecursion ?? 2;
           let escaping = false;
           let inBrace = false;
@@ -1774,7 +1668,7 @@ function lazyMinimatch(): MinimatchModule {
           }
           let i = pos + 1;
           let part = new _a(null, ast);
-          const parts: (typeof ast)[] = [];
+          const parts = [];
           let acc = "";
           while (i < str.length) {
             const c = str.charAt(i++);
@@ -1837,10 +1731,10 @@ function lazyMinimatch(): MinimatchModule {
           ast.#parts = [str.substring(pos - 1)];
           return i;
         }
-        #canAdoptWithSpace(child: string | this) {
+        #canAdoptWithSpace(child) {
           return this.#canAdopt(child, adoptionWithSpaceMap);
         }
-        #canAdopt(child: string | this, map = adoptionMap) {
+        #canAdopt(child, map = adoptionMap) {
           if (
             !child ||
             typeof child !== "object" ||
@@ -1856,29 +1750,29 @@ function lazyMinimatch(): MinimatchModule {
           }
           return this.#canAdoptType(gc.type, map);
         }
-        #canAdoptType(c: string, map = adoptionAnyMap) {
-          return !!map.get(this.type!)?.includes(c);
+        #canAdoptType(c, map = adoptionAnyMap) {
+          return !!map.get(this.type)?.includes(c);
         }
-        #adoptWithSpace(child: this, index: number) {
-          const gc = child.#parts[0] as this;
-          const blank = new _a(null, gc, this.options) as this;
+        #adoptWithSpace(child, index) {
+          const gc = child.#parts[0];
+          const blank = new _a(null, gc, this.options);
           blank.#parts.push("");
           gc.push(blank);
           this.#adopt(child, index);
         }
-        #adopt(child: this, index: number) {
-          const gc = child.#parts[0] as this;
+        #adopt(child, index) {
+          const gc = child.#parts[0];
           this.#parts.splice(index, 1, ...gc.#parts);
           for (const p of gc.#parts) {
             if (typeof p === "object") p.#parent = this;
           }
           this.#toString = void 0;
         }
-        #canUsurpType(c: string) {
-          const m = usurpMap.get(this.type!);
+        #canUsurpType(c) {
+          const m = usurpMap.get(this.type);
           return !!m?.has(c);
         }
-        #canUsurp(child: string | this) {
+        #canUsurp(child) {
           if (
             !child ||
             typeof child !== "object" ||
@@ -1895,10 +1789,10 @@ function lazyMinimatch(): MinimatchModule {
           }
           return this.#canUsurpType(gc.type);
         }
-        #usurp(child: this) {
-          const m = usurpMap.get(this.type!);
-          const gc = child.#parts[0] as this;
-          const nt = m?.get(gc.type!);
+        #usurp(child) {
+          const m = usurpMap.get(this.type);
+          const gc = child.#parts[0];
+          const nt = m?.get(gc.type);
           if (!nt) return false;
           this.#parts = gc.#parts;
           for (const p of this.#parts) {
@@ -1910,14 +1804,14 @@ function lazyMinimatch(): MinimatchModule {
           this.#toString = void 0;
           this.#emptyExt = false;
         }
-        static fromGlob(pattern: string, options: MinimatchOptions = {}) {
+        static fromGlob(pattern, options = {}) {
           const ast = new _a(null, void 0, options);
           _a.#parseAST(pattern, ast, 0, options, 0);
           return ast;
         }
         // returns the regular expression if there's magic, or the unescaped
         // string if not.
-        toMMPattern(): string | MinimatchRegExp {
+        toMMPattern() {
           if (this !== this.#root) return this.#root.toMMPattern();
           const glob = this.toString();
           const [re, body, hasMagic, uflag] = this.toRegExpSource();
@@ -2005,7 +1899,7 @@ function lazyMinimatch(): MinimatchModule {
         // - Since the start for a join is eg /(?!\.) and the start for a part
         // is ^(?!\.), we can just prepend (?!\.) to the pattern (either root
         // or start or whatever) and prepend ^ or / at the Regexp construction.
-        toRegExpSource(allowDot?: boolean): MinimatchRegExpSource {
+        toRegExpSource(allowDot) {
           const dot = allowDot ?? !!this.#options.dot;
           if (this.#root === this) {
             this.#flatten();
@@ -2116,7 +2010,7 @@ function lazyMinimatch(): MinimatchModule {
           }
           this.#toString = void 0;
         }
-        #partsToRegExp(dot: boolean) {
+        #partsToRegExp(dot) {
           return this.#parts
             .map(p => {
               if (typeof p === "string") {
@@ -2129,7 +2023,7 @@ function lazyMinimatch(): MinimatchModule {
             .filter(p => !(this.isStart() && this.isEnd()) || !!p)
             .join("|");
         }
-        static #parseGlob(glob: string, hasMagic: boolean | undefined, noEmpty = false): MinimatchRegExpSource {
+        static #parseGlob(glob, hasMagic, noEmpty = false) {
           let escaping = false;
           let re = "";
           let uflag = false;
@@ -2185,11 +2079,11 @@ function lazyMinimatch(): MinimatchModule {
 
   // dist/commonjs/escape.js
   var require_escape = __commonJS({
-    "dist/commonjs/escape.js"(exports2: { escape(s: string, options?: MinimatchOptions): string }) {
+    "dist/commonjs/escape.js"(exports2) {
       "use strict";
       Object.defineProperty(exports2, "__esModule", { value: true });
-      exports2.escape = (void 0)!;
-      var escape = (s: string, { windowsPathsNoEscape = false, magicalBraces = false }: MinimatchOptions = {}) => {
+      exports2.escape = void 0;
+      var escape = (s, { windowsPathsNoEscape = false, magicalBraces = false } = {}) => {
         if (magicalBraces) {
           return windowsPathsNoEscape ? s.replace(/[?*()[\]{}]/g, "[$&]") : s.replace(/[?*()[\]\\{}]/g, "\\$&");
         }
@@ -2213,67 +2107,67 @@ function lazyMinimatch(): MinimatchModule {
     exports.GLOBSTAR =
     exports.sep =
     exports.minimatch =
-      (void 0)!;
+      void 0;
   var brace_expansion_1 = require_commonjs2();
   var assert_valid_pattern_js_1 = require_assert_valid_pattern();
   var ast_js_1 = require_ast();
   var escape_js_1 = require_escape();
   var unescape_js_1 = require_unescape();
-  var minimatch = (p: string, pattern: string, options: MinimatchOptions = {}) => {
+  var minimatch = (p, pattern, options = {}) => {
     (0, assert_valid_pattern_js_1.assertValidPattern)(pattern);
     if (!options.nocomment && pattern.charAt(0) === "#") {
       return false;
     }
     return new Minimatch(pattern, options).match(p);
   };
-  exports.minimatch = minimatch as MinimatchFunction;
+  exports.minimatch = minimatch;
   var starDotExtRE = /^\*+([^+@!?*[(]*)$/;
-  var starDotExtTest = (ext2: string) => (f: string) => !f.startsWith(".") && f.endsWith(ext2);
-  var starDotExtTestDot = (ext2: string) => (f: string) => f.endsWith(ext2);
-  var starDotExtTestNocase = (ext2: string) => {
+  var starDotExtTest = ext2 => f => !f.startsWith(".") && f.endsWith(ext2);
+  var starDotExtTestDot = ext2 => f => f.endsWith(ext2);
+  var starDotExtTestNocase = ext2 => {
     ext2 = ext2.toLowerCase();
-    return (f: string) => !f.startsWith(".") && f.toLowerCase().endsWith(ext2);
+    return f => !f.startsWith(".") && f.toLowerCase().endsWith(ext2);
   };
-  var starDotExtTestNocaseDot = (ext2: string) => {
+  var starDotExtTestNocaseDot = ext2 => {
     ext2 = ext2.toLowerCase();
-    return (f: string) => f.toLowerCase().endsWith(ext2);
+    return f => f.toLowerCase().endsWith(ext2);
   };
   var starDotStarRE = /^\*+\.\*+$/;
-  var starDotStarTest = (f: string) => !f.startsWith(".") && f.includes(".");
-  var starDotStarTestDot = (f: string) => f !== "." && f !== ".." && f.includes(".");
+  var starDotStarTest = f => !f.startsWith(".") && f.includes(".");
+  var starDotStarTestDot = f => f !== "." && f !== ".." && f.includes(".");
   var dotStarRE = /^\.\*+$/;
-  var dotStarTest = (f: string) => f !== "." && f !== ".." && f.startsWith(".");
+  var dotStarTest = f => f !== "." && f !== ".." && f.startsWith(".");
   var starRE = /^\*+$/;
-  var starTest = (f: string) => f.length !== 0 && !f.startsWith(".");
-  var starTestDot = (f: string) => f.length !== 0 && f !== "." && f !== "..";
+  var starTest = f => f.length !== 0 && !f.startsWith(".");
+  var starTestDot = f => f.length !== 0 && f !== "." && f !== "..";
   var qmarksRE = /^\?+([^+@!?*[(]*)?$/;
-  var qmarksTestNocase = ([m0, ext2 = ""]: string[]) => {
+  var qmarksTestNocase = ([m0, ext2 = ""]) => {
     const noext = qmarksTestNoExt([m0]);
     if (!ext2) return noext;
     ext2 = ext2.toLowerCase();
-    return (f: string) => noext(f) && f.toLowerCase().endsWith(ext2);
+    return f => noext(f) && f.toLowerCase().endsWith(ext2);
   };
-  var qmarksTestNocaseDot = ([m0, ext2 = ""]: string[]) => {
+  var qmarksTestNocaseDot = ([m0, ext2 = ""]) => {
     const noext = qmarksTestNoExtDot([m0]);
     if (!ext2) return noext;
     ext2 = ext2.toLowerCase();
-    return (f: string) => noext(f) && f.toLowerCase().endsWith(ext2);
+    return f => noext(f) && f.toLowerCase().endsWith(ext2);
   };
-  var qmarksTestDot = ([m0, ext2 = ""]: string[]) => {
+  var qmarksTestDot = ([m0, ext2 = ""]) => {
     const noext = qmarksTestNoExtDot([m0]);
-    return !ext2 ? noext : (f: string) => noext(f) && f.endsWith(ext2);
+    return !ext2 ? noext : f => noext(f) && f.endsWith(ext2);
   };
-  var qmarksTest = ([m0, ext2 = ""]: string[]) => {
+  var qmarksTest = ([m0, ext2 = ""]) => {
     const noext = qmarksTestNoExt([m0]);
-    return !ext2 ? noext : (f: string) => noext(f) && f.endsWith(ext2);
+    return !ext2 ? noext : f => noext(f) && f.endsWith(ext2);
   };
-  var qmarksTestNoExt = ([m0]: string[]) => {
+  var qmarksTestNoExt = ([m0]) => {
     const len = m0.length;
-    return (f: string) => f.length === len && !f.startsWith(".");
+    return f => f.length === len && !f.startsWith(".");
   };
-  var qmarksTestNoExtDot = ([m0]: string[]) => {
+  var qmarksTestNoExtDot = ([m0]) => {
     const len = m0.length;
-    return (f: string) => f.length === len && f !== "." && f !== "..";
+    return f => f.length === len && f !== "." && f !== "..";
   };
   var defaultPlatform =
     typeof process === "object" && process
@@ -2293,52 +2187,51 @@ function lazyMinimatch(): MinimatchModule {
   var twoStarDot = "(?:(?!(?:\\/|^)(?:\\.{1,2})($|\\/)).)*?";
   var twoStarNoDot = "(?:(?!(?:\\/|^)\\.).)*?";
   var filter =
-    (pattern: string, options: MinimatchOptions = {}) =>
-    (p: string) =>
+    (pattern, options = {}) =>
+    p =>
       (0, exports.minimatch)(p, pattern, options);
   exports.filter = filter;
   exports.minimatch.filter = exports.filter;
-  var ext = (a: MinimatchOptions, b: MinimatchOptions = {}): MinimatchOptions => Object.assign({}, a, b);
-  var defaults = (def: MinimatchOptions): MinimatchFunction => {
+  var ext = (a, b = {}) => Object.assign({}, a, b);
+  var defaults = def => {
     if (!def || typeof def !== "object" || !Object.keys(def).length) {
       return exports.minimatch;
     }
     const orig = exports.minimatch;
-    const m = (p: string, pattern: string, options: MinimatchOptions = {}) => orig(p, pattern, ext(def, options));
+    const m = (p, pattern, options = {}) => orig(p, pattern, ext(def, options));
     return Object.assign(m, {
       Minimatch: class Minimatch extends orig.Minimatch {
-        constructor(pattern: string, options: MinimatchOptions = {}) {
+        constructor(pattern, options = {}) {
           super(pattern, ext(def, options));
         }
-        static defaults(options: MinimatchOptions) {
+        static defaults(options) {
           return orig.defaults(ext(def, options)).Minimatch;
         }
       },
       AST: class AST extends orig.AST {
         /* c8 ignore start */
-        constructor(type: string | null, parent?: MinimatchAST, options: MinimatchOptions = {}) {
+        constructor(type, parent, options = {}) {
           super(type, parent, ext(def, options));
         }
         /* c8 ignore stop */
-        static fromGlob(pattern: string, options: MinimatchOptions = {}) {
+        static fromGlob(pattern, options = {}) {
           return orig.AST.fromGlob(pattern, ext(def, options));
         }
       },
-      unescape: (s: string, options: MinimatchOptions = {}) => orig.unescape(s, ext(def, options)),
-      escape: (s: string, options: MinimatchOptions = {}) => orig.escape(s, ext(def, options)),
-      filter: (pattern: string, options: MinimatchOptions = {}) => orig.filter(pattern, ext(def, options)),
-      defaults: (options: MinimatchOptions) => orig.defaults(ext(def, options)),
-      makeRe: (pattern: string, options: MinimatchOptions = {}) => orig.makeRe(pattern, ext(def, options)),
-      braceExpand: (pattern: string, options: MinimatchOptions = {}) => orig.braceExpand(pattern, ext(def, options)),
-      match: (list: string[], pattern: string, options: MinimatchOptions = {}) =>
-        orig.match(list, pattern, ext(def, options)),
+      unescape: (s, options = {}) => orig.unescape(s, ext(def, options)),
+      escape: (s, options = {}) => orig.escape(s, ext(def, options)),
+      filter: (pattern, options = {}) => orig.filter(pattern, ext(def, options)),
+      defaults: options => orig.defaults(ext(def, options)),
+      makeRe: (pattern, options = {}) => orig.makeRe(pattern, ext(def, options)),
+      braceExpand: (pattern, options = {}) => orig.braceExpand(pattern, ext(def, options)),
+      match: (list, pattern, options = {}) => orig.match(list, pattern, ext(def, options)),
       sep: orig.sep,
       GLOBSTAR: exports.GLOBSTAR,
     });
   };
   exports.defaults = defaults;
   exports.minimatch.defaults = exports.defaults;
-  var braceExpand = (pattern: string, options: MinimatchOptions = {}) => {
+  var braceExpand = (pattern, options = {}) => {
     (0, assert_valid_pattern_js_1.assertValidPattern)(pattern);
     if (options.nobrace || !/\{(?:(?!\{).)*\}/.test(pattern)) {
       return [pattern];
@@ -2347,10 +2240,10 @@ function lazyMinimatch(): MinimatchModule {
   };
   exports.braceExpand = braceExpand;
   exports.minimatch.braceExpand = exports.braceExpand;
-  var makeRe = (pattern: string, options: MinimatchOptions = {}) => new Minimatch(pattern, options).makeRe();
+  var makeRe = (pattern, options = {}) => new Minimatch(pattern, options).makeRe();
   exports.makeRe = makeRe;
   exports.minimatch.makeRe = exports.makeRe;
-  var match = (list: string[], pattern: string, options: MinimatchOptions = {}) => {
+  var match = (list, pattern, options = {}) => {
     const mm = new Minimatch(pattern, options);
     list = list.filter(f => mm.match(f));
     if (mm.options.nonull && !list.length) {
@@ -2361,27 +2254,27 @@ function lazyMinimatch(): MinimatchModule {
   exports.match = match;
   exports.minimatch.match = exports.match;
   var globMagic = /[?*]|[+@!]\(.*?\)|\[|\]/;
-  var regExpEscape = (s: string) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+  var regExpEscape = s => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
   var Minimatch = class {
-    options: MinimatchOptions;
-    set: PatternPart[][];
-    pattern: string;
-    windowsPathsNoEscape: boolean;
-    nonegate: boolean;
-    negate: boolean;
-    comment: boolean;
-    empty: boolean;
-    preserveMultipleSlashes: boolean;
-    partial: boolean;
-    globSet: string[];
-    globParts: string[][];
-    nocase: boolean;
-    isWindows: boolean;
-    platform: string;
-    windowsNoMagicRoot: boolean;
-    maxGlobstarRecursion: number;
-    regexp: false | null | MinimatchRegExp;
-    constructor(pattern: string, options: MinimatchOptions = {}) {
+    options;
+    set;
+    pattern;
+    windowsPathsNoEscape;
+    nonegate;
+    negate;
+    comment;
+    empty;
+    preserveMultipleSlashes;
+    partial;
+    globSet;
+    globParts;
+    nocase;
+    isWindows;
+    platform;
+    windowsNoMagicRoot;
+    maxGlobstarRecursion;
+    regexp;
+    constructor(pattern, options = {}) {
       (0, assert_valid_pattern_js_1.assertValidPattern)(pattern);
       options = options || {};
       this.options = options;
@@ -2420,7 +2313,7 @@ function lazyMinimatch(): MinimatchModule {
       }
       return false;
     }
-    debug(..._args: unknown[]) {}
+    debug(..._args) {}
     make() {
       const pattern = this.pattern;
       const options = this.options;
@@ -2435,7 +2328,7 @@ function lazyMinimatch(): MinimatchModule {
       this.parseNegate();
       this.globSet = [...new Set(this.braceExpand())];
       if (options.debug) {
-        this.debug = (...args: unknown[]) => console.error(...args);
+        this.debug = (...args) => console.error(...args);
       }
       this.debug(this.pattern, this.globSet);
       const rawGlobParts = this.globSet.map(s => this.slashSplit(s));
@@ -2454,7 +2347,7 @@ function lazyMinimatch(): MinimatchModule {
         return s.map(ss => this.parse(ss));
       });
       this.debug(this.pattern, set);
-      this.set = set.filter(s => s.indexOf(false) === -1) as PatternPart[][];
+      this.set = set.filter(s => s.indexOf(false) === -1);
       if (this.isWindows) {
         for (let i = 0; i < this.set.length; i++) {
           const p = this.set[i];
@@ -2476,7 +2369,7 @@ function lazyMinimatch(): MinimatchModule {
     // eliminate what we can, and push all ** patterns as far
     // to the right as possible, even if it increases the number
     // of patterns that we have to process.
-    preprocess(globParts: string[][]) {
+    preprocess(globParts) {
       if (this.options.noglobstar) {
         for (const partset of globParts) {
           for (let j = 0; j < partset.length; j++) {
@@ -2498,7 +2391,7 @@ function lazyMinimatch(): MinimatchModule {
       return globParts;
     }
     // just get rid of adjascent ** portions
-    adjascentGlobstarOptimize(globParts: string[][]) {
+    adjascentGlobstarOptimize(globParts) {
       return globParts.map(parts => {
         let gs = -1;
         while (-1 !== (gs = parts.indexOf("**", gs + 1))) {
@@ -2514,9 +2407,9 @@ function lazyMinimatch(): MinimatchModule {
       });
     }
     // get rid of adjascent ** and resolve .. portions
-    levelOneOptimize(globParts: string[][]) {
+    levelOneOptimize(globParts) {
       return globParts.map(parts => {
-        parts = parts.reduce((set: string[], part) => {
+        parts = parts.reduce((set, part) => {
           const prev = set[set.length - 1];
           if (part === "**" && prev === "**") {
             return set;
@@ -2533,7 +2426,7 @@ function lazyMinimatch(): MinimatchModule {
         return parts.length === 0 ? [""] : parts;
       });
     }
-    levelTwoFileOptimize(parts: string | string[]) {
+    levelTwoFileOptimize(parts) {
       if (!Array.isArray(parts)) {
         parts = this.slashSplit(parts);
       }
@@ -2585,7 +2478,7 @@ function lazyMinimatch(): MinimatchModule {
     //
     // **/*/<rest> -> */**/<rest> <== not valid because ** doesn't follow
     // this WOULD be allowed if ** did follow symlinks, or * didn't
-    firstPhasePreProcess(globParts: string[][]) {
+    firstPhasePreProcess(globParts) {
       let didSomething = false;
       do {
         didSomething = false;
@@ -2651,7 +2544,7 @@ function lazyMinimatch(): MinimatchModule {
     //
     // {<pre>/**/<rest>,<pre>/**/<p>/<rest>} -> <pre>/**/<rest>
     // ^-- not valid because ** doens't follow symlinks
-    secondPhasePreProcess(globParts: string[][]) {
+    secondPhasePreProcess(globParts) {
       for (let i = 0; i < globParts.length - 1; i++) {
         for (let j = i + 1; j < globParts.length; j++) {
           const matched = this.partsMatch(globParts[i], globParts[j], !this.preserveMultipleSlashes);
@@ -2664,10 +2557,10 @@ function lazyMinimatch(): MinimatchModule {
       }
       return globParts.filter(gs => gs.length);
     }
-    partsMatch(a: string[], b: string[], emptyGSMatch = false) {
+    partsMatch(a, b, emptyGSMatch = false) {
       let ai = 0;
       let bi = 0;
-      let result: string[] = [];
+      let result = [];
       let which = "";
       while (ai < a.length && bi < b.length) {
         if (a[ai] === b[bi]) {
@@ -2715,7 +2608,7 @@ function lazyMinimatch(): MinimatchModule {
     // Partial means, if you run out of file before you run
     // out of pattern, then that's fine, as long as all
     // the parts match.
-    matchOne(file: string[], pattern: PatternPart[], partial = false) {
+    matchOne(file, pattern, partial = false) {
       let fileStartIndex = 0;
       let patternStartIndex = 0;
       if (this.isWindows) {
@@ -2732,7 +2625,7 @@ function lazyMinimatch(): MinimatchModule {
         const fdi = fileUNC ? 3 : fileDrive ? 0 : void 0;
         const pdi = patternUNC ? 3 : patternDrive ? 0 : void 0;
         if (typeof fdi === "number" && typeof pdi === "number") {
-          const [fd, pd] = [file[fdi], pattern[pdi] as string];
+          const [fd, pd] = [file[fdi], pattern[pdi]];
           if (fd.toLowerCase() === pd.toLowerCase()) {
             pattern[pdi] = fd;
             patternStartIndex = pdi;
@@ -2749,7 +2642,7 @@ function lazyMinimatch(): MinimatchModule {
       }
       return this.#matchOne(file, pattern, partial, fileStartIndex, patternStartIndex);
     }
-    #matchGlobstar(file: string[], pattern: PatternPart[], partial: boolean, fileIndex: number, patternIndex: number) {
+    #matchGlobstar(file, pattern, partial, fileIndex, patternIndex) {
       const firstgs = pattern.indexOf(exports.GLOBSTAR, patternIndex);
       const lastgs = pattern.lastIndexOf(exports.GLOBSTAR);
       const [head, body, tail] = partial
@@ -2793,7 +2686,7 @@ function lazyMinimatch(): MinimatchModule {
         }
         return partial || sawSome;
       }
-      const bodySegments: [parts: PatternPart[], lastStart: number][] = [[[], 0]];
+      const bodySegments = [[[], 0]];
       let currentBody = bodySegments[0];
       let nonGsParts = 0;
       const nonGsPartsSums = [0];
@@ -2816,15 +2709,7 @@ function lazyMinimatch(): MinimatchModule {
     }
     // return false for "nope, not matching"
     // return null for "not matching, cannot keep trying"
-    #matchGlobStarBodySections(
-      file: string[],
-      bodySegments: [parts: PatternPart[], lastStart: number][],
-      fileIndex: number,
-      bodyIndex: number,
-      partial: boolean,
-      globStarDepth: number,
-      sawTail: boolean,
-    ): boolean | null {
+    #matchGlobStarBodySections(file, bodySegments, fileIndex, bodyIndex, partial, globStarDepth, sawTail) {
       const bs = bodySegments[bodyIndex];
       if (!bs) {
         for (let i = fileIndex; i < file.length; i++) {
@@ -2861,17 +2746,11 @@ function lazyMinimatch(): MinimatchModule {
       }
       return partial || null;
     }
-    #matchOne(
-      file: string[],
-      pattern: (PatternPart | false)[],
-      partial: boolean,
-      fileIndex: number,
-      patternIndex: number,
-    ) {
-      let fi: number;
-      let pi: number;
-      let pl: number;
-      let fl: number;
+    #matchOne(file, pattern, partial, fileIndex, patternIndex) {
+      let fi;
+      let pi;
+      let pl;
+      let fl;
       for (fi = fileIndex, pi = patternIndex, fl = file.length, pl = pattern.length; fi < fl && pi < pl; fi++, pi++) {
         this.debug("matchOne loop");
         let p = pattern[pi];
@@ -2880,12 +2759,12 @@ function lazyMinimatch(): MinimatchModule {
         if (p === false || p === exports.GLOBSTAR) {
           return false;
         }
-        let hit: boolean;
+        let hit;
         if (typeof p === "string") {
           hit = f === p;
           this.debug("string match", p, f, hit);
         } else {
-          hit = (p as RegExp).test(f);
+          hit = p.test(f);
           this.debug("pattern match", p, f, hit);
         }
         if (!hit) return false;
@@ -2903,13 +2782,13 @@ function lazyMinimatch(): MinimatchModule {
     braceExpand() {
       return (0, exports.braceExpand)(this.pattern, this.options);
     }
-    parse(pattern: string): PatternPart | false {
+    parse(pattern) {
       (0, assert_valid_pattern_js_1.assertValidPattern)(pattern);
       const options = this.options;
       if (pattern === "**") return exports.GLOBSTAR;
       if (pattern === "") return "";
-      let m: RegExpMatchArray | null;
-      let fastTest: ((file: string) => boolean) | null = null;
+      let m;
+      let fastTest = null;
       if ((m = pattern.match(starRE))) {
         fastTest = options.dot ? starTestDot : starTest;
       } else if ((m = pattern.match(starDotExtRE))) {
@@ -2960,11 +2839,7 @@ function lazyMinimatch(): MinimatchModule {
             if (p instanceof RegExp) {
               for (const f of p.flags.split("")) flags.add(f);
             }
-            return typeof p === "string"
-              ? regExpEscape(p)
-              : p === exports.GLOBSTAR
-                ? exports.GLOBSTAR
-                : (p as MinimatchRegExp)._src;
+            return typeof p === "string" ? regExpEscape(p) : p === exports.GLOBSTAR ? exports.GLOBSTAR : p._src;
           });
           pp.forEach((p, i) => {
             const next = pp[i + 1];
@@ -2974,24 +2849,24 @@ function lazyMinimatch(): MinimatchModule {
             }
             if (prev === void 0) {
               if (next !== void 0 && next !== exports.GLOBSTAR) {
-                pp[i + 1] = "(?:\\/|" + twoStar + "\\/)?" + (next as string);
+                pp[i + 1] = "(?:\\/|" + twoStar + "\\/)?" + next;
               } else {
                 pp[i] = twoStar;
               }
             } else if (next === void 0) {
-              pp[i - 1] = (prev as string) + "(?:\\/|\\/" + twoStar + ")?";
+              pp[i - 1] = prev + "(?:\\/|\\/" + twoStar + ")?";
             } else {
               const GLOBSTAR = exports.GLOBSTAR;
               if (next !== GLOBSTAR) {
-                pp[i - 1] = (prev as string) + "(?:\\/|\\/" + twoStar + "\\/)" + (next as string);
+                pp[i - 1] = prev + "(?:\\/|\\/" + twoStar + "\\/)" + next;
                 pp[i + 1] = GLOBSTAR;
               }
             }
           });
           const filtered = pp.filter(p => p !== exports.GLOBSTAR);
-          let filteredLength: number;
+          let filteredLength;
           if (this.partial && (filteredLength = filtered.length) >= 1) {
-            const prefixes: string[] = [];
+            const prefixes = [];
             for (let i = 1; i <= filteredLength; i++) {
               prefixes.push(filtered.slice(0, i).join("/"));
             }
@@ -3013,7 +2888,7 @@ function lazyMinimatch(): MinimatchModule {
       }
       return this.regexp;
     }
-    slashSplit(p: string) {
+    slashSplit(p) {
       if (this.preserveMultipleSlashes) {
         return p.split("/");
       } else if (this.isWindows && /^\/\/[^/]+/.test(p)) {
@@ -3022,7 +2897,7 @@ function lazyMinimatch(): MinimatchModule {
         return p.split(/\/+/);
       }
     }
-    match(f: string, partial = this.partial) {
+    match(f, partial = this.partial) {
       this.debug("match", f, this.pattern);
       if (this.comment) {
         return false;
@@ -3065,7 +2940,7 @@ function lazyMinimatch(): MinimatchModule {
       }
       return this.negate;
     }
-    static defaults(def: MinimatchOptions) {
+    static defaults(def) {
       return exports.minimatch.defaults(def).Minimatch;
     }
   };

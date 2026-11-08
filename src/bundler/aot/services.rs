@@ -9,7 +9,7 @@ use bun_aot::load::source_provider::{
     PathsOfProgram, RefusedText, Resolution, ResolveRequest, SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
-use bun_ast::{ASTMemoryAllocator, Loader, Log};
+use bun_ast::{ASTMemoryAllocator, Loader, Log, SideEffects};
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_react_compiler::Observer;
@@ -151,6 +151,10 @@ impl FileFinder {
                 path: from_native(path.text),
                 required: (result.path_pair.secondary.as_ref()).map(|it| from_native(it.text)),
                 links_followed: true,
+                has_side_effects: matches!(
+                    result.primary_side_effects_data,
+                    SideEffects::HasSideEffects
+                ),
             },
         }
     }

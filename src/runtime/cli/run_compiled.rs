@@ -28,6 +28,7 @@ static CLEARS_TERMINAL: AtomicBool = AtomicBool::new(false);
 static RUNNING_TEST_FILE: Guarded<Vec<u8>> = Guarded::new(Vec::new());
 static REFUSED_CHANGES: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
 static FILES_RUN_FROM_SOURCE: Guarded<BTreeSet<Vec<u8>>> = Guarded::new(BTreeSet::new());
+static FILES_THAT_KEPT_THEIR_RUN: Guarded<BTreeSet<Vec<u8>>> = Guarded::new(BTreeSet::new());
 /// The newest line of `REFUSED_CHANGES` that the running test file has made, without its end. It is kept also where the list is full or has the line.
 static NEWEST_REFUSAL_OF_RUNNING_TEST_FILE: Guarded<Vec<u8>> = Guarded::new(Vec::new());
 const MAX_LISTED_REFUSED_CHANGES: usize = 100;
@@ -1302,6 +1303,7 @@ pub(crate) fn will_run_test_file(title: &[u8]) {
 pub(crate) fn refused_changes() -> Vec<Vec<u8>> {
     let mut refused = REFUSED_CHANGES.lock();
     FILES_RUN_FROM_SOURCE.lock().clear();
+    FILES_THAT_KEPT_THEIR_RUN.lock().clear();
     core::mem::take(&mut *refused)
 }
 
@@ -1338,6 +1340,9 @@ pub(crate) extern "C" fn Bun__AOT__recordRefusedChange(
     if let Some(file_and_why) = said.strip_prefix(RAN_FROM_SOURCE) {
         return add_file_run_from_source(file_and_why);
     }
+    if let Some(quoted) = said.strip_prefix(KEPT_RUN) {
+        return add_file_that_kept_its_run(&quoted[1..quoted.len() - 1]);
+    }
     // Code from a string bears the URL of the file that evaluated it, and its lines are the string's.
     let place = if source_url.to_owned_slice().starts_with(b"file://") {
         let file = path_below_project(&bun_url::path_from_file_url(source_url));
@@ -1368,6 +1373,18 @@ fn add_file_run_from_source(file_and_why: &[u8]) {
         ]
         .concat(),
     );
+}
+
+fn add_file_that_kept_its_run(path: &[u8]) {
+    let path = path_below_project(&bun_core::String::clone_utf8(path));
+    let file = RUNNING_TEST_FILE.lock().clone();
+    add_refused_change([KEPT_RUN, &path[..], b", while ", &file[..], b" ran"].concat());
+}
+
+/// "Kept the run of <path>, while <test file> ran": the path.
+fn file_that_kept_its_run(line: &[u8]) -> Option<&[u8]> {
+    let rest = line.strip_prefix(KEPT_RUN)?;
+    Some(&rest[..bun_core::strings::index_of(rest, b", while ")?])
 }
 
 /// "Ran from source <path>[?<query>]: <why>, while <test file> ran": the path.
@@ -1470,6 +1487,7 @@ pub(crate) const REFUSED_LOAD: &[u8] = b"Cannot load ";
 pub(crate) const LOADED_ADDON: &[u8] = b"Loaded ";
 pub(crate) const UNREACHED_FILE: &[u8] = b"Cannot reach ";
 pub(crate) const RAN_FROM_SOURCE: &[u8] = b"Ran from source ";
+pub(crate) const KEPT_RUN: &[u8] = b"Kept the run of ";
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__AOT__recordMissingExport(
@@ -1497,7 +1515,15 @@ pub(crate) fn add_refused_change(line: Vec<u8>) {
         }
         return;
     }
-    let listed = refused.len() - FILES_RUN_FROM_SOURCE.lock().len();
+    // Each file once, with the test file that first asked for it again.
+    if let Some(file) = file_that_kept_its_run(&line) {
+        if FILES_THAT_KEPT_THEIR_RUN.lock().insert(file.to_vec()) {
+            refused.push(line);
+        }
+        return;
+    }
+    let listed =
+        refused.len() - FILES_RUN_FROM_SOURCE.lock().len() - FILES_THAT_KEPT_THEIR_RUN.lock().len();
     if listed < MAX_LISTED_REFUSED_CHANGES && !refused.contains(&line) {
         refused.push(line);
     }

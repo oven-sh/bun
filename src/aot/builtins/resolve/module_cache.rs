@@ -165,10 +165,14 @@ impl Resolver<'_, '_> {
         let hir = self.input.hir;
         if let Some(entry) = self.find_member_of(table) {
             let is_deleted = self.is_deleted(entry);
-            if is_deleted && matches!(hir.member_key(entry), Some((_, MemberKey::Computed(_)))) {
+            if is_deleted {
                 self.output.entries_deleted_from_module_cache.push(entry);
             }
-            let is_taken_out = is_deleted || self.is_stored_to(entry);
+            let is_stored_to = self.is_stored_to(entry);
+            if is_stored_to {
+                self.output.entries_stored_in_module_cache.push(entry);
+            }
+            let is_taken_out = is_deleted || is_stored_to;
             let is_handed_on =
                 !is_taken_out && self.input.runs_tests && self.is_entry_handed_on(entry);
             if is_taken_out || is_handed_on {

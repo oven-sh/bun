@@ -617,11 +617,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if defines.needs_guard || name == known::__proto__ || !is_this_of_construction {
             return None;
         }
-        let added = self.file.inputs.names_added_to_builtins;
-        let descriptor_finds_accessor_above = added.iter().any(|&(holder, laid)| {
-            holder == BuiltinId::ObjectPrototype && (laid == known::get || laid == known::set)
-        });
-        if descriptor_finds_accessor_above {
+        let unwritten = [known::get, known::set];
+        if unwritten
+            .iter()
+            .any(|&word| self.file.is_name_on_object_prototype(word))
+        {
             return None;
         }
         let bound = self.file.queries.files().bound(callee.file);
@@ -1023,6 +1023,20 @@ impl FileLowering<'_, '_, '_, '_> {
         let ExprKind::Object(properties) = hir[self.skip_type_syntax(descriptor)].kind else {
             return None;
         };
+        let words = [
+            known::value,
+            known::get,
+            known::set,
+            known::enumerable,
+            known::configurable,
+            known::writable,
+        ];
+        if words
+            .iter()
+            .any(|&word| self.is_name_on_object_prototype(word))
+        {
+            return None;
+        }
         let atoms = &self.queries.files().atoms;
         let mut key = None;
         let mut is_named = [false; 4];

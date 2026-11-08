@@ -23,7 +23,6 @@ late-rejection alone one+rejects-over+one.cjs.late 3 one held: SILENT | late rea
 second-mock one added+reset+unmock.js.late 2 body the body: SILENT | runs behind 3 unmock
 second-mock one async+says+throws.js.late 3 throws names: loud | import threw boom 4 late threw boom 5 top none
 second-mock one async+throws+module.js.late 2 throws names: loud | import threw boom 4 late threw boom 5 top none
-second-mock one async+throws+module.js.late 3 module held: loud | late threw Cannot access 'flag' before initializati top none
 plains-accident one async+throws+module.js.late 3 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module3","plain":"module3"} top none
 plains-accident one async+throws+module.js.late 3 module values: SILENT | import module3 require module3 late module3,module3,module3 top none
 second-mock one module+rejects+bare.js.top 2 rejects names: loud | import threw tardy boom 3 late threw tardy boom 4 top flag+plain undefined {"flag":"real","plain":"real"}
@@ -35,9 +34,7 @@ second-mock one module+reset+rejects.js.late 2 body the body: SILENT | runs behi
 late-rejection one one+rejects-over+one.cjs.late 3 one held: SILENT | late real,real,real top none
 late-rejection one one+rejects-over+one.js.late 3 one held: loud | late threw Cannot access 'flag' before initializati top none
 second-mock one one+throws-over+one.cjs.late 1 body the body: SILENT | nothing
-second-mock one one+throws-over+one.cjs.late 3 one held: SILENT | late ,, top none
 second-mock one over+module+throws.js.late 3 throws names: loud | import threw boom 4 late threw boom 5 top none
-second-mock one over+throws+bare.cjs.late 3 bare held: SILENT | late ,, top none
 plains-accident one over+throws+bare.cjs.late 3 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"flag":"real","plain":"real","default":{"flag":"real","plain":"real"}} top none
 plains-accident one over+throws+bare.cjs.late 3 bare values: SILENT | import real require real late real,real,real top none
 plains-accident one rejects+module+reset.js.late 2 module names: SILENT | import flag+plain late flag+plain undefined {"flag":"module2","plain":"module2"} top none
@@ -81,6 +78,5 @@ plains-accident one throws+unmock+throws-over.js.late 2 unmock values: SILENT | 
 second-mock one throws+unmock+throws-over.js.late 3 throws-over held: SILENT | late real,real,real top none
 second-mock one throws-over+one+throws-over.cjs.late 1 body the body: SILENT | nothing
 second-mock one throws-over+two+throws.cjs.late 1 body the body: SILENT | nothing
-second-mock one two+throws+throws.cjs.late 3 throws held: SILENT | late ,, top none
 second-mock one two+throws+throws.cjs.late 3 throws names: loud | import threw boom 8 late threw boom 7 top none
 second-mock one two+throws+throws.cjs.late 3 throws values: loud | import threw boom 5 require threw boom 6 late threw boom 7 top none

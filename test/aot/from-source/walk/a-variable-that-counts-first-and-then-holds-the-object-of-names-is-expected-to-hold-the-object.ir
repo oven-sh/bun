@@ -1,0 +1,15 @@
+# `var K = 0; lib.KINDS = { FIRST: K++, SECOND: K++, THIRD: K++ }; K = lib.KINDS`, and `lib` has left the program's sight: the inferred type of the variable is a number, what is proven of it is nothing; every `K.FIRST` behind it was read closed ("holds primitives too"). In a function that is not checked the objects that Link holds to lie in the variable are expected in place of an inferred type that holds no object: the test stands in front of the loop, the reads go out of slots.
+# f1 = the function that is called at once, f2 = sort
+# -- source: a-variable-that-counts-first-and-then-holds-the-object-of-names-is-expected-to-hold-the-object.js
+# var lib = {}; id(lib);
+# (function (lib) { lib.sort = sort; var K = 0; lib.KINDS = { FIRST: K++, SECOND: K++, THIRD: K++ }; K = lib.KINDS; function sort(list) { var n = 0; for (var i = 0; i < list.length; i++) { switch (list[i]) { case K.FIRST: n += 1; break; case K.SECOND: n += 10; break; case K.THIRD: n += 100; break; } } return n; } })(lib);
+# print(lib.sort([0, 1, 2, 2, 1, 7]));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 221
+# RUN(FORM): walk f2 mechanisms=all
+# FORM-LABEL: code f2:Body
+# FORM: = ShapeTest
+# FORM: isLoopHead=true
+# FORM: = GetSlot {{*}}key="FIRST"
+# FORM: = GetSlot {{*}}key="SECOND"

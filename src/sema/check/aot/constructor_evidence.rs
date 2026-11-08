@@ -10,7 +10,7 @@ use crate::hir::{
     PropKey, TypeNodeKind, VarKind,
 };
 use crate::program::FileId;
-use crate::util::FxHashSet;
+use crate::util::{FxHashMap, FxHashSet};
 
 fn is_member_of_receiver_or_prototype_object(
     hir: &hir::File<'_>,
@@ -40,6 +40,19 @@ impl From<bool> for Standing {
     }
 }
 
+fn is_laid_as_prototype_object(hir: &hir::File<'_>, bound: &Bound<'_>, literal: ExprId) -> bool {
+    let Parent::Expr(parent) = bound.parent_of_expr(literal) else {
+        return false;
+    };
+    let Some(parent) = parent.some() else {
+        return false;
+    };
+    matches!(
+        hir[parent].kind,
+        ExprKind::Assign { op: None, target, value } if value == literal && is_prototype_object(hir, bound, target)
+    )
+}
+
 fn find_standing(
     hir: &hir::File<'_>,
     bound: &Bound<'_>,
@@ -56,6 +69,11 @@ fn find_standing(
                         && !matches!(
                             hir.runtime_property_key(property),
                             PropKey::Name(name) if name == known::get || name == known::set
+                        )
+                        && !is_laid_as_prototype_object(
+                            hir,
+                            bound,
+                            bound.prop_owner[property.idx()],
                         ),
                 );
             }
@@ -258,22 +276,26 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         handed_on.sort_unstable_by_key(|entry| (entry.0, entry.2));
         handed_on.dedup();
-        loop {
-            let count = used.len();
-            for &(parameter, callee, position) in &handed_on {
-                let is_used = match callee.file == file {
-                    true => used.contains(&(callee.function, position)),
-                    false => self
-                        .parameters_seen_to_be_constructors(callee.file)
-                        .binary_search(&(callee.function, position))
-                        .is_ok(),
-                };
-                if is_used && !used.contains(&parameter) {
+        let mut is_used: FxHashSet<(FnId, u32)> = used.iter().copied().collect();
+        let mut handed_to: FxHashMap<(FnId, u32), Vec<(FnId, u32)>> = FxHashMap::default();
+        for &(parameter, callee, position) in &handed_on {
+            let receiving = (callee.function, position);
+            if callee.file == file {
+                handed_to.entry(receiving).or_default().push(parameter);
+                continue;
+            }
+            let seen_there = self.parameters_seen_to_be_constructors(callee.file);
+            if seen_there.binary_search(&receiving).is_ok() && is_used.insert(parameter) {
+                used.push(parameter);
+            }
+        }
+        let mut followed = 0;
+        while let Some(&receiving) = used.get(followed) {
+            followed += 1;
+            for &parameter in handed_to.get(&receiving).map_or(&[][..], Vec::as_slice) {
+                if is_used.insert(parameter) {
                     used.push(parameter);
                 }
-            }
-            if used.len() == count {
-                break;
             }
         }
         used.sort_unstable();

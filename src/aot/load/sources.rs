@@ -15,7 +15,7 @@ pub(crate) use self::freeze::{
     freeze_sources,
 };
 use crate::builtins::{ResolvedBuiltins, RuntimeFunction, RuntimeModule, table};
-use crate::diagnostics::FileDiagnostic;
+use crate::diagnostics::{FileDiagnostic, LoadMessages};
 use crate::load::contents::FileContents;
 use crate::load::contents::load_names::NamedModule;
 use crate::load::module_paths::{compute_display_path, with_separators_of_host};
@@ -88,6 +88,7 @@ pub(crate) struct ParsedSource {
     pub depends_on_more_than_source: bool,
     pub parse_failure: Option<Vec<u8>>,
     pub refused_at: Option<(Loader, Location)>,
+    pub said_where_type_is_written: Option<LoadMessages>,
     pub is_language_assumed: bool,
     pub builtins: ResolvedBuiltins,
     pub library_modules_named_in_text_left_to_run_time: Vec<RuntimeModule>,
@@ -110,6 +111,7 @@ impl ParsedSource {
             depends_on_more_than_source: false,
             parse_failure: None,
             refused_at: None,
+            said_where_type_is_written: None,
             is_language_assumed: false,
             builtins: ResolvedBuiltins::default(),
             library_modules_named_in_text_left_to_run_time: Vec::new(),

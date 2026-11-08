@@ -239,7 +239,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     _ => None,
                 };
                 let binding = ImportBinding::Variable(symbol);
-                return Some(module::emit_import_binding_asked(
+                return Some(module::emit_binding_asked_by_call(
                     self, binding, declared, asked,
                 ));
             }
@@ -251,7 +251,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     _ => None,
                 };
                 let name = self.file.intern_atom(name);
-                return Some(module::emit_import_binding_asked(
+                return Some(module::emit_binding_asked_by_call(
                     self, binding, name, asked,
                 ));
             }

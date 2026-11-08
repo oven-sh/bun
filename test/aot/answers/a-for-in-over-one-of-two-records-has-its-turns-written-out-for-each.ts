@@ -1,16 +1,16 @@
 // answers: without-library
 // # `for (const key in table) if (asked < table[key]) ..` in a loop, where `table` is one of two records: the turns are written out once for each record, behind the tests of its shape, its order of keys
-// # and that it has nothing else, in the order in which the records are written, as long as the turns of all arms together stay within what may be walked (f3, f4: behind the record of four the record of fifteen no longer fits); an object of either record that is no longer as it was made, and one that a turn changes, goes by the loop as written, from the key at which it stands.
+// # and that it has nothing else, as long as the turns of all arms together stay within what may be walked (f3, f4: the record of fifteen uses it up); an object of either record that is no longer as it was made, and one that a turn changes, goes by the loop as written, from the key at which it stands.
 // # f1 = pickOfAny, f2 = pick, f3 = listed, f4 = changed, f5 = tell
 // # RUN(FORM): walk f2 f3 f4 mechanisms=all
 // # FORM-LABEL: code f2:Body
-// # FORM: = HasKeyOrder {{*}}fields=[0, 1, 2, 3]
 // # FORM: = HasKeyOrder {{*}}fields=[11, 12, 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+// # FORM: = HasKeyOrder {{*}}fields=[0, 1, 2, 3]
 // # FORM: = ForInStep
 // # FORM-LABEL: code f3:Body
-// # FORM: = HasKeyOrder {{*}}fields=[0, 1, 2, 3]
+// # FORM: = HasKeyOrder {{*}}fields=[11, 12, 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 // # FORM-LABEL: code f4:Body
-// # FORM: = HasKeyOrder {{*}}fields=[0, 1, 2, 3]
+// # FORM: = HasKeyOrder {{*}}fields=[11, 12, 13, 14, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
 // # CHECK: 27 of 27 of 27

@@ -8,7 +8,8 @@ use super::answers::{
 use super::builtin_types::BuiltinTypeSymbols;
 use super::declared_signatures::DeclaredSignatures;
 use super::inferred_from_use::{
-    MembersByName, ReferenceIndex, Subject, TypeState, TypesInProgress, Usage, UsageState,
+    MembersByName, PartsRemembered, ReferenceIndex, Subject, TypeState, TypesInProgress, Usage,
+    UsageState,
 };
 use super::kept_answers::{
     GaveUpAnswers, KeptFact, KeptMemo, ObjectAnswers, ObjectRow, TypeAnswers, TypeQuestion, TypeRow,
@@ -29,6 +30,7 @@ use crate::session::Arena;
 use crate::types::{EnumValue, SigId, TypeData, TypeId, tf};
 use crate::util::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
+use std::cell::RefCell;
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -121,6 +123,7 @@ pub(super) struct Memo<'c> {
     pub(super) usages_that_lacked_stack: Vec<Subject>,
     pub(super) inferred_types: FxHashMap<Subject, TypeState>,
     pub(super) types_of_parts: FxHashMap<*const Usage, (Rc<Usage>, TypeId)>,
+    pub(super) parts_remembered: Rc<RefCell<PartsRemembered>>,
     pub(super) members_found: FxHashMap<(TypeId, *const MembersByName), (Rc<MembersByName>, bool)>,
     pub(super) unions_without_nullish: FxHashMap<TypeId, TypeId>,
     pub(super) types_in_progress: TypesInProgress,

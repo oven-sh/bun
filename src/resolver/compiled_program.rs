@@ -93,6 +93,8 @@ pub struct CompiledProgram {
     assets_named_at_root: &'static [u8],
     /// `encode_refused_data`, one record after the other.
     refused_data: &'static [u8],
+    /// `--loader` and `[loader]` of bunfig.toml: `bun_aot::module_keys::encode_loaders_given_to_build`.
+    loaders_given_to_build: &'static [u8],
     /// Ascending by path.
     further_package_names: Box<[CompiledFurtherPackageName]>,
     /// Built with `--aot-allow-code-from-disk`. Whether the program itself loads such code is the image's to say.
@@ -529,6 +531,7 @@ impl CompiledProgram {
             root_on_build_machine: None,
             assets_named_at_root: b"",
             refused_data: b"",
+            loaders_given_to_build: b"",
             further_package_names: Box::new([]),
             allows_code_from_disk: false,
             names_plugin: false,
@@ -634,6 +637,15 @@ impl CompiledProgram {
     pub fn with_refused_data(mut self, records: &'static [u8]) -> CompiledProgram {
         self.refused_data = records;
         self
+    }
+
+    pub fn with_loaders_given_to_build(mut self, loaders: &'static [u8]) -> CompiledProgram {
+        self.loaders_given_to_build = loaders;
+        self
+    }
+
+    pub fn loaders_given_to_build(&self) -> &'static [u8] {
+        self.loaders_given_to_build
     }
 
     /// `path`: that of the module that stands for the file.

@@ -500,10 +500,21 @@ impl Resolver<'_, '_> {
     }
 
     fn holds_numbers_alone(&self, variable: SymbolId, followed: u32) -> bool {
-        let (hir, bound) = (self.input.hir, self.input.bound);
         if followed == MOST_VARIABLES_FOLLOWED {
             return false;
         }
+        let asked = (variable, followed);
+        if let Some(&answer) = self.variables_asked_for_numbers.borrow().get(&asked) {
+            return answer;
+        }
+        let answer = self.is_given_numbers_alone(variable, followed);
+        let mut answers = self.variables_asked_for_numbers.borrow_mut();
+        answers.insert(asked, answer);
+        answer
+    }
+
+    fn is_given_numbers_alone(&self, variable: SymbolId, followed: u32) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
         let Some(mut declarations) = self.declarations_of(variable) else {
             return false;
         };

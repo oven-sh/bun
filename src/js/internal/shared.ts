@@ -48,6 +48,7 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
   console.warn(new NotImplementedError(feature, issue));
 }
 
+let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
   errno: number;
   syscall: string;
@@ -59,7 +60,8 @@ class ExceptionWithHostPort extends Error {
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
     // is no longer exposed to user land.
-    const code = require("node:util").getSystemErrorName(err);
+    util ??= require("node:util");
+    const code = util.getSystemErrorName(err);
     let details = "";
     if (port && port > 0) {
       details = ` ${address}:${port}`;
@@ -86,7 +88,7 @@ class ExceptionWithHostPort extends Error {
 }
 
 class NodeAggregateError extends AggregateError {
-  constructor(errors: Error[], message?: string) {
+  constructor(errors, message?) {
     super(new (require("internal/primordials").SafeArrayIterator)(errors), message);
     this.code = errors[0]?.code;
   }
@@ -96,7 +98,7 @@ class NodeAggregateError extends AggregateError {
 }
 
 class ConnResetException extends Error {
-  constructor(msg: string) {
+  constructor(msg) {
     super(msg);
     this.code = "ECONNRESET";
   }
@@ -109,9 +111,9 @@ class ErrnoException extends Error {
   errno: number;
   syscall: string;
 
-  // `util._errnoException` hands a program's arguments straight to this constructor.
-  constructor(err: number, syscall: string, original?: unknown) {
-    const code = require("node:util").getSystemErrorName(err);
+  constructor(err, syscall, original?) {
+    util ??= require("node:util");
+    const code = util.getSystemErrorName(err);
     const message = original ? `${syscall} ${code} ${original}` : `${syscall} ${code}`;
 
     super(message);
@@ -125,16 +127,13 @@ class ErrnoException extends Error {
   }
 }
 
-function once<This, Arguments extends any[], Result>(
-  callback: ((this: This, ...args: Arguments) => Result) | undefined,
-  { preserveReturnValue = false }: { preserveReturnValue?: boolean } = kEmptyObject,
-) {
+function once(callback, { preserveReturnValue = false } = kEmptyObject) {
   let called = false;
-  let returnValue: Result | undefined;
-  return function (this: This, ...args: Arguments): Result | undefined {
+  let returnValue;
+  return function (...args) {
     if (called) return returnValue;
     called = true;
-    const fn = callback!;
+    const fn = callback;
     // Drop the reference so the wrapper cannot keep the callback's
     // closure (and everything it captured) alive once it has run.
     callback = undefined;
@@ -154,17 +153,13 @@ ObjectFreeze(kInternalSendOptions);
 // Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
 // (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
 // https://github.com/nodejs/node/blob/main/src/api/callback.cc
-const reportUncaughtException: (error: unknown) => void = $newCppFunction(
-  "BunProcess.cpp",
-  "jsFunctionReportUncaughtException",
-  1,
-);
+const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 
 // Wrap a node-style callback so a throw inside it takes the uncaught path. The
 // callback keeps its place in the event loop; only the throw is rerouted. The
 // arity switch avoids materializing `arguments` for the shapes fs and dns use.
-function guardCallback(callback: (...args: any[]) => unknown) {
-  return function guarded(a?: unknown, b?: unknown, c?: unknown) {
+function guardCallback(callback) {
+  return function guarded(a?, b?, c?) {
     try {
       switch (arguments.length) {
         case 0:
@@ -252,13 +247,13 @@ function getLazy<T>(initializer: () => T) {
 // the registered observers on a fresh tick.
 // https://github.com/nodejs/node/blob/v25.2.1/lib/internal/perf/observe.js
 
-const observerCounts = new Map<string, number>();
+const observerCounts = new Map();
 const kObservers = new Set<NodeEntryObserver>();
 
 /** Entry types routed through this JS-side registry instead of the native observer. */
 const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
 
-function hasObserver(type: string) {
+function hasObserver(type) {
   return (observerCounts.get(type) ?? 0) > 0;
 }
 
@@ -267,7 +262,7 @@ function hasObserver(type: string) {
  * construct the entry themselves (e.g. perf_hooks timerify) instead of the
  * startPerf/stopPerf pair.
  */
-function enqueueNodeEntry(entry: PerformanceNodeEntry) {
+function enqueueNodeEntry(entry) {
   for (const observer of kObservers) {
     observer.bufferEntry(entry);
   }
@@ -280,13 +275,13 @@ function enqueueNodeEntry(entry: PerformanceNodeEntry) {
 // captured global (every construction is gated behind hasObserver(), which
 // is only true after perf_hooks has loaded).
 class PerformanceNodeEntry {
-  name: string;
-  entryType: string;
-  startTime: number;
-  duration: number;
-  detail: unknown;
+  name;
+  entryType;
+  startTime;
+  duration;
+  detail;
 
-  constructor(name: string, entryType: string, startTime: number, duration: number, detail: unknown) {
+  constructor(name, entryType, startTime, duration, detail) {
     this.name = name;
     this.entryType = entryType;
     this.startTime = startTime;
@@ -305,20 +300,13 @@ class PerformanceNodeEntry {
   }
 }
 
-interface PerformanceContext {
-  type: string;
-  name: string;
-  detail?: object;
-  startTime?: number;
-}
-
-function startPerf(target: object, key: symbol, context: PerformanceContext) {
+function startPerf(target, key, context) {
   context.startTime = performance.now();
   target[key] = context;
 }
 
-function stopPerf(target: object, key: symbol, context?: { detail?: object }) {
-  const ctx: (PerformanceContext & { startTime: number }) | undefined = target[key];
+function stopPerf(target, key, context?) {
+  const ctx = target[key];
   if (!ctx) {
     return;
   }
@@ -335,20 +323,16 @@ function stopPerf(target: object, key: symbol, context?: { detail?: object }) {
  * One registered observer of node-only entry types. The PerformanceObserver
  * wrapper in node:perf_hooks owns one of these when it observes such a type.
  */
-const isFrameOfStoppedModuleGraph: (frame: unknown) => boolean = $newCppFunction(
-  "ModuleGraph.cpp",
-  "jsFunctionIsFrameOfStoppedModuleGraph",
-  1,
-);
+const isFrameOfStoppedModuleGraph = $newCppFunction("ModuleGraph.cpp", "jsFunctionIsFrameOfStoppedModuleGraph", 1);
 /** Whether the script that is running is a disposed `Bun.ModuleGraph`'s (what it had queued still runs). */
 function isStoppedModuleGraphRunning() {
   return isFrameOfStoppedModuleGraph(require("internal/async_context_frame").current());
 }
 
 class NodeEntryObserver {
-  callback: (list: ReturnType<typeof makeNodeEntryList>, owner: unknown) => void;
-  owner: unknown;
-  types = new Set<string>();
+  callback;
+  owner;
+  types = new Set();
   buffer: PerformanceNodeEntry[] = [];
   scheduled = false;
   // The frame of the Bun.ModuleGraph the observer was made in, if any. Entries are delivered in
@@ -356,15 +340,15 @@ class NodeEntryObserver {
   // graph that is then disposed, the immediate would be cancelled with `scheduled` left true, and
   // this observer would never be called again. An observer made in a graph goes with it: see
   // bufferEntry.
-  frame: unknown;
+  frame;
 
-  constructor(callback: NodeEntryObserver["callback"], owner: unknown) {
+  constructor(callback, owner) {
     this.callback = callback;
     this.owner = owner;
     this.frame = require("internal/async_context_frame").currentGraphFrame();
   }
 
-  observe(types: Iterable<string>) {
+  observe(types) {
     for (const type of this.types) {
       observerCounts.set(type, (observerCounts.get(type) ?? 1) - 1);
     }
@@ -384,7 +368,7 @@ class NodeEntryObserver {
     kObservers.delete(this);
   }
 
-  bufferEntry(entry: PerformanceNodeEntry) {
+  bufferEntry(entry) {
     if (!this.types.has(entry.entryType)) {
       return;
     }
@@ -413,7 +397,7 @@ class NodeEntryObserver {
   }
 }
 
-function makeNodeEntryList(entries: PerformanceNodeEntry[]) {
+function makeNodeEntryList(entries) {
   // Node's PerformanceObserverEntryList hands entries out in chronological
   // (startTime) order and getEntriesByName takes an optional type filter.
   const sorted = entries.slice().sort((a, b) => a.startTime - b.startTime);
@@ -421,10 +405,10 @@ function makeNodeEntryList(entries: PerformanceNodeEntry[]) {
     getEntries() {
       return sorted.slice();
     },
-    getEntriesByType(type: unknown) {
+    getEntriesByType(type) {
       return sorted.filter(entry => entry.entryType === type);
     },
-    getEntriesByName(name: unknown, type?: unknown) {
+    getEntriesByName(name, type) {
       return sorted.filter(entry => entry.name === name && (type === undefined || entry.entryType === type));
     },
   };
@@ -436,32 +420,7 @@ const kInternalAssertionSuffix =
   "\nThis is caused by either a bug in Node.js or incorrect usage of Node.js internals.\n" +
   "Please open an issue with this stack trace at https://github.com/nodejs/node/issues\n";
 
-const kHandle = Symbol("kHandle");
-const kClusterOwner = Symbol("kClusterOwner");
-const kCapture = Symbol("kCapture");
-const kShapeMode = Symbol("shapeMode");
-const kAutoDestroyed = Symbol("kAutoDestroyed");
-const kWeakHandler = Symbol("kWeak");
-const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
-
-declare global {
-  namespace $Node {
-    interface Readable {
-      /** Set when the stream destroyed itself after its end, as `autoDestroy` asks. */
-      [kAutoDestroyed]?: boolean;
-    }
-  }
-}
-
-// Filled by the module that writes the functions. What lies in a public prototype object when another module loads may be a program's patch.
-const originals: {
-  eventEmitter:
-    | (Pick<
-        $Node.EventEmitter,
-        "emit" | "addListener" | "once" | "removeListener" | "removeAllListeners" | "listenerCount"
-      > & { storeEmitWithRejectionCapture(emitter: $Node.EventEmitter): void })
-    | undefined;
-} = { eventEmitter: undefined };
+//
 
 export default {
   isStoppedModuleGraphRunning,
@@ -487,15 +446,11 @@ export default {
   NodeEntryObserver,
   PerformanceNodeEntry,
 
-  kHandle,
-  kClusterOwner,
-  kCapture,
-  kShapeMode,
-  kAutoDestroyed,
-  kWeakHandler,
-  kCustomPromisifyArgsSymbol,
+  kHandle: Symbol("kHandle"),
+  kClusterOwner: Symbol("kClusterOwner"),
+  kAutoDestroyed: Symbol("kAutoDestroyed"),
+  kWeakHandler: Symbol("kWeak"),
+  kCustomPromisifyArgsSymbol: Symbol("customPromisifyArgs"),
   kEmptyObject,
   kInternalSendOptions,
-
-  originals,
-} as const;
+};

@@ -264,6 +264,7 @@ pub struct ResolvedBuiltins {
     can_come_by_hook_of_instanceof: bool,
     keys_taken_out_of_module_cache: Box<[KeyOfModuleCache]>,
     entries_deleted_from_module_cache: Box<[ExprId]>,
+    entries_stored_in_module_cache: Box<[ExprId]>,
     keys_of_entries_handed_on: Box<[KeyOfModuleCache]>,
     loses_sight_of_module_cache: bool,
     hands_module_cache_on: bool,
@@ -587,6 +588,10 @@ impl ResolvedBuiltins {
 
     pub fn entries_deleted_from_module_cache(&self) -> &[ExprId] {
         &self.entries_deleted_from_module_cache
+    }
+
+    pub fn entries_stored_in_module_cache(&self) -> &[ExprId] {
+        &self.entries_stored_in_module_cache
     }
 
     pub fn reaches_module_cache(&self) -> bool {

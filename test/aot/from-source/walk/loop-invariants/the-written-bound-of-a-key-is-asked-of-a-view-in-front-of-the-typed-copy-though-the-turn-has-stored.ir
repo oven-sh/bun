@@ -18,6 +18,7 @@
 # turn has WRITTEN does not touch it; only other code could. So "9 < the length" is asked there, as it is of a list, and the read lies inside.
 # decodeSwapped: the variable holds a shorter view at the second call: the test fails and the other copy answers NaN as plain does. decodeShrinking: a turn resizes the buffer: the turns do not leave
 # views as they are, nothing is asked in front, and the reads behind the resize give undefined.
+# How often the bound is asked is not pinned: since the failing way of the test leads to the loop bought once more without the question, the typed copy is walked more than once.
 # f1 = decode, f2 = decodeSwapped, f3 = decodeShrinking
 # OPTIONS: testing=CheckProofsAtRunTime check=Validate
 # RUN: walk f1 f2 f3 mechanisms=all
@@ -28,7 +29,7 @@
 # CHECK-LABEL: code f3:Body
 # CHECK-NOT: isInsideView
 # RUN(COUNT): compile BoundsAskedOfViewsInFrontOfTypedCopies
-# COUNT: statistic BoundsAskedOfViewsInFrontOfTypedCopies 2
+# COUNT-NOT: statistic BoundsAskedOfViewsInFrontOfTypedCopies 0
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 34 10 NaN 9 NaN
 # SHELL: exited with 0

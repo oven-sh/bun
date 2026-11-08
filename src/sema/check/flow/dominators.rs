@@ -20,6 +20,19 @@ pub(super) struct FlowDominators {
     conditions: Option<Vec<(u32, u32)>>,
     calls: Vec<(u32, u32)>,
     last_busy_call: Vec<u32>,
+    last_dominated: Vec<u32>,
+    dominated: Vec<u32>,
+    ascending_edges_end: Vec<u32>,
+    invocations_up_to: Vec<u32>,
+    most_invocations_below: Vec<u32>,
+    longest_turn_below: Vec<u32>,
+}
+
+struct OpenLoop {
+    label: u32,
+    last: u32,
+    most_invocations: u32,
+    longest_turn_inside: u32,
 }
 
 struct TestRoots {
@@ -128,6 +141,33 @@ impl FlowDominators {
         Self::find_last_of(&self.about_anything, start, up_to)
     }
 
+    fn find_first_test_about_after(&self, root: u32, start: u32, after: u32) -> u32 {
+        let at = self.tests.partition_point(|&it| it <= (root, start, after));
+        match self.tests.get(at) {
+            Some(&(its_root, its_start, node)) if (its_root, its_start) == (root, start) => node,
+            _ => u32::MAX,
+        }
+    }
+
+    fn find_first_after(nodes: &[(u32, u32)], start: u32, after: u32) -> u32 {
+        match nodes.get(nodes.partition_point(|&it| it <= (start, after))) {
+            Some(&(its_start, node)) if its_start == start => node,
+            _ => u32::MAX,
+        }
+    }
+
+    fn find_tests_and_calls_around(&self, root: u32, start: u32, flow: u32) -> (u32, u32) {
+        let last = self
+            .find_last_test_about(root, start, flow)
+            .max(self.find_last_about_anything(start, flow))
+            .max(Self::find_last_of(&self.calls, start, flow));
+        let next = self
+            .find_first_test_about_after(root, start, flow)
+            .min(Self::find_first_after(&self.about_anything, start, flow))
+            .min(Self::find_first_after(&self.calls, start, flow));
+        (last, next)
+    }
+
     fn find_last_of(nodes: &[(u32, u32)], start: u32, up_to: u32) -> u32 {
         let after = nodes.partition_point(|&it| it <= (start, up_to));
         match nodes[..after].last() {
@@ -167,13 +207,64 @@ impl Checker<'_, '_> {
             enclosing_loop: Vec::with_capacity(count),
             ..Default::default()
         };
-        let mut open: Vec<(u32, u32)> = Vec::new();
+        let hir = self.hir(file);
+        index.invocations_up_to = Vec::with_capacity(count);
+        let mut turns = vec![0; count];
+        let mut open: Vec<OpenLoop> = Vec::new();
+        let close = |open: &mut Vec<OpenLoop>, index: &FlowDominators, turns: &mut Vec<u32>| {
+            let Some(closed) = open.pop() else {
+                return;
+            };
+            let at_label = index.invocations_up_to[closed.label as usize];
+            let turn =
+                closed.most_invocations.saturating_sub(at_label) + 1 + closed.longest_turn_inside;
+            turns[closed.label as usize] = turn;
+            if let Some(around) = open.last_mut() {
+                around.most_invocations = around.most_invocations.max(closed.most_invocations);
+                around.longest_turn_inside = around.longest_turn_inside.max(turn);
+            }
+        };
         for (i, &node) in bound.flow.iter().enumerate() {
             let i = i as u32;
-            while open.last().is_some_and(|it| it.1 < i) {
-                open.pop();
+            while open.last().is_some_and(|it| it.last < i) {
+                close(&mut open, &index, &mut turns);
             }
-            index.enclosing_loop.push(open.last().map_or(0, |it| it.0));
+            index
+                .enclosing_loop
+                .push(open.last().map_or(0, |it| it.label));
+            let invocations = match node {
+                Flow::Start { .. } | Flow::StartInvoked { .. } => 0,
+                Flow::Assign {
+                    target: FlowTarget::Pat(_),
+                    ..
+                } => 0,
+                Flow::Assign {
+                    target: FlowTarget::Var(d),
+                    ..
+                } => {
+                    let stmt = bound.var_stmt[d.idx()];
+                    let is_of_for_in = stmt.is_some()
+                        && matches!(bound.parent_of_stmt(stmt), Parent::Stmt(owner)
+                            if matches!(hir[owner].kind, StmtKind::ForIn { .. }));
+                    u32::from(is_of_for_in)
+                }
+                Flow::Assign {
+                    target: FlowTarget::Expr(e),
+                    ..
+                } => {
+                    u32::from(bound.get_assignment_target_kind(hir, e) == AssignmentKind::Compound)
+                }
+                _ => 1,
+            };
+            let up_to = (node.antecedents(&bound.flow_edges).iter())
+                .filter(|before| before.is_some() && before.0 < i)
+                .fold(1, |most, before| {
+                    most.max(index.invocations_up_to[before.idx()] + invocations)
+                });
+            index.invocations_up_to.push(up_to);
+            if let Some(around) = open.last_mut() {
+                around.most_invocations = around.most_invocations.max(up_to);
+            }
             let earlier = |before: FlowId| (before.0 < i).then_some(before.0);
             let dominator = match node {
                 Flow::Unreachable | Flow::Start { .. } | Flow::StartInvoked { .. } => None,
@@ -187,7 +278,12 @@ impl Checker<'_, '_> {
                     let edges = bound.edges(start, len);
                     if matches!(node, Flow::Loop { .. }) {
                         let last = edges.iter().filter(|it| it.is_some()).map(|it| it.0).max();
-                        open.push((i, last.unwrap_or(i).max(i)));
+                        open.push(OpenLoop {
+                            label: i,
+                            last: last.unwrap_or(i).max(i),
+                            most_invocations: up_to,
+                            longest_turn_inside: 0,
+                        });
                     }
                     let mut forward = edges.iter().filter_map(|&edge| earlier(edge));
                     let first = forward.next();
@@ -195,6 +291,9 @@ impl Checker<'_, '_> {
                 }
             };
             index.add(i, dominator);
+        }
+        while !open.is_empty() {
+            close(&mut open, &index, &mut turns);
         }
         let mut counts = vec![0u32; count];
         for node in &index.nodes {
@@ -236,6 +335,34 @@ impl Checker<'_, '_> {
         index.about_anything.shared_sort_unstable();
         index.calls.shared_sort_unstable();
         index.last_busy_call = (0..index.calls.len() as u32).collect();
+        index.last_dominated = (0..count as u32).collect();
+        index.dominated = vec![1; count];
+        index
+            .most_invocations_below
+            .clone_from(&index.invocations_up_to);
+        index.longest_turn_below = vec![0; count];
+        for node in (0..count).rev() {
+            let up = index.nodes[node].dominator as usize;
+            if up != node {
+                index.most_invocations_below[up] =
+                    index.most_invocations_below[up].max(index.most_invocations_below[node]);
+                index.longest_turn_below[up] = index.longest_turn_below[up]
+                    .max(index.longest_turn_below[node])
+                    .max(turns[node]);
+                index.last_dominated[up] = index.last_dominated[up].max(index.last_dominated[node]);
+                index.dominated[up] += index.dominated[node];
+            }
+        }
+        let edges = &bound.flow_edges;
+        index.ascending_edges_end = vec![0; edges.len()];
+        for at in (0..edges.len()).rev() {
+            index.ascending_edges_end[at] = match edges.get(at + 1) {
+                Some(next) if edges[at].is_some() && next.is_some() && edges[at].0 < next.0 => {
+                    index.ascending_edges_end[at + 1]
+                }
+                _ => at as u32 + 1,
+            };
+        }
         self.flow_memo.dominators = index;
     }
 
@@ -333,6 +460,102 @@ impl Checker<'_, '_> {
                 return node;
             }
         }
+    }
+
+    #[inline(never)]
+    pub(super) fn count_antecedents_below_dominator_with_type_of(
+        &mut self,
+        walk: &Walk,
+        at: u32,
+        end: u32,
+    ) -> (usize, u32) {
+        self.find_antecedents_below_dominator_with_type_of(walk, at, end)
+            .unwrap_or((0, 0))
+    }
+
+    fn find_antecedents_below_dominator_with_type_of(
+        &mut self,
+        walk: &Walk,
+        at: u32,
+        end: u32,
+    ) -> Option<(usize, u32)> {
+        let reference = &walk.reference;
+        let file = reference.file;
+        let root = root_key(reference.root);
+        if root == 0
+            || reference.unresolved.get() != 0
+            || self.task.file != Some(file)
+            || !walk.reduced.is_empty()
+            || self.is_automatic_type(walk.declared)
+        {
+            return None;
+        }
+        if self.flow_memo.runs.file != Some(file) {
+            self.index_flow_runs(file);
+        }
+        if self.flow_memo.dominators.file != Some(file) {
+            self.index_flow_dominators(file);
+        }
+        let bound = self.bound(file);
+        let (runs, index) = (&self.flow_memo.runs, &self.flow_memo.dominators);
+        let end = index.ascending_edges_end[at as usize].min(end);
+        let (&edge, later @ [_, ..]) = bound.edges(at, end - at).split_first()? else {
+            return None;
+        };
+        let start = index.nodes[edge.idx()].start;
+        if index.starts_of_many.binary_search(&start).is_err() {
+            return None;
+        }
+        let around = |flow: u32| {
+            let (last_assignment, next_assignment) =
+                runs.nodes_about(root, reference, FlowId(flow));
+            let (last, next) = index.find_tests_and_calls_around(root, start, flow);
+            (last.max(last_assignment), next.min(next_assignment))
+        };
+        let (mut least, next) = around(edge.0);
+        let mut label = index.enclosing_loop[edge.idx()];
+        while label > least {
+            let Flow::Loop { start, len } = bound.flow[label as usize] else {
+                return None;
+            };
+            let edges = bound.edges(start, len).iter().filter(|it| it.is_some());
+            if around(edges.fold(label, |last, it| last.max(it.0))).0 > label {
+                least = label;
+                break;
+            }
+            label = index.enclosing_loop[label as usize];
+        }
+        let mut limit = next;
+        if next != u32::MAX {
+            let mut label = index.enclosing_loop[next as usize];
+            while label > edge.0 {
+                limit = label;
+                label = index.enclosing_loop[label as usize];
+            }
+        }
+        let dominator = index.find_highest_from(edge.0, least) as usize;
+        let last_dominated = index.last_dominated[dominator];
+        if last_dominated - dominator as u32 + 1 != index.dominated[dominator] {
+            return None;
+        }
+        let deeper = index.most_invocations_below[dominator]
+            .saturating_sub(index.invocations_up_to[edge.idx()])
+            + index.longest_turn_below[dominator];
+        let count = later.partition_point(|later| later.0 < limit && later.0 <= last_dominated);
+        Some((count, deeper))
+    }
+
+    pub(super) fn count_invocations_passed_by_skip(
+        &self,
+        flow: FlowId,
+        arrived_at: FlowId,
+    ) -> (u32, u32) {
+        let index = &self.flow_memo.dominators;
+        let up_to = &index.invocations_up_to;
+        (
+            up_to[flow.idx()].saturating_sub(up_to[arrived_at.idx()]),
+            index.longest_turn_below[arrived_at.idx()],
+        )
     }
 
     #[inline(never)]

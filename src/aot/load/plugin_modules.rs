@@ -22,6 +22,7 @@ use std::sync::OnceLock;
 
 const FILE_NAMESPACE: &[u8] = b"file";
 pub(super) const ENTRY_TEXT_NAMESPACE: &[u8] = b"entrytext";
+pub(crate) const FOLDER_OF_DATABASE_NAMESPACE: &[u8] = b"folder-of-database";
 const VIRTUAL_DIRECTORY: &[u8] = b"plugin/";
 const ENCODED_EMPTY_SEGMENT: &[u8] = b"%2f";
 
@@ -171,7 +172,7 @@ impl<'a> PluginModules<'a> {
     }
 
     pub(crate) fn add_database(&self, specifier: &[u8]) -> Vec<u8> {
-        let name = name_of_database(specifier);
+        let name = to_native(&name_of_database(specifier)).to_vec();
         let virtual_path = create_virtual_path(DATABASE_NAMESPACE, &name);
         let module = StoredModule {
             loader: Loader::Sqlite,
@@ -183,6 +184,24 @@ impl<'a> PluginModules<'a> {
         let name = (DATABASE_NAMESPACE.to_vec(), name);
         self.virtual_modules.insert_ref(virtual_path.clone(), name);
         virtual_path
+    }
+
+    pub(crate) fn add_folder_of_database(&self, importer: &[u8], name: &[u8]) -> Option<Vec<u8>> {
+        let (namespace, database) = self.virtual_module(importer)?;
+        if namespace != DATABASE_NAMESPACE || database != name {
+            return None;
+        }
+        let virtual_path = create_virtual_path(FOLDER_OF_DATABASE_NAMESPACE, name);
+        let module = StoredModule {
+            loader: Loader::Js,
+            is_from_plugin: true,
+            contents: Some(Cow::Borrowed(b"module.exports = process.cwd();\n")),
+        };
+        let load = OnceLock::from(ModuleLoad::Loaded(module));
+        self.modules.insert_ref(virtual_path.clone(), load);
+        let name = (FOLDER_OF_DATABASE_NAMESPACE.to_vec(), name.to_vec());
+        self.virtual_modules.insert_ref(virtual_path.clone(), name);
+        Some(virtual_path)
     }
 
     pub(crate) fn add_entry_text(&self, text: &EntryText, levels: Option<usize>) -> Vec<u8> {

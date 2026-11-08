@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# function counted(t) { let s = 0; for (let i = 0; i < 20; i++) s += process.env.MADE_UP_HOME === undefined ? 1 : 2; return s + t % 2; }
+# console.log(counted(0), counted(1));
+# -- end of source
+# The turn reads one name off process.env and only compares what it finds. A loop was built twice for reads that ask their sites only where such a read is reckoned with as a number or its holders lead back
+# to a variable of the file. Holders that lead back to a built-in that the text names are as good: the built-in stands in front of every loop. So the read asks its site once, in front of the typed copy.
+# f1 = counted
+# RUN: walk f1:Body mechanisms=all
+# REQUIRES: entries-of-bun not-windows
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="MADE_UP_HOME"
+# CHECK: isLoopHead=true
+# CHECK-NOT: key="MADE_UP_HOME"
+# CHECK: Return

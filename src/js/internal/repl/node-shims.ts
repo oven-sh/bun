@@ -23,24 +23,20 @@ const {
 // internal realm; the load-time-captured intrinsics close the `[Symbol.*]`
 // override hole (a tampered `RegExp.prototype.exec` is still observable per
 // spec — see `@@replace`/`@@split` `Get(rx,"exec")`).
-function SideEffectFreeRegExpPrototypeSymbolReplace(
-  regexp: RegExp,
-  str: string,
-  replacement: string | Parameters<typeof String.prototype.replace>[1],
-) {
+function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
   return RegExpPrototypeSymbolReplace(regexp, str, replacement);
 }
 
-function SideEffectFreeRegExpPrototypeSymbolSplit(regexp: RegExp, str: string, limit?: number) {
+function SideEffectFreeRegExpPrototypeSymbolSplit(regexp, str, limit) {
   return RegExpPrototypeSymbolSplit(regexp, str, limit);
 }
 
-function decorateErrorStack<E extends { stack?: unknown } | null | undefined>(err: E) {
+function decorateErrorStack(err) {
   // JSC materializes stacks eagerly so Node's overrideStackTrace never runs;
   // reproduce it by normalizing "<anonymous> (loc)" frames and cutting at the
   // last REPLn:l:c frame (drops the REPL top-level + vm runner frames).
   if (typeof err?.stack !== "string") return err;
-  let lines: string[] = StringPrototypeSplit(err.stack, "\n");
+  let lines = StringPrototypeSplit(err.stack, "\n");
   lines = ArrayPrototypeMap(lines, l => RegExpPrototypeSymbolReplace(/^(\s+at )<anonymous> \((.+)\)$/, l, "$1$2"));
   let anonIdx = -1;
   for (let i = 0; i < lines.length; i++) {
@@ -58,7 +54,7 @@ function decorateErrorStack<E extends { stack?: unknown } | null | undefined>(er
   return err;
 }
 
-function isError(e: unknown): e is Error {
+function isError(e) {
   return util.types.isNativeError(e) || e instanceof Error;
 }
 
@@ -68,7 +64,7 @@ const { shouldColorize } = require("internal/util/colors");
 
 // ---- internal/util/debuglog ----------------------------------------------
 
-function debuglog(set: string, cb?: (fn: (...args: unknown[]) => void) => void) {
+function debuglog(set, cb) {
   const fn = util.debuglog(set);
   if (typeof cb === "function") cb(fn);
   return fn;
@@ -76,10 +72,7 @@ function debuglog(set: string, cb?: (fn: (...args: unknown[]) => void) => void) 
 
 // ---- internal/util/inspector ----------------------------------------------
 
-function sendInspectorCommand<T>(
-  cb: (session: InstanceType<$BunModules["node:inspector"]["Session"]>) => unknown,
-  onError: () => T,
-) {
+function sendInspectorCommand(cb, onError) {
   // JSC's inspector protocol has no `Runtime.globalLexicalScopeNames` (V8-only),
   // so let/const/class tab-completion in useGlobal:true mode is inert until a
   // native binding enumerates JSGlobalObject::globalLexicalEnvironment().
@@ -92,7 +85,7 @@ const isProxy = util.types.isProxy;
 
 // ---- internal/options ----------------------------------------------
 
-function getOptionValue(name: string) {
+function getOptionValue(name) {
   switch (name) {
     case "--pending-deprecation":
       return process.execArgv.includes("--pending-deprecation");
@@ -111,7 +104,6 @@ function isEnabled() {
   return false;
 }
 
-function has(scope: string, reference?: string): boolean;
 function has() {
   return true;
 }
@@ -142,7 +134,7 @@ const extensionFormatMap = {
 const cascadedLoader = {
   kEvaluationPhase: "evaluation",
   kSourcePhase: "source",
-  import(specifier: string, parentURL?: string, _importAttributes?: object, _phase?: string) {
+  import(specifier, parentURL, _importAttributes, _phase) {
     // Relative specifiers resolve against the referrer the REPL threads
     // through (cwd/repl), not against this bundled module.
     if (parentURL && (specifier.startsWith("./") || specifier.startsWith("../"))) {
@@ -158,11 +150,11 @@ function getOrInitializeCascadedLoader() {
 
 // ---- internal/modules/helpers ----------------------------------------------
 
-function makeRequireFunction(_mod?: object) {
+function makeRequireFunction(_mod) {
   // Anchor relative requires to the REPL's cwd. process.cwd() throws when the
   // working directory has been deleted; same fallback as fixReplRequire
-  // (internal/repl/utils.ts).
-  let cwd: string;
+  // (internal/repl/utils.js).
+  let cwd;
   try {
     cwd = process.cwd();
   } catch {
@@ -171,22 +163,21 @@ function makeRequireFunction(_mod?: object) {
   return Module.createRequire(path.join(cwd, "<repl>"));
 }
 
-let builtinLibs: string[] | undefined;
+let builtinLibs;
 
-function getBuiltinLibs(): string[] {
+function getBuiltinLibs() {
   if (!builtinLibs) {
     // Bun's builtinModules also lists `bun`, `bun:*`, `undici`, `ws`; none
     // resolve under `node:`, so exclude them so completion and the REPL
     // global scope match Node's.
     builtinLibs = Module.builtinModules.filter(
-      (id: string) =>
-        !id.startsWith("_") && !id.startsWith("node:") && !id.startsWith("bun") && id !== "undici" && id !== "ws",
+      id => !id.startsWith("_") && !id.startsWith("node:") && !id.startsWith("bun") && id !== "undici" && id !== "ws",
     );
   }
-  return builtinLibs!;
+  return builtinLibs;
 }
 
-function addBuiltinLibsToObject(object: object, _dummy?: string) {
+function addBuiltinLibsToObject(object, _dummy) {
   // Make built-in modules available directly (loaded lazily). Builtin
   // specifiers don't need a cwd-anchored referrer, so anchor to execPath
   // (avoids ENOENT from process.cwd() in a deleted working directory).
@@ -198,7 +189,7 @@ function addBuiltinLibsToObject(object: object, _dummy?: string) {
       return;
     }
 
-    const setReal = (val: unknown) => {
+    const setReal = val => {
       // Deleting the property before re-assigning it disables the
       // getter/setter mechanism.
       delete object[name];
@@ -235,40 +226,33 @@ function addBuiltinLibsToObject(object: object, _dummy?: string) {
 
 // ---- internal/vm ----------------------------------------------
 
+const vm = require("node:vm");
+
 function makeContextifyScript(
-  code: string,
-  filename: string,
-  lineOffset: number,
-  columnOffset: number,
-  cachedData?: Uint8Array,
-  produceCachedData?: boolean,
-  parsingContext?: object,
-  hostDefinedOptionId?: symbol,
-  importModuleDynamically?: (specifier: string, referrer: unknown, attributes: object, phase: string) => unknown,
+  code,
+  filename,
+  lineOffset,
+  columnOffset,
+  cachedData,
+  produceCachedData,
+  parsingContext,
+  hostDefinedOptionId,
+  importModuleDynamically,
 ) {
-  return new (require("node:vm").Script)(code, {
+  return new vm.Script(code, {
     filename,
     lineOffset,
     columnOffset,
     cachedData,
     produceCachedData,
-    importModuleDynamically: importModuleDynamically ?? ((specifier: string) => import(specifier)),
+    importModuleDynamically: importModuleDynamically ?? (specifier => import(specifier)),
   });
 }
 
 // ---- internal/modules/cjs/loader (constructible Module shim) ----------------
 
 class CJSModuleShim {
-  declare id: string;
-  declare path: string;
-  declare exports: unknown;
-  declare filename: string | null;
-  declare loaded: boolean;
-  declare children: CJSModuleShim[];
-  declare paths: string[] | null;
-  declare parent: CJSModuleShim | undefined;
-
-  constructor(id = "", parent: CJSModuleShim | undefined = undefined) {
+  constructor(id = "", parent = undefined) {
     this.id = id;
     this.path = "";
     this.exports = {};
@@ -282,16 +266,16 @@ class CJSModuleShim {
   static builtinModules = Module.builtinModules;
   static globalPaths = Module.globalPaths;
   static _extensions = Module._extensions;
-  static _nodeModulePaths(from: string): string[] {
+  static _nodeModulePaths(from) {
     return Module._nodeModulePaths(from);
   }
-  static _resolveLookupPaths(request: string, parent?: object): string[] | null {
+  static _resolveLookupPaths(request, parent) {
     if (typeof Module._resolveLookupPaths === "function") {
       return Module._resolveLookupPaths(request, parent);
     }
     return Module._nodeModulePaths(process.cwd()).concat(Module.globalPaths ?? []);
   }
-  static _resolveFilename(request: string, parent?: object, isMain?: boolean, options?: object): string {
+  static _resolveFilename(request, parent, isMain, options) {
     return Module._resolveFilename(request, parent, isMain, options);
   }
 }
@@ -316,11 +300,7 @@ function stopSigintWatchdog() {
 const ALL_PROPERTIES = 0;
 const SKIP_SYMBOLS = 16;
 
-const getOwnNonIndexProperties: (value: object, filter: number) => (string | symbol)[] = $newCppFunction(
-  "UtilInspect.cpp",
-  "jsFunctionGetOwnNonIndexProperties",
-  2,
-);
+const getOwnNonIndexProperties = $newCppFunction("UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties", 2);
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
 // Bun only implements the single-callback set/clear API; emulate Node's
@@ -328,18 +308,18 @@ const getOwnNonIndexProperties: (value: object, filter: number) => (string | sym
 // for the process lifetime once the first REPL starts — see repl.js
 // setupExceptionCapture() for the rationale.
 
-let captureCallbacks: ((err: unknown) => unknown)[] | null = null;
+let captureCallbacks = null;
 
-function addUncaughtExceptionCaptureCallback(cb: (err: unknown) => unknown) {
+function addUncaughtExceptionCaptureCallback(cb) {
   if (!captureCallbacks) {
     captureCallbacks = [];
     try {
-      process.setUncaughtExceptionCaptureCallback((err: unknown) => {
+      process.setUncaughtExceptionCaptureCallback(err => {
         // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator]
         // and this runs while reporting that very error, so an unsafe iteration here
         // replaces the user's exception with "{} is not iterable".
-        for (let i = 0; i < captureCallbacks!.length; i++) {
-          if (captureCallbacks![i](err)) return;
+        for (let i = 0; i < captureCallbacks.length; i++) {
+          if (captureCallbacks[i](err)) return;
         }
         // No callback claimed it: Node's aux API falls through to the
         // regular 'uncaughtException' flow (with the origin arg), then to

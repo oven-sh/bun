@@ -3,10 +3,9 @@
 const BufferModule = require("node:buffer");
 
 const crc32 = $bindgen("node_zlib_binding.bind.ts", "crc32");
-type NativeConstructor<T> = $Bindgen.CompressionStreamConstructor<T & ZlibHandle>;
-const NativeZlib = $bindgen("node_zlib_binding.bind.ts", "NativeZlib") as NativeConstructor<$Bindgen.NativeZlib>;
-const NativeBrotli = $bindgen("node_zlib_binding.bind.ts", "NativeBrotli") as NativeConstructor<$Bindgen.NativeBrotli>;
-const NativeZstd = $bindgen("node_zlib_binding.bind.ts", "NativeZstd") as NativeConstructor<$Bindgen.NativeZstd>;
+const NativeZlib = $bindgen("node_zlib_binding.bind.ts", "NativeZlib");
+const NativeBrotli = $bindgen("node_zlib_binding.bind.ts", "NativeBrotli");
+const NativeZstd = $bindgen("node_zlib_binding.bind.ts", "NativeZstd");
 
 const ObjectKeys = Object.keys;
 const ArrayPrototypePush = Array.prototype.push;
@@ -63,7 +62,7 @@ for (const ckey of ObjectKeys(codes)) {
   codes[codes[ckey]] = ckey;
 }
 
-function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCallback) {
+function zlibBuffer(engine, buffer, callback) {
   validateFunction(callback, "callback");
   // Streams do not support non-Uint8Array ArrayBufferViews yet. Convert it to a Buffer without copying.
   if (isArrayBufferView(buffer)) {
@@ -80,18 +79,7 @@ function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCal
   engine.end(buffer);
 }
 
-const emptyOutBuffer = Buffer.from(new ArrayBuffer());
-function ignoreResult() {}
-
-function takeCallback(engine: $Node.ZlibBase): ZlibCallback {
-  const callback = engine.cb;
-  engine.cb = ignoreResult;
-  engine.buffers = null;
-  engine._outBuffer = emptyOutBuffer;
-  return callback;
-}
-
-function zlibBufferOnData(this: $Node.ZlibBase, chunk: Buffer) {
+function zlibBufferOnData(chunk) {
   if (!this.buffers) this.buffers = [chunk];
   else ArrayPrototypePush.$call(this.buffers, chunk);
   this.nread += chunk.length;
@@ -99,35 +87,34 @@ function zlibBufferOnData(this: $Node.ZlibBase, chunk: Buffer) {
   if (this.nread > maxOutputLength) {
     this.close();
     this.removeAllListeners("end");
-    takeCallback(this).$call(this, $ERR_BUFFER_TOO_LARGE(maxOutputLength));
+    this.cb($ERR_BUFFER_TOO_LARGE(maxOutputLength));
   }
 }
 
-function zlibBufferOnError(this: $Node.ZlibBase, err: Error) {
+function zlibBufferOnError(err) {
   this.removeAllListeners("end");
-  takeCallback(this).$call(this, err);
+  this.cb(err);
 }
 
-function zlibBufferOnEnd(this: $Node.ZlibBase) {
-  let buf: Buffer;
+function zlibBufferOnEnd() {
+  let buf;
   if (this.nread === 0) {
     buf = Buffer.alloc(0);
   } else {
-    const bufs = this.buffers!;
+    const bufs = this.buffers;
     buf = bufs.length === 1 ? bufs[0] : Buffer.concat(bufs, this.nread);
   }
   this.close();
-  const callback = takeCallback(this);
-  if (this._info) callback.$call(this, null, { buffer: buf, engine: this });
-  else callback.$call(this, null, buf);
+  if (this._info) this.cb(null, { buffer: buf, engine: this });
+  else this.cb(null, buf);
 }
 
-function zlibBufferSync(engine: $Node.ZlibBase, buffer: ZlibInput) {
+function zlibBufferSync(engine, buffer) {
   if (typeof buffer === "string") {
-    buffer = Buffer.from(buffer) as Buffer;
+    buffer = Buffer.from(buffer);
   } else if (!isArrayBufferView(buffer)) {
     if (isAnyArrayBuffer(buffer)) {
-      buffer = Buffer.from(buffer) as Buffer;
+      buffer = Buffer.from(buffer);
     } else {
       throw $ERR_INVALID_ARG_TYPE("buffer", "string, Buffer, TypedArray, DataView, or ArrayBuffer", buffer);
     }
@@ -137,7 +124,7 @@ function zlibBufferSync(engine: $Node.ZlibBase, buffer: ZlibInput) {
   return buffer;
 }
 
-function zlibOnError(this: ZlibHandle, message: string, errno: number, code: string) {
+function zlibOnError(message, errno, code) {
   const self = this[owner_symbol];
   // There is no way to cleanly recover. Continuing only obscures problems.
   const error: ZlibError = new Error(message);
@@ -166,95 +153,42 @@ interface FlushOptions {
   fullFlush: number;
 }
 
-/** One of the native compressors, with what this module keeps on it for `processCallback`. */
-interface ZlibHandle extends $Bindgen.CompressionStream {
-  [owner_symbol]: $Node.ZlibBase;
-  /** Set only while a write is on the threadpool. */
-  buffer: (View & { [kAfterFlush]?: () => void }) | null;
-  cb: () => void;
-  afterWrite?: (() => void) | null;
-  availOutBefore: number;
-  availInBefore: number;
-  inOff: number;
-  flushFlag: number;
+interface ZlibHandle {
+  [owner_symbol]?: ZlibBase;
+  onerror: typeof zlibOnError;
+  reset(): void;
+  close(): void;
 }
 
-type View = $Node.AnyView;
-type ZlibInput = string | View | ArrayBuffer | SharedArrayBuffer;
-type ZlibResult = Buffer | { buffer: Buffer; engine: $Node.ZlibBase };
-type ZlibCallback = (error: Error | null, result?: ZlibResult) => void;
-
-// `flush` is a number here and a function for `Transform`, which takes only a function from its options.
-interface ZlibOptions extends Omit<$Node.TransformOptions, "flush" | "encoding"> {
-  encoding?: string | null;
-  flush?: number;
-  finishFlush?: number;
-  chunkSize?: number;
-  windowBits?: number | null;
-  level?: number;
-  memLevel?: number;
-  strategy?: number;
-  dictionary?: View | ArrayBuffer | SharedArrayBuffer;
-  info?: boolean;
-  maxOutputLength?: number;
-  params?: Record<string, number | boolean>;
-  pledgedSrcSize?: number;
-}
-
-declare global {
-  namespace $Node {
-    interface ZlibBase extends Transform {
-      [kError]: ZlibError | null;
-      [kFlushBound]: number[];
-      bytesWritten: number;
-      _handle: ZlibHandle | null;
-      _writeState: Uint32Array;
-      _outBuffer: Buffer;
-      _outOffset: number;
-      _chunkSize: number;
-      _defaultFlushFlag: number;
-      _finishFlushFlag: number;
-      _defaultFullFlushFlag: number;
-      _info: boolean | undefined;
-      _maxOutputLength: number;
-      reset(): void;
-      flush(kind?: number | (() => void), callback?: () => void): void;
-      close(callback?: () => void): void;
-      _processChunk(chunk: View, flushFlag: number, cb?: () => void): Buffer | undefined;
-      // What `zlibBuffer` keeps on the engine it drives.
-      buffers: Buffer[] | null;
-      nread: number;
-      cb: ZlibCallback;
-    }
-
-    interface Zlib extends ZlibBase {
-      _level: number;
-      _strategy: number;
-      params(level: number, strategy: number, callback: () => void): void;
-    }
-  }
-}
-
-interface ZlibBaseConstructor {
-  new (opts: ZlibOptions | undefined, mode: number, handle: ZlibHandle, flushOptions: FlushOptions): $Node.ZlibBase;
-  prototype: any;
+declare class ZlibBase extends Transform {
+  constructor(opts, mode: number, handle: ZlibHandle, flushOptions: FlushOptions);
+  [kError]: ZlibError | null;
+  [kFlushBound]: number[];
+  bytesWritten: number;
+  _handle: ZlibHandle | null;
+  _outBuffer: Buffer;
+  _outOffset: number;
+  _chunkSize: number;
+  _defaultFlushFlag: number;
+  _finishFlushFlag: number;
+  _defaultFullFlushFlag: number;
+  _info: boolean | undefined;
+  _maxOutputLength: number;
+  reset(): void;
+  flush(kind?, callback?): void;
+  close(callback?: () => void): void;
+  _processChunk(chunk: Buffer, flushFlag: number, cb?: () => void): Buffer | undefined;
 }
 
 // The base class for all Zlib-style streams.
-function ZlibBase(
-  this: $Node.ZlibBase,
-  opts: ZlibOptions | undefined,
-  mode: number,
-  handle: ZlibHandle,
-  { flush, finishFlush, fullFlush }: FlushOptions,
-) {
+function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
   let chunkSize = Z_DEFAULT_CHUNK;
   let maxOutputLength = kMaxLength;
   // The ZlibBase class is not exported to user land, the mode should only be passed in by us.
   $assert(typeof mode === "number");
   $assert(mode >= DEFLATE && mode <= ZSTD_DECOMPRESS);
 
-  let flushBoundIdx: number;
+  let flushBoundIdx;
   if (mode === BROTLI_ENCODE || mode === BROTLI_DECODE) {
     flushBoundIdx = FLUSH_BOUND_IDX_BROTLI;
   } else if (mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS) {
@@ -264,7 +198,7 @@ function ZlibBase(
   }
 
   if (opts) {
-    chunkSize = opts.chunkSize!;
+    chunkSize = opts.chunkSize;
     if (!validateFiniteNumber(chunkSize, "options.chunkSize")) {
       chunkSize = Z_DEFAULT_CHUNK;
     } else if (chunkSize < Z_MIN_CHUNK) {
@@ -286,7 +220,7 @@ function ZlibBase(
     }
   }
 
-  Transform.$apply(this, [{ autoDestroy: true, ...(opts as Omit<ZlibOptions, "flush"> | undefined) }]);
+  Transform.$apply(this, [{ autoDestroy: true, ...opts }]);
   this[kError] = null;
   this.bytesWritten = 0;
   this._handle = handle;
@@ -309,7 +243,7 @@ ZlibBase.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_NORMAL];
 ObjectDefineProperty(ZlibBase.prototype, "_closed", {
   configurable: true,
   enumerable: true,
-  get(this: $Node.ZlibBase) {
+  get() {
     return !this._handle;
   },
 });
@@ -320,26 +254,26 @@ ObjectDefineProperty(ZlibBase.prototype, "_closed", {
 // *from* the stream (that is, net.Socket/tls.Socket & file system streams).
 ObjectDefineProperty(ZlibBase.prototype, "bytesRead", {
   configurable: true,
-  get: function (this: $Node.ZlibBase) {
+  get: function () {
     return this.bytesWritten;
   },
-  set: function (this: $Node.ZlibBase, value: number) {
+  set: function (value) {
     this.bytesWritten = value;
   },
 });
 
-ZlibBase.prototype.reset = function (this: $Node.ZlibBase) {
+ZlibBase.prototype.reset = function () {
   $assert(this._handle, "zlib binding closed");
   return this._handle.reset();
 };
 
 // This is the _flush function called by the transform class, internally, when the last chunk has been written.
-ZlibBase.prototype._flush = function (this: $Node.ZlibBase, callback: () => void) {
+ZlibBase.prototype._flush = function (callback) {
   this._transform(Buffer.alloc(0), "", callback);
 };
 
 // Force Transform compat behavior.
-ZlibBase.prototype._final = function (this: $Node.ZlibBase, callback: () => void) {
+ZlibBase.prototype._final = function (callback) {
   callback();
 };
 
@@ -353,15 +287,14 @@ for (let i = 0; i < kFlushFlagList.length; i++) {
   flushiness[kFlushFlagList[i]] = i;
 }
 
-function maxFlush(a: number, b: number) {
+function maxFlush(a, b) {
   return flushiness[a] > flushiness[b] ? a : b;
 }
 
 // Set up a list of 'special' buffers that can be written using .write()
 // from the .flush() code as a way of introducing flushing operations into the
 // write sequence.
-type Chunk = Buffer & { [kFlushFlag]?: number };
-const kFlushBuffers: Chunk[] = [];
+const kFlushBuffers: (Buffer & { [kFlushFlag]?: number })[] = [];
 {
   const dummyArrayBuffer = new ArrayBuffer();
   for (const flushFlag of kFlushFlagList) {
@@ -370,7 +303,7 @@ const kFlushBuffers: Chunk[] = [];
   }
 }
 
-ZlibBase.prototype.flush = function (this: $Node.ZlibBase, kind?: number | (() => void), callback?: () => void) {
+ZlibBase.prototype.flush = function (kind, callback) {
   if (typeof kind === "function" || (kind === undefined && !callback)) {
     callback = kind;
     kind = this._defaultFullFlushFlag;
@@ -382,25 +315,25 @@ ZlibBase.prototype.flush = function (this: $Node.ZlibBase, kind?: number | (() =
   } else {
     if (!this.destroyed) {
       // "2" and 2n index the same flush buffer as 2.
-      kind = kFlushBuffers[kind!]?.[kFlushFlag] ?? kind;
+      kind = kFlushBuffers[kind]?.[kFlushFlag] ?? kind;
       const flushBound = this[kFlushBound];
       kind = checkRangesOrGetDefault(kind, "kind", flushBound[0], flushBound[1], this._defaultFullFlushFlag);
     }
-    this.write(kFlushBuffers[kind!], "", callback);
+    this.write(kFlushBuffers[kind], "", callback);
   }
 };
 
-ZlibBase.prototype.close = function (this: $Node.ZlibBase, callback?: () => void) {
+ZlibBase.prototype.close = function (callback) {
   if (callback) finished(this, callback);
   this.destroy();
 };
 
-ZlibBase.prototype._destroy = function (this: $Node.ZlibBase, err: Error | null, callback: $Node.ErrorCallback) {
+ZlibBase.prototype._destroy = function (err, callback) {
   _close(this);
   callback(err);
 };
 
-ZlibBase.prototype._transform = function (this: $Node.ZlibBase, chunk: Chunk, encoding: string, cb: () => void) {
+ZlibBase.prototype._transform = function (chunk, encoding, cb) {
   let flushFlag = this._defaultFlushFlag;
   // We use a 'fake' zero-length chunk to carry information about flushes from the public API to the actual stream implementation.
   if (typeof chunk[kFlushFlag] === "number") {
@@ -414,7 +347,7 @@ ZlibBase.prototype._transform = function (this: $Node.ZlibBase, chunk: Chunk, en
   processChunk(this, chunk, flushFlag, cb);
 };
 
-ZlibBase.prototype._processChunk = function (this: $Node.ZlibBase, chunk: View, flushFlag: number, cb?: () => void) {
+ZlibBase.prototype._processChunk = function (chunk, flushFlag, cb) {
   // _processChunk() is left for backwards compatibility
   if (typeof cb === "function") processChunk(this, chunk, flushFlag, cb);
   else return processChunkSync(this, chunk, flushFlag);
@@ -424,7 +357,7 @@ ZlibBase.prototype._processChunk = function (this: $Node.ZlibBase, chunk: View, 
 // the chunk an ArrayBuffer. JSC then counts the chunk as allocated a second time, and only a full
 // collection takes it out of the heap size again, so full collections come often. A slice also keeps
 // the whole chunk alive with the result. nativeDecodePullResult in BunStreamSource.cpp has the same rule.
-function takeOutput(buffer: Buffer, offset: number, have: number): Buffer {
+function takeOutput(buffer, offset, have) {
   // A full chunk: hand it over. The caller replaces an exhausted chunk.
   if (offset === 0 && have === buffer.byteLength) return buffer;
   // At most one default chunk: copy it out. A fractional chunkSize gives fractional offsets, which
@@ -435,24 +368,24 @@ function takeOutput(buffer: Buffer, offset: number, have: number): Buffer {
   return buffer.slice(offset, offset + have);
 }
 
-function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number): Buffer {
+function processChunkSync(self, chunk, flushFlag) {
   let availInBefore = chunk.byteLength;
   let availOutBefore = self._chunkSize - self._outOffset;
   let inOff = 0;
-  let availOutAfter: number;
-  let availInAfter: number;
+  let availOutAfter;
+  let availInAfter;
 
-  const buffers: Buffer[] = [];
+  const buffers = [];
   let nread = 0;
   let inputRead = 0;
   const state = self._writeState;
-  const handle = self._handle!;
+  const handle = self._handle;
   let buffer = self._outBuffer;
   let offset = self._outOffset;
   const chunkSize = self._chunkSize;
 
   let error: Error | undefined;
-  self.on("error", function onError(er: Error) {
+  self.on("error", function onError(er) {
     error = er;
   });
 
@@ -524,7 +457,7 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
   return buffers.length === 1 ? buffers[0] : Buffer.concat(buffers, nread);
 }
 
-function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: () => void) {
+function processChunk(self, chunk, flushFlag, cb) {
   const handle = self._handle;
   if (!handle) return process.nextTick(cb);
 
@@ -546,7 +479,7 @@ function processChunk(self: $Node.ZlibBase, chunk: View, flushFlag: number, cb: 
   );
 }
 
-function processCallback(this: ZlibHandle) {
+function processCallback() {
   // This callback's context (`this`) is the `_handle` (ZCtx) object. It is
   // important to null out the values once they are no longer needed since
   // `_handle` can stay in memory long after the buffer is needed.
@@ -588,7 +521,7 @@ function processCallback(this: ZlibHandle) {
   }
 
   // Exhausted the output buffer, or used all the input create a new one.
-  let chunkSize: number | undefined;
+  let chunkSize;
   if (availOutAfter === 0 || self._outOffset >= (chunkSize = self._chunkSize)) {
     chunkSize ??= self._chunkSize;
     handle.availOutBefore = chunkSize;
@@ -649,14 +582,14 @@ function processCallback(this: ZlibHandle) {
   }
 
   // Finished with the chunk.
-  const afterFlush = this.buffer![kAfterFlush];
+  const afterFlush = this.buffer[kAfterFlush];
   this.buffer = null;
   // The handle is idle until this.cb() gives it the next buffered chunk.
   if (afterFlush) afterFlush();
   this.cb();
 }
 
-function _close(engine: $Node.ZlibBase) {
+function _close(engine) {
   // Caller may invoke .close after a zlib error (which will null _handle)
   engine._handle?.close();
   engine._handle = null;
@@ -669,7 +602,7 @@ const zlibDefaultOpts = {
 };
 // Base class for all streams actually backed by zlib and using zlib-specific
 // parameters.
-function Zlib(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
+function Zlib(opts, mode) {
   let windowBits = Z_DEFAULT_WINDOWBITS;
   let level = Z_DEFAULT_COMPRESSION;
   let memLevel = Z_DEFAULT_MEMLEVEL;
@@ -703,7 +636,7 @@ function Zlib(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
     dictionary = opts.dictionary;
     if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
       if (isAnyArrayBuffer(dictionary)) {
-        dictionary = Buffer.from(dictionary) as Buffer;
+        dictionary = Buffer.from(dictionary);
       } else {
         throw $ERR_INVALID_ARG_TYPE(
           "options.dictionary",
@@ -727,7 +660,7 @@ $toClass(Zlib, "Zlib", ZlibBase);
 
 // This callback is used by `.params()` to wait until a full flush happened before adjusting the parameters.
 // In particular, the call to the native `params()` function should not happen while a write is currently in progress on the threadpool.
-function paramsAfterFlushCallback(this: $Node.Zlib, level: number, strategy: number, callback?: () => void) {
+function paramsAfterFlushCallback(level, strategy, callback) {
   if (!this._handle) return;
   this._handle.params(level | 0, strategy | 0);
   if (!this.destroyed) {
@@ -737,7 +670,7 @@ function paramsAfterFlushCallback(this: $Node.Zlib, level: number, strategy: num
   }
 }
 
-Zlib.prototype.params = function params(this: $Node.Zlib, level: number, strategy: number, callback: () => void) {
+Zlib.prototype.params = function params(level, strategy, callback) {
   checkRangesOrGetDefault(level, "level", Z_MIN_LEVEL, Z_MAX_LEVEL);
   checkRangesOrGetDefault(strategy, "strategy", Z_DEFAULT_STRATEGY, Z_FIXED);
 
@@ -766,62 +699,58 @@ Zlib.prototype.params = function params(this: $Node.Zlib, level: number, strateg
   }
 };
 
-function Deflate(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Deflate)) return new Deflate(opts) as any;
+function Deflate(opts): void {
+  if (!(this instanceof Deflate)) return new Deflate(opts);
   Zlib.$apply(this, [opts, DEFLATE]);
 }
 $toClass(Deflate, "Deflate", Zlib);
 
-function Inflate(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Inflate)) return new Inflate(opts) as any;
+function Inflate(opts): void {
+  if (!(this instanceof Inflate)) return new Inflate(opts);
   Zlib.$apply(this, [opts, INFLATE]);
 }
 $toClass(Inflate, "Inflate", Zlib);
 
-function Gzip(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Gzip)) return new Gzip(opts) as any;
+function Gzip(opts): void {
+  if (!(this instanceof Gzip)) return new Gzip(opts);
   Zlib.$apply(this, [opts, GZIP]);
 }
 $toClass(Gzip, "Gzip", Zlib);
 
-function Gunzip(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Gunzip)) return new Gunzip(opts) as any;
+function Gunzip(opts): void {
+  if (!(this instanceof Gunzip)) return new Gunzip(opts);
   Zlib.$apply(this, [opts, GUNZIP]);
 }
 $toClass(Gunzip, "Gunzip", Zlib);
 
-function DeflateRaw(this: $Node.Zlib, opts?: ZlibOptions): void {
+function DeflateRaw(opts): void {
   if (opts && opts.windowBits === 8) opts.windowBits = 9;
-  if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts) as any;
+  if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
   Zlib.$apply(this, [opts, DEFLATERAW]);
 }
 $toClass(DeflateRaw, "DeflateRaw", Zlib);
 
-function InflateRaw(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof InflateRaw)) return new InflateRaw(opts) as any;
+function InflateRaw(opts): void {
+  if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
   Zlib.$apply(this, [opts, INFLATERAW]);
 }
 $toClass(InflateRaw, "InflateRaw", Zlib);
 
-function Unzip(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof Unzip)) return new Unzip(opts) as any;
+function Unzip(opts): void {
+  if (!(this instanceof Unzip)) return new Unzip(opts);
   Zlib.$apply(this, [opts, UNZIP]);
 }
 $toClass(Unzip, "Unzip", Zlib);
 
-// The checker does not take a function for a constructor: both kinds are constructed below.
-type ZlibFunction = (this: $Node.Zlib, opts?: ZlibOptions) => void;
-type ZlibClass = new (opts?: ZlibOptions) => $Node.ZlibBase;
-
-function createConvenienceMethod(ctor: ZlibFunction | ZlibClass, sync: boolean, methodName: string, isZstd?: boolean) {
+function createConvenienceMethod(ctor, sync, methodName, isZstd?) {
   if (sync) {
-    const fn = function (buffer: ZlibInput, opts?: ZlibOptions) {
-      return zlibBufferSync(new (ctor as ZlibClass)(opts), buffer);
+    const fn = function (buffer, opts) {
+      return zlibBufferSync(new ctor(opts), buffer);
     };
     ObjectDefineProperty(fn, "name", { value: methodName });
     return fn;
   } else {
-    const fn = function (buffer: ZlibInput, opts: ZlibOptions | ZlibCallback | undefined, callback?: ZlibCallback) {
+    const fn = function (buffer, opts, callback) {
       if (typeof opts === "function") {
         callback = opts;
         opts = {};
@@ -830,7 +759,7 @@ function createConvenienceMethod(ctor: ZlibFunction | ZlibClass, sync: boolean, 
       // so that the content size is included in the frame header
       if (isZstd) {
         // Calculate buffer size
-        let bufferSize: number;
+        let bufferSize;
         if (typeof buffer === "string") {
           bufferSize = Buffer.byteLength(buffer);
         } else if (isArrayBufferView(buffer)) {
@@ -845,7 +774,7 @@ function createConvenienceMethod(ctor: ZlibFunction | ZlibClass, sync: boolean, 
           opts = { ...opts, pledgedSrcSize: bufferSize };
         }
       }
-      return zlibBuffer(new (ctor as ZlibClass)(opts), buffer, callback!);
+      return zlibBuffer(new ctor(opts), buffer, callback);
     };
     ObjectDefineProperty(fn, "name", { value: methodName });
     return fn;
@@ -861,7 +790,7 @@ const brotliDefaultOpts = {
   finishFlush: BROTLI_OPERATION_FINISH,
   fullFlush: BROTLI_OPERATION_FLUSH,
 };
-function Brotli(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
+function Brotli(opts, mode) {
   $assert(mode === BROTLI_DECODE || mode === BROTLI_ENCODE);
 
   TypedArrayPrototypeFill.$call(brotliInitParamsArray, -1);
@@ -872,9 +801,9 @@ function Brotli(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
         throw $ERR_BROTLI_INVALID_PARAM(origKey);
       }
 
-      const value = opts.params![origKey];
+      const value = opts.params[origKey];
       if (typeof value !== "number" && typeof value !== "boolean") {
-        throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params![origKey]);
+        throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
       }
       brotliInitParamsArray[key] = +value;
     });
@@ -883,7 +812,7 @@ function Brotli(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
   let dictionary = opts?.dictionary;
   if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
     if (isAnyArrayBuffer(dictionary)) {
-      dictionary = Buffer.from(dictionary) as Buffer;
+      dictionary = Buffer.from(dictionary);
     } else {
       throw $ERR_INVALID_ARG_TYPE(
         "options.dictionary",
@@ -905,14 +834,14 @@ function Brotli(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
 $toClass(Brotli, "Brotli", Zlib);
 Brotli.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_BROTLI];
 
-function BrotliCompress(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts) as any;
+function BrotliCompress(opts): void {
+  if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
   Brotli.$apply(this, [opts, BROTLI_ENCODE]);
 }
 $toClass(BrotliCompress, "BrotliCompress", Brotli);
 
-function BrotliDecompress(this: $Node.Zlib, opts?: ZlibOptions): void {
-  if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts) as any;
+function BrotliDecompress(opts): void {
+  if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
   Brotli.$apply(this, [opts, BROTLI_DECODE]);
 }
 $toClass(BrotliDecompress, "BrotliDecompress", Brotli);
@@ -923,8 +852,10 @@ const zstdDefaultOpts = {
   fullFlush: ZSTD_e_flush,
 };
 
-class Zstd extends (ZlibBase as unknown as ZlibBaseConstructor) {
-  constructor(opts: ZlibOptions | undefined, mode: number, initParamsArray: Uint32Array, maxParam: number) {
+class Zstd extends ZlibBase {
+  declare _writeState: Uint32Array;
+
+  constructor(opts, mode, initParamsArray, maxParam) {
     $assert(mode === ZSTD_COMPRESS || mode === ZSTD_DECOMPRESS);
 
     initParamsArray.fill(-1);
@@ -935,11 +866,11 @@ class Zstd extends (ZlibBase as unknown as ZlibBaseConstructor) {
           throw $ERR_ZSTD_INVALID_PARAM(origKey);
         }
 
-        const value = opts.params![origKey];
+        const value = opts.params[origKey];
         if (typeof value !== "number" && typeof value !== "boolean") {
-          throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params![origKey]);
+          throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", opts.params[origKey]);
         }
-        initParamsArray[key] = value as number;
+        initParamsArray[key] = value;
       });
     }
 
@@ -969,7 +900,7 @@ const kMaxZstdCParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWi
 const zstdInitCParamsArray = new Uint32Array(kMaxZstdCParam + 1);
 
 class ZstdCompress extends Zstd {
-  constructor(opts?: ZlibOptions) {
+  constructor(opts) {
     super(opts, ZSTD_COMPRESS, zstdInitCParamsArray, kMaxZstdCParam);
   }
 }
@@ -979,7 +910,7 @@ const kMaxZstdDParam = MathMax(...ObjectKeys(constants).map(key => (key.startsWi
 const zstdInitDParamsArray = new Uint32Array(kMaxZstdDParam + 1);
 
 class ZstdDecompress extends Zstd {
-  constructor(opts?: ZlibOptions) {
+  constructor(opts) {
     super(opts, ZSTD_DECOMPRESS, zstdInitDParamsArray, kMaxZstdDParam);
   }
 }
@@ -987,10 +918,10 @@ class ZstdDecompress extends Zstd {
 // Legacy alias on the C++ wrapper object.
 ObjectDefineProperty(NativeZlib.prototype, "jsref", {
   __proto__: null,
-  get(this: ZlibHandle) {
+  get() {
     return this[owner_symbol];
   },
-  set(this: ZlibHandle, v: $Node.ZlibBase) {
+  set(v) {
     return (this[owner_symbol] = v);
   },
 });
@@ -1032,37 +963,37 @@ const zlib = {
   zstdDecompress: createConvenienceMethod(ZstdDecompress, false, "zstdDecompress"),
   zstdDecompressSync: createConvenienceMethod(ZstdDecompress, true, "zstdDecompressSync"),
 
-  createDeflate: function (options?: ZlibOptions): $Node.ZlibBase {
+  createDeflate: function (options) {
     return new Deflate(options);
   },
-  createInflate: function (options?: ZlibOptions): $Node.ZlibBase {
+  createInflate: function (options) {
     return new Inflate(options);
   },
-  createDeflateRaw: function (options?: ZlibOptions): $Node.ZlibBase {
+  createDeflateRaw: function (options) {
     return new DeflateRaw(options);
   },
-  createInflateRaw: function (options?: ZlibOptions): $Node.ZlibBase {
+  createInflateRaw: function (options) {
     return new InflateRaw(options);
   },
-  createGzip: function (options?: ZlibOptions): $Node.ZlibBase {
+  createGzip: function (options) {
     return new Gzip(options);
   },
-  createGunzip: function (options?: ZlibOptions): $Node.ZlibBase {
+  createGunzip: function (options) {
     return new Gunzip(options);
   },
-  createUnzip: function (options?: ZlibOptions): $Node.ZlibBase {
+  createUnzip: function (options) {
     return new Unzip(options);
   },
-  createBrotliCompress: function (options?: ZlibOptions): $Node.ZlibBase {
+  createBrotliCompress: function (options) {
     return new BrotliCompress(options);
   },
-  createBrotliDecompress: function (options?: ZlibOptions): $Node.ZlibBase {
+  createBrotliDecompress: function (options) {
     return new BrotliDecompress(options);
   },
-  createZstdCompress: function (options?: ZlibOptions): $Node.ZlibBase {
+  createZstdCompress: function (options) {
     return new ZstdCompress(options);
   },
-  createZstdDecompress: function (options?: ZlibOptions): $Node.ZlibBase {
+  createZstdDecompress: function (options) {
     return new ZstdDecompress(options);
   },
 };

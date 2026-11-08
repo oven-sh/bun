@@ -190,6 +190,7 @@ public:
             factoriesOfCompiledMocks.clear();
             numberOfFactoriesSetAside = 0;
             fetchesThatStandForWaitingMocks.clear();
+            compiledFetchesHeldBehindFactories.clear();
             compiledImportersLinkedAheadOfMocks.clear();
             mocksLaidByBodies.clear();
             modulesThatLaidMocksInBodies.clear();
@@ -221,6 +222,8 @@ public:
         size_t numberOfFactoriesSetAside { 0 };
         // The fetches of compiled files that wait for the turn of a mock below them: the key of the fetch, and the mock. To rankWaitingModuleMocks() such an entry of the loader stands for the mock.
         WTF::Vector<std::pair<String, JSC::Strong<JSC::JSObject>>> fetchesThatStandForWaitingMocks;
+        // The fetches of compiled files that go on only once a factory below them has settled, by the key of the record. See rankWaitingModuleMocks().
+        WTF::Vector<String, 1> compiledFetchesHeldBehindFactories;
         // The mocked module, and a compiled importer that had yet to run when the mock was laid and whose record the loader held, linked to the record of the module, which had run. It stays linked to that one.
         WTF::Vector<std::pair<String, String>> compiledImportersLinkedAheadOfMocks;
         uint64_t callsOfFactoriesOfCompiledMocks { 0 };
@@ -239,6 +242,8 @@ public:
             WTF::Vector<uint32_t, 4> importers;
             // The rest, and those that waited at an import() at their top, run again only where they laid a mock themselves.
             WTF::Vector<uint32_t, 2> importersByCall;
+            // The call threw. A body that caught it went on. One that did not has failed: whoever imports it again is given what it threw.
+            bool threw { false };
         };
         WTF::Vector<MockLaidByBody> mocksLaidByBodies;
         // Each `module` of them, once.

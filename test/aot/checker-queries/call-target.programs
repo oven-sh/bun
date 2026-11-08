@@ -963,6 +963,75 @@ linked-by-a-function.js:23 constructor function parent `FixedParent` = linked-by
 absent: linked-by-a-function.js:29 constructor function parent `UnknownParent` = linked-by-a-function.js:1
 absent: linked-by-a-function.js:31 constructor function parent `Spread` = linked-by-a-function.js:1
 absent: linked-by-a-function.js:33 constructor function parent `NeverCalled` = linked-by-a-function.js:1
+//// constructor-function-parents/linked-through-many-functions.js
+function Base() {}
+function step1(constructor, parent) { step2(constructor, parent); }
+function step2(constructor, parent) { step3(constructor, parent); }
+function step3(constructor, parent) { step4(constructor, parent); }
+function step4(constructor, parent) { step5(constructor, parent); }
+function step5(constructor, parent) { step6(constructor, parent); }
+function step6(constructor, parent) { step7(constructor, parent); }
+function step7(constructor, parent) { step8(constructor, parent); }
+function step8(constructor, parent) { step9(constructor, parent); }
+function step9(constructor, parent) { step10(constructor, parent); }
+function step10(constructor, parent) { step11(constructor, parent); }
+function step11(constructor, parent) { link(constructor, parent); }
+function link(constructor, parent) {
+  Object.setPrototypeOf(constructor.prototype, parent.prototype);
+}
+function ThroughTwelveFunctions() {}
+step1(ThroughTwelveFunctions, Base);
+function first(constructor, parent, turns) {
+  if (turns) second(constructor, parent, turns - 1);
+}
+function second(constructor, parent, turns) {
+  if (turns) third(constructor, parent, turns - 1);
+  else link(constructor, parent);
+}
+function third(constructor, parent, turns) {
+  first(constructor, parent, turns);
+}
+function FromTheFirstOfARing() {}
+first(FromTheFirstOfARing, Base, 1);
+function FromTheThirdOfARing() {}
+third(FromTheThirdOfARing, Base, 2);
+function under(constructor, parent) {
+  link(constructor, parent);
+  link(constructor, Base);
+}
+function NamedTwiceAlike() {}
+under(NamedTwiceAlike, Base);
+function Other() {}
+function NamedTwiceApart() {}
+under(NamedTwiceApart, Other);
+function underOther(constructor) { link(constructor, Other); }
+function underBoth(constructor) {
+  link(constructor, Base);
+  underOther(constructor);
+}
+function UnderTwoDeclared() {}
+underBoth(UnderTwoDeclared);
+function both(constructor, one, two) {
+  link(constructor, one);
+  link(constructor, two);
+}
+function UnderOneNamedTwice() {}
+both(UnderOneNamedTwice, Base, Base);
+//// constructor-function-parents/linked-through-many-functions.queries.txt
+# However many functions hand the two on before one links them.
+linked-through-many-functions.js:16 constructor function parent `ThroughTwelveFunctions` = linked-through-many-functions.js:1
+# Functions that lead back to one another all know what any of them links, whichever is asked first.
+linked-through-many-functions.js:28 constructor function parent `FromTheFirstOfARing` = linked-through-many-functions.js:1
+linked-through-many-functions.js:30 constructor function parent `FromTheThirdOfARing` = linked-through-many-functions.js:1
+# A parent that is a parameter is held against a declared one at the call, where it is known.
+linked-through-many-functions.js:36 constructor function parent `NamedTwiceAlike` = linked-through-many-functions.js:1
+absent: linked-through-many-functions.js:39 constructor function parent `NamedTwiceApart` = linked-through-many-functions.js:1
+absent: linked-through-many-functions.js:39 constructor function parent `NamedTwiceApart` = linked-through-many-functions.js:38
+# Two declared parents are no parent, wherever the two links are written.
+absent: linked-through-many-functions.js:46 constructor function parent `UnderTwoDeclared` = linked-through-many-functions.js:1
+absent: linked-through-many-functions.js:46 constructor function parent `UnderTwoDeclared` = linked-through-many-functions.js:38
+# Two parents that are parameters are no parent either, though this call names one function twice.
+absent: linked-through-many-functions.js:52 constructor function parent `UnderOneNamedTwice` = linked-through-many-functions.js:1
 //// constructor-function-parents/linked-by-built-ins.js
 function Base() {}
 function Relinked() {}

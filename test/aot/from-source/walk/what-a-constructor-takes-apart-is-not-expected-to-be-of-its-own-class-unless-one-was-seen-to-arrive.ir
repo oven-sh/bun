@@ -1,0 +1,16 @@
+# -- source: main.ts
+# interface Row { id: number; label: string }
+# const data = JSON.parse('{"rows":[{"id":0,"label":"a"},{"id":1,"label":"bb"}]}');
+# const rows: Row[] = data.rows;
+# class Member { id: number; label: string; constructor(row: Row) { this.id = row.id; this.label = row.label; } }
+# function run(turns: number): number { let s = 0; for (let i = 0; i < turns; i++) { const m = new Member(rows[i & 1]!); s += m.id + m.label.length; } return s; }
+# console.log(run(9), run(0));
+# export {};
+# -- end of source
+# Rows of parsed data are laid into objects of a class. The class has the names of the interface, and it is the only layout of the program that has them, so the written type `Row` reaches the engine as
+# `Member`: the constructor expected to be handed an object of its own class, a test that failed at every row, with every read by name and all that reckons with them behind a rare edge. Every caller of the
+# constructor is known and no Member was seen to arrive: nothing is expected of the parameter.
+# RUN: walk f2 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-NOT: ShapeTest
+# CHECK: PropGet {{*}} key="id"

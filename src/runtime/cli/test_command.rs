@@ -3640,7 +3640,7 @@ impl TestCommand {
             (refused.into_iter()).partition(|line| line.starts_with(run_compiled::UNREACHED_FILE));
         if !unreached.is_empty() {
             pretty_error!(
-                "<yellow>{} load{} of a compiled file by a computed path<r> failed during this run, caught or not. The build saw no import() or require() of a computed path, and it can't see code from a string, as in eval() or new Function(). An executable refuses them too. Import the file by a constant path:\n",
+                "<yellow>{} load{} of a compiled file by a computed path<r> failed during this run, caught or not. The build saw no import() or require() of a computed path that can reach the file, and it can't see code from a string, as in eval() or new Function(). An executable refuses them too, unless you build it with the file as another entry point. Import the file by a constant path, or add --aot-allow-code-from-disk:\n",
                 unreached.len(),
                 if unreached.len() == 1 { "" } else { "s" }
             );
@@ -3660,6 +3660,21 @@ impl TestCommand {
                 pretty_error!(
                     "  {}\n",
                     bstr::BStr::new(&line[run_compiled::RAN_FROM_SOURCE.len()..])
+                );
+            }
+        }
+        let (kept_runs, refused): (Vec<Vec<u8>>, Vec<Vec<u8>>) =
+            (refused.into_iter()).partition(|line| line.starts_with(run_compiled::KEPT_RUN));
+        if !kept_runs.is_empty() {
+            pretty_error!(
+                "<yellow>{} compiled file{} didn't run again<r> during this run where `bun test` runs a file again: a module mock below it was laid or has ended. What its top-level code computed stays as it was:\n",
+                kept_runs.len(),
+                if kept_runs.len() == 1 { "" } else { "s" }
+            );
+            for line in &kept_runs {
+                pretty_error!(
+                    "  {}\n",
+                    bstr::BStr::new(&line[run_compiled::KEPT_RUN.len()..])
                 );
             }
         }

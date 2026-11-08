@@ -19,7 +19,8 @@ use crate::file_analysis::{AnalyzedAgainFrom, FileAnalysis, FileInputs};
 use crate::fold::StoredByMocks;
 use crate::hir_from_data::{DataValue, HostValue};
 use crate::import_sites::{
-    ImportSiteKind, ImportSpecifier, find_texts_of_exports, write_from_other_folder,
+    ImportSiteKind, ImportSpecifier, find_texts_of_exports, is_module_that_reaches_modules,
+    reaches_modules_unnamed, touches_export, write_from_other_folder,
     write_question_where_file_lies, write_start_from_other_folder,
 };
 use crate::resolve::{
@@ -51,6 +52,8 @@ struct WalkedFile<'s, 'r> {
     texts_of_data_files: Vec<TextOfDataFile>,
     imported_file_changers: Vec<ImportedFileChanger>,
     texts_of_other_files: Vec<TextOfOtherFile>,
+    exports_that_others_touch: Vec<Atom>,
+    reaches_modules_unnamed: Option<bool>,
     foldings_with_constants: u32,
     version: u32,
     depth: u32,
@@ -70,6 +73,7 @@ struct CopiedLoadInputs<'s> {
     texts_of_data_files: Vec<TextOfDataFile>,
     imported_file_changers: Vec<ImportedFileChanger>,
     texts_of_other_files: Vec<TextOfOtherFile>,
+    exports_that_others_touch: Vec<Atom>,
 }
 
 impl<'s> CopiedLoadInputs<'s> {
@@ -82,6 +86,7 @@ impl<'s> CopiedLoadInputs<'s> {
             texts_of_data_files: &self.texts_of_data_files,
             imported_file_changers: &self.imported_file_changers,
             texts_of_other_files: &self.texts_of_other_files,
+            exports_that_others_touch: &self.exports_that_others_touch,
         }
     }
 }
@@ -103,6 +108,7 @@ impl<'s, 'r> WalkedFile<'s, 'r> {
             texts_of_data_files: self.texts_of_data_files.clone(),
             imported_file_changers: self.imported_file_changers.clone(),
             texts_of_other_files: self.texts_of_other_files.clone(),
+            exports_that_others_touch: self.exports_that_others_touch.clone(),
         }
     }
 }
@@ -168,6 +174,7 @@ struct WalkState<'s, 'r> {
     unfinished: Vec<u32>,
     askers_of_data_files: Vec<u32>,
     askers_of_other_files: Vec<u32>,
+    askers_of_own_exports: Vec<u32>,
     askers_for_main_module: Vec<u32>,
     files_read_by_plugins: usize,
     time_loading: Duration,
@@ -270,7 +277,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             import_what_is_required(self, &mut state);
             let mut files = order_files(self, &mut state);
             compute_package_depths(&mut files.entries, &files.entry_points, &files.steps);
-            copy_to_session(self.session, &mut files.entries, &files.parsed);
+            copy_to_session(self, &mut files.entries, &files.parsed);
             ordered = Some(files);
         };
         match early_prefetch.get() {
@@ -399,6 +406,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             texts_of_data_files: Vec::new(),
             imported_file_changers: Vec::new(),
             texts_of_other_files: Vec::new(),
+            exports_that_others_touch: Vec::new(),
+            reaches_modules_unnamed: None,
             foldings_with_constants: 0,
             version: 0,
             depth,
@@ -438,6 +447,9 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         }
         if !analysis.asked_of_other_files.is_empty() {
             state.askers_of_other_files.push(index);
+        }
+        if !analysis.asked_of_own_exports.is_empty() {
+            state.askers_of_own_exports.push(index);
         }
         if analysis.asks_for_main_module {
             state.askers_for_main_module.push(index);
@@ -695,6 +707,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 || scan_askers_of_data_files_again(&context.atoms, &mut state)
                 || scan_importers_of_file_changers_again(context, &mut state)
                 || scan_askers_of_other_files_again(context, &mut state)
+                || scan_files_whose_exports_others_touch_again(&context.atoms, &mut state)
                 || forget_files_that_another_loader_reads(context, &mut state)
                 || finish_files(&mut state)
                 || self.follow_chosen_imports(&mut state)
@@ -1801,6 +1814,89 @@ fn scan_askers_of_other_files_again<'s>(
     has_askers
 }
 
+fn find_exports_that_others_touch(
+    atoms: &Interner<'_>,
+    files: &[WalkedFile<'_, '_>],
+    index: u32,
+) -> Vec<Atom> {
+    let file = &files[index as usize];
+    let Some(parsed) = &file.parsed else {
+        return Vec::new();
+    };
+    let asked = parsed.code.analyzed.analysis.asked_of_own_exports;
+    if files
+        .iter()
+        .any(|it| it.reaches_modules_unnamed == Some(true))
+    {
+        return asked.to_vec();
+    }
+    let mut touched = file.exports_that_others_touch.clone();
+    for importer in files {
+        let Some(importing) = &importer.parsed else {
+            continue;
+        };
+        let analysis = &importing.code.analyzed.analysis;
+        let mut next_target = 0;
+        for (site, &resolution) in (analysis.import_sites.iter()).zip(&importing.code.resolutions) {
+            let targets = next_target..next_target + files_of(resolution).count();
+            next_target = targets.end;
+            let loads_file = site.specifier == ImportSpecifier::Unknown
+                || (importer.targets.get(targets)).is_some_and(|it| it.contains(&index));
+            if !loads_file {
+                continue;
+            }
+            let (hir, bound) = (&importing.parse.hir, &importing.parse.bound);
+            let anew = asked.iter().filter(|&&key| {
+                !touched.contains(&key) && touches_export(hir, bound, atoms, site.kind, key)
+            });
+            let anew: Vec<Atom> = anew.copied().collect();
+            touched.extend(anew);
+        }
+    }
+    touched.shared_sort_unstable_by_key(|it| it.0);
+    touched.dedup();
+    touched
+}
+
+fn scan_files_whose_exports_others_touch_again(
+    atoms: &Interner<'_>,
+    state: &mut WalkState<'_, '_>,
+) -> bool {
+    let asks = |file: &WalkedFile<'_, '_>| {
+        (file.parsed.as_ref())
+            .is_some_and(|it| !it.code.analyzed.analysis.asked_of_own_exports.is_empty())
+    };
+    let asking = take_noted_files(&mut state.askers_of_own_exports, &state.files, asks);
+    if !asking.is_empty() {
+        for file in &mut state.files {
+            if let (None, Some(parsed)) = (file.reaches_modules_unnamed, &file.parsed) {
+                let (hir, bound) = (&parsed.parse.hir, &parsed.parse.bound);
+                let mut sites = parsed.code.analyzed.analysis.import_sites.iter();
+                let loads_one_that_does = sites.any(|site| {
+                    matches!(site.specifier, ImportSpecifier::Constant(name)
+                        if is_module_that_reaches_modules(atoms.bytes(name)))
+                });
+                file.reaches_modules_unnamed =
+                    Some(loads_one_that_does || reaches_modules_unnamed(hir, bound, atoms));
+            }
+        }
+    }
+    let mut touched_anew: Vec<(u32, Vec<Atom>)> = Vec::new();
+    for &index in &asking {
+        let found = find_exports_that_others_touch(atoms, &state.files, index);
+        if found != state.files[index as usize].exports_that_others_touch {
+            touched_anew.push((index, found));
+        }
+    }
+    state.askers_of_own_exports = asking;
+    let is_any_touched_anew = !touched_anew.is_empty();
+    for (index, found) in touched_anew {
+        state.files[index as usize].exports_that_others_touch = found;
+        scan_parsed_file_again(state, index);
+    }
+    is_any_touched_anew
+}
+
 fn erase_sites_nothing_asked_for(state: &mut WalkState<'_, '_>) {
     for (file, waiting) in std::mem::take(&mut state.barrels).into_waiting() {
         let file = &mut state.files[file as usize];
@@ -2081,10 +2177,11 @@ fn compute_package_depths(
 }
 
 fn copy_to_session<'s, 'r>(
-    session: &'s Session,
+    context: &CodeLoadContext<'_, 's, 'r>,
     entries: &mut [CodeEntry<'s, 'r>],
     parsed: &[ParsedSlot<'s, 'r>],
 ) {
+    let session = context.session;
     let arena = session.arena();
     let mut settings: FxHashMap<&'r TranspileSettings, &'s TranspileSettings> =
         FxHashMap::default();
@@ -2108,6 +2205,9 @@ fn copy_to_session<'s, 'r>(
         });
         entry.side_effects = match analyzed.side_effects {
             DeclaredSideEffects::Unspecified => DeclaredSideEffects::Unspecified,
+            _ if context.resolver.is_found_with_side_effects(entry.key.path) => {
+                DeclaredSideEffects::Unspecified
+            }
             DeclaredSideEffects::None => DeclaredSideEffects::None,
             DeclaredSideEffects::Listed {
                 directory,

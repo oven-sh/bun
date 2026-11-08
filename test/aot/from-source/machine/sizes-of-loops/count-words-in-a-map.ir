@@ -14,9 +14,9 @@
 # for (let turn = 0; turn < input; turn++) (globalThis as any).answer = count(words);
 # -- end of source
 # The compiler before this one: 31 instructions, 5 of them patches.
-# When the bound was taken: loop: operations 46, patches 4, moves 11, unlikely 13 ; loop: operations 54, patches 4, moves 10, unlikely 13.
-# RUN(X64): loops most:57,64 f1 mechanisms=all-Inlining
+# When the bound was taken: loop: operations 49, patches 4, moves 10, unlikely 13 (the test of what the map gives asks for an int32 first and hands the double on: both arms are counted, an int32 runs four fewer) ; loop: operations 54, patches 4, moves 10, unlikely 13.
+# RUN(X64): loops most:59,64 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
-# X64-NEXT: loop: at most 57
+# X64-NEXT: loop: at most 59
 # X64-NEXT: loop: at most 64

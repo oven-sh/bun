@@ -9,7 +9,8 @@
 # The variables of files that the text of the loop stores are read at the head of each turn of the typed copy. A store into one of them leaves the turn able to begin again, also where the ways of a branch meet; where it begins again each is stored back, so that the closed copy counts the turn once.
 # f1 = running
 # RUN: walk f1:Body mechanisms=all
-# CHECK: isInLoop=true isLoopHead=true
+# The closed copy stands first and bears the marks of a loop too: the head that is meant is the typed copy's, whose counter stays below the length of a list.
+# CHECK: int[1, 4294967295] @Int64{{*}}isInLoop=true isLoopHead=true
 # CHECK: [[held]]: {{*}}= GetModuleVariable variable=[[turns]]
 # CHECK: = PutModuleVariable {{*}}variable=[[turns]]
 # CHECK: = PutDoubleIndex

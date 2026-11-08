@@ -294,6 +294,7 @@ pub struct Program<'s> {
     modules_searched_for_exports: std::sync::atomic::AtomicUsize,
     aot_symbols: std::sync::OnceLock<aot::ProgramSymbols>,
     aot_store_indexes: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::StoreIndex<'s>>]>,
+    aot_written_stores: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::WrittenStores<'s>>]>,
     aot_prototype_links: std::sync::OnceLock<&'s [std::sync::OnceLock<aot::PrototypeLinks<'s>>]>,
     pub files: &'s Files<'s>,
     pub types: TypeStore<'s>,
@@ -628,6 +629,10 @@ impl<'s> Program<'s> {
         counts.collect()
     }
 
+    #[allow(
+        clippy::large_stack_frames,
+        reason = "every table is made here and moved into the program, each with its chunks' addresses in line; runs once per program, close to the bottom of the stack"
+    )]
     pub fn with_node_counts(
         session: &'s Session,
         files: &'s Files<'s>,
@@ -685,6 +690,7 @@ impl<'s> Program<'s> {
             modules_searched_for_exports: Default::default(),
             aot_symbols: Default::default(),
             aot_store_indexes: Default::default(),
+            aot_written_stores: Default::default(),
             aot_prototype_links: Default::default(),
             types,
             expr_types: ByNode::new_in(&exprs, session),
@@ -1051,6 +1057,7 @@ impl<'s> Program<'s> {
             symbols_with_identical_type_parameters: Default::default(),
             counted_export_declarations: Default::default(),
             has_class_or_function_declaration: Default::default(),
+            flow_containers_of_classes: Default::default(),
             generic_mapped_types_in_progress: Vec::new(),
             generic_mapped_types_cut_short: Vec::new(),
             recent_members: Box::new([shape::RecentMembers::NONE; shape::RECENT_MEMBERS]),
@@ -1854,6 +1861,7 @@ pub struct Checker<'p, 's> {
     symbols_with_identical_type_parameters: crate::util::FxHashSet<Sym>,
     /// For `check_namespace_merge_order`: whether a class or a function is among the declarations of a symbol.
     has_class_or_function_declaration: FxHashMap<Sym, bool>,
+    flow_containers_of_classes: FxHashMap<(FileId, ClassId), shape::FlowContainers>,
     /// For `check_external_module_exports`: how many declarations of an exported symbol count as duplicates.
     counted_export_declarations: FxHashMap<Sym, usize>,
     /// `unionOfUnionTypes`, for `UnionReductionSubtype`: the lower id first.

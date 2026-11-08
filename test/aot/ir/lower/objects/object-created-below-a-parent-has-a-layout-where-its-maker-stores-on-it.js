@@ -1,5 +1,5 @@
 // `Object.create(parent)` is an allocation of a layout of the call's own only where the body that makes the object stores on it under a written name. Every other call stays a call and makes a plain object.
-// Below a written null the object is a record. It stays a plain one where the file stores on it under a computed key, hands it to Object.create as the parent or defines on it by a descriptor, in a nested function too.
+// Below a written null the object is a record. It stays a plain one where the file stores on it under a computed key, hands it to Object.create as the parent or defines on it by a descriptor that lays more than a value or a getter, in a nested function too.
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: builtin=ObjectCreate
@@ -129,7 +129,7 @@ const namespaceBelowNull = Object.create(null);
 namespaceBelowNull.name = 1;
 const definedOnBelowNull = Object.create(null);
 definedOnBelowNull.name = 1;
-Object.defineProperty(definedOnBelowNull, "got", { get() { return 1; } });
+Object.defineProperty(definedOnBelowNull, "got", { get() { return 1; }, set(given) {} });
 const parentBelowNull = Object.create(null);
 parentBelowNull.name = 1;
 export const belowTheParent = () => Object.create(parentBelowNull);

@@ -251,6 +251,9 @@ function IncomingMessage(
     isFromNativeServer &&
     nativeHighWaterMark !== undefined &&
     IS_COMPILED_AHEAD_OF_TIME &&
+    $findsDeclaredMember(Object.prototype, "__proto__") &&
+    $findsDeclaredMember(Number, "isInteger") &&
+    $findsDeclaredMember(Math, "floor") &&
     $isPlainHeirOf(this, IncomingMessage) &&
     $findsNoMember(this, "_construct") &&
     this._events === undefined;
@@ -348,6 +351,18 @@ function IncomingMessage(
   this._readableState.readingMore = true;
 }
 $toClass(IncomingMessage, "IncomingMessage", Readable);
+
+function isPlainRequest(stream: $Node.AnyStream | ReadableStream | WritableStream): stream is $Node.AnyStream {
+  return (
+    $isPlainInstanceOf(stream, IncomingMessage) &&
+    $findsDeclaredMember(stream, "pipe", IncomingMessage) &&
+    $findsDeclaredMember(stream, "on", IncomingMessage) &&
+    $findsNoMember(stream, "_writableState") &&
+    $findsNoMember(stream, "write") &&
+    isPlainReadableState((stream as $Node.AnyStream)._readableState)
+  );
+}
+internals.isPlainRequest = isPlainRequest;
 Object.$defineProperty(IncomingMessage, "length", { __proto__: null, value: 1, configurable: true });
 const IncomingMessagePrototype: object = IncomingMessage.prototype;
 

@@ -302,3 +302,5 @@ allows src/aot/lower/condition.rs an answer of typeof
     return name == known::function;
 allows src/aot/lower/member.rs a member of a function that plain Bun answers while it runs
     return name != known::arguments && name != known::caller;
+allows src/sema/import_sites/touched_exports.rs a member that leads from one module to the others
+    matches!(member, b"parent" | b"children" | b"require")

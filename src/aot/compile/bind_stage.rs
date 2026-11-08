@@ -21,11 +21,15 @@ use crate::modules::{
 };
 use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
+use bun_paths::is_absolute;
 use bun_sema::check::aot::BuiltinTypeSymbols;
-use bun_sema::hir::{ExprId, NodeData};
-use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId};
+use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::hir::{ExprId, MemberKey, NodeData};
+use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files};
 use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::SharedSort;
+use bun_sema_driver::host::from_native;
 
 fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     for &module in &reached.looked_at {
@@ -51,6 +55,35 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
     graph.add_imports(&reached.readers_of_built_in_modules);
+}
+
+fn key_names_no_file_of_program(files: &Files<'_>, file: FileId, entry: ExprId) -> bool {
+    let (hir, analysis) = (files.hir(file), files.analysis(file));
+    let path = match hir.member_key(entry) {
+        Some((_, MemberKey::Name(text) | MemberKey::PrivateName(text))) => text,
+        Some((_, MemberKey::Computed(key))) => {
+            let key = hir.skip_type_assertions(key);
+            if let Some(site) = analysis.import_site_of_call(key)
+                && analysis.import_sites[site].kind == ImportSiteKind::RequireResolve(key)
+            {
+                let answers = files.compiled(file).map_or(&[][..], |it| it.code_answers);
+                return matches!(
+                    answers.get(site),
+                    Some(CodeAnswer::External { .. } | CodeAnswer::NotFound(_))
+                );
+            }
+            match analysis.decisions.constant(hir, key) {
+                FoldedValue::Constant(Constant::String(path))
+                | FoldedValue::ConstantOutsideDeadZone(Constant::String(path)) => path,
+                FoldedValue::Constant(_)
+                | FoldedValue::ConstantOutsideDeadZone(_)
+                | FoldedValue::Unknown => return false,
+            }
+        }
+        None => return false,
+    };
+    let path = files.atoms.bytes(path);
+    !is_absolute(path) || !files.by_path.contains(&from_native(path))
 }
 
 fn warn_where_modules_are_reset(
@@ -208,6 +241,7 @@ impl Build<'_> {
                 (application, runtime)
             },
         );
+        self.say_why_forms_under_written_types_are_refused(loaded, &application.graph);
         let page_manifests = self.bundle_pages(loaded, &application.graph);
         if application.graph.errors().is_empty() {
             let provider = self.provider;
@@ -226,6 +260,30 @@ impl Build<'_> {
                 runtime: runtime.with_builtin_types(builtin_types.runtime),
             },
         })
+    }
+
+    fn say_why_forms_under_written_types_are_refused(
+        &mut self,
+        loaded: &LoadedBuild<'_, '_>,
+        graph: &ModuleGraph,
+    ) {
+        let files = loaded.project(ProjectId::Application).view().files();
+        let said_of = |file: FileId| {
+            parsed_source(files, file).and_then(|it| it.said_where_type_is_written.as_ref())
+        };
+        let compiled = files.compiled_files().iter().copied();
+        let refused: Vec<FileId> = compiled.filter(|&file| said_of(file).is_some()).collect();
+        if refused.is_empty() {
+            return;
+        }
+        let named_by_load_sites = graph.find_files_named_by_load_sites();
+        for said in (refused.into_iter())
+            .filter(|file| named_by_load_sites.binary_search(file).is_ok())
+            .filter_map(said_of)
+        {
+            said.hand_on_to(loaded.messages);
+        }
+        self.diagnostics.add_load_messages(loaded.messages);
     }
 
     fn bundle_pages(
@@ -473,9 +531,22 @@ impl Build<'_> {
                 }
                 if !self.options.load.runs_tests && !self.options.aot.runs_in_place {
                     for &(file, entry) in &reached.deletions_from_module_cache {
+                        if key_names_no_file_of_program(view.files(), file, entry) {
+                            continue;
+                        }
                         let hir = view.files().hir(file);
                         let span = Span::of_node(hir, file, NodeData::Expr(entry));
                         let code = Code::DeletionFromModuleCacheDoesNothing;
+                        let warning = Diagnostic::new(code, Some(span), &[]);
+                        self.diagnostics.add(Some(view), warning);
+                    }
+                    for &(file, entry) in &reached.stores_into_module_cache {
+                        if key_names_no_file_of_program(view.files(), file, entry) {
+                            continue;
+                        }
+                        let hir = view.files().hir(file);
+                        let span = Span::of_node(hir, file, NodeData::Expr(entry));
+                        let code = Code::EntryStoredInModuleCacheIsNotAsked;
                         let warning = Diagnostic::new(code, Some(span), &[]);
                         self.diagnostics.add(Some(view), warning);
                     }

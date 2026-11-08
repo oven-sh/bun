@@ -13,6 +13,10 @@
 //   a shared build is one program with many modules; in the mode separate-entry-points each program is a further entry point and runs in a Worker; either way each is judged by its own output and exit code
 //   for two long lines that differ, the shown part starts a little before the first difference
 //   where a source says so, an executable built without the compiler is a second reference
+//   a miscompilation that is planted ends in findings/ with what it goes away without, in fuzz() and in run.ts as it is started by hand
+//   where plain Bun gives up on a regular expression, an executable may give up too or find the match, and nothing else
+//   a program over which TypeScript takes too long is skipped, and the fuzzer's one thread goes on meanwhile
+//   a fault of the fuzzer itself is written down and counted, costs no finding where it can be helped, and is the exit code of run.ts
 import { expect, test as one } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -23,6 +27,7 @@ import { fuzz } from "./fuzz/fuzzer";
 import { withOwnCopies } from "./fuzz/own-copies";
 import { Random } from "./fuzz/random";
 import { reduceFiles, type Whole } from "./fuzz/reduce";
+import { meant as pastTheLimitOfSteps } from "./fuzz/regexp-heavy-backtracking";
 import {
   ProductRunner,
   canIsolate,
@@ -169,9 +174,8 @@ function standIn(judged: (programs: Program[]) => void, seconds = 0, clock = { n
     accepts: () => true,
     allows: () => true,
     modes: () => [{ name: "default", flags: [] }],
-    withoutFlowResults: [],
     disabling: () => [],
-    switches: async () => ({ flowResults: [], passes: [] }),
+    switches: async () => [],
     async judge(_folder, programs): Promise<Judged[]> {
       judged(programs);
       clock.now += seconds * 1000;
@@ -199,6 +203,293 @@ const settings = (folder: string) => ({
   attribute: false,
   firstSeed: 1,
 });
+
+// A runner whose every build prints 833 where plain Bun prints 733, unless the written types are taken away.
+function miscompiles(): Runner {
+  const run = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null, timedOut: false });
+  return {
+    ...standIn(() => {}),
+    switches: async () => ["types", "something-else"],
+    disabling: names => names.map(name => `--without-${name}`),
+    judge: async (_folder, programs, flags): Promise<Judged[]> =>
+      programs.map(() =>
+        flags.includes("--without-types")
+          ? { plain: run("733\n"), verdict: { kind: "same" } }
+          : {
+              plain: run("733\n"),
+              verdict: { kind: "different output", detail: "plain 733 compiled 833", signature: "values" },
+            },
+      ),
+  };
+}
+
+const asked = (folder: string, runner: Runner) => ({
+  ...settings(folder),
+  attribute: true,
+  reduceSeconds: 60,
+  runners: [{ runner, jobs: 1 }],
+  sources: ["number-range-boundaries"],
+  seconds: untilTheCount,
+  programs: 8,
+});
+
+const guiltyOf = (out: string) =>
+  readdirSync(join(out, "findings")).map(
+    name => JSON.parse(readFileSync(join(out, "findings", name, "finding.json"), "utf8")).guilty,
+  );
+
+test(
+  "a planted miscompilation ends in findings/ with what it goes away without",
+  async () => {
+    using folder = tempDir("aot-fuzzer-planted", {});
+    const summary = await fuzz(asked(String(folder), miscompiles()));
+    const out = join(String(folder), "out");
+    expect(existsSync(join(out, "driver-errors.txt")) ? readFileSync(join(out, "driver-errors.txt"), "utf8") : "").toBe(
+      "",
+    );
+    expect(summary.driverErrors).toBe(0);
+    expect(guiltyOf(out)).toEqual([["types"]]);
+    expect(summary.distinct.length).toBe(1);
+  },
+  timeout,
+);
+
+test.each([new Error("the runner cannot say"), new DOMException("the runner cannot say", "DataCloneError")])(
+  "a fault in asking what a finding goes away without is counted and does not cost the finding: %s",
+  async fault => {
+    using folder = tempDir("aot-fuzzer-planted-fault", {});
+    const runner = miscompiles();
+    runner.switches = async () => {
+      throw fault;
+    };
+    const summary = await fuzz(asked(String(folder), runner));
+    const out = join(String(folder), "out");
+    expect(guiltyOf(out)).toEqual([[]]);
+    expect(summary.driverErrors).toBeGreaterThan(0);
+    expect(readFileSync(join(out, "driver-errors.txt"), "utf8")).toContain("the runner cannot say");
+    expect(summary.status).toContain(`driver errors ${summary.driverErrors}`);
+  },
+  timeout,
+);
+
+// Runs programs like Bun. An executable that it builds with --aot prints 833 for 733, unless the written types are erased.
+// The answer is made at the build: what runs a generated program may start no process of its own.
+function printsAnotherNumber(folder: string): string {
+  const path = join(folder, "stand-in");
+  writeFileSync(
+    path,
+    `#!/bin/sh
+case "$1" in
+build)
+  wrong= entry= out= last=
+  for word in "$@"; do
+    case "$word" in
+    --aot) wrong=s/733/833/ ;;
+    *.ts | *.js) [ -n "$entry" ] || [ "$last" = --outfile ] || entry="$word" ;;
+    esac
+    [ "$last" = --outfile ] && out="$word"
+    last="$word"
+  done
+  for word in "$@"; do [ "$word" = --aot-erase-types ] && wrong=; done
+  printf '#!/bin/sh\\necho %s\\n' "$("${bunExe()}" run "$entry" | sed "$wrong")" > "$out"
+  chmod +x "$out"
+  ;;
+*) exec "${bunExe()}" "$@" ;;
+esac
+`,
+  );
+  chmodSync(path, 0o755);
+  return path;
+}
+
+async function startedByHand(folder: string) {
+  await using run = Bun.spawn({
+    cmd: [
+      bunExe(),
+      join(import.meta.dir, "fuzz", "run.ts"),
+      ...[
+        "--bun",
+        printsAnotherNumber(folder),
+        "--out",
+        join(folder, "out"),
+        "--programs-root",
+        join(folder, "stored"),
+      ],
+      ..."--sources stored-programs --single-file --batch 1 --programs 4 --jobs 1 --seed 1".split(" "),
+      ...`--seconds ${untilTheCount} --reduce-seconds 60 --min-free-gb 0`.split(" "),
+    ],
+    env: bunEnv,
+    cwd: folder,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  const errors = join(folder, "out", "driver-errors.txt");
+  return { stdout, stderr, exitCode, driverErrors: existsSync(errors) ? readFileSync(errors, "utf8") : "" };
+}
+
+const storedProgram = { stored: { "prints-a-number.ts": "const count: number = 700 + 33;\nconsole.log(count);\n" } };
+
+unless(isWindows)(
+  "run.ts stores a planted miscompilation and ends with exit code 0",
+  async () => {
+    using folder = tempDir("aot-fuzzer-by-hand", storedProgram);
+    const { stderr, exitCode, driverErrors } = await startedByHand(String(folder));
+    expect({ stderr, driverErrors }).toEqual({ stderr: "", driverErrors: "" });
+    expect(guiltyOf(join(String(folder), "out"))).toEqual([["types"]]);
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+unless(isWindows)(
+  "run.ts ends with exit code 1 where the fuzzer itself failed",
+  async () => {
+    using folder = tempDir("aot-fuzzer-by-hand-fault", storedProgram);
+    // The list of findings cannot be written.
+    mkdirSync(join(String(folder), "out", "findings.tsv"), { recursive: true });
+    const { exitCode, driverErrors } = await startedByHand(String(folder));
+    expect(driverErrors).toContain("findings.tsv");
+    expect(exitCode).toBe(1);
+  },
+  timeout,
+);
+
+test("where plain Bun gives up on a regular expression, only an executable that finds the match is excused", () => {
+  const gaveUp = "0: test true\n1: replaceAll 28, and the language says 2\n";
+  const right = "0: test true\n1: replaceAll 2\n";
+  expect(pastTheLimitOfSteps(gaveUp, right)).toBeString();
+  expect(pastTheLimitOfSteps(right, gaveUp)).toBeUndefined();
+  expect(pastTheLimitOfSteps(gaveUp, "0: test true\n1: replaceAll 3, and the language says 2\n")).toBeUndefined();
+  expect(pastTheLimitOfSteps(gaveUp, "0: test false, and the language says true\n1: replaceAll 2\n")).toBeUndefined();
+});
+
+unless(isWindows)(
+  "TypeScript is asked in a thread of its own, and not for ever",
+  async () => {
+    using folder = tempDir("aot-fuzzer-slow-checker", {
+      // A TypeScript that never answers.
+      "typescript/package.json": `{ "name": "typescript", "main": "index.js" }`,
+      "typescript/index.js": `module.exports = {
+  ScriptTarget: {}, ModuleKind: {}, ModuleResolutionKind: {}, sys: {},
+  convertCompilerOptionsFromJson: () => ({ options: {} }),
+  getDefaultLibFilePath: () => "/lib/lib.d.ts",
+  createProgram() { for (;;); },
+};`,
+      "asks.ts": `import { ProductRunner } from ${JSON.stringify(join(import.meta.dir, "fuzz", "runners"))};
+const runner = new ProductRunner(process.argv[2], { baseFlags: [], threads: 1, buildSeconds: 60, runSeconds: 60, checkSeconds: 1 });
+let ticks = 0;
+const timer = setInterval(() => ticks++, 20);
+const [{ verdict }] = await runner.judge(process.argv[3], [{ text: "console.log(1);\\n", extension: "ts" }], []);
+clearInterval(timer);
+console.log(JSON.stringify(verdict), ticks > 20 ? "the thread went on" : "the thread stood: " + ticks);
+process.exit(0);`,
+    });
+    await using asks = Bun.spawn({
+      cmd: [bunExe(), "asks.ts", refusesEveryBuild(String(folder)), within(folder, "question")],
+      env: { ...bunEnv, AOT_FUZZ_TYPESCRIPT: join(String(folder), "typescript") },
+      cwd: String(folder),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([asks.stdout.text(), asks.stderr.text(), asks.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `{"kind":"skipped","why":"type error TS2554, and TypeScript takes too long to say"} the thread went on\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  timeout,
+);
+
+unless(isWindows)(
+  "a program that holds a function is put to TypeScript, and a question that cannot be sent costs no other",
+  async () => {
+    using folder = tempDir("aot-fuzzer-checker-messages", {
+      // A TypeScript that accepts everything.
+      "typescript/package.json": `{ "name": "typescript", "main": "index.js" }`,
+      "typescript/index.js": `module.exports = {
+  ScriptTarget: {}, ModuleKind: {}, ModuleResolutionKind: {}, sys: {},
+  convertCompilerOptionsFromJson: () => ({ options: {} }),
+  getDefaultLibFilePath: () => "/lib/lib.d.ts",
+  createProgram: () => ({ getSourceFiles: () => [], getOptionsDiagnostics: () => [], getGlobalDiagnostics: () => [] }),
+};`,
+      "asks.ts": `import { ProductRunner } from ${JSON.stringify(join(import.meta.dir, "fuzz", "runners"))};
+import { typeCheckerApart } from ${JSON.stringify(join(import.meta.dir, "fuzz", "type-check"))};
+const runner = new ProductRunner(process.argv[2], { baseFlags: [], threads: 1, buildSeconds: 60, runSeconds: 60 });
+const program = { text: "console.log(1);\\n", extension: "ts", meant: () => undefined };
+console.log((await runner.judge(process.argv[3], [program], []))[0].verdict.kind);
+const check = typeCheckerApart({}, 20);
+for (const text of ["1;", () => {}, "2;"])
+  console.log(await check([{ text }]).then(JSON.stringify, error => error.name));
+process.exit(0);`,
+    });
+    await using asks = Bun.spawn({
+      cmd: [bunExe(), "asks.ts", refusesEveryBuild(String(folder)), within(folder, "question")],
+      env: { ...bunEnv, AOT_FUZZ_TYPESCRIPT: join(String(folder), "typescript") },
+      cwd: String(folder),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([asks.stdout.text(), asks.stderr.text(), asks.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "build refused\n[[]]\nDataCloneError\n[[]]\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  timeout,
+);
+
+// Every executable that it builds sleeps for longer than a case may take. Where collections are forced, its own runs sleep too, if asked to.
+function buildsWhatNeverEnds(folder: string, sleepsTooWhereSlowed: boolean): string {
+  const path = join(folder, "stand-in");
+  writeFileSync(
+    path,
+    `#!/bin/sh
+case "$1" in
+build)
+  while [ "$1" != --outfile ]; do shift; done
+  printf '#!/bin/sh\\nexec sleep 3000\\n' > "$2"
+  chmod +x "$2" ;;
+*)
+  ${sleepsTooWhereSlowed ? '[ -z "$BUN_JSC_slowPathAllocsBetweenGCs" ] || exec sleep 3000' : ":"}
+  exec "${bunExe()}" "$@" ;;
+esac
+`,
+  );
+  chmodSync(path, 0o755);
+  return path;
+}
+
+unless(isWindows).each([1, 2])(
+  "a run that does not end under forced collections is a hang only where plain Bun ends under them: %d to a build",
+  async count => {
+    const kinds = async (sleepsTooWhereSlowed: boolean, flags: string[]) => {
+      using folder = tempDir("aot-fuzzer-hangs", {});
+      const runner = new ProductRunner(buildsWhatNeverEnds(String(folder), sleepsTooWhereSlowed), {
+        ...options,
+        compiledRunSeconds: 2,
+      });
+      const programs = Array.from({ length: count }, (_, at) => ({
+        text: `console.log(${at});\n`,
+        extension: "js" as const,
+      }));
+      const judged = await runner.judge(within(folder, "question"), programs, flags);
+      return judged.map(({ verdict }) => (verdict.kind === "skipped" ? verdict.why : verdict.kind));
+    };
+    const slowed = ["--run-env=BUN_JSC_slowPathAllocsBetweenGCs=1"];
+    const each = (said: string) => Array.from({ length: count }, () => said);
+    expect(await kinds(true, slowed)).toEqual(each("plain Bun does not end under these settings either"));
+    expect(await kinds(false, slowed)).toEqual(each("hang"));
+    expect(await kinds(true, [])).toEqual(each("hang"));
+  },
+  timeout,
+);
 
 test(
   "a program that must be the entry point gets its own build",
@@ -349,7 +640,9 @@ one.skipIf(isWindows)(
   timeout,
 );
 
-unless(isWindows)(
+// Alone, not concurrently: it waits on a clock, and a case beside it held the thread for 193 s under a sanitizer on eight busy processors, longer than the process had.
+// The process has nearly as long as the case: its limit is only there for a case that dies.
+one.skipIf(isWindows)(
   "processes started by a runner exit when the fuzzer is killed",
   async () => {
     using folder = tempDir("aot-fuzzer-judges", {
@@ -363,8 +656,6 @@ await spawned([process.execPath, "-e", 'require("fs").writeFileSync("pid", Strin
       env: bunEnv,
       stdio: ["ignore", "inherit", "inherit"],
     });
-    // The cases of this file run beside one another on one thread, and one of them holds it without an await: 34 s under a sanitizer on one machine,
-    // over 120 s on another. This loop comes round behind that, so the process has nearly as long as the case: its limit is only there for a case that dies.
     while (!existsSync(written) || !readFileSync(written, "utf8")) await Bun.sleep(20);
     const pid = Number(readFileSync(written, "utf8"));
     const isAlive = () => {

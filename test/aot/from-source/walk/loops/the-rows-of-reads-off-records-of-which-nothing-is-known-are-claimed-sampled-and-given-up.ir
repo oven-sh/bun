@@ -11,6 +11,9 @@
 # Forty shapes: 4 rows claimed, one put out, 16 sampled, of which fewer than a third had a row: the group gives up: 21, and not one more in 1,600 further records.
 # A late shape: four shapes, then a fifth that stays: it puts out a row, all 16 of the sample have a row, the rows are shown again and nothing is asked any more: 21.
 # A collection: five shapes in turn for 12 records end in the middle of a sample (12 asked); a collection zeroes the group; one shape then claims its row: 13.
+# An odd record at the head: a dictionary (a hundred names added; it is given no row, and what the stub does not know of it is read by its structure) is met while no row is claimed: no sample is begun, for it could only say that nobody had a row: a wait of 16 records, and the 17th of 400 of one shape claims its row: 2; another shape is given a free row at once: 3.
+# An odd record in the middle: ten records of one shape (1), the dictionary begins a sample (2), and the other shape that follows claims a free row IN the sample and has it for the rest (18): the group has not given up: behind the wait of 16 a third shape is given a row: 19.
+# Long runs: an odd record, 500 of one shape, 499 of another, five times over. The sample that the odd record begins sees the first shape alone. No row is freed at its end: the second shape keeps its row: 3 in the first call, 20 in five (were it freed, the second shape would sit out each wait and ask anew: 75).
 # RUN(TWICE): walk f1 mechanisms=all
 # TWICE-LABEL: code f1:Body
 # TWICE: = GetValueAtSiteOrAbsent {{*}}key="price"
@@ -34,3 +37,15 @@
 # COLLECTION: 132 12
 # COLLECTION-NEXT: 9900 13
 # COLLECTION-NEXT: exited with 0
+# RUN(ODD): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const made = (shapes, from, length) => JSON.parse("[" + Array.from({ length }, (_, i) => `{"s${(from + i) % shapes}":0,"price":${i},"count":2}`).join(",") + "]"); const asked = () => aotOperationCount("operationAOTClaimRowOfReads"); const odd = {}; for (let k = 0; k < 100; k++) odd["k" + k] = k; odd.price = 5; odd.count = 2; const rows = [odd].concat(made(1, 0, 400)), other = JSON.parse("[" + Array.from({ length: 20 }, (_, i) => `{"other":0,"price":${i},"count":2}`).join(",") + "]"); for (let pass = 0; pass < 6; pass++) { total(rows); total(other); } gc(); const before = asked(); print(total(rows), asked() - before); print(total(other), asked() - before); };
+# ODD: 159610 2
+# ODD-NEXT: 380 3
+# ODD-NEXT: exited with 0
+# RUN(MIDDLE): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const made = (shapes, from, length) => JSON.parse("[" + Array.from({ length }, (_, i) => `{"s${(from + i) % shapes}":0,"price":${i},"count":2}`).join(",") + "]"); const asked = () => aotOperationCount("operationAOTClaimRowOfReads"); const odd = {}; for (let k = 0; k < 100; k++) odd["k" + k] = k; odd.price = 5; odd.count = 2; const named = (name, length) => JSON.parse("[" + Array.from({ length }, (_, i) => `{"${name}":0,"price":${i},"count":2}`).join(",") + "]"); const rows = named("a", 10).concat([odd], named("b", 30)), third = named("c", 20); for (let pass = 0; pass < 6; pass++) { total(rows); total(third); } gc(); const before = asked(); print(total(rows), asked() - before); print(total(third), asked() - before); };
+# MIDDLE: 970 18
+# MIDDLE-NEXT: 380 19
+# MIDDLE-NEXT: exited with 0
+# RUN(RUNS): run-in-shell mechanisms=all --aotCountsPath=/dev/null publish = function (total) { const asked = () => aotOperationCount("operationAOTClaimRowOfReads"); const odd = {}; for (let k = 0; k < 100; k++) odd["k" + k] = k; odd.price = 5; odd.count = 2; const named = (name, length) => JSON.parse("[" + Array.from({ length }, (_, i) => `{"${name}":0,"price":${i},"count":2}`).join(",") + "]"); const rows = [odd].concat(named("a", 500), named("b", 499)); for (let pass = 0; pass < 6; pass++) total(rows); gc(); const before = asked(); print(total(rows), asked() - before); let sum = 0; for (let call = 0; call < 4; call++) sum += total(rows); print(sum, asked() - before); };
+# RUNS: 498012 3
+# RUNS-NEXT: 1992048 20
+# RUNS-NEXT: exited with 0

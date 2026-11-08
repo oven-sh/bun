@@ -4,7 +4,8 @@
 // So each arm names a program of test/aot/parallel/arms-of-the-library that reaches it: there a compiled program is held against `bun run`.
 // An arm that only a compiled test run takes names a test of test/aot instead.
 // Where the two sides part today the program says so in a `// Todo:`, which fails once they agree.
-// The second texts under src/js/ahead-of-time are read by the compiler alone: second-texts-of-modules.test.ts holds those.
+// The second texts under src/js/ahead-of-time are read by the compiler alone: second-texts-of-modules.test.ts holds those. A second text that
+// is listed here was the only text of its module when its arms were written: their rows went with it.
 import { Glob } from "bun";
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "fs";
@@ -23,13 +24,17 @@ const callsOfLibrary = "the-library-calls-the-same-built-ins-compiled-as-plain.t
 
 // The line of the arm as it is written, without the blanks around it, and what reaches it. A line that stands twice in a file is listed twice.
 const witnessed: Record<string, [line: string, witness: string][]> = {
-  "builtins/ProcessObjectInternals.ts": [
+  "ahead-of-time/builtins/ProcessObjectInternals.ts": [
     [
-      "return IS_COMPILED_AHEAD_OF_TIME && !WARNINGS_ASK_NODE_PATH",
+      "if (!IS_COMPILED_AHEAD_OF_TIME || WARNINGS_ASK_NODE_PATH) {",
       "parallel/what-a-warning-brings/the-program-replaces-basename.js",
     ],
   ],
-  "internal/process/next_tick_queue.ts": [
+  "ahead-of-time/internal/process/next_tick_queue.ts": [
+    [
+      'if (CAN_LOAD_CODE_AT_RUN_TIME) require("node:async_hooks");',
+      "parallel/code-from-disk-beside-the-compiled-library/it-hooks-the-ticks-of-the-program.cjs",
+    ],
     [
       '((IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(process, "nextTick")) ||',
       "parallel/a-member-of-a-built-in-as-built/it-is-stored-over.mjs",
@@ -47,7 +52,7 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
       "parallel/a-member-of-a-built-in-as-built/it-is-stored-over.mjs",
     ],
   ],
-  "internal/process/tick_ring.ts": [
+  "ahead-of-time/internal/process/tick_ring.ts": [
     ["IS_COMPILED_AHEAD_OF_TIME && CAN_REPLACE_BUILT_INS", callsOfLibrary],
     ["IS_COMPILED_AHEAD_OF_TIME && CAN_REPLACE_BUILT_INS", callsOfLibrary],
     ["if (!(IS_COMPILED_AHEAD_OF_TIME && CAN_REPLACE_BUILT_INS))", callsOfLibrary],
@@ -61,17 +66,49 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
       "parallel-test-runs/arms-of-the-library/a-slice-that-answers-another-list-under-a-tick/a_test.ts",
     ],
   ],
-  "internal/streams/end-of-stream.ts": [
+  "ahead-of-time/internal/streams/end-of-stream.ts": [
     [
       '!(IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(stream as unknown as $Node.Stream, "on")) &&',
       arm("finished-is-asked-of-streams-of-node-and-of-the-web.cjs"),
     ],
     [
-      "const own = IS_COMPILED_AHEAD_OF_TIME && options !== sideOfHeir ? kindOfOwnStream(stream) : Own.Unknown;",
+      "if (IS_COMPILED_AHEAD_OF_TIME && options !== sideOfHeir) own = kindOfOwnStream(stream);",
       "parallel/the-end-of-a-stream-is-awaited-while-the-stream-is-changed/a-readable-whose-pipe-is-taken-away.mjs",
     ],
+    [
+      "IS_COMPILED_AHEAD_OF_TIME &&",
+      "parallel/the-end-of-a-stream-is-awaited-while-the-stream-is-changed/the-requests-of-a-server-are-of-an-heir-that-counts-reads-of-pipe.mjs",
+    ],
+    [
+      "!CAN_REPLACE_BUILT_INS &&",
+      "parallel/the-end-of-a-stream-is-awaited-while-the-stream-is-changed/the-requests-of-a-server-are-of-an-heir-that-counts-reads-of-pipe.mjs",
+    ],
+    [
+      "IS_COMPILED_AHEAD_OF_TIME && own !== Own.Unknown",
+      "parallel/the-end-of-a-stream-is-awaited-while-the-stream-is-changed/the-requests-of-a-server-are-of-an-heir-that-counts-reads-of-pipe.mjs",
+    ],
+    [
+      ": ((IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS && options === sideOfHeir",
+      "parallel/the-end-of-a-stream-is-awaited-while-the-stream-is-changed/the-requests-of-a-server-are-of-an-heir-that-counts-reads-of-pipe.mjs",
+    ],
   ],
-  "internal/streams/pipeline.ts": [
+  "ahead-of-time/internal/streams/pipeline.ts": [
+    [
+      "return IS_COMPILED_AHEAD_OF_TIME &&",
+      "parallel/streams-ask-what-plain-bun-asks/the-controller-of-a-pipeline-is-made-asked-and-aborted.mjs",
+    ],
+    [
+      "!CAN_REPLACE_BUILT_IN_FUNCTIONS &&",
+      "parallel/streams-ask-what-plain-bun-asks/the-controller-of-a-pipeline-is-made-asked-and-aborted.mjs",
+    ],
+    [
+      "return IS_COMPILED_AHEAD_OF_TIME &&",
+      "parallel/streams-ask-what-plain-bun-asks/the-controller-of-a-pipeline-is-made-asked-and-aborted.mjs",
+    ],
+    [
+      "!CAN_REPLACE_BUILT_IN_FUNCTIONS &&",
+      "parallel/streams-ask-what-plain-bun-asks/the-controller-of-a-pipeline-is-made-asked-and-aborted.mjs",
+    ],
     ["IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS", arm("a-pipeline-ends-each-way-on-each-of-its-sides.cjs")],
     ["IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS", arm("a-pipeline-ends-each-way-on-each-of-its-sides.cjs")],
     ["IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS", arm("a-pipeline-ends-each-way-on-each-of-its-sides.cjs")],
@@ -88,18 +125,72 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
       arm("a-pipeline-ends-each-way-on-each-of-its-sides.cjs"),
     ],
   ],
-  "internal/streams/readable.ts": [
+  "ahead-of-time/internal/streams/readable.ts": [
+    [
+      "if (!(IS_COMPILED_AHEAD_OF_TIME && $isPlainHeirOf(this, Readable)) && !(this instanceof Readable)) {",
+      "parallel/streams-ask-what-plain-bun-asks/what-a-readable-asks-of-its-state-its-chunks-and-itself.mjs",
+    ],
+    [
+      "if (CAN_REPLACE_BUILT_IN_FUNCTIONS) internals.keptDefinitions[0]();",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+    [
+      "if (CAN_REPLACE_BUILT_IN_FUNCTIONS) internals.keptDefinitions[1]();",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+    [
+      "const kShapeMode: typeof shared.kShapeMode = IS_COMPILED_AHEAD_OF_TIME ? shared.kShapeMode : (undefined as never);",
+      "parallel/a-readable-is-born-below-what-the-program-has-laid/the-options-are-asked-as-often.cjs",
+    ],
+    [
+      "const kCapture: typeof shared.kCapture = IS_COMPILED_AHEAD_OF_TIME ? shared.kCapture : (undefined as never);",
+      "parallel/a-readable-is-born-below-what-the-program-has-laid/emitters-capture-rejections.cjs",
+    ],
+    [
+      "const EventEmitterPrototype: $Node.EventEmitterPrototype = IS_COMPILED_AHEAD_OF_TIME",
+      "parallel/a-readable-is-born-below-what-the-program-has-laid/emitters-capture-rejections.cjs",
+    ],
+    [
+      "if (IS_COMPILED_AHEAD_OF_TIME) {",
+      "parallel/a-readable-is-born-below-what-the-program-has-laid/a-signal-that-has-aborted-lets-the-program-lay-the-name-on-the-stream-itself.cjs",
+    ],
+    [
+      "IS_COMPILED_AHEAD_OF_TIME &&",
+      "parallel/a-readable-is-born-below-what-the-program-has-laid/nothing-as-a-value-under-the-name-on-the-prototype-of-readable.cjs",
+    ],
     [
       "if (IS_COMPILED_AHEAD_OF_TIME) {",
       "parallel/what-a-program-stores-into-the-table-of-listeners/each-name-that-the-end-of-a-request-looks-under.cjs",
     ],
     ["IS_COMPILED_AHEAD_OF_TIME &&", arm("a-readable-that-has-ended-is-asked-for-its-writable-side.cjs")],
+    ["if (IS_COMPILED_AHEAD_OF_TIME) {", arm("read-is-asked-for-every-kind-of-amount.cjs")],
+    ["const finishRead = IS_COMPILED_AHEAD_OF_TIME", arm("how-often-read-stands-on-the-stack-where-it-calls-out.cjs")],
+    [
+      'if (IS_COMPILED_AHEAD_OF_TIME && $findsDeclaredMember(Number, "isNaN") && internals.isPlainReadableState!(state)) {',
+      arm("what-the-program-sees-of-a-readable-from-inside-every-call-that-read-makes.cjs"),
+    ],
     [
       "if (IS_COMPILED_AHEAD_OF_TIME) internals.isPlainReadableAlone = isPlainReadableAlone;",
       "parallel/the-end-of-a-stream-is-awaited-while-the-stream-is-changed/a-readable-whose-pipe-is-taken-away.mjs",
     ],
   ],
-  "internal/streams/state.ts": [
+  "ahead-of-time/internal/streams/state.ts": [
+    [
+      "if (CAN_REPLACE_BUILT_IN_FUNCTIONS) {",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+    [
+      "const definePropertiesWhereBunRunDoes: typeof ObjectDefineProperties = CAN_REPLACE_BUILT_IN_FUNCTIONS",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+    [
+      "const definePropertyWhereBunRunDoes: typeof ObjectDefineProperty = CAN_REPLACE_BUILT_IN_FUNCTIONS",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+    [
+      'if (CAN_LOAD_CODE_AT_RUN_TIME) require("node:stream");',
+      "parallel/code-from-disk-beside-the-compiled-library/it-asks-node-stream-for-every-kind-of-stream.cjs",
+    ],
     [
       "const oneObject = IS_COMPILED_AHEAD_OF_TIME ? { objectMode: true, highWaterMark: 1 } : undefined;",
       "parallel/how-often-the-flags-of-a-state-are-asked/while-from-makes-a-readable.cjs",
@@ -141,7 +232,7 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
       "parallel/node-http/what-lies-under-reading-more-of-the-state-of-a-request-takes-the-store.cjs",
     ],
   ],
-  "internal/util/inspect.ts": [
+  "ahead-of-time/internal/util/inspect.ts": [
     [
       "const ObjectPrototypeIsPrototypeOf = IS_COMPILED_AHEAD_OF_TIME ? Object.prototype.isPrototypeOf : undefined;",
       arm("what-stands-below-the-prototype-of-functions-is-printed.cjs"),
@@ -152,7 +243,7 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
     ],
     ["? IS_COMPILED_AHEAD_OF_TIME", arm("what-stands-below-the-prototype-of-functions-is-printed.cjs")],
   ],
-  "node/fs.ts": [
+  "ahead-of-time/node/fs.ts": [
     ["appendFileSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
     ["closeSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
     ["chmodSync = IS_COMPILED_AHEAD_OF_TIME", arm("the-functions-of-node-fs-that-node-net-calls.mjs")],
@@ -171,19 +262,51 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
       arm("the-name-of-stats-is-deleted-ahead-of-node-fs.mjs"),
     ],
   ],
-  "node/net.ts": [
+  "ahead-of-time/node/path.ts": [
     [
-      "if (IS_COMPILED_AHEAD_OF_TIME) netSymbols.resumeOfSocket = Socket.prototype.resume;",
-      arm("a-getter-under-resume-above-the-prototype-of-sockets.cjs"),
+      'if (CAN_REPLACE_BUILT_IN_FUNCTIONS) require("internal/validators");',
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
     ],
-  ],
-  "node/path.ts": [
     [
       "IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS",
       "parallel-test-runs/arms-of-the-library/the-first-matches-glob-loads-the-validators/a_test.js",
     ],
   ],
-  "node/events.ts": [
+  "ahead-of-time/internal/fs/streams.ts": [
+    [
+      'if (CAN_REPLACE_BUILT_IN_FUNCTIONS) require("node:fs/promises");',
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+  ],
+  "ahead-of-time/node/net.ts": [
+    [
+      "if (IS_COMPILED_AHEAD_OF_TIME) netSymbols.resumeOfSocket = Socket.prototype.resume;",
+      arm("a-getter-under-resume-above-the-prototype-of-sockets.cjs"),
+    ],
+    [
+      "const bunTlsSymbol: typeof netSymbols.bunTlsSymbol = CAN_REPLACE_BUILT_IN_FUNCTIONS",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+    [
+      "const bunSocketServerOptions: typeof netSymbols.bunSocketServerOptions = CAN_REPLACE_BUILT_IN_FUNCTIONS",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+    [
+      "const kNativeSecureContextCtor: typeof netSymbols.kNativeSecureContextCtor = CAN_REPLACE_BUILT_IN_FUNCTIONS",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+    [
+      "CAN_REPLACE_BUILT_IN_FUNCTIONS",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+  ],
+  "ahead-of-time/node/http2.ts": [
+    [
+      "const bunSocketServerOptions: typeof netSymbols.bunSocketServerOptions = CAN_REPLACE_BUILT_IN_FUNCTIONS",
+      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
+    ],
+  ],
+  "ahead-of-time/node/events.ts": [
     [
       "let holder: object | null = CAN_REPLACE_BUILT_INS ? null : this;",
       arm("an-emitter-is-born-below-what-lies-under-the-name-of-the-prototype.cjs"),
@@ -193,21 +316,21 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
 
 // How many arms of a file name no program yet. A number here only goes down: whoever writes an arm brings its program.
 const owed: Record<string, number> = {
-  "builtins/BundlerPlugin.ts": 1,
-  "builtins/CommonJS.ts": 1,
-  "builtins/ProcessObjectInternals.ts": 3,
-  "internal/cluster/isPrimary.ts": 2,
-  "internal/fs/streams.ts": 3,
-  "internal/streams/destroy.ts": 1,
-  "internal/streams/end-of-stream.ts": 12,
+  "ahead-of-time/builtins/BundlerPlugin.ts": 1,
+  "ahead-of-time/builtins/CommonJS.ts": 1,
+  "ahead-of-time/builtins/ProcessObjectInternals.ts": 3,
+  "ahead-of-time/internal/cluster/isPrimary.ts": 2,
+  "ahead-of-time/internal/fs/streams.ts": 3,
+  "ahead-of-time/internal/streams/destroy.ts": 1,
+  "ahead-of-time/internal/streams/end-of-stream.ts": 11,
   "internal/streams/from.ts": 2,
-  "internal/streams/readable.ts": 40,
-  "internal/streams/state.ts": 3,
-  "internal/streams/transform.ts": 1,
-  "internal/streams/utils.ts": 1,
-  "node/async_hooks.ts": 6,
-  "node/events.ts": 9,
-  "node/http2.ts": 2,
+  "ahead-of-time/internal/streams/readable.ts": 40,
+  "ahead-of-time/internal/streams/state.ts": 3,
+  "ahead-of-time/internal/streams/transform.ts": 1,
+  "ahead-of-time/internal/streams/utils.ts": 1,
+  "ahead-of-time/node/async_hooks.ts": 6,
+  "ahead-of-time/node/events.ts": 9,
+  "ahead-of-time/node/http2.ts": 2,
 };
 
 test("every arm for compiled programs names a program that reaches it", () => {
@@ -216,7 +339,9 @@ test("every arm for compiled programs names a program that reaches it", () => {
   const gone: string[] = [];
   const files = [...new Glob("**/*.{js,ts}").scanSync({ cwd: modules })]
     .map(file => file.replaceAll("\\", "/"))
-    .filter(file => !file.startsWith("ahead-of-time/") && !file.endsWith(".d.ts"))
+    .filter(
+      file => (!file.startsWith("ahead-of-time/") || file in witnessed || file in owed) && !file.endsWith(".d.ts"),
+    )
     .sort();
   for (const file of files) {
     const left = (witnessed[file] ?? []).map(([line]) => line);

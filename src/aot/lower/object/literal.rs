@@ -98,7 +98,10 @@ impl FileLowering<'_, '_, '_, '_> {
             .is_ok_and(|shape| {
                 matches!(
                     shape.kind,
-                    ShapeKind::TypeVariable { .. } | ShapeKind::Anything(_) | ShapeKind::AnyObject
+                    ShapeKind::TypeVariable { .. }
+                        | ShapeKind::Anything(_)
+                        | ShapeKind::AnyObject
+                        | ShapeKind::ConstructorFunctionInstance(_)
                 )
             });
         if names_are_unknown {
@@ -623,7 +626,7 @@ fn find_signature(signatures: &[IndexSignature], key: IndexKey) -> Option<IndexS
         .find(|signature| signature.key == key)
 }
 
-fn is_empty_without_prototype(hir: &File<'_>, literal: ExprId) -> bool {
+pub(in crate::lower) fn is_empty_without_prototype(hir: &File<'_>, literal: ExprId) -> bool {
     let ExprKind::Object(props) = hir[literal].kind else {
         return false;
     };
@@ -649,6 +652,9 @@ pub(crate) fn lower_object_literal(
     };
     if is_empty_without_prototype(hir, literal) {
         lowering.set_position(hir[literal].pos);
+        if let Some(made) = lowering.lower_literal_below_null_for_maker(literal) {
+            return made;
+        }
         let null = lowering.builder.null();
         return lowering.emit_builtin_call(BuiltinId::ObjectCreate, &[null]);
     }

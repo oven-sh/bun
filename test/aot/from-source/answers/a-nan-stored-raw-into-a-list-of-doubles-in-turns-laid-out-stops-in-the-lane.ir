@@ -23,4 +23,4 @@
 # LIE: AOT: f{{*}} at {{*}}: what an operation gives is not of the type that the compiler has proven of it. It is: nothing.
 # LIE: crashed with
 # RUN(COUNT): compile LoopsWhoseTurnsAreLaidOut mechanisms=all testing=EmittersAloneTestEveryPosition,NumbersStoredIntoListsOfDoublesAreTakenToBeNoNaN
-# COUNT: statistic LoopsWhoseTurnsAreLaidOut 25
+# COUNT: statistic LoopsWhoseTurnsAreLaidOut 27

@@ -6,8 +6,8 @@ use super::{
 use crate::{
     Libs, default_compiler_options, diagnostic_from_config_error, host, use_pool_for_lowering,
 };
-use bun_sema::check::Program;
 use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
+use bun_sema::check::{NodeCounts, Program};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
@@ -176,9 +176,7 @@ pub fn load_program<'s>(
     steps.end("free the leaves that nothing reads, settle the texts");
     let checker_session = session.keep(SessionSlot::new());
     let node_counts = Program::count_nodes(files);
-    let program = Program::with_node_counts(checker_session.session(), files, &node_counts);
-    program.find_symbols_of_compiler();
-    let program = &*session.arena().alloc(UnsafeCell::new(program));
+    let program = make_checker(session, checker_session, files, &node_counts);
     steps.end("count nodes, make the checker");
     let config_path = &project.config_path;
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
@@ -234,6 +232,21 @@ pub fn load_program<'s>(
         files_that_project_excludes,
         files_left_to_loader: Default::default(),
     })
+}
+
+/// Makes the checker's program in a frame of its own. The program is large and is moved into the
+/// arena once, so nothing of it lies on the stack under the rest of `load_program`.
+#[inline(never)]
+fn make_checker<'s>(
+    session: &'s Session,
+    checker_session: &'s SessionSlot,
+    files: &'s Files<'s>,
+    node_counts: &NodeCounts,
+) -> &'s UnsafeCell<Program<'s>> {
+    let program = Program::with_node_counts(checker_session.session(), files, node_counts);
+    let program = session.arena().alloc(program);
+    program.find_symbols_of_compiler();
+    UnsafeCell::from_mut(program)
 }
 
 fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Vec<FileId> {

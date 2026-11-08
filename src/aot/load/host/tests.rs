@@ -35,6 +35,8 @@ const DATA: &[u8] = b"/project/a.data";
 const NEVER_LOADED: &[u8] = b"/project/never.ts";
 const DEFERRED_TEMPLATE: &[u8] = b"/project/deferred.tmpl";
 const WITHOUT_PLUGIN: &[u8] = b"/project/without-plugin.vue";
+const PROSE_WITHOUT_PLUGIN: &[u8] = b"/project/prose-without-plugin";
+const PROGRAM_WITHOUT_PLUGIN: &[u8] = b"/project/program-without-plugin";
 const CLAIMED: &[u8] = b"/project/claimed.ts";
 const VIRTUAL_CONFIG: &[u8] = b"config";
 const VIRTUAL_DATA: &[u8] = b"data";
@@ -122,7 +124,7 @@ impl SourceProvider for ScriptedProvider {
     }
 
     fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
-        module.path != WITHOUT_PLUGIN
+        ![WITHOUT_PLUGIN, PROSE_WITHOUT_PLUGIN, PROGRAM_WITHOUT_PLUGIN].contains(&module.path)
     }
 
     fn finish_deferred_loads(&self, _log: &mut Log) -> Vec<DeferredLoad> {
@@ -691,6 +693,34 @@ fn with_texts_that_only_their_load_calls_programs(
 
 fn parse_as_required<'s>(fixture: &Fixture<'_, 's>, path: &[u8]) -> ParsedCode<'s> {
     fixture.parse(path, to_host_loader(Loader::Ts, path))
+}
+
+#[test]
+fn text_that_is_no_program_fails_where_a_load_that_the_bundler_does_not_link_loads_it() {
+    let settings = default_settings();
+    let files = [
+        ("prose", "first();\nthis is no program"),
+        ("prose-without-plugin", "first();\nthis is no program"),
+        ("program-without-plugin", "module.exports = 1;"),
+    ];
+    with_host(&files, |fixture| {
+        let loader_for = |path, is_linked_by_bundler: bool| {
+            fixture.host.loader_of(&LoaderRequest {
+                kind: CodeImportKind::Require,
+                is_linked_by_bundler,
+                ..loader_request(path, &settings)
+            })
+        };
+        assert_eq!(loader_for(PROSE_WITHOUT_PLUGIN, true), BY_NAME);
+        assert_eq!(loader_for(PROGRAM_WITHOUT_PLUGIN, false), BY_NAME);
+        assert_eq!(loader_for(b"/project/prose", false), BY_NAME);
+        let loader = loader_for(PROSE_WITHOUT_PLUGIN, false);
+        let loaded = fixture.parse(PROSE_WITHOUT_PLUGIN, loader);
+        let source = payload_of(&loaded);
+        let said = source.parse_failure.as_deref();
+        assert_eq!(said, Some(&b"';' expected. (2:6)"[..]));
+        assert_eq!(source.kind, SourceKind::Program);
+    });
 }
 
 #[test]

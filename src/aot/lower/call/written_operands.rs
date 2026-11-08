@@ -1,9 +1,10 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, SymbolId};
+use bun_sema::bind::{Binding, Parent, SymbolId};
 use bun_sema::check::aot::ObjectMemberKind;
 use bun_sema::fold::{TreeNode, push_children};
 use bun_sema::hir::{
-    Call, CallId, Chain, ExprId, ExprKind, IdList, PatId, PatKind, StmtId, is_private_name_at,
+    Call, CallId, Chain, ExprId, ExprKind, IdList, NameKind, PatId, PatKind, PropKind, StmtId,
+    is_private_name_at, is_proto_setter,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -17,6 +18,7 @@ use crate::lower::context::StoresByNameInList;
 use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, object};
+use crate::modules::{DescribedPart, WrittenDescriptor};
 
 #[cfg(test)]
 mod tests;
@@ -36,10 +38,13 @@ impl FileLowering<'_, '_, '_, '_> {
         {
             made = self.skip_type_syntax(value);
         }
-        let ExprKind::Call(number) = hir[made].kind else {
-            return None;
+        let is_literal_below_null = object::is_empty_without_prototype(hir, made);
+        let creates = |number: CallId| {
+            find_locked_builtin(self, hir[number].callee) == Some(BuiltinId::ObjectCreate)
         };
-        if find_locked_builtin(self, hir[number].callee) != Some(BuiltinId::ObjectCreate) {
+        if !is_literal_below_null
+            && !matches!(hir[made].kind, ExprKind::Call(number) if creates(number))
+        {
             return None;
         }
         let PatKind::Ident(_) = hir[pattern].kind else {
@@ -66,14 +71,38 @@ impl FileLowering<'_, '_, '_, '_> {
             );
             list.looked_at_from = behind.start;
         }
-        let is_below_null = self.find_only_argument(hir[number]).is_some_and(|parent| {
-            matches!(hir[self.skip_type_syntax(parent)].kind, ExprKind::Null)
-        });
+        let is_below_null = match hir[made].kind {
+            ExprKind::Call(number) => {
+                self.find_parent_and_written_map(hir[number])
+                    .is_some_and(|(parent, _)| {
+                        matches!(hir[self.skip_type_syntax(parent)].kind, ExprKind::Null)
+                    })
+            }
+            _ => is_literal_below_null,
+        };
+        let brings_map = match hir[made].kind {
+            ExprKind::Call(number) => {
+                matches!(
+                    self.find_parent_and_written_map(hir[number]),
+                    Some((_, Some(_)))
+                )
+            }
+            _ => false,
+        };
         if is_below_null && list.kept_plain_below_null.contains(&symbol) {
             return None;
         }
+        let names = || {
+            list.names_stored_on
+                .get(&symbol)
+                .cloned()
+                .unwrap_or_default()
+        };
+        if brings_map {
+            return Some((made, names()));
+        }
         let last = *list.last_store_of.get(&symbol)?;
-        (last >= behind.start).then(|| (made, list.names_stored_on[&symbol].clone()))
+        (last >= behind.start).then(|| (made, names()))
     }
 
     fn note_stores_by_name_in(
@@ -114,6 +143,14 @@ impl FileLowering<'_, '_, '_, '_> {
                                 }
                             }
                         }
+                        ExprKind::Call(_) => {
+                            if let Some(symbol) = self.find_holder_of_written_definition(expression)
+                            {
+                                let last = last_store_of.entry(symbol).or_insert(place);
+                                *last = (*last).max(place);
+                                names_stored_on.entry(symbol).or_default();
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -128,12 +165,99 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    fn lays_value_or_getter(&self, descriptor: ExprId) -> bool {
+        WrittenDescriptor::read(self.hir, self.decisions(), descriptor).is_some_and(|written| {
+            matches!(
+                written.part,
+                DescribedPart::Data { value: Some(_), .. }
+                    | DescribedPart::Accessor {
+                        getter: Some(_),
+                        setter: None
+                    }
+            )
+        })
+    }
+
+    fn is_map_of_values_and_getters(&self, map: ExprId) -> bool {
+        let hir = self.hir;
+        let ExprKind::Object(entries) = hir[self.skip_type_syntax(map)].kind else {
+            return false;
+        };
+        let mut entries = entries.iter().map(|entry| hir[entry]).peekable();
+        entries.peek().is_some()
+            && entries.all(|entry| {
+                entry.kind == PropKind::Init
+                    && entry.name_kind == NameKind::Identifier
+                    && !is_proto_setter(&entry)
+                    && self.lays_value_or_getter(entry.value)
+            })
+    }
+
+    fn find_parent_and_written_map(&self, site: Call) -> Option<(ExprId, Option<ExprId>)> {
+        if let Some(parent) = self.find_only_argument(site) {
+            return Some((parent, None));
+        }
+        let mut operands = self.hir.ids(site.args);
+        let (parent, map) = (operands.next()?, operands.next()?);
+        let is_spread = matches!(self.hir[parent].kind, ExprKind::Spread(_));
+        let is_written =
+            operands.next().is_none() && !is_spread && self.is_map_of_values_and_getters(map);
+        is_written.then_some((parent, Some(map)))
+    }
+
+    fn is_first_operand_of_written_definition(&self, literal: ExprId) -> bool {
+        let mut child = literal;
+        while let Parent::Expr(parent) = self.bound.parent_of_expr(child) {
+            if self.hir.type_assertion_operand(parent) == Some(child) {
+                child = parent;
+                continue;
+            }
+            return self.find_operand_that_written_definition_defines_on(parent) == Some(literal);
+        }
+        false
+    }
+
+    fn find_holder_of_written_definition(&self, expression: ExprId) -> Option<SymbolId> {
+        let holder = self.find_operand_that_written_definition_defines_on(expression)?;
+        match (self.hir[holder].kind, self.bound.binding(holder)) {
+            (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(symbol),
+            _ => None,
+        }
+    }
+
+    fn find_operand_that_written_definition_defines_on(
+        &self,
+        expression: ExprId,
+    ) -> Option<ExprId> {
+        let hir = self.hir;
+        let ExprKind::Call(number) = hir[expression].kind else {
+            return None;
+        };
+        let mut operands = hir.ids(hir[number].args);
+        let holder = self.skip_type_syntax(operands.next()?);
+        let is_written = match find_locked_builtin(self, hir[number].callee) {
+            Some(BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty) => {
+                let (key, descriptor) = (operands.next()?, operands.next()?);
+                matches!(hir[self.skip_type_syntax(key)].kind, ExprKind::String(_))
+                    && self.lays_value_or_getter(descriptor)
+            }
+            Some(BuiltinId::ObjectDefineProperties) => {
+                self.is_map_of_values_and_getters(operands.next()?)
+            }
+            _ => false,
+        };
+        (is_written && operands.next().is_none()).then_some(holder)
+    }
+
     fn note_what_keeps_plain(
         &self,
         expression: ExprId,
         kept_plain_below_null: &mut FxHashSet<SymbolId>,
     ) {
         let (hir, bound) = (self.hir, self.bound);
+        if self.find_holder_of_written_definition(expression).is_some() {
+            return;
+        }
         let named = match hir[expression].kind {
             ExprKind::Assign { target, .. } => match hir[self.skip_type_syntax(target)].kind {
                 ExprKind::Index { obj, .. } => Some(obj),
@@ -380,7 +504,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if self.object_created_for_maker != Some(call) {
             return None;
         }
-        let parent = self.file.find_only_argument(site)?;
+        let (parent, map) = self.file.find_parent_and_written_map(site)?;
         let ExprKind::Call(number) = self.file.hir[call].kind else {
             return None;
         };
@@ -395,6 +519,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         self.lower_expression(site.callee);
         let parent = self.lower_expression(parent);
+        let map = map.map(|map| self.lower_expression(map));
         self.set_position(self.file.call_position(site));
         self.quote_if_next_fails(call);
         let layout = match is_below_null {
@@ -409,8 +534,29 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.set_literal_prototype(head, parent, true);
         self.builder.set_tail_position(outer);
         let made = self.builder.finish_object(head);
+        if let Some(map) = map {
+            self.emit_builtin_call(BuiltinId::ObjectDefineProperties, &[made, map]);
+        }
         self.set_position(self.file.hir[call].pos);
         Some(self.claim_call_result(call, made))
+    }
+
+    pub(in crate::lower) fn lower_literal_below_null_for_maker(
+        &mut self,
+        literal: ExprId,
+    ) -> Option<ValueId> {
+        let layout = if self.object_created_for_maker == Some(literal) {
+            self.layout_of_record_below_null(literal)
+        } else if self.file.is_first_operand_of_written_definition(literal) {
+            self.file.layout_of_names_made_at(literal, &[])
+        } else {
+            return None;
+        };
+        let null = self.builder.null();
+        self.file.fragment.note_allocation(layout);
+        let head = self.builder.new_object(layout, &[], None, &[]);
+        self.builder.set_literal_prototype(head, null, true);
+        Some(self.builder.finish_object(head))
     }
 
     fn layout_of_record_below_null(&mut self, call: ExprId) -> LayoutId {

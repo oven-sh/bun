@@ -8,8 +8,8 @@
 #   let half = seed + 0.5;
 #   let whole = seed | 0;
 #   let later: number | undefined;
-#   const early = (tag: Tag): string => { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return late + " " + work; };
-#   const read = (tag: Tag): string => { let work = 0; for (let i = 0; i < 2; i++) work = (work + tag.n + tag.m) | 0; return half + " " + whole + " " + later + " " + work; };
+#   const early = (tag: Tag): string => { let work = (tag.n + tag.m + tag.n + tag.m + tag.n - tag.n + tag.m - tag.m + tag.n - tag.n + tag.m - tag.m) | 0; return late + " " + work; };
+#   const read = (tag: Tag): string => { let work = (tag.n + tag.m + tag.n + tag.m + tag.n - tag.n + tag.m - tag.m + tag.n - tag.n + tag.m - tag.m) | 0; return half + " " + whole + " " + later + " " + work; };
 #   const step = (): void => { half *= 1.5; whole = (whole + 1) | 0; later = whole * 2; };
 #   let said = "";
 #   try { said += early(unseen({ n: 3, m: 4 })); } catch (thrown) { said += (thrown as Error).name; }

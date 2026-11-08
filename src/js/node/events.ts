@@ -33,32 +33,40 @@ const {
   validateString,
 } = require("internal/validators");
 const { addAbortListener } = require("internal/abort_listener");
-const shared = require("internal/shared");
-const { resistStopPropagation } = shared;
+const { resistStopPropagation } = require("internal/shared");
 
 const types = require("node:util/types");
 let inspect: ((value: unknown, opts?: object) => string) | undefined;
 
+const SymbolFor = Symbol.for;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ReflectOwnKeys = Reflect.ownKeys;
 
-const kCapture: typeof shared.kCapture = shared.kCapture;
+const kCapture = Symbol("kCapture");
 // Set when `_events` was preallocated (streams do this): removeListener then
 // writes `undefined` instead of `delete`, keeping one shared JSC Structure
 // so the (StructureID, name)-keyed megamorphic cache stays hot.
-const kShapeMode: typeof shared.kShapeMode = shared.kShapeMode;
-const kErrorMonitor = Symbol.for("events.errorMonitor");
+const kShapeMode = Symbol("shapeMode");
+const kErrorMonitor = SymbolFor("events.errorMonitor");
 const kMaxEventTargetListeners = Symbol("events.maxEventTargetListeners");
 const kMaxEventTargetListenersWarned = Symbol("events.maxEventTargetListenersWarned");
-const kWatermarkData = Symbol.for("nodejs.watermarkData");
-const kRejection = Symbol.for("nodejs.rejection");
-const kFirstEventParam = Symbol.for("nodejs.kFirstEventParam");
-const captureRejectionSymbol = Symbol.for("nodejs.rejection");
+const kWatermarkData = SymbolFor("nodejs.watermarkData");
+const kRejection = SymbolFor("nodejs.rejection");
+const kFirstEventParam = SymbolFor("nodejs.kFirstEventParam");
+const captureRejectionSymbol = SymbolFor("nodejs.rejection");
 
-let FixedQueue: typeof import("internal/fixed_queue").default.FixedQueue | undefined;
+let FixedQueue;
 const kEmptyObject = Object.freeze(Object.create(null));
 
 var defaultMaxListeners = 10;
+
+interface Listener extends Function {
+  listener?: Function;
+}
+
+interface ListenerList extends Array<Listener> {
+  warned?: boolean;
+}
 
 interface MaxListenersExceededWarning extends Error {
   emitter?: unknown;
@@ -66,224 +74,63 @@ interface MaxListenersExceededWarning extends Error {
   count?: number;
 }
 
-/** A list that has grown past the limit once carries `warned`, so that the warning is printed once. */
-type ListenerList = $Node.Listener[] & { warned?: boolean };
+type EventName = string | symbol;
 
-/** An `EventEmitter` or an `EventTarget`: the static functions tell them apart by their methods. */
-interface EmitterOrTarget {
-  on?(type: $Node.EventName, listener: $Node.Listener): unknown;
-  once?(type: $Node.EventName, listener: $Node.Listener): unknown;
-  removeListener?(type: $Node.EventName, listener: $Node.Listener): unknown;
-  listeners?(type: $Node.EventName): $Node.Listener[];
-  listenerCount?(type: $Node.EventName): number;
-  setMaxListeners?(n: number): unknown;
-  getMaxListeners?(): number;
+declare class EventEmitter {
+  constructor(opts?: { captureRejections?: boolean });
+  _events?: Record<EventName, Listener | ListenerList | undefined>;
+  _eventsCount: number;
   _maxListeners?: number;
-  pause?(): unknown;
-  resume?(): unknown;
-  addEventListener?(type: $Node.EventName, listener: $Node.Listener, options?: object): void;
-  removeEventListener?(type: $Node.EventName, listener: $Node.Listener, options?: object): void;
-  [kMaxEventTargetListeners]?: number;
-  [kMaxEventTargetListenersWarned]?: boolean;
-}
-
-interface OnceOptions {
-  signal?: AbortSignal;
-}
-
-interface OnOptions {
-  signal?: AbortSignal;
-  close?: $Node.EventName[];
-  highWaterMark?: number;
-  highWatermark?: number;
-  lowWaterMark?: number;
-  lowWatermark?: number;
-  [kFirstEventParam]?: boolean;
-}
-
-interface ListenerFlags {
-  once?: boolean;
-}
-
-interface PendingNext {
-  resolve(result: IteratorResult<unknown, undefined>): void;
-  reject(error: unknown): void;
-}
-
-declare global {
-  /** The instances of node's classes that are written as constructor functions, and their constructors. */
-  namespace $Node {
-    type EventName = string | symbol;
-
-    interface Listener {
-      (...args: any[]): unknown;
-      /** On the wrapper that `once()` stores: the function that was given to it. */
-      listener?: Listener;
-    }
-
-    /** One listener is stored bare, several in an array that is never changed in place. */
-    type Events = Record<EventName, Listener | Listener[] | undefined>;
-
-    interface EventEmitterOptions {
-      __proto__?: null;
-      captureRejections?: boolean;
-    }
-
-    interface EventEmitter extends EventEmitterPrototype {
-      /** Missing on an object that has the prototype and never ran the constructor. */
-      _events?: Events;
-      _maxListeners?: number;
-      [kShapeMode]?: boolean;
-      [kRejection]?(error: unknown, type: EventName, ...args: unknown[]): void;
-    }
-
-    /** What `EventEmitter.prototype` itself holds: the methods and two defaults, and no other field of an instance. */
-    interface EventEmitterPrototype {
-      _eventsCount: number;
-      [kCapture]: boolean;
-      setMaxListeners(n: number): this;
-      getMaxListeners(): number;
-      emit(type: EventName, ...args: unknown[]): boolean;
-      addListener(type: EventName, listener: Listener): this;
-      on(type: EventName, listener: Listener): this;
-      prependListener(type: EventName, listener: Listener): this;
-      once(type: EventName, listener: Listener): this;
-      prependOnceListener(type: EventName, listener: Listener): this;
-      removeListener(type: EventName, listener: Listener): this;
-      off(type: EventName, listener: Listener): this;
-      removeAllListeners(type?: EventName): this;
-      listeners(type: EventName): Listener[];
-      rawListeners(type: EventName): Listener[];
-      listenerCount(type: EventName, listener?: Listener): number;
-      eventNames(): EventName[];
-    }
-
-    interface EventEmitterConstructor {
-      new (options?: EventEmitterOptions): EventEmitter;
-      (this: EventEmitter, options?: EventEmitterOptions): void;
-      prototype: any;
-      EventEmitter: EventEmitterConstructor;
-      init: EventEmitterConstructor;
-      EventEmitterAsyncResource: typeof EventEmitterAsyncResource;
-      once: typeof once;
-      on: typeof on;
-      getEventListeners: typeof getEventListeners;
-      getMaxListeners: typeof getMaxListeners;
-      setMaxListeners: typeof setMaxListeners;
-      listenerCount: typeof listenerCount;
-      addAbortListener: typeof addAbortListener;
-      usingDomains: boolean;
-      captureRejections: boolean;
-      defaultMaxListeners: number;
-      /** The same symbol as `kRejection`, and for the type checker the same key. */
-      readonly captureRejectionSymbol: typeof kRejection;
-      readonly errorMonitor: typeof kErrorMonitor;
-      readonly kMaxEventTargetListeners: typeof kMaxEventTargetListeners;
-      readonly kMaxEventTargetListenersWarned: typeof kMaxEventTargetListenersWarned;
-    }
-  }
+  [kCapture]?: boolean;
+  [kShapeMode]?: boolean;
+  setMaxListeners(n: number): this;
+  getMaxListeners(): number;
+  emit(type: EventName, ...args: unknown[]): boolean;
+  addListener(type: EventName, fn: Listener): this;
+  on(type: EventName, fn: Listener): this;
+  prependListener(type: EventName, fn: Listener): this;
+  once(type: EventName, fn: Listener): this;
+  prependOnceListener(type: EventName, fn: Listener): this;
+  removeListener(type: EventName, listener: Listener): this;
+  off(type: EventName, listener: Listener): this;
+  removeAllListeners(type: EventName): this;
+  listeners(type: EventName): Function[];
+  rawListeners(type: EventName): Function[];
+  listenerCount(type: EventName, method?: Function): number;
+  eventNames(): EventName[];
 }
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
-function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions) {
-  if (!IS_COMPILED_AHEAD_OF_TIME) {
-    if (this._events === undefined || this._events === (this as any).__proto__._events) {
-      this._events = Object.create(null);
-      this._eventsCount = 0;
-      this[kShapeMode] = false;
-    } else {
-      // Preallocated `_events` (streams).
-      this[kShapeMode] = true;
-    }
-
-    this._maxListeners ??= undefined;
-    if (opts?.captureRejections) {
-      // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
-      validateBoolean(opts.captureRejections, "options.captureRejections");
-      this[kCapture] = !!opts.captureRejections;
-      this.emit = emitWithRejectionCapture;
-    } else {
-      this[kCapture] = EventEmitterPrototype[kCapture];
-      const capture = EventEmitterPrototype[kCapture];
-      this[kCapture] = capture;
-      if (capture) {
-        this.emit = emitWithRejectionCapture;
-      }
-    }
-    return;
-  }
-  if ($isProxyObject(this)) {
-    ("unlikely");
-    return initializeProxyReceiver(this, opts);
-  }
-  let hasNoTableOfItsOwn = this._events === undefined;
-  if (!hasNoTableOfItsOwn) {
-    let holder: object | null = CAN_REPLACE_BUILT_INS ? null : this;
-    while (holder !== null && !$isProxyObject(holder) && !Object.hasOwn(holder, "__proto__")) {
-      holder = $getPrototypeOf(holder);
-      if (holder === Object.prototype) break;
-    }
-    hasNoTableOfItsOwn =
-      holder === Object.prototype && this !== Object.prototype
-        ? this._events === ($getPrototypeOf(this) as any)._events
-        : this._events === (this as any).__proto__._events;
-  }
-  if (hasNoTableOfItsOwn) {
+function EventEmitter(opts) {
+  if (this._events === undefined || this._events === this.__proto__._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
     this[kShapeMode] = false;
   } else {
-    // Preallocated `_events` (streams).
+    // Preallocated `_events` (streams). The count comes from the prototype
+    // default `EventEmitterPrototype._eventsCount = 0`, as in node.
     this[kShapeMode] = true;
   }
 
   this._maxListeners ??= undefined;
   if (opts?.captureRejections) {
-    ("unlikely");
     // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
     validateBoolean(opts.captureRejections, "options.captureRejections");
     this[kCapture] = !!opts.captureRejections;
-    storeEmitWithRejectionCapture(this);
+    this.emit = emitWithRejectionCapture;
   } else {
     this[kCapture] = EventEmitterPrototype[kCapture];
     const capture = EventEmitterPrototype[kCapture];
     this[kCapture] = capture;
     if (capture) {
-      ("unlikely");
-      storeEmitWithRejectionCapture(this);
-    }
-  }
-}
-
-function initializeProxyReceiver(emitter: any, opts?: $Node.EventEmitterOptions) {
-  if (emitter._events === undefined || emitter._events === emitter.__proto__._events) {
-    emitter._events = Object.create(null);
-    emitter._eventsCount = 0;
-    emitter[kShapeMode] = false;
-  } else {
-    emitter[kShapeMode] = true;
-  }
-
-  emitter._maxListeners ??= undefined;
-  if (opts?.captureRejections) {
-    validateBoolean(opts.captureRejections, "options.captureRejections");
-    emitter[kCapture] = !!opts.captureRejections;
-    storeEmitWithRejectionCapture(emitter);
-  } else {
-    emitter[kCapture] = EventEmitterPrototype[kCapture];
-    const capture = EventEmitterPrototype[kCapture];
-    emitter[kCapture] = capture;
-    if (capture) {
-      storeEmitWithRejectionCapture(emitter);
+      this.emit = emitWithRejectionCapture;
     }
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });
-// Two statements: the object goes nowhere but under `prototype`, so a compiler that reads this text knows the members that are laid below.
-EventEmitter.prototype = {} as $Node.EventEmitterPrototype;
-const EventEmitterPrototype = EventEmitter.prototype;
+const EventEmitterPrototype = (EventEmitter.prototype = {} as EventEmitter);
 
-EventEmitterPrototype.setMaxListeners = function setMaxListeners(this: $Node.EventEmitter, n: number) {
+EventEmitterPrototype.setMaxListeners = function setMaxListeners(n) {
   validateNumber(n, "setMaxListeners", 0);
   this._maxListeners = n;
   return this;
@@ -292,12 +139,12 @@ Object.defineProperty(EventEmitterPrototype.setMaxListeners, "name", { value: "s
 
 EventEmitterPrototype.constructor = EventEmitter;
 
-EventEmitterPrototype.getMaxListeners = function getMaxListeners(this: $Node.EventEmitter) {
+EventEmitterPrototype.getMaxListeners = function getMaxListeners() {
   return _getMaxListeners(this);
 };
 Object.defineProperty(EventEmitterPrototype.getMaxListeners, "name", { value: "getMaxListeners" });
 
-function emitError(emitter: $Node.EventEmitter, args: unknown[]) {
+function emitError(emitter, args) {
   var { _events: events } = emitter;
 
   if (events !== undefined) {
@@ -313,7 +160,7 @@ function emitError(emitter: $Node.EventEmitter, args: unknown[]) {
     }
   }
 
-  let er: unknown;
+  let er: Error | undefined;
   if (args.length > 0) er = args[0];
 
   if (Error.isError(er)) {
@@ -337,7 +184,7 @@ function emitError(emitter: $Node.EventEmitter, args: unknown[]) {
 // A listener list is a bare function for a single listener, else an array
 // (like node). Arrays are never mutated in place - mutators install a copy -
 // so a stored list can be iterated with no defensive clone.
-function applyHandlers(handlers: $Node.Listener | $Node.Listener[], emitter: $Node.EventEmitter, args: unknown[]) {
+function applyHandlers(handlers, emitter, args) {
   if (typeof handlers === "function") {
     handlers.$apply(emitter, args);
     return;
@@ -347,19 +194,14 @@ function applyHandlers(handlers: $Node.Listener | $Node.Listener[], emitter: $No
   }
 }
 
-function addCatch(emitter: $Node.EventEmitter, promise: Promise<unknown>, type: $Node.EventName, args: unknown[]) {
+function addCatch(emitter, promise, type, args) {
   promise.then(undefined, function (err) {
     // The callback is called with nextTick to avoid a follow-up rejection from this promise.
     process.nextTick(emitUnhandledRejectionOrErr, emitter, err, type, args);
   });
 }
 
-function emitUnhandledRejectionOrErr(
-  emitter: $Node.EventEmitter,
-  err: unknown,
-  type: $Node.EventName,
-  args: unknown[],
-) {
+function emitUnhandledRejectionOrErr(emitter, err, type, args) {
   if (typeof emitter[kRejection] === "function") {
     emitter[kRejection](err, type, ...args);
   } else {
@@ -375,16 +217,15 @@ function emitUnhandledRejectionOrErr(
   }
 }
 
-const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...args: unknown[]) {
+const emitWithoutRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
 
   if (type === "error") {
-    ("unlikely");
     return emitError(this, args);
   }
-  const { _events: events } = this;
+  var { _events: events } = this;
   if (events === undefined) return false;
-  const handler = events[type];
+  var handler = events[type];
   if (handler === undefined) return false;
   // For performance reasons Function.call(...) is used whenever possible.
   if (typeof handler === "function") {
@@ -407,13 +248,10 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
     }
     return true;
   }
-  // Compiled ahead of time, the loop is a function of its own, so that what is left is small enough to go where it is called.
-  // In `bun run` that is one more call for every event with several listeners, a sixth more in the interpreter.
-  if (IS_COMPILED_AHEAD_OF_TIME) return emitToEach(this, handler, handler.length, args);
   // No defensive clone: stored arrays are never mutated in place (mutators
   // install a copy), so this list stays stable for the whole loop even if a
   // listener adds/removes listeners.
-  for (let i = 0, length = handler.length; i < length; i++) {
+  for (let i = 0, { length } = handler; i < length; i++) {
     const listener = handler[i];
     switch (args.length) {
       case 0:
@@ -436,38 +274,7 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
   return true;
 };
 
-// The loop of emit() once more, for an executable that was compiled ahead of time. It takes the place of emit() in a stack trace, under its name.
-const emitToEach = function emit(
-  emitter: $Node.EventEmitter,
-  listeners: $Node.Listener[],
-  length: number,
-  args: unknown[],
-): boolean {
-  for (let i = 0; i < length; i += 1) {
-    const listener = listeners[i];
-    switch (args.length) {
-      case 0:
-        listener.$call(emitter);
-        break;
-      case 1:
-        listener.$call(emitter, args[0]);
-        break;
-      case 2:
-        listener.$call(emitter, args[0], args[1]);
-        break;
-      case 3:
-        listener.$call(emitter, args[0], args[1], args[2]);
-        break;
-      default:
-        listener.$apply(emitter, args);
-        break;
-    }
-  }
-  return true;
-};
-EventEmitterPrototype.emit = emit;
-
-const emitWithRejectionCapture = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...args: unknown[]) {
+const emitWithRejectionCapture = function emit(type, ...args) {
   $debug(`${this.constructor?.name || "EventEmitter"}.emit`, type);
   if (type === "error") {
     return emitError(this, args);
@@ -531,31 +338,19 @@ const emitWithRejectionCapture = function emit(this: $Node.EventEmitter, type: $
   return true;
 };
 
-// Only an emitter that captures rejections has an own `emit`. Compiled ahead of time, a store that names the property makes room for it in
-// every emitter, and every call of `emit` asks whether it is there.
-function storeUnderName(emitter: $Node.EventEmitter, name: string, method: unknown) {
-  (emitter as any)[name] = method;
-}
-function storeEmitWithRejectionCapture(emitter: $Node.EventEmitter) {
-  if (IS_COMPILED_AHEAD_OF_TIME) {
-    storeUnderName(emitter, "emit", emitWithRejectionCapture);
-  } else {
-    emitter.emit = emitWithRejectionCapture;
-  }
-}
+EventEmitterPrototype.emit = emitWithoutRejectionCapture;
 
-function _addListener(target: $Node.EventEmitter, type: $Node.EventName, fn: $Node.Listener, prepend: boolean) {
+function _addListener(target, type, fn, prepend) {
   checkListener(fn);
   var events = target._events;
   if (!events) {
-    events = target._events = Object.create(null) as $Node.Events;
+    events = target._events = Object.create(null);
     target._eventsCount = 0;
   } else if (events.newListener !== undefined) {
-    ("unlikely");
     target.emit("newListener", type, fn.listener ?? fn);
     // A newListener handler can replace `_events` (e.g. a once wrapper's
     // removeListener dropping the count to 0 installs a fresh object).
-    events = target._events!;
+    events = target._events;
   }
   var existing = events[type];
   if (existing === undefined) {
@@ -564,32 +359,26 @@ function _addListener(target: $Node.EventEmitter, type: $Node.EventName, fn: $No
     target._eventsCount++;
     return;
   }
-  var handlers: $Node.Listener[];
+  var handlers;
   if (typeof existing === "function") {
     handlers = events[type] = prepend ? [fn, existing] : [existing, fn];
   } else {
     handlers = events[type] = copyWithInserted(existing, fn, prepend);
   }
   var m = _getMaxListeners(target);
-  if (m > 0 && handlers.length > m && !(handlers as ListenerList).warned) {
-    ("unlikely");
+  if (m > 0 && handlers.length > m && !handlers.warned) {
     overflowWarning(target, type, handlers);
   }
 }
 
-const addListener = function addListener(this: $Node.EventEmitter, type: $Node.EventName, fn: $Node.Listener) {
+EventEmitterPrototype.addListener = function addListener(type, fn) {
   _addListener(this, type, fn, false);
   return this;
 };
-EventEmitterPrototype.addListener = addListener;
 
-EventEmitterPrototype.on = addListener;
+EventEmitterPrototype.on = EventEmitterPrototype.addListener;
 
-EventEmitterPrototype.prependListener = function prependListener(
-  this: $Node.EventEmitter,
-  type: $Node.EventName,
-  fn: $Node.Listener,
-) {
+EventEmitterPrototype.prependListener = function prependListener(type, fn) {
   _addListener(this, type, fn, true);
   return this;
 };
@@ -597,9 +386,9 @@ EventEmitterPrototype.prependListener = function prependListener(
 // Copy-on-write: emit iterates stored arrays with no clone, so new listeners
 // land in a fresh array; `warned` carries over so the leak warning fires once.
 // An inline loop beats concat/slice here ~10x (host-call boundary).
-function copyWithInserted(list: $Node.Listener[], fn: $Node.Listener, prepend: boolean) {
+function copyWithInserted(list, fn, prepend) {
   const n = list.length;
-  const copy = $newArrayWithSize<$Node.Listener>(n + 1);
+  const copy: ListenerList = $newArrayWithSize(n + 1);
   // Two straight copies, not a per-element ternary (measured ~25% slower).
   if (prepend) {
     copy[0] = fn;
@@ -608,13 +397,13 @@ function copyWithInserted(list: $Node.Listener[], fn: $Node.Listener, prepend: b
     for (let i = 0; i < n; i++) copy[i] = list[i];
     copy[n] = fn;
   }
-  if ((list as ListenerList).warned) (copy as ListenerList).warned = true;
+  if (list.warned) copy.warned = true;
   return copy;
 }
 
-function overflowWarning(emitter: $Node.EventEmitter, type: $Node.EventName, handlers: $Node.Listener[]) {
+function overflowWarning(emitter, type, handlers) {
   if (!inspect) inspect = require("internal/util/inspect").inspect;
-  (handlers as ListenerList).warned = true;
+  handlers.warned = true;
   const warn: MaxListenersExceededWarning = new Error(
     `Possible EventEmitter memory leak detected. ${handlers.length} ${String(type)} listeners added to ${inspect!(emitter, { depth: -1 })}. MaxListeners is ${_getMaxListeners(emitter)}. Use emitter.setMaxListeners() to increase limit`,
   );
@@ -627,11 +416,7 @@ function overflowWarning(emitter: $Node.EventEmitter, type: $Node.EventName, han
 
 // A closure over (target, type, listener, fired) rather than a state object
 // plus onceWrapper.bind(state): one allocation instead of two per once().
-function _onceWrap(
-  target: $Node.EventEmitter | undefined,
-  type: $Node.EventName,
-  listener: $Node.Listener | undefined,
-) {
+function _onceWrap(target, type, listener) {
   let fired = false;
   // Named `onceWrapper` so inspect/rawListeners() output tracks node's.
   const wrapped = function onceWrapper() {
@@ -640,8 +425,8 @@ function _onceWrap(
       // Drop closure refs so anything that retains the fired wrapper (a cached
       // rawListeners() result, the COW array emit() is iterating) does not
       // retain the emitter. `wrapped.listener` stays: node asserts it survives.
-      const t = target!;
-      const l = listener!;
+      const t = target;
+      const l = listener;
       target = undefined;
       listener = undefined;
       t.removeListener(type, wrapped);
@@ -653,79 +438,31 @@ function _onceWrap(
   return wrapped;
 }
 
-const onceMethod = function once(this: $Node.EventEmitter, type: $Node.EventName, fn: $Node.Listener) {
+EventEmitterPrototype.once = function once(type, fn) {
   checkListener(fn);
   this.on(type, _onceWrap(this, type, fn));
   return this;
 };
-EventEmitterPrototype.once = onceMethod;
 Object.defineProperty(EventEmitterPrototype.once, "name", { value: "once" });
 
-EventEmitterPrototype.prependOnceListener = function prependOnceListener(
-  this: $Node.EventEmitter,
-  type: $Node.EventName,
-  fn: $Node.Listener,
-) {
+EventEmitterPrototype.prependOnceListener = function prependOnceListener(type, fn) {
   checkListener(fn);
   this.prependListener(type, _onceWrap(this, type, fn));
   return this;
 };
 
-// The end of removeListener() once more, for an executable that was compiled ahead of time. It takes its place in a stack trace, under its name.
-const removeFromList = function removeListener(
-  emitter: $Node.EventEmitter,
-  events: $Node.Events,
-  type: $Node.EventName,
-  list: $Node.Listener[],
-  listener: $Node.Listener,
-) {
-  let position = -1;
-  for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i] === listener || list[i].listener === listener) {
-      position = i;
-      break;
-    }
-  }
-  if (position < 0) return emitter;
-
-  const n = list.length;
-  if (n === 2) {
-    events[type] = list[1 - position];
-  } else {
-    const copy = $newArrayWithSize<$Node.Listener>(n - 1);
-    for (let i = 0; i < position; i++) copy[i] = list[i];
-    for (let i = position + 1; i < n; i++) copy[i - 1] = list[i];
-    if ((list as ListenerList).warned) (copy as ListenerList).warned = true;
-    events[type] = copy;
-  }
-
-  if (events.removeListener !== undefined) emitter.emit("removeListener", type, listener.listener ?? listener);
-
-  return emitter;
-};
-
-const removeListener = function removeListener(
-  this: $Node.EventEmitter,
-  type: $Node.EventName,
-  listener: $Node.Listener,
-) {
-  if (typeof listener !== "function") {
-    ("unlikely");
-    checkListener(listener);
-    return this;
-  }
+EventEmitterPrototype.removeListener = function removeListener(type, listener) {
+  checkListener(listener);
 
   const events = this._events;
   if (events === undefined) return this;
 
   const list = events[type];
-  bareListener: {
-    // One comparison finds the usual case, a single listener that is stored bare and is the function itself.
-    if (list !== listener) {
-      if (list === undefined) return this;
-      if (typeof list !== "function") break bareListener;
-      if (list.listener !== listener) return this;
-    }
+  if (list === undefined) return this;
+
+  if (typeof list === "function") {
+    // Bare single listener.
+    if (list !== listener && list.listener !== listener) return this;
     this._eventsCount--;
     if (this[kShapeMode]) {
       // Keep the preallocated slot; just clear it.
@@ -741,8 +478,6 @@ const removeListener = function removeListener(
     return this;
   }
 
-  // Compiled ahead of time, what follows is a function of its own: behind a declared parameter the list is known to be one.
-  if (IS_COMPILED_AHEAD_OF_TIME) return removeFromList(this, events, type, list, listener);
   let position = -1;
   for (let i = list.length - 1; i >= 0; i--) {
     if (list[i] === listener || list[i].listener === listener) {
@@ -755,25 +490,21 @@ const removeListener = function removeListener(
   // Copy-remove (arrays are never mutated in place), and store a lone
   // survivor bare like node does, so `_events[type]` shape matches theirs.
   const n = list.length;
-  if (n === 2) {
-    events[type] = list[1 - position];
-  } else {
-    const copy = $newArrayWithSize<$Node.Listener>(n - 1);
-    for (let i = 0; i < position; i++) copy[i] = list[i];
-    for (let i = position + 1; i < n; i++) copy[i - 1] = list[i];
-    if ((list as ListenerList).warned) (copy as ListenerList).warned = true;
-    events[type] = copy;
+  const copy: ListenerList = $newArrayWithSize(n - 1);
+  for (let i = 0, j = 0; i < n; i++) {
+    if (i !== position) copy[j++] = list[i];
   }
+  if (list.warned) copy.warned = true;
+  events[type] = copy.length === 1 ? copy[0] : copy;
 
   if (events.removeListener !== undefined) this.emit("removeListener", type, listener.listener ?? listener);
 
   return this;
 };
-EventEmitterPrototype.removeListener = removeListener;
 
-EventEmitterPrototype.off = removeListener;
+EventEmitterPrototype.off = EventEmitterPrototype.removeListener;
 
-const removeAllListeners = function removeAllListeners(this: $Node.EventEmitter, type?: $Node.EventName) {
+EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
   const events = this._events;
   if (events === undefined) return this;
 
@@ -782,9 +513,9 @@ const removeAllListeners = function removeAllListeners(this: $Node.EventEmitter,
     if (arguments.length === 0) {
       this._events = Object.create(null);
       this._eventsCount = 0;
-    } else if (events[type!] !== undefined) {
+    } else if (events[type] !== undefined) {
       if (--this._eventsCount === 0) this._events = Object.create(null);
-      else delete events[type!];
+      else delete events[type];
     }
     this[kShapeMode] = false;
     return this;
@@ -803,19 +534,18 @@ const removeAllListeners = function removeAllListeners(this: $Node.EventEmitter,
     return this;
   }
 
-  const listeners = events[type!];
+  const listeners = events[type];
   if (typeof listeners === "function") {
-    this.removeListener(type!, listeners);
+    this.removeListener(type, listeners);
   } else if (listeners !== undefined) {
     // LIFO order. `listeners` is our own snapshot; each removeListener call
     // installs a fresh array (or bare fn / nothing), so it stays intact here.
-    for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type!, listeners[i]);
+    for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
   }
   return this;
 };
-EventEmitterPrototype.removeAllListeners = removeAllListeners;
 
-EventEmitterPrototype.listeners = function listeners(this: $Node.EventEmitter, type: $Node.EventName) {
+EventEmitterPrototype.listeners = function listeners(type) {
   var { _events: events } = this;
   if (!events) return [];
   var handlers = events[type];
@@ -824,7 +554,7 @@ EventEmitterPrototype.listeners = function listeners(this: $Node.EventEmitter, t
   return handlers.map(x => x.listener ?? x);
 };
 
-EventEmitterPrototype.rawListeners = function rawListeners(this: $Node.EventEmitter, type: $Node.EventName) {
+EventEmitterPrototype.rawListeners = function rawListeners(type) {
   var { _events } = this;
   if (!_events) return [];
   var handlers = _events[type];
@@ -833,11 +563,7 @@ EventEmitterPrototype.rawListeners = function rawListeners(this: $Node.EventEmit
   return handlers.slice();
 };
 
-const listenerCountMethod = function listenerCount(
-  this: $Node.EventEmitter,
-  type: $Node.EventName,
-  method?: $Node.Listener,
-) {
+EventEmitterPrototype.listenerCount = function listenerCount(type, method) {
   var handlers = this._events?.[type];
   if (handlers === undefined) return 0;
   if (typeof handlers === "function") {
@@ -856,22 +582,10 @@ const listenerCountMethod = function listenerCount(
   }
   return handlers.length;
 };
-EventEmitterPrototype.listenerCount = listenerCountMethod;
 Object.defineProperty(EventEmitterPrototype.listenerCount, "name", { value: "listenerCount" });
 
-// The methods as they are written here, for the built-in modules that ask whether a method of an emitter is still the one of this module.
-shared.originals.eventEmitter = {
-  emit,
-  storeEmitWithRejectionCapture,
-  addListener,
-  once: onceMethod,
-  removeListener,
-  removeAllListeners,
-  listenerCount: listenerCountMethod,
-};
-
-EventEmitterPrototype.eventNames = function eventNames(this: $Node.EventEmitter) {
-  return this._eventsCount > 0 ? Reflect.ownKeys(this._events!) : [];
+EventEmitterPrototype.eventNames = function eventNames() {
+  return this._eventsCount > 0 ? Reflect.ownKeys(this._events) : [];
 };
 
 EventEmitterPrototype[kCapture] = false;
@@ -883,72 +597,55 @@ EventEmitterPrototype._eventsCount = 0;
 // `async` so the validation/already-aborted `throw`s below surface as a
 // rejected promise instead of a synchronous throw — matches Node, whose
 // `once` is also an async function (`once.constructor.name === "AsyncFunction"`).
-async function once(emitter: EmitterOrTarget, type: $Node.EventName, options: OnceOptions = kEmptyObject) {
+async function once(emitter, type, options = kEmptyObject) {
   validateObject(options, "options");
   var signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
     throw $makeAbortError(undefined, { cause: signal?.reason });
   }
-  const promise = $newPromise<unknown[]>();
-  const errorListener = (err: unknown) => {
-    emitter.removeListener!(type, resolver);
+  const promise = $newPromise();
+  const errorListener = err => {
+    emitter.removeListener(type, resolver);
     if (signal != null) {
-      eventTargetAgnosticRemoveListener(signal, "abort", abortListener!);
+      eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
     }
     $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
   };
-  const resolver = (...args: unknown[]) => {
+  const resolver = (...args) => {
     if (typeof emitter.removeListener === "function") {
       emitter.removeListener("error", errorListener);
     }
     if (signal != null) {
-      eventTargetAgnosticRemoveListener(signal, "abort", abortListener!);
+      eventTargetAgnosticRemoveListener(signal, "abort", abortListener);
     }
     $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, args);
   };
-  let opts;
-  if (typeof emitter.on === "function") {
-    emitter.once!(type, resolver);
-  } else {
-    opts = resistStopPropagation({ __proto__: null, once: true });
-    eventTargetAgnosticAddListener(emitter, type, resolver, opts);
-  }
+  const opts = resistStopPropagation({ __proto__: null, once: true });
+  eventTargetAgnosticAddListener(emitter, type, resolver, opts);
   if (type !== "error" && typeof emitter.once === "function") {
     // EventTarget does not have `error` event semantics like Node
     // EventEmitters, we listen to `error` events only on EventEmitters.
     emitter.once("error", errorListener);
   }
-  let abortListener: (() => void) | undefined;
+  function abortListener() {
+    eventTargetAgnosticRemoveListener(emitter, type, resolver);
+    eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
+    $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, $makeAbortError(undefined, { cause: signal?.reason }));
+  }
   if (signal != null) {
-    abortListener = function abortListener() {
-      eventTargetAgnosticRemoveListener(emitter, type, resolver);
-      eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-      $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, $makeAbortError(undefined, { cause: signal?.reason }));
-    };
-    eventTargetAgnosticAddListener(
-      signal,
-      "abort",
-      abortListener,
-      opts ?? resistStopPropagation({ __proto__: null, once: true }),
-    );
+    eventTargetAgnosticAddListener(signal, "abort", abortListener, opts);
   }
 
   return promise;
 }
 Object.defineProperty(once, "name", { value: "once" });
 
-// In an executable it is looked for at the first call of on(): who only loads this file climbs to no prototype. A test that has replaced Object.getPrototypeOf sees the two calls while the file loads.
-const AsyncIteratorPrototype =
-  IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
-    ? undefined
-    : Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
-const getPrototypeOf = IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS ? Object.getPrototypeOf : undefined;
-let foundAtFirstCall: object | undefined;
-function createIterResult(value: unknown, done: boolean) {
-  return { value, done } as IteratorResult<unknown, undefined>;
+const AsyncIteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(async function* () {}).prototype);
+function createIterResult(value, done) {
+  return { value, done };
 }
-function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions = kEmptyObject) {
+function on(emitter, event, options = kEmptyObject) {
   // Parameters validation
   validateObject(options, "options");
   const signal = options.signal;
@@ -963,10 +660,10 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
 
   // Preparing controlling queues and variables
   FixedQueue ??= require("internal/fixed_queue").FixedQueue;
-  const unconsumedEvents = new FixedQueue<unknown>();
-  const unconsumedPromises = new FixedQueue<PendingNext>();
+  const unconsumedEvents = new FixedQueue();
+  const unconsumedPromises = new FixedQueue();
   let paused = false;
-  let error: unknown = null;
+  let error = null;
   let finished = false;
   let size = 0;
 
@@ -978,7 +675,7 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
           const value = unconsumedEvents.shift();
           size--;
           if (paused && size < lowWatermark) {
-            emitter.resume!(); // Can not be finished yet
+            emitter.resume(); // Can not be finished yet
             paused = false;
           }
           return Promise.$resolve(createIterResult(value, false));
@@ -998,7 +695,7 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
         if (finished) return closeHandler();
 
         // Wait until an event happens
-        return new Promise<IteratorResult<unknown, undefined>>(function (resolve, reject) {
+        return new Promise(function (resolve, reject) {
           unconsumedPromises.push({ resolve, reject });
         });
       },
@@ -1007,7 +704,7 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
         return closeHandler();
       },
 
-      throw(err: unknown) {
+      throw(err) {
         if (!err || !(err instanceof Error)) {
           throw $ERR_INVALID_ARG_TYPE("EventEmitter.AsyncIterator", "Error", err);
         }
@@ -1031,9 +728,7 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
         },
       },
     },
-    IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS
-      ? (foundAtFirstCall ??= getPrototypeOf!(getPrototypeOf!(async function* () {}).prototype) as object)
-      : AsyncIteratorPrototype,
+    AsyncIteratorPrototype,
   );
 
   // Adding event handlers
@@ -1043,7 +738,7 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
     event,
     options[kFirstEventParam]
       ? eventHandler
-      : function (...args: unknown[]) {
+      : function (...args) {
           return eventHandler(args);
         },
   );
@@ -1065,20 +760,20 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
     errorHandler($makeAbortError(undefined, { cause: signal?.reason }));
   }
 
-  function eventHandler(value: unknown) {
+  function eventHandler(value) {
     if (unconsumedPromises.isEmpty()) {
       size++;
       if (!paused && size > highWatermark) {
         paused = true;
-        emitter.pause!();
+        emitter.pause();
       }
       unconsumedEvents.push(value);
-    } else unconsumedPromises.shift()!.resolve(createIterResult(value, false));
+    } else unconsumedPromises.shift().resolve(createIterResult(value, false));
   }
 
-  function errorHandler(err: unknown) {
+  function errorHandler(err) {
     if (unconsumedPromises.isEmpty()) error = err;
-    else unconsumedPromises.shift()!.reject(err);
+    else unconsumedPromises.shift().reject(err);
 
     closeHandler();
   }
@@ -1090,7 +785,7 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
     paused = false;
     const doneResult = createIterResult(undefined, true);
     while (!unconsumedPromises.isEmpty()) {
-      unconsumedPromises.shift()!.resolve(doneResult);
+      unconsumedPromises.shift().resolve(doneResult);
     }
 
     return Promise.$resolve(doneResult);
@@ -1099,15 +794,10 @@ function on(emitter: EmitterOrTarget, event: $Node.EventName, options: OnOptions
 Object.defineProperty(on, "name", { value: "on" });
 
 function listenersController() {
-  const listeners: [
-    emitter: EmitterOrTarget,
-    event: $Node.EventName,
-    handler: $Node.Listener,
-    flags?: ListenerFlags,
-  ][] = [];
+  const listeners: [emitter: unknown, event: string | symbol, handler: Function, flags: unknown][] = [];
 
   return {
-    addEventListener(emitter: EmitterOrTarget, event: $Node.EventName, handler: $Node.Listener, flags?: ListenerFlags) {
+    addEventListener(emitter, event, handler, flags?) {
       eventTargetAgnosticAddListener(emitter, event, handler, flags);
       listeners.push([emitter, event, handler, flags]);
     },
@@ -1120,13 +810,13 @@ function listenersController() {
   };
 }
 
-const getEventListenersForEventTarget: (target: unknown, type: unknown) => $Node.Listener[] = $newCppFunction(
+const getEventListenersForEventTarget = $newCppFunction(
   "JSEventTargetNode.cpp",
   "jsFunctionNodeEventsGetEventListeners",
   1,
 );
 
-function getEventListeners(emitter: EmitterOrTarget, type: $Node.EventName) {
+function getEventListeners(emitter, type) {
   if ($isCallable(emitter?.listeners)) {
     return emitter.listeners(type);
   }
@@ -1135,7 +825,7 @@ function getEventListeners(emitter: EmitterOrTarget, type: $Node.EventName) {
 }
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/events.js#L315-L339
-function setMaxListeners(n = defaultMaxListeners, ...eventTargets: EmitterOrTarget[]) {
+function setMaxListeners(n = defaultMaxListeners, ...eventTargets) {
   validateNumber(n, "setMaxListeners", 0);
   if (eventTargets.length === 0) {
     defaultMaxListeners = n;
@@ -1155,13 +845,13 @@ function setMaxListeners(n = defaultMaxListeners, ...eventTargets: EmitterOrTarg
 }
 Object.defineProperty(setMaxListeners, "name", { value: "setMaxListeners" });
 
-const jsEventTargetGetEventListenersCount: (target: unknown, type: unknown) => number | undefined = $newCppFunction(
+const jsEventTargetGetEventListenersCount = $newCppFunction(
   "JSEventTarget.cpp",
   "jsEventTargetGetEventListenersCount",
   2,
 );
 
-function listenerCount(emitter: EmitterOrTarget, type: $Node.EventName) {
+function listenerCount(emitter, type) {
   if ($isCallable(emitter.listenerCount)) {
     return emitter.listenerCount(type);
   }
@@ -1174,12 +864,7 @@ function listenerCount(emitter: EmitterOrTarget, type: $Node.EventName) {
 }
 Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
 
-function eventTargetAgnosticRemoveListener(
-  emitter: EmitterOrTarget,
-  name: $Node.EventName,
-  listener: $Node.Listener,
-  flags?: ListenerFlags,
-) {
+function eventTargetAgnosticRemoveListener(emitter, name, listener, flags?) {
   if (typeof emitter.removeListener === "function") {
     emitter.removeListener(name, listener);
   } else if (typeof emitter.removeEventListener === "function") {
@@ -1189,15 +874,10 @@ function eventTargetAgnosticRemoveListener(
   }
 }
 
-function eventTargetAgnosticAddListener(
-  emitter: EmitterOrTarget,
-  name: $Node.EventName,
-  listener: $Node.Listener,
-  flags?: ListenerFlags,
-) {
+function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
   if (typeof emitter.on === "function") {
     if (flags?.once) {
-      emitter.once!(name, listener);
+      emitter.once(name, listener);
     } else {
       emitter.on(name, listener);
     }
@@ -1208,18 +888,17 @@ function eventTargetAgnosticAddListener(
   }
 }
 
-function checkListener(listener: $Node.Listener) {
-  if (typeof listener !== "function") validateFunction(listener, "listener");
+function checkListener(listener) {
+  validateFunction(listener, "listener");
 }
 
-function _getMaxListeners(emitter: { _maxListeners?: number }) {
+function _getMaxListeners(emitter) {
   return emitter?._maxListeners ?? defaultMaxListeners;
 }
 
-type AsyncResourceClass = typeof import("./async_hooks").default.AsyncResource;
-let AsyncResource: AsyncResourceClass | null = null;
+let AsyncResource: typeof import("./async_hooks").default.AsyncResource | null = null;
 
-function getMaxListeners(emitterOrTarget: EmitterOrTarget) {
+function getMaxListeners(emitterOrTarget) {
   if (typeof emitterOrTarget?.getMaxListeners === "function") {
     return _getMaxListeners(emitterOrTarget);
   } else if (types.isEventTarget(emitterOrTarget)) {
@@ -1230,31 +909,14 @@ function getMaxListeners(emitterOrTarget: EmitterOrTarget) {
 }
 Object.defineProperty(getMaxListeners, "name", { value: "getMaxListeners" });
 
-interface EventEmitterAsyncResourceOptions extends $Node.EventEmitterOptions {
-  name?: string;
-  triggerAsyncId?: number;
-  requireManualDestroy?: boolean;
-}
-
-type AsyncResourceInstance = InstanceType<AsyncResourceClass>;
-interface ReferencingAsyncResource extends AsyncResourceInstance {
-  readonly eventEmitter: EventEmitterAsyncResource;
-}
-
-let EventEmitterReferencingAsyncResource:
-  | (new (
-      ee: EventEmitterAsyncResource,
-      type: string,
-      options?: EventEmitterAsyncResourceOptions,
-    ) => ReferencingAsyncResource)
-  | undefined;
+let EventEmitterReferencingAsyncResource;
 function lazyLoadAsyncResource() {
   if (!AsyncResource) {
     AsyncResource = require("node:async_hooks").AsyncResource;
     EventEmitterReferencingAsyncResource = class EventEmitterReferencingAsyncResource extends AsyncResource {
-      #eventEmitter: EventEmitterAsyncResource;
+      #eventEmitter;
 
-      constructor(ee: EventEmitterAsyncResource, type: string, options?: EventEmitterAsyncResourceOptions) {
+      constructor(ee, type, options) {
         super(type, options);
         this.#eventEmitter = ee;
       }
@@ -1266,12 +928,12 @@ function lazyLoadAsyncResource() {
   }
 }
 
-class EventEmitterAsyncResource extends (EventEmitter as $Node.EventEmitterConstructor) {
-  #asyncResource: ReferencingAsyncResource;
+class EventEmitterAsyncResource extends EventEmitter {
+  #asyncResource;
 
-  constructor(options?: string | EventEmitterAsyncResourceOptions) {
+  constructor(options) {
     lazyLoadAsyncResource();
-    let name: string;
+    let name;
     if (typeof options === "string") {
       name = options;
       options = undefined;
@@ -1282,14 +944,14 @@ class EventEmitterAsyncResource extends (EventEmitter as $Node.EventEmitterConst
       name = options?.name || new.target.name;
     }
     super(options);
-    this.#asyncResource = new EventEmitterReferencingAsyncResource!(this, name, options);
+    this.#asyncResource = new EventEmitterReferencingAsyncResource(this, name, options);
     // EventEmitter's constructor stamps `this.emit = emitWithRejectionCapture`
     // as an OWN property when captureRejections is on, which would shadow the
     // prototype's runInAsyncScope-wrapped emit below. Remove it so listeners
     // still run in the resource's async scope; the prototype emit re-checks
     // this[kCapture] on every call, so rejection capture is preserved. delete
     // is a no-op when the property is absent, so no own-property check needed.
-    delete (this as any).emit;
+    delete (this as { emit? }).emit;
   }
 
   // No explicit receiver guards: like node v26 (lib/events.js), the private
@@ -1307,23 +969,16 @@ class EventEmitterAsyncResource extends (EventEmitter as $Node.EventEmitterConst
     return this.#asyncResource;
   }
 
-  emit(event: $Node.EventName, ...args: unknown[]): boolean {
+  emit(event, ...args) {
     const asyncResource = this.#asyncResource;
     // The base EventEmitter picks its emit variant by stamping an own property;
     // that own property is deleted in the constructor above, so pick per-call
     // from this[kCapture]. The default branch reads super.emit at call time
     // (Node routes through super.emit) so a userland monkeypatch of
     // EventEmitter.prototype.emit is observed like it is for plain emitters.
-    if (this[kCapture]) {
-      ("unlikely");
-      ArrayPrototypeUnshift.$call(args, emitWithRejectionCapture, this, event);
-    } else {
-      ArrayPrototypeUnshift.$call(args, super.emit, this, event);
-    }
-    return asyncResource.runInAsyncScope.$apply(
-      asyncResource,
-      args as Parameters<typeof asyncResource.runInAsyncScope>,
-    ) as boolean;
+    const emit = this[kCapture] ? emitWithRejectionCapture : super.emit;
+    ArrayPrototypeUnshift.$call(args, emit, this, event);
+    return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }
 
   emitDestroy() {
@@ -1336,7 +991,7 @@ Object.defineProperties(EventEmitter, {
     get() {
       return EventEmitterPrototype[kCapture];
     },
-    set(value: boolean) {
+    set(value) {
       validateBoolean(value, "EventEmitter.captureRejections");
 
       EventEmitterPrototype[kCapture] = value;
@@ -1348,7 +1003,7 @@ Object.defineProperties(EventEmitter, {
     get: () => {
       return defaultMaxListeners;
     },
-    set: (arg: number) => {
+    set: arg => {
       validateNumber(arg, "defaultMaxListeners", 0);
       defaultMaxListeners = arg;
     },
@@ -1385,27 +1040,18 @@ Object.assign(EventEmitter, {
 // Node: `Object.getPrototypeOf(process) instanceof EventEmitter` holds.
 // Link the native process prototype under this module's EventEmitter; the
 // native methods stay earlier in the chain and keep winning lookups.
-// Compiled ahead of time, a native function does the same three steps: the compiler gives up on `process`, and keeps all that it can do,
-// where a statement asks what stands above it. A test that has replaced a built-in could tell the two apart.
-if (IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS) {
-  // From here on an accessor that a program lays on this prototype answers the names that `process` lacks, with `process` as `this`.
-  // Where the program asks for such a name the compiler is told that `process` goes out of its sight; the native function does not look at it.
-  const processIfReachable = PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES ? process : undefined;
-  $newCppFunction("BunProcess.cpp", "jsFunctionMakeProcessInheritFrom", 1)(EventEmitterPrototype, processIfReachable);
-} else {
-  try {
-    const processPrototype = Object.getPrototypeOf(process);
-    if (
-      processPrototype !== null &&
-      processPrototype !== Object.prototype &&
-      !(processPrototype instanceof EventEmitter)
-    ) {
-      Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
-    }
-  } catch {
-    // If the prototype is not relinkable, process simply keeps its native
-    // chain; everything else about this module still works.
+try {
+  const processPrototype = Object.getPrototypeOf(process);
+  if (
+    processPrototype !== null &&
+    processPrototype !== Object.prototype &&
+    !(processPrototype instanceof EventEmitter)
+  ) {
+    Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
   }
+} catch {
+  // If the prototype is not relinkable, process simply keeps its native
+  // chain; everything else about this module still works.
 }
 
-export default EventEmitter as $Node.EventEmitterConstructor;
+export default EventEmitter as any as typeof import("node:events");

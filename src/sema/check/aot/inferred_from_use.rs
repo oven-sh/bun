@@ -21,7 +21,7 @@ use crate::types::{
 use crate::util::{FxHashMap, FxHashSet};
 use bun_sort_by_number::{SortByNumber, number_of_pair};
 use smallvec::SmallVec;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -1042,6 +1042,14 @@ fn merge_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
     if Rc::ptr_eq(own, other) || (walk.is_out_of_budget() && !walk.looks_at_every_use_of(own)) {
         return;
     }
+    walk.levels_of_parts_entered += 1;
+    if !walk.merges_by_what_is_remembered(own, other) {
+        merge_part_by_part(own, walk, other);
+    }
+    walk.levels_of_parts_entered -= 1;
+}
+
+fn merge_part_by_part(own: &mut Rc<Usage>, walk: &mut Walk, other: &Rc<Usage>) {
     if !own.facts.contains(other.facts)
         || other.arms.list.iter().any(|&arm| !own.arms.contains(arm))
     {
@@ -1119,6 +1127,59 @@ struct Walk {
     set_aside: Vec<SubjectInProgress>,
     numbers_listed: Option<Subjects>,
     merges_member_by_member: bool,
+    passed_on: PassedOn,
+    levels_of_parts_entered: u32,
+    remembered: Rc<RefCell<PartsRemembered>>,
+}
+
+#[derive(Default)]
+pub(super) struct PartsRemembered {
+    counts: FxHashMap<*const Usage, (Rc<Usage>, u64)>,
+    compared: FxHashMap<(*const Usage, *const Usage, bool), (Rc<Usage>, Rc<Usage>, bool)>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum StepToPart {
+    Member(Atom),
+    Elements,
+}
+
+struct PassedOn {
+    followed: FxHashSet<(u32, ExprId, bool)>,
+    numbers_of_parts: FxHashMap<(u32, StepToPart), u32>,
+    part_entered: *const Usage,
+    number_of_part_entered: u32,
+}
+
+impl Default for PassedOn {
+    fn default() -> PassedOn {
+        PassedOn {
+            followed: FxHashSet::default(),
+            numbers_of_parts: FxHashMap::default(),
+            part_entered: std::ptr::null(),
+            number_of_part_entered: 0,
+        }
+    }
+}
+
+impl PassedOn {
+    fn number_of(&self, usage: &Usage) -> Option<u32> {
+        std::ptr::eq(usage, self.part_entered).then_some(self.number_of_part_entered)
+    }
+
+    fn is_followed_anew(&mut self, outer: ExprId, usage: &Usage) -> bool {
+        let holds_number = usage.facts.contains(Facts::NUMBER_AT_EVERY_VALUE);
+        match self.number_of(usage) {
+            Some(part) => self.followed.insert((part, outer, holds_number)),
+            None => true,
+        }
+    }
+
+    fn number_of_part(&mut self, whole: &Usage, step: StepToPart) -> Option<u32> {
+        let whole = self.number_of(whole)?;
+        let next = self.numbers_of_parts.len() as u32 + 1;
+        Some(*self.numbers_of_parts.entry((whole, step)).or_insert(next))
+    }
 }
 
 struct SubjectInProgress {
@@ -1154,6 +1215,9 @@ impl Walk {
             set_aside: Vec::new(),
             numbers_listed: None,
             merges_member_by_member: false,
+            passed_on: PassedOn::default(),
+            levels_of_parts_entered: 0,
+            remembered: Rc::default(),
         }
     }
 
@@ -1163,12 +1227,113 @@ impl Walk {
         has_budget
     }
 
-    fn enter_all_nodes_of(&mut self, usage: &Usage) -> bool {
-        let Some(count) = usage.count_nodes(self.remaining_nodes) else {
+    const LEVELS_MERGED_WITHOUT_MEMORY: u32 = if cfg!(test) { 0 } else { 8 };
+    const NODES_COUNTED_WITHOUT_MEMORY: u64 = if cfg!(test) { 2 } else { 32 };
+
+    fn enter_all_nodes_of(&mut self, usage: &Rc<Usage>) -> bool {
+        let count = self.count_nodes_of(usage);
+        if count > self.remaining_nodes {
             return false;
-        };
+        }
         self.remaining_nodes -= count;
         true
+    }
+
+    fn count_nodes_of(&mut self, part: &Rc<Usage>) -> u64 {
+        if let Some(count) = part.count_nodes(Walk::NODES_COUNTED_WITHOUT_MEMORY) {
+            return count;
+        }
+        if let Some(&(_, count)) = self.remembered.borrow().counts.get(&Rc::as_ptr(part)) {
+            return count;
+        }
+        let mut count: u64 = 1;
+        match &part.members {
+            Members::Few(members) => {
+                for member in members {
+                    count = count.saturating_add(self.count_nodes_of(&member.usage));
+                }
+            }
+            Members::Many(members) => count = count.saturating_add(members.by_name.count_nodes()),
+        }
+        if let Some(elements) = &part.elements {
+            count = count.saturating_add(self.count_nodes_of(elements));
+        }
+        let kept = (Rc::clone(part), count);
+        self.remembered
+            .borrow_mut()
+            .counts
+            .insert(Rc::as_ptr(part), kept);
+        count
+    }
+
+    fn merges_by_what_is_remembered(&mut self, own: &mut Rc<Usage>, other: &Rc<Usage>) -> bool {
+        if self.levels_of_parts_entered <= Walk::LEVELS_MERGED_WITHOUT_MEMORY
+            || self.is_out_of_budget()
+        {
+            return false;
+        }
+        if self.holds_all_of(own, other, false) {
+            return true;
+        }
+        if self.holds_all_of(other, own, true) {
+            let added = self.count_nodes_of(other) - self.count_nodes_of(own);
+            if added < self.remaining_nodes {
+                self.remaining_nodes -= added;
+                *own = Rc::clone(other);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn holds_all_of(&mut self, whole: &Rc<Usage>, part: &Rc<Usage>, in_its_order: bool) -> bool {
+        if Rc::ptr_eq(whole, part) {
+            return true;
+        }
+        let key = (Rc::as_ptr(whole), Rc::as_ptr(part), in_its_order);
+        if let Some(&(_, _, holds)) = self.remembered.borrow().compared.get(&key) {
+            return holds;
+        }
+        let holds = self.holds_each_of(whole, part, in_its_order);
+        let kept = (Rc::clone(whole), Rc::clone(part), holds);
+        self.remembered.borrow_mut().compared.insert(key, kept);
+        holds
+    }
+
+    fn holds_each_of(&mut self, whole: &Rc<Usage>, part: &Rc<Usage>, in_its_order: bool) -> bool {
+        if !whole.facts.contains(part.facts) {
+            return false;
+        }
+        let (Members::Few(all), Members::Few(some)) = (&whole.members, &part.members) else {
+            return false;
+        };
+        let holds_arms_and_names = match in_its_order {
+            true => {
+                whole.arms.list.starts_with(&part.arms.list)
+                    && all.len() >= some.len()
+                    && all
+                        .iter()
+                        .zip(some)
+                        .all(|(held, member)| held.name == member.name)
+            }
+            false => part.arms.list.iter().all(|&arm| whole.arms.contains(arm)),
+        };
+        if !holds_arms_and_names {
+            return false;
+        }
+        for member in some {
+            let Some(held) = all.iter().find(|held| held.name == member.name) else {
+                return false;
+            };
+            if !self.holds_all_of(&held.usage, &member.usage, in_its_order) {
+                return false;
+            }
+        }
+        match (&whole.elements, &part.elements) {
+            (_, None) => true,
+            (Some(held), Some(elements)) => self.holds_all_of(held, elements, in_its_order),
+            (None, Some(_)) => false,
+        }
     }
 
     fn is_out_of_budget(&self) -> bool {
@@ -1179,8 +1344,8 @@ impl Walk {
         std::ptr::eq(usage, self.root) && !self.shares_budget && !self.is_freeing_stack
     }
 
-    fn enter_node_of(&mut self, usage: &Usage) -> bool {
-        self.enter_node() || self.looks_at_every_use_of(usage)
+    fn looks_at_uses_of(&self, usage: &Usage) -> bool {
+        (!self.is_out_of_budget() && !self.is_freeing_stack) || self.looks_at_every_use_of(usage)
     }
 }
 
@@ -2495,7 +2660,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 }
             }
             Subject::Number(symbol) => {
-                let mut walk = Walk::new(self.inputs.max_inference_nodes);
+                let mut walk = self.new_walk();
                 walk.numbers_listed = Some(asked_for);
                 self.holds_integers(&mut walk, symbol);
                 return walk.numbers_listed.unwrap_or_default();
@@ -2517,7 +2682,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !self.c.is_any(declared) {
             return;
         }
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let mut walk = self.new_walk();
         if let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol))
             && usage.members.is_empty()
             && !usage.is_incomplete()
@@ -2548,7 +2713,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !self.c.is_any(declared) {
             return declared;
         }
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let mut walk = self.new_walk();
         let Some(usage) = self.usage_of(&mut walk, Subject::Binding(symbol)) else {
             return self.compute_type_from_arguments(name).0;
         };
@@ -2796,7 +2961,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn compute_number_type(&mut self, symbol: SymbolId) -> TypeId {
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let mut walk = self.new_walk();
         match self.c.p.aot_symbols().int32_alias() {
             Some(int32) if self.holds_integers(&mut walk, symbol) => self.c.declared_type(int32),
             Some(_) | None => TypeId::ANY,
@@ -3033,8 +3198,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Some(self.c.union(&elements))
     }
 
+    fn new_walk(&self) -> Walk {
+        Walk {
+            remembered: Rc::clone(&self.memo.parts_remembered),
+            ..Walk::new(self.inputs.max_inference_nodes)
+        }
+    }
+
     fn compute_type_from_uses(&mut self, subject: Subject) -> TypeId {
-        let mut walk = Walk::new(self.inputs.max_inference_nodes);
+        let mut walk = self.new_walk();
         match self.usage_of(&mut walk, subject) {
             Some(usage) => self.type_of_usage(&usage),
             None => TypeId::ANY,
@@ -3369,6 +3541,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     fn compute_usage(&mut self, walk: &mut Walk, subject: Subject) -> Usage {
         let mut usage = Usage::default();
         walk.root = &raw const usage;
+        let passed_on_around = std::mem::take(&mut walk.passed_on);
+        walk.passed_on.part_entered = &raw const usage;
         match subject {
             Subject::Binding(symbol) => {
                 let references = self.references_to_bindings();
@@ -3395,6 +3569,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 );
             }
         }
+        walk.passed_on = passed_on_around;
         if walk.is_out_of_budget() {
             usage.facts |= Facts::INCOMPLETE;
         }
@@ -3437,7 +3612,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_evidence(&mut self, walk: &mut Walk, value: ExprId, usage: &mut Usage) {
-        if self.c.is_stack_low() || !walk.enter_node_of(usage) {
+        if self.c.is_stack_low() || !walk.looks_at_uses_of(usage) {
             return;
         }
         let Some(checked) = self.type_for_evidence(value) else {
@@ -3451,7 +3626,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
         match find_use(self.hir(), self.bound(), value) {
             Use::Nothing => {}
-            Use::PassedOn(outer) => self.add_evidence(walk, outer, usage),
+            Use::PassedOn(outer) => {
+                if walk.passed_on.is_followed_anew(outer, usage) {
+                    self.add_evidence(walk, outer, usage);
+                }
+            }
             Use::Initializes(pattern) => self.add_uses_of_pattern(walk, pattern, usage),
             Use::Destructured(pattern) => self.add_members_of_assignment_pattern(pattern, usage),
             Use::Member {
@@ -3464,7 +3643,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                     true => usage.facts |= Facts::FUNCTION,
                     false if walk.is_out_of_budget() => {}
                     false => {
-                        self.add_evidence(walk, access, usage.member_mut(name));
+                        self.add_evidence_of_part(walk, access, usage, StepToPart::Member(name));
                         self.add_uses_of_elements_in_callbacks(walk, access, name, usage);
                     }
                 }
@@ -3757,6 +3936,34 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    fn add_evidence_of_part(
+        &mut self,
+        walk: &mut Walk,
+        access: ExprId,
+        usage: &mut Usage,
+        step: StepToPart,
+    ) {
+        let number = walk.passed_on.number_of_part(usage, step);
+        let around = (
+            walk.passed_on.part_entered,
+            walk.passed_on.number_of_part_entered,
+        );
+        let part = match step {
+            StepToPart::Member(name) => usage.member_mut(name),
+            StepToPart::Elements => usage.elements_mut(),
+        };
+        walk.passed_on.part_entered = match number {
+            Some(_) => &raw const *part,
+            None => std::ptr::null(),
+        };
+        walk.passed_on.number_of_part_entered = number.unwrap_or(0);
+        self.add_evidence(walk, access, part);
+        (
+            walk.passed_on.part_entered,
+            walk.passed_on.number_of_part_entered,
+        ) = around;
+    }
+
     fn add_keyed_access(
         &mut self,
         walk: &mut Walk,
@@ -3770,10 +3977,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         let is_index = self.is_number_type(key_type)
             || self.c.is_any(key_type) && self.is_used_as_number(walk, key);
         if is_index {
-            self.add_evidence(walk, access, usage.elements_mut());
+            self.add_evidence_of_part(walk, access, usage, StepToPart::Elements);
         } else if let Some(name) = self.c.property_name_of_type(key_type) {
             if !walk.is_out_of_budget() {
-                self.add_evidence(walk, access, usage.member_mut(name));
+                self.add_evidence_of_part(walk, access, usage, StepToPart::Member(name));
             }
         } else {
             usage.facts |= Facts::OBJECT;
@@ -3789,7 +3996,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     }
 
     fn add_uses_of_pattern(&mut self, walk: &mut Walk, pattern: PatId, usage: &mut Usage) {
-        if self.c.is_stack_low() || !walk.enter_node_of(usage) {
+        if self.c.is_stack_low() || !walk.looks_at_uses_of(usage) {
             return;
         }
         let hir = self.hir();
@@ -4261,6 +4468,51 @@ mod tests {
         assert!(*holder.members.in_order()[0].usage == usage);
     }
 
+    #[test]
+    fn a_part_is_taken_as_it_stands_only_where_own_names_come_first_in_it() {
+        let (first, second, holder) = (Atom(1), Atom(2), Atom(3));
+        let mut other = Usage::default();
+        other.member_mut(holder).member_mut(first);
+        other.member_mut(holder).member_mut(second);
+        let part_of = |usage: &Usage| Rc::clone(&usage.members.in_order()[0].usage);
+
+        let mut begins_alike = Usage::default();
+        begins_alike.member_mut(holder).member_mut(first);
+        begins_alike.merge(&mut Walk::new(1000), &other);
+        assert!(Rc::ptr_eq(&part_of(&begins_alike), &part_of(&other)));
+
+        let mut begins_otherwise = Usage::default();
+        begins_otherwise.member_mut(holder).member_mut(second);
+        begins_otherwise.merge(&mut Walk::new(1000), &other);
+        assert_eq!(names(&part_of(&begins_otherwise)), [second, first]);
+    }
+
+    #[test]
+    fn a_part_is_not_taken_as_it_stands_where_the_budget_runs_dry_on_the_way() {
+        let (first, second, below, holder) = (Atom(1), Atom(2), Atom(3), Atom(4));
+        let mut own = Usage::default();
+        own.member_mut(holder).member_mut(first);
+        own.member_mut(holder).member_mut(second);
+        let mut other = own.clone();
+        other.member_mut(holder).member_mut(first).member_mut(below);
+        other.member_mut(holder).member_mut(second).facts |= Facts::NUMBER;
+
+        let mut walk = Walk::new(1);
+        own.merge(&mut walk, &other);
+        assert!(walk.is_out_of_budget());
+        let merged = Rc::clone(&own.members.in_order()[0].usage);
+        assert_eq!(names(&merged.members.get(first).unwrap().usage), [below]);
+        assert!(
+            !merged
+                .members
+                .get(second)
+                .unwrap()
+                .usage
+                .facts
+                .contains(Facts::NUMBER)
+        );
+    }
+
     #[derive(Clone, Default, PartialEq, Debug)]
     struct PlainUsage {
         facts: Facts,
@@ -4322,6 +4574,7 @@ mod tests {
         let all_facts = [Facts::NUMBER, Facts::STRING, Facts::REQUIRED, Facts::STORED];
         let mut trees: Vec<(Rc<Usage>, PlainUsage)> = Vec::new();
         let (mut ended_budgets, mut most_members) = (0, 0);
+        let remembered = Rc::<RefCell<PartsRemembered>>::default();
         const ROUNDS: u32 = if cfg!(miri) { 150 } else { 1500 };
         for round in 0..ROUNDS {
             let (mut usage, mut plain) = (Usage::default(), PlainUsage::default());
@@ -4346,7 +4599,12 @@ mod tests {
                 let other = &trees[next(trees.len() as u64) as usize];
                 let most = other.1.count_nodes() + 2;
                 let budget = if next(4) == 0 { next(most) } else { 1 << 40 };
-                let (mut walk, mut remaining_nodes) = (Walk::new(budget), budget);
+                let remembered = Rc::clone(&remembered);
+                let mut walk = Walk {
+                    remembered,
+                    ..Walk::new(budget)
+                };
+                let mut remaining_nodes = budget;
                 if next(5) == 0 {
                     let name = Atom(next(300) as u32);
                     usage.member_mut(name).merge(&mut walk, &other.0);

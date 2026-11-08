@@ -495,6 +495,12 @@ pub(super) struct IndexInfosInInstantiation {
     hits: u64,
 }
 
+#[derive(Clone)]
+pub(super) struct FlowContainers {
+    constructor: Option<MemberId>,
+    static_blocks: std::rc::Rc<[MemberId]>,
+}
+
 /// A call of `resolveDeclaredMembers`. See `Checker::declared_index_infos_in_progress`.
 #[derive(Copy, Clone)]
 pub(super) struct Declaring {
@@ -6814,6 +6820,27 @@ impl<'p, 's> Checker<'p, 's> {
         self.get_widened_type(ty)
     }
 
+    fn flow_containers_of_class(&mut self, file: FileId, class: ClassId) -> FlowContainers {
+        if let Some(found) = self.flow_containers_of_classes.get(&(file, class)) {
+            return found.clone();
+        }
+        let hir = self.hir(file);
+        let constructor = hir[class].members.iter().find(|&m| {
+            hir[m].kind == MemberKind::Constructor && !matches!(hir[hir[m].func].body, FnBody::None)
+        });
+        let static_blocks = hir[class]
+            .members
+            .iter()
+            .filter(|&m| hir[m].kind == MemberKind::StaticBlock && hir[m].func.is_some());
+        let found = FlowContainers {
+            constructor,
+            static_blocks: static_blocks.collect(),
+        };
+        self.flow_containers_of_classes
+            .insert((file, class), found.clone());
+        found
+    }
+
     pub(super) fn type_of_members_uncached(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
         let (file, first) = members[0];
         let hir = self.hir(file);
@@ -6948,10 +6975,9 @@ impl<'p, 's> Checker<'p, 's> {
                     let initial = inherited.unwrap_or(TypeId::UNDEFINED);
                     let mut has_flow_container = false;
                     if !member.flags.contains(Flags::STATIC) {
-                        if let Some(constructor) = hir[c].members.iter().find(|&m| {
-                            hir[m].kind == MemberKind::Constructor
-                                && !matches!(hir[hir[m].func].body, FnBody::None)
-                        }) {
+                        if let Some(constructor) =
+                            self.flow_containers_of_class(file, c).constructor
+                        {
                             has_flow_container = true;
                             if let Some(ty) = self.flow_type_in_constructor_from(
                                 file,
@@ -6966,9 +6992,8 @@ impl<'p, 's> Checker<'p, 's> {
                     } else {
                         // `getFlowTypeInStaticBlocks`: the first static block whose flow type is
                         // more than null or undefined.
-                        for block in hir[c].members.iter().filter(|&m| {
-                            hir[m].kind == MemberKind::StaticBlock && hir[m].func.is_some()
-                        }) {
+                        let static_blocks = self.flow_containers_of_class(file, c).static_blocks;
+                        for &block in static_blocks.iter() {
                             has_flow_container = true;
                             if let Some(ty) = self.flow_type_in_constructor_from(
                                 file,

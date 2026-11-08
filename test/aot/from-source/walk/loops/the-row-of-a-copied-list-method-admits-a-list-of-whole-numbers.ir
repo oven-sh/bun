@@ -12,9 +12,12 @@
 # `$hasContiguousIndex` finds an element in either storage of boxed values: whole numbers, or any values. The row in front of the copied loop of a list method asked for the second alone, and asked nothing at
 # all of a list that is known to hold numbers: `[1, 2, 3, 4].forEach(..)` ran the copy of the loop that asks kind, pointer, length and bound in every turn. The row admits both now.
 # RUN: walk f1 mechanisms=all
-# CHECK: = HasArrayStorage {{*}}arrayStorage=Contiguous [admitsInt32Storage]
+# A list whose elements the arrow takes for int32s goes by the row for its own storage: the kind is asked once in front, the turn asks IsElementPresent and reads an int32, and eight turns are
+# laid out. (Until then: HasArrayStorage Contiguous [admitsInt32Storage] and HasContiguousIndex on the storage from in front; that row stays for lists of any values and for the bodies that store: map, filter.)
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Int32
 # CHECK: [[storage]]: opaque(ArrayStoragePointer) {{*}}= GetArrayStorage
-# CHECK: = HasContiguousIndex {{*}}storage=[[storage]] [isInBounds]
+# CHECK: = IsElementPresent {{*}}[[storage]] arrayStorage=Int32 [keyIsIntegral, isInBounds]
+# CHECK: : i32 @Int32 = GetArrayElement {{*}}[[storage]] arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]
 # A list that is declared to hold numbers had no row. Link has seen whole numbers and fractions arrive at this arrow: the row asks for either storage of numbers.
 # RUN(NUMBERS): walk f2 mechanisms=all
 # NUMBERS: = HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]

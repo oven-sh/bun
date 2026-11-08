@@ -240,6 +240,7 @@ pub(super) struct ResolverOutput {
     pub(super) tables_of_loaders_written: Vec<ExprId>,
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
     pub(super) entries_deleted_from_module_cache: Vec<ExprId>,
+    pub(super) entries_stored_in_module_cache: Vec<ExprId>,
     pub(super) keys_of_entries_handed_on: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
     pub(super) hands_module_cache_on: bool,
@@ -285,6 +286,7 @@ pub(super) struct Resolver<'a, 's> {
     named_outside: OnceCell<FxHashSet<SymbolId>>,
     names_by_variable: OnceCell<Vec<(u32, u32)>>,
     pub(super) kept_variables: RefCell<FxHashMap<(SymbolId, BuiltinId), bool>>,
+    pub(super) variables_asked_for_numbers: RefCell<FxHashMap<(SymbolId, u32), bool>>,
     pub(super) variables_let_out_of_sight: OnceCell<FxHashSet<SymbolId>>,
     known_sets: RefCell<KnownSets<'a, 's>>,
     evaluated: Range<u32>,
@@ -417,6 +419,7 @@ impl<'a, 's> Resolver<'a, 's> {
             named_outside: OnceCell::new(),
             names_by_variable: OnceCell::new(),
             kept_variables: RefCell::default(),
+            variables_asked_for_numbers: RefCell::default(),
             variables_let_out_of_sight: OnceCell::new(),
             known_sets: RefCell::new(KnownSets::new(
                 input.hir,
@@ -1015,6 +1018,9 @@ impl<'a, 's> Resolver<'a, 's> {
             keys_of_entries_handed_on: output.keys_of_entries_handed_on.into_boxed_slice(),
             entries_deleted_from_module_cache: output
                 .entries_deleted_from_module_cache
+                .into_boxed_slice(),
+            entries_stored_in_module_cache: output
+                .entries_stored_in_module_cache
                 .into_boxed_slice(),
             keys_taken_out_of_module_cache: output
                 .keys_taken_out_of_module_cache

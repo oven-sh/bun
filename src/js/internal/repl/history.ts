@@ -2,7 +2,7 @@
 // Attribution: derived from Node.js, MIT licensed (Node.js contributors).
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
-var __node_module__ = { exports: {} as Exports };
+var __node_module__ = { exports: {} };
 
 const {
   ArrayPrototypeIndexOf,
@@ -15,6 +15,7 @@ const {
   RegExpPrototypeSymbolSplit,
   StringPrototypeStartsWith,
   StringPrototypeTrim,
+  Symbol,
 } = primordials;
 
 const { validateNumber, validateArray } = require("internal/validators");
@@ -23,8 +24,13 @@ const { validateNumber, validateArray } = require("internal/validators");
 // history file) touches fs/os/path or the node-shims helpers, so load those on
 // first use instead of pulling node:fs, node:util, node:vm etc. into every
 // readline.createInterface() / FileHandle.readLines().
-let debug = (...args: unknown[]): void => {
-  debug = require("node:util").debuglog("repl");
+let fs, os, path, permission;
+const lazyFs = () => (fs ??= require("node:fs"));
+const lazyOs = () => (os ??= require("node:os"));
+const lazyPath = () => (path ??= require("node:path"));
+const lazyPermission = () => (permission ??= require("internal/repl/node-shims"));
+let debug = (...args) => {
+  debug = require("internal/repl/node-shims").debuglog("repl");
   return debug(...args);
 };
 const { clearTimeout, setTimeout } = require("node:timers");
@@ -62,39 +68,8 @@ const kFlushHistory = Symbol("_kFlushHistory");
 const kGetHistoryPath = Symbol("_kGetHistoryPath");
 const kCloseHandle = Symbol("_kCloseHandle");
 
-/** The `readline.Interface` (or `REPLServer`) whose lines are kept. */
-interface Context extends $Node.EventEmitter {
-  line: string;
-  closed?: boolean;
-  historySize?: number;
-  pause(): unknown;
-  resume(): unknown;
-  _historyPrev?: () => void;
-  _writeToOutput?: (message: string) => void;
-  _refreshLine?: () => void;
-}
-
-interface Options extends $Node.ReadlineHistoryOptions {
-  filePath?: string;
-}
-
-type OnReady = (err: Error | null, context: Context) => void;
-
 class ReplHistory {
-  declare historyPrev: (() => void) | undefined;
-  declare [kHistoryPath]: string | undefined;
-  declare [kContext]: Context;
-  declare [kTimer]: ReturnType<typeof setTimeout> | null;
-  declare [kWriting]: boolean;
-  declare [kPending]: boolean;
-  declare [kRemoveHistoryDuplicates]: boolean;
-  declare [kHistoryHandle]: $Node.FileHandle | null;
-  declare [kIsFlushing]: boolean;
-  declare [kSize]: number;
-  declare [kHistory]: string[];
-  declare [kIndex]: number;
-
-  constructor(context: Context, options: Options) {
+  constructor(context, options) {
     this[kValidateOptions](options);
 
     this[kHistoryPath] = ReplHistory[kGetHistoryPath](options);
@@ -110,7 +85,7 @@ class ReplHistory {
     this[kIndex] = -1;
   }
 
-  initialize(onReadyCallback: OnReady) {
+  initialize(onReadyCallback) {
     // Empty string disables persistent history
     if (this[kHistoryPath] === "") {
       // Save a reference to the context's original _historyPrev
@@ -142,12 +117,12 @@ class ReplHistory {
 
     this[kContext].pause();
 
-    this[kInitializeHistory](onReadyCallback).catch((err: Error) => {
+    this[kInitializeHistory](onReadyCallback).catch(err => {
       this[kHandleHistoryInitError](err, onReadyCallback);
     });
   }
 
-  addHistory(isMultiline: boolean, lastCommandErrored: boolean | undefined) {
+  addHistory(isMultiline, lastCommandErrored) {
     const line = this[kContext].line;
 
     if (line.length === 0) return "";
@@ -201,7 +176,7 @@ class ReplHistory {
     return this[kIndex] > -1 && this[kHistory].length > 0;
   }
 
-  navigateToNext(substringSearch?: string | null) {
+  navigateToNext(substringSearch) {
     if (!this.canNavigateToNext()) {
       return null;
     }
@@ -228,7 +203,7 @@ class ReplHistory {
     return this[kHistory].length !== this[kIndex] && this[kHistory].length > 0;
   }
 
-  navigateToPrevious(substringSearch: string | null = "") {
+  navigateToPrevious(substringSearch = "") {
     if (!this.canNavigateToPrevious()) {
       return null;
     }
@@ -260,19 +235,19 @@ class ReplHistory {
   get history() {
     return this[kHistory];
   }
-  set history(value: string[]) {
+  set history(value) {
     this[kHistory] = value;
   }
   get index() {
     return this[kIndex];
   }
-  set index(value: number) {
+  set index(value) {
     this[kIndex] = value;
   }
 
   // Start private methods
 
-  static [kGetHistoryPath](options: Options) {
+  static [kGetHistoryPath](options) {
     let historyPath = options.filePath;
     if (typeof historyPath === "string") {
       historyPath = StringPrototypeTrim(historyPath);
@@ -280,7 +255,7 @@ class ReplHistory {
     return historyPath;
   }
 
-  static [kNormalizeLineEndings](line: string, from: string, to: string) {
+  static [kNormalizeLineEndings](line, from, to) {
     // Multiline history entries are saved reversed
     // History is structured with the newest entries at the top
     // and the oldest at the bottom. Multiline histories, however, only occupy
@@ -291,7 +266,7 @@ class ReplHistory {
     return reverseString(line, from, to);
   }
 
-  static [kWriteToOutput](context: Context, message: string) {
+  static [kWriteToOutput](context, message) {
     if (typeof context._writeToOutput === "function") {
       context._writeToOutput(message);
       if (typeof context._refreshLine === "function") {
@@ -303,10 +278,10 @@ class ReplHistory {
   [kResolveHistoryPath]() {
     if (!this[kHistoryPath]) {
       try {
-        this[kHistoryPath] = require("node:path").join(require("node:os").homedir(), ".node_repl_history");
+        this[kHistoryPath] = lazyPath().join(lazyOs().homedir(), ".node_repl_history");
         return this[kHistoryPath];
       } catch (err) {
-        debug((err as Error).stack);
+        debug(err.stack);
         return null;
       }
     }
@@ -314,10 +289,11 @@ class ReplHistory {
   }
 
   [kHasWritePermission]() {
-    return true;
+    const permission = lazyPermission();
+    return !(permission.isEnabled() && permission.has("fs.write", this[kHistoryPath]) === false);
   }
 
-  [kValidateOptions](options: Options) {
+  [kValidateOptions](options) {
     if (typeof options.history !== "undefined") {
       validateArray(options.history, "history");
     }
@@ -326,19 +302,19 @@ class ReplHistory {
     }
   }
 
-  async [kInitializeHistory](onReadyCallback: OnReady) {
+  async [kInitializeHistory](onReadyCallback) {
     try {
       // Open and close file first to ensure it exists
       // History files are conventionally not readable by others
       // 0o0600 = read/write for owner only
-      const hnd = await require("node:fs").promises.open(this[kHistoryPath], "a+", 0o0600);
+      const hnd = await lazyFs().promises.open(this[kHistoryPath], "a+", 0o0600);
       await hnd.close();
 
-      let data: string;
+      let data;
       try {
-        data = (await require("node:fs").promises.readFile(this[kHistoryPath], "utf8")) as string;
+        data = await lazyFs().promises.readFile(this[kHistoryPath], "utf8");
       } catch (err) {
-        return this[kHandleHistoryInitError](err as Error, onReadyCallback);
+        return this[kHandleHistoryInitError](err, onReadyCallback);
       }
 
       if (data) {
@@ -349,7 +325,7 @@ class ReplHistory {
 
       validateArray(this[kHistory], "history");
 
-      const handle = await require("node:fs").promises.open(this[kHistoryPath], "r+");
+      const handle = await lazyFs().promises.open(this[kHistoryPath], "r+");
       this[kHistoryHandle] = handle;
 
       await handle.truncate(0);
@@ -367,11 +343,11 @@ class ReplHistory {
       await this[kFlushHistory]();
     } catch (err) {
       await this[kCloseHandle]();
-      return this[kHandleHistoryInitError](err as Error, onReadyCallback);
+      return this[kHandleHistoryInitError](err, onReadyCallback);
     }
   }
 
-  [kHandleHistoryInitError](err: Error, onReadyCallback: OnReady) {
+  [kHandleHistoryInitError](err, onReadyCallback) {
     // Cannot open history file.
     // Don't crash, just don't persist history.
     ReplHistory[kWriteToOutput](
@@ -408,7 +384,7 @@ class ReplHistory {
     const historyData = ArrayPrototypeJoin(this[kHistory], "\n");
 
     try {
-      await this[kHistoryHandle]!.write(historyData, 0, "utf8");
+      await this[kHistoryHandle].write(historyData, 0, "utf8");
       this[kWriting] = false;
 
       if (this[kPending]) {
@@ -468,12 +444,8 @@ class ReplHistory {
     // First restore the original method on the context
     this[kContext]._historyPrev = this.historyPrev;
     // Then call it with the correct context
-    return this[kContext]._historyPrev!();
+    return this[kContext]._historyPrev();
   }
-}
-
-interface Exports {
-  ReplHistory: typeof ReplHistory;
 }
 
 __node_module__.exports = {

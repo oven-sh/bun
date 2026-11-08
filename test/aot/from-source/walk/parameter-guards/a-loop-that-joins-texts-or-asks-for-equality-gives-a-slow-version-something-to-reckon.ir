@@ -1,0 +1,19 @@
+# -- source: a-loop-that-joins-texts-or-asks-for-equality-gives-a-slow-version-something-to-reckon.ts
+# declare function print(...values: unknown[]): void;
+# class Ledger { tint: number; twine: number; constructor(n: number) { this.tint = 0; this.twine = n; } }
+# const kept: Ledger[] = []; for (let i = 0; i < 20; i++) kept.push(new Ledger(i));
+# const parts: string[] = ["a", "b", "c"];
+# let chain: any = null; for (let i = 0; i < 5; i++) chain = { next: chain, key: "k" + i };
+# const sought = JSON.parse('"k1"');
+# function joins(bag: any) { let text = ""; for (const part of parts) { text = `${text}${part},`; } return "" + text + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine; }
+# function seeks(bag: any) { let node = chain; while (node !== null && node.key !== sought) node = node.next; return "" + (node === null ? "none" : node.key) + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine + bag.twine; }
+# print(kept.length, joins(JSON.parse('{"twine":1}')), seeks(JSON.parse('{"twine":1}')));
+# -- end of source
+# Both functions have a guard that a parsed record fails, and a slow version with a loop that holds no counter. The loop of joins() joins texts by a template, that of seeks() asks for equality: the walked form of either is cheaper than the
+# straight one (a join 146 instructions a turn, an equality 13), so both slow versions are walked, as they would be with a counter beside: what a loop is compiled to does not hang on an `n++` that has nothing to do with it.
+# f1 = joins, f2 = seeks
+# RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
+# REQUIRES(STRAIGHT): faulting-loop-polls as-written
+# STRAIGHT: statistic UnitsWrittenStraight 0
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 20 a,b,c,111111111111111111111111 k1111111111111111111111111

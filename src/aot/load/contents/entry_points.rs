@@ -878,9 +878,16 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         found.into_iter().map(NamedFile::at).collect()
     }
 
-    fn is_named_as_code(&self, path: &[u8]) -> bool {
-        let is_code = loader_named_by_path(&self.input.options.load.loaders, path)
-            .is_some_and(|loader| script_kind_of(loader).is_some());
+    fn can_be_entry_point(&self, path: &[u8], starts_worker_by_whole_name: bool) -> bool {
+        let is_code = match loader_named_by_path(&self.input.options.load.loaders, path) {
+            Some(loader) => script_kind_of(loader).is_some(),
+            None => {
+                let name = &path[strings::last_index_of_char(path, b'/').map_or(0, |at| at + 1)..];
+                starts_worker_by_whole_name
+                    && !strings::contains_char(name, b'.')
+                    && self.input.host.is_code(path)
+            }
+        };
         let is_file_on_disk = path.starts_with(b"/") && !is_host_path(path);
         is_code && is_file_on_disk && !is_declaration_file_name(path)
     }
@@ -888,6 +895,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
     fn write_down_names(
         &self,
         files: Vec<NamedFile>,
+        starts_worker_by_whole_name: bool,
         names_written: &mut Vec<EntryPointPaths>,
     ) -> Vec<Vec<u8>> {
         let mut paths = Vec::with_capacity(files.len());
@@ -896,7 +904,9 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 path,
                 written_down_as,
             } = file;
-            if let Some(public_path) = written_down_as.filter(|_| self.is_named_as_code(&path)) {
+            if let Some(public_path) = written_down_as
+                .filter(|_| self.can_be_entry_point(&path, starts_worker_by_whole_name))
+            {
                 names_written.push(EntryPointPaths {
                     public_path,
                     source_path: source_path_of(&path),
@@ -912,9 +922,14 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         host.is_plugin_source(path) || contains(&host.background_reads(), path)
     }
 
-    fn find_name(&self, path: &[u8], path_of_copy: Option<&[u8]>) -> Option<Vec<u8>> {
+    fn find_name(
+        &self,
+        path: &[u8],
+        path_of_copy: Option<&[u8]>,
+        starts_worker_by_whole_name: bool,
+    ) -> Option<Vec<u8>> {
         let Options { aot, paths, .. } = self.input.options;
-        if !self.is_named_as_code(path) {
+        if !self.can_be_entry_point(path, starts_worker_by_whole_name) {
             return None;
         }
         match path_of_copy {
@@ -979,11 +994,16 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 named_by,
             } = mention;
             let mut keys_of_answer = Vec::new();
+            let mut starts_worker_by_whole_name = false;
             let (paths, path_of_copy, question) = match named {
                 Named::ByName(question) if found.asked.contains_key(&question) => continue,
                 Named::ByName(question) => {
                     let files = self.answer(&finders, &question);
-                    let paths = self.write_down_names(files, &mut found.names_written);
+                    let is_whole = question.names.iter().all(|name| name.1.is_none());
+                    starts_worker_by_whole_name =
+                        because == FoundBecause::StartsWorker && is_whole && !question.is_guess;
+                    let whole = starts_worker_by_whole_name;
+                    let paths = self.write_down_names(files, whole, &mut found.names_written);
                     (paths, None, Some(question))
                 }
                 Named::File {
@@ -1048,7 +1068,8 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     loads.push((path, named_by));
                     continue;
                 }
-                let Some(name) = self.find_name(&path, path_of_copy.as_deref()) else {
+                let whole = starts_worker_by_whole_name;
+                let Some(name) = self.find_name(&path, path_of_copy.as_deref(), whole) else {
                     continue;
                 };
                 let entry_point = FoundEntryPoint {

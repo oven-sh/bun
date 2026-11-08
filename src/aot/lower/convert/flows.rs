@@ -116,6 +116,7 @@ fn collect_function_types(
             | ShapeKind::Tuple { .. }
             | ShapeKind::Builtin { .. }
             | ShapeKind::Class(_)
+            | ShapeKind::ConstructorFunctionInstance(_)
             | ShapeKind::Object => {}
         }
     }

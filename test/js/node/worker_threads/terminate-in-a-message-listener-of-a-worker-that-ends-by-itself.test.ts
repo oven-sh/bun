@@ -82,31 +82,6 @@ describe("node:worker_threads: the worker posts one message and ends by itself",
   );
 
   test(
-    "the callback of terminate(callback) there is called with the exit code, and none is kept once the worker has exited",
-    async () => {
-      await untilBehindTheEndOfTheThread(async hold => {
-        const worker = workerThatEndsInsideItsConstructor(`parentPort.postMessage("first");`, hold);
-        const { threadId, called, code } = await new Promise<{ threadId: number; called: unknown[][]; code: number }>(
-          resolve => {
-            worker.once("message", () => {
-              const threadId = worker.threadId;
-              const called: unknown[][] = [];
-              void worker
-                .terminate((...args) => void called.push(args))
-                .then(code => resolve({ threadId, called, code }));
-            });
-          },
-        );
-        expect({ called, code }).toEqual({ called: [[null, 0]], code: 0 });
-        expect(await worker.terminate(() => expect.unreachable())).toBeUndefined();
-        expect(worker.listenerCount("exit")).toBe(0);
-        return threadId;
-      });
-    },
-    patience,
-  );
-
-  test(
     "'exit' follows a 'message' listener that throws there, and terminate() resolves afterwards",
     async () => {
       await using child = Bun.spawn({

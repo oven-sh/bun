@@ -111,6 +111,7 @@ enum Interest {
     ModuleObject(ModuleObjectOwner, ModuleObjectUse),
     EntryOfModuleCache,
     DeletionFromModuleCache(ExprId),
+    StoreIntoModuleCache(ExprId),
     LoadByUnknownName,
     NameReadFromLoadByUnknownName(Atom),
     LoadOfIsolatedCode,
@@ -1539,6 +1540,15 @@ impl<'a, 's> FileScan<'a, 's> {
                 self.units.interests[TOP_LEVEL as usize].push(Interest::Request(request.target));
             }
         }
+        let folders = graph.folders_of_databases();
+        let mut entry_points = self.input.sources.entry_points().iter();
+        if !folders.is_empty() && entry_points.any(|entry_point| entry_point.file == self.file) {
+            for &folder in folders {
+                let folder = ModuleRef::File(folder);
+                self.add_file_loaded_by_call(folder);
+                self.units.interests[TOP_LEVEL as usize].push(Interest::Evaluation(folder));
+            }
+        }
         for site in self.input.files.analysis(self.file).import_sites {
             if let ImportSiteKind::ExportStar(_) = site.kind
                 && let Some(SiteAnswer::Module(ModuleRef::File(target))) =
@@ -1890,6 +1900,10 @@ impl<'a, 's> FileScan<'a, 's> {
             let interest = Interest::DeletionFromModuleCache(entry);
             self.add_interest(self.hir[entry].pos, interest);
         }
+        for &entry in source.builtins.entries_stored_in_module_cache() {
+            let interest = Interest::StoreIntoModuleCache(entry);
+            self.add_interest(self.hir[entry].pos, interest);
+        }
         let only_reads_entries = source.builtins.keys_taken_out_of_module_cache().is_empty()
             && !source.builtins.loses_sight_of_module_cache();
         if source.builtins.reaches_module_cache()
@@ -2174,6 +2188,7 @@ struct Found {
     files_naming_ways: Vec<FileId>,
     replaced_loader_hooks: Vec<ReplacedLoaderHook>,
     deletions_from_module_cache: Vec<(FileId, ExprId)>,
+    stores_into_module_cache: Vec<(FileId, ExprId)>,
     stores_loader_function: bool,
     files_that_computed_names_may_ask_for: Vec<FileId>,
     readers_of_built_in_modules: Vec<(FileId, RuntimeModule)>,
@@ -2195,6 +2210,8 @@ impl Found {
             .append(&mut other.replaced_loader_hooks);
         self.deletions_from_module_cache
             .append(&mut other.deletions_from_module_cache);
+        self.stores_into_module_cache
+            .append(&mut other.stores_into_module_cache);
         self.stores_loader_function |= other.stores_loader_function;
         self.files_that_computed_names_may_ask_for
             .append(&mut other.files_that_computed_names_may_ask_for);
@@ -3156,6 +3173,9 @@ impl Reacher<'_, '_, '_> {
             }
             (file, name) = (source, listed);
         }
+        for &(_, star) in graph.unlisted_stars_that_bring(file, name) {
+            walk.names_read_from_objects.insert((star, name));
+        }
         if !graph.is_brought_by_star(file, name) {
             return;
         }
@@ -3493,6 +3513,9 @@ impl Reacher<'_, '_, '_> {
             Interest::EntryOfModuleCache => self.keep_every_module_object(file),
             Interest::DeletionFromModuleCache(entry) => {
                 self.found.deletions_from_module_cache.push((file, entry));
+            }
+            Interest::StoreIntoModuleCache(entry) => {
+                self.found.stores_into_module_cache.push((file, entry));
             }
             Interest::StoreOfLoaderFunction(replaced) => {
                 self.keep_every_module_object(file);
@@ -3888,6 +3911,7 @@ pub(crate) struct ReachedModules {
     pub readers_of_built_in_modules: Vec<(FileId, ModuleRef)>,
     pub replaced_loader_hooks: Vec<ReplacedLoaderHook>,
     pub deletions_from_module_cache: Vec<(FileId, ExprId)>,
+    pub stores_into_module_cache: Vec<(FileId, ExprId)>,
     pub stores_loader_function: bool,
     required: SharedSet<(ModuleRef, ModuleRef)>,
     left_to_calls: FxHashSet<(FileId, FileId)>,
@@ -3971,6 +3995,9 @@ fn fingerprint(
     }
     for &(file, entry) in &reached.deletions_from_module_cache {
         add(10, file, u64::from(entry.0));
+    }
+    for &(file, entry) in &reached.stores_into_module_cache {
+        add(11, file, u64::from(entry.0));
     }
     for &(file, module) in &reached.readers_of_built_in_modules {
         add(15, file, FxBuildHasher.hash_one(module));
@@ -4117,6 +4144,11 @@ pub(crate) fn find_left_out_code(
         .deletions_from_module_cache
         .sort_unstable_by_key(|&(file, entry)| (file, entry.0));
     reached_modules.deletions_from_module_cache.dedup();
+    reached_modules.stores_into_module_cache = found.stores_into_module_cache;
+    reached_modules
+        .stores_into_module_cache
+        .sort_unstable_by_key(|&(file, entry)| (file, entry.0));
+    reached_modules.stores_into_module_cache.dedup();
     reached_modules
         .replaced_loader_hooks
         .sort_unstable_by_key(|replaced| (replaced.file, replaced.assignment.0));

@@ -20,8 +20,8 @@ use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::Range;
 use std::ptr::{NonNull, null_mut, slice_from_raw_parts_mut};
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicPtr, AtomicU16, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Once, OnceLock};
 
 /// Makes its owner `Send` if `E` is `Send`, and `Sync` if `E` is `Send + Sync`, because one thread
 /// can add an element through a shared reference that another thread reads or drops. `OnceLock` has
@@ -806,154 +806,124 @@ macro_rules! zeroed {
 }
 zeroed!(AtomicU16, AtomicU32, AtomicU64);
 
-/// One bit per page of an array of cells that starts out all zero. The bit is set once anything on the page has been
-/// written. A reader that finds the bit clear treats the cell as zero without loading it. So a page that was never
-/// written is never read either. It doesn't use a cache line or a page table entry, and its first write is its first
-/// page fault. Reading it first would cost a second page fault (see `touch_pages`).
-///
-/// `index`, here and below, is the index of a cell in the array. An array longer than a page starts at a page boundary.
-trait WrittenPages<C: Zeroed> {
-    fn words(&self) -> &[AtomicU64];
+/// The cells of `1 << GRANULE_BITS` neighboring indices stand side by side in a granule, which is made when the first of them is written.
+const GRANULE_BITS: u32 = 6;
+const GRANULE_MASK: u32 = (1 << GRANULE_BITS) - 1;
+const FIRST_CELLS_BITS: u32 = 12;
+const FIRST_DIRECTORY_BITS: u32 = FIRST_CELLS_BITS - GRANULE_BITS;
 
-    #[inline(always)]
-    fn word_and_bit(index: usize) -> (usize, u64) {
-        let page = index / (SMALLEST_PAGE / size_of::<C>());
-        (page / 64, 1 << (page % 64))
-    }
-
-    /// True if the page of cell `index` may have been written. Always true for a cell past the end of the bitmap.
-    #[inline(always)]
-    fn may_be_written(&self, index: usize) -> bool {
-        let (word, bit) = Self::word_and_bit(index);
-        (self.words().get(word)).is_none_or(|word| word.load(Ordering::Relaxed) & bit != 0)
-    }
-
-    /// Marks the page of `cell` as written. Call this before writing to `cell`, which must be the cell at `index`.
-    #[inline(always)]
-    fn note_write(&self, index: usize, cell: &C) {
-        let (word, bit) = Self::word_and_bit(index);
-        if let Some(word) = self.words().get(word)
-            && word.load(Ordering::Relaxed) & bit == 0
-        {
-            note_first_write(word, bit, cell);
-        }
-    }
+/// Granules, numbered from 1 in the order in which they were made. A page holds only granules that were written.
+struct Granules<C, A: Allocator + Clone> {
+    cells: Chunks<C, FIRST_CELLS_BITS, A>,
+    made: AtomicU32,
 }
 
-/// Writes to the page before setting its bit, so that no reader loads from the page first.
-#[cold]
-fn note_first_write<C: Zeroed>(word: &AtomicU64, bit: u64, cell: &C) {
-    cell.touch();
-    word.fetch_or(bit, Ordering::Relaxed);
+impl<C: Zeroed, A: Allocator + Clone> Granules<C, A> {
+    fn new_in(alloc: A) -> Self {
+        Granules {
+            cells: Chunks::new_in(alloc),
+            made: AtomicU32::new(0),
+        }
+    }
+
+    /// The cell of `index` in the granule `number`, which a directory's entry named.
+    #[inline(always)]
+    fn cell(&self, number: u32, index: u32) -> &C {
+        // SAFETY: `add` allocated the chunk before it published the number, and only the drop frees it.
+        unsafe {
+            &*self
+                .cells
+                .slot(((number - 1) << GRANULE_BITS) | (index & GRANULE_MASK))
+        }
+    }
+
+    /// `cell`, for a reader that nothing has ordered behind `add`: `None` if it doesn't see the granule's chunk.
+    #[inline(always)]
+    fn cell_if_seen(&self, number: u32, index: u32) -> Option<&C> {
+        let Located { chunk, offset } = Chunks::<C, FIRST_CELLS_BITS, A>::locate(
+            ((number - 1) << GRANULE_BITS) | (index & GRANULE_MASK),
+        );
+        let base = self.cells.bases[chunk].load(Ordering::Relaxed);
+        // SAFETY: the address is inside the chunk, which `zeroed_slice_in` initialized and only the drop frees.
+        (!base.is_null()).then(|| unsafe { &*base.wrapping_add(offset) })
+    }
+
+    /// Makes a granule for `entry`, which names none. Of several threads the first wins, and the others' granules stay unused.
+    #[cold]
+    fn add(&self, entry: &AtomicU32) -> u32 {
+        let number = self.made.fetch_add(1, Ordering::Relaxed) + 1;
+        assert!(number < 1 << (32 - GRANULE_BITS), "too many granules");
+        self.cells
+            .slot_or_install((number - 1) << GRANULE_BITS, C::zeroed_slice_in);
+        match entry.compare_exchange(0, number, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => number,
+            Err(named) => named,
+        }
+    }
 }
 
 /// Cells for a fixed range of indices, initially all zero.
-///
-/// The memory starts out uninitialized. The first thread that writes to a page of cells zeroes that page, so creating
-/// the cells costs nothing, and a page that's never written is never resident. The allocator's zeroed memory isn't a
-/// substitute. If any part of a block is reused memory, the allocator clears the whole block on the calling thread.
-pub struct FixedCells<C, A: Allocator = Global> {
-    cells: Box<[MaybeUninit<C>], A>,
-    /// One bit per page of `cells`, set once the page is zeroed.
-    zeroed: Box<[AtomicU64], A>,
-    /// One per page of `cells`. Of the threads that find the bit clear, one zeroes the page and the others wait.
-    zeroing: Box<[Once], A>,
+pub struct FixedCells<C, A: Allocator + Clone = Global> {
+    /// For each `1 << GRANULE_BITS` indices the number of their granule, or 0.
+    directory: Box<[AtomicU32], A>,
+    granules: Granules<C, A>,
 }
 
 impl<C: Zeroed, A: Allocator + Clone> FixedCells<C, A> {
-    const PER_PAGE: usize = SMALLEST_PAGE / size_of::<C>();
-
     pub fn new_in(len: usize, alloc: A) -> Self {
-        let pages = len.div_ceil(Self::PER_PAGE);
-        let mut zeroing = Vec::with_capacity_in(pages, alloc.clone());
-        zeroing.resize_with(pages, Once::new);
         FixedCells {
-            cells: Box::new_uninit_slice_in(len, alloc.clone()),
-            zeroed: AtomicU64::zeroed_slice_in(pages.div_ceil(64), alloc),
-            zeroing: zeroing.into_boxed_slice(),
+            directory: AtomicU32::zeroed_slice_in(len.div_ceil(1 << GRANULE_BITS), alloc.clone()),
+            granules: Granules::new_in(alloc),
         }
-    }
-
-    /// The load is `Acquire` so that a thread that sees the bit set also sees the zeros.
-    #[inline(always)]
-    fn is_zeroed(&self, page: usize) -> bool {
-        let word = self.zeroed.get(page / 64);
-        word.is_some_and(|word| word.load(Ordering::Acquire) & (1 << (page % 64)) != 0)
-    }
-
-    #[cold]
-    fn zero(&self, page: usize) {
-        self.zeroing[page].call_once(|| {
-            let cells = &self.cells[page * Self::PER_PAGE..];
-            let cells = &cells[..cells.len().min(Self::PER_PAGE)];
-            // SAFETY: the cells are inside the allocation. Only this thread accesses them, because nothing else does
-            // before the bit is set. A cell is written through a shared reference, like any atomic.
-            unsafe { cells.as_ptr().cast_mut().write_bytes(0, cells.len()) };
-            self.zeroed[page / 64].fetch_or(1 << (page % 64), Ordering::Release);
-        });
     }
 
     /// Returns the cell at `index`, or `None` if the cell is known to be zero.
     #[inline]
     pub fn existing(&self, index: usize) -> Option<&C> {
-        // SAFETY: its page is zeroed, and all zero bytes are a valid `C`.
-        (self.is_zeroed(index / Self::PER_PAGE))
-            .then(|| unsafe { self.cells[index].assume_init_ref() })
+        let number = self.directory[index >> GRANULE_BITS].load(Ordering::Acquire);
+        (number != 0).then(|| self.granules.cell(number, index as u32))
     }
 
     /// Returns the cell at `index` for writing.
     #[inline]
     pub fn cell(&self, index: usize) -> &C {
-        let (cell, page) = (&self.cells[index], index / Self::PER_PAGE);
-        if !self.is_zeroed(page) {
-            self.zero(page);
+        let entry = &self.directory[index >> GRANULE_BITS];
+        let mut number = entry.load(Ordering::Acquire);
+        if number == 0 {
+            number = self.granules.add(entry);
         }
-        // SAFETY: as in `existing`.
-        unsafe { cell.assume_init_ref() }
+        self.granules.cell(number, index as u32)
     }
 
-    /// Iterates over the pages that have been written.
-    #[cfg(test)]
-    pub fn written(&self) -> impl Iterator<Item = &[C]> {
-        let pages = self.cells.chunks(Self::PER_PAGE).enumerate();
-        let written = pages.filter(|&(page, _)| self.is_zeroed(page));
-        // SAFETY: as in `existing`.
-        written.map(|(_, cells)| unsafe { cells.assume_init_ref() })
-    }
-
-    /// Iterates over the cells in `range` that are on written pages, each with its index.
+    /// Iterates over the cells in `range` that are in granules that have been written, each with its index.
     #[inline]
     pub fn written_in(&self, range: Range<usize>) -> impl Iterator<Item = (usize, &C)> {
-        let pages = range.start / Self::PER_PAGE..range.end.div_ceil(Self::PER_PAGE);
-        let written = pages.filter(|&page| self.is_zeroed(page));
-        written.flat_map(move |page| {
-            let first = range.start.max(page * Self::PER_PAGE);
-            let cells = &self.cells[first..range.end.min((page + 1) * Self::PER_PAGE)];
-            // SAFETY: as in `existing`.
-            (first..).zip(unsafe { cells.assume_init_ref() })
+        let (start, end) = (range.start, range.end);
+        let runs = start >> GRANULE_BITS..end.div_ceil(1 << GRANULE_BITS);
+        runs.flat_map(move |run| {
+            let number = self.directory[run].load(Ordering::Acquire);
+            let first = start.max(run << GRANULE_BITS);
+            let last = if number == 0 {
+                first
+            } else {
+                end.min((run + 1) << GRANULE_BITS)
+            };
+            (first..last).map(move |index| (index, self.granules.cell(number, index as u32)))
         })
     }
+
+    #[cfg(test)]
+    fn granules_made(&self) -> u32 {
+        self.granules.made.load(Ordering::Relaxed)
+    }
 }
-
-const FIRST_CELLS_BITS: u32 = 12;
-
-/// Length of `Cells::written`. 256 words cover 16.7 million four-byte cells, about as many as a large program has
-/// types.
-const WRITTEN_WORDS: usize = 256;
 
 /// Cells for a growing range of indices, initially all zero. `C` is an atomic integer, because a
 /// cell is only ever accessed through a shared reference.
 pub struct Cells<C, A: Allocator + Clone = Global> {
-    chunks: Chunks<C, FIRST_CELLS_BITS, A>,
-    /// Indexed by `Located::offset`. With that numbering, every chunk's first cell is still the first cell of a page.
-    written: Box<[AtomicU64], A>,
-}
-
-impl<C: Zeroed, A: Allocator + Clone> WrittenPages<C> for Cells<C, A> {
-    #[inline(always)]
-    fn words(&self) -> &[AtomicU64] {
-        &self.written
-    }
+    /// For each `1 << GRANULE_BITS` indices the number of their granule, or 0.
+    directory: Chunks<AtomicU32, FIRST_DIRECTORY_BITS, A>,
+    granules: Granules<C, A>,
 }
 
 impl<C: Zeroed + Sync, A: Allocator + Clone + Default> Default for Cells<C, A> {
@@ -965,8 +935,8 @@ impl<C: Zeroed + Sync, A: Allocator + Clone + Default> Default for Cells<C, A> {
 impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
     pub fn new_in(alloc: A) -> Self {
         Cells {
-            written: AtomicU64::zeroed_slice_in(WRITTEN_WORDS, alloc.clone()),
-            chunks: Chunks::new_in(alloc),
+            directory: Chunks::new_in(alloc.clone()),
+            granules: Granules::new_in(alloc),
         }
     }
 
@@ -986,40 +956,43 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
 
     #[inline(always)]
     fn existing_loaded(&self, index: u32, order: Ordering) -> Option<&C> {
-        let Located { chunk, offset } = Chunks::<C, FIRST_CELLS_BITS, A>::locate(index);
-        if !self.may_be_written(offset) {
-            return None;
-        }
-        let base = self.chunks.bases[chunk].load(order);
+        let Located { chunk, offset } =
+            Chunks::<AtomicU32, FIRST_DIRECTORY_BITS, A>::locate(index >> GRANULE_BITS);
+        let base = self.directory.bases[chunk].load(order);
         if base.is_null() {
             return None;
         }
         // SAFETY: the address is inside the chunk, which `zeroed_slice_in` initialized and only the drop frees.
-        Some(unsafe { &*base.wrapping_add(offset) })
+        let number = unsafe { &*base.wrapping_add(offset) }.load(order);
+        if number == 0 {
+            return None;
+        }
+        self.granules.cell_if_seen(number, index)
     }
 
-    /// Returns the cell at `index` for writing, and allocates its chunk if needed.
+    /// Returns the cell at `index` for writing, and makes its granule if needed.
     #[inline]
     pub fn cell(&self, index: u32) -> &C {
-        // SAFETY: as in `existing`.
-        let cell = unsafe { &*self.chunks.slot_or_install(index, C::zeroed_slice_in) };
-        let offset = Chunks::<C, FIRST_CELLS_BITS, A>::locate(index).offset;
-        self.note_write(offset, cell);
-        cell
+        // SAFETY: as in `existing_loaded`.
+        let entry = unsafe {
+            &*self
+                .directory
+                .slot_or_install(index >> GRANULE_BITS, AtomicU32::zeroed_slice_in)
+        };
+        let mut number = entry.load(Ordering::Acquire);
+        if number == 0 {
+            assert!(
+                index.checked_add(1 << FIRST_CELLS_BITS).is_some(),
+                "the index is out of range"
+            );
+            number = self.granules.add(entry);
+        }
+        self.granules.cell(number, index)
     }
 
-    /// Iterates over the allocated chunks.
     #[cfg(test)]
-    pub fn allocated(&self) -> impl Iterator<Item = &[C]> {
-        (self.chunks.bases.iter().enumerate()).filter_map(|(chunk, base)| {
-            let base = base.load(Ordering::Acquire);
-            if base.is_null() {
-                return None;
-            }
-            let len = Chunks::<C, FIRST_CELLS_BITS, A>::len_of(chunk);
-            // SAFETY: the chunk starts `len` after its base and has `len` cells. See `existing`.
-            Some(unsafe { std::slice::from_raw_parts(base.wrapping_add(len), len) })
-        })
+    fn granules_made(&self) -> u32 {
+        self.granules.made.load(Ordering::Relaxed)
     }
 }
 
@@ -1546,70 +1519,167 @@ mod tests {
         assert!(cells.existing(0).is_none());
         assert!(cells.existing(u32::MAX).is_none());
         assert!(cells.existing(1 << 30).is_none());
-        assert_eq!(cells.allocated().count(), 0);
+        assert_eq!(cells.granules_made(), 0);
         cells.cell(5000).store(9, Ordering::Relaxed);
         assert!(cells.existing(0).is_none());
         assert_eq!(cells.existing(5000).unwrap().load(Ordering::Relaxed), 9);
         assert_eq!(cells.existing(5001).unwrap().load(Ordering::Relaxed), 0);
-        // Another page of the chunk that's allocated now. Only the page's bit says that it was never written.
-        let other_page = 5000 + 2 * (SMALLEST_PAGE / size_of::<AtomicU64>()) as u32;
-        assert!(cells.existing(other_page).is_none());
-        assert!(cells.existing_acquire(other_page).is_none());
-        assert_eq!(cells.cell(other_page).load(Ordering::Relaxed), 0);
-        assert!(cells.existing(other_page).is_some());
-        let lengths: Vec<usize> = cells.allocated().map(<[_]>::len).collect();
-        assert_eq!(lengths, [1 << (FIRST_CELLS_BITS + 1)]);
-        let all = cells.allocated().flatten();
-        assert_eq!(all.map(|it| it.load(Ordering::Relaxed)).sum::<u64>(), 9);
+        // The neighboring granule. Only the directory says that it was never written.
+        let other_granule = 5000 + (1 << GRANULE_BITS);
+        assert!(cells.existing(other_granule).is_none());
+        assert!(cells.existing_acquire(other_granule).is_none());
+        assert_eq!(cells.cell(other_granule).load(Ordering::Relaxed), 0);
+        assert!(cells.existing(other_granule).is_some());
+        assert_eq!(cells.granules_made(), 2);
+        assert_eq!(cells.existing(5000).unwrap().load(Ordering::Relaxed), 9);
     }
 
     #[test]
-    fn fixed_cells_start_at_zero_and_exist_once_their_page_is_written() {
-        const PER_PAGE: usize = SMALLEST_PAGE / size_of::<AtomicU32>();
-        const LEN: usize = 2 * PER_PAGE + 3;
-        let cells = FixedCells::<AtomicU32>::new_in(LEN, Global);
-        assert!((0..LEN).all(|index| cells.existing(index).is_none()));
-        assert_eq!(cells.written().count(), 0);
-        cells.cell(2 * PER_PAGE + 1).store(9, Ordering::Relaxed);
-        assert!(cells.existing(2 * PER_PAGE - 1).is_none());
-        let last: Vec<u32> = (2 * PER_PAGE..LEN)
-            .map(|index| cells.existing(index).unwrap().load(Ordering::Relaxed))
-            .collect();
-        assert_eq!(last, [0, 9, 0]);
-        assert_eq!(cells.cell(0).load(Ordering::Relaxed), 0);
-        let lengths: Vec<usize> = cells.written().map(<[_]>::len).collect();
-        assert_eq!(lengths, [PER_PAGE, 3]);
+    fn a_reader_that_sees_the_number_of_a_granule_but_not_its_chunk_finds_nothing() {
+        let cells = Cells::<AtomicU32>::default();
+        // SAFETY: `slot_or_install` returns an entry of the directory's own chunk.
+        unsafe {
+            &*cells
+                .directory
+                .slot_or_install(0, AtomicU32::zeroed_slice_in)
+        }
+        .store(1, Ordering::Relaxed);
+        assert!(cells.existing(5).is_none());
+        assert!(cells.existing_acquire(5).is_none());
+    }
+
+    #[test]
+    fn cells_written_far_apart_stand_side_by_side() {
+        let cells = Cells::<AtomicU32>::default();
+        let places: Vec<usize> = [7u32, 1 << 20, 1 << 27]
+            .map(|index| std::ptr::from_ref(cells.cell(index & !GRANULE_MASK)) as usize)
+            .to_vec();
+        let granule = size_of::<AtomicU32>() << GRANULE_BITS;
         assert_eq!(
-            FixedCells::<AtomicU64>::new_in(0, Global).written().count(),
-            0
+            places,
+            [places[0], places[0] + granule, places[0] + 2 * granule]
+        );
+        let fixed = FixedCells::<AtomicU32>::new_in(1 << 20, Global);
+        let first = std::ptr::from_ref(fixed.cell(0)) as usize;
+        assert_eq!(
+            std::ptr::from_ref(fixed.cell((1 << 20) - 1)) as usize,
+            first + 2 * granule - size_of::<AtomicU32>()
         );
     }
 
     #[test]
-    fn written_in_skips_unwritten_pages_and_clips_to_the_range() {
-        const PER_PAGE: usize = SMALLEST_PAGE / size_of::<AtomicU32>();
-        let cells = FixedCells::<AtomicU32>::new_in(3 * PER_PAGE, Global);
-        assert_eq!(cells.written_in(0..3 * PER_PAGE).count(), 0);
-        cells.cell(PER_PAGE - 1).store(7, Ordering::Relaxed);
-        cells.cell(2 * PER_PAGE).store(8, Ordering::Relaxed);
-        // Starts inside the first page, crosses the unwritten second page, and ends inside the third.
-        let found: Vec<(usize, u32)> = (cells.written_in(PER_PAGE - 2..2 * PER_PAGE + 2))
-            .map(|(index, cell)| (index, cell.load(Ordering::Relaxed)))
+    fn fixed_cells_start_at_zero_and_exist_once_their_granule_is_written() {
+        const PER_GRANULE: usize = 1 << GRANULE_BITS;
+        const LEN: usize = 2 * PER_GRANULE + 3;
+        let cells = FixedCells::<AtomicU32>::new_in(LEN, Global);
+        assert!((0..LEN).all(|index| cells.existing(index).is_none()));
+        assert_eq!(cells.granules_made(), 0);
+        cells.cell(2 * PER_GRANULE + 1).store(9, Ordering::Relaxed);
+        assert!(cells.existing(2 * PER_GRANULE - 1).is_none());
+        let last: Vec<u32> = (2 * PER_GRANULE..LEN)
+            .map(|index| cells.existing(index).unwrap().load(Ordering::Relaxed))
             .collect();
-        let expected = [
-            (PER_PAGE - 2, 0),
-            (PER_PAGE - 1, 7),
-            (2 * PER_PAGE, 8),
-            (2 * PER_PAGE + 1, 0),
-        ];
-        assert_eq!(found, expected);
-        assert_eq!(cells.written_in(PER_PAGE..2 * PER_PAGE).count(), 0);
-        assert_eq!(cells.written_in(5..5).count(), 0);
-        assert_eq!(cells.written_in(0..3 * PER_PAGE).count(), 2 * PER_PAGE);
+        assert_eq!(last, [0, 9, 0]);
+        assert_eq!(cells.cell(0).load(Ordering::Relaxed), 0);
+        assert_eq!(cells.granules_made(), 2);
+        let none = FixedCells::<AtomicU64>::new_in(0, Global);
+        assert_eq!(none.written_in(0..0).count(), 0);
     }
 
     #[test]
-    fn threads_race_to_write_to_a_page_first() {
+    fn written_in_skips_unwritten_granules_and_clips_to_the_range() {
+        const PER_GRANULE: usize = 1 << GRANULE_BITS;
+        let cells = FixedCells::<AtomicU32>::new_in(3 * PER_GRANULE, Global);
+        assert_eq!(cells.written_in(0..3 * PER_GRANULE).count(), 0);
+        cells.cell(PER_GRANULE - 1).store(7, Ordering::Relaxed);
+        cells.cell(2 * PER_GRANULE).store(8, Ordering::Relaxed);
+        // Starts inside the first granule, crosses the unwritten second granule, and ends inside the third.
+        let found: Vec<(usize, u32)> = (cells.written_in(PER_GRANULE - 2..2 * PER_GRANULE + 2))
+            .map(|(index, cell)| (index, cell.load(Ordering::Relaxed)))
+            .collect();
+        let expected = [
+            (PER_GRANULE - 2, 0),
+            (PER_GRANULE - 1, 7),
+            (2 * PER_GRANULE, 8),
+            (2 * PER_GRANULE + 1, 0),
+        ];
+        assert_eq!(found, expected);
+        assert_eq!(cells.written_in(PER_GRANULE..2 * PER_GRANULE).count(), 0);
+        assert_eq!(cells.written_in(5..5).count(), 0);
+        assert_eq!(
+            cells.written_in(0..3 * PER_GRANULE).count(),
+            2 * PER_GRANULE
+        );
+    }
+
+    #[test]
+    fn sixteen_threads_come_to_one_granule_at_once() {
+        const THREADS: u32 = 16;
+        const ROUNDS: u32 = if cfg!(miri) { 2 } else { 500 };
+        const FIRST: u32 = 16 << GRANULE_BITS;
+        const SHARED: u32 = FIRST + GRANULE_MASK;
+        for _ in 0..ROUNDS {
+            let growing = Cells::<AtomicU32>::default();
+            let fixed = FixedCells::<AtomicU32>::new_in(32 << GRANULE_BITS, Global);
+            let start = Barrier::new(THREADS as usize);
+            let places: Vec<[usize; 2]> = std::thread::scope(|scope| {
+                let threads: Vec<_> = (0..THREADS)
+                    .map(|thread| {
+                        let (growing, fixed, start) = (&growing, &fixed, &start);
+                        scope.spawn(move || {
+                            start.wait();
+                            // A reader finds no granule or a whole one: no cell holds more than the writers have added.
+                            for index in FIRST..=SHARED {
+                                let found = [
+                                    growing.existing_acquire(index),
+                                    fixed.existing(index as usize),
+                                ];
+                                for cell in found.into_iter().flatten() {
+                                    assert!(cell.load(Ordering::Relaxed) <= THREADS);
+                                }
+                            }
+                            growing.cell(FIRST + thread).fetch_add(1, Ordering::Relaxed);
+                            fixed
+                                .cell((FIRST + thread) as usize)
+                                .fetch_add(1, Ordering::Relaxed);
+                            let shared = [growing.cell(SHARED), fixed.cell(SHARED as usize)];
+                            shared.map(|cell| {
+                                cell.fetch_add(1, Ordering::Relaxed);
+                                std::ptr::from_ref(cell) as usize
+                            })
+                        })
+                    })
+                    .collect();
+                threads
+                    .into_iter()
+                    .map(|thread| thread.join().unwrap())
+                    .collect()
+            });
+            // Every thread was given the same cell, whichever thread's granule the directory names.
+            assert!(places.iter().all(|place| *place == places[0]));
+            for index in FIRST..=SHARED {
+                let expected = if index == SHARED {
+                    THREADS
+                } else {
+                    u32::from(index - FIRST < THREADS)
+                };
+                assert_eq!(
+                    growing.existing(index).unwrap().load(Ordering::Relaxed),
+                    expected
+                );
+                assert_eq!(
+                    fixed
+                        .existing(index as usize)
+                        .unwrap()
+                        .load(Ordering::Relaxed),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn threads_race_to_write_to_a_granule_first() {
         const THREADS: usize = 4;
         const ROUNDS: u32 = if cfg!(miri) { 2 } else { 200 };
         for _ in 0..ROUNDS {
@@ -1626,8 +1696,8 @@ mod tests {
                     });
                 }
             });
-            let all = cells.written().flatten();
-            let sum: u64 = all.map(|it| it.load(Ordering::Relaxed)).sum();
+            let all = cells.written_in(0..1_000);
+            let sum: u64 = all.map(|(_, it)| it.load(Ordering::Relaxed)).sum();
             assert_eq!(sum, 4 * THREADS as u64);
             assert_eq!(cells.cell(7).load(Ordering::Relaxed), THREADS as u64);
         }
@@ -1671,7 +1741,8 @@ mod tests {
                     assert_eq!(cell.load(Ordering::Relaxed), thread + 1);
                 }
             }
-            assert_eq!(cells.allocated().count(), 3);
+            // A thread that loses the race for a directory's entry leaves its granule unused.
+            assert!(cells.granules_made() >= 3);
         }
     }
 
@@ -1993,7 +2064,7 @@ mod tests {
                 });
             }
         });
-        // One chunk each, plus the page bits of `cells`. A thread that loses the race frees its chunk immediately.
+        // One chunk each, plus the directory of `cells`. A thread that loses the race frees its chunk immediately.
         assert_eq!(count(), 3);
         drop((cells, vec));
         assert_eq!(count(), 0);

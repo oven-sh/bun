@@ -46,8 +46,10 @@ declare const CAN_LOAD_CODE_AT_RUN_TIME: boolean;
 declare const CAN_LOAD_ADDONS_AT_RUN_TIME: boolean;
 /** False in an executable that was compiled ahead of time from a program that never names `node:cluster`. */
 declare const CAN_BE_CLUSTER_WORKER: boolean;
-/** False in what was compiled ahead of time, but for a test run one of whose tests replaces a built-in function or adds a name to `Object.prototype` or `Function.prototype`. Where it is false no program can tell which built-in functions Bun's own code calls, or which names it reads off its own objects. */
+/** False in what was compiled ahead of time, but for a test run one of whose tests replaces a built-in function or adds a name to `Object.prototype` or `Function.prototype`, and for an executable whose text spells a new name on `Function.prototype` or on the prototype of another kind of function. Where it is false no program can tell which built-in functions Bun's own code calls, or which names it reads off its own objects. Where you count on one member of a built-in alone, ask `$findsDeclaredMember` of it instead. */
 declare const CAN_REPLACE_BUILT_INS: boolean;
+/** False in what was compiled ahead of time, but for a test run one of whose tests replaces a built-in function. Where it is false no program can tell which built-in functions Bun's own code calls, when, or with what. It says nothing of names that a program adds to a prototype: an executable may do that, and `CAN_REPLACE_BUILT_INS` is true there. */
+declare const CAN_REPLACE_BUILT_IN_FUNCTIONS: boolean;
 /** False in what was compiled ahead of time from a program that asks `process` only for what Bun gives it. Another name, or a conversion to a text or a number, is answered by what the program has laid on `EventEmitter.prototype`, with `process` as `this`. */
 declare const PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES: boolean;
 /** False in what was compiled ahead of time from a program that cannot tell whether `node:events` was loaded: nothing in it loads the module or may hand `process` on, and it does not look at the prototype chain of `process`. */
@@ -67,7 +69,7 @@ declare function $callNoInline<This, Arguments extends unknown[], Result>(
  * True only where a lookup of `name` on `object` finds the method or accessor that the class of `object` declares or inherits, as the source text defines it.
  * That class may be an heir of the one you mean: name the one you mean as `Class`: then it is true only where the member found is declared by `Class` or by a class above it,
  * and an heir that declares the name itself gets a no. False says nothing: ask the object and its prototypes then.
- * On an object that the runtime builds (`process`), without `Class`: true only where the object's own member of that name is still the one that it was built with.
+ * On an object that the runtime builds (`process`, `Object.prototype`), without `Class`: true only where the object's own member of that name is still the one that it was built with.
  * Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`.
  */
 declare function $findsDeclaredMember(object: object, name: string, Class?: Function): boolean;
@@ -96,6 +98,7 @@ declare function $findsNoMember(object: object, name: string): boolean;
  * Under any other name it may hold an accessor or a property that is not writable, and the answer stays true: a yes says nothing of a name that no class declares and no field bears.
  * Where you spare a read or a store under such a name, ask `$findsNoMember(object, name)`.
  * It says nothing about methods: ask `$findsDeclaredMember` for each one that you count on. It says nothing about frozen objects.
+ * A class that declares a member under `__proto__`, or one below such a class, is not among the classes: its objects get a no.
  * A name under which `Class` or a class above it declares an accessor is a member, not a field, though a constructor stores under it.
  * Lay such an accessor where the compiler sees it: a field over an accessor that it does not see makes the answer false for every object.
  * It holds until code of the program runs again. False says nothing: take the road that reads everything then.
@@ -112,6 +115,7 @@ declare function $isPlainInstanceOf(object: unknown, Class: Function): boolean;
  * seen by the compiler or not (a half that a call hands back): its objects get a no and the other classes keep their yes. It says nothing about methods: an heir may declare its own:
  * ask `$findsDeclaredMember(object, name, Class)` for each one that you count on.
  * Each class has its own count: what ends the yes for the objects of a class ends it for those of the classes below it, and for no others.
+ * A class below may be one that a function makes: from its second evaluation on its objects get a no, those of the first evaluation too.
  * `Class` is the file's own binding of the class or constructor function: one taken out of `require()` makes the answer false.
  */
 declare function $isPlainHeirOf(object: unknown, Class: Function): boolean;
@@ -142,6 +146,7 @@ declare function $isAsBornExceptForAddedNames<Born>(object: unknown, maker: () =
  * What a yes of `$isPlainInstanceOf` says of the chain above an object, asked without an object: `Class.prototype` is the object that it was, no link above it has changed,
  * and on it and on the prototype objects above it nobody but the library has defined an accessor or a property that is not writable, under any name.
  * A plain store of a function or a value there, over a member or under a new name, leaves it true.
+ * Whatever is defined there under `__proto__`, a value too, makes it false: behind a yes a read of `__proto__` off an object that holds no such name itself gives what stands above it.
  * It is for a birth: behind `new.target === Class` the object is fresh, has no property of its own and stands directly below `Class.prototype`:
  * then no store into it runs code of the program or is refused, and a read of a name that the library holds nowhere above finds nothing.
  * Of several classes it says all that of each, by one test: what ends the yes for one of them ends it for all.

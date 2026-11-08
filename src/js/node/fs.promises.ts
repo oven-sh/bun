@@ -36,13 +36,23 @@ var SymbolDispose = Symbol.dispose;
 // Default chunk size for FileHandle.pull/pullSync/writer (matches Node.js).
 const kIterDefaultChunkSize = 131072;
 
-let Interface: $BunModules["node:readline"]["Interface"] | undefined; // lazy value for require("node:readline").Interface.
+let nodeFsForIter; // lazy value for require("node:fs") (sync read/write/close for pull/writer).
 
-function watch(filename: string | Buffer | URL, options: $Node.WatchOptions & { ignore?: unknown } = {}) {
+let Interface; // lazy value for require("node:readline").Interface.
+
+function watch(
+  filename: string | Buffer | URL,
+  options: {
+    encoding?: BufferEncoding;
+    persistent?: boolean;
+    recursive?: boolean;
+    signal?: AbortSignal;
+    ignore?: import("node:fs").WatchOptions["ignore"];
+  } = {},
+) {
   type Event = {
-    __proto__?: null;
     eventType: string;
-    filename: string | Buffer | Error | undefined;
+    filename: string | Buffer | undefined;
   };
 
   if (typeof filename !== "string") {
@@ -54,11 +64,11 @@ function watch(filename: string | Buffer | URL, options: $Node.WatchOptions & { 
       filename = path;
     }
   }
-  let nextEventResolve: (() => void) | null = null;
+  let nextEventResolve: Function | null = null;
   if (typeof options === "string") {
     options = { encoding: options };
   }
-  const queue = $createFIFO() as InstanceType<typeof import("internal/fifo").default<Event>>;
+  const queue = $createFIFO();
   const ignoreMatcher = require("internal/fs/watch").createIgnoreMatcher(options?.ignore);
   const signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
@@ -89,7 +99,7 @@ function watch(filename: string | Buffer | URL, options: $Node.WatchOptions & { 
     };
   }
 
-  const watcher = fs.watch(filename, options || {}, (eventType, filename) => {
+  const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
     if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
       return;
     }
@@ -127,7 +137,7 @@ function watch(filename: string | Buffer | URL, options: $Node.WatchOptions & { 
               throw makeAbortError();
             }
             let event: Event;
-            while ((event = queue.shift()!)) {
+            while ((event = queue.shift() as Event)) {
               if (event.eventType === "close") {
                 closed = true;
                 removeAbortListener();
@@ -141,7 +151,7 @@ function watch(filename: string | Buffer | URL, options: $Node.WatchOptions & { 
               }
               return { value: event, done: false };
             }
-            const { promise, resolve } = Promise.withResolvers<void>();
+            const { promise, resolve } = Promise.withResolvers();
             nextEventResolve = resolve;
             await promise;
           }
@@ -186,12 +196,7 @@ async function cp(src, dest, options) {
   return require("internal/fs/cp").cpFn(src, dest, options);
 }
 
-function settleFromNodeCallback<T>(
-  resolve: (value: T) => void,
-  reject: (reason: unknown) => void,
-  err: unknown,
-  value: T,
-) {
+function settleFromNodeCallback(resolve, reject, err, value) {
   if (err) reject(err);
   else resolve(value);
 }
@@ -200,11 +205,7 @@ async function opendir(dir: string, options?) {
   // Delegate to the callback form so the eager path check (ENOTDIR/ENOENT at
   // open time, like node) runs on an async stat instead of blocking.
   const { promise, resolve, reject } = Promise.withResolvers<import("node:fs").Dir>();
-  require("node:fs").opendir(
-    dir,
-    options,
-    settleFromNodeCallback.bind(null, resolve as (value: unknown) => void, reject),
-  );
+  require("node:fs").opendir(dir, options, settleFromNodeCallback.bind(null, resolve, reject));
   return promise;
 }
 
@@ -228,73 +229,14 @@ function onFileHandleCollected(held: { fd: number; path: string | undefined }) {
   });
 }
 
-declare global {
-  namespace $Node {
-    interface FileHandle extends EventEmitter {
-      readonly fd: number;
-      /** -1 once the handle is closed. */
-      [kFd]: number;
-      [kRef](): void;
-      [kUnref](): void;
-      [kDeserialize](data: { fd: number; flag: string | number }): void;
-      read<T extends ArrayBufferView>(
-        buffer: T,
-        offset?: number | FileHandleReadOptions | null,
-        length?: number | null,
-        position?: number | bigint | null,
-      ): Promise<{ buffer: T; bytesRead: number }>;
-      read(
-        buffer?: ArrayBufferView | FileHandleReadOptions | null,
-        offset?: number | FileHandleReadOptions | null,
-        length?: number | null,
-        position?: number | bigint | null,
-      ): Promise<{ buffer: ArrayBufferView; bytesRead: number }>;
-      write<T extends string | ArrayBufferView>(
-        data: T,
-        offsetOrPosition?: number | { offset?: number; length?: number; position?: number | null } | null,
-        lengthOrEncoding?: number | string | null,
-        position?: number | null,
-      ): Promise<{ buffer: T; bytesWritten: number }>;
-      writev(
-        buffers: readonly ArrayBufferView[],
-        position?: number | null,
-      ): Promise<{ bytesWritten: number; buffers: readonly ArrayBufferView[] }>;
-      sync(): Promise<void>;
-      close(): Promise<void>;
-      createReadStream(options?: object): ReadStream;
-      truncate(len?: number): Promise<void>;
-    }
-
-    interface FileHandleReadOptions {
-      buffer?: ArrayBufferView;
-      offset?: number | null;
-      length?: number | null;
-      position?: number | bigint | null;
-    }
-
-    interface FileHandleConstructor {
-      new (fd: number, flag?: string | number, path?: string): FileHandle;
-      prototype: any;
-    }
-  }
-}
-
-const private_symbols: {
-  kRef: typeof kRef;
-  kUnref: typeof kUnref;
-  kFd: typeof kFd;
-  kTransfer: typeof kTransfer;
-  kTransferList: typeof kTransferList;
-  kDeserialize: typeof kDeserialize;
-  FileHandle: $Node.FileHandleConstructor;
-} = {
+const private_symbols = {
   kRef,
   kUnref,
   kFd,
   kTransfer,
   kTransferList,
   kDeserialize,
-  FileHandle: null!,
+  FileHandle: null as any,
 };
 
 const _readFile = fs.readFile.bind(fs);
@@ -367,7 +309,7 @@ const exports = {
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
   readdir: asyncWrap(fs.readdir, "readdir"),
-  readFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _readFile>) {
+  readFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
     return _readFile(fileHandleOrFdOrPath, ...args);
   },
@@ -404,7 +346,7 @@ const exports = {
     if (!options?.recursive) {
       // node validates in JS and reports ERR_FS_EISDIR for directories
       // (same check as rmSync)
-      let stats: $Node.Stats | undefined;
+      let stats;
       try {
         stats = await fs.lstat(path);
       } catch {
@@ -453,9 +395,8 @@ const exports = {
 export default exports;
 
 // TODO: remove this in favor of just returning js functions that don't check `this`
-function asyncWrap<F extends (...args: any[]) => Promise<unknown>>(fn: F, name: string): F;
-function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
-  const wrapped = async function (...args: unknown[]) {
+function asyncWrap(fn: any, name: string) {
+  const wrapped = async function (...args) {
     return fn.$apply(fs, args);
   };
   Object.defineProperty(wrapped, "name", { value: name });
@@ -480,13 +421,13 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     writev,
     close,
   } = exports;
-  let isArrayBufferView: ((value: unknown) => value is ArrayBufferView) | undefined;
+  let isArrayBufferView;
 
   // Partially taken from https://github.com/nodejs/node/blob/c25878d370/lib/internal/fs/promises.js#L148
   // These functions await the result so that errors propagate correctly with
   // async stack traces and so that the ref counting is correct.
   class FileHandle extends EventEmitter {
-    constructor(fd: number, flag?: string | number, path?: string) {
+    constructor(fd, flag, path?: string) {
       super();
       this[kFd] = fd ? fd : -1;
       this[kRefs] = 1;
@@ -505,13 +446,11 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       return this[kFd];
     }
 
-    [kCloseResolve]: ((value: void) => void) | undefined;
-    declare [kCloseReject]: ((reason?: unknown) => void) | undefined;
-    [kFd]: number;
-    [kFlag]: string | number | undefined;
-    [kClosePromise]: Promise<void> | null | undefined;
-    [kRefs]: number;
-    declare [kLocked]: boolean | undefined;
+    [kCloseResolve];
+    [kFd];
+    [kFlag];
+    [kClosePromise];
+    [kRefs];
     // needs to exist for https://github.com/nodejs/node/blob/8641d941893/test/parallel/test-worker-message-port-transfer-fake-js-transferable.js to pass
     [Symbol("messaging_transfer_symbol")]() {}
 
@@ -695,12 +634,6 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       }
     }
 
-    write<T extends string | ArrayBufferView>(
-      data: T,
-      offsetOrPosition?: number | { offset?: number; length?: number; position?: number | null } | null,
-      lengthOrEncoding?: number | string | null,
-      position?: number | null,
-    ): Promise<{ buffer: T; bytesWritten: number }>;
     async write(buffer, offset, length, position) {
       const fd = this[kFd];
       throwEBADFIfNecessary("write", fd);
@@ -843,7 +776,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       }
 
       const handle = this;
-      let controllerRef: ReadableByteStreamController | undefined;
+      let controllerRef;
       let done = false;
 
       async function ondone() {
@@ -875,11 +808,11 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
         type: "bytes",
         autoAllocateChunkSize: 16384,
 
-        start(controller: ReadableByteStreamController) {
+        start(controller) {
           controllerRef = controller;
         },
 
-        async pull(controller: ReadableByteStreamController) {
+        async pull(controller) {
           const request = controller.byobRequest;
           // The handle can be closed while a pull is in flight, which settles the
           // request and drops the fd out from under the read below.
@@ -1012,7 +945,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
                 throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
               }
               const toRead = remaining > 0 ? Math.min(readSize, remaining) : readSize;
-              const buf: Buffer = Buffer.allocUnsafe(toRead);
+              const buf = Buffer.allocUnsafe(toRead);
               const bytesRead = (await read(fd, buf, 0, toRead, pos >= 0 ? pos : null)) || 0;
               if (bytesRead === 0) break;
               if (pos >= 0) pos += bytesRead;
@@ -1070,7 +1003,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
       this[kLocked] = true;
 
-      const fsSync = require("node:fs");
+      const fsSync = (nodeFsForIter ??= require("node:fs"));
 
       const source = {
         __proto__: null,
@@ -1106,7 +1039,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
                 return { value: undefined, done: true };
               }
               const toRead = remaining > 0 ? Math.min(readSize, remaining) : readSize;
-              const buf: Buffer = Buffer.allocUnsafe(toRead);
+              const buf = Buffer.allocUnsafe(toRead);
               let bytesRead;
               try {
                 bytesRead = fsSync.readSync(fd, buf, 0, toRead, pos >= 0 ? pos : null) || 0;
@@ -1207,16 +1140,10 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
         }
       }
 
-      const fsSync = require("node:fs");
+      const fsSync = (nodeFsForIter ??= require("node:fs"));
 
       // Write a single buffer with retry on zero-byte writes (up to 5 retries).
-      async function writeAll(
-        buf: Uint8Array,
-        offset: number,
-        length: number,
-        position: number,
-        signal: AbortSignal | undefined,
-      ) {
+      async function writeAll(buf, offset, length, position, signal) {
         asyncPending++;
         try {
           let retries = 0;
@@ -1253,7 +1180,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
 
       // Writev with retry. On partial write, concatenates remaining
       // buffers and falls back to writeAll.
-      async function writevAll(buffers: Uint8Array[], position: number, signal: AbortSignal | undefined) {
+      async function writevAll(buffers, position, signal) {
         asyncPending++;
         try {
           let totalSize = 0;
@@ -1530,7 +1457,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
           return totalBytesWritten;
         },
 
-        fail(reason?: unknown) {
+        fail(reason) {
           if (closed || error) return;
           error = reason ?? $ERR_INVALID_STATE("Failed");
           closed = true;
@@ -1549,7 +1476,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
           teardown();
         },
 
-        [SymbolAsyncDispose](this: { fail(reason?: unknown): void }) {
+        [SymbolAsyncDispose]() {
           if (closing) {
             return pendingEndPromise ?? Promise.$resolve();
           }
@@ -1559,7 +1486,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
           return Promise.$resolve();
         },
 
-        [SymbolDispose](this: { fail(reason?: unknown): void }) {
+        [SymbolDispose]() {
           this.fail();
         },
       };
@@ -1574,7 +1501,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
       const fd = this[kFd];
       this[kFd] = -1;
       fileHandleRegistry?.unregister(this);
-      require("node:fs").closeSync(fd);
+      (nodeFsForIter ??= require("node:fs")).closeSync(fd);
       this.emit("close");
     }
 
@@ -1626,9 +1553,6 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     }
   }
   private_symbols.FileHandle = FileHandle;
-  const fileHandles = require("internal/fs/file_handles");
-  fileHandles.internals = private_symbols;
-  fileHandles.whenLoaded?.(private_symbols);
 }
 
 function throwEBADFIfNecessary(fn: string, fd) {
@@ -1649,7 +1573,7 @@ function throwEBADFIfNecessary(fn: string, fd) {
 }
 
 async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {
-  const writer = Bun.file(fd).writer() as $Node.FileSink;
+  const writer = Bun.file(fd).writer();
 
   const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
   let totalBytesWritten = 0;

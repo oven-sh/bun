@@ -1,6 +1,6 @@
 use super::alternatives::{
-    AskedOfDataFiles, Folder, WrittenNames, find_alternatives, find_path_around_parameter,
-    find_texts_of_key,
+    AskedOfDataFiles, AskedOfOwnExports, Folder, WrittenNames, find_alternatives,
+    find_path_around_parameter, find_texts_of_key,
 };
 use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
@@ -644,8 +644,9 @@ pub fn is_linked_by_bundler(hir: &File<'_>, bound: &Bound<'_>, site: ImportSiteK
         return false;
     };
     let callee = hir.skip_type_assertions(hir[call].callee);
-    is_free_common_js(hir, bound, callee, CommonJsVariable::Require)
-        || find_module_printed_as_require(hir, bound, callee).is_some()
+    hir[call].args.len() == 1
+        && (is_free_common_js(hir, bound, callee, CommonJsVariable::Require)
+            || find_module_printed_as_require(hir, bound, callee).is_some())
 }
 
 pub fn is_name_read_by_transpiler(
@@ -694,8 +695,16 @@ fn read_path_given_to_create_require(
     paths_read: &mut Vec<(ExprId, Atom)>,
 ) -> Result<Option<ResolvedFrom>, UnreadPath> {
     let asked = AskedOfDataFiles::default();
-    let found = find_alternatives(inputs, written_names, &asked, given, Folder::OfFile, None)
-        .ok_or(UnreadPath)?;
+    let found = find_alternatives(
+        inputs,
+        written_names,
+        &asked,
+        given,
+        Folder::OfFile,
+        None,
+        None,
+    )
+    .ok_or(UnreadPath)?;
     let ([ImportSpecifier::Constant(path)], true, false) = (
         &found.alternatives[..],
         found.start_at_own_directory,
@@ -763,6 +772,7 @@ pub(super) struct ScannedCalls {
     pub(super) exported_file_changers: Vec<ExportedFileChanger>,
     pub(super) asked_of_other_files: Vec<(Atom, Atom)>,
     pub(super) asked_of_data_files: Vec<(Atom, Atom)>,
+    pub(super) asked_of_own_exports: Vec<Atom>,
     pub(super) names_out_of_data_files: Vec<(Atom, ExprId)>,
     pub(super) keys_stored_in_caches: Vec<(ExprId, ImportSpecifier)>,
     pub(super) module_require_objects: Vec<ExprId>,
@@ -886,6 +896,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         exported_file_changers,
         asked_of_other_files: alternatives.asked_of_other_files.take(),
         asked_of_data_files: alternatives.asked_of_data_files.take(),
+        asked_of_own_exports: alternatives.asked_of_own_exports.take(),
         names_out_of_data_files: alternatives.names_out_of_data_files,
         keys_stored_in_caches,
         module_require_objects,
@@ -1121,6 +1132,7 @@ struct FoundAlternatives {
     written_names: WrittenNames,
     asked_of_data_files: AskedOfDataFiles,
     asked_of_other_files: AskedOfDataFiles,
+    asked_of_own_exports: AskedOfOwnExports,
     names_out_of_data_files: Vec<(Atom, ExprId)>,
 }
 
@@ -1160,6 +1172,7 @@ fn find_specifier(
         argument,
         Folder::OfFile,
         reads_other_files.then_some(&alternatives.asked_of_other_files),
+        Some(&alternatives.asked_of_own_exports),
     );
     let Some(found) = found else {
         return folded;
@@ -1283,7 +1296,15 @@ fn find_path_below_working_directory(
     let written_names = &alternatives.written_names;
     let of_other_files = Some(&alternatives.asked_of_other_files);
     let folder = Folder::WorkingDirectory;
-    let found = find_alternatives(inputs, written_names, &asked, path, folder, of_other_files)?;
+    let found = find_alternatives(
+        inputs,
+        written_names,
+        &asked,
+        path,
+        folder,
+        of_other_files,
+        None,
+    )?;
     if !found.start_at_own_directory || found.is_out_of_data_file {
         return None;
     }

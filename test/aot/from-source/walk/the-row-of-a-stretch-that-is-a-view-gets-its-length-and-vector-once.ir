@@ -1,0 +1,13 @@
+# -- source: main.cjs
+# "use strict";
+# function turn(grid, side, at, sine, cosine) { for (let k = 0; k < side; k++) { const held = grid[k][at + 1]; grid[k][at + 1] = sine * grid[k][at] + cosine * held; grid[k][at] = cosine * grid[k][at] - sine * held; } }
+# const data = JSON.parse("[[1.5,2.5,3.5],[4.5,5.5,6.5]]"), grid = data.map(row => Float64Array.from(row));
+# turn(grid, grid.length, 0, 0.5, 0.25); console.log(Array.from(grid[1]).join());
+# -- end of source
+# The row is spelled five times in the turn and is one view: its length and its vector are loaded for the row, and each access names them.
+# REQUIRES: entries-of-bun
+# RUN: walk f1 mechanisms=all
+# CHECK: GetTypedArrayLength {{*}} typedArrayType=10
+# CHECK: GetTypedArrayVector
+# The positions are held below that length in front of the first reads, so the stores lie inside the view and name the vector alone.
+# CHECK: PutTypedArrayElement {{*}}, {{*}}, {{*}}, {{*}} typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]

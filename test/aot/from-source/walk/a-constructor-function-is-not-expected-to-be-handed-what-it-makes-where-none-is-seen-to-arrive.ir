@@ -1,0 +1,16 @@
+# -- source: main.cjs
+# "use strict";
+# const rows = JSON.parse('[{"wide":1,"tall":2.5},{"wide":3,"tall":4.5}]');
+# function Plate(from) { this.wide = from.wide; this.tall = from.tall; }
+# Plate.prototype.area = function () { return this.wide * this.tall; };
+# function run() { return rows.map(row => new Plate(row)); }
+# console.log(run().length, run()[1].area());
+# -- end of source
+# Rows of parsed data are laid into objects by a constructor function, made by an arrow that is handed to map. The only layout of the program with the names that the constructor reads off its parameter is
+# the one that this very code lays, so in the copy of the constructor the parameter was expected to be a Plate: a test that failed at every row, and the copy left for the slow version, where every store goes
+# by the stub for any field. The callers of a function that instances name as their constructor are not all known; no Plate was seen to arrive: nothing is expected of the parameter.
+# RUN: walk f4 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-NOT: ShapeTest
+# CHECK: PropGet {{*}} key="wide"
+# CHECK: PutSlotOrAdd {{*}} key="wide"

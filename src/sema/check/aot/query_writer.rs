@@ -553,6 +553,7 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
                 let arguments = self.queries.class_type_arguments(found, ty);
                 self.write_type_arguments(site, b"class type argument", arguments);
             }
+            ShapeKind::ConstructorFunctionInstance(_) => self.write_type_members(site, ty),
             ShapeKind::Builtin { .. } => {
                 self.write_accepted_primitives(site, ty);
                 self.write_awaited_type(site, ty);

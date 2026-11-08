@@ -1022,6 +1022,14 @@ fn a_guard_that_gives_undefined_is_dropped_only_where_the_operator_behind_it_goe
     assert_eq!(held(&chosen), [uncertain]);
     let behind = CREATE_BINDING.replace(&format!("{guard} ||"), &format!("1 && {guard} ||"));
     assert_eq!(held(&behind), [uncertain]);
+    let in_es_module = |source: String| {
+        bindings_in("/a.mjs", &format!("{source}export {{}};"), |values| {
+            (values.functions.len(), values.certainty)
+        })
+    };
+    assert_eq!(in_es_module(CREATE_BINDING.to_string()), [once]);
+    assert_eq!(in_es_module(joined("&&")), []);
+    assert_eq!(in_es_module(joined("&& 1 ||")), [once]);
     let star_over_nothing = format!("{}{EXPORT_STAR}", joined("&&"));
     let relies = find_in("/a.cjs", &star_over_nothing);
     assert!(relies.functions().all(|(_, known)| known.shape

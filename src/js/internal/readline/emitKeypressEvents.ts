@@ -2,9 +2,9 @@
 // Attribution: derived from Node.js, MIT licensed (Node.js contributors).
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
-var __node_module__ = { exports: {} as typeof emitKeypressEvents };
+var __node_module__ = { exports: {} };
 
-const { SafeStringIterator } = primordials;
+const { SafeStringIterator, Symbol } = primordials;
 
 const { charLengthAt, CSI, emitKeys } = require("internal/readline/utils");
 const { kSawKeyPress } = require("internal/readline/interface");
@@ -24,18 +24,7 @@ const ESCAPE_CODE_TIMEOUT = 500;
  * accepts a readable Stream instance and makes it emit "keypress" events
  */
 
-interface KeypressStream extends $Node.Readable {
-  [KEYPRESS_DECODER]?: import("node:string_decoder").StringDecoder;
-  [ESCAPE_DECODER]?: ReturnType<typeof emitKeys>;
-}
-
-/** What is read from and written to a `readline.Interface`. */
-interface KeypressOptions {
-  escapeCodeTimeout?: number;
-  isCompletionEnabled?: boolean;
-}
-
-function emitKeypressEvents(stream: KeypressStream, iface: KeypressOptions = {}) {
+function emitKeypressEvents(stream, iface = {}) {
   if (stream[KEYPRESS_DECODER]) return;
 
   stream[KEYPRESS_DECODER] = new StringDecoder("utf8");
@@ -43,13 +32,13 @@ function emitKeypressEvents(stream: KeypressStream, iface: KeypressOptions = {})
   stream[ESCAPE_DECODER] = emitKeys(stream);
   stream[ESCAPE_DECODER].next();
 
-  const triggerEscape = () => stream[ESCAPE_DECODER]!.next("");
+  const triggerEscape = () => stream[ESCAPE_DECODER].next("");
   const { escapeCodeTimeout = ESCAPE_CODE_TIMEOUT } = iface;
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let timeoutId;
 
-  function onData(input: string | Uint8Array) {
+  function onData(input) {
     if (stream.listenerCount("keypress") > 0) {
-      const string = stream[KEYPRESS_DECODER]!.write(input);
+      const string = stream[KEYPRESS_DECODER].write(input);
       if (string) {
         clearTimeout(timeoutId);
 
@@ -65,7 +54,7 @@ function emitKeypressEvents(stream: KeypressStream, iface: KeypressOptions = {})
           }
 
           try {
-            stream[ESCAPE_DECODER]!.next(character);
+            stream[ESCAPE_DECODER].next(character);
             // Escape letter at the tail position
             if (length === string.length && character === kEscape) {
               timeoutId = setTimeout(triggerEscape, escapeCodeTimeout);
@@ -86,7 +75,7 @@ function emitKeypressEvents(stream: KeypressStream, iface: KeypressOptions = {})
     }
   }
 
-  function onNewListener(event: string | symbol) {
+  function onNewListener(event) {
     if (event === "keypress") {
       stream.on("data", onData);
       stream.removeListener("newListener", onNewListener);

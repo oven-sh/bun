@@ -582,11 +582,14 @@ impl<'a> Build<'a> {
         let mut compiled_files = files.compiled_files().iter();
         self.stays_in_compiled_files = options.aot.only_tests_load_code_from_disk
             && !options.can_load_code_at_run_time()
-            && !contents.loads_by_unknown_path
+            && !contents.loads_code_on_disk_by_unknown_path
             && !contents.any_module_loads_again
             && !contents.run.loads.reads_files_from_disk()
             && !roots.imports_uncompiled_code
-            && !compiled_files.any(|&file| may_run_code_outside_image(files, file));
+            && !compiled_files.any(|&file| {
+                contents.run.loads_compiled_files_alone.get(file.idx()) != Some(&true)
+                    && may_run_code_outside_image(files, file)
+            });
         let session = shared.sessions.runtime;
         let inputs = self.create_runtime_load_inputs(shared, session, &roots, &contents);
         let takes_known_regions = Cell::new(true);
@@ -720,6 +723,7 @@ impl<'a> Build<'a> {
                                 || contents.embeds_addon_as_file)),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
                     can_replace_builtins: contents.can_replace_builtins(),
+                    can_replace_builtin_functions: contents.can_replace_builtin_functions(),
                     process_reaches_code_on_its_prototypes: can_load_code_at_run_time
                         || contents.process_reaches_code_on_its_prototypes,
                     warnings_load_events: can_load_code_at_run_time
@@ -1122,6 +1126,46 @@ mod tests {
             );
             if stays_in_compiled_files(&[("a.test.ts", &test_file), (helper, text)]) != stays {
                 wrong.push((head, text));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn what_a_file_of_the_product_may_load_or_run_keeps_a_test_run_in_its_compiled_files() {
+        const OF_PRODUCT: &str = r#"{ "name": "p", "dependencies": { "loader": "1.0.0" } }"#;
+        const OF_TESTS: &str = r#"{ "name": "p" }"#;
+        let rows = [
+            (OF_PRODUCT, "module.exports = name => require(name);", true),
+            (
+                OF_PRODUCT,
+                "module.exports = name => require.main.require(name);",
+                true,
+            ),
+            (OF_PRODUCT, r#"module.exports = (0, eval)("1");"#, true),
+            (
+                OF_PRODUCT,
+                r#"module.exports = new Function("p", "return import(p)");"#,
+                true,
+            ),
+            (OF_TESTS, "module.exports = name => require(name);", false),
+        ];
+        let mut wrong = Vec::new();
+        for (manifest, loader, stays) in rows {
+            let files = [
+                (
+                    "a.test.ts",
+                    "import { test } from \"bun:test\";\nimport load from \"loader\";\ntest(\"t\", () => console.log(load));\n",
+                ),
+                ("package.json", manifest),
+                (
+                    "node_modules/loader/package.json",
+                    r#"{ "name": "loader", "version": "1.0.0", "main": "index.js" }"#,
+                ),
+                ("node_modules/loader/index.js", loader),
+            ];
+            if stays_in_compiled_files(&files) != stays {
+                wrong.push((manifest, loader));
             }
         }
         assert!(wrong.is_empty(), "{wrong:#?}");

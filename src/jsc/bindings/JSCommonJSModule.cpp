@@ -39,7 +39,6 @@
 #include "root.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "headers-handwritten.h"
-#include "Path.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
@@ -510,7 +509,7 @@ JSValue requireCacheOf(Zig::GlobalObject* globalObject, JSModuleGraph* graph, JS
 JSValue createRequireCacheObject(JSC::JSGlobalObject* globalObject, JSC::JSMap* requireMap, JSCommonJSModule* owner)
 {
     auto& vm = globalObject->vm();
-    auto code = Bun::hasCompiledModules() ? commonJSCreateRequireCacheOverCompiledProgramCodeGenerator(vm) : commonJSCreateRequireCacheCodeGenerator(vm);
+    auto code = Bun::hasCompiledModules() ? compiledCommonJSCreateRequireCacheOverCompiledProgramCodeGenerator(vm) : commonJSCreateRequireCacheCodeGenerator(vm);
     auto* createRequireCache = JSFunction::create(vm, globalObject, code, globalObject);
     MarkedArgumentBuffer args;
     args.append(requireMap);
@@ -684,7 +683,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
     auto* parentOfCompiledModule = thisObject->m_isParentStored ? nullptr : Bun::parentOfCompiledModule(thisObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (parentOfCompiledModule) {
-        thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
+        if (auto* parent = dynamicDowncast<JSCommonJSModule>(parentOfCompiledModule))
+            thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parent);
         return JSValue::encode(parentOfCompiledModule);
     }
 
@@ -966,7 +966,12 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
         WTF::TextPosition(),
         JSC::SourceProviderSourceType::Program);
 
-    JSValue dirnameValue = Bun::pathDirname(globalObject, filenameValue);
+    EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
+#if OS(WINDOWS)
+    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
+#else
+    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
+#endif
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);

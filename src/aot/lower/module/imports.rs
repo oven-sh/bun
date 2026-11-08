@@ -5,7 +5,7 @@ use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
 
 use super::test_run_ways::{
-    emit_behind_stations, find_way_to_declaration, find_what_binding_leads_to, has_station,
+    BoundBy, emit_behind_stations, find_way_to_declaration, find_what_binding_leads_to, has_station,
 };
 use crate::builtins::id::{BuiltinId, BuiltinName};
 use crate::builtins::{BuiltinPath, Mutability, Resolved, table};
@@ -199,7 +199,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.jump(join);
             self.builder.switch_to(split.not_taken);
             let importer = self.file.module_id();
-            let object = self.builder.namespace_seen_by(module, importer);
+            let object = self.builder.namespace_seen_by(module, importer, importer);
             self.builder.write_variable(result, object);
             self.jump(join);
             self.continue_in(join);
@@ -245,7 +245,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.switch_to(split.not_taken);
         if let Some(importer) = importer {
             let target = (self.file.fragment).declare_module(ModuleRef::File(mocked));
-            let sees_mock = self.builder.sees_mock_of(target, importer);
+            let sees_mock = self.builder.sees_mock_of(target, importer, importer);
             let (of_mock, own) = (self.create_block(), self.create_block());
             (self.builder).branch(sees_mock, Edge::to(of_mock), Edge::to(own));
             self.continue_in(own);
@@ -255,7 +255,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.continue_in(of_mock);
         }
         let object = match importer {
-            Some(importer) => self.builder.namespace_seen_by(module, importer),
+            Some(importer) => self.builder.namespace_seen_by(module, importer, importer),
             None => self.builder.module_namespace(module, phase, false, true),
         };
         self.builder.write_variable(result, object);
@@ -359,14 +359,32 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.check_member_root(access);
         self.set_position(position);
         let modules = self.file.inputs.modules;
+        let bound_by = match modules.is_member_of_import(self.file.file, access) {
+            true => BoundBy::Statement,
+            false => BoundBy::Call,
+        };
         if let ImportBinding::Synthetic(export) = binding
             && !modules.synthetic_export(export).is_known_member
         {
             let read = ReadWithoutMock::SyntheticMember { export, access };
-            return Some(emit_behind_mocks(self, binding, asked, handed_on_by, read));
+            return Some(emit_behind_mocks(
+                self,
+                binding,
+                asked,
+                handed_on_by,
+                bound_by,
+                read,
+            ));
         }
         let read = ReadWithoutMock::Binding { name, path };
-        Some(emit_behind_mocks(self, binding, asked, handed_on_by, read))
+        Some(emit_behind_mocks(
+            self,
+            binding,
+            asked,
+            handed_on_by,
+            bound_by,
+            read,
+        ))
     }
 
     fn find_file_that_hands_on_object(&self, access: ExprId) -> Option<FileId> {
@@ -426,7 +444,17 @@ pub(super) fn emit_import_binding_asked(
     asked: Option<(FileId, Atom)>,
 ) -> ValueId {
     let read = ReadWithoutMock::Binding { name, path };
-    emit_behind_mocks(lowering, binding, asked, None, read)
+    emit_behind_mocks(lowering, binding, asked, None, BoundBy::Statement, read)
+}
+
+pub(super) fn emit_binding_asked_by_call(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    binding: ImportBinding,
+    name: StringId,
+    asked: Option<(FileId, Atom)>,
+) -> ValueId {
+    let read = ReadWithoutMock::Binding { name, path: None };
+    emit_behind_mocks(lowering, binding, asked, None, BoundBy::Call, read)
 }
 
 #[derive(Copy, Clone)]
@@ -461,6 +489,7 @@ fn emit_behind_mocks(
     binding: ImportBinding,
     asked: Option<(FileId, Atom)>,
     handed_on_by: Option<FileId>,
+    bound_by: BoundBy,
     read: ReadWithoutMock,
 ) -> ValueId {
     let modules = lowering.file.inputs.modules;
@@ -476,9 +505,15 @@ fn emit_behind_mocks(
         let holder = lowering.emit_module_namespace(holder, ImportPhase::Evaluation);
         return lowering.emit_named_read(holder, name);
     }
-    emit_behind_stations(lowering, binding, asked, handed_on_by, &mut |lowering| {
-        emit_read_without_mock(lowering, binding, read)
-    })
+    emit_behind_stations(
+        lowering,
+        binding,
+        asked,
+        handed_on_by,
+        bound_by,
+        &mut |lowering, object, name| lowering.emit_named_read(object, name),
+        &mut |lowering| emit_read_without_mock(lowering, binding, read),
+    )
 }
 
 fn emit_unmocked_binding(
@@ -535,7 +570,15 @@ impl FileLowering<'_, '_, '_, '_> {
         let asked = find_written_import(self, symbol);
         let end = find_what_binding_leads_to(modules, modules.import_binding(self.file, symbol));
         let mut starts = asked.into_iter().chain(end);
-        starts.any(|start| has_station(&find_way_to_declaration(modules, Some(self.file), start)))
+        let kept = &mut *self.modules.kept_between_ways.borrow_mut();
+        starts.any(|start| {
+            has_station(&find_way_to_declaration(
+                modules,
+                Some(&mut *kept),
+                Some(self.file),
+                start,
+            ))
+        })
     }
 
     pub(in crate::lower) fn imported_copy_key(&self, symbol: SymbolId) -> VariableKey {

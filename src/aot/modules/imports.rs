@@ -631,6 +631,7 @@ impl<'a, 's> FileBinder<'a, 's> {
             self.note_loads_handed_out();
         }
         self.collect_mocked_modules();
+        self.add_names_that_stars_bring_from_mocked_modules();
         let bindings = &mut self.imports.bindings;
         bindings.shared_sort_by_key(|&(symbol, _)| symbol);
         bindings.dedup_by_key(|&mut (symbol, _)| symbol);
@@ -1254,7 +1255,20 @@ impl<'a, 's> FileBinder<'a, 's> {
                     .names_searched_behind_stars
                     .extend(behind_stars);
             }
-            let required_name = resolved.required_name.or(name_of_file);
+            let asked_for = match resolved.resolution {
+                Resolution::DynamicStar { .. } => self
+                    .find_name_that_an_export_statement_asks_for(position)
+                    .filter(|&(exporter, _)| tables.is_barrel_where_nothing_is_mocked(exporter)),
+                _ => None,
+            };
+            let required_name = match (resolved.required_name, asked_for) {
+                (Some(required), Some((module, name))) => Some(RequiredName {
+                    module,
+                    name,
+                    ..required
+                }),
+                (required, _) => required.or(name_of_file),
+            };
             let required_names = [required_name, name_of_es_module, name_that_no_link_finds];
             for required_name in required_names.into_iter().flatten() {
                 self.add_name_required_by_export(position, export_name, required_name);
@@ -1277,6 +1291,9 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.add_name_required_by_export(position, export_name, required_name);
             }
         }
+    }
+
+    fn add_names_that_stars_bring_from_mocked_modules(&mut self) {
         let tables = self.context.tables;
         let own_count = tables.own_names(self.file).len();
         for &(export_name, resolved) in &tables.names(self.file)[own_count..] {
@@ -1291,6 +1308,7 @@ impl<'a, 's> FileBinder<'a, 's> {
                 self.add_required_name(RequiredName {
                     asked_by: Some(asked_by),
                     is_found_unless_mocked: true,
+                    is_asked_for_by_star: true,
                     ..RequiredName::new(ModuleRef::File(named), export_name)
                 });
             }

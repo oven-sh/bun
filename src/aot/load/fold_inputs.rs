@@ -30,6 +30,7 @@ pub(crate) struct ProgramFacts {
     pub can_load_addons_at_run_time: bool,
     pub can_be_cluster_worker: bool,
     pub can_replace_builtins: bool,
+    pub can_replace_builtin_functions: bool,
     pub process_reaches_code_on_its_prototypes: bool,
     pub warnings_load_events: bool,
     pub warnings_ask_path: bool,
@@ -136,6 +137,10 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
         ),
         define_fact(b"CAN_BE_CLUSTER_WORKER", facts.can_be_cluster_worker),
         define_fact(b"CAN_REPLACE_BUILT_INS", facts.can_replace_builtins),
+        define_fact(
+            b"CAN_REPLACE_BUILT_IN_FUNCTIONS",
+            facts.can_replace_builtin_functions,
+        ),
         define_fact(
             b"PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES",
             facts.process_reaches_code_on_its_prototypes,
@@ -296,6 +301,7 @@ mod tests {
         can_load_addons_at_run_time: false,
         can_be_cluster_worker: false,
         can_replace_builtins: false,
+        can_replace_builtin_functions: false,
         process_reaches_code_on_its_prototypes: false,
         warnings_load_events: false,
         warnings_ask_path: false,
@@ -497,6 +503,18 @@ mod tests {
             "if (CAN_BE_CLUSTER_WORKER) import('./child');",
             |can_be_cluster_worker| ProgramFacts {
                 can_be_cluster_worker,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn build_decides_whether_runtime_sources_make_their_calls_where_a_replaced_function_sees_them()
+    {
+        assert_fact_decides_import(
+            "if (CAN_REPLACE_BUILT_IN_FUNCTIONS) import('./calls');",
+            |can_replace_builtin_functions| ProgramFacts {
+                can_replace_builtin_functions,
                 ..NO_FACTS
             },
         );

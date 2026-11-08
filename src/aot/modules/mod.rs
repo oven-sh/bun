@@ -86,9 +86,10 @@ use order::{SiteKey, SitePosition, compute_order};
 use plan::{Plan, StoredSite};
 use requests::{
     ScannedSite, Scans, find_spelling, finish_requests, finish_site_answers,
-    leave_imports_of_test_files_to_loader, scan_files,
+    leave_imports_of_test_files_to_loader, request_folders_of_databases_first, scan_files,
 };
 use side_effects::is_declared_free_of_side_effects;
+pub(crate) use side_effects::names as names_file_with_side_effects;
 use std::sync::OnceLock;
 use synthetic_exports::{ReplacedNames, number_synthetic_exports};
 use test_run_names_handed_on::NamesHandedOn;
@@ -164,6 +165,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
 pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
     let mut steps = StepClock::new(Stage::BindModules);
     let mut scans = scan_files(input);
+    let folders_of_databases = request_folders_of_databases_first(input, &mut scans);
     steps.end("bind: scan files");
     let_late_commonjs_files_fail_at_load(input, &mut scans);
     let unloadable = find_unloadable_modules(input, &mut scans);
@@ -192,10 +194,14 @@ pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
         || collect_modules(input, &scans),
     );
     modules.texts_listed_ahead = texts_listed_ahead;
+    modules.folders_of_databases = folders_of_databases;
     if input.entry_points_run_again {
         let entry_points = input.sources.entry_points().iter();
         run_again.extend(entry_points.map(|entry_point| ModuleRef::File(entry_point.file)));
     }
+    run_again.extend(test_run_evictions::find_es_packages_that_mocks_name(
+        input, &scans,
+    ));
     ScannedModules {
         scans,
         unloadable,
@@ -600,7 +606,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         let (site_answers, exports, imports) = match imports {
             Some(imports) => (
                 finish_site_answers(files, &scans, file, &failures),
-                finish_exports(files, &tables, &synthetic, file),
+                finish_exports(files, &tables, &scans, &synthetic, file),
                 core::mem::take(imports),
             ),
             None => (Vec::new(), Vec::new(), FileImports::default()),
@@ -673,6 +679,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
             handed_on: names_handed_on.names_of(file, is_compiled),
             named_by_stars: names_handed_on.files_named_by_stars(file, is_compiled),
             names_from_stars: names_handed_on.names_from_stars(file, is_compiled),
+            names_of_unlisted_stars: names_handed_on.names_of_unlisted_stars(file, is_compiled),
             reaches_mock: reaches_mock.contains(&file),
         })
     };
@@ -852,6 +859,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
         member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
         data_linked_by_names_alone: Box::default(),
         forms_require_checks_first: modules.forms_require_checks_first,
+        folders_of_databases: modules.folders_of_databases,
         star_names_left_out,
         names_laid_on_object_prototype,
     };

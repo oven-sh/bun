@@ -150,16 +150,16 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
     paths:
       /^src\/sema\/(import_sites\/(alternatives|call_sites|made_requires)|fold\/(folder_names|known_to_bun_run|removed_by_bun_run|string_affixes))\.rs$/,
     lines:
-      /known::(?:require|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|hot|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|platform|arch|fileURLToPath|pathToFileURL)"/,
+      /known::(?:require|module|exports|arguments|resolve|getBuiltinModule|process|Module|call|apply|url|href|path|main|hot|join|meta_\w+)\b|b"(?:_?cache|sep|cwd|posix|normalize|platform|arch|fileURLToPath|pathToFileURL)"/,
     reason:
       "a member behind a thing: of `import.meta`, which is syntax; of `require`, `module` and `process`, where the binder has said that the object is the module's own parameter or the global; of what node:module, node:path, node:url, node:os and node:process export, found by the record of the import",
   },
   {
     paths: /^src\/sema\/(import_sites\/alternatives|fold\/folder_calls)\.rs$/,
     lines:
-      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
+      /known::charCodeAt\b|b"(?:forEach|map|filter|find|findLast|findIndex|findLastIndex|some|every|includes|indexOf|lastIndexOf|has|add|size|keys|values|entries|getOwnPropertyNames|ownKeys|defineProperty|mainModule|join|href|pathname|length|default|toString|valueOf|toJSON|trim|trimStart|trimEnd|toLowerCase|toUpperCase|concat|replace|replaceAll|slice|substring)"|known::(?:join|push)\b/,
     reason:
-      "a member behind a value: whoever follows a text has the list, the Set that `new Set(..)` of the free name made, the text, the URL, the object literal or the global `Object` in hand where it reads the name of the member, and built-ins are frozen",
+      "a member behind a value: whoever follows a text has the list, the Set that `new Set(..)` of the free name made, the text, the URL, the object literal or the global `Object` or `Reflect` in hand where it reads the name of the member, and built-ins are frozen",
   },
   {
     paths: /^src\/sema\/import_sites\/alternatives\.rs$/,
@@ -167,6 +167,12 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
       /^(?:\| )?b"(?:__defineGetter__|__defineSetter__|__lookupGetter__|__lookupSetter__|__proto__|constructor|hasOwnProperty|isPrototypeOf|propertyIsEnumerable|toLocaleString)"$/,
     reason:
       "a table of built-ins: what every object inherits from `Object.prototype`, asked of a key that an object literal does not write",
+  },
+  {
+    paths: /^src\/sema\/import_sites\/touched_exports\.rs$/,
+    lines: /b"[\w:]+"|known::(?:exports|default|arguments)\b/,
+    reason:
+      "tables of what leads to the objects of modules: members behind `module`, `require`, `process` and the global object where the binder has said that the name is free, a few members behind anything, names of built-in modules, and the export that another file's import names. Each makes what a file follows through its own exports unknown: none decides for following",
   },
   {
     paths: /^src\/sema\/import_sites\/changed_files\.rs$/,

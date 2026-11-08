@@ -13,7 +13,7 @@ use bun_paths::resolve_path::dirname;
 use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::hir::{self, ExprId, NodeData};
-use bun_sema::hir_from_data::{DataValue, HostValue};
+use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
@@ -186,6 +186,7 @@ pub(crate) struct LoadHost<'a> {
     extra_extensions: Vec<(Vec<u8>, ScriptKind)>,
     unreadable: Guarded<Vec<Vec<u8>>>,
     background_reads: Guarded<Vec<Vec<u8>>>,
+    files_asked_whether_code: Guarded<FxHashMap<Vec<u8>, bool>>,
     reads_in_background_after_load: bool,
 }
 
@@ -246,9 +247,10 @@ fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
 }
 
 fn is_program(name: &[u8], text: &[u8], loader: Loader) -> bool {
-    if std::str::from_utf8(text).is_err() {
-        return false;
-    }
+    std::str::from_utf8(text).is_ok() && parses_as_program(name, text, loader)
+}
+
+fn parses_as_program(name: &[u8], text: &[u8], loader: Loader) -> bool {
     let session = Session::new();
     let atoms = Interner::new_in(&session);
     let parse_options = CompileParseOptions {
@@ -388,6 +390,7 @@ impl<'a> LoadHost<'a> {
             extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
             background_reads: Guarded::new(Vec::new()),
+            files_asked_whether_code: Guarded::new(FxHashMap::default()),
             reads_in_background_after_load: false,
             input,
         }
@@ -1010,6 +1013,12 @@ impl CodeHost for LoadHost<'_> {
         {
             return HostResolution::Path(path);
         }
+        if is_import
+            && let Some(name) = request.specifier.strip_prefix(FOLDER_OF_DATABASE)
+            && let Some(path) = self.plugins.add_folder_of_database(request.importer, name)
+        {
+            return HostResolution::Path(path);
+        }
         let mut entry_texts = self.input.options.load.entry_texts.iter();
         if !is_import && let Some(text) = entry_texts.find(|it| it.name == request.specifier) {
             return HostResolution::Path(self.plugins.add_entry_text(text, None));
@@ -1092,6 +1101,7 @@ impl CodeHost for LoadHost<'_> {
                 path,
                 required: None,
                 links_followed: false,
+                has_side_effects: false,
             };
         }
         if !options.load.runs_tests || search.specifier != b"chai" {
@@ -1121,9 +1131,25 @@ impl CodeHost for LoadHost<'_> {
         Alias::bun_prefixed_builtin(specifier).is_some()
     }
 
+    fn is_code(&self, path: &[u8]) -> bool {
+        if let Some(&is_code) = self.files_asked_whether_code.lock().get(path) {
+            return is_code;
+        }
+        let text = self.read(path);
+        let loader = self.default_loader(path);
+        let is_code = text.is_some_and(|text| parses_as_program(path, &text, loader));
+        let mut asked = self.files_asked_whether_code.lock();
+        asked.insert(path.to_vec(), is_code);
+        is_code
+    }
+
     fn leaves_to_run_time(&self, path: &[u8]) -> bool {
         let aot = &self.input.options.aot;
         aot.runs_tests && !aot.checks_only && self.default_loader(path) == Loader::Html
+    }
+
+    fn names_file_with_side_effects(&self, directory: &[u8], entry: &[u8], path: &[u8]) -> bool {
+        crate::modules::names_file_with_side_effects(directory, entry, path)
     }
 
     fn leaves_packages_outside(&self) -> bool {
@@ -1185,6 +1211,16 @@ impl CodeHost for LoadHost<'_> {
 
     fn has_loader_at_run_time(&self) -> bool {
         self.input.options.load.runs_tests
+    }
+
+    fn types_asked_where_options_are_unread(&self, path: &[u8]) -> &'static [&'static [u8]] {
+        const ALL: &[&[u8]] = &[
+            b"json", b"jsonc", b"json5", b"toml", b"yaml", b"xml", b"text",
+        ];
+        let options = &self.input.options.aot;
+        let hides_source = !options.embeds_function_source || options.hides_names();
+        let is_code = script_kind_of(self.default_loader(path)).is_some();
+        if hides_source && is_code { &[] } else { ALL }
     }
 
     fn add_module_with_query(
@@ -1271,7 +1307,18 @@ impl CodeHost for LoadHost<'_> {
         let without_attribute = || {
             let is_linked_by_bundler = request.is_linked_by_bundler;
             let loader = self.default_loader_for(path, request.kind, is_linked_by_bundler);
-            to_host_loader(loader, path)
+            let by_name = to_host_loader(loader, path);
+            let fails_where_loaded = !is_linked_by_bundler
+                && by_name == BY_NAME
+                && !self.input.options.aot.runs_in_place
+                && matches!(self.served_by(path), ServedBy::Disk)
+                && loader_named_by_path(&self.input.options.load.loaders, path).is_none()
+                && !self.is_read_by_plugin(path)
+                && !self.is_code(path);
+            match fails_where_loaded {
+                true => to_host_loader_of_attribute(loader),
+                false => by_name,
+            }
         };
         let is_embedded = matches!(request.embed_attribute, Some(b"true"));
         let chosen = match request.type_attribute {
@@ -1439,7 +1486,9 @@ impl CodeHost for LoadHost<'_> {
                 ),
                 false => parse_data_module(provider, messages, &source, arena, atoms),
             };
-            if !is_named_as_code || parsed.failure.is_none() {
+            let is_refused_under_type =
+                parsed.failure.is_some() && !is_from_plugin && loader != self.default_loader(path);
+            if !is_refused_under_type && (!is_named_as_code || parsed.failure.is_none()) {
                 said_of_text.hand_on_to(self.input.messages);
             }
             ParsedCode {
@@ -1448,6 +1497,8 @@ impl CodeHost for LoadHost<'_> {
                 payload: Some(Box::new(ParsedSource {
                     plugin_module,
                     web_assembly: parsed.web_assembly,
+                    said_where_type_is_written: (is_refused_under_type && !is_named_as_code)
+                        .then_some(said_of_text),
                     parse_failure: parsed.failure,
                     refused_at: parsed.failed_at.map(|place| (loader, place)),
                     byte_count: text.len(),
@@ -1484,6 +1535,7 @@ impl CodeHost for LoadHost<'_> {
                             parse_failure: Some(failure),
                             refused_at: (source.refused_at.take())
                                 .filter(|_| is_read_by_nobody_later),
+                            said_where_type_is_written: source.said_where_type_is_written.take(),
                             byte_count: text.len(),
                             ..ParsedSource::new(SourceKind::Program, Loader::Js)
                         })),

@@ -1,7 +1,7 @@
 # `const x = rows[i]; s = s + lerp(x, 100, 0.25)` over a list out of JSON.parse. A list of which nothing is expected is asked in front of a loop what it holds where the loop's text sends its elements through an operator that makes numbers.
 # The element's first user is a call here, so it "went through no operator": the loop was built once, `rows.length` and `rows[i]` read by stubs each turn and every operator of the copy in line by its stub: 13,884 instructions a call of 96.
 # Where the linker names the callee, the callee's parameter that takes the element is followed in the callee's own body, through casts, to its first operator that makes numbers or relation: 1,701; `clamp` 13,237 > 1,971.
-# `label` asks `typeof` first: `named` stays as it is. `mixed` reads a list that holds a text and null: the front fails and it answers as plain does.
+# `label` asks `typeof` first: `named` is asked for no list of numbers (a list is expected of `rows` there all the same: its length is read and a loop reads it under an index). `mixed` reads a list that holds a text and null: the front fails and it answers as plain does.
 # f1 = lerp, f2 = clamp, f3 = label, f4 = eased, f5 = held, f6 = named, f7 = mixed
 # LIBRARY: own
 # -- source: main.js
@@ -16,12 +16,13 @@
 # publish(eased, held, named, mixed, rows, odd);
 # -- end of source
 # RUN(EASED): walk f4 mechanisms=all
+# EASED: testedType=Array<number>
 # EASED: = GetArrayElement
 # EASED: = Add {{*}}form=Numbers
 # RUN(HELD): walk f5 mechanisms=all
 # HELD: = GetArrayElement
 # RUN(NAMED): walk f6 mechanisms=all
-# NAMED-NOT: = GetArrayElement
+# NAMED-NOT: testedType=Array<number>
 # RUN(SHELL): run-in-shell let asked = 0; globalThis.take = which => JSON.parse(["[1.5,2.5,3.5,4.5]", "[1.5,\"2\",3.5,null]"][which]); globalThis.publish = (eased, held, named, mixed, rows, odd) => { const tell = () => print(eased(), held(), named(), String(mixed())); tell(); tell(); rows[1] = "7"; tell(); rows[1] = { valueOf() { asked++; return 9; } }; tell(); print(asked); rows.length = 2; tell(); rows.push(0.5, 1, 2); tell(); delete rows[0]; tell(); rows.length = 0; tell(); odd.length = 0; odd.push(1, 2); tell(); };
 # SHELL: 109 10.5 4 26.125224.527.62525
 # SHELL-NEXT: 109 10.5 4 26.125224.527.62525

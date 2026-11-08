@@ -13,7 +13,7 @@ import { dirname, join } from "path";
 import { endAtMemoryLimit, memoryLimit } from "../harness/memory-limit";
 import { decoyShapes, memberNames } from "./decoy-shapes";
 import { laterProbes, probeProgram, probes } from "./engine-probes";
-import { bunInitCompilerOptions, typeChecker, bunTypesFolder, type Checker } from "./type-check";
+import { bunInitCompilerOptions, bunTypesFolder, typeCheckerApart } from "./type-check";
 
 export interface Program {
   text: string;
@@ -414,6 +414,8 @@ export class ProductRunner implements Runner {
       threads: number;
       buildSeconds: number;
       runSeconds: number;
+      /** How long TypeScript may take over a program whose build was refused (default 60). */
+      checkSeconds?: number;
       /** In bytes, for each build and each run, instead of `memoryLimit`. */
       memory?: number;
       /**
@@ -563,8 +565,8 @@ export class ProductRunner implements Runner {
 
   // A mutant of a typed program may not type-check, and that rightly stops the build. But the build must accept what
   // TypeScript accepts with Bun's typings and plain Bun runs.
-  #checkers = new Map<string, Checker | undefined>();
-  #judged(program: Program, flags: string[], verdict: Verdict): Verdict {
+  #checkers = new Map<string, ReturnType<typeof typeCheckerApart>>();
+  async #judged(program: Program, flags: string[], verdict: Verdict): Promise<Verdict> {
     if (program.mayBeRefused && verdict.kind === "build error") return { kind: "skipped", why: "the build is refused" };
     if (verdict.kind !== "skipped" || !verdict.refusal || program.mayBeRefused) return verdict;
     // The build reports TypeScript 7's errors, which infers less from a JavaScript file than the TypeScript used here:
@@ -576,17 +578,31 @@ export class ProductRunner implements Runner {
     if (!this.#checkers.has(name))
       this.#checkers.set(
         name,
-        typeChecker({ typings: bunTypesFolder(), options: tsconfig && (tsconfig.compilerOptions ?? {}) }),
+        typeCheckerApart(
+          { typings: bunTypesFolder(), options: tsconfig && (tsconfig.compilerOptions ?? {}) },
+          this.options.checkSeconds ?? 60,
+        ),
       );
-    const errors = this.#checkers.get(name)?.([withPrint(program)])[0];
+    const errors = await this.#checkers.get(name)!([withPrint(program)]);
+    if (errors === "late") return { kind: "skipped", why: `${verdict.why}, and TypeScript takes too long to say` };
     if (!errors) return verdict;
-    if (errors.length) return { kind: "skipped", why: `${verdict.why}, as in TypeScript` };
+    if (errors[0].length) return { kind: "skipped", why: `${verdict.why}, as in TypeScript` };
     // Names stay in the signature of a rejected build: a member missing on one class says nothing about another class.
     return {
       kind: "build refused",
       detail: `${verdict.refusal.slice(0, 200)} | TypeScript accepts the program`,
       signature: verdict.refusal.replace(/\d+/g, "N").slice(0, 200),
     };
+  }
+
+  // Forced collections slow plain Bun down too. A run that does not end is a finding only where plain Bun ends under the
+  // same settings in the same time.
+  async #unlessPlainHangsToo(verdict: Verdict, folder: string, cmd: string[], flags: string[]): Promise<Verdict> {
+    const isSlowed = this.options.runEnvironment || flags.some(flag => flag.startsWith(runEnvFlag));
+    if (verdict.kind !== "hang" || !isSlowed) return verdict;
+    return (await this.#run(folder, cmd, flags)).timedOut
+      ? { kind: "skipped", why: "plain Bun does not end under these settings either" }
+      : verdict;
   }
 
   #run(folder: string, cmd: string[], flags: string[]) {
@@ -665,7 +681,12 @@ export class ProductRunner implements Runner {
         existsSync(executable) && build.exitCode === 0
           ? { build, run: await this.#run(home, [executable], flags) }
           : { build };
-      let verdict = compare(this, program, plain, compiled);
+      let verdict = await this.#unlessPlainHangsToo(
+        compare(this, program, plain, compiled),
+        home,
+        [this.options.reference ?? this.bun, `./${file}`],
+        flags,
+      );
       if (
         program.followsExecutableWithoutCompiler &&
         compiled.run &&
@@ -709,7 +730,7 @@ export class ProductRunner implements Runner {
         if (others.some(other => other.stdout === stdout && other.exitCode === exitCode))
           verdict = { kind: "skipped", why: program.unstablePlainOutput };
       }
-      return [{ plain, compiled, verdict: this.#judged(program, flags, verdict) }];
+      return [{ plain, compiled, verdict: await this.#judged(program, flags, verdict) }];
     } finally {
       rmSync(executable, { force: true });
       rmSync(join(folder, "program"), { recursive: true, force: true });
@@ -814,14 +835,19 @@ ${table}if (isMainThread) {
         const runs = (await inParallel(members, 4, index => this.#run(folder, [executable, String(index)], flags))).map(
           run => this.#inAnyOrder(run),
         );
-        members.forEach((index, at) => {
+        for (const [at, index] of members.entries()) {
           const compiled = { build, run: runs[at] };
           results[index] = {
             plain: plains[index],
             compiled,
-            verdict: compare(this, programs[index], plains[index], compiled),
+            verdict: await this.#unlessPlainHangsToo(
+              compare(this, programs[index], plains[index], compiled),
+              folder,
+              [this.options.reference ?? this.bun, "./main.js", String(index)],
+              flags,
+            ),
           };
-        });
+        }
         return;
       }
       // Which program is the culprit? An error names a file; if it names none, bisect.
@@ -838,7 +864,7 @@ ${table}if (isMainThread) {
           results[index] = {
             plain: plains[index],
             compiled,
-            verdict: this.#judged(
+            verdict: await this.#judged(
               this.#asModule(programs[index]),
               flags,
               compare(this, programs[index], plains[index], compiled),

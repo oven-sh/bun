@@ -1,5 +1,4 @@
-//! The third argument of `Bun.YAML.stringify`, `Bun.JSON5.stringify` and `Bun.XML.stringify`:
-//! `JSON.stringify`'s `space`, or an options object whose `indent` key is that `space`.
+//! The `space` argument of `Bun.*.stringify`: a `JSON.stringify` space, or `{ indent, ... }`.
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 

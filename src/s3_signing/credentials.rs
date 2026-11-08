@@ -154,8 +154,7 @@ fn aws_cache_set(day: u64, key: &[u8], digest: [u8; DIGESTED_HMAC_256_LEN]) {
 // SseCustomerKey
 // ──────────────────────────────────────────────────────────────────────────
 
-/// A customer-provided key for SSE-C, kept as the two header values S3 wants:
-/// base64 of the key and base64 of its MD5. The raw key is not kept.
+/// The two SSE-C header values: base64 of the key and base64 of its MD5.
 pub struct SseCustomerKey {
     key_b64: [u8; Self::KEY_B64_LEN],
     key_md5_b64: [u8; Self::KEY_MD5_B64_LEN],
@@ -170,17 +169,20 @@ impl SseCustomerKey {
     pub const KEY_B64_LEN: usize = bun_base64::encode_len_from_size(Self::KEY_LEN);
     const KEY_MD5_B64_LEN: usize = bun_base64::encode_len_from_size(bun_sha_hmac::MD5::DIGEST);
 
-    pub fn new(key: &[u8; Self::KEY_LEN]) -> Self {
-        let mut this = Self {
+    /// Boxed so the encoded key is written once, into the heap copy that
+    /// `Drop` zeroes.
+    pub fn new(key: &[u8; Self::KEY_LEN]) -> Box<Self> {
+        let mut this = Box::new(Self {
             key_b64: [0; Self::KEY_B64_LEN],
             key_md5_b64: [0; Self::KEY_MD5_B64_LEN],
-        };
+        });
         let n = bun_base64::encode(&mut this.key_b64, key);
         debug_assert_eq!(n, Self::KEY_B64_LEN);
         let mut md5 = [0u8; bun_sha_hmac::MD5::DIGEST];
         bun_sha_hmac::MD5::hash(key, &mut md5);
         let n = bun_base64::encode(&mut this.key_md5_b64, &md5);
         debug_assert_eq!(n, Self::KEY_MD5_B64_LEN);
+        bun_core::secure_zero(&mut md5);
         this
     }
 
@@ -223,9 +225,6 @@ pub struct S3Credentials {
     pub bucket: Box<[u8]>,
     pub session_token: Box<[u8]>,
     pub(crate) storage_class: Option<StorageClass>,
-    /// SSE-C key. Every object request signed with these credentials carries
-    /// the three `x-amz-server-side-encryption-customer-*` headers. Boxed so
-    /// credentials without one stay small.
     pub sse_customer_key: Option<Box<SseCustomerKey>>,
     /// Important for MinIO support.
     pub insecure_http: bool,
@@ -510,9 +509,7 @@ impl S3Credentials {
 
         let amz_day = &amz_date[0..8];
         let request_payer = sign_options.request_payer;
-        // S3 takes the SSE-C headers on requests that read or write an
-        // object: GET, HEAD, PUT and the multipart POSTs. It does not take
-        // them on DeleteObject, AbortMultipartUpload or ListObjectsV2.
+        // DeleteObject, AbortMultipartUpload and ListObjectsV2 take no SSE-C headers.
         let sse_customer_key: Option<&SseCustomerKey> = self
             .sse_customer_key
             .as_deref()
@@ -529,9 +526,7 @@ impl S3Credentials {
         };
         let mut signed_headers_buf = [0u8; SignedHeaders::MAX_LEN];
         let signed_headers: &[u8] = if sign_query {
-            // A presigned URL carries the credential, date and token as query
-            // parameters. Only `host` and the SSE-C headers are signed as
-            // headers: the SSE-C key must travel in headers, never in a URL.
+            // The SSE-C key must travel in headers, never in the URL.
             SignedHeaders::get_presign(sse_customer_key.is_some(), &mut signed_headers_buf)
         } else {
             SignedHeaders::get(header_key, &mut signed_headers_buf)
@@ -540,7 +535,7 @@ impl S3Credentials {
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
-        let mut tmp_buffer = [0u8; 4096];
+        let mut tmp_buffer = [0u8; CANONICAL_REQUEST_BUFFER_LEN];
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers
@@ -1093,8 +1088,7 @@ pub struct SignResult {
 }
 
 impl SignResult {
-    /// `x-amz-content-sha256`, `x-amz-date`, `Host`, `Authorization` and every
-    /// optional header `SignedHeaders::get` can list.
+    /// The four base headers plus every optional one `SignedHeaders::get` can list.
     pub const MAX_HEADERS: usize = 14;
 
     pub fn headers(&self) -> &[PicoHeader] {
@@ -1384,6 +1378,15 @@ const SSE_CUSTOMER_ALGORITHM_HEADER: &[u8] = b"x-amz-server-side-encryption-cust
 const SSE_CUSTOMER_KEY_HEADER: &[u8] = b"x-amz-server-side-encryption-customer-key";
 const SSE_CUSTOMER_KEY_MD5_HEADER: &[u8] = b"x-amz-server-side-encryption-customer-key-md5";
 
+/// The 4096 bytes the canonical request had before SSE-C, plus what its three
+/// header lines and signed header names add.
+const CANONICAL_REQUEST_BUFFER_LEN: usize = 4096
+    + SSE_CANONICAL_HEADERS_MAX_LEN
+    + 3
+    + SSE_CUSTOMER_ALGORITHM_HEADER.len()
+    + SSE_CUSTOMER_KEY_HEADER.len()
+    + SSE_CUSTOMER_KEY_MD5_HEADER.len();
+
 /// The three CanonicalHeaders lines of SSE-C.
 const SSE_CANONICAL_HEADERS_MAX_LEN: usize = SSE_CUSTOMER_ALGORITHM_HEADER.len()
     + 1
@@ -1463,8 +1466,7 @@ impl SignedHeaders {
         &buf[..n]
     }
 
-    /// The signed headers of a presigned URL: `host`, plus the SSE-C headers
-    /// when the object uses a customer key.
+    /// `host`, plus the SSE-C headers when the object uses a customer key.
     fn get_presign(sse_customer_key: bool, buf: &mut [u8; Self::MAX_LEN]) -> &[u8] {
         let mut n = 0usize;
         macro_rules! push {

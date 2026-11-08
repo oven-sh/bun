@@ -260,12 +260,11 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.request_payer = request_payer;
             }
 
-            // `sse: null` clears a key set on the client. `undefined` inherits it.
             if let Some(sse) = opts.get(global_object, "sse")? {
                 new_credentials.credentials.sse_customer_key = if sse.is_null() {
                     None
                 } else if sse.is_object() {
-                    Some(Box::new(get_sse_customer_key(sse, global_object)?))
+                    Some(get_sse_customer_key(sse, global_object)?)
                 } else {
                     return Err(
                         global_object.throw_invalid_argument_type_value(b"sse", b"object", sse)
@@ -275,13 +274,20 @@ pub(crate) fn get_credentials_with_options(
             }
         }
     }
+    // The key is a request header. Over plain HTTP it would cross the wire in
+    // clear text before the server can refuse it.
+    if new_credentials.credentials.sse_customer_key.is_some()
+        && new_credentials.credentials.insecure_http
+    {
+        return Err(global_object.throw_invalid_arguments(format_args!(
+            "sse needs an https endpoint. The customer key would be sent in clear text over http"
+        )));
+    }
     Ok(new_credentials)
 }
 
-/// `sse: { type: "customer", algorithm?: "AES256", key }`. `key` is the
-/// 32-byte customer key as bytes, or its standard base64 with padding (the
-/// exact value of the `x-amz-server-side-encryption-customer-key` header).
-fn get_sse_customer_key(sse: JSValue, global: &JSGlobalObject) -> JsResult<SseCustomerKey> {
+/// `sse: { type: "customer", algorithm?: "AES256", key }`
+fn get_sse_customer_key(sse: JSValue, global: &JSGlobalObject) -> JsResult<Box<SseCustomerKey>> {
     match sse.get_truthy(global, "type")? {
         Some(kind) if !kind.is_string() => {
             return Err(global.throw_invalid_argument_type_value(b"sse.type", b"string", kind));
@@ -293,7 +299,7 @@ fn get_sse_customer_key(sse: JSValue, global: &JSGlobalObject) -> JsResult<SseCu
             );
         }
     }
-    match sse.get_truthy(global, "algorithm")? {
+    match sse.get(global, "algorithm")?.filter(|v| !v.is_null()) {
         Some(algorithm) if !algorithm.is_string() => {
             return Err(global.throw_invalid_argument_type_value(
                 b"sse.algorithm",
@@ -348,9 +354,7 @@ fn get_sse_customer_key(sse: JSValue, global: &JSGlobalObject) -> JsResult<SseCu
     Ok(customer_key)
 }
 
-/// Decodes `encoded` into `raw` when it is exactly the padded standard base64
-/// of `raw.len()` bytes. Any other spelling is refused, so the string a caller
-/// passed is the header value Bun signs.
+/// Only the padded standard spelling passes: it is the header value Bun signs.
 fn decode_sse_key_base64(encoded: &[u8], raw: &mut [u8; SseCustomerKey::KEY_LEN]) -> bool {
     if encoded.len() != SseCustomerKey::KEY_B64_LEN {
         return false;

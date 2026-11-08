@@ -580,7 +580,7 @@ const plain = await client.file("public.txt", { sse: null }).text();
 
 A presigned URL for an object that uses SSE-C signs the three headers. The caller of the URL must send them, with the same values Bun sends: `AES256`, the standard base64 of the key, and the base64 of the MD5 of the key. The key is never part of the URL. `new Response(s3File)` throws for such a file, because a redirected client cannot send the headers.
 
-Amazon S3 only accepts SSE-C over HTTPS.
+The endpoint must use `https`. Bun refuses the option with an `http` endpoint, because the key would cross the wire in clear text.
 
 ## `S3File`
 

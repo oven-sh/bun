@@ -21,11 +21,16 @@ const s3Options: S3Options = {
   bucket: "my_bucket",
 };
 
-/** An HTTP server that records the headers of each request and answers 200. */
+// The option refuses an http endpoint, so the servers below speak TLS with the
+// test certificate.
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+
+/** An HTTPS server that records the headers of each request and answers 200. */
 function captureServer() {
   const requests: { method: string; url: string; headers: Headers }[] = [];
   const server = Bun.serve({
     port: 0,
+    tls,
     fetch(req) {
       requests.push({ method: req.method, url: req.url, headers: req.headers });
       const url = new URL(req.url);
@@ -189,6 +194,17 @@ describe("s3 - SSE-C", () => {
       expect(make({ type: "customer", key: keyBase64 })).not.toThrow();
     });
 
+    it("rejects an http endpoint", () => {
+      const message = "sse needs an https endpoint";
+      expect(() => new S3Client({ ...s3Options, endpoint: "http://localhost:9000", sse })).toThrow(message);
+      const client = new S3Client({ ...s3Options, endpoint: "http://localhost:9000" });
+      expect(() => client.file("file.txt", { sse })).toThrow(message);
+      expect(() => client.presign("file.txt", { sse })).toThrow(message);
+      const secure = new S3Client({ ...s3Options, endpoint: "https://localhost:9000", sse });
+      expect(() => secure.file("file.txt", { endpoint: "http://localhost:9000" })).toThrow(message);
+      expect(() => secure.file("file.txt", { endpoint: "http://localhost:9000", sse: null })).not.toThrow();
+    });
+
     it("rejects a key of another type", () => {
       expect(make({ type: "customer", key: 42 })).toThrow('The "sse.key" argument must be of type');
       expect(make({ type: "customer" })).toThrow("sse.key is required");
@@ -199,6 +215,9 @@ describe("s3 - SSE-C", () => {
       expect(make({ key })).toThrow('sse.type must be "customer"');
       expect(make({ type: 42, key })).toThrow('The "sse.type" argument must be of type string');
       expect(make({ type: "customer", algorithm: "AES128", key })).toThrow('sse.algorithm must be "AES256"');
+      expect(make({ type: "customer", algorithm: "", key })).toThrow('sse.algorithm must be "AES256"');
+      expect(make({ type: "customer", algorithm: undefined, key })).not.toThrow();
+      expect(make({ type: "customer", algorithm: null, key })).not.toThrow();
       expect(make({ type: "customer", algorithm: 5, key })).toThrow(
         'The "sse.algorithm" argument must be of type string',
       );
@@ -224,11 +243,10 @@ describe("s3 - SSE-C", () => {
     expect(() => new Response(client.file("file.txt"))).toThrow("cannot redirect to an object that uses SSE-C");
   });
 
-  describe("against an S3 server that checks the key", () => {
-    // The in-repo S3 server refuses SSE-C over plain HTTP, as S3 does, so it
-    // needs TLS. The client runs in a child process that accepts the test
-    // certificate.
-    async function run(script: string) {
+  describe.concurrent("against an S3 server that checks the key", () => {
+    // The client runs in a child process, so the request log of the server is
+    // complete when the child exits.
+    async function run(script: string, expected: unknown) {
       await using server = serve({
         tls,
         buckets: ["buntest"],
@@ -241,9 +259,10 @@ describe("s3 - SSE-C", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(JSON.stringify(expected));
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
-      return { output: JSON.parse(stdout), requests: server.requests };
+      return server.requests;
     }
 
     const prelude = `
@@ -255,7 +274,8 @@ describe("s3 - SSE-C", () => {
     `;
 
     it("writes, reads and stats an object, and refuses the wrong key", async () => {
-      const { output, requests } = await run(`${prelude}
+      const requests = await run(
+        `${prelude}
         await client.write("secret.txt", "top secret");
         const text = await client.file("secret.txt").text();
         const size = (await client.stat("secret.txt")).size;
@@ -268,15 +288,16 @@ describe("s3 - SSE-C", () => {
         // A HEAD response has no body, so there is no error code to read.
         const noKeyStat = await plain.stat("secret.txt").then(() => "ok", () => "error");
         console.log(JSON.stringify({ text, size, sliced, wrongKey, noKey, noKeyStat }));
-      `);
-      expect(output).toEqual({
-        text: "top secret",
-        size: 10,
-        sliced: "secret",
-        wrongKey: "AccessDenied",
-        noKey: "InvalidRequest",
-        noKeyStat: "error",
-      });
+      `,
+        {
+          text: "top secret",
+          size: 10,
+          sliced: "secret",
+          wrongKey: "AccessDenied",
+          noKey: "InvalidRequest",
+          noKeyStat: "error",
+        },
+      );
       expect(requests.map(r => [r.operation, r.status, r.errorCode])).toEqual([
         ["PutObject", 200, undefined],
         ["GetObject", 200, undefined],
@@ -289,7 +310,8 @@ describe("s3 - SSE-C", () => {
     });
 
     it("presigned URLs work with the headers and fail without them", async () => {
-      const { output, requests } = await run(`${prelude}
+      const requests = await run(
+        `${prelude}
         const headers = {
           "${ALGORITHM}": "AES256",
           "${KEY}": process.argv[2],
@@ -310,14 +332,15 @@ describe("s3 - SSE-C", () => {
         const del = client.presign("presigned.txt", { method: "DELETE" });
         const deleteWithoutHeaders = await status(del, { method: "DELETE" });
         console.log(JSON.stringify({ putWithHeaders, getWithHeaders, getWithoutHeaders, getWithOtherKey, deleteWithoutHeaders }));
-      `);
-      expect(output).toEqual({
-        putWithHeaders: 200,
-        getWithHeaders: "via presign",
-        getWithoutHeaders: 403,
-        getWithOtherKey: 403,
-        deleteWithoutHeaders: 204,
-      });
+      `,
+        {
+          putWithHeaders: 200,
+          getWithHeaders: "via presign",
+          getWithoutHeaders: 403,
+          getWithOtherKey: 403,
+          deleteWithoutHeaders: 204,
+        },
+      );
       // The server names no operation for a request it refuses before routing.
       expect(requests.map(r => [r.method, r.status, r.errorCode])).toEqual([
         ["PUT", 200, undefined],
@@ -330,7 +353,8 @@ describe("s3 - SSE-C", () => {
 
     it("sends the key on every leg of a multipart upload", async () => {
       const partSize = 5 * 1024 * 1024;
-      const { output, requests } = await run(`${prelude}
+      const requests = await run(
+        `${prelude}
         // One part size plus 1 KiB so the writer takes the multipart path instead of a single PUT.
         const body = Buffer.alloc(${partSize} + 1024, "x");
         const writer = client.file("big.bin").writer({ partSize: ${partSize} });
@@ -338,8 +362,9 @@ describe("s3 - SSE-C", () => {
         await writer.end();
         const back = await client.file("big.bin").bytes();
         console.log(JSON.stringify({ same: Buffer.compare(body, back) === 0, size: back.length }));
-      `);
-      expect(output).toEqual({ same: true, size: partSize + 1024 });
+      `,
+        { same: true, size: partSize + 1024 },
+      );
       const legs = requests.map(r => r.operation);
       expect(legs).toEqual([
         "CreateMultipartUpload",

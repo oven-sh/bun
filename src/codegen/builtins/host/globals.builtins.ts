@@ -549,6 +549,9 @@ const s3OptionNames = [
   "contentDisposition",
   "contentEncoding",
   "requestPayer",
+  "sse",
+  "algorithm",
+  "key",
 ];
 
 const requestOptionNames = [

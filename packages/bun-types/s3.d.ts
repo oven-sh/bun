@@ -415,7 +415,7 @@ declare module "bun" {
      * `key` is the 256-bit key, as 32 bytes or as the base64 of 32 bytes.
      * A file or a `presign()` call inherits the key of its client. Pass
      * `sse: null` to read or write a plain object through such a client.
-     * Amazon S3 only accepts SSE-C over HTTPS.
+     * The endpoint must use `https`: an `http` endpoint throws.
      *
      * @see https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerSideEncryptionCustomerKeys.html
      *

@@ -680,6 +680,11 @@ impl BunTestRoot {
         }
     }
 
+    /// Whether the file that just ran, whichever it is, ran no test because the preload's set-up hooks failed.
+    pub(crate) fn set_up_failed(&self) -> bool {
+        matches!(self.set_up, SetUp::Failed(_))
+    }
+
     pub(crate) fn exit_file(&mut self) {
         let _g = group_begin!();
 

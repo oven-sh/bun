@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
-import { isWindows } from "harness";
+import { isAndroid, isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
 
@@ -73,11 +73,7 @@ it("tmpdir", () => {
     ).toBeTrue();
   } else {
     const originalEnv = process.env.TMPDIR;
-    let dir =
-      process.env.TMPDIR ||
-      process.env.TMP ||
-      process.env.TEMP ||
-      (process.platform === "android" ? "/data/local/tmp" : "/tmp");
+    let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || (isAndroid ? "/data/local/tmp" : "/tmp");
     if (dir.length > 1 && dir.endsWith("/")) {
       dir = dir.substring(0, dir.length - 1);
     }

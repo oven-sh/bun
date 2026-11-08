@@ -276,8 +276,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     }
 
     // Called in a Bun.ModuleGraph's context: that graph's require().
-    RELEASE_AND_RETURN(
-        scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)))));
+    JSObject* require = Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val, Bun::currentModuleGraph(defaultGlobalObject(globalObject)));
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, {});
+        Bun::didCreateRequire(vm, callFrame, require);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(require));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
@@ -1160,7 +1164,8 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
             JSObject* moduleConstructor = JSModuleConstructor::create(
                 init.vm, static_cast<Zig::GlobalObject*>(init.owner));
             init.set(moduleConstructor);
-            JSC::AOT::hostDidCreateNodeModule(init.owner, moduleConstructor);
+            if (init.vm.hasCompiledCode()) [[unlikely]]
+                JSC::AOT::hostDidCreateNodeModule(init.owner, moduleConstructor);
         });
 
     globalObject->m_nodeModuleSourceMapEntryStructure.initLater(

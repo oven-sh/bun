@@ -1140,7 +1140,7 @@ const ClassInfo JSMockFunction::s_info = { "Mock"_s, &Base::s_info, nullptr, nul
 
 class SpyWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final {}
+    FinalizeResult finalize(JSC::Handle<JSC::Unknown>, void* context) final { return FinalizeResult::KeepImpl; }
 };
 
 static SpyWeakHandleOwner& weakValueHandleOwner()

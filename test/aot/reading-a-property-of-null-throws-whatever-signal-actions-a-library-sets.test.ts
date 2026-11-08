@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { locksEnvironment } from "./hardened";
 import { afterAll } from "./harness/default-timeout";
 import { callsItself, compiler, readers, sender } from "./harness/reads-of-null";
+import { hasSmallHeap, saysWhereItIs } from "./harness/where-a-child-is";
 import { withoutCoreDump } from "./harness/without-core-dump";
 import { describe, test } from "./supported";
 
@@ -248,6 +249,7 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
     stdout: "pipe",
     stderr: "pipe",
   });
+  using _where = hasSmallHeap(env) ? saysWhereItIs(proc.pid, cmd) : undefined;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }

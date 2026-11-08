@@ -1665,7 +1665,7 @@ JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
 
 // onmessage/onerror are CustomValue properties, so JSC invokes these callbacks
 // with the property receiver as thisValue, which is not necessarily the global
-// object: `new Proxy(globalThis, {}).onmessage = fn` passes the Proxy.
+// object: the global of `vm.createContext(globalThis)` as a Reflect.set receiver.
 static Zig::GlobalObject* globalObjectForEventHandler(JSC::JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue)
 {
     if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(JSValue::decode(thisValue)))

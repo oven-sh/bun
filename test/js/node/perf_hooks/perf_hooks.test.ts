@@ -699,9 +699,10 @@ describe("gc entries", () => {
             duration: entry.duration,
             // The collection started and ended inside Bun.gc(true). The start is put on the timeline of
             // performance.now() when the entry reaches JS, from two clocks that are read one after the other: the time
-            // between the two reads can only move it to an earlier time.
-            startsInsideTheCall: entry.startTime >= before,
-            endsInsideTheCall: entry.duration > 0 && entry.startTime + entry.duration <= after,
+            // between the two reads can only move the entry to an earlier time. So the end of the entry is what is
+            // compared with both ends of the call.
+            lasts: entry.duration > 0,
+            endsInsideTheCall: entry.startTime + entry.duration > before && entry.startTime + entry.duration <= after,
           });
         }).observe(options);
       }
@@ -727,7 +728,7 @@ describe("gc entries", () => {
       },
       startTime: expect.any(Number),
       duration: expect.any(Number),
-      startsInsideTheCall: true,
+      lasts: true,
       endsInsideTheCall: true,
     });
     expect(exitCode).toBe(0);
@@ -797,6 +798,27 @@ describe("gc entries", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The kind and the flags are Node's numbers, not what `constants` holds when the entry is made. The module of the
+  // entries loads with the first observer, after the program had its chance to replace a global.
+  concurrent("an entry does not depend on what the program did to constants and to Object.setPrototypeOf", async () => {
+    const { result, exitCode } = await run(`
+      const { NODE_PERFORMANCE_GC_MAJOR: major, NODE_PERFORMANCE_GC_FLAGS_FORCED: forced } = constants;
+      for (const name of Object.keys(constants)) constants[name] = -1;
+      Object.setPrototypeOf = () => {
+        throw new Error("replaced by the program");
+      };
+      new PerformanceObserver((list, observer) => {
+        const entry = list.getEntries().find(entry => entry.detail.flags === forced);
+        if (!entry) return;
+        observer.disconnect();
+        finish({ hasTheKindOfNode: entry.detail.kind === major });
+      }).observe({ type: "gc" });
+      Bun.gc(true);
+    `);
+    expect(result).toEqual({ hasTheKindOfNode: true });
+    expect(exitCode).toBe(0);
+  });
+
   // With BUN_JSC_collectContinuously, other collections start and end inside the call that forces one.
   concurrent("a forced collection has the flag when other collections end inside the same call", async () => {
     const { result, exitCode } = await run(
@@ -851,10 +873,13 @@ describe("gc entries", () => {
       });
       observer.observe({ type: "gc" });
       Bun.gc(true);
-      setTimeout(() => {
-        observer.disconnect();
-        finish({ entries });
-      }, 1);
+      // A record would reach the observer from an immediate of the first turn.
+      setImmediate(() => {
+        setImmediate(() => {
+          observer.disconnect();
+          finish({ entries });
+        });
+      });
     `,
       { env: { BUN_JSC_useGC: "0" } },
     );

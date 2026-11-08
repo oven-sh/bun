@@ -6,8 +6,8 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { join } from "path";
 import type { Readable } from "stream";
 import { text } from "stream/consumers";
+import { unsupported } from "../../aot/harness/commands";
 import { run as runCommand } from "../../aot/harness/run";
-import { unsupported } from "../../aot/run-programs";
 
 const supported = !unsupported;
 
@@ -62,25 +62,7 @@ async function expectSameAsBunRun(files: Record<string, string>, entry: string, 
     run(String(dir), true, "app/" + entry, options),
   ]);
   expect(withoutWarnings(actual, options?.warns)).toEqual(expected);
-  return { ...actual, bunRun: expected };
-}
-
-/** Where the two differ on purpose: both end well and say nothing on stderr, and the test says what each prints. */
-async function expectBothToRun(files: Record<string, string>, entry: string, options?: Options) {
-  using dir = tempDir(
-    "run-aot",
-    Object.fromEntries(Object.entries(files).map(([path, text]) => ["app/" + path, text])),
-  );
-  const [bunRun, actual] = await Promise.all([
-    run(String(dir), false, "app/" + entry, options),
-    run(String(dir), true, "app/" + entry, options),
-  ]);
-  expect({ stderr: bunRun.stderr, exitCode: bunRun.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  expect({ stderr: withoutWarnings(actual, options?.warns).stderr, exitCode: actual.exitCode }).toEqual({
-    stderr: "",
-    exitCode: 0,
-  });
-  return { ...actual, bunRun };
+  return actual;
 }
 
 describe.skipIf(!supported)("a file that is imported for its path", () => {
@@ -308,6 +290,51 @@ describe.skipIf(!supported)("bun run --aot", () => {
     },
   );
 
+  test.concurrent.each([
+    [".", "assign legacy h"],
+    ["local", "define standard g"],
+  ])("the tsconfig.json of the working directory says how every file is transpiled: %s", async (cwd, expected) => {
+    const options = (defines: boolean, factory: string) =>
+      JSON.stringify({
+        compilerOptions: {
+          useDefineForClassFields: defines,
+          experimentalDecorators: !defines,
+          jsx: "react",
+          jsxFactory: factory,
+        },
+      });
+    const probe = `
+      const h = () => "h", g = () => "g";
+      let field = "define", decorators = "";
+      class Base { set x(value: number) { field = "assign"; } }
+      function mark(...args: unknown[]) { decorators = typeof args[1] === "object" ? "standard" : "legacy"; }
+      class Derived extends Base {
+        // @ts-ignore
+        x = 1;
+        // @ts-ignore
+        @mark method() {}
+      }
+      new Derived();
+      // @ts-ignore
+      console.log(field, decorators, <a />);`;
+    using dir = tempDir("run-aot", {
+      "tsconfig.json": options(false, "h"),
+      "local/tsconfig.json": options(true, "g"),
+      "node_modules/pkg/tsconfig.json": options(true, "g"),
+      "node_modules/pkg/package.json": `{ "name": "pkg", "main": "probe.tsx" }`,
+      "probe.tsx": probe,
+      "local/probe.tsx": probe,
+      "local/deeper/probe.tsx": probe,
+      "node_modules/pkg/probe.tsx": probe,
+      "main.ts": `import "./probe.tsx";\nimport "./local/probe.tsx";\nimport "./local/deeper/probe.tsx";\nimport "pkg";`,
+    });
+    const [plain, compiled] = await Promise.all(
+      [false, true].map(aot => run(join(String(dir), cwd), aot, join(String(dir), "main.ts"))),
+    );
+    expect(compiled).toEqual(plain);
+    expect(compiled.stdout).toBe((expected + "\n").repeat(4));
+  });
+
   test.concurrent("process.argv, process.execPath and Bun.main", async () => {
     const { stdout } = await expectSameAsBunRun(
       {
@@ -365,7 +392,11 @@ describe.skipIf(!supported)("bun run --aot", () => {
         `,
       });
       // The source map of bun run has no entry for a call of require(): its frame names the brace in front of the call, 3:17. A compiled program names the call, as it does for every other call.
-      await expectSameAsBunRun(files(`.replace(/(at load \\(\\S+?):\\d+:\\d+/, "$1")`), "entry.cjs");
+      // Of the call of the arrow function bun run names the end of what is called, a compiled program its beginning.
+      await expectSameAsBunRun(
+        files(`.replace(/(at load \\(\\S+?):\\d+:\\d+/, "$1").replace(/(throws\\.cjs:3):\\d+/g, "$1")`),
+        "entry.cjs",
+      );
       using dir = tempDir("run-aot", files(""));
       const { stdout } = await run(String(dir), true, "entry.cjs");
       expect(stdout.replaceAll("\\", "/")).toMatch(
@@ -435,13 +466,55 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("import() and require() of what is only known when it runs", async () => {
+  // The build of what is forked warns as the first build did. A parent that forks it silently may read nothing of it.
+  test.concurrent("what it forks says nothing of a build that succeeds", async () => {
+    await expectSameAsBunRun(
+      {
+        "entry.js": `
+          const { fork } = require("child_process");
+          if (process.argv[2] === "child") process.send("up");
+          else {
+            const ended = [];
+            const end = line => ended.push(line) === 2 && console.log(ended.sort().join("\\n"));
+            fork(process.argv[1], ["child"], { silent: true }).on("exit", code => end("nothing is read: exit " + code));
+            const child = fork(process.argv[1], ["child"], { silent: true });
+            let said = "";
+            child.stderr.on("data", data => (said += data));
+            child.on("close", code => {
+              const lines = said.split("\\n").filter(line => line && !line.startsWith("[aot] "));
+              end("stderr is read: exit " + code + ", lines " + lines.length);
+            });
+          }
+          function never() {
+            ${Array.from({ length: 12 }, (_, i) => `try { require("a-package-that-is-not-there-${i}"); } catch {}`).join("\n")}
+          }
+        `,
+      },
+      "entry.js",
+      { warns: ["TS100151"] },
+    );
+  });
+
+  test.concurrent("import() and require() of a name that is put together, which the build reads", async () => {
     await expectSameAsBunRun(
       {
         "entry.ts": `
           const name = "./sub/" + ["oth", "er"].join("");
           console.log((await import(name)).default, require(name + ".ts").default, require.resolve(name));
           console.log((await import(import.meta.dir + "/sub/other.ts")).default);
+        `,
+        "sub/other.ts": `export default "the other module";`,
+      },
+      "entry.ts",
+    );
+  });
+
+  test.concurrent("import() of what is only known when it runs", async () => {
+    await expectSameAsBunRun(
+      {
+        "entry.ts": `
+          import written from "./sub/other";
+          console.log(written, (await import(process.env.NAME_THAT_NOBODY_SETS ?? "./sub/other")).default);
         `,
         "sub/other.ts": `export default "the other module";`,
       },
@@ -495,7 +568,6 @@ describe.skipIf(!supported)("bun run --aot", () => {
         `,
         },
         "entry.ts",
-        { warns: ["TS100064"] },
       );
       expect(stdout).toBe("lib begins\nother runs\nsaid: lib has a word\nentry: lib has a word\n");
     },
@@ -566,27 +638,21 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(stdout).toBe("loaded as JavaScript true\n");
   });
 
-  // A `.cjs` file is CommonJS, so it is sloppy, however it is reached: that is Node's answer, and one file's mode does not hang on the rest of the graph.
-  // Bun: `bun run` has a `.cjs` file with no sign of CommonJS in its text strict where an `import` reaches it, unless a package.json beside it says "commonjs".
-  const whereBunRunDiffers: Record<string, string> = {
-    "imports-cjs.mjs": "strict",
-    "imports-dynamically.mjs": "strict sloppy strict strict",
-  };
-  for (const [entry, expected] of Object.entries({
-    "entry.cjs": "sloppy",
-    "commonjs-package/entry.js": "sloppy",
-    "commonjs-package/entry.cjs": "sloppy",
-    "module-package/entry.cjs": "sloppy",
-    "imports-cjs.mjs": "sloppy",
-    "imports-js-of-commonjs-package.mjs": "sloppy",
-    "imports-cjs-of-commonjs-package.mjs": "sloppy",
-    "imports-dynamically.mjs": "sloppy sloppy sloppy strict",
-    "requires.cjs": "sloppy strict sloppy sloppy",
+  // None of the files says in its text whether it is CommonJS. Its name, its package and who loads it decide, as under `bun run`.
+  for (const [entry, files] of Object.entries({
+    "entry.cjs": 1,
+    "commonjs-package/entry.js": 1,
+    "commonjs-package/entry.cjs": 1,
+    "module-package/entry.cjs": 1,
+    "imports-cjs.mjs": 1,
+    "imports-js-of-commonjs-package.mjs": 1,
+    "imports-cjs-of-commonjs-package.mjs": 1,
+    "imports-dynamically.mjs": 4,
+    "requires.cjs": 4,
   })) {
-    test.concurrent("files that are CommonJS only by name are sloppy: " + entry, async () => {
+    test.concurrent("files that are CommonJS only by name are sloppy where `bun run` says so: " + entry, async () => {
       const text = `(function () { console.log(this === undefined ? "strict" : "sloppy"); })();`;
-      const compare = whereBunRunDiffers[entry] === undefined ? expectSameAsBunRun : expectBothToRun;
-      const { stdout, bunRun } = await compare(
+      const { stdout } = await expectSameAsBunRun(
         {
           "entry.cjs": text,
           "imported.cjs": text,
@@ -615,8 +681,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
         },
         entry,
       );
-      expect(stdout.trim().split("\n").join(" ")).toBe(expected);
-      expect(bunRun.stdout.trim().split("\n").join(" ")).toBe(whereBunRunDiffers[entry] ?? expected);
+      expect(stdout).toMatch(new RegExp(`^(?:(?:sloppy|strict)\\n){${files}}$`));
     });
   }
 

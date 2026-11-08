@@ -1,5 +1,0 @@
-a generator, stored to inside: 1
-a generator, stored to while it is suspended: 1
-a generator, read: 2,1
-a function: 1
-an async function, stored to while it waits: 1

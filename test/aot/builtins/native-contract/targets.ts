@@ -28,6 +28,7 @@ export type Unreachable = { name: string; path: string; mode: CallMode; reason: 
 const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   // The differential test calls these with the operands that their entries name. Here they would get everything.
   [/^process\.(binding|_linkedBinding|chdir|_rawDebug|stdout|stderr)\b/, "it changes the state of the process or takes over a standard stream"],
+  [/^%NodeCryptoBindingCrypto%\.scrypt/, "whatever it is passed, it computes for a thirtieth of a second"],
   [/^(alert|confirm|prompt)$/, "it waits for input"],
   [/^Atomics\.(waitAsync|pause)$/, "it blocks the thread"],
   [/^(fetch|postMessage)$/, "it starts a thread or opens a connection"],
@@ -45,18 +46,23 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/doConnect|clusterRawBind|sendHelperPrimary|emitHandleIPCMessage/, "it opens a connection or writes to the channel of a parent process"],
   [/^%(Quic\w+|PostgresSQL\w+|MySQL\w+|PostgresBinding|MysqlBinding)%|node_quic_binding|postgres\.bind\.ts|mysql\.bind\.ts/, "it needs a server that the test does not have"],
   [
-    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
+    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|TestEnvironment\.?[Cc]pp|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
     "only the code of Bun and of the engine calls it, and it takes the kinds of its operands on trust",
   ],
   [
     /createNativeFrameForTesting|orderedRemoveProbe|noProxyMatches|createStatsForIno|describeCheckerQueries|createMemfdForTesting|jsFunction_readFreedStringUnderASAN/i,
     "a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose",
   ],
+  [/jsFunction_(aotBuiltin(Entries|Mismatches)|builtinFeatureUses)|collectSyncWithoutSweep/, "a helper of Bun's own tests that takes no operand and a tenth of a second"],
   [
     /shellLex|shellParse|proxy_testing\.?bind\.?ts:?proxyFor|(operatingSystem|architecture)IsMatch|compareCodeResolution|describeCodeGraph/i,
     "a helper of Bun's own tests that does not come back for some operands",
   ],
 ]);
+
+// Behind such a call others do something else: no connection is secured with ciphers that do not exist, no request has a head of one byte, and what `process` lacks is looked for on an operand of the test.
+// It is among the last calls of its process.
+export const leavesProcessChanged = /setTLSDefaultCiphers|setMaxHTTPHeaderSize|MakeProcessInheritFrom/i;
 
 export function reasonTargetIsSkipped(path: string): string | undefined {
   for (const [pattern, reason] of neverCalledNatives) if (pattern.test(path)) return reason;
@@ -309,5 +315,5 @@ export function collectTargets(realm: Realm, filter: RegExp): (Target | Unreacha
       argumentCount: Math.max(callee.length, 1),
     });
   }
-  return targets;
+  return targets.sort((left, right) => Number(leavesProcessChanged.test(left.path)) - Number(leavesProcessChanged.test(right.path)));
 }

@@ -1,6 +1,7 @@
 use bun_sema::bind::{CodeUnit, Decl, EvalScope, FnOwner, ScopeId, ScopeKind};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{ExprId, Flags, FnBody, FnId, FnKind, StmtId};
+use smallvec::SmallVec;
 
 use super::{Context, EvalUse, Initialization, PatternRole, Task, WalkedFunctionId, Walker};
 use crate::ir::{ClassSlot, FunctionKey};
@@ -39,21 +40,12 @@ impl Walker<'_, '_> {
 
     fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
         let context = self.enter_unit(id, self.bound.fns[function.idx()].scope);
-        // A half of an accessor that may be made with an earlier one copies only what has its last value by then.
-        let in_front = self.halves_in_front.get(function.idx()).copied();
-        let in_front = in_front.and_then(|in_front| in_front.some());
-        match in_front.and_then(|in_front| self.walk.function_of_fn[in_front.idx()]) {
-            Some(in_front) => {
-                let time = self.walk.functions[in_front.index()].created_at;
-                self.walk.functions[id.index()].created_at = time;
-                self.walk.halves_in_front.push((id, in_front));
-            }
-            None => self.push_task(Task::MarkCreated(id), context),
-        }
-        // A function that can be suspended holds its receiver, and what the names of its parameters hold, until it ends.
+        self.push_task(Task::MarkCreated(id), context);
         let flags = self.hir[function].flags;
         let can_be_suspended = flags.intersects(Flags::ASYNC | Flags::GENERATOR);
-        if can_be_suspended && self.hir.runtime_function_kind(function) != FnKind::Arrow {
+        let is_strict = self.bound.is_strict_scope(context.lexical_scope);
+        let is_arrow = self.hir.runtime_function_kind(function) == FnKind::Arrow;
+        if can_be_suspended && is_strict && !is_arrow {
             self.use_this(context);
         }
         if can_be_suspended {
@@ -101,8 +93,8 @@ impl Walker<'_, '_> {
         if let Ok(index) = found {
             let entry = annex_b_functions[index];
             self.record_store(context, BindingRef::Symbol(entry.var_symbol));
-            self.record_unwritten_symbol_use(context, entry.block_symbol);
-            self.record_unwritten_symbol_use(context, entry.var_symbol);
+            self.record_symbol_use(context, entry.block_symbol);
+            self.record_symbol_use(context, entry.var_symbol);
             self.push_initialization(entry.var_symbol, context);
         }
         self.push_function(function, id);
@@ -125,7 +117,17 @@ impl Walker<'_, '_> {
     pub(super) fn use_new_target(&mut self, context: Context) {
         let function = match self.bound.code_unit(context.lexical_scope) {
             CodeUnit::Function(function) => function,
-            CodeUnit::File | CodeUnit::FieldInitializer(_) => return,
+            CodeUnit::FieldInitializer(member) => {
+                let (compiled, signed) =
+                    (self.input.compiled, self.input.fields_under_signed_members);
+                if class::is_evaluated_in_constructor(
+                    self.hir, self.bound, compiled, signed, member,
+                ) {
+                    self.use_lexical_slot(context, ScopeSlot::NewTarget);
+                }
+                return;
+            }
+            CodeUnit::File => return,
         };
         match self.hir.runtime_function_kind(function) {
             FnKind::Decl | FnKind::Expr | FnKind::Constructor => {
@@ -197,7 +199,10 @@ impl Walker<'_, '_> {
                 Some(WalkedFunctionId::MODULE_BODY)
             }
             CodeUnit::File | CodeUnit::FieldInitializer(_) => return,
-            CodeUnit::Function(function) => self.walk.function_of_fn[function.idx()],
+            CodeUnit::Function(function) => {
+                self.walk.functions_that_name_arguments.push(function);
+                self.walk.function_of_fn[function.idx()]
+            }
         };
         let scope = self.bound.top_scope(self.hir, owner);
         self.record_slot_use(context.function, scope, ScopeSlot::ArgumentsBinding);
@@ -225,6 +230,18 @@ impl Walker<'_, '_> {
             self.record_eval_use(context, BindingRef::Symbol(symbol), time);
             self.record_store(context, BindingRef::Symbol(symbol));
         }
+        let under_names_of_file = (context.function, time);
+        self.walk
+            .evals_under_names_of_file
+            .push(under_names_of_file);
+        let is_repeated_or_guarded =
+            context.enclosing_try.is_some() || context.enclosing_loop.is_some();
+        if is_repeated_or_guarded && context.function == WalkedFunctionId::MODULE_BODY {
+            for symbol in bound.ids(eval.file_symbols) {
+                self.record_store(context, BindingRef::Symbol(symbol));
+            }
+        }
+        self.visit_constructor_symbols(eval, context);
         let first_use = self.walk.uses.len();
         self.use_this(context);
         self.use_new_target(context);
@@ -250,14 +267,22 @@ impl Walker<'_, '_> {
             until: ScopeId::NONE,
             declaring_scope: ScopeId::NONE,
             pos: hir[call].pos,
+            asks_with_objects_alone: false,
         };
         self.record_scope_objects(context.function, search);
         let parent_of = |&scope: &ScopeId| bound.runtime_parent_scope(hir, scope).some();
+        let mut from = ScopeKind::Block;
         for scope in std::iter::successors(eval.scope.some(), parent_of) {
-            let ScopeKind::Class(class) = bound.scopes[scope.idx()].kind else {
+            let inside = std::mem::replace(&mut from, bound.scopes[scope.idx()].kind);
+            let ScopeKind::Class(class) = from else {
                 continue;
             };
-            for slot in class::class_slots(hir, bound, self.input.compiled.settings, class) {
+            if inside == ScopeKind::BaseExpression {
+                continue;
+            }
+            let compiled = self.input.compiled;
+            let signed = self.input.fields_under_signed_members;
+            for slot in class::class_slots(hir, bound, compiled, signed, class) {
                 match slot {
                     ClassSlot::ComputedKey(_) | ClassSlot::DecoratorState => {}
                     _ => {
@@ -265,6 +290,32 @@ impl Walker<'_, '_> {
                         self.record_eval_use(context, binding, time);
                     }
                 }
+            }
+        }
+    }
+
+    fn visit_constructor_symbols(&mut self, eval: EvalScope, context: Context) {
+        let (hir, bound) = (self.hir, self.bound);
+        if eval.constructor_symbols.is_empty() {
+            return;
+        }
+        let (compiled, signed) = (self.input.compiled, self.input.fields_under_signed_members);
+        let parent_of = |&scope: &ScopeId| bound.runtime_parent_scope(hir, scope).some();
+        let scopes: SmallVec<[ScopeId; 1]> = std::iter::successors(eval.scope.some(), parent_of)
+            .filter_map(|scope| {
+                let ScopeKind::FieldInitializer(field) = bound.scopes[scope.idx()].kind else {
+                    return None;
+                };
+                let constructor = bound.constructor_of_field_value(hir, scope)?;
+                class::is_evaluated_in_constructor(hir, bound, compiled, signed, field)
+                    .then(|| bound.fns[constructor.idx()].scope)
+            })
+            .collect();
+        for symbol in bound.ids(eval.constructor_symbols) {
+            if scopes.contains(&bound.symbol_scope(symbol)) {
+                self.record_eval_use(context, BindingRef::Symbol(symbol), 0);
+                self.record_store(context, BindingRef::Symbol(symbol));
+                self.walk.symbol_initializations[symbol.idx()] = None;
             }
         }
     }
@@ -286,7 +337,17 @@ impl Walker<'_, '_> {
             CodeUnit::File if self.walk.has_wrapper_parameters => {
                 return self.record_eval_arguments_slots(eval, context, time);
             }
-            CodeUnit::File | CodeUnit::FieldInitializer(_) => return,
+            CodeUnit::FieldInitializer(member) => {
+                let (compiled, signed) =
+                    (self.input.compiled, self.input.fields_under_signed_members);
+                if class::is_evaluated_in_constructor(
+                    self.hir, self.bound, compiled, signed, member,
+                ) {
+                    self.record_eval_arguments_slots(eval, context, time);
+                }
+                return;
+            }
+            CodeUnit::File => return,
         };
         let kind = self.hir.runtime_function_kind(function);
         self.record_eval_arguments_slots(eval, context, time);

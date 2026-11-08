@@ -1,5 +1,0 @@
-{
-  "env": {
-    "BUN_JSC_useJSPI": "0"
-  }
-}

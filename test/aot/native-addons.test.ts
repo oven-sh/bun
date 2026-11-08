@@ -5,11 +5,12 @@
 //   LOCKED  the addon changes a built-in object. It gets what the program itself gets for the same store (LOCKED_BY=program).
 //   TEXT    the addon has text evaluated. As plain Bun, or the call throws an EvalError and what the program reads afterwards is what it read before.
 //   HIDDEN  the addon walks from the global object through process.mainModule, which the program never names. As plain Bun, or the walk throws a TypeError and nothing has changed.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, beforeAll, test } from "./harness/default-timeout";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const programs = join(import.meta.dir, "native-addons");
@@ -72,7 +73,17 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/native-addons", () => {
         const executable = join(folder, name.replace(/\.\w+$/, isWindows ? ".exe" : ""));
         built(
           await spawned(
-            [bunExe(), "build", "--compile", "--aot", join(programs, name), "--outfile", executable],
+            // No program imports a built-in module. On Windows a function of the library makes process.env, where the path of the addon is.
+            [
+              bunExe(),
+              "build",
+              "--compile",
+              "--aot",
+              ...(isWindows ? [] : ["--no-builtin-modules"]),
+              join(programs, name),
+              "--outfile",
+              executable,
+            ],
             programs,
             bunEnv,
           ),

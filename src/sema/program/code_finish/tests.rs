@@ -1,7 +1,7 @@
 #![cfg(not(miri))]
 
 use super::*;
-use crate::program::code_file::load_code_file;
+use crate::program::code_file::{LoadInputs, load_code_file};
 use crate::program::code_load::CodeTarget;
 use crate::program::code_test_host::{
     StatementsHost, TestBuild, load_files, to_paths, with_compile_context,
@@ -46,7 +46,7 @@ fn load_module<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> Box
     let target = CodeTarget::of_path(path, HostLoader::default());
     let arena = context.session.arena();
     let text = context.host.read_source(path);
-    let parsed = load_code_file(context, arena, target, text, false, &[], &[]);
+    let parsed = load_code_file(context, arena, target, text, &LoadInputs::default());
     context.answer_types_question(arena, target.key, parsed).0
 }
 
@@ -63,6 +63,7 @@ fn code_files_without_entries<'s, 'r>(
         entry_of_file: Vec::new(),
         is_in_types_program: is_in_types_program.to_vec(),
         typed_files_with_other_code: FxHashSet::default(),
+        reads_code_on_request: false,
     }
 }
 
@@ -96,11 +97,10 @@ fn order_unseen_files(files: &Files<'_>, seen: &[FileId]) -> Ordered {
 }
 
 fn assert_has_no_files(graph: &CodeGraph<'_>) {
-    let files = graph.viewed();
-    assert!(files.entry_points.is_empty());
-    assert!(files.compiled_files.is_empty());
-    assert!(files.is_compiled.is_empty());
-    assert!(files.host_modules.is_empty());
+    assert!(graph.entry_points.is_empty());
+    assert!(graph.compiled_files.is_empty());
+    assert!(graph.is_compiled.is_empty());
+    assert!(graph.host_modules.is_empty());
     assert!(graph.host_payloads.is_empty());
 }
 

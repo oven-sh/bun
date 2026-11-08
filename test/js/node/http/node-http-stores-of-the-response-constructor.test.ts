@@ -4,10 +4,7 @@ import { join } from "node:path";
 
 test("the setters of a class that extends ServerResponse get every store of its constructor", async () => {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      join(import.meta.dir, "../../../aot/programs/node-http-probes/stores-of-the-response-constructor.ts"),
-    ],
+    cmd: [bunExe(), join(import.meta.dir, "../../../aot/parallel/node-http/stores-of-the-response-constructor.ts")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

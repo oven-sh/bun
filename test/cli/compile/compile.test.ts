@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, rmSync, statSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { basename, join } from "path";
+import { unsupported } from "../../aot/harness/commands";
 import { run as runCommand } from "../../aot/harness/run";
-import { unsupported } from "../../aot/run-programs";
 
 async function run(cwd: string, cmd: string[]) {
   const { stdout, stderr, exitCode } = await runCommand(cmd, cwd, { ...bunEnv, NO_COLOR: "1" });
@@ -58,34 +58,43 @@ describe.concurrent("bun compile", () => {
       exitCode: 0,
     });
 
-    expect(await bun(String(dir), "compile", "--no-aot", "--aot-log-type-mismatches", "app.ts")).toEqual({
+    expect(await bun(String(dir), "compile", "--no-aot", "--aot-huge-heap", "app.ts")).toEqual({
       stdout: "",
-      stderr: "error: --aot-log-type-mismatches requires --aot\n",
+      stderr: "error: --aot-huge-heap requires --aot\n",
       exitCode: 1,
     });
   });
 
   test.skipIf(!!unsupported)(
-    "says how much is typed, and --explain says why the rest is not",
+    "prints three lines, and --explain says how much is typed and why the rest is not",
     async () => {
       using dir = tempDir("compile-explain", {
         "app.ts": `function first(text: string): number {\n  return JSON.parse(text).head;\n}\nconsole.log(first('{"head":1}'));`,
       });
       const said = ({ stdout, stderr }: { stdout: string; stderr: string }) => (stdout + stderr).split("\n");
-      const hint = "Untyped code works, but runs slower. Run with --explain to see what to fix.";
       const built = await bun(String(dir), "compile", "app.ts");
-      const summary = said(built).filter(line => /^[\d.]+% of property accesses|^Untyped code works/.test(line));
+      expect({ ...built, stdout: built.stdout.split("\n") }).toEqual({
+        stdout: [
+          expect.stringMatching(/^ *\[[\d.]+m?s\]  bundle  1 modules$/),
+          expect.stringMatching(
+            /^ *\[[\d.]+m?s\] compile  \S*app(\.exe)?  compiled 4 lines in [\d,]+\.\d\d s \([\d,]+ lines\/s\)$/,
+          ),
+          expect.stringMatching(/^ +build id  [0-9a-f]{32}$/),
+          "",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+      const explained = await bun(String(dir), "compile", "app.ts", "--explain");
+      const summary = said(explained).filter(line => /of property accesses|^Untyped code works/.test(line));
       expect(summary).toEqual([
-        hint,
         expect.stringMatching(
           /^[\d.]+% of property accesses are one load: \d+ free, \d+ tested, [1-9]\d* by name \(\d+\)$/,
         ),
       ]);
-      const accesses = Number(/(\d+) by name/.exec(summary[1]!)![1]);
-      const explained = await bun(String(dir), "compile", "app.ts", "--explain");
+      const accesses = Number(/(\d+) by name/.exec(summary[0]!)![1]);
       expect(said(explained)).toContainEqual(expect.stringMatching(/^note: 1\. [a-z-]+: /));
       expect(said(explained)).toContain(`note: ${accesses} of ${accesses} untyped access${accesses === 1 ? "" : "es"}`);
-      expect(said(explained)).not.toContain(hint);
       expect(
         said(await bun(String(dir), "build", "--compile", "--aot", "app.ts", "--explain")).filter(
           line => !/\[\d/.test(line),
@@ -109,46 +118,62 @@ describe.concurrent("bun compile", () => {
       expect(await bun(String(dir), "compile", "app.ts", "--explain=nonsense")).toEqual({
         stdout: "",
         stderr:
-          'error: Invalid value for --explain: "nonsense". Must be one of text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics\n',
+          'error: Invalid value for --explain: "nonsense". Must be one of text, json, guards, guards-json, trim, allocations, forms, statistics\n',
         exitCode: 1,
       });
     },
     120_000,
   );
 
+  // Each of the two cases below builds twice, beside every other build of this file: the cases above have two minutes for one build.
+  const doubledNumbers = { "app.ts": `console.log([1, 2, 3].map((x: number) => x * 2).join());` };
+
+  function builderIn(dir: string) {
+    return async (...args: string[]) => {
+      rmSync(executable(dir, "app"), { force: true });
+      const { stderr, exitCode } = await bun(dir, ...args, "app.ts", "--outfile", "app");
+      if (exitCode !== 0) return { stderr, exitCode };
+      return {
+        stderr,
+        exitCode,
+        size: statSync(executable(dir, "app")).size,
+        ...(await run(dir, [executable(dir, "app")])),
+      };
+    };
+  }
+
   test.skipIf(!!unsupported)(
     "writes what bun build --compile --aot writes",
     async () => {
-      using dir = tempDir("compile-same-as-build", {
-        "app.ts": `console.log([1, 2, 3].map((x: number) => x * 2).join());`,
-      });
-      async function build(...args: string[]) {
-        rmSync(executable(String(dir), "app"), { force: true });
-        const { stderr, exitCode } = await bun(String(dir), ...args, "app.ts", "--outfile", "app");
-        if (exitCode !== 0) return { stderr, exitCode };
-        return {
-          stderr,
-          exitCode,
-          size: statSync(executable(String(dir), "app")).size,
-          ...(await run(String(dir), [executable(String(dir), "app")])),
-        };
-      }
+      using dir = tempDir("compile-same-as-build", doubledNumbers);
+      const build = builderIn(String(dir));
       const compiled = await build("compile");
       expect(compiled).toMatchObject({ stdout: "2,4,6\n", exitCode: 0 });
       expect(compiled).toEqual(await build("build", "--compile", "--aot"));
+    },
+    240_000,
+  );
+
+  test.skipIf(!!unsupported)(
+    "with --trim writes what bun build --compile --aot --trim writes",
+    async () => {
+      using dir = tempDir("compile-trim-same-as-build", doubledNumbers);
+      const build = builderIn(String(dir));
       const trimmed = await build("compile", "--trim");
       expect(trimmed).toEqual(await build("build", "--compile", "--aot", "--trim"));
       expect(await build("build", "--trim")).toEqual({ stderr: "error: --trim requires --compile\n", exitCode: 1 });
     },
-    60_000,
+    240_000,
   );
 
-  test.each([[["--aot", "--no-aot"], "error: Cannot use both --aot and --no-aot\n"]])("%j", async (flags, stderr) => {
-    using dir = tempDir("compile-both-flags", { "app.ts": `console.log(1);` });
-    const built = await bun(String(dir), "compile", ...flags, "app.ts");
-    if (unsupported && built.stderr.includes(unsupported)) return;
-    expect(built).toEqual({ stdout: "", stderr, exitCode: 1 });
-  });
+  test.skipIf(!!unsupported).each([[["--aot", "--no-aot"], "error: Cannot use both --aot and --no-aot\n"]])(
+    "%j",
+    async (flags, stderr) => {
+      using dir = tempDir("compile-both-flags", { "app.ts": `console.log(1);` });
+      const built = await bun(String(dir), "compile", ...flags, "app.ts");
+      expect(built).toEqual({ stdout: "", stderr, exitCode: 1 });
+    },
+  );
 
   test("--target=browser with an HTML entry point writes one HTML file", async () => {
     using dir = tempDir("compile-html", {

@@ -179,6 +179,82 @@ fn compiled_file_ignores_other_comment_text() {
 }
 
 #[test]
+fn comment_in_tag_holds_no_pragma() {
+    let none = (None, ["", "", ""]);
+    let cases = [
+        ("<a /* @jsx h */ b='1' />;", none),
+        ("< /* @jsx h */ a />;", none),
+        ("<a b /* @jsx h */ ='1' />;", none),
+        ("<a b= /* @jsx h */ '1' />;", none),
+        ("<a b='1' /* @jsx h */ c />;", none),
+        ("<a b='1' / /* @jsx h */ >;", none),
+        ("<a // @jsx h\n b='1' />;", none),
+        ("<a /* x */ /* @jsx h */ />;", none),
+        ("<a.b /* @jsx h */ />;", none),
+        ("<a b={1} /* @jsx h */ />;", none),
+        ("<a b={{ c: 1 }} /* @jsx h */ />;", none),
+        ("<a {...b} /* @jsx h */ />;", none),
+        ("<a /* @jsx h */ ></a>;", none),
+        ("<a></ /* @jsx h */ a>;", none),
+        ("<a></a /* @jsx h */ >;", none),
+        ("< /* @jsx h */ ></>;", none),
+        ("<></ /* @jsx h */ >;", none),
+        ("<a><b /* @jsx h */ /></a>;", none),
+        ("<a><b></b /* @jsx h */ ></a>;", none),
+        ("<a b={<c /* @jsx h */ />} />;", none),
+        ("<a>{<c /* @jsx h */ />}</a>;", none),
+        ("<a>/* @jsx h */</a>;", none),
+        ("// @jsx g\n<a /* @jsx h */ />;", (None, ["g", "", ""])),
+        (
+            "<a /* @jsxRuntime classic @jsxFrag F @jsxImportSource s */ />;",
+            none,
+        ),
+    ];
+    assert_jsx_pragmas(&[javascript(true, false), tsx(true)], &cases);
+    let cases = [
+        ("<A /* @jsx h */ <B> />;", none),
+        ("<A<B> /* @jsx h */ />;", none),
+        ("<A<B> c /* @jsx h */ />;", none),
+        ("<A<B<C>> / /* @jsx h */ >;", none),
+    ];
+    assert_jsx_pragmas(&[tsx(true)], &cases);
+}
+
+#[test]
+fn comment_in_code_inside_tag_holds_pragma() {
+    let read = (None, ["h", "", ""]);
+    let cases = [
+        ("<a b={/* @jsx h */ 1} />;", read),
+        ("<a b={1 /* @jsx h */} />;", read),
+        ("<a b={(1 /* @jsx h */)} />;", read),
+        ("<a b={{ c: 1 } /* @jsx h */} />;", read),
+        ("<a b={() => { /* @jsx h */ }} />;", read),
+        ("<a {/* @jsx h */ ...b} />;", read),
+        ("<a {.../* @jsx h */ b} />;", read),
+        ("<a {...b /* @jsx h */} />;", read),
+        ("<a>{/* @jsx h */}</a>;", read),
+        ("<a>{1 /* @jsx h */}</a>;", read),
+        ("<>{/* @jsx h */}</>;", read),
+        ("<a b={<c d={/* @jsx h */ 1} />} />;", read),
+        ("<a><b />{/* @jsx h */}<c /></a>;", read),
+        ("/* @jsx h */ <a />;", read),
+        ("<a /> /* @jsx h */;", read),
+        ("(<a /> /* @jsx h */);", read),
+        ("<a /* @jsx g */ />; // @jsx h", read),
+    ];
+    assert_jsx_pragmas(&[javascript(true, false), tsx(true)], &cases);
+    let cases = [
+        ("<A</* @jsx h */ B> />;", read),
+        ("<A<B /* @jsx h */> />;", read),
+        ("<A<(B) /* @jsx h */> />;", read),
+        ("<A<B, /* @jsx h */ C> />;", read),
+        ("<A<B<C> /* @jsx h */> />;", read),
+        ("< /* @jsx h */ T,>(a: T) => a;", read),
+    ];
+    assert_jsx_pragmas(&[tsx(true)], &cases);
+}
+
+#[test]
 fn last_compiled_jsx_pragma_wins_with_unusable_argument() {
     let none = (None, ["", "", ""]);
     let cases = [
@@ -193,18 +269,37 @@ fn last_compiled_jsx_pragma_wins_with_unusable_argument() {
 
 #[test]
 fn compiled_jsx_runtime_names() {
-    for (name, classic) in [
-        ("classic", Some(true)),
-        ("react", Some(true)),
-        ("automatic", Some(false)),
-        ("react-jsx", Some(false)),
-        ("react-jsxdev", Some(false)),
-        ("Classic", None),
-        ("preserve", None),
+    for (name, classic, is_development) in [
+        ("classic", Some(true), None),
+        ("react", Some(true), None),
+        ("automatic", Some(false), None),
+        ("react-jsx", Some(false), Some(false)),
+        ("react-jsxdev", Some(false), Some(true)),
+        ("Classic", None, None),
+        ("React-jsx", None, None),
+        ("preserve", None, None),
     ] {
         let text = format!("// @jsxRuntime {name}\na;");
-        assert_eq!(jsx_pragmas(&text, tsx(true)).0, classic, "{name}");
+        let pragmas = parsed(&text, tsx(true)).unwrap().jsx_pragmas;
+        let found = (pragmas.classic, pragmas.is_development);
+        assert_eq!(found, (classic, is_development), "{name}");
     }
+}
+
+#[test]
+fn last_compiled_jsx_runtime_decides_alone() {
+    for (first, last, is_development) in [
+        ("react-jsxdev", "react-jsx", Some(false)),
+        ("react-jsx", "react-jsxdev", Some(true)),
+        ("react-jsxdev", "automatic", None),
+        ("react-jsxdev", "preserve", None),
+    ] {
+        let text = format!("// @jsxRuntime {first}\n// @jsxRuntime {last}\na;");
+        let pragmas = parsed(&text, tsx(true)).unwrap().jsx_pragmas;
+        assert_eq!(pragmas.is_development, is_development, "{text}");
+    }
+    let checked = parsed("/* @jsxRuntime react-jsxdev */ a;", tsx(false)).unwrap();
+    assert_eq!(checked.jsx_pragmas, JsxPragmas::default());
 }
 
 #[test]
@@ -242,6 +337,133 @@ fn checked_file_reads_jsx_pragmas_like_tsc() {
         ("/* @jsxRuntime react */ a;", none),
     ];
     assert_jsx_pragmas(&[tsx(false), javascript(false, false)], &cases);
+}
+
+const READ_BY_BUN_RUN: &str = r"
+0 | /* @__PURE__ */
+0 | /* #__PURE__ */
+0 | /*@__PURE__*/
+0 | /* text @__PURE__ */
+0 | /* @other @__PURE__ */
+1 | /* @__PURE__x */
+0 | /* @__PURE__. */
+1 | /* @ __PURE__ */
+0 | /* @@__PURE__ */
+1 | /* __PURE__ */
+1 | /* @jsx @__PURE__ */
+1 | /* @jsxFrag @__PURE__ */
+1 | /* @jsxImportSource #__PURE__ */
+1 | /* @jsxRuntime @__PURE__ */
+1 | /* #jsx @__PURE__ */
+0 h Fragment | /* @jsx h @__PURE__ */
+1 | /* @jsx        @__PURE__ */
+0 | /* @jsx         @__PURE__ */
+1 | /* @jsx\t@__PURE__ */
+0 | /* @jsx\n@__PURE__ */
+0 | /* @jsx: @__PURE__ */
+0 | /* @jsxy @__PURE__ */
+0 | /* @JSX @__PURE__ */
+1 | /* @jsx a@__PURE__ */
+1 | /* @jsx h @jsxFrag @__PURE__ */
+0 | /* @jsx @__PURE__ @__PURE__ */
+0 h Fragment | /* @__PURE__ @jsx h */
+0 | /* @jsx @__PURE__ */ /* @__PURE__ */
+0 createElement Fragment | /* @jsx */ /* @__PURE__ */
+1 | /*# sourceMappingURL=a@__PURE__ */
+0 | /*# sourceMappingURL=a @__PURE__ */
+1 | /*@ sourceMappingURL=a@__PURE__ */
+0 | /*# sourceMappingURL= @__PURE__ */
+1 | /*# sourceMappingURL=@__PURE__ */
+0 | /*#sourceMappingURL=a@__PURE__ */
+0 | /*#  sourceMappingURL=a@__PURE__ */
+0 | /*# sourceMappingURL=é@__PURE__ */
+0 | /*# sourceMappingURL=a\t@__PURE__ */
+0 | /*# sourceMappingURL=a\n@__PURE__ */
+0 | /*# sourceURL=a@__PURE__ */
+0 | /*# sourcemappingurl=a@__PURE__ */
+0 | // @__PURE__\n
+0 | //@__PURE__\n
+0 | // #__PURE__\n
+0 | //\t@__PURE__\n
+1 | //\u{a0}@__PURE__\n
+1 | // text @__PURE__\n
+1 | // @other @__PURE__\n
+1 | // @jsx @__PURE__\n
+0 h Fragment | // @__PURE__ @jsx h\n
+1 | //# sourceMappingURL=a @__PURE__\n
+1 | // @__PURE__x\n
+1 h Fragment | // @jsx h\n
+1 h Fragment | /* @jsx h */
+1 createElement Fragment | //# sourceMappingURL=map@jsx h\n
+1 h Fragment | //# sourceMappingURL=map @jsx h\n
+1 createElement Fragment | /*# sourceMappingURL=map@jsx h */
+1 createElement Fragment | //@ sourceMappingURL=map@jsx h\n
+1 createElement Fragment | //# sourceMappingURL=@jsx h\n
+1 createElement Fragment | //# sourceMappingURL=map#jsx h\n
+1 h Fragment | //#sourceMappingURL=map@jsx h\n
+1 h Fragment | //# sourceMappingURL=é@jsx h\n
+1 createElement Fragment | //# sourceMappingURL=map@jsxFrag F\n
+1 h F | // @jsx h @jsxFrag F\n
+1 createElement Fragment | /* @jsxImportSource @jsx h */
+1 h Fragment | /* @jsxImportSource    @jsx h */
+1 h Fragment | /* @jsxImportSource     @jsx h */
+1 createElement Fragment | /* @jsxRuntime @jsx h */
+1 g Fragment | // @jsx h\n// @jsx g\n
+1 createElement Fragment | // @jsx h\n// @jsx \n
+1 h Fragment | /* @jsx h\n*/
+1 h Fragment | /* @jsx h*/
+1 g Fragment | // @jsx h@jsxFrag F\n// @jsx g\n
+1 createElement Fragment | /* @jsxImportSource   @jsx h */
+1 createElement F | // @jsxFrag F\n
+1 createElement Fragment | // @jsxFragment F\n
+1 createElement Fragment | // @jsx-h h\n
+1 h Fragment | // @jsx\u{a0}h\n
+1 h Fragment | /* @jsx h\u{a0}g */
+1 h Fragment | // @jsx h\r\n
+1 h Fragment | /*@jsx h*/
+0 h Fragment | /**\n * @jsx h\n * @__PURE__\n */
+1 h Fragment | // #jsx h\n
+1 g Fragment | // @jsx h // @jsx g\n
+1 h Fragment | // @@jsx h\n
+1 h Fragment | // a@jsx h\n
+1 | /* @jsxRuntime        @__PURE__ */
+0 | /* @jsxRuntime         @__PURE__ */
+1 | /* @jsx @__PURE__*/
+1 | /*# sourceMappingURL=a@__PURE__*/
+1 | /* @jsx a */ /* b */
+0 | /* @jsx @__PURE__ */ // @__PURE__\n
+0 | // @jsx @__PURE__\n/* @__PURE__ */
+1 ./tiny/jsx-dev-runtime | // @jsxRuntime automatic @jsxImportSource ./tiny\n
+1 createElement | // @jsxImportSource ./tiny\n//# sourceMappingURL=a@jsxRuntime automatic\n
+1 ./tiny/jsx-dev-runtime | // @jsxImportSource ./tiny\n//# sourceMappingURL=a @jsxRuntime automatic\n
+1 ./tiny/jsx-dev-runtime | // @jsxRuntime automatic\n// @jsxImportSource ./tiny\n//# sourceMappingURL=a@jsxImportSource ./none\n
+";
+
+#[test]
+fn comments_are_walked_like_bun_run() {
+    for line in READ_BY_BUN_RUN.trim().lines() {
+        let (printed, comments) = line.split_once(" | ").unwrap();
+        let comments = (comments.replace("\\n", "\n").replace("\\r", "\r")).replace("\\t", "\t");
+        let text = format!("{} mark();", comments.replace("\\u{a0}", "\u{a0}"));
+        let options = javascript(true, false);
+        let file = parsed(&text, options).unwrap();
+        let ran = file.calls.iter().filter(|call| !call.is_pure).count();
+        let (classic, [factory, fragment, import_source]) = jsx_pragmas(&text, options);
+        let or = |written: String, default: &str| match written.is_empty() {
+            true => default.to_owned(),
+            false => written,
+        };
+        let answer = match classic {
+            Some(false) => format!("{ran} {import_source}/jsx-dev-runtime"),
+            _ => {
+                let fragment = or(fragment, "Fragment");
+                format!("{ran} {} {fragment}", or(factory, "createElement"))
+            }
+        };
+        let word_count = printed.split(' ').count();
+        let words: Vec<&str> = answer.split(' ').take(word_count).collect();
+        assert_eq!(words.join(" "), printed, "{line}");
+    }
 }
 
 #[test]

@@ -1,5 +1,0 @@
-ghost TypeError
-late TypeError
-undefined
-undefined
-1

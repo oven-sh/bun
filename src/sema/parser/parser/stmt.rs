@@ -252,7 +252,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `isStartOfDeclaration`
     pub(crate) fn is_start_of_declaration(&mut self) -> bool {
         // Fast path for the most common case, where the text is enough to know the scan's answer.
-        if self.token() == T::Import && self.is_followed_by(b" {") {
+        let is_known_by_text = match self.token() {
+            T::Import => self.is_followed_by_bytes(b" {"),
+            T::Export => {
+                self.is_followed_by_bytes(b" const ")
+                    || self.is_followed_by_bytes(b" function ")
+                    || self.is_followed_by_bytes(b" class ")
+                    || self.is_followed_by_bytes(b" default ")
+                    || self.is_followed_by_bytes(b" {")
+            }
+            _ => false,
+        };
+        if is_known_by_text {
             return true;
         }
         // The scan steps over one modifier at a time and keeps no state, so it gives the same answer from each of them.
@@ -340,8 +351,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     }
                 }
                 T::Global => {
+                    // `bun run` reads a `global` that begins a statement of code that runs as a name, and the next line as a statement of its own.
+                    let is_name_at_end_of_line =
+                        *last == first && self.options.compiles && !self.has_context(ctx::AMBIENT);
                     self.next();
                     return !self.is_ecmascript
+                        && !(is_name_at_end_of_line && self.newline_before())
                         && matches!(self.token(), T::OpenBrace | T::Identifier | T::Export);
                 }
                 T::Import => {
@@ -1765,8 +1780,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.is_flow() {
             return self.flow_declaration_after_expression(start, expression);
         }
-        // `parseErrorForMissingSemicolonAfter`: "If a declared node failed to parse, it would have
-        // emitted a diagnostic already."
         if !self.is_ecmascript
             && !self.options.dialect.oxc
             && let Some(&Expr {
@@ -1776,6 +1789,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && self.lx.text_of(name) == b"declare"
             && !self.is_parenthesized(expression)
         {
+            self.missing_semicolon_after_declare();
             return self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY);
         }
         if self.recovers() {

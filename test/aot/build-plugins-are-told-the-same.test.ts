@@ -125,6 +125,7 @@ build.onLoad({ filter: /.*/ }, (args: any) => void tell("onLoad", args));`,
     prints: "outer inner real\n",
   },
   "imports that are erased, and files of the project that nothing imports": {
+    alone: true,
     files: {
       "main.ts": `import type { Shape } from "./shape"; import { type Size, size } from "./size"; import { Unused } from "./unused"; import { OnlyAType } from "./only-a-type";
 const shape: Shape = { sides: 3 }; const one: Size = size; const other: OnlyAType = 2; console.log(shape.sides, one, other, typeof ambient);`,
@@ -138,6 +139,7 @@ const shape: Shape = { sides: 3 }; const one: Size = size; const other: OnlyATyp
     prints: "3 1 2 undefined\n",
   },
   "the entry point": {
+    alone: true,
     files: { "main.ts": `console.log("from the disk");` },
     plugins: [
       `build.onResolve({ filter: /main/ }, (args: any) => void tell("onResolve", args));
@@ -146,6 +148,7 @@ build.onLoad({ filter: /main\\.ts$/ }, (args: any) => { tell("onLoad", args); re
     prints: "from the plugin\n",
   },
   "an entry point that a plugin resolves to another file": {
+    alone: true,
     files: { "main.ts": `console.log("main");`, "other.ts": `console.log("other");` },
     plugins: [
       `build.onResolve({ filter: /main/ }, (args: any) => { tell("onResolve", args); return { path: join(folder, "other.ts") }; });`,
@@ -153,6 +156,7 @@ build.onLoad({ filter: /main\\.ts$/ }, (args: any) => { tell("onLoad", args); re
     prints: "other\n",
   },
   "an entry point in a namespace": {
+    alone: true,
     files: { "main.ts": `console.log("main");` },
     plugins: [
       `build.onResolve({ filter: /^virtual:/ }, (args: any) => { tell("onResolve", args); return { path: "entry", namespace: "virtual" }; });

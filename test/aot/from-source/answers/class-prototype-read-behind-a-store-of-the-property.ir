@@ -1,0 +1,21 @@
+# Until the class of a constructor function begins, the read of its prototype object gives what `prototype` of the function holds then. So the read stays behind whatever may store to the property.
+# Nothing has begun in the first turn, so the store there ends nothing, and the guards begin over the stored object at the `new` behind it. A read from in front of the loop would name the object that the function was born with.
+# What is tested is no object of the function, so the chain is walked up to the object that was read. The function is at hand in front of the loop, so nothing but the store keeps the read in the loop.
+# -- source: main.js
+# "use strict";
+# function Message(n) { this.n = n; }
+# function run(store, make) { const Made = Message; let count = 0; for (let i = 0; i < 10; i++) { if (i === 0) store(); globalThis.last = new Made(1); if (make() instanceof Made) count++; } return count; }
+# Function("return globalThis.register")()(run, Message);
+# -- end of source
+# RUN: run-in-shell globalThis.register = (run, Message) => { print(run(() => { Message.prototype = { twice() { return 8; } }; }, () => Object.create(Message.prototype))); };
+# CHECK: 10
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+# RUN(KEPT): run-in-shell globalThis.register = (run, Message) => { print(run(() => { }, () => Object.create(Message.prototype))); };
+# KEPT: 10
+# KEPT-NEXT: exited with 0
+# KEPT-NEXT: the source prints the same
+# RUN(LATE): run-in-shell globalThis.register = (run, Message) => { let turn = 0; print(run(() => { }, () => { if (++turn === 5) Message.prototype = { }; return Object.create(Message.prototype); })); };
+# LATE: 10
+# LATE-NEXT: exited with 0
+# LATE-NEXT: the source prints the same

@@ -1,11 +1,12 @@
 // A shipped executable tells nobody the folders of the machine that built it: its bytes do not hold them, it does not look into them, and no message names them. A message names a file as the
 // executable knows it (/$bunfs/root/..), as the program wrote it, or where it really lies on the machine of the run.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
-import { built, spawned, withoutDebugInformation } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
 const secret = "the-folder-of-the-builder";
@@ -20,12 +21,16 @@ describe("compile/aot/an executable does not tell where it was built", () => {
   beforeAll(async () => {
     mkdirSync(join(source, "lib"), { recursive: true });
     mkdirSync(join(elsewhere, "lib"), { recursive: true });
+    mkdirSync(join(root, "beside"));
     writeFileSync(join(source, "lib", "inside.mjs"), `export const value = "inside";\n`);
+    // A file above the folder of the build: where it lies in the executable says how far up it lay, and no name of a folder on the way.
+    writeFileSync(join(root, "beside", "above.mjs"), `export const above = import.meta.url;\n`);
     // The build cannot see the name under which this file is asked for, so it is not in the executable.
     writeFileSync(join(source, "lib", "outside.mjs"), `export const value = "of the folder of the build";\n`);
     writeFileSync(
       join(source, "main.mjs"),
       `import { value } from "./lib/inside.mjs";
+import { above } from "../beside/above.mjs";
 const load = file => import(file);
 try {
   console.log((await load(JSON.parse('["./lib/outside.mjs"]')[0])).value);
@@ -37,7 +42,7 @@ try {
 } catch (error) {
   console.log(error.stack);
 }
-console.log(value, import.meta.url, import.meta.dir, process.argv[1], Bun.main);
+console.log(value, above, import.meta.url, import.meta.dir, process.argv[1], Bun.main);
 `,
     );
     built(

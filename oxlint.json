@@ -107,7 +107,8 @@
         "bun/no-duplicate-conditional-property-access": "error",
 
         // The same rule, except that `"unlikely";` may be the first statement of an arm of an `if`, which tells
-        // `bun build --compile --aot` that the arm rarely runs.
+        // `bun build --compile --aot` that the arm rarely runs, and `("frames are native code");` or
+        // `("has no frames");` the first statement of a function, which tells it how a stack trace lists the function.
         "no-unused-expressions": "off",
         "bun/no-unused-expressions": "error"
       }

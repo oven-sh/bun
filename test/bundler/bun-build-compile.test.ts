@@ -2217,6 +2217,33 @@ describe("compiled binary validity", () => {
     expect(stdout.trim()).toBe("compile-test-output");
     expect(exitCode).toBe(0);
   });
+
+  test("import.meta.main is true in the entry point and false in what it imports", async () => {
+    using dir = tempDir("build-compile-import-meta-main", {
+      "app.ts": `import { isMain } from "./imported";\nconsole.log(import.meta.main, isMain);`,
+      "imported.ts": `export const isMain = import.meta.main;`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "app.ts")],
+      compile: {
+        outfile: join(dir + "", "app-main"),
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true false\n", stderr: "", exitCode: 0 });
+  });
 });
 
 if (isLinux) {

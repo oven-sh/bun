@@ -5,8 +5,8 @@ use bun_core::AnyBitPattern;
 
 use crate::cut_model::{CutCapacity, CutModel, NoCutReason};
 use crate::image::{
-    AddressRange, Architecture, ExecutableFormat, ImageError, MappedSpan, RemovedFileRanges,
-    merge_ranges, subtract_cuts,
+    AddressRange, Architecture, ExecutableFormat, ImageBytes, ImageError, MappedSpan,
+    RemovedFileRanges, merge_ranges, subtract_cuts,
 };
 use crate::macho::{MachoSigner, SEG_LINKEDIT};
 use crate::macho_fixups::{SegmentPiece, rebuild_chained_fixups};
@@ -101,13 +101,17 @@ pub(crate) fn cut_model(macho: &[u8]) -> CutModel {
             capacity,
             cuttable_spans: find_cuttable_spans(&parsed),
             spans_cut_only_at_end: find_read_only_segments(&parsed),
+            slot_costs: None,
         },
         Ok(CutCapacity::NoCuts(reason)) => without_cuts(reason),
         Err(_) => without_cuts(NoCutReason::HeadersUnreadable),
     }
 }
 
-pub(crate) fn remove_ranges(macho: &mut Vec<u8>, cuts: &[AddressRange]) -> Result<(), ImageError> {
+pub(crate) fn remove_ranges(
+    macho: &mut dyn ImageBytes,
+    cuts: &[AddressRange],
+) -> Result<(), ImageError> {
     let parsed = parse(macho)?;
     let plan = plan_removal(macho, &parsed, cuts)?;
     apply_plan(macho, parsed.header_room_end, &plan);
@@ -625,17 +629,17 @@ fn remap_command(
     Ok(())
 }
 
-fn apply_plan(macho: &mut Vec<u8>, header_room_end: usize, plan: &Plan) {
+fn apply_plan(macho: &mut dyn ImageBytes, header_room_end: usize, plan: &Plan) {
     renumber_symbols(&mut macho[plan.old_symbols.clone()], &plan.new_ordinals);
     plan.map.removed.compact(macho);
     let compacted_size = macho.len();
     let growth = plan.map.growth as usize;
     let fixups_end = plan.map.removed.moved_floor(plan.map.old_fixups_end) as usize + growth;
-    macho.resize(compacted_size + growth, 0);
+    macho.grow(compacted_size + growth);
     macho.copy_within(fixups_end - growth..compacted_size, fixups_end);
     macho[fixups_end - plan.fixups.len()..fixups_end].copy_from_slice(&plan.fixups);
     macho.truncate(plan.signature.start);
-    macho.resize(plan.signature.end, 0);
+    macho.grow(plan.signature.end);
     let (headers, padding) = macho[..header_room_end].split_at_mut(plan.headers.len());
     headers.copy_from_slice(&plan.headers);
     padding.fill(0);

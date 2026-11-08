@@ -2,7 +2,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { spawned } from "./run-programs";
+import { spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -64,7 +64,6 @@ describe.concurrent("the aot condition", () => {
   test.each([
     ["bun run --aot", ["run", "--aot", "./main.ts"]],
     ["bun --aot", ["--aot", "./main.ts"]],
-    ["bun run --aot-log-type-mismatches", ["run", "--aot-log-type-mismatches", "./main.ts"]],
   ])("%s runs the file that it names", async (_, command) => {
     using dir = tempDir("aot-condition", files);
     expect(await run(String(dir), bunExe(), ...command)).toMatchObject({ printed: honored, exitCode: 0 });

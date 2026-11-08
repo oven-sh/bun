@@ -1,4 +1,4 @@
-use crate::{EnteredFrom, Feature, FeatureSet, is_removed};
+use crate::{EnteredFrom, Feature, FeatureSet, TrimFeature, is_removed};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RuntimeRequirement {
@@ -6,6 +6,15 @@ pub enum RuntimeRequirement {
     Feature(Feature),
     WholeRuntime,
     RuntimeCode,
+}
+
+/// What runs code that no build has compiled: the interpreter, the transpiler, the loaders and the source of built-in functions.
+pub fn features_running_uncompiled_code() -> FeatureSet {
+    TrimFeature::Interpreter.features()
+}
+
+pub fn can_run_uncompiled_code() -> bool {
+    !features_running_uncompiled_code().iter().any(is_removed)
 }
 
 impl RuntimeRequirement {

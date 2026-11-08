@@ -1,4 +1,5 @@
 // eval in many spellings. The evaluated code calls an API that the program never uses.
+//@ build --no-builtin-modules
 //@ evaluated-code-uses-removed-api
 const text = "Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter";
 //// direct
@@ -17,7 +18,6 @@ console.log(globalThis["eval"](text));
 //// globalThis-concat
 console.log(globalThis["ev" + "al"](text));
 //// globalThis-argv
-//@ not-seen
 //@ args eval
 console.log(globalThis[process.argv[2]](text));
 //// destructured

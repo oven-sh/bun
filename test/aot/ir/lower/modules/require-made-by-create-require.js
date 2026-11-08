@@ -4,13 +4,13 @@
 // HELD: = RequireModule module=m{{*}}specifier="node:os"
 // HELD: Return
 
-// RUN(FILE): lower
-// FILE-LABEL: function {{*}}name="file"
-// FILE-NOT: = Call
-// FILE-NOT: RequireModule
-// FILE: EvaluateModule module=m
-// FILE: = GetModuleVariable
-// FILE: Return
+// RUN(WHOLE): lower
+// WHOLE-LABEL: function {{*}}name="file"
+// WHOLE-NOT: = Call
+// WHOLE-NOT: RequireModule
+// WHOLE: EvaluateModule module=m
+// WHOLE: = GetModuleVariable
+// WHOLE: Return
 
 // RUN(ATONCE): lower
 // ATONCE-LABEL: function {{*}}name="atOnce"

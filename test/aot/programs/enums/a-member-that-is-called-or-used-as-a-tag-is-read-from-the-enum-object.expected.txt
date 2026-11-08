@@ -1,4 +1,0 @@
-nothing stored TypeError TypeError TypeError TypeError
-called called on Plain called on Plain called on Plain
-called, in a namespace called on Inner called on Inner called on Inner
-a tag called on Plain called on Plain called on Inner called on Inner

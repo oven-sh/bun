@@ -1,24 +1,31 @@
 use super::effects::{ProgramOrigins, compute_origins};
 use super::{
-    CompileRequest, EntryPointFailure, EntryPoints, LoadFailure, LoadedProgram, WithoutBunTypes,
+    BunTypes, CompileRequest, EntryPointFailure, EntryPoints, LoadFailure, LoadedProgram,
+    WithoutBunTypes,
 };
 use crate::{
-    Libs, default_compiler_options, diagnostic_from_config_error, host, use_dedicated_pool,
+    Libs, default_compiler_options, diagnostic_from_config_error, give_pool_stack_for_lowering,
+    host, use_dedicated_pool,
 };
 use bun_sema::check::Program;
 use bun_sema::check::aot::{FileOrigin, containers_completed_by_bun_types};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::FileKind;
 use bun_sema::json::Json;
-use bun_sema::program::{CompileInputs, FileId, Files, MainModule, RootFileNames, Run};
+use bun_sema::program::{
+    CodeView, CompileInputs, EntryPointsFound, FileId, Files, LoggedSteps, RootFileNames,
+};
 use bun_sema::resolve::{
     CodeFailure, CodeHost, CodeImportForm, CodeImportKind, CodeOptions, CodeRequest,
-    CodeResolution, Host, HostResolution, Options, Resolver, is_same_path, is_typescript_file_name,
-    join,
+    CodeResolution, ComputedCandidate, ComputedCodeRequest, ComputedResolution, ExternalKind, Host,
+    HostResolution, Options, Resolver, is_javascript, is_same_path, is_typescript_file_name, join,
 };
-use bun_sema::session::Session;
+use bun_sema::session::{Session, SessionSlot};
 use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_threading::Guarded;
 use std::borrow::Cow;
+use std::cell::UnsafeCell;
+use std::sync::atomic::AtomicBool;
 
 const FILES_FREED_IN_A_RUN: usize = 32;
 
@@ -27,29 +34,18 @@ pub fn load_program<'s>(
     host: &dyn CodeHost,
     request: &CompileRequest<'_, 's>,
 ) -> Result<LoadedProgram<'s>, LoadFailure> {
-    load_program_with_parsed_files(session, host, request, None)
-}
-
-/// `parsed`: the declaration files that the loads of the build have parsed so far.
-pub fn load_program_with_parsed_files<'s>(
-    session: &'s Session,
-    host: &dyn CodeHost,
-    request: &CompileRequest<'_, 's>,
-    parsed: Option<&'s Run<'s>>,
-) -> Result<LoadedProgram<'s>, LoadFailure> {
+    give_pool_stack_for_lowering();
     use_dedicated_pool("Bun Compile");
+    let mut steps = LoggedSteps::begin(host);
     let entry_paths = match request.entry_points {
-        EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
+        EntryPoints::Written(specifiers) | EntryPoints::WrittenAndFound(specifiers, ..) => {
             resolve_entry_points(host, request.code, specifiers)?
         }
-        EntryPoints::Resolved(paths)
-        | EntryPoints::Imported(paths)
-        | EntryPoints::Configured(paths, _) => paths.to_vec(),
+        EntryPoints::Resolved(paths) => paths.to_vec(),
     };
-    debug_assert!(!entry_paths.is_empty());
+    debug_assert!(!entry_paths.is_empty() || request.code.tsconfig_override.is_some());
     let mut project = find_project(host, request, &entry_paths)?;
-    let is_configured = matches!(request.entry_points, EntryPoints::Configured(..));
-    if request.code.tsconfig_override.is_none() && !is_configured {
+    if request.code.tsconfig_override.is_none() {
         add_files_of_other_projects(host, &mut project, &entry_paths);
     }
     if request.code.transpiles_by_working_directory && request.code.tsconfig_override.is_none() {
@@ -57,13 +53,28 @@ pub fn load_program_with_parsed_files<'s>(
             .options
             .transpile_as(&options_of_working_directory(host, request.code));
     }
+    if project.options.emit_decorator_metadata && !project.options.experimental_decorators {
+        project.options.experimental_decorators = true;
+        project.errors.retain(|error| {
+            let option = error.args.first().map(Vec::as_slice);
+            error.code != 5052 || option != Some(&b"emitDecoratorMetadata"[..])
+        });
+    }
     project
         .errors
         .retain(|error| error.code != 18003 && error.code != 18002);
+    let roots_with_and_without_what_is_excluded = (!project.config_path.is_empty()).then(|| {
+        (
+            project.roots_with_what_is_excluded(host),
+            project.roots(host),
+        )
+    });
     let unlisted_files = project.unlisted_files.take();
     let first_files = host.compiler_declarations();
     let mut last_files = Vec::new();
     let options = &mut project.options;
+    options.allows_es_module_mark = request.code.allows_es_module_mark;
+    options.builds_executable = request.code.builds_executable;
     options
         .current_directory
         .clone_from(&request.code.working_directory);
@@ -71,6 +82,7 @@ pub fn load_program_with_parsed_files<'s>(
         .custom_conditions
         .extend_from_slice(&request.code.custom_conditions);
     let has_bun_types_installed = choose_libraries(host, options, request.libs);
+    let names_bun_types_by_itself = options.names_bun_types_by_itself;
     let is_application = request.project_origin != FileOrigin::Runtime;
     let brings_bun_types =
         is_application && !has_bun_types_installed && take_bun_types_of_host(host, options);
@@ -79,7 +91,7 @@ pub fn load_program_with_parsed_files<'s>(
     if is_application && has_bun_types {
         last_files.append(&mut host.declarations_beside_bun_types(has_bun_types_installed));
     }
-    if is_application && !has_bun_types {
+    if is_application && !has_bun_types_installed {
         if let Some(path) = host.declarations_in_place_of_bun_types() {
             options.declarations_of_last_resort.clone_from(&path);
             last_files.push(path);
@@ -94,10 +106,28 @@ pub fn load_program_with_parsed_files<'s>(
         )
     };
     let listed_files = with_declarations(std::mem::take(&mut project.files));
+    let finds_entry_points = matches!(request.entry_points, EntryPoints::WrittenAndFound(..));
+    let config_path = project.config_path.clone();
+    let found_entry_paths: Guarded<Vec<Vec<u8>>> = Guarded::new(Vec::new());
+    let list_with_found = || {
+        let found = found_entry_paths.lock();
+        if !config_path.is_empty() || !found.iter().any(|path| is_typescript_file_name(path)) {
+            return None;
+        }
+        let all = [&entry_paths[..], &found[..]].concat();
+        Some(with_declarations(
+            default_project(host, request.code, &all).files,
+        ))
+    };
     let root_files = match unlisted_files {
         Some(_) => {
             options.own_roots = Some(usize::MAX);
             RootFileNames::Unlisted(&list_files)
+        }
+        None if finds_entry_points => {
+            options.own_roots = Some(usize::MAX);
+            options.files.clone_from(&listed_files);
+            RootFileNames::ListedAndFound(&listed_files, &list_with_found)
         }
         None => {
             options.own_roots = Some(listed_files.len());
@@ -106,54 +136,121 @@ pub fn load_program_with_parsed_files<'s>(
         }
     };
     options.emits_declarations = false;
-    let files = Files::load_for_compile_with_parsed_files(
+    let find_entry_points = |code: &dyn CodeView<'_>| match request.entry_points {
+        EntryPoints::WrittenAndFound(_, find) => {
+            let found = find(code);
+            let mut paths = found_entry_paths.lock();
+            paths.retain(|path| !found.dropped.contains(path));
+            paths.extend_from_slice(&found.paths);
+            drop(paths);
+            found
+        }
+        _ => EntryPointsFound::default(),
+    };
+    steps.end("entry points, project, libraries");
+    let files = Files::load_for_compile(
         session,
-        parsed,
         host,
         project.options,
         root_files,
         &CompileInputs {
             entry_points: &entry_paths,
-            main_module: match request.entry_points {
-                EntryPoints::Configured(..) | EntryPoints::Imported(_) => MainModule::Elsewhere,
-                EntryPoints::WrittenFor(_, main_module) => main_module,
-                EntryPoints::Written(_) | EntryPoints::Resolved(_) => MainModule::EntryPoint,
-            },
+            finds_entry_points: finds_entry_points.then_some(&find_entry_points),
             code: request.code,
             fold: request.fold,
             atoms: request.atoms,
         },
     );
+    steps.end("the files: the sum of the lines above, from the walk on");
     host.loaded();
     let files: &'s Files<'s> = session.arena().alloc(files);
     free_unread_leaves(files, host);
-    let program = session.arena().alloc(Program::new(session, files));
+    steps.end("free the leaves that nothing reads, settle the texts");
+    let checker_session = session.keep(SessionSlot::new());
+    let node_counts = Program::count_nodes(files);
+    let program = Program::with_node_counts(checker_session.session(), files, &node_counts);
+    program.find_symbols_of_compiler();
+    let program = &*session.arena().alloc(UnsafeCell::new(program));
+    steps.end("count nodes, make the checker");
     let config_path = &project.config_path;
     let problems = ConfigError::from_problems(host, session, config_path, files.program_problems());
     let errors = project.errors.iter().chain(&problems);
     let origins = compute_origins(files, host, request.project_origin);
-    let without_bun_types = (is_application && !has_bun_types).then_some(WithoutBunTypes {
-        has_configuration_file: !config_path.is_empty(),
-        incomplete_containers: containers_completed_by_bun_types(files),
-    });
+    steps.end("origins of the files");
+    let bun_types = if has_bun_types_installed && names_bun_types_by_itself && is_application {
+        BunTypes::InstalledAndNotNamed
+    } else if !is_application || has_bun_types_installed {
+        BunTypes::Installed
+    } else if brings_bun_types {
+        BunTypes::Brought
+    } else {
+        BunTypes::Missing(WithoutBunTypes {
+            incomplete_containers: containers_completed_by_bun_types(files),
+            errors_with_bun_types: host.errors_with_bun_types().map(<[_]>::to_vec),
+        })
+    };
+    let has_configuration_file = !config_path.is_empty();
+    let files_that_project_excludes = match &roots_with_and_without_what_is_excluded {
+        Some((all, kept)) => {
+            let is_file = |path: &[u8]| host.is_file(path);
+            let is_excluded = |path: &Vec<u8>| {
+                let path = config::SplitFilePath::new(path);
+                !kept.has(&path, &is_file) && all.has(&path, &is_file)
+            };
+            let mut excluded = [&entry_paths[..], &found_entry_paths.lock()[..]].concat();
+            excluded.retain(is_excluded);
+            find_files_that_only_lead_from(files, &excluded)
+        }
+        None => Vec::new(),
+    };
     let diagnostics = ProgramOrigins {
         files: Some(files),
         origins: &origins,
         project_origin: request.project_origin,
-        without_bun_types: without_bun_types.as_ref(),
-        lacks_installed_bun_types: is_application && !has_bun_types_installed,
+        bun_types: &bun_types,
+        has_configuration_file,
     }
     .apply_effects(configuration_diagnostics(host, config_path, errors));
     Ok(LoadedProgram {
         program,
+        files,
+        checker_session,
+        node_counts,
+        is_checker_freed: AtomicBool::new(false),
+        cycles_entered: Default::default(),
         origins,
         project_origin: request.project_origin,
         diagnostics,
-        has_bun_types_installed,
-        brings_bun_types,
-        without_bun_types,
-        is_read_again: false,
+        bun_types,
+        has_configuration_file,
+        files_that_project_excludes,
+        files_left_to_loader: Default::default(),
     })
+}
+
+fn find_files_that_only_lead_from(files: &Files<'_>, excluded: &[Vec<u8>]) -> Vec<FileId> {
+    if excluded.is_empty() {
+        return Vec::new();
+    }
+    let file_ids = || (0..files.modules.len()).map(|index| FileId(index as u32));
+    let reach = |mut pending: Vec<FileId>| {
+        let mut is_reached = vec![false; files.modules.len()];
+        while let Some(file) = pending.pop() {
+            if !std::mem::replace(&mut is_reached[file.idx()], true) {
+                pending.extend(files.module(file).imports.values().copied());
+            }
+        }
+        is_reached
+    };
+    let is_excluded = |file: &FileId| {
+        let name = files.module(*file).file_name();
+        excluded.iter().any(|path| path == name)
+    };
+    let from_excluded = reach(file_ids().filter(is_excluded).collect());
+    let from_the_rest = reach(file_ids().filter(|it| !from_excluded[it.idx()]).collect());
+    file_ids()
+        .filter(|it| from_excluded[it.idx()] && !from_the_rest[it.idx()])
+        .collect()
 }
 
 fn free_unread_leaves(files: &Files<'_>, host: &dyn CodeHost) {
@@ -190,15 +287,114 @@ fn configuration_diagnostics<'e>(
         .collect()
 }
 
-/// The file that a load takes for an entry point which is written so. `None`: it takes none.
-pub fn resolve_entry_point(
+pub struct FileFinderTables {
+    session: Session,
+    options: Options,
+}
+
+impl Default for FileFinderTables {
+    fn default() -> FileFinderTables {
+        FileFinderTables {
+            session: Session::new(),
+            options: Options::default(),
+        }
+    }
+}
+
+pub struct FileFinder<'a> {
+    resolver: Resolver<'a>,
+    host: &'a dyn CodeHost,
+    code: &'a CodeOptions,
+}
+
+impl<'a> FileFinder<'a> {
+    pub fn new(
+        tables: &'a FileFinderTables,
+        host: &'a dyn CodeHost,
+        code: &'a CodeOptions,
+    ) -> FileFinder<'a> {
+        let resolver = Resolver::for_compile(&tables.session, host, &tables.options, code);
+        FileFinder {
+            resolver,
+            host,
+            code,
+        }
+    }
+
+    pub fn find_entry_point(&self, specifier: &[u8]) -> Option<Vec<u8>> {
+        let resolution = self.resolver.resolve_code(&CodeRequest {
+            specifier,
+            importer: b"",
+            directory: &self.code.working_directory,
+            kind: CodeImportKind::EntryPoint,
+            form: CodeImportForm::Static,
+        });
+        match resolution {
+            CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
+            _ => None,
+        }
+    }
+
+    pub fn find_import(&self, importer: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_loaded(importer, specifier, CodeImportKind::Import)
+    }
+
+    pub fn find_required(&self, importer: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+        self.find_loaded(importer, specifier, CodeImportKind::Require)
+    }
+
+    fn find_loaded(
+        &self,
+        importer: &[u8],
+        specifier: &[u8],
+        kind: CodeImportKind,
+    ) -> Option<Vec<u8>> {
+        let resolution = self.resolver.resolve_code(&CodeRequest {
+            specifier,
+            importer,
+            directory: &self.host.directory_of(importer),
+            kind,
+            form: CodeImportForm::Macro,
+        });
+        match resolution {
+            CodeResolution::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
+            CodeResolution::External {
+                specifier: path,
+                kind: ExternalKind::UncompiledCode,
+            } => Some(path.to_vec()),
+            _ => None,
+        }
+    }
+}
+
+pub fn resolve_names_known_in_part(
     host: &dyn CodeHost,
     code: &CodeOptions,
-    specifier: &[u8],
-) -> Option<Vec<u8>> {
-    resolve_entry_points(host, code, &[specifier.to_vec()])
-        .ok()?
-        .pop()
+    directory: &[u8],
+    names: &[(&[u8], Option<&[u8]>)],
+) -> Option<Vec<Vec<u8>>> {
+    let session = Session::new();
+    let options = Options::default();
+    let resolver = Resolver::for_compile(&session, host, &options, code);
+    let request = ComputedCodeRequest {
+        prefix: b"",
+        suffix: b"",
+        importer: b"",
+        directory,
+        kind: CodeImportKind::EntryPoint,
+        form: CodeImportForm::Static,
+        site: Default::default(),
+    };
+    let ComputedResolution::Candidates { candidates, .. } =
+        resolver.resolve_alternative_code(&request, names)
+    else {
+        return None;
+    };
+    let files = candidates.iter().filter_map(|candidate| match candidate {
+        ComputedCandidate::File(file) if file.host_module.is_none() => Some(file.path.to_vec()),
+        ComputedCandidate::File(_) | ComputedCandidate::HostModule(_) => None,
+    });
+    Some(files.collect())
 }
 
 fn resolve_entry_points(
@@ -247,35 +443,52 @@ fn resolve_entry_points(
     })
 }
 
+fn find_config_of_program(
+    host: &dyn CodeHost,
+    code: &CodeOptions,
+    directory: &[u8],
+) -> Option<Vec<u8>> {
+    let found = config::find_config(host, directory)?;
+    let below = code
+        .working_directory
+        .strip_prefix(&host.directory_of(&found)[..]);
+    let is_of_project = below.is_some_and(|below| below.is_empty() || below[0] == b'/');
+    let is_of_dependency = !is_of_project && bun_core::strings::contains(&found, b"/node_modules/");
+    (!is_of_dependency).then_some(found)
+}
+
 fn find_project(
     host: &dyn CodeHost,
     request: &CompileRequest<'_, '_>,
     entry_paths: &[Vec<u8>],
 ) -> Result<config::Project, LoadFailure> {
     let code = request.code;
-    let config_path = match (request.entry_points, &code.tsconfig_override) {
-        (EntryPoints::Configured(_, Some(manifest_path)), _) => {
-            let session = Session::new();
-            return Ok(config::load_for_aot_package(host, &session, manifest_path));
-        }
-        (EntryPoints::Configured(_, None), _) => None,
-        (_, Some(path)) if host.is_dir(path) => Some(join(path, b"tsconfig.json")),
-        (_, Some(path)) => Some(path.clone()),
-        (_, None) => {
-            let directory = match entry_paths.first() {
+    let first_of_project = match code.tsconfig_override {
+        Some(_) => 0,
+        None => first_entry_point_of_largest_project(host, code, entry_paths),
+    };
+    let of_project = &entry_paths[first_of_project..];
+    let config_path = match &code.tsconfig_override {
+        Some(path) if host.is_dir(path) => Some(join(path, b"tsconfig.json")),
+        Some(path) => Some(path.clone()),
+        None => {
+            let directory = match of_project.first() {
                 Some(path) => host.directory_of(path),
                 None => Cow::Borrowed(&code.working_directory[..]),
             };
-            config::find_config(host, &directory)
+            find_config_of_program(host, code, &directory)
         }
     };
     let Some(config_path) = config_path else {
         return Ok(default_project(host, code, entry_paths));
     };
+    if code.tsconfig_override.is_some() && !code.builds_executable && !host.is_file(&config_path) {
+        return Ok(default_project(host, code, entry_paths));
+    }
     let project = config::load_for_build_with_unlisted_files(host, &Session::new(), &config_path);
     let project = project.map(|project| match code.tsconfig_override {
         Some(_) => project,
-        None => find_project_of_first_entry_point(host, project, entry_paths),
+        None => find_project_of_first_entry_point(host, project, of_project),
     });
     project.map_err(|errors| LoadFailure {
         unresolved_entry_points: Vec::new(),
@@ -284,43 +497,41 @@ fn find_project(
     })
 }
 
-pub fn find_configuration_of_each_entry_point(
+fn first_entry_point_of_largest_project(
     host: &dyn CodeHost,
-    request: &CompileRequest<'_, '_>,
-) -> Option<Vec<Vec<u8>>> {
-    let entry_paths = match request.entry_points {
-        EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
-            resolve_entry_points(host, request.code, specifiers).ok()?
-        }
-        EntryPoints::Resolved(paths)
-        | EntryPoints::Imported(paths)
-        | EntryPoints::Configured(paths, _) => paths.to_vec(),
-    };
-    let mut of_folder: FxHashMap<Vec<u8>, Option<Vec<u8>>> = FxHashMap::default();
-    let mut found = Vec::with_capacity(entry_paths.len());
-    for entry_path in &entry_paths {
-        let folder = host.directory_of(entry_path).into_owned();
-        if let Some(Some(known)) = of_folder.get(&folder) {
-            found.push(known.clone());
-            continue;
-        }
-        let project = find_project(host, request, core::slice::from_ref(entry_path)).ok()?;
-        let nearest = match request.code.tsconfig_override {
-            Some(_) => None,
-            None => config::find_config(host, &folder),
-        };
-        let is_chosen_by_folder = nearest.is_none_or(|nearest| nearest == project.config_path);
-        of_folder.insert(
-            folder,
-            is_chosen_by_folder.then(|| project.config_path.clone()),
-        );
-        found.push(project.config_path);
+    code: &CodeOptions,
+    entry_paths: &[Vec<u8>],
+) -> usize {
+    struct Project {
+        config_path: Option<Vec<u8>>,
+        first: usize,
+        count: usize,
     }
-    Some(found)
+    let mut projects: Vec<Project> = Vec::new();
+    let mut of_folder: FxHashMap<Cow<'_, [u8]>, usize> = FxHashMap::default();
+    for (position, path) in entry_paths.iter().enumerate() {
+        let folder = of_folder.entry(host.directory_of(path));
+        let index = *folder.or_insert_with_key(|folder| {
+            let config_path = find_config_of_program(host, code, folder);
+            let known = projects.iter().position(|it| it.config_path == config_path);
+            known.unwrap_or_else(|| {
+                projects.push(Project {
+                    config_path,
+                    first: position,
+                    count: 0,
+                });
+                projects.len() - 1
+            })
+        });
+        projects[index].count += 1;
+    }
+    let configured = projects.iter().filter(|it| it.config_path.is_some());
+    let largest = configured.rev().max_by_key(|it| it.count);
+    largest.map_or(0, |it| it.first)
 }
 
 fn options_of_working_directory(host: &dyn CodeHost, code: &CodeOptions) -> Options {
-    let config_path = config::find_config(host, &code.working_directory);
+    let config_path = config::find_config_in(host, &code.working_directory);
     let stated = config_path
         .and_then(|path| config::load_options_for_build(host, &Session::new(), &path).ok());
     stated
@@ -356,6 +567,13 @@ fn add_files_of_other_projects(
     let mut referenced_by: FxHashMap<Vec<u8>, ReferencedProjects> = FxHashMap::default();
     let mut added = vec![program.config_path.clone()];
     let mut files: Option<FxHashSet<Vec<u8>>> = None;
+    let (allows_js, resolves_json) = (
+        program.options.allow_js,
+        program.options.resolve_json_module,
+    );
+    let is_root_file_of_program = |path: &[u8]| {
+        (allows_js || !is_javascript(path)) && (resolves_json || !path.ends_with(b".json"))
+    };
     let mut add = |project: config::Project, added: &mut Vec<Vec<u8>>| {
         if !added.contains(&project.config_path) {
             added.push(project.config_path);
@@ -364,6 +582,7 @@ fn add_files_of_other_projects(
             let new_files = project
                 .files
                 .into_iter()
+                .filter(|path| is_root_file_of_program(path))
                 .filter(|path| files.insert(path.clone()));
             program.files.extend(new_files);
         }
@@ -427,12 +646,12 @@ fn without_files(project_origin: FileOrigin) -> ProgramOrigins<'static, 'static>
         files: None,
         origins: &[],
         project_origin,
-        without_bun_types: None,
-        lacks_installed_bun_types: false,
+        bun_types: &BunTypes::Installed,
+        has_configuration_file: true,
     }
 }
 
-fn default_project(
+pub(super) fn default_project(
     host: &dyn Host,
     code: &CodeOptions,
     entry_paths: &[Vec<u8>],
@@ -440,7 +659,7 @@ fn default_project(
     let mut options = default_compiler_options();
     if let Json::Object(options) = &mut options {
         config::merge_compiler_options(options, config::compile_build_overrides(), &[]);
-        options.retain(|option| option.0 != b"verbatimModuleSyntax");
+        options.retain(|option| option.0 != b"verbatimModuleSyntax" && option.0 != b"lib");
     }
     let directory = &code.working_directory;
     let mut project = config::without_config(host, directory, options, entry_paths.to_vec());
@@ -468,6 +687,7 @@ fn name_bun_types(options: &mut Options) {
     let is_named = (types.iter()).any(|name| matches!(&name[..], b"bun" | b"bun-types" | b"*"));
     if !is_named {
         types.push(b"bun".to_vec());
+        options.names_bun_types_by_itself = true;
     }
 }
 

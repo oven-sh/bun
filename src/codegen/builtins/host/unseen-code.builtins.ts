@@ -9,47 +9,54 @@ const machineCodeLoaders = [
   "bun:ffi.dlopen",
   "bun:ffi.linkSymbols",
   "native:Bindgen:ffi.bind.ts:cc",
+  "native:Bindgen:ffi.bind.ts:linkLibrary",
+  "native:Bindgen:ffi.bind.ts:makeCallback",
+  "native:Bindgen:ffi.bind.ts:makeFunction",
+  "native:Bindgen:ffi.bind.ts:openLibrary",
   "process.dlopen",
 ];
 
 const moduleLoaders = [
   "%ModuleRequire%",
   "%ModuleRequire%.extensions",
+  "%ModuleRequirePrototype%.extensions",
   "%PrivateGlobals%.createInternalModuleById",
-  "%PrivateGlobals%.esmLoadSync",
-  "%PrivateGlobals%.requireCommonJS",
   "Bun.ModuleGraph",
-  "Bun.build",
   "Bun.plugin",
-  "ShadowRealm.prototype.importValue",
   "node:module._extensions",
   "node:module._load",
   "node:module.runMain",
   "process.getBuiltinModule",
 ];
 
-const textEvaluators = [
-  "%NodeVMBinding%.Module",
-  "%NodeVMBinding%.Script",
-  "%NodeVMBinding%.compileFunction",
-  "ShadowRealm.prototype.evaluate",
-  "native:Cpp:NodeVM.cpp:Bun::createNodeVMBinding",
-];
+const textEvaluators = ["%NodeVMBinding%.Module", "%NodeVMBinding%.Script", "%NodeVMBinding%.compileFunction"];
 
 const heapEnumerators = ["bun:jsc.getProtectedObjects"];
 
 const unseenCodeEntries = [...moduleLoaders, ...textEvaluators, ...heapEnumerators];
 
+// The library's `require` calls these for a name that somebody has handed to a loader above. That load answers for the file that the name finds.
+const nativeCodeOfLoaders = [
+  "%PrivateGlobals%.esmLoadSync",
+  "%PrivateGlobals%.internalRequire",
+  "%PrivateGlobals%.loadEsmIntoCjs",
+  "%PrivateGlobals%.requireCommonJS",
+  "%PrivateGlobals%.requireESM",
+];
+
 // A worker has a heap of its own and starts with an entry point of the build: the loader of its realm refuses everything else.
 const seenCodeEntries = [
   ...machineCodeLoaders,
+  ...nativeCodeOfLoaders,
   "%NodeVMBinding%.createContext",
   "%NodeVMBinding%.isContext",
   "%NodeVMBinding%.isModuleNamespaceObject",
+  "%PrivateGlobals%.createFIFO",
   "Bun.Transpiler",
   "Worker",
   "bun:jsc.startRemoteDebugger",
   "native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag",
+  "native:Cpp:NodeVM.cpp:Bun::createNodeVMBinding",
   "native:Cpp:Worker.cpp:createNodeWorkerConstructor",
   "native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding",
   "native:NewCppFunction:BunDebugger.cpp:jsFunction_closeNodeInspector",
@@ -62,8 +69,16 @@ const seenCodeEntries = [
   "native:NewCppFunction:ModuleGraph.cpp:jsFunctionModuleGraphFrameOfFrame",
   "native:NewCppFunction:ModuleGraph.cpp:jsFunctionModuleGraphOfFrame",
   "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled",
+  "native:NewCppFunction:NodeVM.cpp:jsFunctionSetNewContextsHaveGC",
   "native:NewCppFunction:Worker.cpp:jsFunctionPostMessage",
   "native:Bindgen:napi_body.bind.ts:threadsafeFunctionLiveCount",
+  "node:module._debug",
+  "node:module._findPath",
+  "node:module._initPaths",
+  "node:module._pathCache",
+  "node:module._resolveLookupPaths",
+  "node:module.constants",
+  "node:module.globalPaths",
   "process.binding",
 ];
 
@@ -77,6 +92,7 @@ const classesWithConstructor = [
   "%BlockList%",
   "%BuildMessage%",
   "%Crypto%",
+  "%Dirent%",
   "%ELDHistogram%",
   "%Expect%",
   "%ExpectTypeOf%",
@@ -139,6 +155,7 @@ const prototypesWithoutConstructor = [
   "%ExpectStringContaining%.prototype",
   "%ExpectStringMatching%.prototype",
   "%FFI%.prototype",
+  "%FFICallback%.prototype",
   "%FSWatcher%.prototype",
   "%FileInternalReadableStreamSource%.prototype",
   "%HTMLBundle%.prototype",
@@ -171,8 +188,10 @@ const prototypesWithoutConstructor = [
 
 const moduleNamespaces = [
   "abort-controller",
+  "bun:jsc",
   "bun:sqlite",
   "bun:test",
+  "bun:test/vitest",
   "node:_http_agent",
   "node:_http_client",
   "node:_http_common",
@@ -260,10 +279,12 @@ const nativeFiles = [
   "NodeV8.cpp",
   "ProcessBindingTTYWrap.cpp",
   "StructuredClone.cpp",
+  "TestEnvironment.cpp",
   "Undici.cpp",
   "UtilInspect.cpp",
   "ZigSourceProvider.cpp",
   "bindgen_test.bind.ts",
+  "declared_results_testing.bind.ts",
   "decodeURIComponentSIMD.cpp",
   "highway_strings_testing.cpp",
   "node_crypto_binding.cpp",
@@ -276,6 +297,8 @@ export default b.declarations(
   unseenCodeEntries.flatMap(path => b.extend(path, { runsUnseenCode: true })),
   seenCodeEntries.flatMap(path => b.extend(path, { runsUnseenCode: false })),
   b.extend("Bun.serve", { runsUnseenCode: b.whenOperandHasProperty("options", "app") }),
+  // A macro of a file that it bundles runs in a VM of its own, and only where the executable admits code that was not compiled into it.
+  b.extend("Bun.build", { runsUnseenCode: b.whenBuildAdmitsRuntimeCode }),
   b.seenCodeOnly({
     holders: [...hostObjects, ...classesWithConstructor, ...prototypesWithoutConstructor, ...moduleNamespaces],
     nativeFiles,

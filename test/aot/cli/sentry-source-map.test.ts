@@ -6,7 +6,7 @@ import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harne
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
-import { built, slot, spawned } from "../run-programs";
+import { built, slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };

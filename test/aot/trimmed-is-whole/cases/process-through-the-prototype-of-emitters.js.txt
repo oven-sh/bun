@@ -25,6 +25,7 @@ EventEmitter.prototype[["__define", "Getter__"].join("")]("noDeprecation", funct
 util.deprecate(() => {}, "x")();
 seen();
 //// the-chain-of-a-server
+//@ alone
 //@ exit 1
 let proto = Object.getPrototypeOf(http.createServer());
 while (Object.getPrototypeOf(Object.getPrototypeOf(proto))) proto = Object.getPrototypeOf(proto);

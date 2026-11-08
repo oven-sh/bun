@@ -438,7 +438,7 @@ for (const log of result.logs) {
 
 ### `bun compile`
 
-[`bun compile`](/compiler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. Like the build, it takes entry points.
+[`bun compile`](/compiler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. It also reports the type errors in code that the executable leaves out, such as a function that nothing calls. `bun compile --check` stops at those too. Like the build, it takes entry points.
 
 `bun check --aot` takes `--define k=v`, like `bun compile`. A define decides which code the build removes, and the build reports no errors in code that it removes. Pass both commands the same defines, so that they see the same program.
 
@@ -449,7 +449,7 @@ bun compile --define 'process.env.NODE_ENV="production"' ./server.ts
 
 It checks each file with the `tsconfig.json` that the build uses for it, so it takes neither `-b` nor [compiler options as flags](#compiler-options-as-flags). `-p` is the build's `--tsconfig-override`.
 
-With `--explain`, it also lists [the code that compiled to a slow path](/compiler/explain), worst first, with a fix for each. `--explain=guards` lists [every type guard that can fail at run time](/compiler/debugging#list-them-from-your-source).
+With `--explain`, it also lists [the code that compiled to a slow path](/compiler/explain), worst first, with a fix for each. `--explain=guards` lists [every type guard that can fail at run time](/compiler/debugging#find-the-guards-that-fail).
 
 ## If `package.json` has a `check` script
 

@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
-import { slot, spawned } from "../run-programs";
+import { slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 type Files = Record<string, string>;

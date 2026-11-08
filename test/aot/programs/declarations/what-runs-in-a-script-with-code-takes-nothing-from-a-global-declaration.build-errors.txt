@@ -1,2 +1,0 @@
-error: TS2339: Property 'declared' does not exist on type 'Held'.
-error: TS2345: Argument of type '3' is not assignable to parameter of type 'Level'.

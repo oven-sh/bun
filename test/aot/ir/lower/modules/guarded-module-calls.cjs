@@ -13,6 +13,20 @@
 // LOADCALL: [[other]]([[callee]]):
 // LOADCALL-NEXT: = Call [[callee]], -, [[specifier]] calleeName="require"
 
+// RUN(MODULE): lower
+// MODULE-LABEL: function {{*}}name="loadThroughModule"
+// MODULE: [[module]] = Convert {{*}}declared={type=builtin(ModuleObject) flags=[IsExpected]}
+// MODULE-NEXT: [[read]] = PropGet [[module]] key="require"
+// MODULE-NEXT: [[callee]] = Convert [[read]] declared={type=builtin(ModuleRequire) flags=[IsExpected]}
+// MODULE-NEXT: [[specifier]] = String string="./imports/common.cjs"
+// MODULE-NEXT: [[expected]] = ModuleBuiltin builtin=ModuleRequire module=m
+// MODULE-NEXT: [[same]] = StrictEq [[callee]], [[expected]]
+// MODULE-NEXT: Branch [[same]] -> taken [[matched]](), notTaken [[other]](| 0)
+// MODULE: [[matched]]():
+// MODULE: EvaluateModule module=m
+// MODULE: [[other]]([[replaced]]):
+// MODULE-NEXT: = Call [[replaced]], [[module]], [[specifier]] calleeName="module.require"
+
 // RUN(NATIVE): lower
 // NATIVE-LABEL: function {{*}}name="native"
 // NATIVE: = PropGet {{*}}key="getBuiltinModule"
@@ -40,8 +54,12 @@ function load() {
   return require("./imports/common.cjs");
 }
 
+function loadThroughModule() {
+  return module.require("./imports/common.cjs");
+}
+
 function native() {
   return process.getBuiltinModule("node:buffer");
 }
 
-module.exports = { load, native };
+module.exports = { load, loadThroughModule, native };

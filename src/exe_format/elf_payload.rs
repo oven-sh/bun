@@ -10,10 +10,11 @@ use crate::elf::{
 use crate::elf_program_headers::{
     PAYLOAD_SEGMENT_COUNT, PT_BUN_PAYLOAD, PT_NULL, find_reserved_segment,
 };
+use crate::mapped_file::{ReadOnce, TemplateBytes};
 use crate::{align_up, read_struct, write_struct};
 
 pub enum Piece<'a> {
-    Bytes(&'a [u8]),
+    Bytes(ReadOnce<'a>),
     Zeros(u64),
     Length([u8; 8]),
 }
@@ -202,34 +203,43 @@ impl PayloadPlan {
     }
 }
 
-impl<'a> ElfFile<&'a mut [u8]> {
-    pub fn over(data: &'a mut [u8]) -> Result<ElfFile<&'a mut [u8]>, ElfError> {
-        validate_elf64_le(data)?;
+impl<'a> ElfFile<TemplateBytes<'a>> {
+    pub fn over(data: TemplateBytes<'a>) -> Result<ElfFile<TemplateBytes<'a>>, ElfError> {
+        validate_elf64_le(&data)?;
         Ok(ElfFile { data })
     }
 
-    /// Find the `.bun` section and place `payload` so the kernel `mmap`s it at exec time alongside the rest of the binary.
+    /// Find the `.bun` section and place the payload so the kernel `mmap`s it at exec time alongside the rest of the binary.
+    /// `parts`, one behind the other, are the payload.
     pub fn bun_section_in_pieces(
         mut self,
-        payload: &'a [u8],
+        parts: &[&'a [u8]],
         code: Option<Range<u64>>,
-    ) -> Result<[Piece<'a>; 6], ElfError> {
-        let plan = self.plan_payload(payload.len() as u64, code)?;
+    ) -> Result<Vec<Piece<'a>>, ElfError> {
+        let payload_length: u64 = parts.iter().map(|part| part.len() as u64).sum();
+        let plan = self.plan_payload(payload_length, code)?;
         self.write_payload_headers(&plan);
 
         let head_end = plan.head_end();
-        let data: &'a [u8] = self.data;
-        Ok([
-            Piece::Bytes(&data[..usize::try_from(head_end).expect("int cast")]),
+        let mut data = self.data.read_once();
+        let mut take_up_to = |end: u64| {
+            let end = usize::try_from(end).expect("int cast");
+            data.take_first(end - data.offset())
+        };
+        let head = take_up_to(head_end);
+        drop(take_up_to(plan.tail_start));
+        let tail = take_up_to(plan.tail_end);
+        let mut pieces = vec![
+            Piece::Bytes(head),
             Piece::Zeros(plan.file_offset - head_end),
-            Piece::Length((payload.len() as u64).to_le_bytes()),
-            Piece::Bytes(payload),
+            Piece::Length(payload_length.to_le_bytes()),
+        ];
+        pieces.extend(parts.iter().map(|&part| Piece::Bytes(ReadOnce::kept(part))));
+        pieces.extend([
             Piece::Zeros(plan.aligned_size - plan.content_size),
-            Piece::Bytes(
-                &data[usize::try_from(plan.tail_start).expect("int cast")
-                    ..usize::try_from(plan.tail_end).expect("int cast")],
-            ),
-        ])
+            Piece::Bytes(tail),
+        ]);
+        Ok(pieces)
     }
 }
 
@@ -845,14 +855,14 @@ mod tests {
         (result, elf.data)
     }
 
-    fn concatenate(pieces: [Piece<'_>; 6]) -> Vec<u8> {
+    fn concatenate(pieces: Vec<Piece<'_>>) -> Vec<u8> {
         let mut bytes = Vec::new();
         for piece in pieces {
             let start = bytes.len();
-            match piece {
+            match &piece {
                 Piece::Bytes(slice) => bytes.extend_from_slice(slice),
-                Piece::Zeros(count) => bytes.resize(start + count as usize, 0),
-                Piece::Length(length) => bytes.extend_from_slice(&length),
+                Piece::Zeros(count) => bytes.resize(start + *count as usize, 0),
+                Piece::Length(length) => bytes.extend_from_slice(length),
             }
             assert_eq!(piece.len(), (bytes.len() - start) as u64);
         }
@@ -861,16 +871,16 @@ mod tests {
 
     fn write_in_pieces(template: &[u8], payload: &[u8]) -> (Result<Vec<u8>, ElfError>, Vec<u8>) {
         let mut bytes = template.to_vec();
-        let written = ElfFile::over(&mut bytes)
-            .and_then(|elf| elf.bun_section_in_pieces(payload, None))
+        let written = ElfFile::over(TemplateBytes::Kept(&mut bytes))
+            .and_then(|elf| elf.bun_section_in_pieces(&[payload], None))
             .map(concatenate);
         (written, bytes)
     }
 
     fn write_with_code(template: &[u8], payload: &[u8], code: Range<u64>) -> Vec<u8> {
         let mut bytes = template.to_vec();
-        let elf = ElfFile::over(&mut bytes).unwrap();
-        concatenate(elf.bun_section_in_pieces(payload, Some(code)).unwrap())
+        let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
+        concatenate(elf.bun_section_in_pieces(&[payload], Some(code)).unwrap())
     }
 
     fn payload_segments(elf: &[u8]) -> Vec<(u32, u64, u64)> {
@@ -1078,6 +1088,33 @@ mod tests {
                 [(PF_R, 0, page), (PF_R | PF_X, page, 2 * page)]
             );
             assert_eq!(find_reserved_segment(&to_the_end), None);
+        }
+    }
+
+    #[test]
+    fn payload_in_parts_is_written_as_the_joined_payload() {
+        for architecture in ARCHITECTURES {
+            let mut trimmed = template(architecture);
+            remove_text_pages(&mut trimmed);
+            let page = page_size(&trimmed);
+            let payload = create_payload(4 * page);
+            let code = page - 8..3 * page - 8;
+            let joined = write_with_code(&trimmed, &payload, code.clone());
+            let ends = [[0, 0], [1, 2], [code.start, code.end], [4 * page, 4 * page]];
+            for [first, second] in ends.map(|ends| ends.map(|end| end as usize)) {
+                let parts = [
+                    &payload[..first],
+                    &payload[first..second],
+                    &payload[second..],
+                ];
+                let mut bytes = trimmed.clone();
+                let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
+                let pieces = elf
+                    .bun_section_in_pieces(&parts, Some(code.clone()))
+                    .unwrap();
+                assert_eq!(pieces.len(), 8);
+                assert!(concatenate(pieces) == joined);
+            }
         }
     }
 

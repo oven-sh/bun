@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: module [[entry]] path="{{*}}with-and-eval-variables"
+// CHECK: module [[entry]] path="{{*}}with-and-eval-variables.cjs"
 // CHECK: evalscope [[scope]] mode=Sloppy flags=[IsInFunction, AllowsNewTarget] bindings=[{kind=WithObject depth=1 operand=
 // CHECK: {kind=EvalVariables depth=
 // CHECK: function [[f]] name="f" module=[[entry]]

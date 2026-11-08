@@ -19,7 +19,7 @@ use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::config::{change_extension, compare_strings_case_insensitive};
 use crate::json::Json;
-use crate::program::{get_output_extension, source_file_may_be_emitted};
+use crate::program::{ReadingTask, get_output_extension, source_file_may_be_emitted};
 use crate::resolve::{
     JsxEmit, ObjectKind, Paths, ancestors, best_pattern, contains_path,
     ensure_path_is_non_module_name, equate_string_case_insensitive, get_base_file_name,
@@ -36,6 +36,7 @@ use bun_paths::resolve_path::{dirname, relative_normalized};
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::rc::Rc;
+use std::sync::atomic::Ordering::Relaxed;
 
 mod commonjs;
 
@@ -2176,6 +2177,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if results.is_empty() {
+            // In a build the trees of a module go behind the last file that imports it.
+            if files.is_compile_build() {
+                return Rc::default();
+            }
             results = self.modules_that_export(symbol);
         }
         let results = Rc::new(results);
@@ -2234,35 +2239,85 @@ impl<'p, 's> Checker<'p, 's> {
         modules
     }
 
+    /// True if `exporting_modules` resolves the exports of `file`.
+    pub(super) fn is_searched_for_exports(&self, file: FileId) -> bool {
+        let module = self.files().module(file);
+        // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
+        // `is_leaf`, which is immutable after loading, before reading `hir`.
+        !module.is_leaf && module.hir.has_module_syntax
+    }
+
     /// The first call for the program builds the index.
+    ///
+    /// Resolving an export can close a cycle, and what the index says of that export depends on where the cycle was
+    /// entered. So the index of a task that was discarded isn't kept. The recheck builds it again and enters the same
+    /// cycles, this time from the first file that leads there. What a discarded task prints is dropped, so it gets an
+    /// empty index.
     fn exporting_modules(&mut self) -> &'p ExportingModules {
+        const MODULES_READ_IN_A_TASK: usize = 1024;
         let program = self.p;
         if let Some(index) = program.exporting_modules.get() {
             return index;
         }
+        if self.was_discarded() {
+            return &program.no_exporting_modules;
+        }
         let files = self.files();
-        let mut index = ExportingModules::default();
-        for (position, &file) in (0..).zip(files.order) {
-            let module = files.module(file);
-            // A leaf file doesn't export aliases. The task that checks it frees its HIR (`Files::free_tree`). Test
-            // `is_leaf`, which is immutable after loading, before reading `hir`.
-            if module.is_leaf || !module.hir.has_module_syntax {
-                continue;
+        let stopped_at = program.exporting_modules_stopped_at.load(Relaxed);
+        if let Some(&file) = files.order.get(stopped_at as usize)
+            && !self.task.is_trusted_about_every_cycle()
+        {
+            self.add_exports_of_module(&mut ExportingModules::default(), file, stopped_at);
+            if self.was_discarded() {
+                return &program.no_exporting_modules;
             }
-            index.positions.insert(file, position);
-            let module = files.file_symbol(file);
-            let equals = files.export(module, known::export_equals);
-            let exports = self.exports_of_symbol(module);
-            for exported in equals.into_iter().chain(exports.iter().map(|it| it.1)) {
-                if let AliasTarget::Symbol(target) = self.merged_resolved_symbol(exported) {
-                    let positions = index.by_target.entry(target).or_default();
-                    if positions.last() != Some(&position) {
-                        positions.push(position);
-                    }
+        }
+        let mut index = ExportingModules::default();
+        let mut position = 0;
+        for modules in files.order.chunks(MODULES_READ_IN_A_TASK) {
+            let _reading = ReadingTask::begin();
+            for &file in modules {
+                self.add_exports_of_module(&mut index, file, position);
+                if self.was_discarded() {
+                    (program.exporting_modules_stopped_at).store(position, Relaxed);
+                    return &program.no_exporting_modules;
                 }
+                position += 1;
             }
         }
         program.exporting_modules.get_or_init(|| index)
+    }
+
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn modules_searched_for_exports(&self) -> usize {
+        self.p.modules_searched_for_exports.load(Relaxed)
+    }
+
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn search_exports_of_every_module(&mut self) -> usize {
+        self.exporting_modules();
+        self.p.modules_searched_for_exports.load(Relaxed)
+    }
+
+    fn add_exports_of_module(&mut self, index: &mut ExportingModules, file: FileId, position: u32) {
+        if self.was_discarded() || !self.is_searched_for_exports(file) {
+            return;
+        }
+        #[cfg(any(test, feature = "test_support"))]
+        self.p.modules_searched_for_exports.fetch_add(1, Relaxed);
+        let files = self.files();
+        index.positions.insert(file, position);
+        let module = files.file_symbol(file);
+        let equals = files.export(module, known::export_equals);
+        let exports = self.exports_of_symbol(module);
+        for exported in equals.into_iter().chain(exports.iter().map(|it| it.1)) {
+            if let AliasTarget::Symbol(target) = self.merged_resolved_symbol(exported) {
+                let positions = index.by_target.entry(target).or_default();
+                if positions.last() != Some(&position) {
+                    positions.push(position);
+                }
+            }
+        }
     }
 
     /// "look for a variable in scope with the container's type which may be acting like a namespace (eg, `Symbol` acts

@@ -1,11 +1,12 @@
 // With the React Compiler on, the code of a component file is the compiler's output, which --aot compiles as untyped code, and the file
 // as it is written only says what the types are. Each program in ./react-compiler runs under plain Bun and as an --aot executable that
-// ./react-compiler/build.ts has built, and prints the same. ./react-compiler/react-stand-in has the three modules that the output imports.
-import { afterAll, describe, expect, test } from "bun:test";
+// ./react-compiler/build.ts has built, and prints the same. ./react-compiler/react-stand-in has the three modules that the output imports. Two more cases: ./react-compiler-2.test.ts.
+import { describe, expect } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, told, unsupported } from "./run-programs";
+import { built, slot, spawned, told, unsupported } from "./harness/commands";
+import { afterAll, test } from "./harness/default-timeout";
 
 const programs = join(import.meta.dir, "react-compiler");
 
@@ -22,6 +23,7 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     "names-that-only-types-in-a-component-use",
     "outside-variables-that-a-component-only-assigns",
     "list-of-two-spreads-in-a-component",
+    "import-meta-glob",
   ])(
     "%s",
     name =>
@@ -42,49 +44,40 @@ describe.skipIf(!!unsupported)("compile/aot/react-compiler", () => {
     600_000,
   );
 
-  test(
-    "component-files-with-slow-plugin",
-    () =>
-      slot(async () => {
-        const main = join(programs, "component-files-with-slow-plugin", "main.ts");
-        const executable = join(folder, "component-files-with-slow-plugin");
-        built(
-          await spawned(
-            [bunExe(), "run", join(programs, "build-with-slow-plugin.ts"), main, executable],
-            programs,
-            bunEnv,
-          ),
-        );
-        const compiled = await spawned([executable], programs, bunEnv);
-        expect(compiled.signal).toBeNull();
-        // Each of the three components ran as the compiler's output.
-        expect(compiled.stderr.match(/^\[react-compiler\] a cache of /gm)?.length).toBe(3);
-        const plain = await spawned([bunExe(), "run", main], programs, bunEnv);
-        expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
-        expect(told({ ...compiled, stderr: compiled.stderr.replace(/^\[react-compiler\] .*\n/gm, "") })).toEqual(
-          told(plain),
-        );
-      }),
-    600_000,
-  );
-
-  test(
-    "type-error-in-component-file",
-    () =>
-      slot(async () => {
-        const main = join(programs, "type-error-in-component-file", "main.ts");
-        const build = await spawned(
-          [bunExe(), "run", join(programs, "build.ts"), main, join(folder, "type-error-in-component-file")],
-          programs,
-          bunEnv,
-        );
-        expect({ errors: build.stderr.match(/\bTS\d+: .*/g), signal: build.signal, exitCode: build.exitCode }).toEqual({
-          // The helper's error. The two inside the component are not reported: the React Compiler has replaced that function, and what is checked is no longer what was written.
-          errors: ["TS2322: Type 'string' is not assignable to type 'number'."],
-          signal: null,
-          exitCode: 1,
-        });
-      }),
-    600_000,
-  );
+  // What the compiler memoizes depends on the shape of its input, so on what the parser folded, merged and removed first. At the same flags an --aot
+  // executable prints what a bundled executable prints, and its components ask for caches of the same sizes.
+  // The two share the parser and the compiler, so they share their bugs: a program whose components are pure also prints what it prints with the compiler off.
+  describe.each([
+    ["impure-call-after-statement-in-catch", "impure"],
+    ["parser-rewrites-before-the-compiler", "impure"],
+    ["commonjs-component", "impure"],
+    ["pure-components", "pure"],
+    ["code-that-nothing-reaches-beside-a-component", "pure"],
+  ])("same-as-bundle/%s", (name, purity) => {
+    // TODO: Macros.tsx calls a macro, and --aot refuses every macro at build time (TS100053: Macros are disabled).
+    (name === "parser-rewrites-before-the-compiler" ? test.todo : test.concurrent).each(["none", "syntax", "all"])(
+      "minify: %s",
+      minified =>
+        slot(async () => {
+          const directory = join(programs, "same-as-bundle");
+          const main = join(directory, name, "main.tsx");
+          const run = async (kind: "aot" | "bundle" | "uncompiled") => {
+            const executable = join(folder, [name, kind, minified].join("-"));
+            built(
+              await spawned(
+                [bunExe(), "run", join(directory, "build.ts"), main, executable, kind, minified],
+                directory,
+                bunEnv,
+              ),
+            );
+            return told(await spawned([executable], directory, bunEnv));
+          };
+          const bundled = await run("bundle");
+          expect(bundled.stderr).toContain("[react-compiler] a cache of ");
+          expect(await run("aot")).toEqual(bundled);
+          if (purity === "pure") expect((await run("uncompiled")).stdout).toBe(bundled.stdout);
+        }),
+      600_000,
+    );
+  });
 });

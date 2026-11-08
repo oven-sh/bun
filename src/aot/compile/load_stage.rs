@@ -1,61 +1,64 @@
-use super::import_graph::ImportGraph;
-use super::{
-    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, mentions_worker_constructor,
-    preload_of,
+use super::runtime_reach::ReachWhileLoading;
+use super::{Build, CodeOfWorkers, EntryPointPaths, LoadedBuild, LoadedProject, Options};
+use crate::builtins::table::{self, BuiltinId};
+use crate::builtins::{BuiltinNames, ResolvedBuiltins, RuntimeModule};
+use crate::diagnostic_codes::Code;
+use crate::diagnostics::{Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView, Span};
+use crate::link::run_beside;
+use crate::load::contents::worker_entries::source_path_of;
+use crate::load::contents::{
+    ContentsInput, EntryPointFinder, FinderInput, FoundEntryPoint, ProgramContents,
+    collect_program_contents,
 };
-use crate::builtins::BuiltinNames;
-use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
-use crate::load::named_loads::resolve_loads_through_imported_loaders;
+use crate::load::module_paths::{count_folders, spell_with_other_levels};
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
-use crate::load::runtime_roots::{RuntimeRoots, collect_runtime_roots};
+use crate::load::runtime_roots::{
+    FurtherLibraryCode, RuntimeRoots, builtins_used_at_start, collect_runtime_roots,
+};
 use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
-use crate::load::worker_files::{
-    WorkerSearch, find_code_that_starts_workers, find_embedded_code_files, source_path_of,
-};
-use crate::load::{PerProject, ProjectId, SourceKind, Sources};
-use crate::statistics::{LimitId, LimitValues, Stage, StatisticId, Statistics};
+use crate::load::{PerProject, ProjectId, Sources};
+use crate::modules::asks_for_original_beside_mock;
+use crate::statistics::{Stage, StepClock};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
+use bun_sema::hir::{ExprId, ExprKind};
 use bun_sema::import_sites::ImportSpecifier;
-use bun_sema::program::{FileId, Files, MainModule, Run};
+use bun_sema::node::NodeData;
+use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
-    CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
-    find_configuration_of_each_entry_point, load_program_with_parsed_files, resolve_entry_point,
+    ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram, fit_threads_to_sources,
+    load_program,
 };
 use bun_threading::Guarded;
-use core::sync::atomic::Ordering;
 use std::cell::Cell;
 use std::mem::take;
 use std::thread::Scope;
-use std::time::Instant;
 
 const MAX_ASSET_READERS: usize = 64;
 
-/// What plugins make of the assets is needed when the executable is written. A plugin can take seconds for one.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum AssetReads {
     #[cfg(test)]
     FinishedByLoad,
-    /// They go on while `then` runs, which calls `LoadedBuild::finish_asset_reads`.
     FinishedLater,
 }
 
 type Then<'t, 'a, R> =
     &'t mut dyn for<'b, 's> FnMut(&mut Build<'a>, LoadedBuild<'b, 's>) -> Result<R, Stage>;
 
-// Each reader starts the next: the calling thread pays for one thread.
 fn start_asset_readers<'scope>(
     scope: &'scope Scope<'scope, '_>,
     host: &'scope LoadHost<'_>,
@@ -79,10 +82,236 @@ fn start_asset_readers<'scope>(
     });
 }
 
+fn warn_of_files_left_out_by_patterns(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    host: &LoadHost<'_>,
+) {
+    const NAMES_SPELLED: usize = 5;
+    const CURES: [&[u8]; 2] = [
+        b"Write the extension (`./${lang}.json`) or `with: { type: \"json\" }` to embed them",
+        b"A path that isn't a constant never finds a file whose name begins with a dot. Import it by a constant path",
+    ];
+    let files = view.files();
+    let mut left_out = host.files_left_out_by_patterns();
+    if left_out.is_empty() {
+        return;
+    }
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    left_out.retain(|it| !held.contains(&it.path[..]));
+    let compiled = files.compiled_files().iter();
+    for &file in compiled.filter(|_| !left_out.is_empty()) {
+        let (analysis, atoms) = (files.analysis(file), files.atoms());
+        let folder = host.directory_of(files.file_name(file));
+        let left_out_by = |written: &ImportSpecifier| {
+            let ImportSpecifier::Pattern { prefix, suffix } = *written else {
+                return &left_out[..0];
+            };
+            let written_at = [&folder[..], atoms.bytes(prefix), atoms.bytes(suffix)];
+            let start = left_out.partition_point(|it| it.written_at() < written_at);
+            let length = left_out[start..].partition_point(|it| it.written_at() == written_at);
+            &left_out[start..start + length]
+        };
+        for site in analysis
+            .import_sites
+            .iter()
+            .filter(|site| site.kind.loads_module())
+        {
+            let written = analysis.alternatives_of(&site.specifier).iter();
+            let by_cure = written.map(left_out_by).flat_map(|of_pattern| {
+                let data = of_pattern.partition_point(|it| !it.begins_with_dot);
+                let (data, with_dot) = of_pattern.split_at(data);
+                [data, with_dot].into_iter().zip(CURES)
+            });
+            for (left_out, cure) in by_cure.filter(|(left_out, _)| !left_out.is_empty()) {
+                let spelled = left_out.iter().take(NAMES_SPELLED);
+                let spelled: Vec<Box<[u8]>> =
+                    spelled.map(|it| host.display_path_of(&it.path)).collect();
+                let mut list = spelled.join(&b", "[..]);
+                if left_out.len() > spelled.len() {
+                    let more = format!(" and {} more", left_out.len() - spelled.len());
+                    list.extend_from_slice(more.as_bytes());
+                }
+                let node = NodeData::Expr(site.specifier_node);
+                let span = Span::of_node(files.hir(file), file, node);
+                let code = Code::FilesLeftOutByPattern;
+                diagnostics.add(
+                    Some(view),
+                    Diagnostic::new(code, Some(span), &[&list, cure]),
+                );
+            }
+        }
+    }
+}
+
 fn read_assets<'scope>(scope: &'scope Scope<'scope, '_>, host: &'scope LoadHost<'_>) {
     let paths = host.background_reads();
     let count = paths.len().min(MAX_ASSET_READERS);
     start_asset_readers(scope, host, std::sync::Arc::new(Guarded::new(paths)), count);
+}
+
+fn find_starts_that_led_to_files(
+    files: &Files<'_>,
+    sources: &Sources,
+    contents: &ProgramContents,
+) -> Vec<(Vec<u8>, u32)> {
+    let mut places = Vec::new();
+    let starts = contents.found_entry_points.iter();
+    for &(file, start) in starts.flat_map(|found| &found.starts) {
+        let hir = &files.module(file).hir;
+        let ExprKind::New(call) = hir[ExprId(start)].kind else {
+            continue;
+        };
+        let callee = hir.skip_type_assertions(hir[call].callee);
+        for expression in [ExprId(start), callee] {
+            places.push((sources.diagnostic_path(file).to_vec(), hir[expression].pos));
+        }
+    }
+    places
+}
+
+fn find_node_workers_that_led_to_no_file(
+    files: &Files<'_>,
+    contents: &ProgramContents,
+) -> Vec<Diagnostic> {
+    let mut said = Vec::new();
+    for &file in files.compiled_files() {
+        let Some(source) = parsed_source(files, file) else {
+            continue;
+        };
+        for start in &source.contents.node_workers_out_of_sight {
+            let mut found = contents.found_entry_points.iter();
+            let led_to_file = matches!(start.at, NodeData::Expr(at)
+                if found.any(|found| found.starts.contains(&(file, at.0))));
+            if led_to_file {
+                continue;
+            }
+            let code = match start.is_told_to_evaluate {
+                true => Code::WorkerTextNotCompiled,
+                false => Code::WorkerStartedFromUnknownValue,
+            };
+            let span = Span::of_node(&files.module(file).hir, file, start.at);
+            said.push(Diagnostic::new(code, Some(span), &[]));
+        }
+    }
+    said
+}
+
+fn code_of_workers(contents: &ProgramContents) -> CodeOfWorkers {
+    match (
+        contents.names_worker_constructor,
+        contents.hands_worker_constructor_on || contents.starts_worker_out_of_sight,
+    ) {
+        (false, _) => CodeOfWorkers::NoneNamed,
+        (true, true) => CodeOfWorkers::Unseen,
+        (true, false) => CodeOfWorkers::Compiled,
+    }
+}
+
+fn is_path_of_module(module_path: &[u8], alias: &[u8]) -> bool {
+    let is_same_byte =
+        |(&held, &written): (&u8, &u8)| held == written || (held == b'\\' && written == b'/');
+    module_path.len() == alias.len() && module_path.iter().zip(alias).all(is_same_byte)
+}
+
+fn collect_entry_point_aliases(
+    files: &Files<'_>,
+    sources: &Sources,
+    levels_during_load: usize,
+    mut names_written: Vec<EntryPointPaths>,
+) -> (Vec<EntryPointPaths>, Vec<Diagnostic>) {
+    let root = sources.root_of_executable().unwrap_or_default().iter();
+    let root: Vec<u8> = root
+        .map(|&byte| if byte == b'\\' { b'/' } else { byte })
+        .collect();
+    let levels = sources.levels_above_root();
+    for alias in &mut names_written {
+        let name = &alias.public_path;
+        alias.public_path = spell_with_other_levels(&root, name, levels_during_load, levels);
+    }
+    names_written.shared_sort_unstable();
+    names_written.dedup();
+    let begun_at = files.entry_points().iter();
+    let begun_at: FxHashMap<Vec<u8>, FileId> = begun_at
+        .map(|&file| (source_path_of(files.module(file).file_name()), file))
+        .collect();
+
+    names_written.retain(|alias| {
+        let name = &alias.public_path[..];
+        let is_named = |file: &FileId| is_path_of_module(sources.public_path(*file), name);
+        !files.compiled_files().iter().any(is_named)
+    });
+    let same_name = |a: &EntryPointPaths, b: &EntryPointPaths| a.public_path == b.public_path;
+    let (unambiguous, shared): (Vec<_>, Vec<_>) = (names_written.chunk_by(same_name))
+        .partition(|files_of_name: &&[EntryPointPaths]| files_of_name.len() == 1);
+    let said = shared.iter().map(|files_of_name| {
+        let [first, second] = [0, 1].map(|index| {
+            let path = &files_of_name[index].source_path;
+            let file = begun_at.get(path);
+            file.map_or(&path[..], |&file| sources.module_paths(file).display_path)
+        });
+        let arguments = [&files_of_name[0].public_path[..], first, second];
+        Diagnostic::new(Code::WorkerFilesGoByOnePath, None, &arguments)
+    });
+    let said = said.collect();
+    let mut aliases: Vec<EntryPointPaths> = unambiguous.into_iter().flatten().cloned().collect();
+    aliases.retain(|alias| begun_at.contains_key(&alias.source_path));
+    (aliases, said)
+}
+
+fn gets_at_module_loader(files: &Files<'_>, file: FileId, builtins: &ResolvedBuiltins) -> bool {
+    let is =
+        |id: BuiltinId, other: BuiltinId| table::canonical_id(id) == table::canonical_id(other);
+    let tables_of_loaders = [
+        BuiltinId::ModuleRequireExtensions,
+        BuiltinId::ModuleRequirePrototypeExtensions,
+        BuiltinId::NodeModule_extensions,
+    ];
+    let holds_object = || {
+        let expressions = (0..files.hir(file).exprs.len() as u32).map(ExprId);
+        let mut builtins_held = expressions.filter_map(|it| builtins.builtin_of_expression(it));
+        builtins_held.any(|id| is(id, BuiltinId::NodeModule))
+    };
+    builtins
+        .mentioned()
+        .iter()
+        .any(|&id| match is(id, BuiltinId::NodeModule) {
+            true => holds_object(),
+            false => {
+                let mut members = table::members(BuiltinId::NodeModule).iter();
+                tables_of_loaders.iter().any(|&loaders| is(id, loaders))
+                    || (!is(id, BuiltinId::NodeModuleCreateRequire)
+                        && members.any(|&member| is(id, member)))
+            }
+        })
+}
+
+fn may_run_code_outside_image(files: &Files<'_>, file: FileId) -> bool {
+    let (Some(source), Some(compiled)) = (parsed_source(files, file), files.compiled(file)) else {
+        return true;
+    };
+    let is_test_runner = |site: usize| {
+        matches!(compiled.code_answers.get(site), Some(&CodeAnswer::HostModule(id))
+            if RuntimeModule::from_registry_id(id.0) == Some(RuntimeModule::BunTest))
+    };
+    let builtins = &source.builtins;
+    builtins.mentions_evaluator()
+        || gets_at_module_loader(files, file, builtins)
+        || asks_for_original_beside_mock(
+            files.hir(file),
+            files.bound(file),
+            &compiled.analysis,
+            builtins,
+            &files.atoms,
+            &is_test_runner,
+        )
+}
+
+#[derive(Default)]
+struct FoundByLoad {
+    entry_points: Vec<FoundEntryPoint>,
+    names_written: Vec<EntryPointPaths>,
 }
 
 struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
@@ -90,27 +319,20 @@ struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
     request: &'l CompileRequest<'l, 's>,
     scope: &'scope Scope<'scope, 'env>,
     asset_reads: AssetReads,
-    finish_asset_reads: &'l dyn Fn() -> bool,
-    /// Of a build of several programs: for each entry point of the request the position of its program among `Build::programs`.
-    positions: &'l [usize],
+    finish_asset_reads: &'l dyn Fn(),
 }
 
 struct SharedLoadInputs<'c, 's> {
     disk: &'c Disk,
     sessions: PerProject<&'s Session>,
-    world_sessions: &'s [Session],
-    /// One for each load of Bun's own code behind the first.
-    further_runtime_sessions: &'s [Session],
     atoms: Interner<'s>,
     application_fold: &'c FoldInputs<'s>,
     builtin_names: &'c BuiltinNames,
     manifest: &'static Manifest,
     runtime_modules: &'c RuntimeModules,
     messages: &'c LoadMessages,
-    parsed_declarations: Option<&'s Run<'s>>,
 }
 
-/// What the request for a load of Bun's own code borrows.
 struct RuntimeLoadInputs<'c, 's> {
     fold: FoldInputs<'s>,
     code: CodeOptions,
@@ -119,19 +341,10 @@ struct RuntimeLoadInputs<'c, 's> {
     loads_code_by_unknown_names_alone: bool,
 }
 
-// Programs that ask the same of Bun's own code share one load of it.
-fn asks_the_same(a: &RuntimeRoots, b: &RuntimeRoots) -> bool {
-    a.paths == b.paths
-        && a.host_loaded_modules == b.host_loaded_modules
-        && a.modules_named_at_run_time == b.modules_named_at_run_time
-        && a.imports_cluster == b.imports_cluster
-        && a.imports_uncompiled_code == b.imports_uncompiled_code
-        && a.loads_by_unknown_path == b.loads_by_unknown_path
-}
-
 fn create_runtime_modules(archive: &'static Archive, options: &Options<'_>) -> RuntimeModules {
     let runtime_modules = RuntimeModules::new(archive, options.load.omits_builtin_modules)
-        .with_test_aliases(options.load.runs_tests);
+        .with_test_aliases(options.load.runs_tests)
+        .with_first_texts(options.aot.takes_first_texts);
     #[cfg(test)]
     let runtime_modules = runtime_modules.with_replaced_sources(&options.load.in_memory_files);
     runtime_modules
@@ -158,36 +371,36 @@ impl<'a> Build<'a> {
             application: Session::new(),
             runtime: Session::new(),
         };
-        let world_sessions: Vec<Session> = (0..64).map(|_| Session::new()).collect();
-        let program_count = self.programs.map_or(1, |programs| programs.indexes.len());
-        let further: Vec<Session> = (1..program_count).map(|_| Session::new()).collect();
-        let all = (sessions.as_ref(), &world_sessions[..], &further[..]);
-        let result = self.load_in_sessions(all, asset_reads, then);
+        let result = self.load_in_sessions(sessions.as_ref(), asset_reads, then);
         self.retired_sessions
             .extend([sessions.application, sessions.runtime]);
-        let others = world_sessions.into_iter().chain(further);
-        self.retired_sessions
-            .extend(others.filter(|session| !session.is_unused()));
         result
     }
 
     fn load_in_sessions<R>(
         &mut self,
-        (sessions, world_sessions, further_runtime_sessions): (
-            PerProject<&Session>,
-            &[Session],
-            &[Session],
-        ),
+        sessions: PerProject<&Session>,
         asset_reads: AssetReads,
         then: Then<'_, 'a, R>,
     ) -> Result<R, Stage> {
         self.clock.start(Stage::Load);
+        let mut steps = StepClock::new(Stage::Load);
         let options = self.options;
+        self.chosen_threads = match options.aot.thread_count {
+            None => {
+                fit_threads_to_sources();
+                None
+            }
+            Some(_) => Some(ChosenThreads::new(self.threads)),
+        };
         let disk = create_disk(options, self.threads);
         let application_session = sessions.application;
         let atoms = Interner::new_in(application_session);
         let builtin_names = BuiltinNames::new(&atoms);
         let archive = Archive::embedded();
+        let natives = archive.manifest().natives().iter();
+        let natives = natives.map(|native| (&*native.name, native.is_also_member_of_global_this));
+        crate::builtins::resolve::set_natives(natives);
         let runtime_modules = create_runtime_modules(archive, options);
         let messages = LoadMessages::default();
         let provided = messages.with_log(|log| {
@@ -198,25 +411,20 @@ impl<'a> Build<'a> {
             &provided,
             application_session.arena(),
             &atoms,
-            &self.limits,
             self.platform,
+            options.aot.runs_in_place || options.load.runs_tests,
         );
-        let parsed_declarations = preload_of(options).map(|_| {
-            &*(application_session.arena()).alloc(Run::of_compile_build(application_session, atoms))
-        });
         let shared = SharedLoadInputs {
             disk: &disk,
             sessions,
-            world_sessions,
-            further_runtime_sessions,
             atoms,
             application_fold: &application_fold,
             builtin_names: &builtin_names,
             manifest: archive.manifest(),
             runtime_modules: &runtime_modules,
             messages: &messages,
-            parsed_declarations,
         };
+        steps.end("disk, names of built-ins, what folds");
         let result = self.load_projects(&shared, asset_reads, then);
         self.leftovers.push(Box::new(disk));
         result
@@ -230,10 +438,11 @@ impl<'a> Build<'a> {
     ) -> Result<R, Stage> {
         let options = self.options;
         let code = CodeOptions {
-            max_computed_candidates: max_computed_candidates(&self.limits),
+            mocks_any_file: options.load.runs_tests,
+            follows_paths_to_functions_of_other_files: options.load.runs_tests,
+            looks_for_type_errors: options.aot.looks_for_type_errors,
             ..options.code.clone()
         };
-        let limits = self.limits.clone();
         let host = LoadHost::new(LoadHostInput {
             disk: shared.disk,
             provider: self.provider,
@@ -242,337 +451,283 @@ impl<'a> Build<'a> {
             messages: shared.messages,
             builtin_names: shared.builtin_names,
             platform: self.platform,
-            limits: &limits,
         });
         let host = match asset_reads {
             #[cfg(test)]
             AssetReads::FinishedByLoad => host,
             AssetReads::FinishedLater => host.reading_in_background_after_load(),
         };
-        let written_for_programs = |entry_points| {
-            EntryPoints::WrittenFor(entry_points, MainModule::EntryPointOfProcessOrWorker)
-        };
         let request = CompileRequest {
-            entry_points: match self.programs {
-                None => EntryPoints::Written(&options.entry_points),
-                Some(_) => written_for_programs(&options.entry_points),
-            },
+            entry_points: EntryPoints::Written(&options.entry_points),
             code: &code,
             fold: shared.application_fold,
             atoms: shared.atoms,
             libs: options.typescript_libs,
-            project_origin: FileOrigin::NoFile,
+            project_origin: match options.aot.runs_tests && !options.aot.checks_only {
+                true => FileOrigin::TestedSource,
+                false => FileOrigin::NoFile,
+            },
             threads: self.threads,
             progress: None,
             left_out_bodies: None,
+            discards_first_visits: options.aot.discards_first_visits,
         };
-        // A program is configured by the file that its entry point finds. Those that find the one of the first are loaded with it.
-        let positions = self.leave_entry_points_of_other_projects(&host, &request);
-        let loaded_entry_points: Vec<Vec<u8>> = (positions.iter())
-            .map(|&position| options.entry_points[position].clone())
-            .collect();
-        let request = match positions.len() == options.entry_points.len() {
-            true => request,
-            false => CompileRequest {
-                entry_points: written_for_programs(&loaded_entry_points),
-                ..request
-            },
-        };
-        let left_before_load = self.left_entry_points.len();
-        std::thread::scope(|scope| {
-            loop {
-                self.options = options;
-                self.left_entry_points.truncate(left_before_load);
-                let are_assets = Cell::new(None);
-                let finish_asset_reads = || {
-                    let finish = || host.finish_background_reads() || shared.messages.has_errors();
-                    let finished = are_assets.get().unwrap_or_else(finish);
-                    are_assets.set(Some(finished));
-                    finished
-                };
-                let project = ApplicationLoad {
-                    host: &host,
-                    request: &request,
-                    scope,
-                    asset_reads,
-                    finish_asset_reads: &finish_asset_reads,
-                    positions: &positions,
-                };
-                let result = self.load_projects_once(shared, &project, then);
-                if finish_asset_reads() {
-                    if asset_reads == AssetReads::FinishedLater {
-                        self.diagnostics.add_load_messages(shared.messages);
-                    }
-                    let from_plugins = host.assets_from_plugins();
-                    let from_plugins: Vec<Vec<u8>> = from_plugins
-                        .iter()
-                        .map(|path| source_path_of(path))
-                        .collect();
-                    self.started_workers.remove_sources(&from_plugins);
-                    return result;
+        let result = std::thread::scope(|scope| {
+            let are_asset_reads_finished = Cell::new(false);
+            let finish_asset_reads = || {
+                if !are_asset_reads_finished.replace(true) {
+                    host.finish_background_reads();
                 }
-                drop(result);
-                self.provider.clear_embedded_files();
-                self.diagnostics = Diagnostics::new();
-                self.statistics = Statistics::default();
-            }
-        })
-    }
-
-    fn load_projects_once<'s, R>(
-        &mut self,
-        shared: &SharedLoadInputs<'_, 's>,
-        project: &ApplicationLoad<'_, '_, '_, '_, 's>,
-        then: Then<'_, 'a, R>,
-    ) -> Result<R, Stage> {
-        let mut kept_runtime = None;
-        if let Some(preload) = preload_of(self.options) {
-            let placeholder = [preload.placeholder_entry_point.to_vec()];
-            let request = CompileRequest {
-                entry_points: EntryPoints::Written(&placeholder),
-                ..*project.request
             };
-            let of_placeholder = ApplicationLoad {
-                host: project.host,
+            let project = ApplicationLoad {
+                host: &host,
                 request: &request,
-                scope: project.scope,
-                asset_reads: project.asset_reads,
-                finish_asset_reads: project.finish_asset_reads,
-                positions: project.positions,
+                scope,
+                asset_reads,
+                finish_asset_reads: &finish_asset_reads,
             };
-            self.is_preloading = true;
-            let compiled =
-                self.load_and_compile(shared, &of_placeholder, &mut *then, &mut kept_runtime);
-            self.is_preloading = false;
-            drop(compiled?);
-            self.diagnostics = Diagnostics::new();
-            self.statistics = Statistics::default();
-            self.clock.start(Stage::Load);
-            preload.is_loaded.store(true, Ordering::Relaxed);
-            (preload.on_loaded)();
-        }
-        self.load_and_compile(shared, project, then, &mut kept_runtime)
+            let result = self.load_and_compile(shared, &project, then);
+            finish_asset_reads();
+            if asset_reads == AssetReads::FinishedLater {
+                self.diagnostics.add_load_messages(shared.messages);
+            }
+            result
+        });
+        self.leftovers.push(host.into_leftovers());
+        result
     }
 
-    /// `kept_runtime`: Bun's own code as an earlier program of the build has loaded it. The placeholder of `Preload` leaves it there.
     fn load_and_compile<'s, R>(
         &mut self,
         shared: &SharedLoadInputs<'_, 's>,
         project: &ApplicationLoad<'_, '_, '_, '_, 's>,
         then: Then<'_, 'a, R>,
-        kept_runtime: &mut Option<(RuntimeRoots, LoadedProgram<'s>)>,
     ) -> Result<R, Stage> {
         let options = self.options;
-        let (host, request, positions) = (project.host, project.request, project.positions);
-        let session = shared.sessions.application;
-        let mut application = self.load_application(session, host, request, shared)?;
+        let (host, request) = (project.host, project.request);
+        let mut steps = StepClock::new(Stage::Load);
+        let (application, found) = match options.aot.checks_only {
+            true => {
+                let application = self.load_application(shared, project, request)?;
+                (application, FoundByLoad::default())
+            }
+            false => {
+                let finder = EntryPointFinder::new(FinderInput {
+                    host,
+                    code: request.code,
+                    options,
+                });
+                let find = |code: &dyn CodeView<'_>| -> EntryPointsFound { finder.find(code) };
+                let request_that_finds = CompileRequest {
+                    entry_points: EntryPoints::WrittenAndFound(&options.entry_points, &find),
+                    ..*request
+                };
+                let application = self.load_application(shared, project, &request_that_finds)?;
+                let names_written = finder.take_names_written();
+                let found = FoundByLoad {
+                    entry_points: finder.finish(application.files(), options.entry_points.len()),
+                    names_written,
+                };
+                (application, found)
+            }
+        };
+        steps.end("the application");
         if project.asset_reads == AssetReads::FinishedLater {
             read_assets(project.scope, host);
         }
-        if options.aot.checks_only && options.entry_points.len() > 1 {
-            self.import_graph = Some(ImportGraph::of(application.files()));
-        }
-        resolve_loads_through_imported_loaders(application.files(), &self.parallel_runner());
+        self.compile_loaded(shared, project, &application, found, then)
+    }
 
+    fn compile_loaded<'s, R>(
+        &mut self,
+        shared: &SharedLoadInputs<'_, 's>,
+        project: &ApplicationLoad<'_, '_, '_, '_, 's>,
+        application: &LoadedProgram<'s>,
+        found: FoundByLoad,
+        then: Then<'_, 'a, R>,
+    ) -> Result<R, Stage> {
+        let options = self.options;
+        let (host, request) = (project.host, project.request);
         let files = application.files();
-        self.started_workers = Default::default();
-        if !options.aot.checks_only {
-            self.started_workers.copies = find_embedded_code_files(files, &options.load.loaders);
-        }
-        if !options.aot.checks_only && mentions_worker_constructor(files) {
-            let code_from_root = CodeOptions {
-                working_directory: bun_sema_driver::host::from_native(
-                    &options.paths.root_directory,
-                ),
-                ..request.code.clone()
-            };
-            let search = WorkerSearch {
-                limits: &self.limits,
-                loaders: &options.load.loaders,
-                paths: &options.paths,
-                runs_in_place: options.aot.runs_in_place,
-                provider: self.provider,
-                resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
-                resolve_bare_name: &|name| resolve_entry_point(host, &code_from_root, name),
-            };
-            (self.started_workers.files, self.started_workers.code) =
-                find_code_that_starts_workers(files, &search);
-        }
-        if !self.started_workers.copies.is_empty() || !self.started_workers.files.is_empty() {
-            self.started_workers.held_texts = texts_of_program_files(files)
-                .map(|(path, size)| (path.to_vec(), size))
-                .collect();
-        }
-        let view = |first: Option<FileId>| {
-            // SAFETY: the load has ended, and between two programs no thread works for the build.
-            unsafe { files.view_program(first) };
+        let in_parallel = self.parallel_runner();
+        let mut steps = StepClock::new(Stage::Load);
+        let contents = collect_program_contents(ContentsInput {
+            files,
+            options,
+            found_entry_points: found.entry_points,
+            any_file_may_become_main_module: host.may_any_file_become_main_module(),
+            is_every_text_asked: !host.has_file_that_asks_for_what_unseen_code_finds(),
+            in_parallel: &in_parallel,
+        });
+        steps.end("contents of the program");
+        let serves_unseen_code = options.can_load_code_at_run_time();
+        #[cfg(test)]
+        let serves_unseen_code = serves_unseen_code || self.keeps_library_code_without_names;
+        let used_at_start = builtins_used_at_start(options.aot);
+        let further = FurtherLibraryCode {
+            used_at_start: &used_at_start,
+            serves_unseen_code,
+            loads_code_from_disk: options.aot.loads_code_from_disk,
+            has_file_that_asks_for_it: host.has_file_that_asks_for_what_unseen_code_finds(),
         };
-        // Each program with its position and the file it begins at. A build of one program looks at all that was loaded.
-        let programs: Vec<(usize, Option<FileId>)> = match self.programs {
-            None => vec![(0, None)],
-            Some(ProgramsOfOneLoad {
-                held_elsewhere: Some(held),
-                indexes,
-                ..
-            }) => {
-                let most = self.limits.get(LimitId::MaxProgramsPerBuild);
-                if indexes[0] as u64 >= most || repeats_much_text(files, held, &self.limits) {
-                    self.is_one_program = true;
-                    return Err(Stage::Load);
-                }
-                let first_files = files.entry_points().iter().copied().map(Some);
-                positions.iter().copied().zip(first_files).collect()
-            }
-            Some(of_one_load)
-                if files.entry_points().len() != positions.len()
-                    || are_one_program(
-                        files,
-                        of_one_load.indexes[positions[0]] == 0,
-                        &self.limits,
-                    ) =>
-            {
-                let holds_all = of_one_load.are_all_of_the_build
-                    && of_one_load.indexes.len() == positions.len();
-                if !holds_all {
-                    self.is_one_program = true;
-                    return Err(Stage::Load);
-                }
-                // What was loaded is what a build of one program loads.
-                self.programs = None;
-                vec![(0, None)]
-            }
-            Some(_) => {
-                let first_files = files.entry_points().iter().copied().map(Some);
-                let programs: Vec<(usize, Option<FileId>)> =
-                    positions.iter().copied().zip(first_files).collect();
-                self.leave_programs_that_see_declarations_of_others(files, programs)
-            }
-        };
-        if programs.is_empty() {
-            self.has_left_all_entry_points = true;
-            return Err(Stage::Load);
-        }
-        let is_read_again = self.programs.is_some();
-        application.set_is_read_again(is_read_again);
-        let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
-        let mut roots: Vec<RuntimeRoots> = first_files
-            .iter()
-            .map(|&first| {
-                if first.is_some() {
-                    view(first);
-                }
-                collect_runtime_roots(files, shared.runtime_modules, self.platform)
+        let roots = collect_runtime_roots(
+            files,
+            &contents,
+            shared.runtime_modules,
+            self.platform,
+            further,
+        );
+        let mut compiled_files = files.compiled_files().iter();
+        self.stays_in_compiled_files = options.aot.only_tests_load_code_from_disk
+            && !options.can_load_code_at_run_time()
+            && !contents.loads_by_unknown_path
+            && !contents.any_module_loads_again
+            && !contents.run.loads.reads_files_from_disk()
+            && !roots.imports_uncompiled_code
+            && !compiled_files.any(|&file| may_run_code_outside_image(files, file));
+        let session = shared.sessions.runtime;
+        let inputs = self.create_runtime_load_inputs(shared, session, &roots, &contents);
+        let takes_known_regions = Cell::new(true);
+        let runtime_request = self.create_runtime_request(shared, &inputs, &roots.paths);
+        let RuntimeLoadInputs {
+            host: ref runtime_host,
+            can_load_code_at_run_time,
+            loads_code_by_unknown_names_alone,
+            ..
+        } = inputs;
+        let mut input =
+            self.create_freeze_input(shared, application, None, &contents.found_entry_points);
+        input.levels_above_root = host.levels_above_root();
+        let lost = host.file_lost_with_texts_of_other_levels();
+        self.stop_at_internal_error(lost.map_or(Ok(()), |file| {
+            let message = b"only at the depth of the disk does the code of a Worker lead to ";
+            Err(InternalError {
+                stage: Stage::Load,
+                message: [&message[..], &file].concat(),
             })
-            .collect();
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-        for (index, asked) in roots.iter().enumerate() {
-            match (groups.iter_mut()).find(|group| asks_the_same(&roots[group[0]], asked)) {
-                Some(group) => group.push(index),
-                None => groups.push(vec![index]),
+        }))?;
+        steps.end("roots of the library");
+        let (frozen_application, runtime) = run_beside(
+            &self.beside_runner(),
+            || freeze_sources(&input, &in_parallel),
+            || load_program(session, runtime_host, &runtime_request),
+        );
+        steps.end("freeze the application beside the load of the library");
+        let runtime = self.finish_load(runtime, &runtime_request, shared.messages)?;
+        let programs = PerProject {
+            application,
+            runtime: &runtime,
+        };
+        let sources = self.freeze_projects(shared, programs, &roots, frozen_application)?;
+        self.stop_if_errors(Stage::Load)?;
+        steps.end("freeze the library, paths across the projects");
+        let view = ProgramView {
+            loaded: application,
+            sources: &sources.application,
+        };
+        if !options.load.runs_tests {
+            for diagnostic in find_node_workers_that_led_to_no_file(files, &contents) {
+                self.diagnostics.add(Some(view), diagnostic);
             }
         }
-        let mut result = None;
-        let mut runtime_to_keep = None;
-        for (group_index, group) in groups.iter().enumerate() {
-            let started = Instant::now();
-            let roots = &roots[group[0]];
-            let session = match group_index {
-                0 => shared.sessions.runtime,
-                _ => &shared.further_runtime_sessions[group_index - 1],
-            };
-            let inputs = self.create_runtime_load_inputs(shared, session, roots);
-            let runtime_request = self.create_runtime_request(shared, &inputs, roots);
-            let RuntimeLoadInputs {
-                host: ref runtime_host,
-                can_load_code_at_run_time,
-                loads_code_by_unknown_names_alone,
-                ..
-            } = inputs;
-            let kept = kept_runtime.take();
-            let mut runtime = match kept.filter(|(known, _)| asks_the_same(known, roots)) {
-                Some((_, runtime)) => runtime,
-                None => self.load_runtime(shared, session, runtime_host, &runtime_request)?,
-            };
-            self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
-
-            runtime.set_is_read_again(is_read_again || shared.parsed_declarations.is_some());
-            for &index in group {
-                if first_files[index].is_some() {
-                    view(first_files[index]);
-                }
-                self.begin_program(programs[index].0);
-                let programs = PerProject {
-                    application: &application,
-                    runtime: &runtime,
-                };
-                let sources = self.freeze_projects(shared, programs, roots)?;
-                self.stop_if_errors(Stage::Load)?;
-                let projects = PerProject {
-                    application: LoadedProject {
-                        loaded: &application,
-                        host,
-                        request,
-                        sources: sources.application,
-                    },
-                    runtime: LoadedProject {
-                        loaded: &runtime,
-                        host: runtime_host,
-                        request: &runtime_request,
-                        sources: sources.runtime,
-                    },
-                };
-                let loaded = LoadedBuild {
-                    projects,
-                    world_sessions: shared.world_sessions,
-                    application: None,
-                    session: shared.sessions.application,
-                    atoms: shared.atoms,
-                    messages: shared.messages,
-                    builtin_names: shared.builtin_names,
-                    can_load_code_at_run_time,
-                    loads_code_by_unknown_names_alone,
-                    finish_asset_reads: project.finish_asset_reads,
-                };
-                result = Some(then(self, loaded)?);
-            }
-            if self.is_preloading {
-                runtime_to_keep = Some((group[0], runtime));
-            }
+        if !options.aot.checks_only && !options.aot.runs_in_place {
+            warn_of_files_left_out_by_patterns(&mut self.diagnostics, view, host);
         }
-        if let Some((index, runtime)) = runtime_to_keep {
-            *kept_runtime = Some((roots.swap_remove(index), runtime));
+        if !options.aot.checks_only {
+            self.started_workers.code = code_of_workers(&contents);
+            self.started_workers.named_at =
+                find_starts_that_led_to_files(files, &sources.application, &contents);
+            self.started_workers.levels_above_root = sources.application.levels_above_root();
+            let (names, said) = collect_entry_point_aliases(
+                files,
+                &sources.application,
+                count_folders(&options.paths.root_directory),
+                found.names_written,
+            );
+            self.started_workers.names = names;
+            for diagnostic in said {
+                self.diagnostics.add(None, diagnostic);
+            }
+            self.stop_if_errors(Stage::Load)?;
         }
-        Ok(result.expect("a build has a program"))
+        steps.end("other names of entry points");
+        let projects = PerProject {
+            application: LoadedProject {
+                loaded: application,
+                host,
+                request,
+                sources: sources.application,
+            },
+            runtime: LoadedProject {
+                loaded: &runtime,
+                host: runtime_host,
+                request: &runtime_request,
+                sources: sources.runtime,
+            },
+        };
+        let loaded = LoadedBuild {
+            projects,
+            atoms: shared.atoms,
+            messages: shared.messages,
+            builtin_names: shared.builtin_names,
+            contents: &contents,
+            can_load_code_at_run_time,
+            loads_code_by_unknown_names_alone,
+            keeps_library_code_without_names: roots.keeps_code_without_names,
+            holds_what_unseen_code_finds: roots.holds_what_unseen_code_finds,
+            finish_asset_reads: project.finish_asset_reads,
+            known_library_regions: &|| {
+                let reach = runtime_host.reach.as_ref()?;
+                let files = runtime.files();
+                (takes_known_regions.replace(false))
+                    .then(|| reach.take_known_regions(shared.runtime_modules, files))
+            },
+        };
+        then(self, loaded)
     }
 
     fn create_runtime_load_inputs<'c, 's>(
         &self,
         shared: &SharedLoadInputs<'c, 's>,
         session: &'s Session,
-        roots: &RuntimeRoots,
+        roots: &'c RuntimeRoots,
+        contents: &'c ProgramContents,
     ) -> RuntimeLoadInputs<'c, 's> {
         let options = self.options;
-        // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
         let is_told_of_code = options.can_load_code_at_run_time() || roots.imports_uncompiled_code;
+        let makes_names = contents.loads_by_unknown_path
+            || (contents.loads_by_unknown_name && !options.load.runs_tests);
         let loads_code_by_unknown_names_alone =
-            !is_told_of_code && roots.loads_by_unknown_path && options.aot.loads_code_from_disk;
+            !is_told_of_code && makes_names && options.aot.loads_code_from_disk;
         let can_load_code_at_run_time = is_told_of_code || loads_code_by_unknown_names_alone;
+        let reads_all_that_files_ask_for =
+            can_load_code_at_run_time || roots.holds_what_unseen_code_finds;
         RuntimeLoadInputs {
             fold: create_runtime_fold_inputs(
                 shared.manifest,
                 session.arena(),
                 &shared.atoms,
                 shared.messages,
-                &self.limits,
                 self.platform,
                 ProgramFacts {
                     can_load_code_at_run_time,
+                    can_load_addons_at_run_time: can_load_code_at_run_time
+                        || (contents.loads_by_unknown_path
+                            && (options.aot.only_tests_load_code_from_disk
+                                || contents.embeds_addon_as_file)),
                     can_be_cluster_worker: roots.imports_cluster || can_load_code_at_run_time,
+                    can_replace_builtins: contents.can_replace_builtins(),
+                    process_reaches_code_on_its_prototypes: can_load_code_at_run_time
+                        || contents.process_reaches_code_on_its_prototypes,
+                    warnings_load_events: can_load_code_at_run_time
+                        || contents.loads_by_unknown_name
+                        || contents.inspects_prototype_chain_of_process
+                        || roots.loads_events,
+                    takes_first_texts: options.aot.takes_first_texts,
                 },
             ),
             code: CodeOptions {
                 tsconfig_override: Some([VIRTUAL_ROOT, b"tsconfig.json"].concat()),
-                max_computed_candidates: max_computed_candidates(&self.limits),
                 ..CodeOptions::bun_run(VIRTUAL_ROOT.strip_suffix(b"/").unwrap_or(VIRTUAL_ROOT))
             },
             host: RuntimeHost {
@@ -580,8 +735,13 @@ impl<'a> Build<'a> {
                 runtime_modules: shared.runtime_modules,
                 builtin_names: shared.builtin_names,
                 platform: self.platform,
+                replaced_builtins: &contents.replaced_builtins,
+                unlocked_builtins: &contents.run.members_written_as_reads,
                 messages: shared.messages,
                 unreadable: Default::default(),
+                manifest: shared.manifest,
+                reach: (!reads_all_that_files_ask_for).then(|| ReachWhileLoading::new(&roots.asks)),
+                reads_types: reads_all_that_files_ask_for || !roots.asks.is_empty(),
             },
             can_load_code_at_run_time,
             loads_code_by_unknown_names_alone,
@@ -592,13 +752,13 @@ impl<'a> Build<'a> {
         &self,
         shared: &SharedLoadInputs<'_, 's>,
         inputs: &'r RuntimeLoadInputs<'_, 's>,
-        roots: &'r RuntimeRoots,
+        root_paths: &'r [Vec<u8>],
     ) -> CompileRequest<'r, 's>
     where
         'a: 'r,
     {
         CompileRequest {
-            entry_points: EntryPoints::Resolved(&roots.paths),
+            entry_points: EntryPoints::Resolved(root_paths),
             code: &inputs.code,
             fold: &inputs.fold,
             atoms: shared.atoms,
@@ -607,106 +767,21 @@ impl<'a> Build<'a> {
             threads: self.threads,
             progress: None,
             left_out_bodies: None,
+            discards_first_visits: self.options.aot.discards_first_visits,
         }
-    }
-
-    fn load_runtime<'s>(
-        &mut self,
-        shared: &SharedLoadInputs<'_, 's>,
-        session: &'s Session,
-        host: &RuntimeHost<'_>,
-        request: &CompileRequest<'_, 's>,
-    ) -> Result<LoadedProgram<'s>, Stage> {
-        let parsed = shared.parsed_declarations;
-        let runtime = load_program_with_parsed_files(session, host, request, parsed);
-        self.finish_load(runtime, request, shared.messages)
-    }
-
-    /// The positions of the entry points that are loaded now. The others are left for loads of their own.
-    fn leave_entry_points_of_other_projects(
-        &mut self,
-        host: &LoadHost<'_>,
-        request: &CompileRequest<'_, '_>,
-    ) -> Vec<usize> {
-        let all = 0..self.options.entry_points.len();
-        let found = (self.programs.filter(|_| all.len() > 1)).and_then(|programs| {
-            Some((
-                programs,
-                find_configuration_of_each_entry_point(host, request)?,
-            ))
-        });
-        let Some((programs, found)) = found else {
-            return all.collect();
-        };
-        let mut left: Vec<(&[u8], Vec<usize>)> = Vec::new();
-        for position in all.clone().filter(|&position| found[position] != found[0]) {
-            let index = programs.indexes[position];
-            match left.iter_mut().find(|it| it.0 == &found[position][..]) {
-                Some(known) => known.1.push(index),
-                None => left.push((&found[position], vec![index])),
-            }
-        }
-        self.left_entry_points
-            .extend(left.into_iter().map(|it| it.1));
-        all.filter(|&position| found[position] == found[0])
-            .collect()
-    }
-
-    /// See `Files::declaring_files_of_each_program` and `Files::is_program_in_order_of_its_own_load`. The programs that go on.
-    fn leave_programs_that_see_declarations_of_others(
-        &mut self,
-        files: &Files<'_>,
-        programs: Vec<(usize, Option<FileId>)>,
-    ) -> Vec<(usize, Option<FileId>)> {
-        let Some(of_one_load) = self.programs.filter(|_| programs.len() > 1) else {
-            return programs;
-        };
-        let declaring = files.declaring_files_of_each_program();
-        let mut all: Vec<FileId> = declaring.iter().flatten().copied().collect();
-        all.sort_unstable();
-        all.dedup();
-        let mut left: Vec<(&[FileId], Vec<usize>)> = Vec::new();
-        let mut kept = Vec::with_capacity(programs.len());
-        for (program, own) in programs.into_iter().zip(&declaring) {
-            let index = of_one_load.indexes[program.0];
-            // The numbers of the files are in what the front end hands on.
-            if !(program.1).is_none_or(|first| files.is_program_in_order_of_its_own_load(first)) {
-                self.left_entry_points.push(vec![index]);
-                continue;
-            }
-            if *own == all {
-                kept.push(program);
-                continue;
-            }
-            match left.iter_mut().find(|it| it.0 == &own[..]) {
-                Some(known) => known.1.push(index),
-                None => left.push((own, vec![index])),
-            }
-        }
-        self.left_entry_points
-            .extend(left.into_iter().map(|it| it.1));
-        kept
     }
 
     fn load_application<'s>(
         &mut self,
-        session: &'s Session,
-        host: &LoadHost<'_>,
-        request: &CompileRequest<'_, 's>,
         shared: &SharedLoadInputs<'_, 's>,
+        project: &ApplicationLoad<'_, '_, '_, '_, 's>,
+        request: &CompileRequest<'_, 's>,
     ) -> Result<LoadedProgram<'s>, Stage> {
-        let (messages, parsed) = (shared.messages, shared.parsed_declarations);
-        let mut result = load_program_with_parsed_files(session, host, request, parsed);
-        if !host.reads_in_background_after_load()
-            && !host.finish_background_reads()
-            && result.is_ok()
-            && !messages.has_errors()
-        {
-            drop(result);
-            self.provider.clear_embedded_files();
-            result = load_program_with_parsed_files(session, host, request, parsed);
+        let result = load_program(shared.sessions.application, project.host, request);
+        if !project.host.reads_in_background_after_load() {
+            (project.finish_asset_reads)();
         }
-        self.finish_load(result, request, messages)
+        self.finish_load(result, request, shared.messages)
     }
 
     fn finish_load<'s>(
@@ -718,7 +793,6 @@ impl<'a> Build<'a> {
         self.diagnostics.add_load_messages(messages);
         match result {
             Ok(mut program) => {
-                self.brings_bun_types |= program.brings_bun_types;
                 let diagnostics = take(&mut program.diagnostics);
                 self.diagnostics
                     .add_build_diagnostics(Stage::Load, diagnostics);
@@ -726,12 +800,9 @@ impl<'a> Build<'a> {
             }
             Err(failure) => {
                 let entry_point_names = match request.entry_points {
-                    EntryPoints::Written(specifiers) | EntryPoints::WrittenFor(specifiers, _) => {
-                        specifiers
-                    }
-                    EntryPoints::Resolved(paths)
-                    | EntryPoints::Imported(paths)
-                    | EntryPoints::Configured(paths, _) => paths,
+                    EntryPoints::Written(specifiers)
+                    | EntryPoints::WrittenAndFound(specifiers, ..) => specifiers,
+                    EntryPoints::Resolved(paths) => paths,
                 };
                 self.diagnostics
                     .add_load_failure(failure, entry_point_names);
@@ -740,31 +811,49 @@ impl<'a> Build<'a> {
         }
     }
 
+    fn create_freeze_input<'i, 's>(
+        &self,
+        shared: &SharedLoadInputs<'_, '_>,
+        loaded: &'i LoadedProgram<'s>,
+        roots: Option<&'i RuntimeRoots>,
+        found_entry_points: &'i [FoundEntryPoint],
+    ) -> FreezeInput<'i, 's>
+    where
+        'a: 'i,
+    {
+        FreezeInput {
+            project: match roots {
+                Some(_) => ProjectId::Runtime,
+                None => ProjectId::Application,
+            },
+            files: loaded.files(),
+            options: self.options,
+            manifest: shared.manifest,
+            host_loaded_modules: roots.map_or(&[], |it| &it.host_loaded_modules),
+            modules_named_at_run_time: roots.map_or(&[], |it| &it.modules_named_at_run_time),
+            found_entry_points,
+            levels_above_root: None,
+        }
+    }
+
     fn freeze_projects(
         &mut self,
         shared: &SharedLoadInputs<'_, '_>,
         programs: PerProject<&LoadedProgram<'_>>,
         roots: &RuntimeRoots,
+        frozen_application: Result<FrozenSources, InternalError>,
     ) -> Result<PerProject<Sources>, Stage> {
-        let mut freeze = |project: ProjectId, roots: Option<&RuntimeRoots>| {
-            let loaded = *programs.get(project);
-            let input = FreezeInput {
-                project,
-                files: loaded.files(),
-                options: self.options,
-                manifest: shared.manifest,
-                host_loaded_modules: roots.map_or(&[], |it| &it.host_loaded_modules),
-                modules_named_at_run_time: roots.map_or(&[], |it| &it.modules_named_at_run_time),
-                is_world: false,
-            };
-            self.freeze_project(loaded, &input)
-        };
+        let in_parallel = self.parallel_runner();
+        let application = self.finish_freeze(programs.application, frozen_application)?;
+        let input = self.create_freeze_input(shared, programs.runtime, Some(roots), &[]);
+        let runtime = freeze_sources(&input, &in_parallel);
         let sources = PerProject {
-            application: freeze(ProjectId::Application, None)?,
-            runtime: freeze(ProjectId::Runtime, Some(roots))?,
+            application,
+            runtime: self.finish_freeze(programs.runtime, runtime)?,
         };
         let frozen = sources.as_ref();
         let frozen = frozen.map(|project, sources| (programs.get(project).files(), sources));
+        self.stop_if_errors(Stage::Load)?;
         self.stop_at_internal_error(check_unique_paths_across_projects(frozen))?;
         Ok(sources)
     }
@@ -776,140 +865,37 @@ impl<'a> Build<'a> {
         })
     }
 
-    /// The sources of a program that checks a typed package by itself. The application reports what is wrong with them.
-    pub(crate) fn freeze_world(&mut self, loaded: &LoadedProgram<'_>) -> Result<Sources, Stage> {
-        let input = FreezeInput {
-            project: ProjectId::Application,
-            files: loaded.files(),
-            options: self.options,
-            manifest: Archive::embedded().manifest(),
-            host_loaded_modules: &[],
-            modules_named_at_run_time: &[],
-            is_world: true,
-        };
-        let frozen = freeze_sources(&input, &self.parallel_runner());
-        Ok(self.stop_at_internal_error(frozen)?.sources)
-    }
-
-    fn freeze_project(
+    fn finish_freeze(
         &mut self,
         loaded: &LoadedProgram<'_>,
-        input: &FreezeInput<'_, '_>,
+        frozen: Result<FrozenSources, InternalError>,
     ) -> Result<Sources, Stage> {
-        let frozen = freeze_sources(input, &self.parallel_runner());
         let FrozenSources {
             sources,
             diagnostics,
-            counters,
         } = self.stop_at_internal_error(frozen)?;
         let view = ProgramView {
             loaded,
             sources: &sources,
         };
         self.diagnostics.add_buffer(view, diagnostics);
-        for &file in view.files().compiled_files() {
-            self.diagnostics.add_fold_errors(view, file);
-        }
-        self.statistics.add_counters(view, counters);
         Ok(sources)
     }
-}
-
-// Of the files of several entry points. A global begins at each of them, and what the compiler proves holds for one global, so each begins
-// a program of its own. They are one program where that gains nothing or costs the executable its size:
-// - nothing starts a Worker, so there is one global;
-// - a program loads a module by a name that the build does not know, which may be that of any entry point: it has to hold them all;
-// - the programs share much of their files, and a file is compiled once for each program that holds it;
-// - there are very many: pages or plugins that a pattern has found.
-fn are_one_program(files: &Files<'_>, has_first_of_build: bool, limits: &LimitValues) -> bool {
-    let limit = |limit: LimitId| usize::try_from(limits.get(limit)).unwrap_or(usize::MAX);
-    let entry_points = files.entry_points();
-    let view = |first: Option<FileId>| {
-        // SAFETY: the load has ended, and no thread works for the build.
-        unsafe { files.view_program(first) };
-    };
-    let size_of = |compiled: &[FileId]| -> usize {
-        let texts = compiled
-            .iter()
-            .map(|&file| files.module(file).hir.text.len());
-        texts.sum()
-    };
-    let mut is_held = vec![false; files.modules.len()];
-    let (mut size_of_all, mut size_of_each) = (0, 0);
-    let mut are_one = entry_points.len() > limit(LimitId::MaxProgramsPerBuild);
-    for (position, &first) in entry_points.iter().enumerate() {
-        if are_one {
-            break;
-        }
-        view(Some(first));
-        let compiled = files.compiled_files();
-        are_one = (position == 0 && has_first_of_build && !mentions_worker_constructor(files))
-            || loads_modules_by_names_that_are_not_constant(files);
-        size_of_each += size_of(compiled);
-        for &file in compiled {
-            if !core::mem::replace(&mut is_held[file.idx()], true) {
-                size_of_all += size_of(&[file]);
-            }
-        }
-    }
-    view(None);
-    let repeated = size_of_each - size_of_all;
-    let share = size_of_all / 100 * limit(LimitId::MaxRepeatedSourcePercent);
-    are_one || repeated > limit(LimitId::MaxRepeatedSourceBytes).max(share)
-}
-
-fn texts_of_program_files<'f, 's>(
-    files: &'f Files<'s>,
-) -> impl Iterator<Item = (&'s [u8], usize)> + use<'f, 's> {
-    let compiled = files.compiled_files().iter();
-    let programs = compiled.filter(|&&file| {
-        parsed_source(files, file).is_some_and(|source| source.kind == SourceKind::Program)
-    });
-    programs.map(|&file| {
-        let module = files.module(file);
-        (module.file_name(), module.hir.text.len())
-    })
-}
-
-// The rule of `are_one_program` for the files of a program that is loaded behind the others.
-fn repeats_much_text(files: &Files<'_>, held: &[(Vec<u8>, usize)], limits: &LimitValues) -> bool {
-    let limit = |limit: LimitId| usize::try_from(limits.get(limit)).unwrap_or(usize::MAX);
-    let is_held = |path: &[u8]| held.binary_search_by(|it| it.0[..].cmp(path)).is_ok();
-    let mut size_of_all: usize = held.iter().map(|it| it.1).sum();
-    let mut repeated = 0;
-    for (path, size) in texts_of_program_files(files) {
-        match is_held(path) {
-            true => repeated += size,
-            false => size_of_all += size,
-        }
-    }
-    let share = size_of_all / 100 * limit(LimitId::MaxRepeatedSourcePercent);
-    repeated > limit(LimitId::MaxRepeatedSourceBytes).max(share)
-}
-
-// No fewer than `loads_modules_by_computed_names` finds once the modules are bound.
-fn loads_modules_by_names_that_are_not_constant(files: &Files<'_>) -> bool {
-    files.compiled_files().iter().any(|&file| {
-        parsed_source(files, file).is_none_or(|it| it.builtins.loads_unknown_modules())
-            || (files.analysis(file).import_sites.iter())
-                .any(|site| !matches!(site.specifier, ImportSpecifier::Constant(_)))
-    })
-}
-
-pub(super) fn max_computed_candidates(limits: &LimitValues) -> u32 {
-    let limit = limits.get(LimitId::MaxComputedSpecifierCandidates);
-    u32::try_from(limit).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::builtins::RuntimeModule;
-    use crate::compile::testing::{BUNDLED_LIBS, TestProject, default_settings, describe_messages};
+    use crate::compile::testing::{
+        BUNDLED_LIBS, TestProject, default_settings, describe_messages, run_build,
+        with_loaded_build, with_loaded_test_run,
+    };
     use crate::load::source_provider::WithoutServices;
+    use crate::statistics::LimitValues;
     use bun_ast::Log;
     use bun_sema::fold::{Constant, Decision};
-    use bun_sema::hir::{ExprId, ExprKind};
+    use bun_sema::hir::ExprKind;
+    use bun_sema::import_sites::ImportSiteKind;
     use bun_sema_driver::ThreadCaches;
 
     fn can_runtime_sources_load_code(admits_inspector: bool, external_packages: &[&[u8]]) -> bool {
@@ -957,5 +943,237 @@ mod tests {
         assert!(!can_runtime_sources_load_code(false, &[]));
         assert!(can_runtime_sources_load_code(true, &[]));
         assert!(can_runtime_sources_load_code(false, &[b"left-pad"]));
+    }
+
+    fn stays_in_compiled_files(files: &[(&str, &str)]) -> bool {
+        let mut project = TestProject::new(files, &default_settings());
+        project.runs_tests = true;
+        project.aot.loads_code_from_disk = true;
+        project.aot.only_tests_load_code_from_disk = true;
+        run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+            build.with_loaded_projects(|build, _| Ok(build.stays_in_compiled_files))
+        })
+    }
+
+    #[test]
+    fn test_run_stays_in_its_compiled_files_unless_a_file_may_run_other_code() {
+        const PLAIN: (&str, &str) = ("helper.cjs", "exports.mark = 1;");
+        let runs = [
+            ("", PLAIN, true),
+            (
+                "",
+                ("helper.cjs", r#"exports.mark = require("node:path").sep;"#),
+                true,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"import { createRequire } from "node:module"; export const mark = createRequire(import.meta.url)("node:path").sep;"#,
+                ),
+                true,
+            ),
+            (
+                "",
+                ("helper.cjs", r#"exports.mark = (0, eval)("1");"#),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.cjs",
+                    r#"exports.mark = new Function("p", "return import(p)");"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.cjs",
+                    r#"const Module = require("node:module"); Module._load = () => 1; exports.mark = 1;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.cjs",
+                    r#"require.extensions[".mine"] = () => {}; exports.mark = 1;"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.cjs",
+                    r#"delete require.cache[__filename]; exports.mark = 1;"#,
+                ),
+                false,
+            ),
+            (
+                r#"vi.mock("./helper.cjs", () => ({ mark: 2 }));"#,
+                PLAIN,
+                true,
+            ),
+            (r#"vi.mock("./helper.cjs");"#, PLAIN, false),
+            (r#"await vi.importActual("./helper.cjs");"#, PLAIN, false),
+            (r#"vi.resetModules();"#, PLAIN, false),
+        ];
+        let mut wrong = Vec::new();
+        for (head, (helper, text), stays) in runs {
+            let test_file = format!(
+                "import {{ test, vi }} from \"bun:test\";\n{head}\nimport {{ mark }} from \"./{helper}\";\ntest(\"t\", () => console.log(mark));\n"
+            );
+            if stays_in_compiled_files(&[("a.test.ts", &test_file), (helper, text)]) != stays {
+                wrong.push((head, text));
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn calls_on_a_free_name_of_the_test_runner_are_sites() {
+        let rows = [
+            (
+                r#"jest.mock("./dep.js", () => jest.requireActual("./asked.cjs"));"#,
+                2,
+            ),
+            (
+                r#"export const actual = () => jest.requireActual("./asked.cjs");"#,
+                1,
+            ),
+            (
+                r#"export const made = () => jest.createMockFromModule("./asked.cjs");"#,
+                1,
+            ),
+            (
+                r#"export const later = () => vi.importActual("./asked.cjs");"#,
+                1,
+            ),
+            (r#"vi.doMock("./dep.js", () => ({}));"#, 1),
+            (
+                r#"jest.doMock("./dep.js", () => ({})).doMock("./asked.cjs", () => ({}));"#,
+                2,
+            ),
+        ];
+        let heads = [
+            r#"import { test } from "bun:test";"#,
+            r#"import * as runner from "bun:test"; const { test } = runner;"#,
+            r#"import { jest, test, vi } from "bun:test";"#,
+        ];
+        let mut wrong = Vec::new();
+        for head in heads {
+            for (text, sites) in rows {
+                let test_file = format!("{head}\n{text}\ntest(\"t\", () => {{}});\n");
+                let files = [
+                    ("a.test.js", &test_file[..]),
+                    ("dep.js", "export {};"),
+                    ("asked.cjs", "exports.mark = 1;"),
+                ];
+                let found = with_loaded_test_run(&files, &default_settings(), |_, loaded| {
+                    let files = loaded.project(ProjectId::Application).loaded.files();
+                    let file = files.by_path.get(&b"/project/a.test.js"[..]);
+                    let sites = files.analysis(file.expect("it is loaded")).import_sites;
+                    let by_runner = sites.iter().filter(|site| {
+                        matches!(
+                            site.kind,
+                            ImportSiteKind::MockModule(_)
+                                | ImportSiteKind::ImportByTestRunner(_)
+                                | ImportSiteKind::RequireByTestRunner(_)
+                        )
+                    });
+                    by_runner.count()
+                });
+                if found != sites {
+                    wrong.push((head, text, found));
+                }
+            }
+        }
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    #[test]
+    fn worker_that_starts_from_what_the_load_has_not_read_runs_unseen_code() {
+        let rows = [
+            ("export {};", CodeOfWorkers::NoneNamed),
+            (
+                r#"new Worker(new URL("./w.ts", import.meta.url));"#,
+                CodeOfWorkers::Compiled,
+            ),
+            (
+                r#"new Worker("data:text/javascript,postMessage(1)");"#,
+                CodeOfWorkers::Unseen,
+            ),
+            (
+                r#"new Worker(new URL("data:text/javascript,postMessage(1)"));"#,
+                CodeOfWorkers::Unseen,
+            ),
+            (
+                "export const start = (path: string) => new Worker(path);",
+                CodeOfWorkers::Unseen,
+            ),
+            ("export const constructor = Worker;", CodeOfWorkers::Unseen),
+        ];
+        for (text, code) in rows {
+            let files = [("main.ts", text), ("w.ts", "export {};")];
+            let found = with_loaded_build(&files, &default_settings(), |build, _| {
+                build.started_workers.code
+            });
+            assert_eq!(found, code, "{text}");
+        }
+    }
+
+    #[test]
+    fn only_an_executable_is_told_where_the_load_loses_sight_of_a_worker_of_node() {
+        use crate::diagnostics::Diagnostics;
+        fn describe(build: &mut Build<'_>, _: &LoadedBuild<'_, '_>) -> String {
+            let mut log = Log::init();
+            let said = std::mem::replace(&mut build.diagnostics, Diagnostics::new());
+            said.write_to(&mut log);
+            describe_messages(&log)
+        }
+        let text = r#"import { Worker } from "node:worker_threads"; export const start = (path: string) => new Worker(path);"#;
+        let files = [("main.ts", text)];
+        let sentence = "which file this Worker starts from";
+        let said = with_loaded_build(&files, &default_settings(), describe);
+        assert!(said.contains(sentence), "{said}");
+        let said = with_loaded_test_run(&files, &default_settings(), describe);
+        assert!(!said.contains(sentence), "{said}");
+    }
+
+    #[test]
+    fn alias_of_entry_point_names_one_file_and_is_the_path_of_no_module() {
+        let files = [("main.ts", "import './other';"), ("other.ts", "export {};")];
+        let paths = |public_path: &str, file_name: &str| EntryPointPaths {
+            public_path: public_path.as_bytes().to_vec(),
+            source_path: source_path_of(file_name.as_bytes()),
+        };
+        let names_written = vec![
+            paths("/$bunfs/root/worker", "/project/main.ts"),
+            paths("/$bunfs/root/worker", "/project/main.ts"),
+            paths("/$bunfs/root/shared", "/project/main.ts"),
+            paths("/$bunfs/root/shared", "/project/other.ts"),
+            paths("/$bunfs/root/other.ts", "/project/main.ts"),
+            paths("/$bunfs/root/imported", "/project/other.ts"),
+        ];
+        let build = with_loaded_build(&files, &default_settings(), |_, loaded| {
+            let application = loaded.project(ProjectId::Application);
+            let (files, sources) = (application.loaded.files(), &application.sources);
+            collect_entry_point_aliases(files, sources, 1, names_written)
+        });
+        let (aliases, warnings) = build;
+        assert_eq!(aliases, [paths("/$bunfs/root/worker", "/project/main.ts")]);
+        let said: Vec<&[Vec<u8>]> = warnings.iter().map(|it| &it.arguments[..]).collect();
+        let shared = [
+            &b"/$bunfs/root/shared"[..],
+            b"main.ts",
+            b"/project/other.ts",
+        ];
+        assert_eq!(said, [&shared.map(<[u8]>::to_vec)[..]]);
+        assert!(is_path_of_module(
+            b"B:\\~BUN\\root\\a.js",
+            b"B:/~BUN/root/a.js"
+        ));
+        assert!(!is_path_of_module(b"/$bunfs/root/a.js", b"/$bunfs/root/a"));
     }
 }

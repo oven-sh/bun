@@ -30,7 +30,7 @@ pub enum BoxSizing {
 impl BoxSizing {
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<BoxSizing> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         if bun_core::eql_case_insensitive_ascii(ident, b"content-box", true) {
             Ok(BoxSizing::ContentBox)
         } else if bun_core::eql_case_insensitive_ascii(ident, b"border-box", true) {

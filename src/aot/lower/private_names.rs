@@ -1,6 +1,7 @@
 mod access;
 mod resolve;
 
+use bun_sema::atom::Atom;
 use bun_sema::bind::{PrivateMembers, SymbolId};
 use bun_sema::hir::{ClassId, ExprId, MemberId};
 use smallvec::{SmallVec, smallvec};
@@ -31,6 +32,7 @@ pub(in crate::lower) struct StoredValue {
     class: ClassId,
     member: MemberId,
     holder: PrivateHolder,
+    written: Option<Atom>,
 }
 
 #[derive(Copy, Clone)]
@@ -42,7 +44,7 @@ struct StateField {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn emit_private_get(&mut self, object: ValueId, access: ExprId) -> ValueId {
-        self.set_position(self.file.hir[access].pos);
+        self.report_at_member(access);
         match self.file.bound.private_name_of_reference(access) {
             Some(name) => self.emit_name_get(object, name),
             None => self.emit_error(RuntimeErrorKind::UnresolvableReference),
@@ -56,6 +58,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value: ValueId,
         source: Option<ExprId>,
     ) {
+        self.report_at_member(access);
         match self.file.bound.private_name_of_reference(access) {
             Some(name) => self.emit_name_set(object, name, value, source),
             None => {
@@ -72,7 +75,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         split.taken_value
     }
 
-    // A new collection is a new private name, and the fields have room for the entries of one.
     fn continue_if_recorded(&mut self, access: PrivateStateAccess, otherwise: BlockId) {
         let collection = self.continue_if_type(access.collection, TypeTable::OBJECT, otherwise);
         let recorded = self.get_private_state_slot(access.state, PrivateStatePart::Collection);
@@ -91,7 +93,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call::emit_call(self, method, Some(access.collection), &arguments);
     }
 
-    // `new WeakMap()` that is stored in a variable of private state.
     pub(in crate::lower) fn record_state_creation(
         &mut self,
         creation: ExprId,
@@ -127,6 +128,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(state) = self.file.resolve_state(access.state) else {
             return self.builder.boolean(false);
         };
+        self.file.inputs.fixed_builtins.note(match state.kind {
+            PrivateStateKind::Field => BuiltinId::WeakMapPrototypeHas,
+            PrivateStateKind::Brand => BuiltinId::WeakSetPrototypeHas,
+        });
         let result = self.builder.create_variable(None);
         let done = self.create_block();
         let is_missing = self.builder.boolean(false);
@@ -147,6 +152,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(state) = self.file.resolve_state(access.state) else {
             return self.builder.undefined();
         };
+        let fixed = self.file.inputs.fixed_builtins;
+        fixed.note(BuiltinId::WeakMapPrototypeGet);
         let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
         self.builder
             .private_get(access.object, token, state.layout, state.field)
@@ -156,6 +163,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(state) = self.file.resolve_state(access.state) else {
             return;
         };
+        let fixed = self.file.inputs.fixed_builtins;
+        fixed.note(BuiltinId::WeakMapPrototypeSet);
         let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
         self.builder
             .private_set(access.object, token, state.layout, state.field, value);
@@ -170,7 +179,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.emit_entry_of_collection(access, value);
             return;
         };
-        let in_collection = self.create_unlikely_block();
+        let in_collection = self.create_block();
         let done = self.create_block();
         self.continue_if_recorded(access, in_collection);
         let token = self.get_private_state_slot(access.state, PrivateStatePart::Token);
@@ -251,10 +260,11 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
         let options = LoweringOptions {
             platform: host_platform(),
             embeds_function_text: false,
-            reports_type_mismatches: false,
             removable: Default::default(),
             minifies_identifiers: false,
             obfuscates: false,
+            counts_executions: false,
+            runs_tests: false,
         };
         let lowered = lower_program(&[("main.mjs", main), ("helpers.mjs", HELPERS)], options);
         lowered.into_iter().map(|(_, lowered)| lowered).collect()
@@ -286,12 +296,8 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
         assert_eq!(count(COUNTER, Opcode::NewClassToken), 2);
         assert_eq!(count(COUNTER, Opcode::PrivateDefine), 2);
         assert_eq!(count(COUNTER, Opcode::PrivateHas), 5);
-    }
-
-    // Five more would be `has` and `get` in `read`, `has` and `set` in `write`, `has` in `step`.
-    #[test]
-    fn an_entry_in_a_field_is_reached_without_asking_the_collection_for_its_methods() {
-        assert_eq!(count(COUNTER, Opcode::PropGet), 16);
+        assert_eq!(count(COUNTER, Opcode::PrivateGet), 1);
+        assert_eq!(count(COUNTER, Opcode::PrivateSet), 2);
     }
 
     #[test]

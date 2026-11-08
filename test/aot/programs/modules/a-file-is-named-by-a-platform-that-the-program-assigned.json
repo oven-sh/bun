@@ -1,4 +1,0 @@
-{
-  "skipInShell": "the shell has no require() for a computed name",
-  "alone": "it assigns to process.platform, which every program of one executable reads"
-}

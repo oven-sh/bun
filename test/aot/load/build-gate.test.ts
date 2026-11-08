@@ -2,8 +2,10 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned } from "../run-programs";
+import { slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
+
+// A build looks for every mistake that `bun check` finds in the program's own files. What each kind of mistake does to the build, by the kind of the file, is what the table below says.
 
 type Files = Record<string, string>;
 type Verdict = (result: Awaited<ReturnType<typeof run>>) => void;
@@ -88,18 +90,6 @@ const builds =
   result =>
     expect(result).toMatchObject({ errors: [], warnings: [], exitCode: 0, wroteExecutable: true, stdout });
 
-const DEMOTED =
-  /^TS100009: 'dep' has 1 type error \(the first at .*node_modules[\\/]dep[\\/]index\.ts:2:9\), so 1 of its 1 files are compiled without their types\. They still work, but run slower\.$/;
-
-const buildsWithoutTypes: Verdict = result =>
-  expect(result).toMatchObject({
-    errors: [],
-    warnings: [expect.stringMatching(DEMOTED)],
-    exitCode: 0,
-    wroteExecutable: true,
-    stdout: "6\n",
-  });
-
 const ANYWHERE = /(?:)/;
 const CHECK_JS = { allowJs: true, checkJs: true };
 
@@ -176,7 +166,8 @@ type DependencyCase = [name: string, compilerOptions: object, line: string, verd
 
 const dependencyCases: DependencyCase[] = [
   ["no warning when it has no errors", {}, "", builds("6\n")],
-  ["a type error demotes it", {}, MISTYPED_LOCAL, buildsWithoutTypes],
+  // Nobody looks for type errors in a dependency.
+  ["a type error in it says nothing", {}, MISTYPED_LOCAL, builds("6\n")],
   [
     "a style rule of the application does not demote it",
     { noUnusedLocals: true },

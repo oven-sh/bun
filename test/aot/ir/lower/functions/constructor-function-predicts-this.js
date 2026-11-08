@@ -1,6 +1,6 @@
 // RUN: link
 // CHECK: layout [[layout]] kind=Instance name="P" module=[[entry]] {{*}}flags=[IsConstructorFunction]
-// CHECK: module [[entry]] path="{{*}}constructor-function-predicts-this"
+// CHECK: module [[entry]] path="{{*}}constructor-function-predicts-this.js"
 // CHECK: function [[p]] name="P" module=[[entry]] {{*}}flags=[HasThis, {{*}}thisType={type=[[layout]] flags=[IsExpected]}
 // CHECK: function [[q]] name="q" module=[[entry]] {{*}}flags=[HasThis, {{*}}thisType={type=anything}
 

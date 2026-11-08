@@ -1299,7 +1299,16 @@ describe.concurrent("the userinfo of a git URL is masked as a whole", () => {
       }),
     });
 
-    const env = { ...bunEnv, GIT_CONFIG_NOSYSTEM: "1", GIT_ASKPASS: "false", GIT_TERMINAL_PROMPT: "0" };
+    const env = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_COUNT: "1",
+      // With curl 8.23 git forgets the URL's user after the first answer, so it has to ask before it.
+      GIT_CONFIG_KEY_0: "http.proactiveAuth",
+      GIT_CONFIG_VALUE_0: "basic",
+      GIT_ASKPASS: "false",
+      GIT_TERMINAL_PROMPT: "0",
+    };
     const { out, err, exitCode } = await run(String(dir), env, ["install"]);
     expect(err).toContain(`could not read Password for 'http://***@127.0.0.1:${server.port}'`);
     expect(out + err).not.toContain(word);

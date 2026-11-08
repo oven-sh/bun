@@ -1,7 +1,10 @@
+// `bun test --debug-aot` runs compiled code in place of the files. What an executable does with a plugin that is registered at run time: test/aot/parallel/library-modules.
+// What a build finds in one test file holds for the whole run: a computed import opens it to code that no build has seen, and a plugin lets every file load again. So only the
+// cases of which a build finds the same share a run, as folders of one project: the two that register a plugin. Such a run compiles much of Bun's own library, whatever it holds.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { built, slot, spawned } from "./run-programs";
+import { run } from "./harness/run";
 import { describe, test } from "./supported";
 
 const timeout = 600_000;
@@ -10,29 +13,15 @@ const tsconfig = JSON.stringify({
   compilerOptions: {
     module: "esnext",
     moduleResolution: "bundler",
-    resolveJsonModule: true,
     allowJs: true,
     typeRoots: [join(import.meta.dir, "../../packages")],
     types: ["bun-types"],
   },
 });
 
-const library = {
-  "tsconfig.json": tsconfig,
-  "lib.ts": `export function lib(): string { return "lib"; }`,
-  "other.ts": `export function lib(): string { return "other"; }`,
-  "late.ts": `export { lib } from "./lib";\nexport const late = "late";`,
-  "legacy.cjs": `module.exports = { name: "legacy" };`,
-  "data.json": `{ "name": "data" }`,
-};
-
 const header = String.raw`
   import { lib } from "./lib";
-  import legacy from "./legacy.cjs";
-  import data from "./data.json";
-  console.log(lib(), legacy.name, data.name);
-  const asked: string[] = [];
-  const nameOf = (path: string) => path.split(/[\\/]/).pop()!;
+  console.log(lib());
   function attempt(register: (build: any) => void): void {
     try {
       Bun.plugin({ name: "probe", setup: register });
@@ -43,129 +32,34 @@ const header = String.raw`
   }
 `;
 
-const footer = String.raw`
-  console.log("static:", lib(), legacy.name, data.name);
-  console.log("import():", (await import("./lib")).lib(), (await import("./legacy.cjs")).default.name, (await import("./data.json")).default.name);
-  console.log("require():", require("./lib").lib(), require("./legacy.cjs").name, require("./data.json").name);
-  console.log("first loaded now:", (await import("./late")).lib(), (await import("./late")).late, (await import("./other")).lib());
-  console.log("asked:", asked.join(" ") || "nothing");
-`;
-
-const unchanged =
-  "static: lib legacy data\nimport(): lib legacy data\nrequire(): lib legacy data\nfirst loaded now: lib late other\nasked: nothing\n";
-
-async function compileAndRun(folder: string, ...flags: string[]) {
-  const executable = join(folder, "program" + flags.join("") + (isWindows ? ".exe" : ""));
-  const build = await spawned(
-    [bunExe(), "build", "--compile", ...flags, "main.ts", "--outfile", executable],
-    folder,
-    bunEnv,
-  );
-  built(build);
-  return spawned([executable], folder, bunEnv);
-}
-
-async function runTests(folder: string) {
-  const { stdout, stderr, exitCode } = await spawned(
-    [bunExe(), "test", "--debug-aot", "./main.test.ts"],
-    folder,
-    bunEnv,
-  );
-  return { output: stdout + stderr, exitCode };
-}
-
-const replacement = `(args: any) => (asked.push("load:" + nameOf(args.path)), { contents: "export function lib() { return 'replaced'; } export default { name: 'replaced' };", loader: "js" })`;
-
-const neverAsked: Record<string, string> = {
-  "onLoad of a TypeScript module": String.raw`build => build.onLoad({ filter: /(lib|late|other)\.ts$/ }, ${replacement})`,
-  "onLoad of a JSON module": String.raw`build => build.onLoad({ filter: /\.json$/ }, ${replacement})`,
-  "onLoad of a CommonJS module": String.raw`build => build.onLoad({ filter: /legacy/ }, ${replacement})`,
-  "onLoad of every file": String.raw`build => build.onLoad({ filter: /.*/ }, ${replacement})`,
-  "onResolve of the entry point": String.raw`build => build.onResolve({ filter: /main/ }, (args: any) => (asked.push("resolve:" + nameOf(args.path)), undefined))`,
-  "onResolve of every name": String.raw`build => build.onResolve({ filter: /.*/ }, (args: any) => (asked.push("resolve:" + nameOf(args.path)), undefined))`,
-  "onResolve that sends one module of the program to another": String.raw`build => build.onResolve({ filter: /lib/ }, (args: any) => (asked.push("resolve:" + nameOf(args.path)), { path: import.meta.dir + "/other.ts" }))`,
-  "onResolve that sends a module of the program to a file on disk": String.raw`build => build.onResolve({ filter: /lib/ }, (args: any) => (asked.push("resolve:" + nameOf(args.path)), { path: (globalThis as any).process.cwd() + "/other.ts" }))`,
-};
-
-const accepted = String.raw`
-  ${header}
-  attempt(build => build.onLoad({ filter: /\.yaml$/ }, () => ({ exports: { value: "from plugin" }, loader: "object" })));
-  attempt(build => build.onLoad({ filter: /lib/, namespace: "virtual" }, () => ({ exports: { value: "from namespace" }, loader: "object" })));
-  attempt(build => build.onResolve({ filter: /^virtual:/ }, (args: any) => ({ path: args.path.slice(8), namespace: "virtual" })));
-  attempt(build => build.module("my-virtual", () => ({ exports: { value: "from module" }, loader: "object" })));
-  attempt(build => build.module("shared-lib", () => ({ exports: { lib }, loader: "object" })));
-  const yamlPath = (globalThis as any).process.cwd() + "/written.yaml";
-  await Bun.write(yamlPath, "value: from file");
-  console.log((await import(yamlPath)).value);
-  console.log((await import(["virtual", "lib"].join(":"))).value);
-  console.log((await import(["my", "virtual"].join("-"))).value);
-  console.log((await import(["shared", "lib"].join("-"))).lib === lib);
-`;
-
-const acceptedOutput =
-  "lib legacy data\nregistered\nregistered\nregistered\nregistered\nregistered\nfrom plugin\nfrom namespace\nfrom module\ntrue\n";
-
-describe.concurrent("plugins registered at run time", () => {
-  for (const [name, register] of Object.entries(neverAsked)) {
-    test(
-      `${name} registers, and an executable never asks it for a module of the program`,
-      () =>
-        slot(async () => {
-          using dir = tempDir("aot-run-time-plugin", {
-            ...library,
-            "main.ts": `${header}\nattempt(${register});\n${footer}`,
-          });
-          const bundled = await compileAndRun(String(dir));
-          const compiled = await compileAndRun(String(dir), "--aot");
-          const expected = { stdout: "lib legacy data\nregistered\n" + unchanged, exitCode: 0 };
-          expect({ stdout: bundled.stdout, exitCode: bundled.exitCode }).toEqual(expected);
-          expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual(expected);
-        }),
-      timeout,
-    );
-  }
-
-  test(
-    "module() of a compiled path throws",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-run-time-plugin", {
-          ...library,
-          "main.ts": String.raw`${header}
-            attempt(build => {
-              const resolved = import.meta.resolve("./lib.ts");
-              build.module(resolved.startsWith("file:") ? Bun.fileURLToPath(resolved) : resolved, () => ({ exports: {}, loader: "object" }));
-            });`,
-        });
-        const { stdout, exitCode } = await compileAndRun(String(dir), "--aot");
-        expect(stdout).toMatch(/^TypeError: module\(\) cannot replace a module that was compiled ahead of time$/m);
-        expect(exitCode).toBe(0);
-      }),
-    timeout,
-  );
-
-  test(
-    "plugins for other modules register and run in an executable",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-run-time-plugin", { ...library, "main.ts": accepted });
-        const { stdout, exitCode } = await compileAndRun(String(dir), "--aot");
-        expect({ stdout, exitCode }).toEqual({ stdout: acceptedOutput, exitCode: 0 });
-      }),
-    timeout,
-  );
-
-  test("plugins for other modules register under bun run", async () => {
-    using dir = tempDir("aot-run-time-plugin", { ...library, "main.ts": accepted });
-    const { stdout, exitCode } = await spawned([bunExe(), "run", "main.ts"], String(dir), bunEnv);
-    expect({ stdout, exitCode }).toEqual({ stdout: acceptedOutput, exitCode: 0 });
+// A plugin outlives its test file, so no case names a file of another.
+const projects = new Map<string, Record<string, string>>();
+const runs = new Map<string, Promise<{ output: string; exitCode: number | null }>>();
+const runTests = (project: string) =>
+  runs.getOrInsertComputed(project, async () => {
+    const files = projects.get(project)!;
+    using dir = tempDir("aot-run-time-plugin", files);
+    const testFiles = Object.keys(files).filter(path => path.endsWith(".test.ts"));
+    const cmd = [bunExe(), "test", "--debug-aot", ...testFiles.map(path => "./" + path)];
+    const { stdout, stderr, exitCode } = await run(cmd, String(dir), bunEnv);
+    return { output: stdout + stderr, exitCode };
   });
 
+/** Adds a folder to the project. Its test file holds one test, which has the name of the folder. */
+function addCase(project: string, folder: string, ofCase: Record<string, string>) {
+  const files = projects.getOrInsertComputed(project, () => ({ "tsconfig.json": tsconfig }));
+  for (const [path, text] of Object.entries(ofCase)) files[`${folder}/${path}`] = text;
+  return async () => {
+    const { output, exitCode } = await runTests(project);
+    const failed = Array.from(output.matchAll(/^\(fail\) (\S+)/gm), ([, name]) => name);
+    expect(output).toMatch(new RegExp(`^\\(pass\\) ${folder}\\b`, "m"));
+    // A run ends with 1 where a test has failed: that is held against the case of that test alone.
+    return { output, exitCode: exitCode === 1 && failed.length > 0 && !failed.includes(folder) ? 0 : exitCode };
+  };
+}
+
+describe.concurrent("plugins registered at run time", () => {
   const inPlace: Record<string, { register: string; message: RegExp }> = {
-    "onLoad of a module": {
-      register: String.raw`build => build.onLoad({ filter: /lib\.ts$/ }, () => ({ contents: "", loader: "ts" }))`,
-      message: /^Error: A runtime plugin can't load ".*lib\.ts" because it was already compiled into this executable$/m,
-    },
     "onResolve of the entry point": {
       register: String.raw`build => build.onResolve({ filter: /main/ }, () => undefined)`,
       message:
@@ -173,73 +67,83 @@ describe.concurrent("plugins registered at run time", () => {
     },
   };
   for (const [name, { register, message }] of Object.entries(inPlace)) {
+    const runCase = addCase("plugins", "resolves", {
+      "lib.ts": `export function lib(): string { return "lib"; }`,
+      "main.test.ts": `import { test } from "bun:test";\n${header}\ntest("resolves", () => attempt(${register}));\n`,
+    });
     test(
       `${name} throws where compiled code runs in place of the files, which bun test would put to the plugin`,
-      () =>
-        slot(async () => {
-          using dir = tempDir("aot-run-time-plugin", {
-            ...library,
-            "main.test.ts": `import { test } from "bun:test";\n${header}\ntest("case", () => attempt(${register}));\n`,
-          });
-          const { output, exitCode } = await runTests(String(dir));
-          expect(output).toMatch(message);
-          expect(exitCode).toBe(0);
-        }),
+      async () => {
+        const { output, exitCode } = await runCase();
+        expect(output).toMatch(message);
+        expect(exitCode).toBe(0);
+      },
       timeout,
     );
   }
 });
 
-describe.concurrent("mock.module under bun test --debug-aot", () => {
+describe.concurrent("plugins that load files of a test run", () => {
+  // More of it, against `bun test`: "a plugin that loads files of the run" in harness/modules-in-a-test-run.ts.
+  const runCase = addCase("plugins", "loads", {
+    "lib.ts": `export function lib(): string { return "lib"; }`,
+    "late.ts": `export function lib(): string { return "late"; }`,
+    "plugin.test.ts": `import { test } from "bun:test";\n${header}
+          test("loads", async () => {
+            attempt(build => build.onLoad({ filter: /loads[\\\\/](lib|late)\\.ts$/ }, () => ({ contents: "export const lib = () => 'from the plugin';", loader: "ts" })));
+            console.log(lib(), (await import("./lib")).lib(), (await import("./late")).lib());
+          });\n`,
+  });
   test(
-    "a built-in module a compiled module imports throws",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-run-time-mock", {
-          "tsconfig.json": tsconfig,
-          "user.js": `import { existsSync } from "node:fs"; export const exists = path => existsSync(path);`,
-          "main.test.ts": `
+    "onLoad gets a file that has not run, and a file that has run stays",
+    async () => {
+      const { output, exitCode } = await runCase();
+      expect(output).toContain("registered\nlib lib from the plugin\n");
+      expect(exitCode).toBe(0);
+    },
+    timeout,
+  );
+});
+
+describe.concurrent("mock.module under bun test --debug-aot", () => {
+  const runBuiltIn = addCase("a mocked built-in module", "built-in", {
+    "user.js": `import { existsSync } from "node:fs"; export const exists = path => existsSync(path);`,
+    "mock.test.ts": `
             import { mock, test } from "bun:test";
             import { exists } from "./user.js";
-            test("case", () => {
-              console.log("exists:", exists("main.test.ts"));
-              try {
-                mock.module("node:fs", () => ({ existsSync: () => false }));
-                console.log("mocked");
-              } catch (error: any) {
-                console.log(error.name + ": " + error.message);
-              }
+            test("built-in", () => {
+              console.log("exists:", exists("tsconfig.json"));
+              mock.module("node:fs", () => ({ existsSync: () => false }));
+              console.log("mocked:", exists("tsconfig.json"));
             });
           `,
-        });
-        const { output, exitCode } = await runTests(String(dir));
-        expect(output).toContain(
-          `TypeError: mock(module, fn) cannot replace a module that was compiled ahead of time: "node:fs"`,
-        );
-        expect(output).not.toContain("mocked");
-        expect(exitCode).toBe(0);
-      }),
+  });
+  test(
+    "a built-in module a compiled module imports is mocked",
+    async () => {
+      const { output, exitCode } = await runBuiltIn();
+      expect(output).toContain("exists: true\nmocked: false\n");
+      expect(exitCode).toBe(0);
+    },
     timeout,
   );
 
-  test(
-    "a package nothing compiled imports is mocked",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-run-time-mock", {
-          "tsconfig.json": tsconfig,
-          "main.test.ts": `
+  const runPackage = addCase("a mocked package", "package", {
+    "mock.test.ts": `
             import { mock, test } from "bun:test";
-            test("case", async () => {
+            test("package", async () => {
               mock.module("not-installed-package", () => ({ a: 1 }));
               console.log("value:", (await import(["not-installed", "package"].join("-"))).a);
             });
           `,
-        });
-        const { output, exitCode } = await runTests(String(dir));
-        expect(output).toContain("value: 1");
-        expect(exitCode).toBe(0);
-      }),
+  });
+  test(
+    "a package nothing compiled imports is mocked",
+    async () => {
+      const { output, exitCode } = await runPackage();
+      expect(output).toContain("value: 1");
+      expect(exitCode).toBe(0);
+    },
     timeout,
   );
 });

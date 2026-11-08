@@ -752,6 +752,15 @@ bun::N_AVX3_ZEN4::ParseMappingsImpl                                  [AVX, AVX2,
 
 
 # ----------------------------------------------------------------------------
+# Bun PNG scanline filters (src/jsc/bindings/highway_png.cpp).
+# Gate: BUN_HWY_DISPATCH (highway_dispatch.h) via hwy::SupportedTargets. (3 symbols)
+# ----------------------------------------------------------------------------
+bun::N_AVX2::PngFilterRgba                                           [AVX, AVX2]
+bun::N_AVX2::PngUnfilter                                             [AVX, AVX2]
+bun::N_AVX2::UnfilterUp                                              [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # BoringSSL AES.
 # (15 symbols)
 # ----------------------------------------------------------------------------

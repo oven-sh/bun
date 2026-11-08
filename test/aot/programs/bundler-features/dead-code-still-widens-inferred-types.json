@@ -1,7 +1,0 @@
-{
-  "build": [
-    "--define",
-    "INTERNAL=false"
-  ],
-  "reference": "compiled"
-}

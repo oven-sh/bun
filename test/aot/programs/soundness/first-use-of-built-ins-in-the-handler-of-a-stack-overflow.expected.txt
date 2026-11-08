@@ -1,3 +1,0 @@
-RangeError
-true true function ok
-tick

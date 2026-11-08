@@ -1,5 +1,0 @@
-{
-  "entryPoints": ["./deletes-a-file.js"],
-  "skipWithASAN": "it compares two times of a release build",
-  "skipInVariants": "it compares two times, which a flag of the build may change"
-}

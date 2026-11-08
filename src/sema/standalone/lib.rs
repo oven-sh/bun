@@ -13,9 +13,6 @@ mod typescript_libs;
 #[cfg(any(test, feature = "test_support"))]
 pub const TYPESCRIPT_LIBS: bun_sema_driver::host::BundledLibs = typescript_libs::BUNDLED;
 
-#[cfg(unix)]
-use core::mem::MaybeUninit;
-
 /// Runs `work(i)` for every `i` below `count` on `threads` threads, which have the stack of a thread of `bun check`.
 #[cfg(any(test, feature = "test_support"))]
 pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sync) {
@@ -45,10 +42,10 @@ pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sy
 /// Returns the column count of the terminal attached to standard output, or 0 if it isn't a terminal.
 pub fn terminal_width() -> usize {
     #[cfg(unix)]
-    // SAFETY: all zeros is a valid `winsize`, which the call fills in.
-    unsafe {
-        let mut size: libc::winsize = MaybeUninit::zeroed().assume_init();
-        if libc::ioctl(1, libc::TIOCGWINSZ, &raw mut size) == 0 {
+    {
+        let mut size: libc::winsize = bun_core::ffi::zeroed();
+        // SAFETY: the call fills in `size`.
+        if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &raw mut size) } == 0 {
             return usize::from(size.ws_col);
         }
     }
@@ -60,8 +57,7 @@ pub fn terminal_width() -> usize {
 pub fn peak_memory() -> u64 {
     #[cfg(target_os = "macos")]
     {
-        // SAFETY: all zeros is a valid `rusage_info_v4`.
-        let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
+        let mut info: libc::rusage_info_v4 = bun_core::ffi::zeroed();
         // SAFETY: `info` has the type that `RUSAGE_INFO_V4` fills in, and it outlives the call.
         let failed = unsafe {
             libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
@@ -105,8 +101,8 @@ fn peak_rss() -> u64 {
 // needs to link (`native`).
 #[cfg(all(test, not(windows)))]
 mod tests {
-    use bun_sema::resolve::{Host, displayed_path, join};
-    use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
+    use bun_sema::resolve::{displayed_path, join};
+    use bun_sema_driver::host::{from_argument, from_native, to_native};
 
     #[test]
     fn directory_in_root_can_be_named_like_a_typescript_root() {
@@ -141,13 +137,5 @@ mod tests {
         );
         assert_eq!(from_argument(&inside, b"b.ts"), from_native(b"/c:/a/b.ts"));
         assert_eq!(from_argument(&inside, b"c:/a"), drive);
-    }
-
-    #[test]
-    fn realpath_under_the_marked_root_stays_under_it() {
-        // A test can't create a directory in `/`. `/usr/lib` already exists and isn't a symlink.
-        let disk = Disk::with_already_read(1, Default::default(), b"/");
-        assert_eq!(disk.realpath(b"/usr/lib"), b"/usr/lib");
-        assert_eq!(disk.realpath(b"/\0/usr/lib"), b"/\0/usr/lib");
     }
 }

@@ -2,7 +2,7 @@ use bun_sema::hir::{FnBody, FnId};
 
 use crate::builtins::SourceDialect;
 use crate::ir::FunctionId;
-use crate::ir::generated::{FunctionFlags, RuntimeErrorKind};
+use crate::ir::generated::RuntimeErrorKind;
 use crate::lower::module::{self, LibraryFunctionForm};
 use crate::lower::{FileLowering, FunctionLowering};
 
@@ -12,6 +12,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let top = self.bound.fns[source.idx()].scope;
         let mut lowering = FunctionLowering::begin(self, function);
         lowering.returned = returned;
+        lowering.count_function(source);
         match module::library_function_form(lowering.file, source) {
             Some(LibraryFunctionForm::NakedConstructor) => {
                 let new_target = lowering.builder.new_target();
@@ -22,13 +23,13 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         lowering.lower_parameters(source);
         lowering.emit_coroutine_start();
+        lowering.count_generator_body(source);
         lowering.emit_fast_path(source);
         lowering.lower_function_body(source);
         lowering.leave_scope(top);
         lowering.finish();
     }
 
-    // Nothing that the build sees names the function.
     pub(crate) fn lower_left_out_function(&mut self, function: FunctionId) {
         let name = self.function_header(function).name;
         let kind = match self.source.dialect() {
@@ -46,6 +47,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_function_body(&mut self, source: FnId) {
         match self.file.hir[source].body {
             FnBody::Block(statements) => {
+                self.give_list_to_scope(self.file.bound.fns[source.idx()].scope, statements);
                 self.lower_statements(statements);
                 self.emit_empty_return();
             }
@@ -54,14 +56,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.emit_return(value, Some(expression));
             }
             FnBody::None => {}
-        }
-        // JSC records the call that makes the promise of an async function behind the body, which the source map takes back to the last token of the function.
-        let flags = self.builder.function().flags;
-        if flags.contains(FunctionFlags::IS_ASYNC)
-            && !flags.contains(FunctionFlags::IS_GENERATOR)
-            && let Some(position) = self.file.last_mapped_function_position(source)
-        {
-            self.builder.record_position(position);
         }
     }
 }

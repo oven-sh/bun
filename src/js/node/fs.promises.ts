@@ -45,12 +45,14 @@ function watch(filename: string | Buffer | URL, options: $Node.WatchOptions & { 
     filename: string | Buffer | Error | undefined;
   };
 
-  if (filename instanceof URL) {
-    throw new TypeError("Watch URLs are not supported yet");
-  } else if (Buffer.isBuffer(filename)) {
-    filename = filename.toString();
-  } else if (typeof filename !== "string") {
-    throw $ERR_INVALID_ARG_TYPE("filename", ["string", "Buffer", "URL"], filename);
+  if (typeof filename !== "string") {
+    if (Buffer.isBuffer(filename)) {
+      filename = filename.toString();
+    } else {
+      const path = require("internal/url").toPathIfFileURL(filename);
+      if (typeof path !== "string") throw $ERR_INVALID_ARG_TYPE("filename", ["string", "Buffer", "URL"], filename);
+      filename = path;
+    }
   }
   let nextEventResolve: (() => void) | null = null;
   if (typeof options === "string") {
@@ -1624,6 +1626,9 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     }
   }
   private_symbols.FileHandle = FileHandle;
+  const fileHandles = require("internal/fs/file_handles");
+  fileHandles.internals = private_symbols;
+  fileHandles.whenLoaded?.(private_symbols);
 }
 
 function throwEBADFIfNecessary(fn: string, fd) {

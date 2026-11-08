@@ -1,13 +1,25 @@
 // What ./idioms.test.ts runs. It says how.
+// A row in which a built-in does the work moves with the build of Bun: a change under src/ can make the linker and the compiler lay native code out anew. Of the 106 idioms of
+// ./idioms/built-in 30 moved by 10 to 20% behind one such change, 14 down and 16 up, with the same compiled code. ./symbols.ts says in which functions the instructions lie.
 import { afterAll, expect } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isCI, isDebug, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
-import { withSteadyCollections } from "../harness/counted-run";
-import { isToldWhatToTake, slot, spawned, withoutDebugInformation } from "../run-programs";
+import { slot, spawned, withoutDebugInformation } from "../harness/commands";
 import { describe, test } from "../supported";
+import { runsOfReading } from "./measure-idioms";
 import { writeUntypedIdioms } from "./untyped-idioms";
+
+// Collections come by bytes allocated and run on the program's own thread.
+// With the collector's own threads on, counts differ by some percent from run to run.
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 
 const root = join(import.meta.dir, "idioms");
 const pinsPath = join(import.meta.dir, `pins.${process.platform}-${process.arch}.json`);
@@ -76,16 +88,9 @@ export function pinnedIdioms(part = 1, parts = 1) {
     const carrier = skipped ? [] : withoutDebugInformation();
     const untypedRoot = join(folder, "idioms");
     if (!skipped) writeUntypedIdioms(untypedRoot);
-    // Without pins only what the three forms print is compared. There a run that is told nothing starts no idiom after 200 seconds and says so.
-    const mayLeaveOut = !hasPins && !mode && !process.env.AOT_PERF_ONLY && !isToldWhatToTake;
-    let leftOut = 0;
     afterAll(() => {
       rmSync(folder, { recursive: true, force: true });
-      if (leftOut)
-        console.error(
-          `SHARE: ${leftOut} of the ${idioms.length} idioms were not run: the file had run for 200 seconds`,
-        );
-      if (mode === "update" || mode === "lower") writeFileSync(pinsPath, JSON.stringify(pins, null, 2) + "\n");
+      if (mode === "update" || mode === "lower") writeFileSync(pinsPath, `{\n${Object.keys(pins).map(name => `${JSON.stringify(name)}: ${JSON.stringify(pins[name])}`).join(",\n")}\n}\n`);
     });
 
     async function instructions(cmd: string[], n: number) {
@@ -99,13 +104,14 @@ export function pinnedIdioms(part = 1, parts = 1) {
       return { count: run.instructions, printed: run.stdout };
     }
     async function aTurn(cmd: string[], n: number) {
-      const short = await instructions(cmd, n >> 2);
-      const long = await instructions(cmd, n);
+      const runs = runsOfReading(n);
+      const short = await instructions(cmd, runs.short);
+      const long = await instructions(cmd, runs.long);
       return {
         instructions:
           short.count === undefined || long.count === undefined
             ? undefined
-            : Math.round(((long.count - short.count) / (n - (n >> 2))) * 10) / 10,
+            : Math.round(((long.count - short.count) / (runs.long - runs.short)) * 10) / 10,
         printed: long.printed,
       };
     }
@@ -142,7 +148,6 @@ export function pinnedIdioms(part = 1, parts = 1) {
         name,
         () =>
           slot(async () => {
-            if (mayLeaveOut && performance.now() > 200_000) return void leftOut++;
             const n = turns[name];
             const typed = await compiled(root, name + ".ts", n);
             const untyped = await compiled(untypedRoot, name + ".js", n);

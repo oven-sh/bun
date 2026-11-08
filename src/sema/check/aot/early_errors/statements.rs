@@ -11,24 +11,38 @@ enum BodyDeclaration {
 impl Checker<'_, '_> {
     pub(super) fn check_statement_early_errors(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut with_modifiers: &[(StmtId, Span<ModifierId>)] = &hir.modifiers_of_stmts;
         for s in (0..hir.stmts.len() as u32).map(StmtId) {
+            while let [(earlier, _), rest @ ..] = with_modifiers
+                && *earlier < s
+            {
+                with_modifiers = rest;
+            }
             if matches!(bound.parent_of_stmt(s), Parent::None) {
                 continue;
             }
-            if !hir.stmt_modifiers(s).is_empty() {
+            if let [(of, modifiers), ..] = with_modifiers
+                && *of == s
+                && !modifiers.is_empty()
+            {
                 self.check_grammar_modifiers_of_statement(file, s);
             }
-            self.check_statement_syntax(file, s);
+            self.check_statement_syntax(hir, bound, file, s);
         }
     }
 
-    fn check_statement_syntax(&mut self, file: FileId, s: StmtId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    fn check_statement_syntax(
+        &mut self,
+        hir: &File<'_>,
+        bound: &Bound<'_>,
+        file: FileId,
+        s: StmtId,
+    ) {
         match hir[s].kind {
             StmtKind::Var(decls) => {
                 if !is_loop_head(hir, bound, s) {
                     self.check_grammar_variable_statement(file, s, decls);
-                    self.check_variable_declarations(file, decls, Kind::VariableStatement);
+                    self.check_variable_declarations(hir, file, decls, Kind::VariableStatement);
                 }
             }
             StmtKind::For { init, .. } => {
@@ -36,19 +50,19 @@ impl Checker<'_, '_> {
                     && let StmtKind::Var(decls) = hir[init].kind
                 {
                     self.check_grammar_variable_declaration_list(file, init, decls);
-                    self.check_variable_declarations(file, decls, Kind::ForStatement);
+                    self.check_variable_declarations(hir, file, decls, Kind::ForStatement);
                 }
             }
             StmtKind::ForIn { left, .. } => {
                 self.check_grammar_for_in_or_for_of_statement(file, s, left);
-                self.check_loop_head(file, s, left, true);
+                self.check_loop_head(hir, file, s, left, true);
             }
             StmtKind::ForOf { left, is_await, .. } => {
                 self.check_grammar_for_in_or_for_of_statement(file, s, left);
                 if is_await {
                     self.check_for_await_in_class_static_block(file, s);
                 }
-                self.check_loop_head(file, s, left, false);
+                self.check_loop_head(hir, file, s, left, false);
             }
             StmtKind::Return(_) => {
                 self.check_grammar_return_statement(file, s);
@@ -71,10 +85,10 @@ impl Checker<'_, '_> {
                 }
             }
             StmtKind::Fn(f) => {
-                self.check_declaration_as_body(file, s, BodyDeclaration::Function(f));
+                self.check_declaration_as_body(hir, bound, file, s, BodyDeclaration::Function(f));
             }
             StmtKind::Class(c) => {
-                self.check_declaration_as_body(file, s, BodyDeclaration::Class);
+                self.check_declaration_as_body(hir, bound, file, s, BodyDeclaration::Class);
                 let class = &hir[c];
                 if class.name.is_none()
                     && !class.flags.contains(Flags::DEFAULT)
@@ -88,28 +102,29 @@ impl Checker<'_, '_> {
             StmtKind::Import(_) if hir.is_in_jsdoc(hir[s].start) => {}
             StmtKind::Import(_) => {
                 let code = if hir.is_js { 1473 } else { 1232 };
-                self.check_module_syntax_position(file, s, code);
+                self.check_module_syntax_position(hir, bound, file, s, code);
                 self.check_module_syntax_in_namespace(file, s, 1147);
-                self.check_import_attribute_values(file, s);
+                self.check_import_attribute_values(hir, file, s);
             }
             StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. } => {
                 let code = if hir.is_js { 1474 } else { 1233 };
-                self.check_module_syntax_position(file, s, code);
+                self.check_module_syntax_position(hir, bound, file, s, code);
                 self.check_module_syntax_in_namespace(file, s, 1194);
-                self.check_import_attribute_values(file, s);
+                self.check_import_attribute_values(hir, file, s);
             }
             StmtKind::ExportDefault(_) => {
-                self.check_module_syntax_position(file, s, 1258);
+                self.check_module_syntax_position(hir, bound, file, s, 1258);
                 self.check_module_syntax_in_namespace(file, s, 1319);
             }
+            StmtKind::Module(_) if hir.is_in_jsdoc(hir[s].start) => {}
             StmtKind::Module(_)
             | StmtKind::ImportEquals(_)
             | StmtKind::ExportAssign(_)
             | StmtKind::ExportAsNamespace(_) => {
                 self.check_typescript_statement_position(file, s);
             }
-            StmtKind::Expr(e) => self.check_end_of_declare(file, e),
             StmtKind::Empty
+            | StmtKind::Expr(_)
             | StmtKind::Debugger
             | StmtKind::Directive { .. }
             | StmtKind::Block(_)
@@ -126,28 +141,34 @@ impl Checker<'_, '_> {
 
     fn check_variable_declarations(
         &mut self,
+        hir: &File<'_>,
         file: FileId,
         decls: Span<VarDeclId>,
         list_parent: Kind,
     ) {
-        let hir = self.hir(file);
-        for d in decls
-            .iter()
-            .filter(|&d| !hir[d].flags.contains(Flags::AMBIENT))
-        {
-            self.check_grammar_variable_declaration(file, d, list_parent);
+        for d in decls.iter() {
+            if !hir[d].flags.contains(Flags::AMBIENT) {
+                self.check_grammar_variable_declaration(file, d, list_parent);
+            }
         }
     }
 
-    fn check_loop_head(&mut self, file: FileId, s: StmtId, left: StmtId, is_for_in: bool) {
-        match self.hir(file)[left].kind {
+    fn check_loop_head(
+        &mut self,
+        hir: &File<'_>,
+        file: FileId,
+        s: StmtId,
+        left: StmtId,
+        is_for_in: bool,
+    ) {
+        match hir[left].kind {
             StmtKind::Var(decls) => {
                 let list_parent = if is_for_in {
                     Kind::ForInStatement
                 } else {
                     Kind::ForOfStatement
                 };
-                self.check_variable_declarations(file, decls, list_parent);
+                self.check_variable_declarations(hir, file, decls, list_parent);
             }
             StmtKind::Expr(target) => {
                 if self.is_for_async_of(file, s) {
@@ -189,11 +210,28 @@ impl Checker<'_, '_> {
         }
     }
 
-    fn check_declaration_as_body(&mut self, file: FileId, s: StmtId, declaration: BodyDeclaration) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        if hir.rare_syntax & rare::DECLARATION_AS_BODY == 0 {
-            return;
+    #[inline]
+    fn check_declaration_as_body(
+        &mut self,
+        hir: &File<'_>,
+        bound: &Bound<'_>,
+        file: FileId,
+        s: StmtId,
+        declaration: BodyDeclaration,
+    ) {
+        if hir.rare_syntax & rare::DECLARATION_AS_BODY != 0 {
+            self.check_declaration_that_may_be_body(hir, bound, file, s, declaration);
         }
+    }
+
+    fn check_declaration_that_may_be_body(
+        &mut self,
+        hir: &File<'_>,
+        bound: &Bound<'_>,
+        file: FileId,
+        s: StmtId,
+        declaration: BodyDeclaration,
+    ) {
         let (mut outer, mut is_labeled) = (s, false);
         while let Some(parent) = statement_parent(bound, outer)
             && matches!(hir[parent].kind, StmtKind::Labeled { .. })
@@ -236,15 +274,21 @@ impl Checker<'_, '_> {
         }
     }
 
-    fn check_module_syntax_position(&mut self, file: FileId, s: StmtId, code: u32) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    #[inline]
+    fn check_module_syntax_position(
+        &mut self,
+        hir: &File<'_>,
+        bound: &Bound<'_>,
+        file: FileId,
+        s: StmtId,
+        code: u32,
+    ) {
         if !matches!(bound.parent_of_stmt(s), Parent::File | Parent::Module(_)) {
             self.early_grammar_error_at((file, hir[s].start, 0), code, &[]);
         }
     }
 
-    fn check_import_attribute_values(&mut self, file: FileId, s: StmtId) {
-        let hir = self.hir(file);
+    fn check_import_attribute_values(&mut self, hir: &File<'_>, file: FileId, s: StmtId) {
         let Some(attributes) = hir.statement_import_attributes(s).some() else {
             return;
         };
@@ -270,6 +314,7 @@ impl Checker<'_, '_> {
     }
 }
 
+#[inline]
 fn statement_parent(bound: &Bound<'_>, s: StmtId) -> Option<StmtId> {
     if let Parent::Stmt(parent) = bound.parent_of_stmt(s) {
         parent.some()
@@ -278,6 +323,7 @@ fn statement_parent(bound: &Bound<'_>, s: StmtId) -> Option<StmtId> {
     }
 }
 
+#[inline]
 fn is_loop_head(hir: &File<'_>, bound: &Bound<'_>, s: StmtId) -> bool {
     statement_parent(bound, s).is_some_and(|parent| {
         matches!(

@@ -3,8 +3,10 @@ use std::collections::BTreeMap;
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
 use bun_aot::engine::{ExecutableIdentity, TargetImageForm};
-use bun_aot::options::{Externals, LoadOptions, Options, PathOptions, RemovableOptions};
-use bun_ast::{Loc, Log};
+use bun_aot::options::{
+    Externals, LoadOptions, Options, PathFilter, PathOptions, RemovableOptions,
+};
+use bun_ast::{Loader, Loc, Log};
 use bun_core::strings;
 use bun_glob::{BunGlobWalker, detect_glob_syntax, walk};
 use bun_options_types::aot_options::AotOptions;
@@ -12,6 +14,7 @@ use bun_paths::MAX_PATH_BYTES;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_sema::resolve::{CodeOptions, JsxRuntime, JsxSettings};
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{from_argument, from_native, to_native};
 
@@ -49,6 +52,7 @@ pub(crate) fn options_from_bundler<'r>(
         log,
     );
     let entry_points = entry_points.map(|list| follow_links(input, list));
+    let entry_points = entry_points.and_then(|list| start_with_first_script(input, list, log));
     let paths = (entry_points.as_ref()).and_then(|list| path_options(input, list, log));
     let (true, Some(entry_points), Some(paths)) = (is_supported, entry_points, paths) else {
         return None;
@@ -65,12 +69,15 @@ pub(crate) fn options_from_bundler<'r>(
         removable: RemovableOptions {
             ignores_pure_annotations: input.bundle_options.ignore_dce_annotations,
             jsx_has_side_effects: input.bundle_options.jsx.side_effects,
+            has_no_bundle: input.aot.runs_tests || input.aot.runs_in_place,
+            is_told_to_minify_syntax: input.bundle_options.minify_syntax
+                && !input.bundle_options.is_library,
         },
         lists_modules: input.bundle_options.metafile,
-        // An obfuscated executable shows no name, and its source map has the names as they are written.
+        // An obfuscated executable shows no name.
         minifies_identifiers: input.bundle_options.minify_identifiers
             && !input.bundle_options.keep_names
-            && !input.aot.obfuscates,
+            && !input.aot.hides_names(),
     })
 }
 
@@ -82,7 +89,7 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         server_components, allow_unresolved, macro_remap, inject, framework, dev_server,
         hot_module_reloading, ignore_module_resolution_errors, disable_transpilation, repl_mode,
         react_compiler_parse_test_pragmas,
-        loaders: _, jsx: _, react_compiler: _, root_dir: _, preserve_symlinks: _,
+        loaders: _, jsx: _, react_compiler: _, react_compiler_filter: _, root_dir: _, preserve_symlinks: _,
         tsconfig_override: _, main_fields: _, transform_options: _, external: _, packages: _,
         extension_order: _, main_field_extension_order: _, no_macros: _, custom_conditions: _,
         entry_naming: _, compile_entry_point_name: _, force_node_env: _,
@@ -103,7 +110,8 @@ fn report_unsupported_options(options: &BundleOptions<'_>, log: &mut Log) -> boo
         deprecated_namespace_object_setters: _, bytecode_depth: _, optimize_bytecode: _,
         bytecode_order: _, compile_target_builtins: _, metafile: _, metafile_json_path: _,
         metafile_markdown_path: _, serve_plugins: _, bunfig_path: _, unwrap_commonjs_packages: _,
-        supports_multiple_outputs: _, rewrite_jest_for_tests: _, code_coverage: _, debugger: _,
+        supports_multiple_outputs: _, rewrite_jest_for_tests: _, vitest_globals: _,
+        test_file_imports_vitest: _, own_test_globals: _, code_coverage: _, debugger: _,
     } = options;
 
     let is_development_server = framework.is_some() || !dev_server.is_null() || *hot_module_reloading;
@@ -202,9 +210,18 @@ fn code_options(input: &OptionsInput<'_, '_, '_>) -> CodeOptions {
 
     // An executable holds the file of a package that a bundle holds. `bun run` takes "main" where a package has both.
     code.prefers_module_field = !input.aot.runs_in_place;
+    code.builds_executable = !input.aot.runs_in_place;
     code.preserves_symlinks = options.preserve_symlinks;
-    code.transpiles_by_working_directory = input.aot.checks_only;
-    code.tsconfig_override = (options.tsconfig_override.as_ref())
+    code.ignores_declared_side_effects = options.ignore_dce_annotations;
+    // As `bun run` and `bun test` transpile the same files.
+    code.transpiles_by_working_directory = input.aot.runs_in_place;
+    code.allows_es_module_mark = input.aot.checks_only || input.aot.runs_tests;
+    code.entry_points_that_run_first = (paths_of_preloads(input).iter())
+        .map(|path| from_argument(&code.working_directory, path))
+        .collect();
+    let tsconfig_override = options.tsconfig_override.as_ref();
+    code.tsconfig_override = tsconfig_override
+        .or(input.aot.missing_tsconfig_override.as_ref())
         .map(|path| from_argument(&code.working_directory, path));
 
     let orders = &options.extension_order;
@@ -250,20 +267,34 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         .zip(options.loaders.values())
         .map(|(extension, &loader)| (extension.to_vec(), loader))
         .collect();
-    loaders.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    loaders.shared_sort_unstable_by(|a, b| a.0.cmp(&b.0));
     LoadOptions {
         project_root: without_trailing_slash_windows_path(input.working_directory).to_vec(),
         loaders,
         externals: externals(options),
         react_compiler: options.react_compiler,
-        runs_macros: !options.no_macros,
+        react_compiler_filter: options.react_compiler_filter.map(PathFilter),
         in_memory_files: in_memory_files(input),
         in_memory_file_keys: in_memory_file_keys(input),
         entry_texts: Vec::new(),
         omits_builtin_modules: input.aot.omits_builtin_modules,
         runs_tests: input.aot.runs_tests,
-        takes_runtime_as_any: false,
+        has_globals_of_vitest: input.aot.has_globals_of_vitest,
+        // Nobody reads the test files ahead of the build, so any of them may import it. A file that they share asks as it loads.
+        entry_point_imports_vitest: input.aot.runs_tests,
+        replaced_builtins: sorted_unique(input.aot.replaced_by_tests.builtins.iter().copied()),
+        test_files: follow_links(input, input.aot.replaced_by_tests.test_files.clone()),
+        paths_of_preloads: paths_of_preloads(input),
     }
+}
+
+fn paths_of_preloads(input: &OptionsInput<'_, '_, '_>) -> Vec<Vec<u8>> {
+    (input.aot.replaced_by_tests.preloads.iter())
+        .flat_map(|preload| {
+            let absolute = absolute_path(input.working_directory, preload);
+            real_file_path(&absolute).into_iter().chain([absolute])
+        })
+        .collect()
 }
 
 fn in_memory_files(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -285,7 +316,7 @@ fn in_memory_file_keys(input: &OptionsInput<'_, '_, '_>) -> Vec<(Vec<u8>, Vec<u8
     let mut keys: Vec<_> = (by_path.into_iter())
         .map(|(path, (key, _))| (key.to_vec(), path))
         .collect();
-    keys.sort_unstable();
+    keys.shared_sort_unstable();
     keys
 }
 
@@ -296,7 +327,7 @@ pub(crate) fn in_memory_files_by_path<'f>(
 ) -> BTreeMap<Vec<u8>, (&'f [u8], &'f [u8])> {
     let working_directory = from_native(working_directory);
     let mut files: Vec<_> = file_map.map.iter().collect();
-    files.sort_unstable_by(|a, b| a.0[..].cmp(&b.0[..]));
+    files.shared_sort_unstable_by(|a, b| a.0[..].cmp(&b.0[..]));
     (files.into_iter())
         .map(|(key, contents)| {
             (
@@ -332,7 +363,7 @@ fn externals(options: &BundleOptions<'_>) -> Externals {
 
 fn sorted_unique<T: Ord>(list: impl Iterator<Item = T>) -> Vec<T> {
     let mut sorted: Vec<T> = list.collect();
-    sorted.sort_unstable();
+    sorted.shared_sort_unstable();
     sorted.dedup();
     sorted
 }
@@ -344,10 +375,22 @@ fn path_options(
 ) -> Option<PathOptions> {
     let root_directory = root_directory(input, entry_points, log)?;
     let entry_point_names = entry_point_names(input, entry_points, &root_directory, log)?;
+    // A program that runs in place has the paths of its files on disk, and no other names.
+    let entry_point_file_names = match input.aot.runs_in_place {
+        true => Vec::new(),
+        false => embedded_entry_point_names(
+            input.bundle_options,
+            input.working_directory,
+            entry_points,
+            &root_directory,
+            log,
+        )?,
+    };
     Some(PathOptions {
         module_prefix: input.module_prefix.to_vec(),
         root_directory,
         entry_point_names,
+        entry_point_file_names,
     })
 }
 
@@ -433,6 +476,7 @@ fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
 /// `bun run` starts a file under its real path, and so `node_modules/.bin/tool` finds what lies beside the file that the link names.
 fn follow_links(input: &OptionsInput<'_, '_, '_>, entry_points: Vec<Vec<u8>>) -> Vec<Vec<u8>> {
     let mut followed: Vec<Vec<u8>> = Vec::with_capacity(entry_points.len());
+    let mut seen: FxHashSet<Vec<u8>> = FxHashSet::default();
     for entry in entry_points {
         let is_in_memory = input.file_map.is_some_and(|files| files.contains(&entry));
         let absolute = absolute_path(input.working_directory, &entry);
@@ -441,11 +485,29 @@ fn follow_links(input: &OptionsInput<'_, '_, '_>, entry_points: Vec<Vec<u8>>) ->
             false => real_file_path(&absolute).filter(|real| *real != absolute),
         };
         let entry = real.unwrap_or(entry);
-        if !followed.contains(&entry) {
+        if seen.insert(entry.clone()) {
             followed.push(entry);
         }
     }
     followed
+}
+
+/// As with `bun build --compile`, an executable starts with the first entry point that is neither a stylesheet nor a page.
+fn start_with_first_script(
+    input: &OptionsInput<'_, '_, '_>,
+    mut entry_points: Vec<Vec<u8>>,
+    log: &mut Log,
+) -> Option<Vec<Vec<u8>>> {
+    let is_script = |entry: &Vec<u8>| {
+        let loader = input.bundle_options.loader(bun_paths::extension(entry));
+        !matches!(loader, Loader::Css | Loader::Html)
+    };
+    let Some(first) = entry_points.iter().position(is_script) else {
+        log.add_error_fmt(None, Loc::EMPTY, format_args!("No output files to bundle"));
+        return None;
+    };
+    entry_points[..=first].rotate_right(1);
+    Some(entry_points)
 }
 
 fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
@@ -499,7 +561,7 @@ fn entry_point_names(
 }
 
 /// The names of the entry points' files in the executable, which are those that `bun build --compile` gives them: the resolver looks for an entry point under `.js` whatever the extension of its source was, and tools read the list.
-pub(crate) fn embedded_entry_point_names(
+fn embedded_entry_point_names(
     options: &BundleOptions<'_>,
     working_directory: &[u8],
     entry_points: &[Vec<u8>],
@@ -515,6 +577,12 @@ pub(crate) fn embedded_entry_point_names(
             Some(name) if index == 0 => Some(name.to_vec()),
             _ => {
                 let relative = relative_path(working_directory, root_directory, entry)?;
+                let extension: &[u8] = match options.loader(bun_paths::extension(entry)) {
+                    Loader::Css => b"css",
+                    Loader::Html => b"html",
+                    _ => b"js",
+                };
+                template.placeholder.ext = extension.into();
                 Some(entry_name(Some(&mut template), relative))
             }
         });
@@ -523,7 +591,7 @@ pub(crate) fn embedded_entry_point_names(
 
 fn without_equal_names(names: Vec<Vec<u8>>, log: &mut Log) -> Option<Vec<Vec<u8>>> {
     let mut sorted: Vec<&Vec<u8>> = names.iter().collect();
-    sorted.sort_unstable();
+    sorted.shared_sort_unstable();
     let mut has_duplicate = false;
     for group in sorted
         .chunk_by(|a, b| a == b)
@@ -654,7 +722,7 @@ fn glob_matches(pattern: &[u8], working_directory: &[u8]) -> Option<Vec<Vec<u8>>
             Ok(Err(_)) | Err(_) => return None,
         }
     }
-    matches.sort_unstable();
+    matches.shared_sort_unstable();
     Some(matches)
 }
 

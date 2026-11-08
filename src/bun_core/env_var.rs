@@ -54,6 +54,8 @@ new!(pub BUN_BYTECODE_ORDER_NAMES_OUT: string, "BUN_BYTECODE_ORDER_NAMES_OUT", {
 // A compiled executable writes the payload order file of this run here at exit; `%p` in the path becomes the pid.
 new!(pub BUN_BYTECODE_ORDER_OUT: string, "BUN_BYTECODE_ORDER_OUT", {});
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
+// JavaScriptCore's option of that name: the engine logs the phases of an AOT build. The front end logs its stages beside them.
+new!(pub BUN_JSC_logAOTPhaseTimes: boolean, "BUN_JSC_logAOTPhaseTimes", { default: false });
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });
 new!(pub BUN_CONFIG_DISABLE_ioctl_ficlonerange: boolean, "BUN_CONFIG_DISABLE_ioctl_ficlonerange", { default: false });
 // TODO(markovejnovic): Legacy usage had the default at 30, even though a the attached comment
@@ -75,11 +77,11 @@ new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIM
 new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
 #[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
-#[cfg(not(bun_locked_environment))]
-new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", {});
-#[cfg(not(bun_locked_environment))]
 new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
+// Bun's own tests, behind BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: `bun build --compile --aot` writes the program alone where it would write an
+// executable.
+#[cfg(not(bun_locked_environment))]
+new!(pub BUN_AOT_WRITES_PROGRAM_ALONE: boolean, "BUN_AOT_WRITES_PROGRAM_ALONE", { default: false });
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });
@@ -96,6 +98,15 @@ new!(pub BUN_DEBUG_QUIET_LOGS: boolean, "BUN_DEBUG_QUIET_LOGS", {});
 // size limit of the embedded module graph (`StandaloneModuleGraph::to_bytes`)
 // so a test can reach it without a 4 GiB input.
 new!(pub BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES: unsigned, "BUN_DEBUG_TEST_STANDALONE_GRAPH_MAX_BYTES", {});
+// Testing hook for `bun build --compile --aot --trim`: the build also writes, under this name, the executable that the
+// same command line makes without `--trim`, so a test that holds the two against each other compiles its program once.
+new!(pub BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: string, "BUN_DEBUG_TEST_UNTRIMMED_OUTFILE", {});
+// Testing hook for `bun test --aot`, which takes no developer flags: words of the compiler, split at commas, as `bun build` takes them.
+// `disable=flow-results` builds tests as a program that is too large to analyze is built.
+new!(pub BUN_DEBUG_TEST_AOT_WORDS: string, "BUN_DEBUG_TEST_AOT_WORDS", {});
+// Testing hook for `bun run --aot` and `bun test --aot`: `shared-memory` or `deleted` is the first kind of file they try for the
+// compiled program, as where the kinds before it do not work.
+new!(pub BUN_DEBUG_TEST_AOT_PROGRAM_FILE: string, "BUN_DEBUG_TEST_AOT_PROGRAM_FILE", {});
 // How long `bun check` runs before it draws its progress line (default 300), so a test can see the line on a small project.
 new!(pub BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: unsigned, "BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS", {});
 new!(pub BUN_DEV_SERVER_TEST_RUNNER: string, "BUN_DEV_SERVER_TEST_RUNNER", {});
@@ -285,6 +296,8 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_MEMFD, "BUN_FEATURE_FLAG_DISABLE_MEMFD", {});
     // The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", {});
+    // No `openat2` or `O_RESOLVE_BENEATH`, as on a kernel without them. For seccomp policies that kill on `openat2`.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH, "BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK, "BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", {});
     // Fall back to the scalar byte-at-a-time VLQ decode in
     // bun_sourcemap::mapping::parse (skips the Highway-dispatched path).

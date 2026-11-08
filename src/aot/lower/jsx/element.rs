@@ -5,18 +5,18 @@ use bun_sema::bind::{ImplicitReference, ImplicitReferenceKind};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{ExprId, ExprKind, NodeData, is_intrinsic_jsx_name};
 use bun_sema::import_sites::{
-    JsxCallee, JsxImport, find_key_attribute, has_static_children, is_ignored_key, jsx_callee,
-    jsx_children,
+    JsxCallee, JsxImport, find_key_attribute, has_static_children, jsx_callee, jsx_children,
 };
 use bun_sema::resolve::JsxRuntime;
 use smallvec::{SmallVec, smallvec};
 
 use super::{Element, find_key_argument};
-use crate::diagnostic_codes::Code;
 use crate::ir::ValueId;
 use crate::lower::call::{self, Arguments, Callee};
+use crate::lower::expression::Tail;
 use crate::lower::member::PropertyName;
 use crate::lower::{FileLowering, FunctionLowering, module};
+use crate::modules::{ModuleRef, SiteAnswer};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum JsxRoot {
@@ -31,7 +31,9 @@ fn find_jsx_reference(
 ) -> ImplicitReference {
     let found = references.binary_search_by(|reference| {
         let recorded_root = match reference.kind {
-            ImplicitReferenceKind::JsxFactory => JsxRoot::Factory,
+            ImplicitReferenceKind::JsxFactory | ImplicitReferenceKind::DefinedPath => {
+                JsxRoot::Factory
+            }
             ImplicitReferenceKind::JsxFragment => JsxRoot::Fragment,
             ImplicitReferenceKind::DecoratorMetadata(_) => return Ordering::Greater,
         };
@@ -55,24 +57,9 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => None,
         }
     }
-
-    fn report_jsx_key_warnings(&mut self, element: Element, target: JsxCallee) {
-        let hir = self.hir;
-        for attribute in hir[element.jsx].attrs.iter() {
-            if is_ignored_key(hir, attribute) {
-                let span = self.span_of(NodeData::Prop(attribute));
-                self.diagnostics.report(Code::JsxKeyIgnored, span, &[]);
-            }
-        }
-        if target == JsxCallee::Import(JsxImport::CreateElement) {
-            let span = self.span_of(NodeData::Expr(element.expression));
-            self.diagnostics.report(Code::JsxKeyAfterSpread, span, &[]);
-        }
-    }
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    // The element has no spread attribute.
     pub(crate) fn lower_element_parts_for_effect(&mut self, expression: ExprId) {
         let hir = self.file.hir;
         let ExprKind::Jsx(jsx) = hir[expression].kind else {
@@ -93,7 +80,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    pub(crate) fn lower_jsx(&mut self, expression: ExprId) -> ValueId {
+    pub(in crate::lower) fn lower_jsx(&mut self, expression: ExprId, tail: Tail<'_>) -> ValueId {
         let hir = self.file.hir;
         let ExprKind::Jsx(jsx) = hir[expression].kind else {
             debug_assert!(false, "lower_jsx takes a Jsx expression");
@@ -110,7 +97,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             target != JsxCallee::Import(JsxImport::Fragment),
             "Fragment is a tag, never a callee"
         );
-        self.file.report_jsx_key_warnings(element, target);
         self.set_position(element.position);
         let callee = match target {
             JsxCallee::Import(import) => self.get_jsx_import(import),
@@ -132,14 +118,25 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             }
         };
         self.set_position(element.position);
-        call::emit_call_of(self, callee, arguments)
+        let call = call::emit_call_of(self, callee, arguments);
+        self.return_call_in_tail_position(call, tail)
     }
 
     fn get_jsx_import(&mut self, import: JsxImport) -> Callee {
-        let binding = self.file.inputs.modules.jsx_binding(self.file.file, import);
+        let modules = self.file.inputs.modules;
+        let binding = modules.jsx_binding(self.file.file, import);
+        let asked = match modules.find_site_answer(self.file.file, import.site_kind()) {
+            Some(SiteAnswer::Module(ModuleRef::File(module))) => {
+                let atoms = &self.file.queries.files().atoms;
+                Some((module, atoms.intern(import.export_name())))
+            }
+            _ => None,
+        };
         let name = self.file.intern_bytes(import.export_name());
+        let required = self.emit_required_jsx_import(import, name);
         Callee {
-            function: module::emit_import_binding(self, binding, name),
+            function: required
+                .unwrap_or_else(|| module::emit_import_binding_asked(self, binding, name, asked)),
             this: None,
             key: None,
             name: Some(name),
@@ -157,13 +154,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let root_name = self
             .file
             .intern_binding_name(reference.binding, reference.name);
-        // Bun's transpiler prints the first name of a pragma as it is written there, so a quoted text is a string.
         let function = match find_quoted_text(&path[0]) {
             Some(text) => {
                 let text = self.file.intern_bytes(text);
                 self.builder.string(text)
             }
             None => self.get_binding_without_expression(reference.binding, reference.name),
+        };
+        let function = if reference.member.is_some() {
+            let key = self.file.name_key(reference.member);
+            self.emit_get(function, PropertyName::Constant(key))
+        } else {
+            function
         };
         let mut callee = Callee {
             function,
@@ -253,7 +255,7 @@ fn find_quoted_text(name: &[u8]) -> Option<&[u8]> {
 
 #[cfg(test)]
 mod tests {
-    use bun_sema::atom::known;
+    use bun_sema::atom::{Atom, known};
     use bun_sema::bind::decorator_metadata::MetadataReference;
     use bun_sema::bind::{Binding, ImplicitReference, ImplicitReferenceKind, SymbolId};
     use bun_sema::hir::{ExprId, MemberId, NodeData, ParamId, TypeNodeId};
@@ -266,6 +268,7 @@ mod tests {
             kind,
             name,
             binding: Binding::Free,
+            member: Atom::NONE,
         };
         let element = |index| NodeData::Expr(ExprId(index));
         let metadata = |index| {
@@ -311,6 +314,7 @@ mod tests {
             kind,
             name: known::React,
             binding,
+            member: Atom::NONE,
         };
         let shadowing = Binding::Symbol(SymbolId(1));
         let outer = Binding::Symbol(SymbolId(0));

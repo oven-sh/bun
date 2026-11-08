@@ -8,19 +8,87 @@ use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Decl, Parent, S
 use bun_sema::check::aot::ObjectOrigin;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
-    self, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, StmtId, StmtKind,
+    self, BinOp, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, PatKind, StmtId, StmtKind,
+    TextRange, is_moved_to_file_start,
 };
+use bun_sema::import_sites::JsxImport;
 use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashSet;
 
 use super::OwnFields;
 use super::object_types::can_be_field;
 use crate::builtins::ResolvedBuiltins;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::{Field, FieldForm, Layout, LayoutKind, LimitId};
-use crate::ir::{DeclaredType, LayoutId, LayoutKey};
-use crate::lower::{CheckerTypeId, FileLowering};
-use crate::modules::{DescribedPart, ModuleKind, ModuleRef, Shape, WrittenDescriptor};
+use crate::ir::generated::{Field, FieldForm, Layout, LayoutKind, LimitId, PositionFlags};
+use crate::ir::{DeclaredType, InParallel, LayoutId, LayoutKey, for_each_mut};
+use crate::lower::scope::{BindingRef, ScopeSlot};
+use crate::lower::{CheckerTypeId, FileInputs, FileLowering, module};
+use crate::modules::{DescribedPart, ModuleGraph, ModuleKind, ModuleRef, Shape, WrittenDescriptor};
+
+#[derive(Copy, Clone)]
+struct CreatedName {
+    name: Atom,
+    form: FieldForm,
+}
+
+pub struct NamesCreatedOnExports {
+    modules: Vec<(FileId, u32)>,
+    names: Vec<CreatedName>,
+}
+
+impl NamesCreatedOnExports {
+    pub fn collect(
+        files: &Files<'_>,
+        modules: &ModuleGraph,
+        inputs: &[Option<FileInputs<'_>>],
+        in_parallel: InParallel<'_>,
+    ) -> NamesCreatedOnExports {
+        let file_ids = (0..inputs.len() as u32).map(FileId);
+        let candidates = file_ids.filter(|&file| may_have_exports_layout(files, modules, file));
+        let mut found: Vec<(FileId, Vec<CreatedName>)> =
+            candidates.map(|file| (file, Vec::new())).collect();
+        for_each_mut(&mut found, in_parallel, &|(module, names)| {
+            if let Some(text) = ModuleText::of_module(files, inputs, *module) {
+                *names = list_created_names(&text);
+            }
+        });
+        found.retain(|(_, names)| !names.is_empty());
+        let name_count: usize = found.iter().map(|(_, names)| names.len()).sum();
+        let mut created = NamesCreatedOnExports {
+            modules: Vec::with_capacity(found.len()),
+            names: Vec::with_capacity(name_count),
+        };
+        for (module, names) in found {
+            created.modules.push((module, created.names.len() as u32));
+            created.names.extend(names);
+        }
+        created
+    }
+
+    fn of(&self, module: FileId) -> &[CreatedName] {
+        let Ok(at) = self.modules.binary_search_by_key(&module, |entry| entry.0) else {
+            return &[];
+        };
+        let start = self.modules[at].1 as usize;
+        let following = self.modules.get(at + 1);
+        let end = following.map_or(self.names.len(), |entry| entry.1 as usize);
+        &self.names[start..end]
+    }
+}
+
+fn may_have_exports_layout(files: &Files<'_>, modules: &ModuleGraph, module: FileId) -> bool {
+    if !modules.has_record(module)
+        || modules.kind(module) != ModuleKind::CommonJs
+        || modules.is_library(module)
+    {
+        return false;
+    }
+    match modules.shape(ModuleRef::File(module)) {
+        Shape::Value | Shape::AsToday => !files.bound(module).file_uses_arguments(),
+        Shape::EsModule | Shape::Names => false,
+    }
+}
 
 impl FileLowering<'_, '_, '_, '_> {
     fn find_container_position(&self, symbol: Sym) -> u32 {
@@ -47,24 +115,11 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     pub(crate) fn module_exports_layout(&mut self, module: FileId) -> Option<LayoutId> {
-        let modules = self.inputs.modules;
-        if !modules.has_record(module)
-            || modules.kind(module) != ModuleKind::CommonJs
-            || modules.is_library(module)
-        {
+        let files = self.queries.files();
+        if !may_have_exports_layout(files, self.inputs.modules, module) {
             return None;
         }
-        match modules.shape(ModuleRef::File(module)) {
-            Shape::Value | Shape::AsToday => {}
-            Shape::EsModule | Shape::Names => return None,
-        }
-        let bound = self.queries.files().bound(module);
-        // `arguments.callee` is the function that holds the text of the module.
-        if bound.file_uses_arguments() {
-            return None;
-        }
-        let file_symbol = bound.file_symbol.some()?;
-        // A file symbol that declarations of other files merge into is defined by no file alone.
+        let file_symbol = files.bound(module).file_symbol.some()?;
         let symbol = self.queries.canonical_symbol(module, file_symbol);
         if symbol.file != module || symbol.id != file_symbol {
             return None;
@@ -74,70 +129,69 @@ impl FileLowering<'_, '_, '_, '_> {
         has_fields.then_some(layout)
     }
 
-    pub(crate) fn module_type_layout(&mut self, ty: CheckerTypeId) -> Option<LayoutId> {
+    fn find_module_of_type(&mut self, ty: CheckerTypeId) -> Option<FileId> {
         let ObjectOrigin::Symbol(symbol) = self.queries.object_origin(ty) else {
             return None;
         };
-        if !self.is_file_symbol(symbol) {
-            return None;
-        }
-        self.module_exports_layout(symbol.file)
+        self.is_file_symbol(symbol).then_some(symbol.file)
     }
 
-    // `false`: nobody can see the object, so the body does not make it. A module that is required while its body runs shows it.
-    pub(crate) fn begins_with_exports_object(&self, module: FileId) -> bool {
-        let own_module = ModuleRef::File(module);
+    pub(in crate::lower) fn is_type_of_module(&mut self, ty: CheckerTypeId) -> bool {
+        self.find_module_of_type(ty).is_some()
+    }
+
+    pub(crate) fn module_type_layout(&mut self, ty: CheckerTypeId) -> Option<LayoutId> {
+        let module = self.find_module_of_type(ty)?;
+        self.module_exports_layout(module)
+    }
+
+    fn reads_this_of_body(&self) -> bool {
+        let this = BindingRef::Slot(module::file_scope(self), ScopeSlot::This);
+        let analysis = &self.compiled.analysis;
+        self.scopes.placement(this).is_some()
+            && (!analysis.has_esm_syntax || analysis.jsx_imports.contains(JsxImport::JsxDev))
+    }
+
+    fn names_exports_without_expression(&self) -> bool {
+        let analysis = &self.compiled.analysis;
+        let mut bindings = analysis.bindings_read_without_expression(self.hir, self.bound);
+        bindings.any(|binding| {
+            matches!(
+                binding,
+                Binding::CommonJs(CommonJsVariable::Exports | CommonJsVariable::Module)
+            )
+        })
+    }
+
+    pub(in crate::lower) fn begins_with_exports_object(&self) -> bool {
+        let own_module = ModuleRef::File(self.file);
         let modules = self.inputs.modules;
-        if modules.half(own_module) || modules.keeps_module_object(own_module) {
+        if modules.half(own_module)
+            || modules.keeps_module_object(own_module)
+            || self.reads_this_of_body()
+            || self.names_exports_without_expression()
+        {
             return true;
         }
-        let replaces_first = self.ask_module_text(module, replaces_exports_first);
-        !replaces_first.unwrap_or(false)
+        !replaces_exports_first(&ModuleText {
+            hir: self.hir,
+            bound: self.bound,
+            decisions: self.decisions(),
+            builtins: self.builtins,
+            is_this_exports: !self.compiled.analysis.has_esm_syntax,
+        })
     }
 
-    fn ask_module_text<R>(
-        &self,
-        module: FileId,
-        ask: impl FnOnce(&ModuleText<'_, '_>) -> R,
-    ) -> Option<R> {
-        let files = self.queries.files();
-        let (compiled, inputs) = (files.compiled(module)?, self.inputs.files[module.idx()]?);
-        Some(ask(&ModuleText {
-            files,
-            hir: files.hir(module),
-            bound: files.bound(module),
-            decisions: &compiled.analysis.decisions,
-            builtins: inputs.builtins,
-            is_this_exports: !compiled.analysis.has_esm_syntax,
-        }))
-    }
-
-    // The fields are in the order in which the body creates the properties, which is the one order of keys that a creating store goes on from without a call.
     fn compute_exports_fields(&mut self, module: FileId) -> OwnFields {
-        let Some(creations) = self.ask_module_text(module, collect_creations) else {
-            return OwnFields::default().finish();
-        };
-        let mut creations = creations.unwrap_or_default();
-        creations.sort_by_key(|it| (it.is_deferred, it.end, Reverse(it.start)));
-
+        let created = self.inputs.names_created_on_exports;
         let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
-        let mut created_names = FxHashSet::default();
         let mut fields = OwnFields::default();
-        for creation in creations {
-            if !created_names.insert(creation.name) {
-                continue;
-            }
-            let Some(form) = creation.form else {
-                continue;
-            };
-            let key = self.atom_key(creation.name);
+        for &CreatedName { name, form } in created.of(module) {
+            let key = self.atom_key(name);
             if !can_be_field(self, key) {
                 continue;
             }
             if fields.as_slice().len() as u64 >= limit {
-                if module == self.file {
-                    self.gave_up(LimitId::FieldsInKeyOrder, 0);
-                }
                 break;
             }
             fields.add(Field {
@@ -161,7 +215,10 @@ impl FileLowering<'_, '_, '_, '_> {
         let limit = self.inputs.limits.get(LimitId::FieldsInKeyOrder);
         let mut fields = OwnFields::default();
         for &(name, export) in bound.table(bound.symbol(symbol.id).exports) {
-            if !bound.has_runtime_value(export) {
+            let is_private_static = bound.symbol(export).decls.iter().any(|decl| {
+                matches!(decl, Decl::Member(member) if bound.private_name_of_member(*member).is_some())
+            });
+            if is_private_static || !bound.has_runtime_value(export) {
                 continue;
             }
             let key = self.name_key(name);
@@ -169,16 +226,17 @@ impl FileLowering<'_, '_, '_, '_> {
                 continue;
             }
             if fields.as_slice().len() as u64 >= limit {
-                let position = self.find_container_position(symbol);
-                self.gave_up(LimitId::FieldsInKeyOrder, position);
                 break;
             }
             let mut declarations = bound.symbol(export).decls.iter();
             let is_enum_member = declarations.any(|decl| matches!(decl, Decl::EnumMember(_)));
-            let declared = match is_enum_member {
+            let mut declared = match is_enum_member {
                 true => DeclaredType::untyped(),
                 false => self.binding_position(export),
             };
+            if declared.flags.contains(PositionFlags::IS_FROM_COMPILER) {
+                declared.flags |= PositionFlags::IS_EXPECTED;
+            }
             fields.add(Field {
                 key: Some(key),
                 declared,
@@ -217,12 +275,28 @@ impl FileLowering<'_, '_, '_, '_> {
 }
 
 struct ModuleText<'x, 's> {
-    files: &'x Files<'s>,
     hir: &'x hir::File<'s>,
     bound: &'x Bound<'s>,
     decisions: &'x Decisions<'s>,
     builtins: &'x ResolvedBuiltins,
     is_this_exports: bool,
+}
+
+impl<'x, 's> ModuleText<'x, 's> {
+    fn of_module(
+        files: &'x Files<'s>,
+        inputs: &[Option<FileInputs<'x>>],
+        module: FileId,
+    ) -> Option<ModuleText<'x, 's>> {
+        let (compiled, inputs) = (files.compiled(module)?, inputs[module.idx()]?);
+        Some(ModuleText {
+            hir: files.hir(module),
+            bound: files.bound(module),
+            decisions: &compiled.analysis.decisions,
+            builtins: inputs.builtins,
+            is_this_exports: !compiled.analysis.has_esm_syntax,
+        })
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -232,7 +306,6 @@ struct Assignment {
     value: ExprId,
 }
 
-// `form` is `None` where the text does not say which form the property gets.
 #[derive(Copy, Clone)]
 struct Creation {
     name: Atom,
@@ -328,6 +401,7 @@ fn is_exports_object(text: &ModuleText<'_, '_>, expression: ExprId) -> bool {
 }
 
 fn find_assignment(text: &ModuleText<'_, '_>, target: ExprId) -> Option<Assignment> {
+    let target = text.bound.outermost_type_assertion(text.hir, target);
     let Parent::Expr(parent) = text.bound.parent_of_expr(target) else {
         return None;
     };
@@ -361,10 +435,8 @@ fn find_constant_name(text: &ModuleText<'_, '_>, key: ExprId) -> Option<Atom> {
     }
 }
 
-// The form of a property that the descriptor creates.
 fn find_defined_form(text: &ModuleText<'_, '_>, descriptor: ExprId) -> Option<FieldForm> {
-    let (atoms, decisions) = (&text.files.atoms, text.decisions);
-    let written = WrittenDescriptor::read(atoms, text.hir, decisions, descriptor)?;
+    let written = WrittenDescriptor::read(text.hir, text.decisions, descriptor)?;
     let mut form = match written.part {
         DescribedPart::Accessor { .. } => FieldForm::IS_ACCESSOR,
         DescribedPart::Data {
@@ -440,7 +512,6 @@ fn stores_object_variable(text: &ModuleText<'_, '_>) -> bool {
     })
 }
 
-// `None`: the module puts another object in place of the one its body starts with, so the names land there.
 fn collect_creations(text: &ModuleText<'_, '_>) -> Option<Vec<Creation>> {
     let (hir, bound) = (text.hir, text.bound);
     if has_export_assignment(bound) || stores_object_variable(text) {
@@ -455,7 +526,7 @@ fn collect_creations(text: &ModuleText<'_, '_>) -> Option<Vec<Creation>> {
         let Some((object, key)) = hir.member_key(expression) else {
             continue;
         };
-        if !bound.is_write_access(hir, expression) || text.decisions.is_dead_expr(expression) {
+        if !bound.is_stored_to(hir, expression) || text.decisions.is_dead_expr(expression) {
             continue;
         }
         let assignment = find_assignment(text, expression);
@@ -478,12 +549,26 @@ fn collect_creations(text: &ModuleText<'_, '_>) -> Option<Vec<Creation>> {
         let Some(name) = name else {
             continue;
         };
-        // The value is evaluated before the store.
         let node = assignment.map_or(expression, |it| it.node);
         let form = Some(FieldForm::default());
         creations.push(create_creation(text, name, form, node));
     }
     Some(creations)
+}
+
+fn list_created_names(text: &ModuleText<'_, '_>) -> Vec<CreatedName> {
+    let mut creations = collect_creations(text).unwrap_or_default();
+    creations.shared_sort_by_key(|it| (it.is_deferred, it.end, Reverse(it.start)));
+    let mut created_names = FxHashSet::default();
+    creations.retain(|it| created_names.insert(it.name));
+    let of_known_form = creations.iter().filter_map(|it| {
+        let form = it.form?;
+        Some(CreatedName {
+            name: it.name,
+            form,
+        })
+    });
+    of_known_form.collect()
 }
 
 struct Replacement {
@@ -511,14 +596,26 @@ fn find_module_name(text: &ModuleText<'_, '_>, access: ExprId) -> Option<ExprId>
     names_exports_object(text, access).then(|| text.hir.skip_type_assertions(object))
 }
 
-// `module.exports = value` or `exports = module.exports = value` as a statement of the body.
 fn find_replacement(text: &ModuleText<'_, '_>, statement: StmtId) -> Option<Replacement> {
     let hir = text.hir;
-    let StmtKind::Expr(expression) = hir[statement].kind else {
-        return None;
+    let mut expression = match hir[statement].kind {
+        StmtKind::Expr(expression) => expression,
+        StmtKind::Var(declarations) => {
+            let first = &hir[declarations.iter().next()?];
+            matches!(hir[first.pat].kind, PatKind::Ident(_)).then_some(first.init.some()?)?
+        }
+        _ => return None,
     };
     if text.decisions.is_dead_stmt(statement) {
         return None;
+    }
+    while let ExprKind::Binary {
+        op: BinOp::Comma,
+        left,
+        ..
+    } = hir[hir.skip_type_assertions(expression)].kind
+    {
+        expression = left;
     }
     let (target, value) = find_plain_store(text, expression)?;
     let (module_name, exports_name, value) = match find_module_name(text, target) {
@@ -543,12 +640,19 @@ fn find_replacement(text: &ModuleText<'_, '_>, statement: StmtId) -> Option<Repl
 fn is_evaluated_behind(
     text: &ModuleText<'_, '_>,
     replacement: &Replacement,
+    evaluated_ahead: &[TextRange],
     mention: ExprId,
 ) -> bool {
     let hir = text.hir;
     let position = hir[mention].pos;
     if position >= replacement.end {
-        // A function declaration can be called from the first statement on. Any other function is made where it is written.
+        let next = evaluated_ahead.partition_point(|moved| moved.end <= position);
+        if evaluated_ahead
+            .get(next)
+            .is_some_and(|moved| moved.pos <= position)
+        {
+            return false;
+        }
         let mut outermost = None;
         let is_in_body = is_in_body_through(text, mention, |function| {
             outermost = Some(function);
@@ -556,19 +660,18 @@ fn is_evaluated_behind(
         });
         return is_in_body && outermost.is_none_or(|function| hir[function].kind != FnKind::Decl);
     }
-    // A function that is the value itself is not called before it is stored.
     let value = hir.skip_type_assertions(replacement.value);
     position >= replacement.start && matches!(hir[value].kind, ExprKind::Fn(_))
 }
 
 fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
     let (hir, bound) = (text.hir, text.bound);
-    let mut statements = hir.ids(hir.body);
-    let Some(replacement) = statements.find_map(|statement| find_replacement(text, statement))
-    else {
+    let mut statements = hir.ids(hir.body).enumerate();
+    let found =
+        statements.find_map(|(index, statement)| Some((index, find_replacement(text, statement)?)));
+    let Some((statements_in_front, replacement)) = found else {
         return false;
     };
-    // A body that returns in front of the statement exports the object it began with.
     let can_return_first = (0..hir.stmts.len() as u32).map(StmtId).any(|statement| {
         let scope = bound.scope_of_stmt(statement);
         matches!(hir[statement].kind, StmtKind::Return(_))
@@ -579,32 +682,35 @@ fn replaces_exports_first(text: &ModuleText<'_, '_>) -> bool {
     if can_return_first {
         return false;
     }
-    (0..hir.exprs.len() as u32).map(ExprId).all(|mention| {
-        let variable = match hir[mention].kind {
-            ExprKind::This => return !(text.is_this_exports && reads_this_of_file(text, mention)),
-            ExprKind::Ident(_) => match bound.binding(mention) {
-                Binding::CommonJs(
-                    variable @ (CommonJsVariable::Exports | CommonJsVariable::Module),
-                ) => variable,
-                _ => return true,
-            },
-            _ => return true,
-        };
-        if text.decisions.is_dead_expr(mention)
-            || mention == replacement.module_name
-            || Some(mention) == replacement.exports_name
-        {
+    let evaluated_ahead = hir
+        .ids(hir.body)
+        .enumerate()
+        .filter(|&(index, it)| index < statements_in_front || is_moved_to_file_start(hir, it));
+    let evaluated_ahead = evaluated_ahead.map(|(_, it)| hir[it].loc);
+    let mut evaluated_ahead: Vec<TextRange> = evaluated_ahead
+        .filter(|written| written.pos >= replacement.end)
+        .collect();
+    evaluated_ahead.shared_sort_unstable_by_key(|written| written.pos);
+    bound.ident_bindings().iter().all(|&(mention, binding)| {
+        let Binding::CommonJs(variable) = binding else {
             return true;
-        }
+        };
         let names_replaced_value = match variable {
             CommonJsVariable::Exports => replacement.exports_name.is_some(),
-            _ => match bound.parent_of_expr(mention) {
+            CommonJsVariable::Module => match bound.parent_of_expr(mention) {
                 Parent::Expr(access) => hir
                     .member_key(access)
                     .is_some_and(|(object, _)| object == mention),
                 _ => false,
             },
+            CommonJsVariable::Require | CommonJsVariable::Filename | CommonJsVariable::Dirname => {
+                return true;
+            }
         };
-        names_replaced_value && is_evaluated_behind(text, &replacement, mention)
+        text.decisions.is_dead_expr(mention)
+            || mention == replacement.module_name
+            || Some(mention) == replacement.exports_name
+            || (names_replaced_value
+                && is_evaluated_behind(text, &replacement, &evaluated_ahead, mention))
     })
 }

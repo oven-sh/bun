@@ -3,7 +3,6 @@ use bun_sema::hir::is_moved_to_file_start;
 
 use super::*;
 
-// Reading a `let`, `const` or class binding in its temporal dead zone throws, so the read is only removable once the binding is known to be initialized.
 impl Removable<'_, '_> {
     fn pattern_owner(&self, mut pattern: PatId) -> Parent {
         loop {
@@ -16,7 +15,32 @@ impl Removable<'_, '_> {
         }
     }
 
-    // `Parent::None` at a function boundary. Static fields and static blocks run inline with their class.
+    fn parent_above_expressions(&self, expression: ExprId) -> Parent {
+        const LONG: usize = 32;
+        let mut kept = self.parents_above_long_chains.borrow_mut();
+        let (mut node, mut steps) = (expression, 0);
+        let above = loop {
+            if let Some(&above) = kept.get(&node) {
+                break above;
+            }
+            match self.bound.parent_of_expr(node) {
+                Parent::Expr(outer) => (node, steps) = (outer, steps + 1),
+                above => break above,
+            }
+        };
+        if steps >= LONG {
+            let mut node = expression;
+            for _ in 0..steps {
+                kept.insert(node, above);
+                let Parent::Expr(outer) = self.bound.parent_of_expr(node) else {
+                    break;
+                };
+                node = outer;
+            }
+        }
+        above
+    }
+
     fn inline_parent(&self, node: Parent) -> Parent {
         let (hir, bound) = (self.hir, self.bound);
         let class_parent = |class: ClassId| bound.class_owner[class.idx()].to_parent();
@@ -26,7 +50,7 @@ impl Removable<'_, '_> {
                 .map_or(Parent::None, class_parent)
         };
         match node {
-            Parent::Expr(expression) => bound.parent_of_expr(expression),
+            Parent::Expr(expression) => self.parent_above_expressions(expression),
             Parent::Stmt(statement) => bound.parent_of_stmt(statement),
             Parent::VarInit(declarator) => Parent::Stmt(bound.var_stmt[declarator.idx()]),
             Parent::Prop(property) | Parent::PropKey(property) | Parent::MethodKey(property) => {
@@ -62,17 +86,17 @@ impl Removable<'_, '_> {
     }
 
     fn runs_inline_in(&self, read: ExprId, container: Parent) -> bool {
-        let mut node = self.bound.parent_of_expr(read);
+        debug_assert!(!matches!(container, Parent::Expr(_)));
+        let mut node = self.parent_above_expressions(read);
         while node != Parent::None && node != container {
             node = self.inline_parent(node);
         }
         node != Parent::None
     }
 
-    // A class's inner name is initialized after its `extends` clause and computed keys, before its static fields and blocks.
     fn runs_in_static_initializer(&self, read: ExprId, class: ClassId) -> bool {
         let bound = self.bound;
-        let mut node = bound.parent_of_expr(read);
+        let mut node = self.parent_above_expressions(read);
         while node != Parent::None {
             let parent = self.inline_parent(node);
             let node_class = match node {
@@ -92,7 +116,7 @@ impl Removable<'_, '_> {
         false
     }
 
-    fn declaration_statement(&self, declaration: Decl) -> Option<(StmtId, u32)> {
+    pub(super) fn declaration_statement(&self, declaration: Decl) -> Option<(StmtId, u32)> {
         let (hir, bound) = (self.hir, self.bound);
         let statement = match declaration {
             Decl::Var(name) | Decl::Require(name) => {
@@ -115,11 +139,14 @@ impl Removable<'_, '_> {
     }
 
     pub(super) fn is_initialized_at(&self, read: ExprId, symbol: SymbolId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        match bound.initial_state(symbol) {
-            InitialState::Undefined | InitialState::Initialized => return true,
-            InitialState::Uninitialized => {}
+        match self.bound.initial_state(symbol) {
+            InitialState::Undefined | InitialState::Initialized => true,
+            InitialState::Uninitialized => self.has_initializer_run_at(read, symbol),
         }
+    }
+
+    pub(super) fn has_initializer_run_at(&self, read: ExprId, symbol: SymbolId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
         if bound.binding_stability(symbol) == BindingStability::ContainerMember {
             return true;
         }
@@ -137,7 +164,6 @@ impl Removable<'_, '_> {
             return false;
         };
         let container = bound.parent_of_stmt(statement);
-        // `for (const a of [a])` evaluates `[a]` first.
         let is_loop_variable = match container {
             Parent::Stmt(owner) => match hir[owner].kind {
                 StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => left == statement,

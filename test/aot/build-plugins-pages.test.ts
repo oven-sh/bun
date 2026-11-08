@@ -137,6 +137,7 @@ build.onLoad({ filter: /\\.db$/ }, (args: any) => { tell("onLoad", args); const 
     ],
   },
   "the loaders base64 and dataurl": {
+    alone: true,
     files: {
       "main.ts": `// @ts-nocheck\nimport a from "virtual:a"; import b from "virtual:b.txt"; console.log(a, b);`,
     },
@@ -147,6 +148,7 @@ build.onLoad({ filter: /^b/, namespace: "virtual" }, () => ({ contents: "data", 
     ],
   },
   "the loaders md and xml": {
+    alone: true,
     files: {
       "main.ts": `// @ts-nocheck\nimport md from "virtual:a"; import xml from "virtual:b"; console.log(JSON.stringify(md), JSON.stringify(xml));`,
     },

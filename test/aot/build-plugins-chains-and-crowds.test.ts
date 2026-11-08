@@ -57,6 +57,7 @@ build.onLoad({ filter: /b\\.ts$/ }, (args: any) => { tell("second onLoad", args)
     prints: "disk\n",
   },
   "the entry point, where every plugin declines": {
+    alone: true,
     files: { "main.ts": `console.log("main");` },
     plugins: [
       `build.onResolve({ filter: /main/ }, (args: any) => { tell("first", args); return null; });`,

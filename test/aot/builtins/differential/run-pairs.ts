@@ -7,7 +7,7 @@ import { Log } from "./log";
 import type { Invocation, Realm } from "./members";
 import { runSet } from "./observe";
 import { readsOfOperandCode } from "./operand-code";
-import { admitsValue, baseSetOf, isCallThatExists, withArgument, withReceiver, type Call } from "./operands";
+import { admitsValue, baseSetOf, isCallThatExists, mayStandFor, withArgument, withReceiver, type Call } from "./operands";
 import { candidateOf, isReentrant, valueOf, type Completion, type OperandSet, type Run } from "./runs";
 import {
   conversionProtocols,
@@ -16,6 +16,7 @@ import {
   parameterOf,
   type Conversion,
   type DumpedOverload,
+  type DumpedParameter,
   type OperandName,
 } from "./table-description";
 
@@ -187,6 +188,11 @@ function stepFor(realm: Realm, overload: DumpedOverload, operand: OperandName, v
   return parameter.conversion === "None" || parameter.conversion === "Dictionary" ? "LeaveToBuiltin" : "Convert";
 }
 
+// For a value that the parameter does not accept.
+function stepForCandidate(parameter: DumpedParameter): Step {
+  return parameter.conversion === "None" || parameter.conversion === "Dictionary" ? "LeaveToBuiltin" : "Convert";
+}
+
 function isResolved(realm: Realm, overload: DumpedOverload, { receiver, args }: Run): boolean {
   const operands: [OperandName, unknown][] = [
     ...(overload.receiver ? [["this", receiver] as const] : []),
@@ -289,6 +295,8 @@ async function checkStateBeforeConversions(
       const plain = withOperand(base, operand, candidate);
       const positions = convertedPositions(overload, plain).filter(position => position !== operand);
       if (positions.length === 0) break;
+      const parameter = parameterOf(overload, operand);
+      if (parameter && !mayStandFor(realm, parameter, candidate) && stepForCandidate(parameter) === "LeaveToBuiltin") continue;
       const run = await runIfCallExists(realm, call, invocation, plain);
       if (!isAcceptedReceiver(realm, call, overload, run) || !isResolved(realm, overload, run)) continue;
       for (const position of positions) {
@@ -527,8 +535,31 @@ const handsOutTheSame = (left: Run, right: Run) => isSameValue(valuesHandedOut(l
 const showsTheSame = (left: Run, right: Run) =>
   hasSameOutcome(left.completion, right.completion) && handsOutTheSame(left, right);
 
-// The call on operands that are made anew, and the call on such operands behind a store to memory of one of them. A call that writes
-// what it reads answers otherwise the second time on the same operands, and is judged so all the same.
+function isDeclaredRead(realm: Realm, overload: DumpedOverload, parameter: DumpedParameter, value: unknown, heaps: readonly string[]): boolean {
+  if (heaps.some(heap => overload.reads.includes(heap))) return true;
+  const ofOperandCode = readsOfOperandCode(realm, parameter, value);
+  return ofOperandCode === "Everything" || heaps.some(heap => ofOperandCode.includes(heap));
+}
+
+// The call on operands that are made anew.
+async function callAsMade(
+  realm: Realm,
+  call: Call,
+  invocation: Invocation,
+  overload: DumpedOverload,
+  set: OperandSet,
+  operand: OperandName,
+): Promise<Run | undefined> {
+  // Code of an operand that reaches into another one may read what the built-in does not.
+  if (isReentrant(set)) return undefined;
+  const run = await runIfCallExists(realm, call, invocation, set);
+  if (!isAcceptedReceiver(realm, call, overload, run)) return undefined;
+  const parameter = parameterOf(overload, operand);
+  return parameter && admitsValue(realm, parameter.accepted, valueOf(run, operand), true) ? run : undefined;
+}
+
+// That call, and the call on such operands behind a store to memory of one of them. A call that writes what it reads answers otherwise
+// the second time on the same operands, and is judged so all the same.
 async function callBehindStore(
   realm: Realm,
   call: Call,
@@ -537,15 +568,9 @@ async function callBehindStore(
   set: OperandSet,
   operand: OperandName,
   index: number,
+  run: Run,
 ): Promise<StoreOutcome> {
-  // Code of an operand that reaches into another one may read what the built-in does not.
-  if (isReentrant(set)) return "NoVerdict";
-  const run = await runIfCallExists(realm, call, invocation, set);
-  if (!isAcceptedReceiver(realm, call, overload, run)) return "NoVerdict";
-  const parameter = parameterOf(overload, operand);
-  if (!parameter || !admitsValue(realm, parameter.accepted, valueOf(run, operand), true)) return "NoVerdict";
-  const again = await runIfCallExists(realm, call, invocation, set);
-  if (!again || !showsTheSame(run, again)) return "NoVerdict";
+  const parameter = parameterOf(overload, operand)!;
   // Such a result changes with the operand, whatever the call read: it says nothing, and what the call leaves behind does.
   const isBound = isBoundTo(run.completion, valueOf(run, operand));
 
@@ -580,9 +605,10 @@ async function callBehindStore(
       { before: created(), after: placesOf(valueOf(run, operand)) },
       { before: created(index), after: placesOf(value) },
     );
-  if (leavesNoTrace || heaps.some(heap => overload.reads.includes(heap))) return "Explained";
-  const ofOperandCode = readsOfOperandCode(realm, parameter, value);
-  if (ofOperandCode === "Everything" || heaps.some(heap => ofOperandCode.includes(heap))) return "Explained";
+  if (leavesNoTrace || isDeclaredRead(realm, overload, parameter, value, heaps)) return "Explained";
+  // A call that answers otherwise each time says nothing.
+  const again = await runIfCallExists(realm, call, invocation, set);
+  if (!again || !showsTheSame(run, again)) return "NoVerdict";
   const message =
     `the call ${describeOutcome(run.completion)}, and behind a store to ${heaps.join(" or ")} of ${describeOperand(operand)} ` +
     `it ${describeOutcome(behind.completion)}`;
@@ -631,13 +657,21 @@ async function checkReads(
   for (const operand of operands) {
     // A read of the name from any other value is not a use of the entry.
     if (operand === "this" && call.entry.kind === "DataProperty") continue;
+    const parameter = parameterOf(overload, operand);
     for (const candidate of comparableInstances) {
-      const count = changesOf(candidate.create(new Log(), operand, { receiver: undefined })).length;
+      if (!parameter || !mayStandFor(realm, parameter, candidate)) continue;
+      const sample = candidate.create(new Log(), operand, { receiver: undefined });
+      // A store to what the entry says it reads shows nothing new.
+      const indexes = [...changesOf(sample).entries()].flatMap(([index, { heaps }]) => (isDeclaredRead(realm, overload, parameter, sample, heaps) ? [] : [index]));
+      if (indexes.length === 0) continue;
       for (const set of setsNamingPlaces(overload, withOperand(base, operand, candidate), operand)) {
-        for (let index = 0; index < count; index++) {
-          let outcome = await callBehindStore(realm, call, invocation, overload, set, operand, index);
+        const run = await callAsMade(realm, call, invocation, overload, set, operand);
+        if (!run) continue;
+        for (const index of indexes) {
+          let outcome = await callBehindStore(realm, call, invocation, overload, set, operand, index, run);
           for (let time = 1; time < timesToShow && typeof outcome === "object"; time++) {
-            const again = await callBehindStore(realm, call, invocation, overload, set, operand, index);
+            const anew = await callAsMade(realm, call, invocation, overload, set, operand);
+            const again = anew ? await callBehindStore(realm, call, invocation, overload, set, operand, index, anew) : "NoVerdict";
             outcome = typeof again === "object" && !isSameDifference(outcome, again) ? "NoVerdict" : again;
           }
           if (outcome === "NoVerdict") break;

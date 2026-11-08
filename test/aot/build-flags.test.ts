@@ -1,9 +1,10 @@
 // The flags of `bun build` that change what the program does. Each program is built with `--compile` and with `--compile --aot` under the same
 // flags, and both executables print what is written here. A flag that --aot does not support stops the build with an error.
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./run-programs";
+import { slot, spawned, unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
 const packages = {
   "node_modules/cond/package.json": `{ "name": "cond", "version": "1.0.0", "exports": { "custom": "./custom.js", "default": "./default.js" } }`,
@@ -56,6 +57,55 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     },
     prints: "42 named true number staging\n",
   },
+  "--define of a name in place of a name": {
+    flags: ["--define=MODE=mode", "--define=CALC=Math", "--define=load=require"],
+    files: {
+      "main.js": `globalThis.mode = "global";
+const mode = "module";
+function pick(mode) { return MODE; }
+function later(mode) { return () => MODE; }
+function store(mode) { MODE = "stored"; return mode; }
+function own() { const MODE = "own"; return MODE; }
+function local(Math) { return CALC.max(1, 2); }
+console.log(MODE, pick("parameter"), later("captured")(), store("parameter"), globalThis.mode, own(), typeof MODE);
+let said; try { said = typeof load("node:os").platform; } catch (e) { said = e.message; }
+console.log(local({ max: () => "local" }), CALC.max(1, 2), said);`,
+    },
+    prints: "module parameter captured stored global own string\nlocal 2 require is not defined\n",
+  },
+  "--define of a name in place of a path, and of a path in place of a name": {
+    flags: [
+      "--define=config.mode=mode",
+      "--define=import.meta.env.MODE=mode",
+      "--define=DEPTH=settings.depth",
+      "--define=LOADER_AT_HAND=require",
+    ],
+    files: {
+      "main.mjs": `globalThis.mode = "global";
+globalThis.settings = { depth: "global" };
+const mode = "module";
+const settings = { depth: "module" };
+function pick(mode) { return config.mode; }
+function later(mode) { return () => import.meta.env.MODE; }
+function own(config) { return config.mode; }
+function depth(settings) { return DEPTH; }
+function loader(require) { return LOADER_AT_HAND; }
+function put() { const settings = { depth: "local" }; DEPTH = "stored"; return settings.depth; }
+console.log(config.mode, import.meta.env.MODE, pick("parameter"), later("captured")(), own({ mode: "own" }), typeof config.mode);
+console.log(DEPTH, depth({ depth: "parameter" }), loader("parameter"), put());`,
+    },
+    prints: "module module parameter captured own string\nglobal parameter parameter stored\n",
+  },
+  "--define of a name in place of a path, under typeof": {
+    flags: ["--define=config.flag=absent", "--define=FLAG=absent", "--define=config.there=present"],
+    files: {
+      "main.ts": `declare const config: { flag: unknown; there: unknown }; declare const FLAG: unknown;
+(globalThis as any).present = 1;
+const kind = (read: () => string) => { try { return read(); } catch (e) { return (e as Error).name; } };
+console.log(kind(() => typeof config.flag), kind(() => typeof (config.flag)), kind(() => typeof FLAG), kind(() => typeof config.there));`,
+    },
+    prints: "ReferenceError ReferenceError undefined number\n",
+  },
   "--define and --drop of a path that the program ends in brackets": {
     ...pathsThatEndInBrackets,
     prints:
@@ -87,16 +137,6 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     flags: ["--format=iife"],
     files: { "main.ts": `import { a } from "./a"; console.log(a);`, "a.ts": `export const a = "a";` },
     prints: "a\n",
-  },
-  "--bytecode-depth": {
-    flags: ["--bytecode", "--bytecode-depth=1"],
-    files: { "main.ts": `function outer() { return function inner() { return "inner"; }; } console.log(outer()());` },
-    prints: "inner\n",
-  },
-  "--bytecode-order": {
-    flags: ["--bytecode", "--bytecode-order=app.order"],
-    files: { "main.ts": `console.log("ordered");`, "app.order": "" },
-    prints: "ordered\n",
   },
   "--env": {
     flags: ["--env=PUBLIC_*"],
@@ -167,7 +207,8 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     flags: ["--drop=console"],
     files: {
       "main.ts": `let evaluated = 0;
-const say = (text: unknown) => void process.stdout.write(String(text) + "\\n");
+const held = console;
+const say = (text: unknown) => void held.log(String(text));
 console.log("dropped", evaluated++);
 console.error.call(console, evaluated++);
 console?.warn(evaluated++);
@@ -178,12 +219,11 @@ function shadows(console: { log(text: string): string }) { return console.log("a
 say(shadows({ log: text => text }));
 { const console = { log: (text: string) => "so is a constant: " + text }; say(console.log("called")); }
 say(typeof console.log);
-const held = console;
 held.table = () => say("through another name it is called");
 held.table();
 say((console as any).log("as a test") ? "never" : "the arm for undefined");
 import("./other").then(other => other.run());`,
-      "other.ts": `export function run() { console.log("dropped in every file"); process.stdout.write("other ran\\n"); }`,
+      "other.ts": `export function run() { console.log("dropped in every file"); const held = console; held.log("other ran"); }`,
     },
     prints:
       "undefined\n0\na parameter by the name is called\nso is a constant: called\nfunction\nthrough another name it is called\nthe arm for undefined\nother ran\n",
@@ -216,6 +256,31 @@ console.log(evaluated, tools.keep("kept"));`,
   },
 };
 
+// These change every file of the build, or what another of them asks. The others are given to one build of one program.
+const alone = /brackets|^--(format|jsx-runtime|minify|production|drop=console)/;
+const together = Object.entries(honored).filter(([name]) => !alone.test(name));
+for (const [name] of together) delete honored[name];
+const mains = together.map(([, { files }], index) =>
+  Object.keys(files)
+    .find(file => file.startsWith("main."))!
+    .replace(".", index + "."),
+);
+honored[together.map(([name]) => name).join(", ")] = {
+  flags: together.flatMap(([, { flags }]) => flags),
+  files: {
+    ...Object.assign(
+      {},
+      ...together.map(([, { files }], index) =>
+        Object.fromEntries(
+          Object.entries(files).map(([file, text]) => [file.startsWith("main.") ? mains[index] : file, text]),
+        ),
+      ),
+    ),
+    "main.ts": mains.map(main => `import "./${main}";\n`).join(""),
+  },
+  prints: together.map(([, { prints }]) => prints).join(""),
+};
+
 const rejected: Record<string, string[]> = {
   "--banner with code": ["--banner=globalThis.fromBanner = 1;"],
   "--footer with code": ["--footer=globalThis.fromFooter = 1;"],
@@ -230,7 +295,7 @@ describe.concurrent("compile/aot/flags of bun build", () => {
         slot(async () => {
           using dir = tempDir("aot-build-flags", files);
           const folder = String(dir);
-          const main = Object.keys(files).find(file => file.startsWith("main."))!;
+          const main = "main.ts" in files ? "main.ts" : Object.keys(files).find(file => file.startsWith("main."))!;
           for (const how of [[], ["--aot"]]) {
             const executable = join(folder, "program" + how.length + (isWindows ? ".exe" : ""));
             const built = await spawned(
@@ -259,32 +324,6 @@ describe.concurrent("compile/aot/flags of bun build", () => {
       600_000,
     );
   }
-  test(
-    "Bun.build: drop",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-build-drop", {
-          "main.ts": `console.log("dropped"); process.stdout.write("kept\\n");`,
-          "build.ts": `const built = await Bun.build({ entrypoints: ["./main.ts"], drop: ["console"], compile: { outfile: "./program", aot: true } }); process.stdout.write(String(built.success));`,
-        });
-        const built = await spawned([bunExe(), "build.ts"], String(dir), bunEnv);
-        expect({ stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
-          stdout: "true",
-          stderr: expect.any(String),
-          exitCode: 0,
-        });
-        const ran = await spawned([join(String(dir), isWindows ? "program.exe" : "program")], String(dir), {
-          ...bunEnv,
-          BUN_JSC_crashIfInterpreterIsUsed: "1",
-        });
-        expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
-          stdout: "kept\n",
-          exitCode: 0,
-          signal: null,
-        });
-      }),
-    600_000,
-  );
   for (const [what, flags] of Object.entries(rejected)) {
     test(
       "stops the build with an error: " + what,

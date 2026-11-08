@@ -1,1 +1,0 @@
-{ "build": ["--aot-limit=MaxLayoutsInType:12"] }

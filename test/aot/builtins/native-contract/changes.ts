@@ -3,8 +3,8 @@ import { types } from "node:util";
 import { describeKey, describeOrigin } from "../differential/behaviors";
 import type { Trap } from "../differential/log";
 import { isElementKey } from "../differential/references";
-import type { Run } from "../differential/runs";
-import { compareSnapshots, type Change, type ObjectState } from "../differential/snapshots";
+import { changesIn, type Run } from "../differential/runs";
+import type { Change, ObjectState } from "../differential/snapshots";
 import { describeOperand, isObject, type OperandUse } from "../differential/table-description";
 
 export type OperandChange = {
@@ -75,13 +75,18 @@ function findTrappedChanges({ log, set }: Run): OperandChange[] {
   });
 }
 
-function findSnapshotChanges({ before, after, set }: Run): OperandChange[] {
-  return compareSnapshots(before, after).map(change => ({
+function findSnapshotChanges(run: Run): OperandChange[] {
+  return changesIn(run).map(change => ({
     use: useOfChange(change),
-    where: describePlace(before.get(change.object)!),
+    where: describePlace(run.before.get(change.object)!),
     what: describeChange(change),
-    set: set.name,
+    set: run.set.name,
   }));
+}
+
+/** For a change that is made once in a process, so that no single call shows it. */
+export function describeChangeOfBuiltinObject(change: Change): OperandChange {
+  return { use: useOfChange(change), where: `the built-in ${Object.prototype.toString.call(change.object)}`, what: describeChange(change), set: "one of all sets" };
 }
 
 function findNewInheritors({ completion, log, before, set }: Run): OperandChange[] {

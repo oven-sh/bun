@@ -2,15 +2,18 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{BindingKind, Bound, Decl, ScopeId, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::hir::{self, ExprKind, FnId, FnKind, PatKind, StmtId, StmtKind};
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, Files};
 
 use super::lexical_owners::compute_lexical_owners;
 use super::walk::{ScopeWalk, walk_file};
 use super::{ScopeAnalysis, ScopeInput, analyze_scopes};
 use crate::builtins::{ImportTargets, ResolveInput, SourceDialect, resolve_file};
-use crate::compile::testing::with_lowering_inputs;
+use crate::compile::testing::{
+    with_lowering_inputs, with_lowering_inputs_of_entry_that_runs_again,
+    with_lowering_inputs_of_test_run,
+};
 use crate::ir::FunctionKey;
-use crate::ir::generated::LimitId;
+use crate::lower::LoweringInputs;
 use crate::lower::captures::max_captures;
 
 pub(in crate::lower) fn with_scope_input<R>(
@@ -18,6 +21,39 @@ pub(in crate::lower) fn with_scope_input<R>(
     test: impl FnOnce(&ScopeInput<'_, '_>) -> R,
 ) -> R {
     with_lowering_inputs(files, |loaded, inputs, file| {
+        test_scope_input(loaded, inputs, file, test)
+    })
+}
+
+pub(in crate::lower) fn with_scope_analysis_of_entry_that_runs_again<R>(
+    files: &[(&str, &str)],
+    test: impl FnOnce(&hir::File<'_>, &Bound<'_>, &ScopeAnalysis) -> R,
+) -> R {
+    with_lowering_inputs_of_entry_that_runs_again(files, |loaded, inputs, file| {
+        test_scope_input(loaded, inputs, file, |input| {
+            test(input.hir, input.bound, &analyze_scopes(input))
+        })
+    })
+}
+
+pub(in crate::lower) fn with_scope_analysis_of_test_run<R>(
+    files: &[(&str, &str)],
+    test: impl FnOnce(&hir::File<'_>, &Bound<'_>, &ScopeAnalysis) -> R,
+) -> R {
+    with_lowering_inputs_of_test_run(files, |loaded, inputs, file| {
+        test_scope_input(loaded, inputs, file, |input| {
+            test(input.hir, input.bound, &analyze_scopes(input))
+        })
+    })
+}
+
+fn test_scope_input<R>(
+    loaded: &Files<'_>,
+    inputs: &LoweringInputs<'_>,
+    file: FileId,
+    test: impl FnOnce(&ScopeInput<'_, '_>) -> R,
+) -> R {
+    {
         let compiled = loaded.compiled(file);
         let file_inputs = inputs.files[file.idx()];
         test(&ScopeInput {
@@ -27,12 +63,12 @@ pub(in crate::lower) fn with_scope_input<R>(
             compiled: compiled.expect("the entry point is compiled"),
             modules: inputs.modules,
             builtins: file_inputs.expect("the entry point is lowered").builtins,
+            fields_under_signed_members: &[],
+            holds_registry: &|_| false,
             max_captures: max_captures(),
-            max_handler_arguments: LimitId::MaxHandlerArguments.value_on_x86_64() as usize,
-            max_handler_arguments_per_block: LimitId::MaxHandlerArgumentsPerBlock.value_on_x86_64()
-                as usize,
+            names_lie_on_object_prototype: inputs.names_lie_on_object_prototype(),
         })
-    })
+    }
 }
 
 pub(in crate::lower) fn with_runtime_dialect_input<R>(
@@ -46,11 +82,16 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             hir,
             bound,
             decisions: &compiled.analysis.decisions,
+            atoms: &loaded.atoms,
             module_format: compiled.analysis.module_format,
             targets: &ImportTargets::new(&[]),
             names: inputs.builtin_names,
             platform: inputs.options.platform,
             dialect: SourceDialect::Runtime,
+            replaced: &[],
+            runs_tests: false,
+            holds_language: false,
+            is_text_asked: true,
         });
         test(&ScopeInput {
             file,
@@ -59,10 +100,10 @@ pub(in crate::lower) fn with_runtime_dialect_input<R>(
             compiled,
             modules: inputs.modules,
             builtins: &builtins,
+            fields_under_signed_members: &[],
+            holds_registry: &|_| false,
             max_captures: max_captures(),
-            max_handler_arguments: LimitId::MaxHandlerArguments.value_on_x86_64() as usize,
-            max_handler_arguments_per_block: LimitId::MaxHandlerArgumentsPerBlock.value_on_x86_64()
-                as usize,
+            names_lie_on_object_prototype: false,
         })
     })
 }
@@ -89,7 +130,9 @@ pub(in crate::lower) fn symbol_named(
     let name = find_atom(hir, text);
     let symbols = (0..bound.symbols.len() as u32).map(SymbolId);
     let named = symbols.filter(|&symbol| {
-        bound.symbol(symbol).name == name && is_value_binding(bound.binding_kind(symbol))
+        bound.symbol(symbol).name == name
+            && is_value_binding(bound.binding_kind(symbol))
+            && bound.container_parameter(bound.symbol_scope(symbol)) != symbol
     });
     let named: Vec<SymbolId> = named.collect();
     assert_eq!(named.len(), 1, "{text} names one binding");

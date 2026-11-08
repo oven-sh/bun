@@ -1,29 +1,33 @@
 use std::time::Instant;
 
 use bun_aot::engine::{
-    EngineModuleId, EngineResult, ExecutableIdentity, TargetImageForm,
-    describe_difference_of_runtime, has_compiler, image_alignment, used_features,
+    EngineModuleId, ExecutableIdentity, TargetImageForm, describe_difference_of_runtime,
+    has_compiler, image_alignment, used_features,
 };
+use bun_aot::statistics::{log_part_outside_stages, log_time_outside_stages};
 use bun_ast::Loader;
 use bun_bundler::aot::{AotBuild, AotBuildFailure, AotBuildRequest, AotEntryPoint};
 use bun_bundler::options::{self, OutputFile};
-use bun_core::ZBox;
+use bun_core::{CodeGenerationFromStrings, ZBox};
 use bun_exe_format::identity::{
-    HostDescription, RuntimeDescription, find_file_identity, find_process_identity,
+    HostDescription, LeftOutOfBuild, RuntimeDescription, find_file_identity, find_process_identity,
     read_stamp_of_builtin_modules,
 };
 use bun_options_types::Format;
+use bun_options_types::aot_options::AotOptions;
 use bun_paths::resolve_path::{self, platform};
 use bun_sema::util::FxHashSet;
 use bun_standalone_graph::StandaloneModuleGraph::{
     CompileResult, ExecutableRequest, Flags, GraphRequest, target_base_public_path, to_graph_bytes,
     write_executable,
 };
+use bun_standalone_graph::executable_request::ExecutableDetails;
 use bun_standalone_graph::{
-    CompiledEntryPointInput, CompiledPackageNameInput, CompiledProgramInput, with_executable_image,
+    CompiledEntryPointInput, CompiledPackageNameInput, CompiledPathAliasInput,
+    CompiledProgramInput, with_executable_image,
 };
 use bun_sys::Fd;
-use bun_trim::{Feature, TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
+use bun_trim::TrimPlan;
 
 use super::{
     AssetError, BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest,
@@ -40,6 +44,8 @@ struct ProductInputs<'p> {
     module_prefix: &'p [u8],
     outfile: Option<&'p [u8]>,
     plan: Option<&'p TrimPlan>,
+    /// `BUN_DEBUG_TEST_UNTRIMMED_OUTFILE`, and what that executable leaves out.
+    untrimmed: Option<(&'p [u8], Option<&'p TrimPlan>)>,
 }
 
 #[inline(never)]
@@ -49,8 +55,14 @@ pub(crate) fn compile_to_executable(
     if !has_compiler() {
         return Err(CompileFailure::NoCompiler);
     }
+    log_time_outside_stages("before the build");
     let bundler = request.bundler.take().expect("one call per request");
     let target = check_request(request)?;
+    // Code from disk finds what it imports as under `bun run`: by the package.json and tsconfig.json files that lie there.
+    if request.options.loads_code_from_disk {
+        let disabled = Flags::DISABLE_AUTOLOAD_PACKAGE_JSON | Flags::DISABLE_AUTOLOAD_TSCONFIG;
+        request.executable.flags.remove(disabled);
+    }
     let _reports_where_it_stops =
         bun_crash_handler::report_stopped_builds(bun_crash_handler::BuildDescribers {
             where_this_thread_stopped: Bun__AOT__describeWhereThisThreadStopped,
@@ -70,42 +82,51 @@ pub(crate) fn compile_to_executable(
     let mut build = match build_program(request, bundler, target, module_prefix) {
         Ok(build) => build,
         Err(failure) => {
-            reports::write_failed_build_report(options, &failure, request.log);
             return Err(CompileFailure::Build {
                 files_checked: reports::count_modules(&failure.statistics),
-                refused_entry_points: failure.refused_entry_points,
             });
         }
     };
+    log_part_outside_stages("behind the engine: end of the build");
     let mut used = used_features(&build.engine);
-    for program in &build.further_programs {
-        add_used_features(&mut used, used_features(program));
-    }
-    used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code;
-    if (used.features.iter()).any(|used| used.feature == Feature::SystemCaCertificates) {
-        request.executable.flags |= Flags::NAMES_SYSTEM_CA_CERTIFICATES;
-    }
+    // With =strict a Worker runs nothing but compiled code.
+    used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code
+        && options.code_generation_from_strings != CodeGenerationFromStrings::Strict;
     let trimming = trimming::decide_trimming(request, &used)?;
+    let untrimmed_outfile = bun_core::env_var::BUN_DEBUG_TEST_UNTRIMMED_OUTFILE
+        .get_not_empty()
+        .filter(|_| options.trim.removes_unused);
+    let untrimmed = match untrimmed_outfile {
+        Some(outfile) => Some((outfile, trimming::plan_without_trim_flag(request, &used)?)),
+        None => None,
+    };
+    log_part_outside_stages("behind the engine: used features, trimming");
     let mut outcome = reports::collect_reports(&build, options, &used, &trimming);
+    log_part_outside_stages("behind the engine: reports");
 
     let outfile = match request.product {
         CompileProduct::ReportsOnly => None,
+        CompileProduct::Executable { .. } if options.writes_no_executable => None,
         CompileProduct::GraphBytes => Some(None),
         CompileProduct::Executable { outfile } => Some(Some(outfile)),
     };
-    let written = outfile.map_or(Ok(()), |outfile| {
+    if let Some(outfile) = outfile {
         let product = ProductInputs {
             module_prefix,
             outfile,
             plan: trimming.plan(),
+            untrimmed: (untrimmed.as_ref()).map(|(outfile, plan)| (*outfile, plan.as_ref())),
         };
         write_product(request, &mut build, product, &mut outcome)?;
+        if outfile.is_some() {
+            log_part_outside_stages("behind the engine: the file");
+        }
         outcome.metafile = outfile.and_then(|outfile| reports::collect_metafile(&build, outfile));
-        Ok(())
-    });
-    // The report names the executable, so it comes last. A build that could not write one still reports.
-    reports::write_build_report(&build, options, &used, &trimming, &outcome)?;
-    written?;
+        log_part_outside_stages("behind the engine: metafile");
+    }
+    drop(build);
+    log_part_outside_stages("behind the engine: drop the build");
+    log_time_outside_stages("behind the engine");
     Ok(outcome)
 }
 
@@ -118,31 +139,17 @@ fn write_product(
 ) -> Result<(), CompileFailure> {
     let started = Instant::now();
     let options = request.options;
-    add_assets(
+    let assets_named_at_root = add_assets(
         request,
         product.outfile,
         &build.root_directory,
         &mut build.output_files,
     )?;
-    // A program behind the first begins at one entry point. The first holds all the others.
-    let first_module_id = |program: &EngineResult| program.entry_module_ids().first().copied();
-    let count_of_first = (build.entry_points.len())
-        .checked_sub(build.further_programs.len())
-        .ok_or_else(corrupted_program)?;
-    let ids_of_first = build.engine.entry_module_ids();
-    let ids_of_first = match build.further_programs.len() {
-        0 => Some(ids_of_first),
-        _ => ids_of_first.get(..count_of_first),
-    };
-    let mut module_ids: Vec<EngineModuleId> = ids_of_first.ok_or_else(corrupted_program)?.to_vec();
-    for program in &build.further_programs {
-        module_ids.push(first_module_id(program).ok_or_else(corrupted_program)?);
-    }
-    let mut entry_points =
-        pair_entry_points(&build.entry_points, &module_ids, options.runs_in_place)?;
-    for (index, entry_point) in (1..).zip(entry_points.iter_mut().skip(count_of_first)) {
-        entry_point.image_index = index;
-    }
+    let mut entry_points = pair_entry_points(
+        &build.entry_points,
+        build.engine.entry_module_ids(),
+        options.runs_in_place,
+    )?;
     // In place a file that is embedded keeps the path of its source, which names the entry point already.
     if !options.runs_in_place {
         pair_embedded_copies(
@@ -151,11 +158,6 @@ fn write_product(
             &mut build.output_files,
         )?;
     }
-    let further_images: Vec<&[u8]> = build
-        .further_programs
-        .iter()
-        .map(|program| program.image().ok_or_else(corrupted_program))
-        .collect::<Result<_, _>>()?;
     let package_names: Vec<CompiledPackageNameInput<'_>> = build
         .package_names
         .iter()
@@ -164,9 +166,33 @@ fn write_product(
             required: name.required,
             imported: name.imported,
             hides_other_paths: name.hides_other_paths,
+            is_hidden_from_require: name.is_hidden_from_require,
+            is_hidden_from_import: name.is_hidden_from_import,
         })
         .collect();
+    let path_aliases: Vec<CompiledPathAliasInput<'_>> = build
+        .path_aliases
+        .iter()
+        .map(|alias| CompiledPathAliasInput {
+            folder: &alias.folder,
+            key: &alias.key,
+            target: &alias.target,
+            is_base_url: alias.is_base_url,
+        })
+        .collect();
+    let knows_places = options.loads_code_from_disk && !options.runs_in_place;
+    let root_below_working_directory = match knows_places {
+        true => find_root_below_working_directory(&build.root_directory),
+        false => None,
+    };
+    let root_from_executable = match &request.product {
+        CompileProduct::Executable { outfile } if knows_places => {
+            find_root_from_executable(&build.root_directory, outfile)
+        }
+        _ => None,
+    };
     let settings = &mut request.executable;
+    let (image, symbols) = build.engine.image_mut_and_symbols();
     let graph = GraphRequest {
         target: settings.target,
         output_files: &build.output_files,
@@ -176,26 +202,76 @@ fn write_product(
         flags: settings.flags,
         runtime_options: settings.runtime_options,
         compiled_program: Some(CompiledProgramInput {
-            image: build.engine.image().ok_or_else(corrupted_program)?,
-            further_images: &further_images,
+            image: image.ok_or_else(corrupted_program)?,
             image_alignment: image_alignment(),
             entry_points: &entry_points,
             package_names: &package_names,
+            path_aliases: &path_aliases,
+            root_below_working_directory: root_below_working_directory.as_deref(),
+            root_from_executable: root_from_executable.as_deref(),
+            // The program holds `__dirname` or the like, so it tells the folder itself, and asks for its own modules by paths below it.
+            root_on_build_machine: (build.holds_source_paths && !options.runs_in_place)
+                .then(|| trim_trailing_separators(&build.root_directory)),
+            assets_named_at_root: &assets_named_at_root,
+            levels_above_root: build.levels_above_root as u32,
+            further_package_names: &build.further_package_names,
+            root_folders_spelled: match options.runs_in_place {
+                true => b"",
+                false => &build.root_folders_spelled,
+            },
+            allows_code_from_disk: options.loads_code_from_disk,
+            names_plugin: build.names_plugin,
             preserves_source_paths: options.runs_in_place,
-            symbols: build.engine.symbols(),
+            symbols,
         }),
     };
     let Some(outfile) = product.outfile else {
         outcome.graph_bytes = Some(to_graph_bytes(&graph).map_err(CompileFailure::Graph)?);
+        log_part_outside_stages("behind the engine: the payload");
+        if bun_core::env_var::BUN_JSC_logAOTPhaseTimes.get() == Some(true) {
+            let bytes = outcome.graph_bytes.as_ref().map_or(0, |bytes| bytes.len());
+            bun_core::print_errorln!("AOT test build | program bytes {}", bytes);
+        }
         outcome.executable_time = started.elapsed();
         return Ok(());
     };
 
+    // What is asked of the file itself wants the file.
+    let asks_for_this_bun_as_it_is = settings.target.is_this_bun()
+        && settings.executable_path.is_none()
+        && !options.trim.is_enabled()
+        && product.untrimmed.is_none()
+        && !options.obfuscates
+        && !options.emits_symbols;
+    if asks_for_this_bun_as_it_is && crate::cli::run_compiled::writes_program_alone() {
+        let bytes = to_graph_bytes(&graph).map_err(CompileFailure::Graph)?;
+        log_part_outside_stages("behind the engine: the payload");
+        let (directory, path) = executable_location(settings.root_dir, outfile);
+        let build_id = bun_exe_format::build_id::compute(&bytes);
+        crate::cli::run_compiled::write_program_alone(directory, path, &bytes, &build_id).map_err(
+            |error| CompileFailure::FileNotWritten {
+                path: path.to_vec(),
+                error,
+            },
+        )?;
+        outcome.executable = Some(ExecutableDetails {
+            size: bytes.len() as u64,
+            build_id: Some(build_id),
+            ..Default::default()
+        });
+        build.output_files.truncate(1);
+        outcome.output_files = core::mem::take(&mut build.output_files);
+        outcome.executable_time = started.elapsed();
+        return Ok(());
+    }
+
+    // SAFETY: the loader outlives the request, and the build, which reads it, has ended.
+    let env = unsafe { &mut *settings.env };
     let mut executable_request = ExecutableRequest {
         graph,
         root_dir: settings.root_dir,
         outfile,
-        env: &mut *settings.env,
+        env,
         windows: settings.windows,
         executable_path: settings.executable_path,
         trim: product.plan,
@@ -203,6 +279,14 @@ fn write_product(
     let written = write_executable(&mut executable_request).map_err(CompileFailure::Graph)?;
     if let CompileResult::Err(error) = written.result {
         return Err(CompileFailure::Executable(error));
+    }
+    if let Some((untrimmed_outfile, plan)) = product.untrimmed {
+        executable_request.outfile = untrimmed_outfile;
+        executable_request.trim = plan;
+        let untrimmed = write_executable(&mut executable_request).map_err(CompileFailure::Graph)?;
+        if let CompileResult::Err(error) = untrimmed.result {
+            return Err(CompileFailure::Executable(error));
+        }
     }
     if options.obfuscates {
         let (directory, path) = executable_location(settings.root_dir, outfile);
@@ -250,6 +334,7 @@ pub(super) fn corrupted_program() -> CompileFailure {
 struct Target {
     identity: ExecutableIdentity,
     image_form: Option<TargetImageForm>,
+    left_out: LeftOutOfBuild,
 }
 
 fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFailure> {
@@ -268,6 +353,7 @@ fn check_request(request: &CompileRequest<'_, '_>) -> Result<Target, CompileFail
         .map(|identity| Target {
             identity: ExecutableIdentity(identity),
             image_form: None,
+            left_out: LeftOutOfBuild(Bun__AOT__whatThisBuildLeavesOut()),
         })
         .map_err(CompileFailure::NoIdentity)
 }
@@ -286,7 +372,9 @@ struct BuiltinModulesHeader {
 }
 
 unsafe extern "C" {
-    static bun_internal_modules_header: BuiltinModulesHeader;
+    /// The header of the section with the modules, which nothing writes.
+    safe static bun_internal_modules_header: BuiltinModulesHeader;
+    safe fn Bun__AOT__whatThisBuildLeavesOut() -> u32;
 }
 
 const OFFSET_OF_IMAGE_FORM_IN_DESCRIPTION: usize = 26;
@@ -298,6 +386,11 @@ fn image_form_of(template: &Template) -> Option<TargetImageForm> {
         1 => Some(TargetImageForm::PositionIndependent),
         _ => None,
     }
+}
+
+fn left_out_of(template: &Template) -> LeftOutOfBuild {
+    let record = template.description.record(RuntimeDescription::LEFT_OUT);
+    record.and_then(LeftOutOfBuild::read).unwrap_or_default()
 }
 
 fn check_template(path: &[u8]) -> Result<Target, CompileFailure> {
@@ -325,6 +418,7 @@ fn check_template(path: &[u8]) -> Result<Target, CompileFailure> {
         None => Ok(Target {
             identity: ExecutableIdentity(template.identity),
             image_form: image_form_of(&template),
+            left_out: left_out_of(&template),
         }),
     }
 }
@@ -346,8 +440,7 @@ fn find_difference(template: &Template) -> Option<Vec<u8>> {
         sentence.extend_from_slice(own_revision);
         return Some(sentence);
     }
-    // SAFETY: the header of the section with the modules, which nothing writes.
-    let own_stamp = unsafe { bun_internal_modules_header.source_stamp };
+    let own_stamp = bun_internal_modules_header.source_stamp;
     if template.stamp_of_builtin_modules != own_stamp {
         return Some(b"its built-in modules have another text".to_vec());
     }
@@ -369,15 +462,44 @@ fn build_program(
     target: Target,
     module_prefix: &[u8],
 ) -> Result<AotBuild, Box<AotBuildFailure>> {
+    let working_directory = bun_sys::getcwd_alloc().ok();
+    let to_absolute = |path: &[u8]| {
+        let folder = working_directory.as_ref()?.as_bytes();
+        Some(resolve_path::join_abs_string::<platform::Auto>(folder, &[path]).to_vec())
+    };
+    let outfile = match request.product {
+        CompileProduct::Executable { outfile } => to_absolute(outfile),
+        CompileProduct::GraphBytes | CompileProduct::ReportsOnly => None,
+    };
+    let maps = outfile
+        .iter()
+        .flat_map(|outfile| [&b".map"[..], b".map.js"].map(|end| [&outfile[..], end].concat()));
+    let metafiles = request.executable.metafiles.into_iter();
+    let metafiles = metafiles.filter(|path| !path.is_empty());
+    let options = AotOptions {
+        omits_foreign_calls: !target.left_out.has_foreign_calls(),
+        code_generation_from_strings: match target.left_out.has_code_from_strings() {
+            true => request.options.code_generation_from_strings,
+            false => CodeGenerationFromStrings::Strict,
+        },
+        other_products: maps.chain(metafiles.filter_map(to_absolute)).collect(),
+        ..request.options.clone()
+    };
+    // Anything but an executable at that path is a file of the user's, which the program may name.
+    let outfile = outfile.filter(|path| {
+        let path = ZBox::from_bytes(path);
+        with_executable_image(&path, |file| find_file_identity(file).is_ok()).unwrap_or(false)
+    });
     let built = bun_bundler::aot::build(AotBuildRequest {
         transpiler: bundler.transpiler,
         entry_points: request.entry_points,
         assets: request.executable.assets,
-        options: request.options,
+        options: &options,
         executable_identity: target.identity,
         image_form: target.image_form,
         module_prefix,
-        log: &mut *request.log,
+        outfile: outfile.as_deref(),
+        log: request.log,
         arena: bundler.arena,
         event_loop: bundler.event_loop,
         worker_pool: bundler.worker_pool,
@@ -386,27 +508,28 @@ fn build_program(
         typescript_libs: bun_sema_driver::Libs::Bundled(crate::cli::typescript_libs::BUNDLED),
     });
     built.map_err(|failure| {
-        if !request.log.has_errors() {
-            request
-                .log
-                .add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
+        // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
+        let log = unsafe { &mut *request.log };
+        if !log.has_errors() {
+            log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
         }
         Box::new(failure)
     })
 }
 
+/// Returns `CompiledProgram::assets_named_at_root`.
 fn add_assets(
     request: &CompileRequest<'_, '_>,
     outfile: Option<&[u8]>,
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), CompileFailure> {
+) -> Result<Vec<u8>, CompileFailure> {
     let assets = request.executable.assets;
     if assets.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let added = if request.options.runs_in_place {
-        add_assets_in_place(assets, output_files)
+        add_assets_in_place(assets, output_files).map(|()| Vec::new())
     } else {
         let entry_name = outfile.map_or(&b""[..], configuration::compile_outfile);
         add_assets_under_root(assets, entry_name, root_directory, output_files)
@@ -460,10 +583,11 @@ fn add_assets_under_root(
     entry_name: &[u8],
     root_directory: &[u8],
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), AssetError> {
+) -> Result<Vec<u8>, AssetError> {
     let working_directory =
         bun_sys::getcwd_alloc().map_err(AssetError::WorkingDirectoryUnreadable)?;
     let mut modules_without_text = modules_without_text(output_files);
+    let mut paths_of_files_given: Vec<Box<[u8]>> = Vec::new();
     let mut taken: std::collections::BTreeMap<Box<[u8]>, Option<usize>> = output_files
         .iter()
         .enumerate()
@@ -492,12 +616,16 @@ fn add_assets_under_root(
             });
         }
         for mut file in files {
+            let is_file_given = file.dest_path[..] == asset_name[..];
             if let Some(under_root) = &under_root {
                 let path_in_asset = file
                     .dest_path
                     .strip_prefix(&asset_name[..])
                     .expect("collect_compile_assets names files under the asset's name");
                 file.dest_path = graph_path(under_root, path_in_asset).into_boxed_slice();
+            }
+            if is_file_given {
+                paths_of_files_given.push(file.dest_path.clone());
             }
             let Some(earlier) = taken.insert(file.dest_path.clone(), None) else {
                 add_asset(file, &mut modules_without_text, output_files);
@@ -514,7 +642,39 @@ fn add_assets_under_root(
             }
         }
     }
-    Ok(())
+    Ok(find_assets_named_at_root(
+        &paths_of_files_given,
+        output_files,
+    ))
+}
+
+fn find_assets_named_at_root(
+    paths_of_files_given: &[Box<[u8]>],
+    output_files: &[OutputFile],
+) -> Vec<u8> {
+    let is_taken = |base_name: &[u8]| {
+        output_files
+            .iter()
+            .filter(|file| file.output_kind.is_file_in_standalone_mode())
+            .filter_map(|file| {
+                bun_core::strings::remove_leading_dot_slash(&file.dest_path).strip_prefix(base_name)
+            })
+            .any(|rest| matches!(rest, [] | [b'/', ..]))
+    };
+    let is_shared = |base_name: &[u8]| {
+        let base_names = paths_of_files_given
+            .iter()
+            .map(|path| bun_paths::basename(path));
+        base_names.filter(|&name| name == base_name).count() > 1
+    };
+    paths_of_files_given
+        .iter()
+        .filter(|path| {
+            let base_name = bun_paths::basename(path);
+            !is_shared(base_name) && !is_taken(base_name)
+        })
+        .flat_map(|path| path.iter().copied().chain([0]))
+        .collect()
 }
 
 fn path_under_root(
@@ -638,6 +798,37 @@ pub(super) fn asset_output_file(dest: Vec<u8>, bytes: Vec<u8>) -> OutputFile {
     }
 }
 
+/// Where the root directory of the build lies, seen from the working directory: below it, the same folder, or above it.
+/// An executable that is shipped tells nobody the folders of the machine that built it, so a root that lies elsewhere is not written down.
+fn find_root_below_working_directory(root_directory: &[u8]) -> Option<Vec<u8>> {
+    let working_directory = bun_sys::getcwd_alloc().ok()?;
+    let root = resolve_path::relative(
+        working_directory.as_bytes(),
+        trim_trailing_separators(root_directory),
+    );
+    let mut names = root.split(|&byte| bun_paths::is_sep_native(byte));
+    let goes_up = names.next() == Some(b"..");
+    (!goes_up || names.all(|name| name == b"..")).then(|| root.to_vec())
+}
+
+/// Where the root directory lies, seen from the folder of the executable: the folders of an installed program keep their places. Nothing is recorded
+/// where the two have no folder in common but the root of the disk, or where the way there names more than two folders: that tells where the program was built.
+fn find_root_from_executable(root_directory: &[u8], outfile: &[u8]) -> Option<Vec<u8>> {
+    let working_directory = bun_sys::getcwd_alloc().ok()?;
+    let outfile =
+        resolve_path::join_abs_string::<platform::Auto>(working_directory.as_bytes(), &[outfile]);
+    let folder = resolve_path::dirname::<platform::Auto>(outfile);
+    let root = resolve_path::relative(folder, trim_trailing_separators(root_directory));
+    if bun_paths::is_absolute(root) {
+        return None;
+    }
+    let is_sep = |&byte: &u8| bun_paths::is_sep_native(byte);
+    let ups = root.split(is_sep).take_while(|name| *name == b"..").count();
+    let names = root.split(is_sep).filter(|name| !name.is_empty()).count() - ups;
+    let depth = folder.split(is_sep).filter(|name| !name.is_empty()).count();
+    (ups < depth && names <= 2).then(|| root.to_vec())
+}
+
 pub(super) fn pair_entry_points<'b>(
     entry_points: &'b [AotEntryPoint],
     module_ids: &[EngineModuleId],
@@ -656,7 +847,6 @@ pub(super) fn pair_entry_points<'b>(
                 false => &entry_point.module_path,
             },
             module_path: &entry_point.module_path,
-            image_index: 0,
         })
         .collect())
 }
@@ -688,39 +878,9 @@ pub(super) fn pair_embedded_copies<'b>(
             module_id: compiled.module_id,
             source_path: compiled.source_path,
             module_path: compiled.module_path,
-            image_index: compiled.image_index,
         };
         copy.entry_point_index = Some(u32::try_from(pairs.len()).map_err(|_| corrupted_program())?);
         pairs.push(pair);
     }
     Ok(())
-}
-
-/// The run time holds what any program of the executable uses. A witness is a position in the records of the first program.
-fn add_used_features(used: &mut UsedFeatures, further: UsedFeatures) {
-    for feature in further.features {
-        let is_same = |known: &&mut UsedFeature| known.feature == feature.feature;
-        match used.features.iter_mut().find(is_same) {
-            Some(known) => known.is_named |= feature.is_named,
-            None => used.features.push(UsedFeature {
-                witness: None,
-                ..feature
-            }),
-        }
-    }
-    used.causes
-        .extend(further.causes.into_iter().map(|unseen| UnseenCode {
-            cause: unseen.cause,
-            witness: None,
-        }));
-    used.starts_workers_from_unseen_code |= further.starts_workers_from_unseen_code;
-    match (&mut used.locales, further.locales) {
-        (UsedLocales::Unknown(_), _) => {}
-        (locales, UsedLocales::Unknown(_)) => *locales = UsedLocales::Unknown(None),
-        (UsedLocales::Listed(listed), UsedLocales::Listed(more)) => {
-            listed.extend(more);
-            listed.sort_unstable();
-            listed.dedup();
-        }
-    }
 }

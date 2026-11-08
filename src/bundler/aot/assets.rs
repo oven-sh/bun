@@ -4,9 +4,11 @@ use bun_aot::load::source_provider::{Failed, SourceFile};
 use bun_ast::{Loader, Log, Target};
 use bun_core::strings;
 use bun_paths::resolve_path;
+use bun_sema::util::SharedSort;
 use bun_threading::Guarded;
 
 use super::paths::{relative_path, report_long_path};
+use super::plugins::with_separators_of_host;
 use super::services::BuildContext;
 use crate::ContentHasher;
 use crate::bun_fs as Fs;
@@ -48,10 +50,6 @@ impl EmbeddedFiles {
             None => files.push(output),
         }
         Ok(())
-    }
-
-    pub(crate) fn clear(&self) {
-        self.files.lock().clear();
     }
 
     pub(crate) fn embed_page_outputs(&self, mut files: Vec<OutputFile>) {
@@ -105,7 +103,7 @@ fn create_embedded_file(
         false => name_under_root(context, file, &template),
     };
     let path = match runs_in_place {
-        true => file.path.to_vec(),
+        true => with_separators_of_host(file.path, cfg!(windows)).into_owned(),
         false => embedded_path(&context.module_prefix, &dest_path),
     };
     let output = OutputFile::init(Options {
@@ -150,7 +148,7 @@ fn create_embedded_template(
         template.data.clone_from(&options.asset_naming);
     }
 
-    let working_directory = context.bundle().transpiler().fs().top_level_dir();
+    let working_directory = Fs::FileSystem::get().top_level_dir();
     let relative = relative_path(working_directory, &options.root_dir, file.path)?;
     let pathname = Fs::PathName::init(&relative);
     template.placeholder.name = pathname.base.into();
@@ -176,7 +174,7 @@ fn name_under_root(
     template: &PathTemplate,
 ) -> Vec<u8> {
     let path_from_root = || {
-        let working_directory = context.bundle().transpiler().fs().top_level_dir();
+        let working_directory = Fs::FileSystem::get().top_level_dir();
         let relative = relative_path(working_directory, &context.options().root_dir, file.path)?;
         (!relative.starts_with(b"..")).then(|| posix_path(&relative))
     };
@@ -201,7 +199,7 @@ fn print_embedded_name(template: &PathTemplate) -> Vec<u8> {
 
 fn compute_name_order(files: &[OutputFile]) -> Vec<u32> {
     let mut order: Vec<u32> = (0..files.len() as u32).collect();
-    order.sort_by(|&left, &right| {
+    order.shared_sort_by(|&left, &right| {
         let (left, right) = (&files[left as usize], &files[right as usize]);
         left.dest_path
             .cmp(&right.dest_path)
@@ -296,6 +294,12 @@ mod tests {
     use super::super::services::with_test_context;
     use super::*;
     use crate::options::BundleOptions;
+
+    impl EmbeddedFiles {
+        fn embed_outputs(&self, outputs: Vec<OutputFile>) {
+            self.files.lock().extend(outputs);
+        }
+    }
 
     fn create_output(dest_path: &[u8], source: &[u8], bytes: &[u8], source_map: u32) -> OutputFile {
         OutputFile::init(Options {
@@ -441,12 +445,10 @@ mod tests {
     fn equal_bytes_share_one_file() {
         let embedded = EmbeddedFiles::default();
         let mut log = Log::init();
-        embedded.embed_page_outputs(vec![
+        embedded.embed_outputs(vec![
             create_output(b"a.js", b"/a.js", b"a", 1),
             create_output(b"shared.map", b"/shared", b"map", u32::MAX),
-        ]);
-        embedded.embed_page_outputs(vec![
-            create_output(b"b.js", b"/b.js", b"b", 1),
+            create_output(b"b.js", b"/b.js", b"b", 3),
             create_output(b"shared.map", b"/shared", b"map", u32::MAX),
         ]);
         assert!(embedded.check_names(&mut log).is_ok());
@@ -463,23 +465,8 @@ mod tests {
     }
 
     #[test]
-    fn later_outputs_raise_source_map_index() {
-        let embedded = EmbeddedFiles::default();
-        let mut log = Log::init();
-        embedded.embed_page_outputs(vec![create_output(b"a", b"/a", b"1", u32::MAX)]);
-        embedded.embed_page_outputs(vec![
-            create_output(b"b", b"/b", b"2", 1),
-            create_output(b"b.map", b"/b", b"3", u32::MAX),
-        ]);
-        assert!(embedded.check_names(&mut log).is_ok());
-        let files = embedded.into_output_files();
-        assert_eq!(&*files[1].dest_path, b"b");
-        assert_eq!(files[1].source_map_index, 2);
-    }
-
-    #[test]
     #[cfg_attr(miri, ignore)]
-    fn page_source_maps_follow_files() {
+    fn source_maps_follow_files() {
         with_test_context(
             |_| {},
             |context| {
@@ -491,9 +478,9 @@ mod tests {
                     loader: Loader::File,
                 };
                 assert!(embedded.embed_file(context, &image, &mut log).is_ok());
-                embedded.embed_page_outputs(vec![
-                    create_output(b"z.js", b"/z.ts", b"z", 2),
-                    create_output(b"a.js", b"/a.ts", b"a", 3),
+                embedded.embed_outputs(vec![
+                    create_output(b"z.js", b"/z.ts", b"z", 3),
+                    create_output(b"a.js", b"/a.ts", b"a", 4),
                     create_output(b"z.js.map", b"/z.ts", b"z map", u32::MAX),
                     create_output(b"a.js.map", b"/a.ts", b"a map", u32::MAX),
                 ]);
@@ -517,7 +504,7 @@ mod tests {
     fn different_bytes_under_one_name_collide() {
         let embedded = EmbeddedFiles::default();
         let mut log = Log::init();
-        embedded.embed_page_outputs(vec![
+        embedded.embed_outputs(vec![
             create_output(b"x", b"/first", b"1", u32::MAX),
             create_output(b"x", b"/second", b"2", u32::MAX),
         ]);
@@ -535,7 +522,7 @@ mod tests {
         for copies in [[&b""[..], b"text"], [b"text", b""], [b"text", b"text"]] {
             let embedded = EmbeddedFiles::default();
             let mut log = Log::init();
-            embedded.embed_page_outputs(vec![
+            embedded.embed_outputs(vec![
                 create_output(b"x.min.js", b"/lib/x.min.js", copies[0], u32::MAX),
                 create_output(b"x.min.js", b"/lib/x.min.js", copies[1], u32::MAX),
             ]);
@@ -552,7 +539,7 @@ mod tests {
     fn every_collision_is_reported() {
         let embedded = EmbeddedFiles::default();
         let mut log = Log::init();
-        embedded.embed_page_outputs(vec![
+        embedded.embed_outputs(vec![
             create_output(b"x", b"/a/x", b"1", u32::MAX),
             create_output(b"y", b"/a/y", b"1", u32::MAX),
             create_output(b"x", b"/b/x", b"2", u32::MAX),
@@ -575,7 +562,7 @@ mod tests {
         output.load_order = 4;
         output.loads_at_startup = true;
         output.bytecode_entry_offset = 5;
-        embedded.embed_page_outputs(vec![output]);
+        embedded.embed_outputs(vec![output]);
         assert!(embedded.check_names(&mut log).is_ok());
         let files = embedded.into_output_files();
         assert_eq!(files.len(), 1);
@@ -688,10 +675,10 @@ mod tests {
         let mut log = Log::init();
         let outputs: [(&[u8], &[u8]); 3] = [(b"/a", b"z"), (b"/b", b"y"), (b"/c", b"z")];
         for (source, dest_path) in outputs {
-            first.embed_page_outputs(vec![create_output(dest_path, source, b"1", u32::MAX)]);
+            first.embed_outputs(vec![create_output(dest_path, source, b"1", u32::MAX)]);
         }
         for (source, dest_path) in outputs.into_iter().rev() {
-            second.embed_page_outputs(vec![create_output(dest_path, source, b"1", u32::MAX)]);
+            second.embed_outputs(vec![create_output(dest_path, source, b"1", u32::MAX)]);
         }
         assert!(first.check_names(&mut log).is_ok());
         assert!(second.check_names(&mut log).is_ok());

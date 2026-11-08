@@ -1,6 +1,6 @@
 // RUN(METHOD): link
 // METHOD: variable [[tokenVariable]] module=[[entry]] declared={type=classtoken flags=[IsFromCompiler]}
-// METHOD: module [[entry]] path="{{*}}class-context"
+// METHOD: module [[entry]] path="{{*}}class-context.js"
 // METHOD: evalscope [[scope]] flags=[IsInFunction, AllowsSuperProperty, AllowsNewTarget] bindings=
 // METHOD-NOT: {kind=This
 // METHOD: {name="Box" kind=Constant depth=
@@ -10,7 +10,7 @@
 // METHOD: = DirectEval {{*}}[[token]]{{*}}evalScope=[[scope]]
 
 // RUN(DERIVED): link
-// DERIVED: module [[entry]] path="{{*}}class-context"
+// DERIVED: module [[entry]] path="{{*}}class-context.js"
 // DERIVED: evalscope [[scope]] flags=[IsInFunction, IsInDerivedConstructor, AllowsSuperProperty, AllowsSuperCall, AllowsNewTarget] bindings=
 // DERIVED: {kind=This depth=1 layout=
 // DERIVED: {kind=ClassObject depth=
@@ -19,7 +19,7 @@
 // DERIVED: = DirectEval [[text]], [[unbound]], {{*}}evalScope=[[scope]]
 
 // RUN(ALONE): link
-// ALONE: module [[entry]] path="{{*}}class-context"
+// ALONE: module [[entry]] path="{{*}}class-context.js"
 // ALONE: evalscope [[scope]] flags=[IsInFunction, AllowsSuperProperty, AllowsSuperCall, AllowsNewTarget] bindings=
 // ALONE: {kind=This depth=1 layout=
 // ALONE: {kind=ClassObject depth=
@@ -27,19 +27,19 @@
 // ALONE: = DirectEval {{*}}evalScope=[[scope]]
 
 // RUN(ARROW): link
-// ARROW: module [[entry]] path="{{*}}class-context"
+// ARROW: module [[entry]] path="{{*}}class-context.js"
 // ARROW: evalscope [[scope]] flags=[IsInFunction, IsInArrowFunction, AllowsSuperProperty, AllowsNewTarget] bindings=
 // ARROW: function [[later]] name="later" module=[[entry]] {{*}}kind=Arrow
 // ARROW: = DirectEval {{*}}evalScope=[[scope]]
 
 // RUN(FIELD): link
-// FIELD: module [[entry]] path="{{*}}class-context"
+// FIELD: module [[entry]] path="{{*}}class-context.js"
 // FIELD: evalscope [[scope]] flags=[IsInArrowFunction, IsInFieldInitializer, AllowsSuperProperty, AllowsNewTarget] bindings=
 // FIELD: function [[run]] name="run" module=[[entry]] {{*}}kind=Arrow
 // FIELD: = DirectEval {{*}}evalScope=[[scope]]
 
 // RUN(DECORATOR): link
-// DECORATOR: module [[entry]] path="{{*}}class-context"
+// DECORATOR: module [[entry]] path="{{*}}class-context.js"
 // DECORATOR: evalscope [[scope]] flags=[IsInFunction, AllowsNewTarget] bindings=[{name="text"
 // DECORATOR: function [[decorate]] name="decorate" module=[[entry]]
 // DECORATOR: = DirectEval {{*}}evalScope=[[scope]]

@@ -3,14 +3,23 @@
 // What is looked for has a Structure that says so, and those Structures are kept in a list: the objects of the heap are gone through only where one of them is below the proxy. So what one more proxy costs does not grow with the number of objects that are alive.
 import { expect } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
-import { measureCommand } from "./analysis-scaling/measure-check";
-import { withSteadyCollections } from "./harness/counted-run";
-import { slot, spawned, withoutDebugInformation } from "./run-programs";
+import { countsInstructions, measureCommand } from "./analysis-scaling/measure-check";
+import { slot, spawned, withoutDebugInformation } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const root = join(import.meta.dir, "a-proxy-above-a-prototype");
+
+// Collections come when so much has been allocated and at no other time, and the thread of the program does all their work while the program stands still.
+// Otherwise what the collector's threads get done beside the program differs by some percent from run to run.
+const withSteadyCollections = {
+  BUN_GC_TIMER_DISABLE: "1",
+  BUN_JSC_percentCPUPerMBForEdenTimer: "0",
+  BUN_JSC_percentCPUPerMBForFullTimer: "0",
+  BUN_JSC_useConcurrentGC: "0",
+  BUN_JSC_numberOfGCMarkers: "1",
+};
 
 async function withExecutable(run: (executable: string) => Promise<void>) {
   const folder = String(tempDir("aot-a-proxy-above-a-prototype", {}));
@@ -55,7 +64,7 @@ async function instructionsForOneMore(executable: string, few: number, many: num
   return Math.round((costs[1] - costs[0]) / (many - few));
 }
 
-describe.skipIf(isDebug || isASAN || isWindows)("compile/aot/a-proxy-above-a-prototype", () => {
+describe.skipIf(isDebug || isASAN || !countsInstructions())("compile/aot/a-proxy-above-a-prototype", () => {
   test(
     "what one more proxy above a prototype object costs does not grow with the objects that are alive",
     () =>

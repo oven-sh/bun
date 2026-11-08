@@ -75,12 +75,9 @@ bitflags::bitflags! {
 
 pub struct ModuleLoad {
     pub module: RuntimeModule,
-    pub is_conditional: bool,
-    /// The exports that native code reads off what the module answers. `None`: nobody has written down which.
     pub exports_read: Option<&'static [&'static str]>,
 }
 
-/// A module that native code loads while Bun starts, and the exports that it reads off what the module answers. `None`: nobody has written down which.
 pub struct StartupLoad {
     pub module: RuntimeModule,
     pub exports_read: Option<&'static [&'static str]>,
@@ -93,6 +90,7 @@ pub struct BuiltinEntry {
     pub mutability: Mutability,
     pub platforms: Platforms,
     pub flags: BuiltinFlags,
+    pub is_added_at_first_read: bool,
     pub holder: Option<BuiltinId>,
     pub name: BuiltinName,
     pub prototype: Prototype,
@@ -101,22 +99,47 @@ pub struct BuiltinEntry {
     pub same_object_as: Option<BuiltinId>,
     pub first_member: u16,
     pub member_count: u16,
-    /// A position in the table's list of `Dependencies`: see `loads`, `calls`, `calls_for_texts` and `implemented_by`.
     pub dependencies: u16,
 }
 
-/// What an entry calls only where the operand of the call at a position is one of some texts.
 pub struct CallsForTexts {
     pub argument: u8,
     pub texts: &'static [BuiltinName],
     pub calls: &'static [RuntimeFunction],
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum WrittenOperand {
+    Function,
+    Integer {
+        least: i64,
+        most: i64,
+        may_be_left_out: bool,
+    },
+    Any,
+    AnyFurther,
+    PrimitivesFurther {
+        null: bool,
+        boolean: bool,
+        number: bool,
+        string: bool,
+    },
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct QuietCall {
+    pub operands: &'static [WrittenOperand],
+    pub answers_primitive: bool,
+}
+
 pub(super) struct Dependencies {
     pub(super) loads: &'static [ModuleLoad],
     pub(super) calls: &'static [RuntimeFunction],
     pub(super) calls_for_texts: &'static [CallsForTexts],
+    pub(super) calls_where_call_runs_other_code: &'static [RuntimeFunction],
+    pub(super) calls_that_run_no_other_code: &'static [QuietCall],
     pub(super) implemented_by: &'static [RuntimeFunction],
+    pub(super) guessed: &'static [RuntimeFunction],
 }
 
 pub struct TypeName {
@@ -149,6 +172,7 @@ pub struct ModuleData {
     pub namespace: BuiltinId,
     pub specifier: &'static str,
     pub flags: ModuleFlags,
+    pub exports_holding_module_object: &'static [BuiltinName],
     pub exports_held_by_namespace: &'static [BuiltinName],
 }
 
@@ -188,53 +212,5 @@ pub struct HostRead {
     pub context: HostReadContext,
     pub export_name: BuiltinName,
     pub read_use: HostReadUse,
-}
-
-bitflags::bitflags! {
-    /// What an operand is where it is no object. `NOT_PASSED`: the call has no argument at the position.
-    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-    pub struct OperandKinds: u8 {
-        const UNDEFINED = 1 << 0;
-        const NULL = 1 << 1;
-        const BOOLEAN = 1 << 2;
-        const NUMBER = 1 << 3;
-        const STRING = 1 << 4;
-        const SYMBOL = 1 << 5;
-        const BIG_INT = 1 << 6;
-        const NOT_PASSED = 1 << 7;
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum ObjectDemand {
-    /// The entry converts an object, iterates over it or calls it, or takes none.
-    None,
-    /// An object or array literal of the statement itself, whose properties are data under written names.
-    Literal,
-    /// An array literal without holes and spread elements.
-    ArrayLiteral,
-    /// An `ArrayLiteral` each element of which is a `Literal`.
-    ArrayLiteralOfLiterals,
-    /// The entry looks at what the object is, or keeps it in its result.
-    Any,
-}
-
-/// What an operand has to be so that the call does nothing a program can see.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct OperandDemand {
-    pub primitives: OperandKinds,
-    /// With `NUMBER`: the number is a whole number from the first to the second.
-    pub integers: Option<(i64, i64)>,
-    pub objects: ObjectDemand,
-}
-
-/// Generated from the columns of an overload from which the engine derives the effects of a call.
-pub struct RemovableCall {
-    pub builtin: BuiltinId,
-    pub is_construction: bool,
-    pub receiver: Option<OperandDemand>,
-    /// A call with more arguments than these is not covered, unless `has_rest`.
-    pub parameters: &'static [OperandDemand],
-    /// The last of `parameters` takes every further argument.
-    pub has_rest: bool,
+    pub names_looked_for: &'static [BuiltinName],
 }

@@ -3,7 +3,8 @@ import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { locksEnvironment } from "./hardened";
-import { withoutCoreDump } from "./run-programs";
+import { withoutCoreDump } from "./harness/commands";
+import "./harness/real-executables";
 import { describe, test } from "./supported";
 
 // What `bun build --compile --aot` cuts out of the executable leaves a hole in its address space, which later mappings may fill.
@@ -12,13 +13,15 @@ const [how, hole] = process.argv.slice(2);
 const libc = dlopen(process.platform === "darwin" ? "/usr/lib/libSystem.B.dylib" : "libc.so.6", {
   mmap: { args: ["ptr", "usize", "i32", "i32", "i32", "i64"], returns: "ptr" },
   ...(process.platform === "darwin" && { _dyld_get_image_vmaddr_slide: { args: ["u32"], returns: "i64" } }),
-});
-const address = Number(hole) + Number(libc.symbols._dyld_get_image_vmaddr_slide?.(0) ?? 0);
+}); // @ts-expect-error
+const address = Number(hole) + Number(libc.symbols._dyld_get_image_vmaddr_slide?.(0) ?? 0); // @ts-expect-error
 const call = () => new CFunction({ ptr: address, args: [], returns: "void" })();
 const [read_write, fixed_private_anonymous] = [3, process.platform === "darwin" ? 0x1012 : 0x32];
 const map = () => console.log("mapped", libc.symbols.mmap(address, 16384, read_write, fixed_private_anonymous, -1, 0) === address);
+// As the npm package signal-exit does. A breakpoint stops nothing then.
+if (how.endsWith("listening")) for (const signal of ["SIGTRAP", "SIGABRT", "SIGHUP"]) process.on(signal, () => {});
 console.log("started");
-if (how === "call") call();
+if (how === "call" || how.startsWith("call filled")) call();
 if (how === "read") read.u8(address);
 if (how === "call mapped data") (map(), call());
 if (how === "read mapped data") (map(), console.log(read.u8(address)));
@@ -33,11 +36,12 @@ function segmentsOfElf(file: Buffer) {
       end: Number(file.readBigUInt64LE(header + 16) + file.readBigUInt64LE(header + 40)),
       offset: Number(file.readBigUInt64LE(header + 8)),
       bytesInFile: Number(file.readBigUInt64LE(header + 32)),
+      isCode: !!(file.readUInt32LE(header + 4) & 1),
     }));
 }
 
 function segmentsOfMachO(file: Buffer) {
-  const segments: { start: number; end: number; offset: number; bytesInFile: number }[] = [];
+  const segments: { start: number; end: number; offset: number; bytesInFile: number; isCode: boolean }[] = [];
   for (let command = 32, index = 0; index < file.readUInt32LE(16); command += file.readUInt32LE(command + 4), index++) {
     if (file.readUInt32LE(command) !== 0x19 || file.toString("latin1", command + 8, command + 18) === "__PAGEZERO")
       continue;
@@ -47,25 +51,47 @@ function segmentsOfMachO(file: Buffer) {
       end: start + Number(file.readBigUInt64LE(command + 32)),
       offset: Number(file.readBigUInt64LE(command + 40)),
       bytesInFile: Number(file.readBigUInt64LE(command + 48)),
+      isCode: !!(file.readUInt32LE(command + 60) & 4),
     });
   }
   return segments;
 }
 
-function middleOfLargestHole(executable: string) {
-  const file = readFileSync(executable);
+function segmentsAndHoles(file: Buffer) {
   const segments = (isLinux ? segmentsOfElf(file) : segmentsOfMachO(file)).sort((a, b) => a.start - b.start);
   const holes = segments
     .slice(1)
     .map(({ start }, index) => ({ start: segments[index].end, size: start - segments[index].end }));
-  const largest = holes.sort((a, b) => b.size - a.size)[0];
+  return { segments, holes };
+}
+
+function middleOfLargestHole(executable: string) {
+  const file = readFileSync(executable);
+  const { segments, holes } = segmentsAndHoles(file);
+  // A gap that Bun itself has was left by its linker. One build had 4 MB between its first two segments.
+  const gapsOfBun = new Set(segmentsAndHoles(readFileSync(bunExe())).holes.map(({ start }) => start));
+  const cut = holes.filter(({ start }) => !gapsOfBun.has(start));
+  const largest = cut.sort((a, b) => b.size - a.size)[0] ?? { start: 0, size: 0 };
   const middle = largest.start + largest.size / 2;
   const placesOfMagic: number[] = [];
   for (let at = file.indexOf("BUNFEAT\0"); at >= 0; at = file.indexOf("BUNFEAT\0", at + 1)) {
     const segment = segments.find(({ offset, bytesInFile }) => offset <= at && at < offset + bytesInFile);
     if (segment) placesOfMagic.push(segment.start + at - segment.offset);
   }
-  return { address: middle - (middle % 0x4000), size: largest.size, placesOfMagic };
+  // Whole pages are cut. What is left of a removed range in the page behind them is filled: one word, over and over.
+  const isFilled = ({ offset }: { offset: number }) =>
+    Array.from({ length: 16 }, (_, word) => file.readUInt32LE(offset + 4 * word)).every(
+      (word, _, all) => word === all[0],
+    );
+  const behindCut = segments.filter(
+    segment => segment.isCode && cut.some(hole => hole.start + hole.size === segment.start),
+  );
+  return {
+    address: middle - (middle % 0x4000),
+    size: largest.size,
+    placesOfMagic,
+    filled: behindCut.find(isFilled)?.start,
+  };
 }
 
 const offsetText = (offset: number) => (offset < 0 ? "-0x" : "+0x") + Math.abs(offset).toString(16);
@@ -76,10 +102,22 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     "read": { stdout: "started\n", saysRemoved: false, exits70: false },
     "call mapped data": { stdout: "started\nmapped true\n", saysRemoved: false, exits70: false },
     "read mapped data": { stdout: "started\nmapped true\n0\n", saysRemoved: false, exits70: false },
+    "call filled": { stdout: "started\n", saysRemoved: true, exits70: true },
+    "call filled, listening": { stdout: "started\n", saysRemoved: true, exits70: true },
   };
   const found: Record<string, unknown> = {};
-  // Today: on macOS a call into a mapped page that cannot be run is reported as a removed feature.
-  const failsToday = isMacOS ? ["call mapped data"] : [];
+  // What fails today fails on macOS alone. It is declared on every platform, so that a list of what is declared `todo` has it wherever the list is written.
+  const knownFailures: Record<string, { here: boolean; today: string }> = {
+    "call mapped data": {
+      here: isMacOS,
+      today: `on macOS a crash is called "a removed feature" where none was called: a call into a mapped page that cannot be run`,
+    },
+    "call filled, listening": {
+      here: isMacOS && process.arch === "x64",
+      today: "on macOS x64 removed code is still filled with breakpoints",
+    },
+  };
+  const failsToday = Object.keys(knownFailures).filter(how => knownFailures[how].here);
   const withoutKnownFailures = (cases: Record<string, unknown>) =>
     Object.fromEntries(Object.entries(cases).filter(([how]) => !failsToday.includes(how)));
 
@@ -114,8 +152,9 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
     // an ordinary fault. So "call" asks from the end of the hole on, and the others ask where it found nothing mapped.
     const places = [4, 3, 2, 1, 0, -1, -2, -3].map(steps => hole.address + steps * stride);
     let free = places[0];
-    for (const how of ["call", "read", "call mapped data", "read mapped data"]) {
-      for (const address of how === "call" ? places : [free]) {
+    expect(hole.filled).toBeNumber();
+    for (const how of Object.keys(wanted)) {
+      for (const address of how === "call" ? places : how.startsWith("call filled") ? [hole.filled! + 16] : [free]) {
         const cmd = withoutCoreDump([join(folder, "main"), how, String(address)]);
         const { stdout, stderr, exitCode, signalCode } = await spawned(cmd);
         said.push(
@@ -127,19 +166,18 @@ describe.skipIf(!isLinux && !isMacOS)("a fault at an address inside a removed ra
           // The sentence ends with where removed code was entered, counted from Bun__removableFeatureState.
           const place = /number: \d+([-+]0x[0-9a-f]+)/.exec(stderr)?.[1];
           expect(hole.placesOfMagic.map(state => offsetText(address - state))).toContain(place);
-          free = address;
+          if (how === "call") free = address;
           break;
         }
       }
     }
     const [seen, expected] = [withoutKnownFailures(found), withoutKnownFailures(wanted)];
-    if (said.length > 4 || !Bun.deepEquals(seen, expected)) console.error(said.join("\n"));
+    if (said.length > 6 || !Bun.deepEquals(seen, expected)) console.error(said.join("\n"));
     expect(seen).toEqual(expected);
   }, 240_000);
 
-  for (const how of failsToday) {
-    test.todo(`is called a removed feature only where removed code was called: ${how}`, () => {
-      expect(found[how]).toEqual(wanted[how]);
-    });
+  for (const [how, { here, today }] of Object.entries(knownFailures)) {
+    const name = `is called a removed feature only where removed code was called: ${how}: ${today}`;
+    test.todo(name, here ? () => expect(found[how]).toEqual(wanted[how]) : undefined);
   }
 });

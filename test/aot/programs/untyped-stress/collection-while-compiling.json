@@ -1,5 +1,0 @@
-{
-  "env": {
-    "JSC_slowPathAllocsBetweenGCs": "1"
-  }
-}

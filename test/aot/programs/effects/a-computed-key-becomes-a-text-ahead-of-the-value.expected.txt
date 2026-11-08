@@ -1,9 +1,0 @@
-a value in a literal: key to text < value
-two values in a literal: key to text < value < key to text < value
-a key that is made by a call: key < key to text < value
-a function in a literal: key to text < value
-a field of a class: key to text < value
-a static field of a class: key to text < value
-two static fields of a class: key to text < key to text < value < value
-an assignment: value < key to text
-a pattern: key to text < default

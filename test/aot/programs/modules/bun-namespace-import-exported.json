@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for the module \"bun\", which the jsc shell does not provide" }

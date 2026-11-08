@@ -1,3 +1,0 @@
-{
-  "skipInShell": "it needs bun:jsc, which the jsc shell does not have"
-}

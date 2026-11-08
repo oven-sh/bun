@@ -72,9 +72,9 @@ const optionsTaken = wordsOfTable(
   "};",
 );
 const wordsOfAllocatorTaken = wordsOfTable(
-  "patches/mimalloc/environment-sets-sizes-and-pace-only.patch",
-  "bool mi_is_read_from_environment(const char* name) {",
-  "};",
+  "scripts/build/deps/mimalloc.ts",
+  "const namesReadFromLockedEnvironment = [",
+  "];",
 );
 const namesNeverRead = wordsOfTable("src/bun_core/util.rs", "pub fn is_never_read(", "\n    ];");
 
@@ -132,8 +132,6 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     ["BUN_DEBUG_ALL", "1"],
     ["BUN_DEBUGGER", "1"],
     ["BUN_AOT_CHECKED_NATIVE_CALLS", "checked.txt"],
-    ["BUN_AOT_TYPE_MISMATCH_LOG", "stderr"],
-    ["BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", "json"],
     ["BUN_AOT_VERBOSE", "1"],
     ["BUN_AOT_THERE_IS_NO_SUCH_VARIABLE", "1"],
     ["BUN_AOT_", "1"],
@@ -216,7 +214,6 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     const before = readdirSync(String(directory)).sort();
     const words = {
       BUN_AOT_CHECKED_NATIVE_CALLS: path("checked.txt"),
-      BUN_AOT_TYPE_MISMATCH_LOG: path("mismatches.jsonl"),
       BUN_BYTECODE_DIGEST_OUT: path("digest.txt"),
       BUN_BYTECODE_ORDER_OUT: path("order.txt"),
       BUN_TRACE: path("trace.jsonl"),
@@ -290,12 +287,9 @@ describe.skipIf(!locksEnvironment)("an executable of a hardened build", () => {
     expect(existsSync(`${mark}-of-child`)).toBe(ran);
   });
 
-  test.each(["BUN_AOT_CHECKED_NATIVE_CALLS", "BUN_AOT_TYPE_MISMATCH_LOG", "BUN_AOT_VERBOSE"])(
-    "has no code that asks for %s",
-    name => {
-      expect(Bun.spawnSync(["grep", "-q", "-a", name, bunExe()]).exitCode).toBe(1);
-    },
-  );
+  test.each(["BUN_AOT_CHECKED_NATIVE_CALLS", "BUN_AOT_VERBOSE"])("has no code that asks for %s", name => {
+    expect(Bun.spawnSync(["grep", "-q", "-a", name, bunExe()]).exitCode).toBe(1);
+  });
 
   test("is the only thing that does not start: bun itself does", async () => {
     const words = {

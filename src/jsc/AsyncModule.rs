@@ -8,6 +8,7 @@ use bun_io::KeepAlive;
 use bun_resolver::fs as Fs;
 
 use crate::bun_string_jsc;
+use crate::resolved_source::PrintedAst;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     self as jsc, EncodedSliceJsc as _, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise,
@@ -1014,22 +1015,12 @@ impl AsyncModule {
             "resumeLoadingModule: {}",
             bstr::BStr::new(self.specifier())
         );
-        // Take `parse_result` by value via `mem::take`, then restore below, to
-        // satisfy borrowck around `linker.link(&mut parse_result)` while
-        // `self` is also borrowed.
+        // `print_with_source_map` consumes the `ParseResult`, so take it by value.
         let arena = *self.parse_result.ast.parts.allocator();
         let mut parse_result =
             core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
-        // SAFETY: `string_buf` is a `Box<[u8]>` whose backing allocation is
-        // stable for the lifetime of `*self`; this fn never replaces it, so
-        // slices into it remain valid across the `&mut self` reborrows below
-        // (`self.parse_result = ...`). Detach the borrow so borrowck doesn't
-        // tie `path`/`specifier` to `&self`.
-        let specifier: &[u8] = unsafe { bun_ptr::detach_lifetime(self.specifier()) };
-        // SAFETY: same `string_buf` stability invariant as `specifier` above —
-        // the backing `Box<[u8]>` is never replaced in this fn.
-        let path_text: &[u8] = unsafe { bun_ptr::detach_lifetime(self.path_text()) };
-        let path = Fs::Path::init(path_text);
+        let specifier = self.specifier();
+        let path = Fs::Path::init(self.path_text());
         let jsc_vm = VirtualMachine::get_mut_ptr();
         // SAFETY: `jsc_vm` is the live per-thread VM (one VM per thread)
         // (`transpiler.log`/`resolver.log`/`linker.log` are themselves raw
@@ -1062,62 +1053,34 @@ impl AsyncModule {
 
         // We _must_ link because:
         // - node_modules bundle won't be properly
-        // SAFETY: per-thread VM; `linker` is a value field of `transpiler`.
+        // SAFETY: per-thread VM; `linker` and `options` are distinct value fields of `transpiler`.
         unsafe {
             (*jsc_vm).transpiler.linker.link::<false, true>(
+                &(*jsc_vm).transpiler.options,
                 &path,
                 &mut parse_result,
                 &(*jsc_vm).origin,
                 bun_bundler::options::ImportPathFormat::AbsolutePath,
             )?;
         }
-        self.parse_result = parse_result;
-        // `print_with_source_map` consumes `ParseResult` by
-        // value (it moves `ast` into `print_ast`). Hoist the post-print
-        // read (`is_commonjs_module`) above the move so we
-        // can `mem::take` instead of cloning.
-        let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
-            || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-        let arena = *self.parse_result.ast.parts.allocator();
-        let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
+        // Read before `print_with_source_map` moves `ast` into `print_ast`.
+        let printed_ast = PrintedAst::new(&parse_result.ast);
 
         // `VirtualMachine.source_code_printer` is a thread-local
-        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`). `BufferPrinter` is `!Clone`, so
-        // swap the buffer out and write it back via the `_writeback`
-        // guard — same observable effect (the thread-local's buffer is
-        // reused). Matches RuntimeTranspilerStore.rs.
+        // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); the print reuses its buffer.
         let mut printer_ptr = crate::virtual_machine::SOURCE_CODE_PRINTER
             .get()
             .expect("source_code_printer not initialized");
-        // SAFETY: thread-local owns the leaked Box; only this thread touches it.
-        let mut printer = core::mem::replace(
-            unsafe { printer_ptr.as_mut() },
-            bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
-        );
+        // SAFETY: thread-local owns the leaked Box; only this thread touches it,
+        // and nothing from here to the return reads the thread-local.
+        let printer = unsafe { printer_ptr.as_mut() };
         printer.ctx.reset();
-        // The writeback must fire at fn exit,
-        // *after* the `printer.ctx.get_written()` reads below. Declare the
-        // guard immediately after `printer` so it drops last (locals drop in
-        // reverse declaration order) and the buffer is still populated when
-        // read.
-        let _writeback =
-            scopeguard::guard((printer_ptr.as_ptr(), &raw mut printer), |(dst, src)| {
-                // SAFETY: `dst` is the thread-local's leaked Box, `src` is the
-                // stack `printer`; both outlive this guard (it drops before
-                // `printer`). Move the buffer back into the thread-local slot.
-                unsafe {
-                    *dst = core::mem::replace(
-                        &mut *src,
-                        bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init()),
-                    )
-                };
-            });
 
         {
             // SAFETY: per-thread VM; `source_map_handler` stashes the
             // `*mut BufferPrinter` and only reborrows inside
             // `on_source_map_chunk` after the writer's last use retires.
-            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&raw mut printer) };
+            let mut mapper = unsafe { (*jsc_vm).source_map_handler(&raw mut *printer) };
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(
@@ -1128,7 +1091,7 @@ impl AsyncModule {
                     // in the per-VM `transpiler_arena`.
                     &self.arena,
                     parse_result,
-                    &mut printer,
+                    printer,
                     bun_js_printer::Format::EsmAscii,
                     mapper.get(),
                     None,
@@ -1153,11 +1116,12 @@ impl AsyncModule {
         // the number recycled) by the transpile frame's fd guard.
 
         Ok(ResolvedSource {
-            source_code: BunString::clone_latin1(printer.ctx.get_written()),
             source_url: BunString::clone_utf8(path.text),
-            is_commonjs_module,
             is_static: self.is_static,
-            ..Default::default()
+            ..ResolvedSource::printed(
+                printed_ast,
+                BunString::clone_latin1(printer.ctx.get_written()),
+            )
         })
     }
 }

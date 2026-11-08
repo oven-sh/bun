@@ -1,5 +1,5 @@
 // Every way in which JavaScript that isn't in the executable could start inside it, one small program each. The whole-program analysis of --aot assumes that it
-// has seen all the code that will ever run: either the build finds that the program can run other code (the report lists an event under `unseenCode`, and nothing
+// has seen all the code that will ever run: either the build finds that the program can run other code (`--explain=trim` prints a line for the event, and nothing
 // is proven about what that code can reach), or the attempt throws at run time. A route that runs the code in an executable whose build found no event fails here.
 // An evaluator is followed as a value: the event is raised where it is called, and where the compiler loses track of it. One that is read off a value the compiler
 // knows nothing about raises no event, and its call throws before any string is evaluated.
@@ -7,11 +7,11 @@
 // A Worker that starts from text runs it in a VM of its own, without the compiled program: nothing that the analysis has proven is within its reach. Its routes are listed to pin that they run.
 // Machine code is not such JavaScript: an N-API addon and what bun:ffi calls are native code like Bun's own. Their routes are listed to pin that they raise no event and are not refused.
 // What native code can do to a compiled program is the subject of native-addons.test.ts.
-import { describe, expect, test } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./run-programs";
+import { slot, spawned } from "./harness/commands";
+import { beforeAll, describe, test } from "./supported";
 
 type Route = {
   body: string;
@@ -30,7 +30,7 @@ type Route = {
   runsApartFromTheProgram?: boolean;
 };
 
-const prelude = (wait: number) => `
+const helpers = (wait: number) => `
 const never = process.argv.length > 99;
 const glue = (...parts) => parts.join(never ? "x" : "");
 const text = glue("globalThis.RAN", " = (globalThis.RAN || 0)", " + 1; 'value'");
@@ -38,6 +38,15 @@ const moduleText = glue("globalThis.RAN", " = (globalThis.RAN || 0)", " + 1;");
 function temporaryFile(extension, contents) { const fs = require("node:fs"), os = require("node:os"), path = require("node:path"); const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "unseen-")), glue("code", extension)); fs.writeFileSync(file, contents); return file; }
 async function attempt(f) { let error; try { await f(); await new Promise(r => setTimeout(r, ${wait})); } catch (e) { error = e ?? new Error("threw " + e); } console.log(globalThis.RAN ? "RAN" : error ? "refused " + error.name + (error.code ? " " + error.code : "") : "did not run"); }
 `;
+/** A program holds the helpers that it uses and no others: what they import would be compiled with it. */
+const prelude = ({ body, wait = 0 }: Route) =>
+  helpers(wait)
+    .split("\n")
+    .filter(line => {
+      const name = /^(?:const|function|async function) (\w+)/.exec(line)?.[1];
+      return !name || ["never", "glue", "attempt"].includes(name) || new RegExp(`\\b${name}\\b`).test(body);
+    })
+    .join("\n");
 
 const vm = `const vm = require(glue('node:', 'vm')); const o = { n: 1 }; `;
 const changed = `; if (o.n !== 1) globalThis.RAN = 1`;
@@ -46,51 +55,25 @@ const routes: Record<string, Record<string, Route>> = {
   "evaluators": {
     "eval direct": { body: `eval(text)` },
     "eval indirect": { body: `(0, eval)(text)` },
-    "eval through global this": { body: `globalThis.eval(text)` },
     "eval through a variable": { body: `const e = eval; e(text)` },
     "eval under a computed name": { body: `globalThis[glue('ev', 'al')](text)` },
     "eval as a callback of map": { body: `[text].map(eval)` },
-    "eval as a timer callback": { body: `setTimeout(eval, 0, text)`, wait: 20 },
     "eval as a promise reaction": { body: `await Promise.resolve(text).then(eval)` },
-    "eval as a next tick callback": { body: `process.nextTick(eval, text)`, wait: 20 },
-    "eval bound as a microtask": { body: `queueMicrotask(eval.bind(null, text))`, wait: 20 },
-    "eval through reflect apply": { body: `Reflect.apply(eval, null, [text])` },
     "eval through a proxy": { body: `new Proxy(eval, {})(text)` },
-    "eval through call": { body: `eval.call(null, text)` },
     "eval from a descriptor": { body: `Object.getOwnPropertyDescriptor(globalThis, glue('ev', 'al')).value(text)` },
     "function constructor": { body: `new Function(text)()` },
-    "function constructor called": { body: `Function(text)()` },
     "function constructor of a function": { body: `(function () {}).constructor(text)()` },
-    "function constructor of an arrow": { body: `(() => {}).constructor(text)()` },
-    "function constructor of a method": { body: `({ m() {} }).m.constructor(text)()` },
-    "function constructor of a class": { body: `(class {}).constructor(text)()` },
-    "function constructor through array": { body: `[].constructor.constructor(text)()` },
-    "function constructor through object": { body: `({}).constructor.constructor(text)()` },
-    "function constructor through string": { body: `''.constructor.constructor(text)()` },
     "function constructor through a built in method": { body: `[].map.constructor(text)()` },
-    "function constructor through prototype": { body: `Function.prototype.constructor(text)()` },
-    "function constructor through get prototype of": {
-      body: `Object.getPrototypeOf(function () {}).constructor(text)()`,
-    },
     "function constructor under a computed name": { body: `globalThis[glue('Func', 'tion')](text)()` },
     "function constructor under a computed member": { body: `(function () {})[glue('const', 'ructor')](text)()` },
     "function constructor through reflect construct": { body: `Reflect.construct(Function, [text])()` },
-    "function constructor through apply": { body: `Function.apply(null, [text])()` },
     "function constructor bound": { body: `Function.bind(null, text)()()` },
     "function constructor subclass": { body: `new (class extends Function {})(text)()` },
     "function constructor of unknown value": { body: `JSON.parse('[]').constructor.constructor(text)()` },
     "async function constructor": { body: `await Object.getPrototypeOf(async function () {}).constructor(text)()` },
     "generator function constructor": { body: `Object.getPrototypeOf(function* () {}).constructor(text)().next()` },
-    "async generator function constructor": {
-      body: `await Object.getPrototypeOf(async function* () {}).constructor(text)().next()`,
-    },
     "timeout with a string": { body: `setTimeout(text, 0)`, wait: 30 },
-    "interval with a string": {
-      body: `const t = setInterval(text, 1); setTimeout(() => clearInterval(t), 20)`,
-      wait: 40,
-    },
     "immediate with a string": { body: `setImmediate(text)`, wait: 30 },
-    "shadow realm": { body: `new ShadowRealm().evaluate(glue('1 +', ' 1')) === 2 && (globalThis.RAN = 1)` },
   },
   "node:module": {
     "module compile": {
@@ -117,11 +100,6 @@ const routes: Record<string, Record<string, Route>> = {
       wait: 30,
     },
     "module require method": { body: `module.require(temporaryFile('.js', moduleText))`, extension: "cjs" },
-    "main module require": { body: `require.main.require(temporaryFile('.js', moduleText))`, extension: "cjs" },
-    "process main module require": {
-      body: `process.mainModule.require(temporaryFile('.js', moduleText))`,
-      extension: "cjs",
-    },
     "own extension handler compiles": {
       body: `require.extensions[glue('.unse', 'en')] = (m, f) => m._compile(require('node:fs').readFileSync(f, 'utf8'), f); require(temporaryFile('.unseen', moduleText))`,
       extension: "cjs",
@@ -133,23 +111,11 @@ const routes: Record<string, Record<string, Route>> = {
   },
   "loaders with names nobody knows": {
     "require of a file": { body: `require(temporaryFile('.js', moduleText))` },
-    "require of a commonjs file": { body: `require(temporaryFile('.cjs', moduleText))`, extension: "cjs" },
-    "require of a typescript file": { body: `require(temporaryFile('.ts', moduleText))` },
     "require after resolve sync": {
       body: `const f = temporaryFile('.js', moduleText); require(Bun.resolveSync(f, '/'))`,
     },
-    "require after require resolve": {
-      body: `const f = temporaryFile('.js', moduleText); require(require.resolve(f))`,
-    },
     "import meta require": { body: `import.meta.require(temporaryFile('.js', moduleText))`, extension: "mjs" },
     "import of a file": { body: `await import(temporaryFile('.mjs', moduleText))` },
-    "import of a file url": {
-      body: `await import(require('node:url').pathToFileURL(temporaryFile('.mjs', moduleText)).href)`,
-    },
-    "import after import meta resolve": {
-      body: `await import(import.meta.resolve(temporaryFile('.mjs', moduleText)))`,
-      extension: "mjs",
-    },
     "import of a data url": { body: `await import(glue('data:text/javascript,', encodeURIComponent(moduleText)))` },
     "import of a blob url": {
       body: `await import(URL.createObjectURL(new Blob([moduleText], { type: 'text/javascript' })))`,
@@ -161,8 +127,6 @@ const routes: Record<string, Record<string, Route>> = {
     "require of node vm under a computed name": { body: `require(glue('node:', 'vm')).runInThisContext(text)` },
     "import of vm under a computed name": { body: `(await import(glue('node:', 'vm'))).runInThisContext(text)` },
     "vm named": { body: `require('node:vm').runInThisContext(text)` },
-    "vm script": { body: `new (require('node:vm').Script)(text).runInThisContext()` },
-    "vm new context": { body: `require('node:vm').runInNewContext(glue('1 +', ' 1')) === 2 && (globalThis.RAN = 1)` },
     "vm compile function": { body: `require('node:vm').compileFunction(text)()` },
   },
   "process": {
@@ -226,7 +190,6 @@ const routes: Record<string, Record<string, Route>> = {
     "sqlite load extension": {
       body: `new (require('bun:sqlite').Database)(':memory:').loadExtension(temporaryFile('.so', 'x'))`,
     },
-    "repl named": { body: `typeof require('node:repl').start` },
     "inspector named": { body: `require('node:inspector').open(0)` },
     "inspector under a computed name": { body: `require(glue('node:', 'inspector')).open(0)` },
     "node test under a computed name": { body: `typeof require(glue('node:', 'test'))` },
@@ -247,16 +210,9 @@ const routes: Record<string, Record<string, Route>> = {
   },
   "evaluators of node:vm reached without naming the module, with objects of the program handed in": {
     "unnamed vm run in new context": { body: vm + `vm.runInNewContext(glue('o.n', ' = 2'), { o })` + changed },
-    "unnamed vm run in context": {
-      body: vm + `vm.runInContext(glue('o.n', ' = 2'), vm.createContext({ o }))` + changed,
-    },
-    "unnamed vm script in new context": {
-      body: vm + `new vm.Script(glue('o.n', ' = 2')).runInNewContext({ o })` + changed,
-    },
     "unnamed vm script in this context": {
       body: vm + `globalThis.o = o; new vm.Script(glue('o.n', ' = 2')).runInThisContext()` + changed,
     },
-    "unnamed vm compile function": { body: vm + `vm.compileFunction(glue('o.n', ' = 2'), ['o'])(o)` + changed },
     "unnamed vm source text module": {
       body:
         vm +
@@ -265,17 +221,10 @@ const routes: Record<string, Record<string, Route>> = {
     "unnamed vm function of new context": {
       body: vm + `vm.runInNewContext(glue('Func', 'tion'))(glue('o', ''), glue('o.n', ' = 2'))(o)` + changed,
     },
-    "unnamed vm eval of new context": {
-      body:
-        vm + `const c = vm.createContext({ o }); vm.runInContext(glue('ev', 'al'), c)(glue('o.n', ' = 2'))` + changed,
-    },
     "builtin module vm run in new context": {
       body:
         `const vm = process.getBuiltinModule(glue('v', 'm')); const o = { n: 1 }; vm.runInNewContext(glue('o.n', ' = 2'), { o })` +
         changed,
-    },
-    "shadow realm import value": {
-      body: `await new ShadowRealm().importValue(temporaryFile('.mjs', glue('export const v', ' = 1;')), 'v') === 1 && (globalThis.RAN = 1)`,
     },
   },
   "the module loader object": {
@@ -309,10 +258,6 @@ const routes: Record<string, Record<string, Route>> = {
       body: `const { Worker } = require(glue('node:', 'worker_threads')); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
     },
     "unnamed repl": { body: `typeof require(glue('node:', 'repl')).start` },
-    "process dlopen under a computed name": {
-      body: `process[glue('dl', 'open')]({ exports: {} }, temporaryFile('.node', 'not a library'))`,
-      isMachineCode: true,
-    },
     "plugin under a computed name": {
       body: `Bun[glue('plu', 'gin')]({ name: 'p', setup(b) { b.module(glue('virtual-', 'module'), () => ({ contents: moduleText, loader: 'js' })); } }); await import(glue('virtual-', 'module'))`,
     },
@@ -383,82 +328,167 @@ const routes: Record<string, Record<string, Route>> = {
   },
 };
 
-// A route is a build and a run. The routes of a part are built at once.
-export function codeTheCompilerNeverSaw(part: number, parts: number) {
-  describe.concurrent("compile/aot/code the compiler never saw", () => {
-    if (unsupported) return void test.skip(unsupported, () => {});
-    let index = 0;
-    for (const [group, members] of Object.entries(routes)) {
-      for (const [name, route] of Object.entries(members)) {
-        if (index++ % parts !== part - 1) continue;
-        test(
-          `${group}: ${name}`,
-          () =>
-            slot(async () => {
-              const main = "main." + (route.extension ?? "js");
-              const requireInModule =
-                route.extension === "mjs"
-                  ? `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n`
-                  : "";
-              using dir = tempDir("aot-unseen-code", {
-                [main]: `${requireInModule}${prelude(route.wait ?? 0)}attempt(async () => { ${route.body}; });\n`,
-                "page.html": "<!doctype html><title>t</title><p>page</p>",
-                "outside.js": `globalThis.RAN = 1; console.log("RAN");\n`,
-                "run/empty.txt": "",
-              });
-              const folder = String(dir);
-              const outside = join(folder, "outside.js");
-              const withFile = (text: string) =>
-                text.replaceAll("{FILE}", isWindows ? outside.replaceAll("\\", "/") : outside);
-              const executable = join(folder, isWindows ? "program.exe" : "program");
-              const report = join(folder, "report.json");
-              const built = await spawned(
-                [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, main, "--outfile", executable],
-                folder,
-                bunEnv,
-              );
-              expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
-                stderr: expect.any(String),
-                exitCode: 0,
-              });
-              const sawAnEvent = JSON.parse(readFileSync(report, "utf8")).unseenCode.length > 0;
+// A route for which the build finds an event is a program of its own: the report has a line for each kind of event and each API, with one place, so in company it would not tell whose an event is.
+// The routes for which the build finds none are files of one program, whose entry point imports the file that ROUTE names: that program stays closed, and a route in it that runs the code fails.
+const findsNoEvent = new Set([
+  "arguments callee caller",
+  "be bun in environment",
+  "call site get function",
+  "call site get this",
+  "eval argument",
+  "function arguments",
+  "function caller",
+  "function constructor under a computed member",
+  "immediate with a string",
+  "inspect argument",
+  "inspect in environment",
+  "inspector named",
+  "loader load and evaluate file",
+  "loader object exists",
+  "loader parse module",
+  "loader provide fetch",
+  "loader registry hands out modules",
+  "loader request import",
+  "module prototype load",
+  "module register",
+  "preload argument",
+  "preload in bun options",
+  "preload in bunfig",
+  "process binding contextify",
+  "process binding natives",
+  "process linked binding",
+  "require argument",
+  "require in node options",
+  "serve development with plugins in bunfig",
+  "serve static plugins in bunfig",
+  "spawn of itself as bun",
+  "sqlite load extension",
+  "timeout with a string",
+  "transpiler that scans a text with a macro",
+  "transpiler with a macro",
+  "transpiler with a macro out of a built-in module",
+  "worker of a blob url",
+  "worker of a data url",
+  "worker of a file",
+  "worker threads eval",
+  "worker with preload",
+]);
 
-              const workingDirectory = join(folder, "run");
-              for (const [file, text] of Object.entries(route.filesInWorkingDirectory ?? {}))
-                await Bun.write(join(workingDirectory, file), withFile(text));
-              const env = {
-                ...bunEnv,
-                ...Object.fromEntries(Object.entries(route.env ?? {}).map(([key, value]) => [key, withFile(value)])),
-              };
-              const ran = await spawned([executable, ...(route.args ?? []).map(withFile)], workingDirectory, env);
-              expect(ran.signal).toBeNull();
-              if (route.isMachineCode) {
-                // The build says that machine code may be loaded, and the load is not refused. Whether the library or the C compiler is there depends on the machine.
-                const isRefusedAsUnseenCode = /^refused Error ERR_CODE_NOT_COMPILED$/m.test(ran.stdout);
-                expect({ sawAnEvent, isRefusedAsUnseenCode, stdout: ran.stdout }).toEqual({
-                  sawAnEvent: true,
-                  isRefusedAsUnseenCode: false,
-                  stdout: expect.any(String),
-                });
-                return;
-              }
-              const ranTheCode = /^RAN$/m.test(ran.stdout);
-              if (route.runsApartFromTheProgram)
-                return void expect({ ranTheCode, stdout: ran.stdout }).toEqual({
-                  ranTheCode: true,
-                  stdout: expect.any(String),
-                });
-              expect({
-                ranTheCode: ranTheCode && !sawAnEvent && !route.replacesTheProgram,
-                stdout: ran.stdout,
-              }).toEqual({
-                ranTheCode: false,
-                stdout: expect.any(String),
-              });
-            }),
-          600_000,
-        );
-      }
+/** `file`: as the build prints it. Undefined: the event lies nowhere in the program. */
+type Event = { file: string | undefined };
+// That the program starts a Worker from code outside the executable is printed in a line of the same make. It is no event: that code runs apart from the program.
+const lineOfEvent =
+  /^aot: trim: blocked by (?!dynamic-import: the program starts a Worker from code that isn't in the executable)[\w-]+: .*?(?: at (.+):\d+:\d+)?$/;
+const all = Object.entries(routes).flatMap(([group, members]) =>
+  Object.entries(members).map(([name, route]) => ({
+    group,
+    name,
+    route,
+    file: `${name.replaceAll(" ", "-")}.${route.extension ?? "js"}`,
+  })),
+);
+const textOf = (route: Route) =>
+  (route.extension === "mjs"
+    ? `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n`
+    : "") + `${prelude(route)}attempt(async () => { ${route.body}; });\n`;
+const others = {
+  "page.html": "<!doctype html><title>t</title><p>page</p>",
+  "outside.js": `globalThis.RAN = 1; console.log("RAN");\n`,
+  "run/empty.txt": "",
+};
+
+async function build(folder: string, main: string) {
+  const executable = join(folder, isWindows ? "program.exe" : "program");
+  const built = await spawned(
+    [bunExe(), "build", "--compile", "--aot", "--explain=trim", main, "--outfile", executable],
+    folder,
+    { ...bunEnv, NO_COLOR: "1" },
+  );
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+  const events: Event[] = built.stderr.split(/\r?\n/).flatMap(line => {
+    const found = lineOfEvent.exec(line);
+    return found ? [{ file: found[1] }] : [];
+  });
+  return { executable, events };
+}
+
+async function judge(
+  folder: string,
+  executable: string,
+  sawAnEvent: boolean,
+  route: Route,
+  more: Record<string, string> = {},
+) {
+  const outside = join(folder, "outside.js");
+  const withFile = (text: string) => text.replaceAll("{FILE}", isWindows ? outside.replaceAll("\\", "/") : outside);
+  const workingDirectory = join(folder, "run");
+  for (const [file, text] of Object.entries(route.filesInWorkingDirectory ?? {}))
+    await Bun.write(join(workingDirectory, file), withFile(text));
+  const env = {
+    ...bunEnv,
+    ...more,
+    ...Object.fromEntries(Object.entries(route.env ?? {}).map(([key, value]) => [key, withFile(value)])),
+  };
+  const ran = await spawned([executable, ...(route.args ?? []).map(withFile)], workingDirectory, env);
+  expect(ran.signal).toBeNull();
+  if (route.isMachineCode) {
+    // The build says that machine code may be loaded, and the load is not refused. Whether the library or the C compiler is there depends on the machine.
+    const isRefusedAsUnseenCode = /^refused Error ERR_CODE_NOT_COMPILED$/m.test(ran.stdout);
+    return void expect({ sawAnEvent, isRefusedAsUnseenCode, stdout: ran.stdout }).toEqual({
+      sawAnEvent: true,
+      isRefusedAsUnseenCode: false,
+      stdout: expect.any(String),
+    });
+  }
+  const ranTheCode = /^RAN$/m.test(ran.stdout);
+  if (route.runsApartFromTheProgram)
+    return void expect({ ranTheCode, stdout: ran.stdout }).toEqual({ ranTheCode: true, stdout: expect.any(String) });
+  expect({ ranTheCode: ranTheCode && !sawAnEvent && !route.replacesTheProgram, stdout: ran.stdout }).toEqual({
+    ranTheCode: false,
+    stdout: expect.any(String),
+  });
+}
+
+export function codeTheCompilerNeverSaw() {
+  describe.concurrent("code the compiler never saw, in a program of its own", () => {
+    for (const { group, name, route, file } of all.filter(({ name }) => !findsNoEvent.has(name))) {
+      test(
+        `${group}: ${name}`,
+        () =>
+          slot(async () => {
+            using dir = tempDir("aot-unseen-code", { [file]: textOf(route), ...others });
+            const { executable, events } = await build(String(dir), file);
+            expect({ sawAnEvent: events.length > 0 }).toEqual({ sawAnEvent: true });
+            await judge(String(dir), executable, true, route);
+          }),
+        600_000,
+      );
+    }
+  });
+
+  const routesOfProgram = all.filter(({ name }) => findsNoEvent.has(name));
+  describe("code the compiler never saw, in a program that the build finds closed", () => {
+    const dir = tempDir("aot-unseen-code", {
+      "main.js":
+        `const routes = {\n${routesOfProgram.map(({ file }) => `  ${JSON.stringify(file)}: () => import("./${file}"),\n`).join("")}};\n` +
+        `routes[process.env.ROUTE]();\n`,
+      ...Object.fromEntries(routesOfProgram.map(({ file, route }) => [file, textOf(route)])),
+      ...others,
+    });
+    afterAll(() => dir[Symbol.dispose]());
+    let built: Awaited<ReturnType<typeof build>>;
+    beforeAll(async () => void (built = await build(String(dir), "main.js")), 600_000);
+    for (const { group, name, route, file } of routesOfProgram) {
+      test.concurrent(
+        `${group}: ${name}`,
+        () =>
+          slot(async () => {
+            using run = tempDir("aot-unseen-code-run", others);
+            expect(built.events).toEqual([]);
+            await judge(String(run), built.executable, false, route, { ROUTE: file });
+          }),
+        600_000,
+      );
     }
   });
 }

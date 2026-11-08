@@ -1,4 +1,5 @@
 // A method or a getter of a host class is taken from the prototype object and run on a receiver that is no instance. The program makes no instance of the class.
+//@ build --no-builtin-modules
 function attempt(work) {
   try {
     console.log("answers", typeof work());
@@ -53,7 +54,9 @@ attempt(() => MessagePort.prototype.ref.call({}));
 //// BroadcastChannel
 attempt(() => BroadcastChannel.prototype.postMessage.call({}, 1));
 //// SubtleCrypto
+//@ alone
 //@ exit 1
 attempt(() => SubtleCrypto.prototype.exportKey.call({}));
 //// File
+//@ alone
 attempt(() => File.prototype.image.call({}));

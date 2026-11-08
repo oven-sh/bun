@@ -1,1 +1,0 @@
-{ "skipInShell": "it asks for node:assert, node:util, node:v8 and bun:jsc, which the jsc shell does not provide" }

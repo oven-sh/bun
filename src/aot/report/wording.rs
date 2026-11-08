@@ -2,10 +2,8 @@ use bun_trim::UnseenCodeCause;
 
 use super::levels::AccessColumn;
 use crate::ir::generated::{
-    AllocationEscapeReason, AllocationHeapCause, ArrayChainDeclineReason, CallDeclineReason,
-    CheckCause, DeclineKind, GeneratorFusionDeclineReason, IllTypedCause, InterpretedCause,
-    KnowledgeLevel, LoopDeclineReason, StringBuilderDeclineReason, TypedResultDeclineReason,
-    UnprovenCause,
+    AllocationEscapeReason, AllocationHeapCause, CodeForm, IllTypedCause, KnowledgeLevel,
+    TypeTestFailure, UnprovenCause,
 };
 
 pub(super) const DOCUMENTATION_URL: &[u8] = b"https://bun.com/docs/compiler/explain#";
@@ -15,7 +13,7 @@ pub(super) struct CauseWording {
     pub fix: &'static str,
 }
 
-pub(super) struct CheckWording {
+pub(super) struct GuardWording {
     pub counted_as: &'static str,
     pub headline: &'static str,
     pub fix: &'static str,
@@ -25,6 +23,28 @@ pub(super) struct IllTypedWording {
     pub code: &'static str,
     pub message: &'static str,
     pub fix: &'static str,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub(super) enum GuardClass {
+    OtherType,
+    UnknownObject,
+    UnknownCallee,
+    UnprovenContents,
+    ProofWithheld,
+    ReadBeforeInitialized,
+}
+
+impl GuardClass {
+    pub(super) const COUNT: usize = 6;
+    pub(super) const ALL: [GuardClass; GuardClass::COUNT] = [
+        GuardClass::OtherType,
+        GuardClass::UnknownObject,
+        GuardClass::UnknownCallee,
+        GuardClass::UnprovenContents,
+        GuardClass::ProofWithheld,
+        GuardClass::ReadBeforeInitialized,
+    ];
 }
 
 pub(super) const ESCAPE_REASONS: [(AllocationEscapeReason, &str);
@@ -64,12 +84,8 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "this is a bug in Bun: please report it.",
         ),
         UnprovenCause::ResultDisabled => (
-            "The analysis that proves this was turned off by a developer option.",
-            "build without --aot-disable.",
-        ),
-        UnprovenCause::LimitReached => (
-            "The analysis gave up here because it hit a compiler limit.",
-            "the limit is shown above. Split the function or the type to get under it.",
+            "The part of the analysis that proves this was left out of the build.",
+            "no build option does that, so this is a bug in Bun: please report it.",
         ),
         UnprovenCause::UnknownObject => (
             "An object from untyped code is used as this type here, so it can have any shape.",
@@ -111,49 +127,9 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
             "The array, Map or Set this value is read from may contain values of other types.",
             "only add to the collection from typed code, or narrow the element after reading it.",
         ),
-        UnprovenCause::FieldDeleted => (
-            "A property that the type requires is deleted here.",
-            "declare the property optional, or assign undefined.",
-        ),
-        UnprovenCause::UnknownKeyDelete => (
-            "A property is deleted here with a computed key.",
-            "use a Map, or delete a constant key.",
-        ),
-        UnprovenCause::PropertyRedefined => (
-            "A property of an object of this type is redefined here, for example as a getter or a setter.",
-            "declare it as a field, a getter or a setter in the class or the object literal.",
-        ),
-        UnprovenCause::PropertyAdded => (
-            "A property that the type does not declare is added to an object of this type here.",
-            "declare the property in the class or the object type.",
-        ),
-        UnprovenCause::UnknownKeyStore => (
-            "A property is assigned here with a computed key.",
-            "use a Map or a Record type for data with computed keys.",
-        ),
-        UnprovenCause::StoreOfOtherType => (
-            "A value of a different type is stored in this field here.",
-            "store a value of the declared type, or widen the type of the field.",
-        ),
-        UnprovenCause::IntegrityChanged => (
-            "An object of this type is passed to Object.freeze, Object.seal or Object.preventExtensions here.",
-            "freeze the object where it is created, or freeze a copy.",
-        ),
-        UnprovenCause::PrototypeChanged => (
-            "The prototype of an object of this type is changed here.",
-            "create the object with the prototype it needs.",
-        ),
-        UnprovenCause::OwnPropertyHidesMember => (
-            "A property added to an instance can shadow a method of its class.",
-            "declare the property in the class.",
-        ),
         UnprovenCause::OtherNewTarget => (
             "This class is constructed with a different new.target (Reflect.construct, or a subclass from untyped code).",
             "construct it with new.",
-        ),
-        UnprovenCause::LeftByPasses => (
-            "The compiler proved the types here and still emitted the slow path.",
-            "this is a missed optimization in Bun, not a problem in your code. Please report it.",
         ),
         UnprovenCause::UndescribedNativeResult => (
             "The value is the result of a built-in function whose result type the compiler doesn't know.",
@@ -203,47 +179,67 @@ pub(super) fn cause_wording(cause: UnprovenCause) -> CauseWording {
     CauseWording { message, fix }
 }
 
-pub(super) fn check_wording(cause: CheckCause) -> CheckWording {
+pub(super) fn guard_class(cause: UnprovenCause) -> GuardClass {
     match cause {
-        CheckCause::Unknown => CheckWording {
-            counted_as: "with no recorded cause",
-            headline: "the compiler couldn't prove the type of this value",
-            fix: "this is a bug in Bun: please report it",
-        },
-        CheckCause::UnknownObject => CheckWording {
-            counted_as: "on a value from untyped code",
-            headline: "the value may come from untyped code",
-            fix: "narrow it first: typeof for a primitive. For an object, check its fields and build a new object of the type from them",
-        },
-        CheckCause::UnknownCallee => CheckWording {
-            counted_as: "on the result of an unknown callee",
-            headline: "the value is returned by a call whose callee isn't known at build time",
-            fix: "call the function directly, or narrow the result",
-        },
-        CheckCause::UnprovenContents => CheckWording {
-            counted_as: "on an element of a collection",
-            headline: "the array, Map or Set it's read from may contain values of other types",
-            fix: "only add to the collection from typed code, or narrow the element after reading it",
-        },
-        CheckCause::MayFail => CheckWording {
+        UnprovenCause::Unknown => GuardClass::OtherType,
+        UnprovenCause::ResultDisabled => GuardClass::ProofWithheld,
+        UnprovenCause::UnknownCallee | UnprovenCause::ResultOfUnknownCallee => {
+            GuardClass::UnknownCallee
+        }
+        UnprovenCause::UnprovenContents => GuardClass::UnprovenContents,
+        UnprovenCause::UnknownObject
+        | UnprovenCause::NonLayoutObject
+        | UnprovenCause::BuiltinBase
+        | UnprovenCause::UnknownBase
+        | UnprovenCause::ClassEvaluatedAgain
+        | UnprovenCause::ReachesNativeCode
+        | UnprovenCause::ReachesUnknownJavaScript
+        | UnprovenCause::UnknownWriter
+        | UnprovenCause::OtherNewTarget
+        | UnprovenCause::UndescribedNativeResult
+        | UnprovenCause::UnseenCode
+        | UnprovenCause::UncheckedConversionOfUntracked
+        | UnprovenCause::DataFromOutside
+        | UnprovenCause::ThrownByRunTime
+        | UnprovenCause::ParameterOfEscapedFunction
+        | UnprovenCause::ContentsOfEscapedObject
+        | UnprovenCause::ObjectWithoutLayout
+        | UnprovenCause::Untracked
+        | UnprovenCause::LayoutOutsideFamily => GuardClass::UnknownObject,
+    }
+}
+
+pub(super) fn guard_wording(class: GuardClass) -> GuardWording {
+    match class {
+        GuardClass::OtherType => GuardWording {
             counted_as: "on a value of the wrong type",
             headline: "a value of the wrong type reaches this guard",
             fix: "trace the value back from here: an unsound cast ('as', 'any' or '!') hides the mismatch from TypeScript",
         },
-        CheckCause::LimitReached => CheckWording {
-            counted_as: "where the analysis hit a limit",
-            headline: "the analysis gave up on this value because it hit a compiler limit",
-            fix: "give the values a common class, or split the function",
+        GuardClass::UnknownObject => GuardWording {
+            counted_as: "on a value from untyped code",
+            headline: "the value may come from untyped code",
+            fix: "narrow it first: typeof for a primitive. For an object, check its fields and build a new object of the type from them",
         },
-        CheckCause::ResultDisabled => CheckWording {
-            counted_as: "because a developer option turned the proof off",
-            headline: "the analysis that proves this was turned off",
-            fix: "build without --aot-disable",
+        GuardClass::UnknownCallee => GuardWording {
+            counted_as: "on the result of an unknown callee",
+            headline: "the value is returned by a call whose callee isn't known at build time",
+            fix: "call the function directly, or narrow the result",
         },
-        CheckCause::AddedByPass => CheckWording {
-            counted_as: "added by the compiler",
-            headline: "the compiler added this guard for an optimization",
-            fix: "nothing to fix: it can only fail if another guard in this list fails",
+        GuardClass::UnprovenContents => GuardWording {
+            counted_as: "on an element of a collection",
+            headline: "the array, Map or Set it's read from may contain values of other types",
+            fix: "only add to the collection from typed code, or narrow the element after reading it",
+        },
+        GuardClass::ProofWithheld => GuardWording {
+            counted_as: "because part of the analysis was left out of the build",
+            headline: "the part of the analysis that proves this was left out of the build",
+            fix: "no build option does that, so this is a bug in Bun: please report it",
+        },
+        GuardClass::ReadBeforeInitialized => GuardWording {
+            counted_as: "on a variable that may be read too early",
+            headline: "the variable may be read before it's initialized",
+            fix: "initialize it before the code that reads it can run",
         },
     }
 }
@@ -268,7 +264,7 @@ pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWo
         ),
         IllTypedCause::SuppressedError => (
             "suppressed-error",
-            "A type error is suppressed here (@ts-ignore, @ts-expect-error, @ts-nocheck).",
+            "The type checker doesn't accept this value here.",
             "fix the type error.",
         ),
         IllTypedCause::DeclarationWithoutBody => (
@@ -291,30 +287,10 @@ pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWo
             "A primitive, function, array, built-in object or proxy is used as this object type.",
             "pass an object literal or a class instance.",
         ),
-        IllTypedCause::StoreOutsideFieldType => (
-            "wrong-type-stored",
-            "A value of a different type is stored in this field somewhere in the program.",
-            "store a value of the declared type, or widen the field's type.",
-        ),
-        IllTypedCause::ComputedKeyStore => (
-            "computed-key-store",
-            "A store with a computed key may write this field.",
-            "use a Map or a Record type for data with computed keys.",
-        ),
-        IllTypedCause::UnprovenReceiverStore => (
-            "store-through-unknown-object",
-            "A store through an object of unknown type may write this field.",
-            "give that object a type.",
-        ),
         IllTypedCause::NativeWritesOperand => (
             "passed-to-builtin",
             "The object is passed to a built-in function that may write to it.",
             "pass a copy, or only the fields the function needs.",
-        ),
-        IllTypedCause::StateChanged => (
-            "object-changed",
-            "A delete, Object.defineProperty, Object.setPrototypeOf or Object.freeze changes an object of this type.",
-            "declare the property optional, or create the object in its final form.",
         ),
         IllTypedCause::UnseenWriter => (
             "written-by-runtime-code",
@@ -361,205 +337,19 @@ pub(super) fn ill_typed_cause_wording(cause: IllTypedCause) -> Option<IllTypedWo
             "The field or variable can be read before it's initialized.",
             "initialize it in the declaration or first in the constructor.",
         ),
-        IllTypedCause::LookupMayChange => (
-            "lookup-may-change",
-            "The method can be replaced, shadowed or overridden at run time, so the call isn't resolved at build time.",
-            "don't assign to methods or prototypes after the class is defined.",
-        ),
     };
     Some(IllTypedWording { code, message, fix })
 }
 
-pub(super) fn decline_sentence(kind: DeclineKind) -> &'static str {
-    match kind {
-        DeclineKind::Unknown => "no reason was recorded",
-        DeclineKind::HotCallNotInlined => "a hot call was not inlined",
-        DeclineKind::HotCallNotResolved => "the callee of a hot call isn't known at build time",
-        DeclineKind::GeneratorLoopNotFused => {
-            "a generator wasn't inlined into its loop, so every iteration suspends and resumes it"
+pub(super) fn failure_sentence(failure: TypeTestFailure) -> &'static str {
+    match failure {
+        TypeTestFailure::TakesGenericPath => "when it fails, only this operation is slower",
+        TypeTestFailure::Throws => {
+            "when it fails, the operation throws, as it does in plain JavaScript"
         }
-        DeclineKind::ArrayChainNotFused => {
-            "a chain of array methods wasn't fused, so it allocates the intermediate arrays"
+        TypeTestFailure::Leaves => {
+            "when it fails, the rest of the call runs in the function's slow version"
         }
-        DeclineKind::StringBuilderNotCreated => {
-            "strings are concatenated in a loop without a string builder"
-        }
-        DeclineKind::StringBuildersNotJoined => {
-            "a string is built separately and then copied into a larger string"
-        }
-        DeclineKind::AllocationNotSunk => {
-            "an allocation couldn't be removed or moved to the stack (see --explain=allocations)"
-        }
-        DeclineKind::TypedResultNotSelected => {
-            "a built-in call returns a boxed value even though a typed version exists"
-        }
-        DeclineKind::IterationNotExpandedByClass => {
-            "a loop uses the iterator protocol because the type of the iterable isn't known"
-        }
-        DeclineKind::LoopNotVersioned => {
-            "loop guards couldn't be hoisted, so they run on every iteration"
-        }
-        DeclineKind::LoopBoundNotClamped => {
-            "bounds checks couldn't be hoisted out of a loop, so they run on every iteration"
-        }
-        DeclineKind::StretchNotGuarded => {
-            "code with expected types got no fast path, so it always takes the slow path"
-        }
-        DeclineKind::ResultNodeInterpreted => {
-            "part of the type that a parse is written under is built by the generic parser, not compiled code"
-        }
-        DeclineKind::GenericVersionNotCreated => {
-            "a function got no slow path, so values are guarded at every use instead of checked once"
-        }
-    }
-}
-
-pub(super) fn typed_result_decline_sentence(reason: u32) -> Option<&'static str> {
-    match TypedResultDeclineReason::from_wire(reason)? {
-        TypedResultDeclineReason::None => None,
-        TypedResultDeclineReason::NoTarget => Some("the result isn't converted to a declared type"),
-        TypedResultDeclineReason::TargetIsNotModeledByFlow => Some(
-            "the declared type only becomes visible after inlining, or it reaches more object and array types than one call handles",
-        ),
-        TypedResultDeclineReason::TargetHasNoTypedPart => {
-            Some("the type contains no object or array")
-        }
-        TypedResultDeclineReason::PromiseIsNotAwaitedAtOnce => {
-            Some("the promise isn't awaited immediately")
-        }
-        TypedResultDeclineReason::HostHasNoBytesForm => Some("the class has no bytes() method"),
-        TypedResultDeclineReason::RowsHaveSeveralLayouts => {
-            Some("the rows have more than one shape")
-        }
-        TypedResultDeclineReason::AnotherSourceIsOpen => {
-            Some("the function is still parsing another string")
-        }
-    }
-}
-
-pub(super) fn call_decline_sentence(reason: u32) -> Option<&'static str> {
-    match CallDeclineReason::from_wire(reason)? {
-        CallDeclineReason::None => None,
-        CallDeclineReason::UnknownCallee => Some("the callee could be any function"),
-        CallDeclineReason::CalleeNotCallable => {
-            Some("none of the possible callees can be called this way")
-        }
-        CallDeclineReason::CalleeNeedsClosure => {
-            Some("the method is a closure, so the call needs its function object")
-        }
-        CallDeclineReason::UnknownMember => {
-            Some("a possible receiver may have a different function under this name")
-        }
-        CallDeclineReason::NeedsTest => {
-            Some("the callee is only expected, so the call needs a guard")
-        }
-        CallDeclineReason::EffectsBeforeCall => {
-            Some("other code runs between loading the method and calling it")
-        }
-        CallDeclineReason::TooManyCallees => Some("the call site has too many possible callees"),
-    }
-}
-
-pub(super) fn generator_fusion_decline_sentence(reason: u32) -> Option<&'static str> {
-    match GeneratorFusionDeclineReason::from_wire(reason)? {
-        GeneratorFusionDeclineReason::Unknown => Some("the compiler lost track of the generator"),
-        GeneratorFusionDeclineReason::None => None,
-        GeneratorFusionDeclineReason::BodyIsNotDescribed => {
-            Some("the generator function's body isn't visible here")
-        }
-        GeneratorFusionDeclineReason::HasNoStep => {
-            Some("the function that creates the generator never resumes it")
-        }
-        GeneratorFusionDeclineReason::SeveralLiveInstances => {
-            Some("more than one generator created here can be live at the same time")
-        }
-        GeneratorFusionDeclineReason::StepMayReachOtherGenerator => {
-            Some("a next(), return() or throw() call in the loop may resume a different generator")
-        }
-        GeneratorFusionDeclineReason::MayEscapeBeforeStep => {
-            Some("the generator escapes while the loop runs")
-        }
-        GeneratorFusionDeclineReason::BodyIsBoundToFrame => {
-            Some("the generator's body can't be moved out of its own stack frame")
-        }
-        GeneratorFusionDeclineReason::BodyIsTooLarge => {
-            Some("the generator's body is too large to inline")
-        }
-        GeneratorFusionDeclineReason::CallerIsTooLarge => {
-            Some("inlining would make the caller too large")
-        }
-        GeneratorFusionDeclineReason::InlineDepth => {
-            Some("the inlining depth limit was hit, or the generator is recursive")
-        }
-    }
-}
-
-pub(super) fn array_chain_decline_sentence(reason: u32) -> Option<&'static str> {
-    match ArrayChainDeclineReason::from_wire(reason)? {
-        ArrayChainDeclineReason::Unknown => Some("the compiler recorded no reason"),
-        ArrayChainDeclineReason::None => None,
-        ArrayChainDeclineReason::SourceIsNotPristine => {
-            Some("the first array may have holes, or its methods may have been overridden")
-        }
-        ArrayChainDeclineReason::CallbackIsNotAFunction => Some("a callback may not be a function"),
-        ArrayChainDeclineReason::CalleeIsUnknown => Some("a callback is not known at build time"),
-        ArrayChainDeclineReason::CallbackSeesIntermediateArray => {
-            Some("a callback uses its array argument, which is an intermediate array")
-        }
-        ArrayChainDeclineReason::CallbacksInterfere => {
-            Some("one callback can observe the order the others run in")
-        }
-        ArrayChainDeclineReason::SkippedCallIsObservable => {
-            Some("a callback with side effects would run fewer times")
-        }
-        ArrayChainDeclineReason::CallbackWritesSource => {
-            Some("a callback may write to the first array")
-        }
-        ArrayChainDeclineReason::ValueBetweenLinksInterferes => {
-            Some("code between the chained calls depends on the callbacks' side effects")
-        }
-    }
-}
-
-pub(super) fn string_builder_decline_sentence(reason: u32) -> Option<&'static str> {
-    match StringBuilderDeclineReason::from_wire(reason)? {
-        StringBuilderDeclineReason::Unknown => Some("the compiler recorded no reason"),
-        StringBuilderDeclineReason::Created => Some("a string builder was created"),
-        StringBuilderDeclineReason::TooFewAppends => {
-            Some("too few appends for a string builder to be worth it")
-        }
-        StringBuilderDeclineReason::TwoStatesLive => {
-            Some("an earlier value of the string is used after more was appended")
-        }
-        StringBuilderDeclineReason::StateIsNotFirstOperand => {
-            Some("the string is not the left operand of the concatenation")
-        }
-        StringBuilderDeclineReason::WebLimit => {
-            Some("the function builds more strings than the compiler tracks")
-        }
-    }
-}
-
-pub(super) fn loop_decline_sentence(reason: u32) -> Option<&'static str> {
-    match LoopDeclineReason::from_wire(reason)? {
-        LoopDeclineReason::None => None,
-        LoopDeclineReason::NotInnermost => Some("the loop contains another loop"),
-        LoopDeclineReason::SeveralEntries => Some("the loop has more than one entry"),
-        LoopDeclineReason::NoSingleLikelyPath => Some("the loop body has no single hot path"),
-        LoopDeclineReason::UncloneableValue => {
-            Some("the loop has an operation that can't be duplicated")
-        }
-        LoopDeclineReason::NothingToHoist => Some("too few guards can be hoisted out of the loop"),
-        LoopDeclineReason::NotCounted => Some("the loop isn't a counted loop with a constant step"),
-        LoopDeclineReason::CounterMayWrap => Some("the loop counter may overflow"),
-        LoopDeclineReason::BoundNotInvariant => Some("the loop bound isn't loop-invariant"),
-        LoopDeclineReason::TestNotOnLikelyPath => {
-            Some("the loop's exit test isn't on its hot path")
-        }
-        LoopDeclineReason::EffectsBeforeTopTest => {
-            Some("code with side effects runs before the loop's exit test")
-        }
-        LoopDeclineReason::LimitReached => Some("the loop exceeds a compiler limit"),
     }
 }
 
@@ -605,23 +395,11 @@ pub(super) fn heap_cause_sentence(cause: AllocationHeapCause) -> Option<&'static
     }
 }
 
-pub(super) fn interpreted_cause_sentence(reason: u32) -> Option<&'static str> {
-    match InterpretedCause::from_wire(reason)? {
-        InterpretedCause::None => None,
-        InterpretedCause::RepeatedRecursion => Some("two members of a union are both recursive"),
-        InterpretedCause::LayoutIsNotModeled => Some("no call in the program parses this type"),
-        InterpretedCause::FieldTypeIsNotTestable => {
-            Some("a field's proven type can't be checked at run time")
-        }
-    }
-}
-
 pub(super) fn unseen_code_sentence(cause: UnseenCodeCause) -> &'static str {
     match cause {
         UnseenCodeCause::ProgramNotCompiled => "the program wasn't built with --aot",
         UnseenCodeCause::ReportMissing => "the compiler didn't report which APIs are used",
         UnseenCodeCause::FlowResultDisabled => "a developer option turned the analysis off",
-        UnseenCodeCause::FlowGaveUp => "the analysis hit a compiler limit",
         UnseenCodeCause::EvaluatesText => "the program calls eval() or new Function()",
         UnseenCodeCause::ImportsUncompiledCode => {
             "the program imports a module that isn't in the executable"
@@ -669,11 +447,18 @@ pub(super) fn column_description(column: AccessColumn) -> &'static str {
     }
 }
 
+pub(super) fn form_label(form: CodeForm) -> &'static str {
+    match form {
+        CodeForm::Open => "open",
+        CodeForm::Closed => "closed",
+        CodeForm::Generic => "generic",
+    }
+}
+
 pub(super) fn cause_code(cause: UnprovenCause) -> &'static str {
     match cause {
         UnprovenCause::Unknown => "unknown",
         UnprovenCause::ResultDisabled => "analysis-disabled",
-        UnprovenCause::LimitReached => "limit-reached",
         UnprovenCause::UnknownObject => "unknown-object",
         UnprovenCause::NonLayoutObject => "not-a-plain-object",
         UnprovenCause::BuiltinBase => "builtin-base",
@@ -684,17 +469,7 @@ pub(super) fn cause_code(cause: UnprovenCause) -> &'static str {
         UnprovenCause::UnknownWriter => "written-by-untyped-code",
         UnprovenCause::UnknownCallee => "unknown-callee",
         UnprovenCause::UnprovenContents => "untyped-collection",
-        UnprovenCause::FieldDeleted => "field-deleted",
-        UnprovenCause::UnknownKeyDelete => "computed-key-delete",
-        UnprovenCause::PropertyRedefined => "property-redefined",
-        UnprovenCause::PropertyAdded => "property-added",
-        UnprovenCause::UnknownKeyStore => "computed-key-store",
-        UnprovenCause::StoreOfOtherType => "wrong-type-stored",
-        UnprovenCause::IntegrityChanged => "frozen",
-        UnprovenCause::PrototypeChanged => "prototype-changed",
-        UnprovenCause::OwnPropertyHidesMember => "method-shadowed",
         UnprovenCause::OtherNewTarget => "other-new-target",
-        UnprovenCause::LeftByPasses => "missed-optimization",
         UnprovenCause::UndescribedNativeResult => "builtin-result",
         UnprovenCause::UnseenCode => "runtime-code",
         UnprovenCause::UncheckedConversionOfUntracked => "unchecked-value",
@@ -709,36 +484,22 @@ pub(super) fn cause_code(cause: UnprovenCause) -> &'static str {
     }
 }
 
-pub(super) fn guard_cause_code(cause: CheckCause) -> &'static str {
-    match cause {
-        CheckCause::Unknown => "unknown",
-        CheckCause::UnknownObject => "untyped-value",
-        CheckCause::UnknownCallee => "unknown-callee",
-        CheckCause::UnprovenContents => "untyped-collection",
-        CheckCause::MayFail => "wrong-type",
-        CheckCause::LimitReached => "limit-reached",
-        CheckCause::ResultDisabled => "analysis-disabled",
-        CheckCause::AddedByPass => "added-by-compiler",
+pub(super) fn guard_cause_code(class: GuardClass) -> &'static str {
+    match class {
+        GuardClass::OtherType => "wrong-type",
+        GuardClass::UnknownObject => "untyped-value",
+        GuardClass::UnknownCallee => "unknown-callee",
+        GuardClass::UnprovenContents => "untyped-collection",
+        GuardClass::ProofWithheld => "analysis-disabled",
+        GuardClass::ReadBeforeInitialized => "read-before-init",
     }
 }
 
-pub(super) fn missed_optimization_code(kind: DeclineKind) -> &'static str {
-    match kind {
-        DeclineKind::Unknown => "unknown",
-        DeclineKind::HotCallNotInlined => "not-inlined",
-        DeclineKind::HotCallNotResolved => "unknown-callee",
-        DeclineKind::GeneratorLoopNotFused => "generator-not-inlined",
-        DeclineKind::ArrayChainNotFused => "array-chain-not-fused",
-        DeclineKind::StringBuilderNotCreated => "no-string-builder",
-        DeclineKind::StringBuildersNotJoined => "string-copied",
-        DeclineKind::AllocationNotSunk => "heap-allocation",
-        DeclineKind::TypedResultNotSelected => "boxed-result",
-        DeclineKind::IterationNotExpandedByClass => "iterator-protocol",
-        DeclineKind::LoopNotVersioned => "loop-guards-not-hoisted",
-        DeclineKind::LoopBoundNotClamped => "bounds-checks-not-hoisted",
-        DeclineKind::StretchNotGuarded => "no-fast-path",
-        DeclineKind::ResultNodeInterpreted => "generic-parser",
-        DeclineKind::GenericVersionNotCreated => "guarded-at-every-use",
+pub(super) fn failure_code(failure: TypeTestFailure) -> &'static str {
+    match failure {
+        TypeTestFailure::TakesGenericPath => "rejoins",
+        TypeTestFailure::Throws => "throws",
+        TypeTestFailure::Leaves => "leaves",
     }
 }
 
@@ -747,7 +508,6 @@ pub(super) fn trim_blocker_code(cause: UnseenCodeCause) -> &'static str {
         UnseenCodeCause::ProgramNotCompiled => "no-aot",
         UnseenCodeCause::ReportMissing => "no-report",
         UnseenCodeCause::FlowResultDisabled => "analysis-disabled",
-        UnseenCodeCause::FlowGaveUp => "limit-reached",
         UnseenCodeCause::EvaluatesText => "eval",
         UnseenCodeCause::ImportsUncompiledCode => "external-import",
         UnseenCodeCause::LoadsModuleByName | UnseenCodeCause::LoadsCodeByName => "dynamic-import",

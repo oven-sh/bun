@@ -1,9 +1,10 @@
-// Each program reads every member of `process`, takes one more step, and prints the keys in order.
+// The program reads every member of `process`, takes one more step, and prints the keys in order.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { join } from "node:path";
+import { bunExe } from "harness";
 import { canTrim } from "../bundler/compile-trim-features";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { unsupported } from "./harness/compiler";
+import { run } from "./harness/run";
+import { sharedBuilds } from "./harness/shared-builds";
 
 const steps = {
   "after reading every member": "",
@@ -15,7 +16,8 @@ const steps = {
   "after Object.freeze": "Object.freeze(process);",
 };
 
-const programFor = (step: string) => `const read = key => {
+// Its first argument says which step it takes.
+const program = `const read = key => {
   try {
     return typeof process[key];
   } catch {
@@ -23,7 +25,10 @@ const programFor = (step: string) => `const read = key => {
   }
 };
 console.log(Object.keys(process).map(key => key + ":" + read(key)).join(" "));
-${step}
+switch (process.argv[2]) {
+${Object.entries(steps)
+  .map(([name, step]) => `  case ${JSON.stringify(name)}:\n    ${step}\n    break;\n`)
+  .join("")}}
 const inLoop = [];
 for (const key in process) inLoop.push(key);
 console.log(inLoop.join(" "));
@@ -34,24 +39,16 @@ console.log(Reflect.ownKeys(process).map(String).join(" "));
 if (!canTrim)
   console.error("SKIPPED: keys-of-process-in-a-trimmed-executable.test.ts: this build of Bun doesn't support --trim");
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
-  "a trimmed executable lists the keys of process in the same order as one that is not trimmed",
+(canTrim && !unsupported ? describe.concurrent : describe.skip)(
+  "a trimmed executable lists the keys of process in the same order as bun",
   () => {
-    test.each(Object.entries(steps))(
-      "%s",
-      (_, step) =>
-        slot(async () => {
-          using dir = tempDir("keys-of-process", { "program.js": programFor(step) });
-          const folder = String(dir);
-          const build = [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile"];
-          built(await spawned([...build, "whole"], folder, bunEnv));
-          built(await spawned([...build, "trimmed", "--trim"], folder, bunEnv));
-          const whole = await spawned([join(folder, "whole")], folder, bunEnv);
-          const trimmed = await spawned([join(folder, "trimmed")], folder, bunEnv);
-          expect(whole.stdout).not.toBe("");
-          expect({ stdout: trimmed.stdout, exitCode: trimmed.exitCode }).toEqual({ stdout: whole.stdout, exitCode: 0 });
-        }),
-      600_000,
-    );
+    const { folder, build } = sharedBuilds("keys-of-process", { "program.js": program });
+
+    test.each(Object.keys(steps))("%s", async step => {
+      const trimmed = await build("program.js", "--aot", "--trim");
+      const plain = await run([bunExe(), "program.js", step], folder);
+      expect(plain.stdout).not.toBe("");
+      expect(await run([trimmed.executable, step], folder)).toEqual({ ...plain, exitCode: 0 });
+    });
   },
 );

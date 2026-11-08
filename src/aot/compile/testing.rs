@@ -1,18 +1,15 @@
-mod tests;
-
-use super::lower_stage::find_files_to_lower;
-use super::{BoundBuild, Build, LoadedBuild, LoadedProject};
+use super::{BoundBuild, Build, FrontEndOutput, LoadedBuild, LoadedProject};
 use super::{BuildFailed, LinkedProgram, link_program};
+use crate::builtins::BuiltinId;
 use crate::diagnostics::ProgramView;
 use crate::engine::ExecutableIdentity;
 use crate::ir::Program;
 use crate::known_helpers::KnownHelpers;
-use crate::link::ProgramNames;
 use crate::load::ProjectId;
 use crate::load::source_provider::{SourceProvider, WithoutServices};
 use crate::lower::LeftOutDeclarations;
 use crate::lower::{LoweredFile, LoweringInputs, LoweringOptions, lower_file};
-use crate::modules::{BindInput, DeferredExports};
+use crate::modules::{BindInput, DeferredExports, bind_modules};
 use crate::options::{LoadOptions, Options, PathOptions, RemovableOptions};
 use crate::statistics::{LimitValues, Stage};
 use bstr::BStr;
@@ -20,6 +17,7 @@ use bun_ast::Log;
 use bun_ast::runtime::ReactCompilerMode;
 use bun_builtin_sources::VIRTUAL_ROOT;
 use bun_options_types::aot_options::AotOptions;
+use bun_sema::atom::Atom;
 use bun_sema::json::Json;
 use bun_sema::program::FileId;
 use bun_sema::program::Files;
@@ -33,7 +31,7 @@ use std::sync::Once;
 const PROJECT_DIRECTORY: &[u8] = b"/project";
 const CONFIGURATION_FILE: &str = "tsconfig.json";
 
-pub(super) const BUNDLED_LIBS: Libs<'static> = Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS);
+pub(crate) const BUNDLED_LIBS: Libs<'static> = Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS);
 
 pub(crate) const TYPED_PACKAGE_JSON: &str = r#"{"name":"p","version":"1.0.0","type":"module","exports":{"aot":"./x.aot.ts","default":"./x.js"}}"#;
 
@@ -52,8 +50,7 @@ pub fn lower_program(
     files: &[(&str, &str)],
     options: LoweringOptions,
 ) -> Vec<(FileId, LoweredFile)> {
-    let settings = default_settings();
-    with_build(BUNDLED_LIBS, files, &settings, &WithoutServices, |build| {
+    with_build_that_keeps_library_code(files, |build| {
         with_bound_build(build, |build, loaded, bound| {
             let application = loaded.project(ProjectId::Application).loaded.files();
             let runtime = loaded.project(ProjectId::Runtime).loaded.files();
@@ -80,12 +77,77 @@ pub(crate) fn lower_program_without(
             let project = loaded.project(ProjectId::Application);
             let roles = decide_project_roles(project);
             let compiled_files = project.loaded.files().compiled_files();
-            let files_to_lower = find_files_to_lower(compiled_files, &roles);
+            let files_to_lower = find_files_without_early_errors(compiled_files, &roles);
             build.with_lowering_inputs(loaded, bound, ProjectId::Application, &roles, |inputs| {
                 let mut library_functions = inputs.library_functions.clone();
                 library_functions.leave_out_declarations(choose(project.loaded.files()));
                 let inputs = LoweringInputs {
                     library_functions: &library_functions,
+                    ..*inputs
+                };
+                let checked = check_and_lower(
+                    project.loaded,
+                    project.host,
+                    project.request,
+                    &roles,
+                    &files_to_lower,
+                    &|checker, file| lower_file(&inputs, checker, file),
+                );
+                checked.lowered
+            })
+        })
+    })
+}
+
+pub(crate) fn lower_program_replacing(
+    files: &[(&str, &str)],
+    replaced_builtins: &[u32],
+) -> Vec<(FileId, LoweredFile)> {
+    let settings = default_settings();
+    with_build(BUNDLED_LIBS, files, &settings, &WithoutServices, |build| {
+        with_bound_build(build, |build, loaded, bound| {
+            let project = loaded.project(ProjectId::Application);
+            let roles = decide_project_roles(project);
+            let compiled_files = project.loaded.files().compiled_files();
+            let files_to_lower = find_files_without_early_errors(compiled_files, &roles);
+            build.with_lowering_inputs(loaded, bound, ProjectId::Application, &roles, |inputs| {
+                let inputs = LoweringInputs {
+                    replaced_builtins,
+                    ..*inputs
+                };
+                let checked = check_and_lower(
+                    project.loaded,
+                    project.host,
+                    project.request,
+                    &roles,
+                    &files_to_lower,
+                    &|checker, file| lower_file(&inputs, checker, file),
+                );
+                checked.lowered
+            })
+        })
+    })
+}
+
+pub(crate) fn lower_program_below_object_prototype(
+    files: &[(&str, &str)],
+    names: &[&str],
+) -> Vec<(FileId, LoweredFile)> {
+    let settings = default_settings();
+    with_build(BUNDLED_LIBS, files, &settings, &WithoutServices, |build| {
+        with_bound_build(build, |build, loaded, bound| {
+            let project = loaded.project(ProjectId::Application);
+            let roles = decide_project_roles(project);
+            let compiled_files = project.loaded.files().compiled_files();
+            let files_to_lower = find_files_without_early_errors(compiled_files, &roles);
+            let atoms = &project.loaded.files().atoms;
+            let added: Vec<(BuiltinId, Atom)> = names
+                .iter()
+                .map(|name| (BuiltinId::ObjectPrototype, atoms.intern(name.as_bytes())))
+                .collect();
+            build.with_lowering_inputs(loaded, bound, ProjectId::Application, &roles, |inputs| {
+                let inputs = LoweringInputs {
+                    names_added_to_builtins: &added,
                     ..*inputs
                 };
                 let checked = check_and_lower(
@@ -127,10 +189,16 @@ pub fn lower_program_with_limits(
     lower_application(&TestProject { limits, ..project })
 }
 
+pub(crate) fn lower_test_run(files: &[(&str, &str)]) -> Vec<(FileId, LoweredFile)> {
+    let mut project = TestProject::new(files, &default_settings());
+    project.runs_tests = true;
+    lower_application(&project)
+}
+
 pub fn lower_and_link_program<R>(
     files: &[(&str, &str)],
     settings: &TranspileSettings,
-    then: impl FnOnce(&Program, &ProgramNames) -> R,
+    then: impl FnOnce(&Program) -> R,
 ) -> R {
     with_build(BUNDLED_LIBS, files, settings, &WithoutServices, |build| {
         let output = build.with_loaded_projects(|build, loaded| {
@@ -139,7 +207,13 @@ pub fn lower_and_link_program<R>(
             let units = build.check_and_lower(&loaded, &bound);
             build.link(loaded, bound, units)
         })?;
-        Ok(then(&output.program, &output.names))
+        let FrontEndOutput {
+            mut program,
+            functions,
+            ..
+        } = output;
+        program.functions = functions.into_program_functions(&build.parallel_runner());
+        Ok(then(&program))
     })
 }
 
@@ -174,9 +248,34 @@ pub fn with_runtime_bind_input<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&BindInput<'_, '_>) -> R,
 ) -> R {
-    let settings = default_settings();
-    with_build(BUNDLED_LIBS, files, &settings, &WithoutServices, |build| {
+    with_build_that_keeps_library_code(files, |build| {
         with_loaded_bind_input(build, ProjectId::Runtime, then)
+    })
+}
+
+pub fn with_bind_input_of_test_files<R>(
+    files: &[(&str, &str)],
+    test_files: usize,
+    preloads: usize,
+    then: impl FnOnce(&BindInput<'_, '_>) -> R,
+) -> R {
+    let settings = default_settings();
+    let mut project = TestProject::with_entry_points(files, test_files + preloads, &settings);
+    project.runs_tests = true;
+    project.preload_count = preloads;
+    run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+        with_loaded_bind_input(build, ProjectId::Application, then)
+    })
+}
+
+pub fn with_test_run_bind_input<R>(
+    files: &[(&str, &str)],
+    then: impl FnOnce(&BindInput<'_, '_>) -> R,
+) -> R {
+    let mut project = TestProject::new(files, &default_settings());
+    project.runs_tests = true;
+    run_build(&project, BUNDLED_LIBS, &WithoutServices, |build| {
+        with_loaded_bind_input(build, ProjectId::Application, then)
     })
 }
 
@@ -205,6 +304,17 @@ pub(crate) fn with_loaded_test_run<R>(
 ) -> R {
     let mut project = TestProject::new(files, settings);
     project.runs_tests = true;
+    with_loaded_project(&project, then)
+}
+
+pub(crate) fn with_loaded_test_run_of_vitest<R>(
+    files: &[(&str, &str)],
+    settings: &TranspileSettings,
+    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>) -> R,
+) -> R {
+    let mut project = TestProject::new(files, settings);
+    project.runs_tests = true;
+    project.entry_point_imports_vitest = true;
     with_loaded_project(&project, then)
 }
 
@@ -240,8 +350,32 @@ pub(crate) fn with_lowering_inputs<R>(
     files: &[(&str, &str)],
     then: impl FnOnce(&Files<'_>, &LoweringInputs<'_>, FileId) -> R,
 ) -> R {
-    let settings = default_settings();
-    with_build(BUNDLED_LIBS, files, &settings, &WithoutServices, |build| {
+    with_lowering_inputs_of(&TestProject::new(files, &default_settings()), then)
+}
+
+pub(crate) fn with_lowering_inputs_of_test_run<R>(
+    files: &[(&str, &str)],
+    then: impl FnOnce(&Files<'_>, &LoweringInputs<'_>, FileId) -> R,
+) -> R {
+    let mut project = TestProject::new(files, &default_settings());
+    project.runs_tests = true;
+    with_lowering_inputs_of(&project, then)
+}
+
+pub(crate) fn with_lowering_inputs_of_entry_that_runs_again<R>(
+    files: &[(&str, &str)],
+    then: impl FnOnce(&Files<'_>, &LoweringInputs<'_>, FileId) -> R,
+) -> R {
+    let mut project = TestProject::new(files, &default_settings());
+    project.aot.entry_points_run_again = true;
+    with_lowering_inputs_of(&project, then)
+}
+
+fn with_lowering_inputs_of<R>(
+    project: &TestProject,
+    then: impl FnOnce(&Files<'_>, &LoweringInputs<'_>, FileId) -> R,
+) -> R {
+    run_build(project, BUNDLED_LIBS, &WithoutServices, |build| {
         with_bound_build(build, |build, loaded, bound| {
             let application = loaded.project(ProjectId::Application);
             let roles = decide_project_roles(application);
@@ -284,6 +418,11 @@ fn find_replaced_runtime_sources(runtime: &Files<'_>, files: &[(&str, &str)]) ->
     replaced_sources
 }
 
+fn find_files_without_early_errors(files: &[FileId], roles: &RoleDecision) -> Vec<FileId> {
+    let files = files.iter().copied();
+    files.filter(|&file| !roles.has_early_error(file)).collect()
+}
+
 fn lower_files(
     build: &mut Build<'_>,
     project: ProjectId,
@@ -298,14 +437,14 @@ fn lower_files(
 fn lower_project_files(
     build: &Build<'_>,
     loaded: &LoadedBuild<'_, '_>,
-    bound: &BoundBuild<'_>,
+    bound: &BoundBuild,
     id: ProjectId,
     files: &[FileId],
     options: LoweringOptions,
 ) -> Vec<(FileId, LoweredFile)> {
     let project = loaded.project(id);
     let roles = decide_project_roles(project);
-    let files_to_lower = find_files_to_lower(files, &roles);
+    let files_to_lower = find_files_without_early_errors(files, &roles);
     build.with_lowering_inputs(loaded, bound, id, &roles, |inputs| {
         let inputs = LoweringInputs { options, ..*inputs };
         let checked = check_and_lower(
@@ -327,7 +466,7 @@ pub(super) fn decide_project_roles(project: &LoadedProject<'_, '_>) -> RoleDecis
 
 pub(super) fn with_bound_build<R>(
     build: &mut Build<'_>,
-    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>, &BoundBuild<'s>) -> R,
+    then: impl for<'b, 's> FnOnce(&mut Build<'_>, &LoadedBuild<'b, 's>, &BoundBuild) -> R,
 ) -> Result<R, Stage> {
     build.with_loaded_projects(|build, loaded| {
         let bound = build.bind_modules(&loaded)?;
@@ -343,21 +482,66 @@ fn with_loaded_bind_input<R>(
 ) -> Result<R, Stage> {
     build.with_loaded_projects(|build, loaded| {
         let in_parallel = build.parallel_runner();
-        let view = loaded.project(project).view();
-        let known_helpers = KnownHelpers::compute(view.files(), &in_parallel);
+        let beside = build.beside_runner();
+        let application = loaded.project(ProjectId::Application).view();
         let library = loaded.project(ProjectId::Runtime).view();
         let deferred_exports = DeferredExports::collect(library.files(), library.sources);
-        Ok(then(&BindInput {
-            files: view.files(),
-            sources: view.sources,
+        let contents = loaded.contents;
+        let runs_tests = build.options.load.runs_tests;
+        let known_helpers = KnownHelpers::compute_below_added_names(
+            application.files(),
+            &contents.names_added_to_builtins,
+            &in_parallel,
+        );
+        let run_of_library = crate::test_runs::RunContents::default();
+        let input = BindInput {
+            files: application.files(),
+            sources: application.sources,
             builtin_names: loaded.builtin_names,
             deferred_exports: &deferred_exports,
+            known_helpers: &known_helpers,
             platform: build.platform,
             external_packages: &[],
-            application: None,
-            known_helpers: &known_helpers,
+            replaced_builtins: &contents.replaced_builtins,
+            names_added_to_builtins: &contents.names_added_to_builtins,
+            runs_in_place: false,
+            ignores_declared_side_effects: false,
+            mocks_any_module: contents.mocks_any_module,
+            mocked_library_modules: &[],
+            hands_on_any_module: contents.loads_by_unknown_name
+                || contents.loads_by_unknown_path
+                || contents.run.loader_functions_answer_requires,
+            any_module_loads_again: runs_tests && contents.any_module_loads_again,
+            runs_tests,
+            runner_starts_entry_points: runs_tests,
+            written_entry_point_count: build.options.entry_points.len(),
+            entry_points_run_again: false,
+            typescript_drops_absent_exports: false,
+            runs_in_several_realms: false,
+            files_are_named_out_of_sight: false,
+            helpers_of_tests_name_files: false,
+            run: &contents.run,
             in_parallel: &in_parallel,
-        }))
+            beside: &beside,
+        };
+        Ok(match project {
+            ProjectId::Application => then(&input),
+            ProjectId::Runtime => {
+                let graph = bind_modules(&input).graph;
+                let library_helpers = KnownHelpers::compute(library.files(), &in_parallel);
+                then(&BindInput {
+                    files: library.files(),
+                    sources: library.sources,
+                    known_helpers: &library_helpers,
+                    mocks_any_module: false,
+                    mocked_library_modules: graph.mocked_library_modules(),
+                    runner_starts_entry_points: false,
+                    written_entry_point_count: library.files().entry_points().len(),
+                    run: &run_of_library,
+                    ..input
+                })
+            }
+        })
     })
 }
 
@@ -371,13 +555,21 @@ fn with_build<R>(
     run_build(&TestProject::new(files, settings), libs, provider, run)
 }
 
+fn with_build_that_keeps_library_code<R>(
+    files: &[(&str, &str)],
+    run: impl FnOnce(&mut Build<'_>) -> Result<R, Stage>,
+) -> R {
+    let mut project = TestProject::new(files, &default_settings());
+    project.keeps_library_code_without_names = true;
+    run_build(&project, BUNDLED_LIBS, &WithoutServices, run)
+}
+
 pub(crate) fn set_up_output() {
     static OUTPUT: Once = Once::new();
-    // A thread of Bun's pool asserts that Bun's `main` has set up the output.
     OUTPUT.call_once(bun_core::output::stdio::init);
 }
 
-pub(super) fn run_build<R>(
+pub(crate) fn run_build<R>(
     project: &TestProject,
     libs: Libs<'_>,
     provider: &dyn SourceProvider,
@@ -386,6 +578,7 @@ pub(super) fn run_build<R>(
     let options = project.options(libs);
     let caches = ThreadCaches::default();
     let mut build = Build::new(&options, provider, &caches, project.limits.clone());
+    build.keeps_library_code_without_names = project.keeps_library_code_without_names;
     let result = run(&mut build);
     let mut log = Log::init();
     match build.finish(result, &mut log) {
@@ -419,12 +612,6 @@ impl TemporaryDirectory {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     }
-
-    pub(crate) fn write_typed_package(&self, installed: &str, typed: &str) {
-        self.write("node_modules/p/package.json", TYPED_PACKAGE_JSON);
-        self.write("node_modules/p/x.js", installed);
-        self.write("node_modules/p/x.aot.ts", typed);
-    }
 }
 
 impl Drop for TemporaryDirectory {
@@ -449,23 +636,28 @@ pub(crate) fn describe_messages(log: &Log) -> String {
     text
 }
 
-pub(super) struct TestProject {
-    pub(super) aot: AotOptions,
+pub(crate) struct TestProject {
+    pub(crate) aot: AotOptions,
     directory: Vec<u8>,
-    pub(super) entry_points: Vec<Vec<u8>>,
+    pub(crate) entry_points: Vec<Vec<u8>>,
     in_memory_files: Vec<(Vec<u8>, Vec<u8>)>,
     limits: LimitValues,
     paths: PathOptions,
+    pub(crate) root_directory: Option<&'static [u8]>,
     react_compiler: ReactCompilerMode,
-    runs_tests: bool,
+    pub(crate) runs_tests: bool,
+    entry_point_imports_vitest: bool,
+    pub(crate) preload_count: usize,
+    pub(crate) keeps_library_code_without_names: bool,
+    pub(crate) builds_executable: bool,
 }
 
 impl TestProject {
-    pub(super) fn new(files: &[(&str, &str)], settings: &TranspileSettings) -> TestProject {
+    pub(crate) fn new(files: &[(&str, &str)], settings: &TranspileSettings) -> TestProject {
         TestProject::with_entry_points(files, 1, settings)
     }
 
-    pub(super) fn with_entry_points(
+    pub(crate) fn with_entry_points(
         files: &[(&str, &str)],
         entry_point_count: usize,
         settings: &TranspileSettings,
@@ -492,7 +684,7 @@ impl TestProject {
         }
     }
 
-    pub(super) fn on_disk(directory: &[u8], entry_points: &[&str]) -> TestProject {
+    pub(crate) fn on_disk(directory: &[u8], entry_points: &[&str]) -> TestProject {
         set_up_output();
         let entry_points = entry_points.iter().map(|name| name.as_bytes().to_vec());
         let entry_points: Vec<Vec<u8>> = entry_points.collect();
@@ -509,9 +701,15 @@ impl TestProject {
                 module_prefix: b"/$bunfs/root/".to_vec(),
                 root_directory: directory.to_vec(),
                 entry_point_names: entry_points,
+                entry_point_file_names: Vec::new(),
             },
+            root_directory: None,
             react_compiler: ReactCompilerMode::Disabled,
             runs_tests: false,
+            entry_point_imports_vitest: false,
+            preload_count: 0,
+            keeps_library_code_without_names: false,
+            builds_executable: false,
         }
     }
 
@@ -533,21 +731,59 @@ impl TestProject {
         }
     }
 
-    pub(super) fn options<'a>(&'a self, libs: Libs<'a>) -> Options<'a> {
+    fn path_options(&self) -> PathOptions {
+        let Some(root_directory) = self.root_directory else {
+            return self.paths.clone();
+        };
+        let name_of = |entry_point: &Vec<u8>| {
+            let path = [&self.directory[..], b"/", &entry_point[..]].concat();
+            let name = path.strip_prefix(root_directory);
+            let name = name.and_then(|name| name.strip_prefix(b"/"));
+            name.expect("every entry point lies below the root directory")
+                .to_vec()
+        };
+        PathOptions {
+            root_directory: root_directory.to_vec(),
+            entry_point_names: self.entry_points.iter().map(name_of).collect(),
+            ..self.paths.clone()
+        }
+    }
+
+    fn paths_listed_by_runner(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+        if !self.runs_tests {
+            return (Vec::new(), Vec::new());
+        }
+        let path_of = |name: &Vec<u8>| [&self.directory[..], b"/", &name[..]].concat();
+        let mut test_files: Vec<Vec<u8>> = self.entry_points.iter().map(path_of).collect();
+        let preloads = test_files.split_off(test_files.len() - self.preload_count);
+        (test_files, preloads)
+    }
+
+    pub(crate) fn options<'a>(&'a self, libs: Libs<'a>) -> Options<'a> {
+        let (test_files, paths_of_preloads) = self.paths_listed_by_runner();
         Options {
             aot: &self.aot,
             executable_identity: ExecutableIdentity([0; 16]),
             image_form: None,
             entry_points: self.entry_points.clone(),
-            code: CodeOptions::bun_run(&from_native(&self.directory)),
+            code: CodeOptions {
+                builds_executable: self.builds_executable,
+                entry_points_that_run_first: (paths_of_preloads.iter())
+                    .map(|path| from_native(path))
+                    .collect(),
+                ..CodeOptions::bun_run(&from_native(&self.directory))
+            },
             typescript_libs: libs,
             load: LoadOptions {
                 react_compiler: self.react_compiler,
                 runs_tests: self.runs_tests,
+                entry_point_imports_vitest: self.entry_point_imports_vitest,
+                test_files,
+                paths_of_preloads,
                 in_memory_files: self.in_memory_files.clone(),
                 ..LoadOptions::new(self.directory.clone())
             },
-            paths: self.paths.clone(),
+            paths: self.path_options(),
             removable: RemovableOptions::default(),
             lists_modules: false,
             minifies_identifiers: false,

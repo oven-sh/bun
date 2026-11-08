@@ -129,19 +129,12 @@ impl ConsoleObject {
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
         });
-        let p: *mut ConsoleObject = out;
-        // SAFETY: `out` is now fully initialized at its final address; the
-        // adapters store raw pointers into `out.stderr_buffer` /
-        // `out.stdout_buffer`, which remain valid for `out`'s lifetime
-        // *provided the caller never moves it* (see fn doc).
-        unsafe {
-            (*p).error_writer_backing = error_writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stderr_buffer);
-            (*p).writer_backing = writer
-                .quiet_writer()
-                .adapt_to_new_api(&mut (*p).stdout_buffer);
-        }
+        out.error_writer_backing = error_writer
+            .quiet_writer()
+            .adapt_to_new_api(&mut out.stderr_buffer);
+        out.writer_backing = writer
+            .quiet_writer()
+            .adapt_to_new_api(&mut out.stdout_buffer);
         out
     }
 
@@ -361,16 +354,13 @@ fn throw_for_removed_table_printer(global: &JSGlobalObject) -> jsc::JsError {
 }
 
 /// <https://console.spec.whatwg.org/#formatter>
-#[crate::host_call]
-pub extern "C" fn message_with_type_and_level(
-    ctype: *mut ConsoleObject,
+pub fn message_with_type_and_level(
     message_type: MessageType,
     level: MessageLevel,
     global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
+    vals: &[JSValue],
 ) {
-    if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
+    if let Err(err) = message_with_type_and_level_(message_type, level, global, vals) {
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
         if matches!(err, jsc::JsError::OutOfMemory) {
@@ -381,12 +371,10 @@ pub extern "C" fn message_with_type_and_level(
 }
 
 fn message_with_type_and_level_(
-    _ctype: *mut ConsoleObject,
     message_type: MessageType,
     level: MessageLevel,
     global: &JSGlobalObject,
-    vals: *const JSValue,
-    len: usize,
+    vals: &[JSValue],
 ) -> JsResult<()> {
     let console: *mut ConsoleObject = vm_console(global);
     // `defer console.default_indent +|= is_start_group as u16;`
@@ -406,7 +394,7 @@ fn message_with_type_and_level_(
         }
     });
 
-    if is_start_group && len == 0 {
+    if is_start_group && vals.is_empty() {
         // No label prints nothing, so return before the before-print hook of
         // `bun test` runs. An explicit `undefined` is a label and is printed.
         return Ok(());
@@ -432,7 +420,7 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    if message_type == MessageType::Assert && len == 0 {
+    if message_type == MessageType::Assert && vals.is_empty() {
         let text: &str = if Output::enable_ansi_colors_stderr() {
             pfmt!("<r><red>Assertion failed<r>\n", true)
         } else {
@@ -483,7 +471,7 @@ fn message_with_type_and_level_(
         (hooks.console_on_before_print)();
     }
 
-    let mut print_length = len;
+    let mut print_length = vals.len();
     // Get console depth from CLI options or bunfig, fallback to default.
     let console_depth = bun_options_types::context::try_get()
         .and_then(|ctx| ctx.runtime_options.console_depth)
@@ -503,19 +491,16 @@ fn message_with_type_and_level_(
         ..FormatOptions::default()
     };
 
-    // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
-    let vals_slice = unsafe { bun_core::ffi::slice(vals, len) };
-
-    if message_type == MessageType::Table && len >= 1 {
+    if message_type == MessageType::Table && !vals.is_empty() {
         // if value is not an object/array/iterable, don't print a table and just print it
-        let tabular_data = vals_slice[0];
+        let tabular_data = vals[0];
         if tabular_data.is_object() {
             // The function that the program calls is the engine's, which every executable has.
             if bun_removable_features::is_removed(bun_removable_features::Feature::ConsoleTable) {
                 return Err(throw_for_removed_table_printer(global));
             }
-            let properties: JSValue = if len >= 2 && vals_slice[1].js_type().is_array() {
-                vals_slice[1]
+            let properties: JSValue = if vals.len() >= 2 && vals[1].js_type().is_array() {
+                vals[1]
             } else {
                 JSValue::UNDEFINED
             };
@@ -532,9 +517,9 @@ fn message_with_type_and_level_(
         }
     }
 
-    if message_type == MessageType::Dir && len >= 2 {
+    if message_type == MessageType::Dir && vals.len() >= 2 {
         print_length = 1;
-        let opts = vals_slice[1];
+        let opts = vals[1];
         if opts.is_object() {
             if let Some(depth_prop) = opts.get(global, b"depth")? {
                 if depth_prop.is_number() {
@@ -556,13 +541,7 @@ fn message_with_type_and_level_(
     }
 
     if print_length > 0 {
-        format2(
-            level,
-            global,
-            &vals_slice[..print_length],
-            writer,
-            print_options,
-        )?;
+        format2(level, global, &vals[..print_length], writer, print_options)?;
     } else if message_type == MessageType::Log {
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and
@@ -1604,6 +1583,10 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
+        /// Set for `bun:test` matcher messages. Returns true if the value was a DOM node or collection and it printed it.
+        pub dom_printer:
+            Option<fn(&mut Formatter<'_>, &mut dyn bun_io::Write, JSValue) -> JsResult<bool>>,
+        pub call_own_getters: bool,
     }
 
     impl<'a> Formatter<'a> {
@@ -1632,6 +1615,8 @@ pub mod formatter {
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
+                dom_printer: None,
+                call_own_getters: false,
             }
         }
 
@@ -1668,6 +1653,8 @@ pub mod formatter {
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
+                dom_printer: self.dom_printer,
+                call_own_getters: self.call_own_getters,
             }
         }
 
@@ -2114,29 +2101,29 @@ pub mod formatter {
                 });
             }
 
+            if js_type == jsc::JSType::InternalFunction
+                && value.is_placeholder_for_omitted_builtin()
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Function,
+                    cell: js_type,
+                });
+            }
+
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
                 && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)
+                && let Some(callback_value) =
+                    value.fast_get(global_this, jsc::BuiltinName::InspectCustom)?
+                && callback_value.is_callable()
             {
-                // Attempt to get custom formatter
-                match value.fast_get(global_this, jsc::BuiltinName::InspectCustom) {
-                    Err(_) => {
-                        return Ok(TagResult {
-                            tag: TagPayload::RevokedProxy,
-                            ..Default::default()
-                        });
-                    }
-                    Ok(Some(callback_value)) if callback_value.is_callable() => {
-                        return Ok(TagResult {
-                            tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
-                                function: callback_value,
-                                this: value,
-                            }),
-                            cell: js_type,
-                        });
-                    }
-                    _ => {}
-                }
+                return Ok(TagResult {
+                    tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
+                        function: callback_value,
+                        this: value,
+                    }),
+                    cell: js_type,
+                });
             }
 
             if js_type == jsc::JSType::DOMWrapper {
@@ -3055,13 +3042,11 @@ pub mod formatter {
         fn for_each_prelude(
             ctx: &mut Self,
             global_this: &JSGlobalObject,
-            key: *mut EncodedSlice,
+            key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            // SAFETY: caller passes a valid `*EncodedSlice`.
-            let key = unsafe { &*key };
             if key.eq_ascii(b"constructor") {
                 return None;
             }
@@ -3135,7 +3120,7 @@ pub mod formatter {
         pub(crate) extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
-            key: *mut EncodedSlice,
+            key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
@@ -3171,6 +3156,17 @@ pub mod formatter {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<bun_core::String>> {
+        if value.js_type() == jsc::JSType::GlobalProxy {
+            let target = value.get_proxy_target();
+            let name_str = target.get_class_name(global_this)?;
+            // `get_class_name` falls back to the native class name when it finds no constructor. Don't print that.
+            let is_label = !name_str.is_empty()
+                && !name_str.eq_ascii(b"Object")
+                && !target
+                    .get_class_info_name()
+                    .is_some_and(|native| name_str.eq_ascii(native));
+            return Ok(is_label.then_some(name_str));
+        }
         let name_str = value.get_class_name(global_this)?;
         if !name_str.eq_ascii(b"Object") {
             return Ok(Some(name_str));
@@ -3305,6 +3301,14 @@ pub mod formatter {
                 armed: &raw const remove_before_recurse,
                 value,
             };
+
+            if let Some(print_dom) = self.dom_printer {
+                if matches!(format, Tag::Object | Tag::Proxy | Tag::Array)
+                    && print_dom(self, writer_, value)?
+                {
+                    return Ok(());
+                }
+            }
 
             // Each arm is hoisted to its own `#[inline(never)]` helper so the
             // `print_as` frame stays small enough to recurse 512 levels under
@@ -3864,6 +3868,11 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            if self.single_line && self.dom_printer.is_some() {
+                let _ = write!(writer_, "[{}]", value.to_bun_string(self.global_this)?);
+                return Ok(());
+            }
+
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
@@ -4334,9 +4343,13 @@ pub mod formatter {
                     }
                     if nonempty_count >= 100 {
                         writer.print_comma::<C>();
-                        writer.write_all(b"\n"); // we want the line break to be unconditional here
-                        *writer.estimated_line_length = 0;
-                        writer.write_indent(self.indent);
+                        if self.single_line {
+                            writer.space();
+                        } else {
+                            writer.write_all(b"\n");
+                            *writer.estimated_line_length = 0;
+                            writer.write_indent(self.indent);
+                        }
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!(
@@ -5363,6 +5376,7 @@ pub mod formatter {
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
+            let call_own_getters = self.call_own_getters;
             let global_this = self.global_this;
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
@@ -5375,6 +5389,12 @@ pub mod formatter {
 
             if ordered_properties {
                 value.for_each_property_ordered(
+                    global_this,
+                    (&raw mut iter).cast::<c_void>(),
+                    PropertyIteratorCtx::<C>::for_each,
+                )?;
+            } else if call_own_getters {
+                value.for_each_property_calling_own_getters(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,
@@ -5410,9 +5430,7 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            if self.single_line {
-                let _ = writer_.write_all(b" ");
-            } else if self.always_newline_scope || self.good_time_for_a_new_line() {
+            if !self.single_line && (self.always_newline_scope || self.good_time_for_a_new_line()) {
                 let _ = writer_.write_all(b"\n");
                 let _ = self.write_indent(writer_);
                 self.reset_line();
@@ -5459,10 +5477,19 @@ pub mod formatter {
             iter_always_newline: bool,
         ) -> JsResult<()> {
             if iter_i == 0 {
-                if value.is_class(self.global_this) {
-                    self.print_as::<C>(Tag::Class, writer_, value, js_type)?;
-                } else if value.is_callable() {
-                    self.print_as::<C>(Tag::Function, writer_, value, js_type)?;
+                if value.is_callable() {
+                    let tag = if value.is_class(self.global_this) {
+                        Tag::Class
+                    } else {
+                        Tag::Function
+                    };
+                    // Printing `value` as an object already put it in the visited map, so `print_as` would call it circular.
+                    let was_in_map = self.map_node.is_some() && self.map.remove(&value).is_some();
+                    let result = self.print_as::<C>(tag, writer_, value, js_type);
+                    if was_in_map {
+                        self.map.insert(value, ());
+                    }
+                    result?;
                 } else {
                     if let Some(name_str) = get_object_name(self.global_this, value)? {
                         let _ = write!(writer_, "{name_str} ");
@@ -5931,18 +5958,12 @@ pub(crate) extern "C" fn Bun__ConsoleObject__takeHeapSnapshot(
     let Ok(result) = global_this.generate_heap_snapshot() else {
         return;
     };
-    let snapshot: [JSValue; 1] = [result];
-    // SAFETY: re-entry into our own host shim with a stack-local args slice.
-    unsafe {
-        message_with_type_and_level(
-            core::ptr::null_mut(), // unused by the callee
-            MessageType::Log,
-            MessageLevel::Debug,
-            global_this,
-            snapshot.as_ptr(),
-            1,
-        );
-    }
+    message_with_type_and_level(
+        MessageType::Log,
+        MessageLevel::Debug,
+        global_this,
+        &[result],
+    );
 }
 
 console_noop_hooks!(
@@ -5956,7 +5977,7 @@ console_noop_hooks!(
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
-    ctype: *mut ConsoleObject,
+    _console: *mut ConsoleObject,
     // Taking the
     // exhaustive Rust enums by value at the C ABI would be UB on an
     // out-of-range discriminant, so accept the raw `u32` (matching the C++
@@ -5967,15 +5988,11 @@ pub(crate) extern "C" fn Bun__ConsoleObject__messageWithTypeAndLevel(
     vals: *const JSValue,
     len: usize,
 ) {
-    // SAFETY: forwarding the same FFI args to the inner host shim.
-    unsafe {
-        message_with_type_and_level(
-            ctype,
-            MessageType::from_raw(message_type),
-            MessageLevel::from_raw(level),
-            global,
-            vals,
-            len,
-        )
-    };
+    message_with_type_and_level(
+        MessageType::from_raw(message_type),
+        MessageLevel::from_raw(level),
+        global,
+        // SAFETY: C++ passes its stack array `jsArgs` and the number of values it wrote to it.
+        unsafe { core::slice::from_raw_parts(vals, len) },
+    );
 }

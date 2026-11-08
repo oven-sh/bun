@@ -1,9 +1,0 @@
-{
-  "alone": "it measures time, memory or what is collected, and that hangs on what the compiler knows about the whole executable",
-  "skipInVariant": {
-    "no-inlining": "it stores what the default build lets the collector take, and this build keeps more alive",
-    "predictions-fail-one-time-in-seven-validated": "it stores what the default build lets the collector take, and this build keeps more alive",
-    "validate": "it stores what the default build lets the collector take, and this build keeps more alive",
-    "validate-collecting": "it stores what the default build lets the collector take, and this build keeps more alive"
-  }
-}

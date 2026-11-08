@@ -1353,7 +1353,7 @@ pub struct Options<'a> {
     /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
-    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
+    pub require_or_import_meta_for_source_callback: Option<RequireOrImportMetaCallback<'a>>,
 
     /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
@@ -1388,15 +1388,10 @@ impl<'a> Options<'a> {
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta {
-        if self
-            .require_or_import_meta_for_source_callback
-            .ctx
-            .is_none()
-        {
-            return RequireOrImportMeta::default();
+        match &self.require_or_import_meta_for_source_callback {
+            Some(callback) => callback.call(id, was_unwrapped_require),
+            None => RequireOrImportMeta::default(),
         }
-        self.require_or_import_meta_for_source_callback
-            .call(id, was_unwrapped_require)
     }
 }
 
@@ -1428,7 +1423,7 @@ impl<'a> Default for Options<'a> {
             code_coverage: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
-            require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
+            require_or_import_meta_for_source_callback: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
@@ -1476,56 +1471,44 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
-// Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
-// keeps alive for the print pass; `callback` is POD.
+/// A type-erased `&'a T`, and the `T` method to call on it.
 #[derive(Clone, Copy)]
-pub struct RequireOrImportMetaCallback {
-    pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
-}
-
-impl Default for RequireOrImportMetaCallback {
-    fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
-            RequireOrImportMeta::default()
-        }
-        Self {
-            ctx: None,
-            callback: noop,
-        }
-    }
+pub struct RequireOrImportMetaCallback<'a> {
+    ctx: NonNull<()>,
+    callback: fn(NonNull<()>, u32, bool) -> RequireOrImportMeta,
+    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 /// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
 /// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta;
 }
 
-impl RequireOrImportMetaCallback {
-    pub(crate) fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
+impl<'a> RequireOrImportMetaCallback<'a> {
+    fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
+        (self.callback)(self.ctx, id, was_unwrapped_require)
     }
 
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
+    pub fn init<T: RequireOrImportMetaSource>(ctx: &'a T) -> Self {
         fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
+            p: NonNull<()>,
             id: u32,
             was_unwrapped_require: bool,
         ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
-            // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
-            // deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
+            // SAFETY: only `call` calls this, with the `&'a T` that `init` erased beside it, and
+            // `call` needs a `RequireOrImportMetaCallback<'a>`, so `'a` has not ended.
+            unsafe { p.cast::<T>().as_ref() }
+                .require_or_import_meta_for_source(id, was_unwrapped_require)
         }
         Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
-            ctx: Some(NonNull::from(ctx).cast::<()>()),
+            ctx: NonNull::from(ctx).cast::<()>(),
             callback: thunk::<T>,
+            _marker: core::marker::PhantomData,
         }
     }
 }
@@ -1667,7 +1650,7 @@ pub(crate) mod __gated_printer {
         pub(crate) call_target: Option<ExprData>,
         pub(crate) writer: W,
 
-        pub(crate) renamer: rename::Renamer<'a, 'a>,
+        pub(crate) renamer: rename::Renamer<'a>,
         pub(crate) prev_stmt_tag: StmtTag,
         pub(crate) source_map_builder: SourceMap::chunk::Builder<'a>,
 
@@ -1735,7 +1718,7 @@ pub(crate) mod __gated_printer {
         // `core::convert::Infallible` directly.
 
         /// Reborrow the optional `ModuleInfo` for the duration of `&mut self`.
-        /// Callers that need to interleave other `&mut self` calls (e.g.
+        /// Callers that need to interleave other calls on `self` (e.g.
         /// `name_for_symbol`) must fetch those values *before* calling this, then
         /// re-call `module_info()` — see PORTING.md §Forbidden re: lifetime-extend.
         #[inline]
@@ -1883,14 +1866,14 @@ pub(crate) mod __gated_printer {
         fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
             // Rust can't pre-count `fmt::Arguments` without formatting,
             // so stream each formatted chunk straight into the writer's
-            // reserved space instead — same zero-heap property without
+            // buffer instead — same zero-heap property without
             // formatting twice.
             struct FmtAdapter<'w, W: WriterTrait> {
                 writer: &'w mut W,
             }
             impl<W: WriterTrait> core::fmt::Write for FmtAdapter<'_, W> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    self.writer.write_reserved(s.as_bytes());
+                    self.writer.print_slice(s.as_bytes());
                     Ok(())
                 }
             }
@@ -1936,7 +1919,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn mangled_prop_name(&mut self, ref_: Ref) -> &'a [u8] {
+        pub(crate) fn mangled_prop_name(&self, ref_: Ref) -> &'a [u8] {
             let ref_ = self.symbols().follow(ref_);
             // TODO: we don't support that
             if let Some(mangled_props) = self.options.mangled_props {
@@ -2662,19 +2645,9 @@ pub(crate) mod __gated_printer {
             self.renamer.symbols()
         }
 
-        /// Borrowck-reshape helper: `Renamer::name_for_symbol` returns a slice
-        /// borrowing `&mut self.renamer`, which conflicts with the immediately
-        /// following `self.print_*` call. The returned bytes always point into
-        /// either the AST arena (`Symbol::original_name: *const [u8]`) or the
-        /// `Source::contents` buffer — both are kept alive for `'a` by the
-        /// caller of `Printer::init`. Detach the borrow to a raw ptr per the
-        /// parser's ARENA convention (matching `slice_of` for AST fields).
-        /// Reshaped for borrowck — a future refactor could thread `'bump` through Renamer.
         #[inline]
-        fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {
-            let p = std::ptr::from_ref::<[u8]>(self.renamer.name_for_symbol(ref_));
-            // SAFETY: arena/source-backed; outlives 'a (see renamer.rs SAFETY notes).
-            unsafe { &*p }
+        fn name_for_symbol(&self, ref_: Ref) -> &'a [u8] {
+            self.renamer.name_for_symbol(ref_)
         }
 
         // Emitting a `throw` shim is a diagnostic/error path — keep it out of the
@@ -5687,7 +5660,7 @@ pub(crate) mod __gated_printer {
                         return Ok(());
                     }
 
-                    // `ClauseItem` isn't `Clone`, so build a Vec of arena
+                    // No need to copy the items: build a Vec of arena
                     // borrows instead and swap-remove the borrows; the printer is
                     // the only consumer of the filtered list, and a re-print
                     // recomputes the identical filtering, so the AST write-back
@@ -5828,7 +5801,7 @@ pub(crate) mod __gated_printer {
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
                         // reshaped for borrowck — re-borrow module_info per item so
-                        // `name_for_symbol` (which needs `&mut self`) can run between uses.
+                        // `name_for_symbol` (which borrows `self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let id = mi.str(import_record.path.text);
@@ -6919,7 +6892,7 @@ pub(crate) mod __gated_printer {
                             self.print(b"\\u");
                             let mut tmp = [0u8; 4];
                             let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                            self.writer.write_reserved(&tmp[..len]);
+                            self.print(&tmp[..len]);
                         }
                     }
                     continue;
@@ -6928,7 +6901,7 @@ pub(crate) mod __gated_printer {
                 {
                     let mut tmp = [0u8; 4];
                     let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                    self.writer.write_reserved(&tmp[..len]);
+                    self.print(&tmp[..len]);
                 }
             }
             Ok(())
@@ -7027,7 +7000,7 @@ pub(crate) mod __gated_printer {
             bump: &'a bun_alloc::Arena,
             import_records: &'a [ImportRecord<'a>],
             opts: Options<'a>,
-            renamer: rename::Renamer<'a, 'a>,
+            renamer: rename::Renamer<'a>,
             source_map_builder: SourceMap::chunk::Builder<'a>,
         ) -> Self {
             Self {
@@ -7287,8 +7260,7 @@ pub trait WriterContext {
     fn write_all(&mut self, buf: &[u8]);
     fn get_last_byte(&self) -> u8;
     fn get_last_last_byte(&self) -> u8;
-    fn reserve_next(&mut self, count: u64) -> *mut u8;
-    fn advance_by(&mut self, count: u64);
+    fn reserve_next(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn take_buffer(&mut self) -> MutableString;
     fn done(&mut self) {}
@@ -7301,18 +7273,7 @@ pub trait WriterTrait {
     fn prev_prev_char(&self) -> u8;
     fn print_byte(&mut self, b: u8);
     fn print_slice(&mut self, s: &[u8]);
-    fn reserve(&mut self, count: u64) -> *mut u8;
-    fn advance(&mut self, count: u64);
-    /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
-    /// Centralizes the open-coded `reserve + copy_nonoverlapping + advance` triplet
-    #[inline]
-    fn write_reserved(&mut self, bytes: &[u8]) {
-        let ptr = self.reserve(bytes.len() as u64);
-        // SAFETY: `reserve(n)` returns a writable region of >= n bytes owned by the
-        // writer's internal buffer, which is disjoint from caller-provided `bytes`.
-        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
-        self.advance(bytes.len() as u64);
-    }
+    fn reserve(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn done(&mut self);
     fn std_writer(&mut self) -> StdWriterAdapter<'_, Self>
@@ -7359,12 +7320,8 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.get_last_last_byte()
     }
 
-    pub(crate) fn reserve(&mut self, count: u64) -> *mut u8 {
+    pub(crate) fn reserve(&mut self, count: u64) {
         self.ctx.reserve_next(count)
-    }
-
-    pub(crate) fn advance(&mut self, count: u64) {
-        self.ctx.advance_by(count);
     }
 
     #[inline]
@@ -7405,12 +7362,8 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> *mut u8 {
+    fn reserve(&mut self, count: u64) {
         self.reserve(count)
-    }
-    #[inline]
-    fn advance(&mut self, count: u64) {
-        self.advance(count)
     }
     #[inline]
     fn slice(&self) -> &[u8] {
@@ -7449,12 +7402,8 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> *mut u8 {
+    fn reserve(&mut self, count: u64) {
         (**self).reserve(count)
-    }
-    #[inline]
-    fn advance(&mut self, count: u64) {
-        (**self).advance(count)
     }
     #[inline]
     fn slice(&self) -> &[u8] {
@@ -7550,16 +7499,9 @@ impl BufferWriter {
         if len >= 2 { list[len - 2] } else { 0 }
     }
 
-    pub(crate) fn reserve_next(&mut self, count: u64) -> *mut u8 {
+    pub(crate) fn reserve_next(&mut self, count: u64) {
         let n = usize::try_from(count).expect("int cast");
-        // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
-        unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr()
-    }
-
-    pub(crate) fn advance_by(&mut self, count: u64) {
-        let count_usize = usize::try_from(count).expect("int cast");
-        // SAFETY: reserve_next reserved and the caller initialized [len..len+count).
-        unsafe { bun_core::vec::commit_spare(&mut self.buffer.list, count_usize) };
+        self.buffer.list.reserve(n);
     }
 
     pub fn reset(&mut self) {
@@ -7602,12 +7544,8 @@ impl WriterContext for BufferWriter {
         self.get_last_last_byte()
     }
     #[inline]
-    fn reserve_next(&mut self, count: u64) -> *mut u8 {
+    fn reserve_next(&mut self, count: u64) {
         self.reserve_next(count)
-    }
-    #[inline]
-    fn advance_by(&mut self, count: u64) {
-        self.advance_by(count)
     }
     #[inline]
     fn slice(&self) -> &[u8] {
@@ -7734,13 +7672,8 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 ) -> crate::Result<usize> {
     bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
 
-    // `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut`
-    // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
-    // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
-    // Renamer<'static,'static>`) lets inference unify it with the no-op arm.
-    let mut no_op_renamer;
-    // hoisted out of the `minify_identifiers` arm so the
-    // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
+    // Declared out here so that what `renamer` borrows outlives the branch that makes it.
+    let no_op_renamer;
     let mut minify_renamer;
     // `Scope` isn't `Copy` here and the only
     // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
@@ -7748,7 +7681,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // `tree.module_scope` instead (lives for `'a`).
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
-    let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
+    let renamer = if opts.minify_identifiers {
         // Pinned before the reserved names are computed so no slot takes one of these names.
         let dont_break_the_code = [tree.module_ref, tree.exports_ref, tree.require_ref]
             .into_iter()
@@ -7827,7 +7760,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let char_freq = tree.char_freq.as_deref().copied().unwrap_or_default();
         minify_renamer.assign_names_by_frequency(&char_freq.compile())?;
 
-        rename::Renamer::MinifyRenamer(&mut *minify_renamer)
+        rename::Renamer::MinifyRenamer(&minify_renamer)
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
         no_op_renamer.to_renamer()
@@ -7968,8 +7901,7 @@ pub fn print_json<W: WriterTrait>(
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
     let bump = bun_alloc::Arena::new();
-    let mut no_op =
-        rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
+    let no_op = rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
 
     let full_opts = Options {
         indent: opts.indent,
@@ -8002,7 +7934,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
-    renamer: rename::Renamer<'a, 'a>,
+    renamer: rename::Renamer<'a>,
 ) -> PrintResult {
     let _trace = bun_core::perf::trace("JSPrinter.print");
 
@@ -8033,7 +7965,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
-    renamer: rename::Renamer<'a, 'a>,
+    renamer: rename::Renamer<'a>,
 ) -> PrintResult {
     if target.is_bun() {
         print_with_writer_and_platform::<W, true, GENERATE_SOURCE_MAPS>(
@@ -8074,7 +8006,7 @@ pub(crate) fn print_with_writer_and_platform<
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
-    renamer: rename::Renamer<'a, 'a>,
+    renamer: rename::Renamer<'a>,
 ) -> PrintResult {
     bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
 

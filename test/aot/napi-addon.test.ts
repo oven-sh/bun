@@ -4,11 +4,12 @@
 // A line that begins with TYPE makes one call that stores what the declared type does not allow, and prints what the call said, what
 // the object looks like afterwards, and what an object that nobody touched looks like. There --aot may differ from plain Bun in
 // two ways only: the call fails with an error and leaves the object untouched, or typed code that reads the object afterwards throws.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, resolve } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
+import { afterAll, beforeAll, test } from "./harness/default-timeout";
 
 const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 const programs = join(import.meta.dir, "napi-addon");
@@ -57,6 +58,8 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/napi-addon", () => {
     "created-by-the-addon",
     "referenced-by-the-addon",
     "classes-and-callbacks",
+    "a-nan-that-native-code-hands-over",
+    "members-that-the-addon-lays",
   ])(
     "%s",
     name =>
@@ -71,7 +74,13 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/napi-addon", () => {
           ),
         );
         const compiled = await spawned([executable], programs, env);
-        const plain = await spawned([bunExe(), "run", join(programs, name + ".ts")], programs, env);
+        // What an executable is refused, the run beside it leaves out. Nothing but the C compiler of bun:ffi is.
+        const refused = compiled.stdout.split("\n").filter(line => line.startsWith("REFUSED "));
+        expect(refused.filter(line => line !== "REFUSED bun:ffi cc()")).toEqual([]);
+        const plain = await spawned([bunExe(), "run", join(programs, name + ".ts")], programs, {
+          ...env,
+          REFUSED: refused.join("\n"),
+        });
         expect({ signal: plain.signal, exitCode: plain.exitCode, stderr: plain.stderr }).toEqual({
           signal: null,
           exitCode: 0,

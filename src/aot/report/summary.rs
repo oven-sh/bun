@@ -11,6 +11,7 @@ use super::levels::{
 };
 use super::positions::{PathStyle, Positions, write_shown_position};
 use super::runtime_use::record_at;
+use super::source_texts::ModuleOrigin;
 use super::wording::{
     column_description, column_key, column_label, level_label, unseen_code_sentence,
 };
@@ -18,20 +19,41 @@ use super::{ReportEntry, ReportInput};
 use crate::engine::AccessCountRecord;
 use crate::ir::generated::AccessCost;
 use crate::ir::ids::ModuleId;
-use crate::link::ModuleOrigin;
-use crate::statistics::{LimitId, StatisticId, Statistics};
+use crate::statistics::{Stage, StatisticId, Statistics};
 
-const HINT_BELOW_TENTHS: u32 = 950;
 const MAX_LISTED_FILES: usize = 5;
-const HINT: &[u8] =
-    b"Untyped code works, but runs slower. Run with --explain to see what to fix.\n";
 
 pub fn write_summary(input: &ReportInput<'_>, out: &mut Vec<u8>) {
     let options = input.options;
-    let has_text_report = options.explain.contains(ExplainSet::TEXT);
     write_trim_causes(input, out);
-    let totals = compute_totals(input);
-    write_lines(&totals, has_text_report, &options.option_words, out);
+    write_developer_options(&options.option_words, out);
+    if options.explain.contains(ExplainSet::TEXT) {
+        write_access_lines(&compute_totals(input), out);
+    }
+}
+
+pub(super) struct CompileSpeed {
+    pub(super) lines: u64,
+    pub(super) milliseconds: u64,
+    pub(super) lines_per_second: u64,
+}
+
+impl CompileSpeed {
+    pub(super) fn of(statistics: &Statistics) -> CompileSpeed {
+        let stages = Stage::ALL
+            .into_iter()
+            .filter(|stage| !matches!(stage, Stage::Any | Stage::RunTime));
+        let nanoseconds = stages
+            .map(|stage| statistics.get(stage.time()))
+            .fold(0, u64::saturating_add);
+        let lines = statistics.get(StatisticId::SourceLines);
+        let per_second = u128::from(lines) * 1_000_000_000 / u128::from(nanoseconds.max(1));
+        CompileSpeed {
+            lines,
+            milliseconds: nanoseconds / 1_000_000,
+            lines_per_second: per_second.min(u128::from(u64::MAX)) as u64,
+        }
+    }
 }
 
 pub fn write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>) {
@@ -40,15 +62,35 @@ pub fn write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>) {
         format::write_counted(out, demoted_files, "file", "files");
         out.extend_from_slice(b" compiled without types");
     }
+    let speed = CompileSpeed::of(statistics);
+    if speed.lines == 0 || speed.milliseconds == 0 {
+        return;
+    }
+    if !out.is_empty() {
+        out.extend_from_slice(b", ");
+    }
+    out.extend_from_slice(b"compiled ");
+    format::write_counted(out, speed.lines, "line", "lines");
+    out.extend_from_slice(b" in ");
+    let hundredths = speed.milliseconds / 10;
+    format::write_count(out, hundredths / 100);
+    out.extend_from_slice(&[
+        b'.',
+        b'0' + (hundredths % 100 / 10) as u8,
+        b'0' + (hundredths % 10) as u8,
+    ]);
+    out.extend_from_slice(b" s (");
+    format::write_count(out, speed.lines_per_second);
+    out.extend_from_slice(b" lines/s)");
 }
 
 pub(super) fn collect_details(input: &ReportInput<'_>, out: &mut Vec<ReportEntry>) {
+    let texts = input.texts;
     let text = details_text(
         input.engine.access_counts(),
-        |module| input.names.module_path(module),
-        |module| input.names.module_origin(module),
+        |module| texts.path(module),
+        |module| texts.origin(module),
         input.statistics,
-        |limit| input.engine.limit_value(limit),
         &PathPrinter::new(),
     );
     out.extend(text.map(|text| ReportEntry::line(ExplainSet::TEXT, text)));
@@ -92,24 +134,20 @@ fn write_columns_line(out: &mut Vec<u8>, label: &str, costs: &CostCounts) {
     out.extend_from_slice(b")\n");
 }
 
-fn write_lines(
-    totals: &ProgramTotals,
-    has_text_report: bool,
-    option_words: &[Box<[u8]>],
-    out: &mut Vec<u8>,
-) {
+fn write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>) {
+    if option_words.is_empty() {
+        return;
+    }
+    out.extend_from_slice(b"Built with developer options:");
+    for word in option_words {
+        format::write_parts(out, &[b" --aot-", word]);
+    }
+    out.push(b'\n');
+}
+
+fn write_access_lines(totals: &ProgramTotals, out: &mut Vec<u8>) {
     let program = &totals.program.access_costs;
     let dependencies = &totals.dependencies.access_costs;
-    if !option_words.is_empty() {
-        out.extend_from_slice(b"Built with developer options:");
-        for word in option_words {
-            format::write_parts(out, &[b" --aot-", word]);
-        }
-        out.push(b'\n');
-    }
-    if program.total() > 0 && free_tenths(program) < HINT_BELOW_TENTHS && !has_text_report {
-        out.extend_from_slice(HINT);
-    }
     if dependencies.total() > 0 {
         write_columns_line(out, "Dependencies: ", dependencies);
     }
@@ -123,7 +161,7 @@ fn write_trim_causes(input: &ReportInput<'_>, out: &mut Vec<u8>) {
         return;
     }
     let records = input.engine.unseen_code();
-    let mut positions = Positions::new(input, PathStyle::Native);
+    let mut positions = Positions::new(input, PathStyle::Posix);
     for unseen in &input.used_features.causes {
         let position = record_at(records, unseen.witness)
             .and_then(|record| positions.resolve_location(record.witness.location));
@@ -143,7 +181,6 @@ fn details_text<'r>(
     path_of: impl Fn(ModuleId) -> &'r [u8],
     origin_of: impl Fn(ModuleId) -> ModuleOrigin,
     statistics: &Statistics,
-    limit_value_of: impl Fn(LimitId) -> u64,
     printer: &PathPrinter,
 ) -> Option<Vec<u8>> {
     let all = totals_of(records, &origin_of).combined().access_costs;
@@ -168,7 +205,6 @@ fn details_text<'r>(
     format::write_count(&mut text, statistics.get(StatisticId::IndirectCalls));
     text.extend_from_slice(b" indirect");
     write_untyped_files(&mut text, &files, printer);
-    write_reached_limits(&mut text, statistics, limit_value_of);
     Some(text)
 }
 
@@ -194,7 +230,7 @@ fn write_untyped_files(out: &mut Vec<u8>, files: &[(&[u8], CostCounts)], printer
     out.extend_from_slice(b"\nFiles with the most untyped accesses:");
     for (path, accesses) in files.iter().take(MAX_LISTED_FILES) {
         out.extend_from_slice(b"\n  ");
-        printer.write_path(out, path);
+        out.extend_from_slice(&printer.posix_path(path));
         out.extend_from_slice(b"  ");
         format::write_percent(out, free_tenths(accesses));
         out.extend_from_slice(b" typed (");
@@ -207,30 +243,6 @@ fn write_untyped_files(out: &mut Vec<u8>, files: &[(&[u8], CostCounts)], printer
         out.extend_from_slice(b"\n  and ");
         format::write_count(out, (files.len() - MAX_LISTED_FILES) as u64);
         out.extend_from_slice(b" more");
-    }
-}
-
-fn write_reached_limits(
-    out: &mut Vec<u8>,
-    statistics: &Statistics,
-    limit_value_of: impl Fn(LimitId) -> u64,
-) {
-    let mut reached = LimitId::ALL
-        .into_iter()
-        .filter(|&limit| limit != LimitId::None)
-        .map(|limit| (limit, statistics.get(limit.hits())))
-        .filter(|&(_, hits)| hits > 0)
-        .peekable();
-    if reached.peek().is_none() {
-        return;
-    }
-    out.extend_from_slice(b"\nCompiler limits hit:");
-    for (limit, hits) in reached {
-        format::write_parts(out, &[b"\n  ", limit.name().as_bytes(), b" = "]);
-        format::write_count(out, limit_value_of(limit));
-        out.extend_from_slice(b", hit ");
-        format::write_counted(out, hits, "time", "times");
-        format::write_parts(out, &[b" (limits ", limit.purpose().as_bytes(), b")"]);
     }
 }
 

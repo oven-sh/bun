@@ -14,7 +14,7 @@
 // RUN(FILES): link
 // FILES: module [[b]] path="{{*}}/imports/chain/cycle-b.cjs"
 // FILES: module [[a]] path="{{*}}/imports/chain/cycle-a.cjs"
-// FILES: module [[entry]] path="{{*}}/commonjs-cycle"
+// FILES: module [[entry]] path="{{*}}/commonjs-cycle.cjs"
 // FILES: function {{*}}module=[[b]] kind=CommonJsModule
 // FILES-NOT: PropSet
 // FILES-NOT: = NewObject

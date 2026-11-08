@@ -22,6 +22,21 @@ fn name_run(name: BuiltinName) -> NameRun {
 }
 
 #[test]
+fn no_member_with_code_has_a_name_that_a_key_without_a_text_spells() {
+    for id in all_ids() {
+        let entry = entry(id);
+        if is_symbol_name(entry.name) {
+            continue;
+        }
+        let name = core::str::from_utf8(text_of_name(entry.name)).unwrap();
+        let is_spelled =
+            matches!(name, "undefined" | "null" | "true" | "false") || name.parse::<f64>().is_ok();
+        let has_code = is_callable(id) || entry.kind == BuiltinKind::Accessor;
+        assert!(!(is_spelled && has_code), "{}", text_of(id));
+    }
+}
+
+#[test]
 fn member_spans_match_holders() {
     for id in all_ids() {
         let span = members(id);
@@ -117,7 +132,6 @@ fn member_is_absent_below_listed_chain() {
     );
     assert_eq!(member(BuiltinId::Math, push), MemberLookup::Absent);
     assert_eq!(member(BuiltinId::Array, push), MemberLookup::Absent);
-    assert_eq!(member(BuiltinId::Process, push), MemberLookup::Absent);
     assert_eq!(
         member(BuiltinId::ArrayPrototype, name("isArray")),
         MemberLookup::Absent
@@ -143,6 +157,10 @@ fn member_is_unknown_below_unknown_prototype() {
     assert!(has_flag(namespace, BuiltinFlags::LISTS_ALL_MEMBERS));
     assert_eq!(entry(namespace).prototype, Prototype::Unknown);
     assert_eq!(member(namespace, name("push")), MemberLookup::Unknown);
+    assert_eq!(
+        member(BuiltinId::Process, name("push")),
+        MemberLookup::Unknown
+    );
 }
 
 #[test]
@@ -181,25 +199,20 @@ fn symbol_members() {
 #[test]
 fn names_stored_by_native_code() {
     for stored in [
-        // Members of built-in objects.
         "byteLength",
         "PI",
         "readFileSync",
-        // Defined on new instances.
         "message",
         "sourceURL",
         "errors",
         "suppressed",
-        // Fields of results.
         "done",
         "written",
         "reason",
         "groups",
         "indices",
-        // Defined on an operand.
         "originalLine",
         "lastIndex",
-        // Fields of an object that the host makes.
         "headersUrl",
     ] {
         assert!(is_stored_by_native_code(name(stored)), "{stored}");
@@ -209,7 +222,6 @@ fn names_stored_by_native_code() {
     )));
     let mut members = all_ids().filter(|&id| entry(id).holder.is_some());
     assert!(members.all(|id| is_stored_by_native_code(entry(id).name)));
-    // A text that is only ever a value.
     assert!(!is_stored_by_native_code(name("ERR_INVALID_ARG_TYPE")));
 }
 
@@ -230,6 +242,26 @@ fn every_well_known_symbol_has_name() {
     );
     assert_eq!(well_known_symbol(BuiltinId::MathPI), None);
     assert_eq!(well_known_symbol(BuiltinId::Symbol), None);
+}
+
+#[test]
+fn functions_are_callable() {
+    for function in [
+        BuiltinId::MathAbs,
+        BuiltinId::Array,
+        BuiltinId::ArrayPrototypePush,
+        BuiltinId::FunctionPrototype,
+    ] {
+        assert!(is_callable(function), "{function:?}");
+    }
+    for other in [
+        BuiltinId::Math,
+        BuiltinId::ArrayPrototype,
+        BuiltinId::SymbolIterator,
+        BuiltinId::MathPI,
+    ] {
+        assert!(!is_callable(other), "{other:?}");
+    }
 }
 
 #[test]
@@ -331,6 +363,12 @@ fn assert_mutability(ids: &[BuiltinId], mutability: Mutability) {
 #[test]
 fn members_of_locked_object_are_locked() {
     assert_flag(BuiltinId::ObjectPrototype, IS_LOCKED_OBJECT, true);
+    let is_locked_object = |id: &BuiltinId| has_flag(*id, IS_LOCKED_OBJECT);
+    assert!(
+        all_ids()
+            .filter(is_locked_object)
+            .all(|id| canonical_id(id) == BuiltinId::ObjectPrototype)
+    );
     assert_mutability(members(BuiltinId::ObjectPrototype), AlwaysLocked);
     assert_flag(BuiltinId::Math, HAS_LOCKED_MEMBERS, true);
     assert_mutability(&[BuiltinId::MathFloor], AlwaysLocked);
@@ -338,7 +376,7 @@ fn members_of_locked_object_are_locked() {
     assert_mutability(&[BuiltinId::ErrorCaptureStackTrace], ConstantUnlessWritten);
 }
 
-const MEMBERS_LEFT_WRITABLE: [BuiltinId; 55] = [
+const MEMBERS_LEFT_WRITABLE: [BuiltinId; 65] = [
     BuiltinId::BufferPoolSize,
     BuiltinId::DateNow,
     BuiltinId::DateParse,
@@ -394,6 +432,16 @@ const MEMBERS_LEFT_WRITABLE: [BuiltinId; 55] = [
     BuiltinId::SetPrototypeIsSubsetOf,
     BuiltinId::SetPrototypeIsSupersetOf,
     BuiltinId::SetPrototypeIsDisjointFrom,
+    BuiltinId::IntlDateTimeFormatPrototypeFormat,
+    BuiltinId::IntlDateTimeFormatPrototypeFormatRange,
+    BuiltinId::IntlDateTimeFormatPrototypeFormatRangeToParts,
+    BuiltinId::IntlDateTimeFormatPrototypeFormatToParts,
+    BuiltinId::IntlDateTimeFormatPrototypeResolvedOptions,
+    BuiltinId::IntlNumberFormatPrototypeFormat,
+    BuiltinId::IntlNumberFormatPrototypeFormatRange,
+    BuiltinId::IntlNumberFormatPrototypeFormatRangeToParts,
+    BuiltinId::IntlNumberFormatPrototypeFormatToParts,
+    BuiltinId::IntlNumberFormatPrototypeResolvedOptions,
 ];
 
 #[test]
@@ -444,9 +492,14 @@ fn only_holder_locked_by_name_leaves_member_writable() {
 }
 
 #[test]
-fn regexp_prototype_is_closed_entirely() {
-    assert_flag(BuiltinId::RegExpPrototype, IS_LOCKED_OBJECT, true);
-    assert_flag(BuiltinId::RegExpPrototype, HAS_LOCKED_MEMBERS, false);
+fn regexp_prototype_locks_members_and_stays_extensible() {
+    assert_flag(BuiltinId::RegExpPrototype, HAS_LOCKED_MEMBERS, true);
+    assert_flag(BuiltinId::RegExpPrototype, IS_LOCKED_OBJECT, false);
+    assert_flag(
+        BuiltinId::RegExpPrototype,
+        BuiltinFlags::IS_CLOSED_TO_OTHER_NAMES,
+        false,
+    );
     let locked = [
         BuiltinId::RegExpPrototypeExec,
         BuiltinId::RegExpPrototypeSymbolReplace,
@@ -548,9 +601,15 @@ fn object_closed_to_other_names_locks_members() {
 }
 
 #[test]
-fn generator_prototypes_are_closed_entirely() {
-    assert_flag(BuiltinId::GeneratorPrototype, IS_LOCKED_OBJECT, true);
-    assert_flag(BuiltinId::AsyncGeneratorPrototype, IS_LOCKED_OBJECT, true);
+fn generator_prototypes_lock_members_and_stay_extensible() {
+    for prototype in [
+        BuiltinId::GeneratorPrototype,
+        BuiltinId::AsyncGeneratorPrototype,
+    ] {
+        assert_flag(prototype, HAS_LOCKED_MEMBERS, true);
+        assert_flag(prototype, IS_LOCKED_OBJECT, false);
+        assert_flag(prototype, BuiltinFlags::IS_CLOSED_TO_OTHER_NAMES, false);
+    }
     let links = [
         (
             BuiltinId::GeneratorFunctionPrototypePrototype,
@@ -728,6 +787,7 @@ fn entry_point_default_export_is_served() {
         argument: 0,
     };
     assert_eq!(read.read_use, served);
+    assert_eq!(read.names_looked_for, [name("fetch"), name("app")]);
     let mut plugin_reads = host_reads(HostReadContext::Plugin);
     assert!(plugin_reads.all(|read| read.context == HostReadContext::Plugin));
     assert!(host_reads(HostReadContext::Plugin).all(|read| read.read_use != served));

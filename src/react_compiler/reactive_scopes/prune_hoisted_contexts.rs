@@ -13,7 +13,7 @@ use crate::diagnostics::{CompilerError, cold_invariant, cold_todo};
 use crate::hir::{
     EvaluationOrder, IdentifierId, InstructionKind, InstructionValue, Place, ReactiveFunction,
     ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveValue,
-    environment::Environment,
+    environment::{Environment, OutputMode},
 };
 
 use crate::reactive_scopes::visitors::{
@@ -177,15 +177,18 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                             // References to hoisted functions are now "safe" as
                             // variable assignments have finished.
                             state.uninitialized.remove(lvalue_id);
-                            // Not in upstream: a function declared below could run above this assignment.
-                            if !state.pending_functions.is_empty() {
-                                return Err(cold_todo(
-                                    "[PruneHoistedContexts] Rewrite hoisted function references",
-                                    instruction.loc,
-                                ));
+                            // Not in upstream. Lint prints nothing, and an error thrown here would hide what it recorded.
+                            if self.env.output_mode != OutputMode::Lint {
+                                // A function declared below could run above the assignment.
+                                if !state.pending_functions.is_empty() {
+                                    return Err(cold_todo(
+                                        "[PruneHoistedContexts] Rewrite hoisted function references",
+                                        instruction.loc,
+                                    ));
+                                }
+                                // facebook/react#37834 (open): the scope's `let` must be assigned.
+                                lvalue.kind = InstructionKind::Reassign;
                             }
-                            // Not in upstream (facebook/react#37834, open): the scope's `let` must be assigned.
-                            lvalue.kind = InstructionKind::Reassign;
                         }
                     } else {
                         return Err(cold_todo(

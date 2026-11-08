@@ -5361,8 +5361,8 @@ describe("react-compiler does not overflow the stack on a component that is nest
   });
 });
 
-// `bun test --react-compiler` compiles in the runtime transpiler, which keeps its output in a cache on disk. The
-// component is `UnusedClosure` of react-compiler/HoistedFunctionThatAMemoBlockDeclaresIsAssigned.
+// `bun test --react-compiler` compiles in the runtime transpiler, which always minifies syntax. The component is
+// `UnusedClosure` of react-compiler/HoistedFunctionThatAMemoBlockDeclaresIsAssigned.
 test("react-compiler under bun test assigns a hoisted function that a memo block declares", async () => {
   using dir = tempDir("react-compiler-bun-test-hoisted", {
     "node_modules/react/package.json": JSON.stringify({
@@ -5404,4 +5404,48 @@ test("react-compiler under bun test assigns a hoisted function that a memo block
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.match(/compiled: .*/)?.[0] ?? stderr).toBe("compiled: true, onClick: function");
   expect(exitCode).toBe(0);
+});
+
+// `bun lint` runs the same passes and prints nothing. An error that a pass throws there replaces what the validations
+// recorded for the function, so the pass must not throw for `IndirectEarlyCall`: the read of the ref is still reported.
+test("react-compiler under bun lint reports a component that it leaves as written for a hoisted function", async () => {
+  using dir = tempDir("react-compiler-lint-hoisted", {
+    ".oxlintrc.json": JSON.stringify({
+      plugins: ["react"],
+      categories: { correctness: "off" },
+      rules: { "react/refs": "error" },
+    }),
+    "indirect.jsx": `import { useRef } from "react";
+export function Component(p) {
+  const ref = useRef(null);
+  const unused = () => helper();
+  const v = sibling();
+  const current = ref.current;
+  function helper() {
+    return p.a;
+  }
+  function sibling() {
+    return helper();
+  }
+  return (
+    <button onClick={helper}>
+      {v}
+      {current}
+    </button>
+  );
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "lint", "-f", "json"],
+    env: { ...bunEnv, AGENT: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (!stdout.startsWith("{")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+  const found = JSON.parse(stdout).diagnostics.map(it => [it.filename, it.code, it.labels[0].span.line]);
+  expect(found).toEqual([["indirect.jsx", "react(refs)", 6]]);
+  expect(exitCode).toBe(1);
 });

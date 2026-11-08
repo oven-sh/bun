@@ -278,6 +278,19 @@ export const toSatisfyAsCustomMatcher = b.fn({
   ...plain("Expect", "toSatisfyAsCustomMatcher", "to_satisfy_as_custom_matcher"),
   args: { received: b.any, predicate: b.any },
 });
+/** `expect`, `expect.soft` and `expect.poll` of `"vitest"`. `Expect::create_of_vitest()` makes the object. */
+export const callOfVitest = b.fn({
+  ...plain("Expect", "callOfVitest", "call_of_vitest"),
+  args: { value: b.any, message: b.any },
+});
+export const softOfVitest = b.fn({
+  ...plain("Expect", "softOfVitest", "soft_of_vitest"),
+  args: { value: b.any, message: b.any },
+});
+export const pollOfVitest = b.fn({
+  ...plain("Expect", "pollOfVitest", "poll_of_vitest"),
+  args: { fn: b.any, options: b.any },
+});
 export const stringify = b.fn({ ...utility("stringify", "stringify"), args: { value: b.any } });
 export const printExpected = b.fn({ ...utility("printExpected", "print_expected"), args: { value: b.any } });
 export const printReceived = b.fn({ ...utility("printReceived", "print_received"), args: { value: b.any } });

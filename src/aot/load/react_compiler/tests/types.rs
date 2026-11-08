@@ -338,11 +338,19 @@ fn caller_of_compiled_type_guard_narrows() {
          export const useIsBoolean = function (value: unknown = false): value is boolean {\n\
          'use memo';\n\
          return typeof value === 'boolean';\n\
-         };\n",
+         };\n\
+         export function useLine(parts: string[]): string[] {\n\
+         'use memo';\n\
+         return [parts.join(' ')];\n\
+         }\n\
+         export function useIsLine(value: unknown = 'none'): value is string {\n\
+         const lines = useLine([String(value)]);\n\
+         return typeof value === 'string' && lines.length === 1;\n\
+         }\n",
     ]
     .concat();
-    let main = "import { useAssertedGiven, useAssertedString, useIsBoolean, useIsNumber, useIsString } from './guards';\n\
-                const [first, second, third, fourth]: unknown[] = ['a', 1, true, 'b'];\n\
+    let main = "import { useAssertedGiven, useAssertedString, useIsBoolean, useIsLine, useIsNumber, useIsString } from './guards';\n\
+                const [first, second, third, fourth, fifth]: unknown[] = ['a', 1, true, 'b', 'c'];\n\
                 const given: string | undefined = ['c'].pop();\n\
                 export const length = useIsString(first, 'x') ? first.length : 0;\n\
                 export const fixed = useIsNumber(second) ? second.toFixed(1) : '';\n\
@@ -351,6 +359,7 @@ fn caller_of_compiled_type_guard_narrows() {
                 export const upper = fourth.toUpperCase();\n\
                 useAssertedGiven(given);\n\
                 export const size = given.length;\n\
+                export const line = useIsLine(fifth) ? fifth.length : 0;\n\
                 export const guard: (value: unknown, label?: string) => value is string = useIsString;\n";
     let files = with_react_package(&[("main.ts", main), ("guards.tsx", guards.as_str())]);
     with_project(
@@ -360,7 +369,12 @@ fn caller_of_compiled_type_guard_narrows() {
         |project| {
             let tree = Tree::new(project, "guards.tsx");
             let hir = tree.hir();
-            let declared = ["useIsString", "useAssertedString", "useAssertedGiven"];
+            let declared = [
+                "useIsString",
+                "useAssertedString",
+                "useAssertedGiven",
+                "useIsLine",
+            ];
             let declared = declared.map(|name| tree.function_named(name));
             let assigned = ["useIsNumber", "useIsBoolean"].map(|name| {
                 match hir[tree.declaration_named(name).init].kind {
@@ -374,6 +388,16 @@ fn caller_of_compiled_type_guard_narrows() {
         },
     );
     assert_both_modes_report(&files, &[]);
+
+    let main = "import { useAssertedString, useIsNumber } from './guards';\n\
+                const [second, fourth]: unknown[] = [1, 'b'];\n\
+                export const fixed: string = useIsNumber(second) ? second : '';\n\
+                useAssertedString(fourth);\n\
+                export const upper: number = fourth;\n";
+    let files = with_react_package(&[("main.ts", main), ("guards.tsx", guards.as_str())]);
+    let path = "/project/main.ts";
+    let not_any = [(2322, path.to_owned(), 3), (2322, path.to_owned(), 5)];
+    assert_both_modes_report(&files, &not_any);
 }
 
 #[test]

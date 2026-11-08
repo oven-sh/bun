@@ -104,13 +104,18 @@ describe.concurrent("a dead zone ReferenceError names the binding", () => {
   test("an uncaught error from a class field initializer", async () => {
     using dir = tempDir("issue-25569-field", {
       "class-first.js": "class X {\n  name = foo\n}\nnew X()\nconst foo = 1\n",
-      // The file of the issue. Node names 'X' here: Bun runs a top-level class before the statements above it (#46795),
-      // so the first dead zone read is the one of 'foo'.
+      // The file of the issue, with `new X()` above the class. Which binding is read first in its dead zone depends on
+      // where a top-level class runs (#46795): 'foo' while Bun runs the class before the statements above it, and 'X'
+      // when the class runs where it is written, as in Node. This test is about the name, so it takes both.
       "issue.js": "new X()\n\nclass X {\n  name = foo\n  constuctor() {}\n}\n\nconst foo = 1\n",
     });
-    for (const file of ["class-first.js", "issue.js"]) {
+    const expected = {
+      "class-first.js": /ReferenceError: Cannot access 'foo' before initialization\./,
+      "issue.js": /ReferenceError: Cannot access '(foo|X)' before initialization\./,
+    };
+    for (const [file, message] of Object.entries(expected)) {
       const { stdout, stderr, exitCode } = await run(String(dir), [file], envWith("0"));
-      expect(stderr).toContain(`ReferenceError: ${tdz("foo")}`);
+      expect(stderr).toMatch(message);
       expect(stdout).toBe("");
       expect(exitCode).toBe(1);
     }

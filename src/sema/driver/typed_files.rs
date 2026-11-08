@@ -1305,6 +1305,17 @@ impl Mappings {
             .filter(|entry| entry.0 == generated)?;
         Some((last.1, last.2))
     }
+
+    /// Each entry as (source, original, generated), in that order.
+    fn by_original(&self) -> Vec<(u32, u32, u32)> {
+        let mut by_original: Vec<(u32, u32, u32)> = self
+            .entries
+            .iter()
+            .map(|&(generated, source, original)| (source, original, generated))
+            .collect();
+        by_original.sort_unstable();
+        by_original
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -2983,10 +2994,12 @@ fn add_types(
         &mappings,
         bundle,
     );
+    let by_original = mappings.by_original();
     let mut transfer = Transfer {
         javascript,
         output: &output,
         mappings: &mappings,
+        by_original: &by_original,
         modules: &written[..sources.len()],
         linked: &linked,
         type_references,
@@ -3009,6 +3022,7 @@ struct Transfer<'t, 'a, 's> {
     javascript: &'a [u8],
     output: &'t Syntax<'a, 's>,
     mappings: &'t Mappings,
+    by_original: &'t [(u32, u32, u32)],
     modules: &'t [Option<Written<'a, 's>>],
     linked: &'t Linked,
     type_references: FxHashSet<(&'t [u8], &'t [u8])>,
@@ -3722,18 +3736,13 @@ impl<'a> Transfer<'_, 'a, '_> {
     }
 
     fn copy_directives(&mut self) {
-        let (javascript, mappings, written, insertions) = (
+        let (javascript, mappings, by_original, written, insertions) = (
             self.javascript,
             self.mappings,
+            self.by_original,
             self.modules,
             &mut self.insertions,
         );
-        let mut by_original: Vec<(u32, u32, u32)> = mappings
-            .entries
-            .iter()
-            .map(|&(generated, source, original)| (source, original, generated))
-            .collect();
-        by_original.sort_unstable();
         let mut ignored: Vec<usize> = Vec::new();
         let templates: Vec<(usize, usize)> = (self.output.file.exprs.iter())
             .filter(|expr| javascript.get(expr.pos as usize) == Some(&b'`'))

@@ -989,7 +989,7 @@ impl BunTest {
     fn on_done_error(global_this: &JSGlobalObject, done: &DoneCallback, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
-            if done.current_sequence(this).is_some() {
+            if done.current_sequence(this).is_some_and(|sequence| sequence.active_entry_can_fail()) {
                 this.on_uncaught_exception(global_this, Some(error), false, &done.entry);
                 // Like an uncaught exception, and unlike a throw from the callback: the entry is over whatever
                 // the callback returns, and the count keeps `on_before_exit()` from draining this file's event loop.
@@ -1035,7 +1035,10 @@ impl BunTest {
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
 
-        if !ref_in.has_one_ref() {
+        let has_one_ref = ref_in.has_one_ref();
+        let should_run = has_one_ref || was_error;
+
+        if !should_run {
             return Ok(());
         }
 

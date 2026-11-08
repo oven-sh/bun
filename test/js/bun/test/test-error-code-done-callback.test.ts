@@ -428,36 +428,32 @@ describe("an error passed to a hook's done() fails that hook, like a throw from 
     });
   });
 
-  // A retry runs the hooks again. A hook that fails after a test.failing body threw does not fail that test.
-  test.concurrent("a retry and an expected failure of the test absorb it, as after a throw", async () => {
+  // A retry runs the hooks again. For test.fails a failed hook is the failure that the test expects.
+  test.concurrent("a retry or test.fails absorbs it, as after a throw", async () => {
     const run = await likeAThrow(
       hook => `
         import { afterEach, beforeEach, describe, it, onTestFinished } from "bun:test";
         const attempts = { beforeEach: 0, afterEach: 0, onTestFinished: 0 };
-        describe("retry", () => {
-          describe("beforeEach", () => {
-            beforeEach(${hook("beforeEach failed in attempt 1", "++attempts.beforeEach === 1")});
-            it("passes in attempt 2", () => console.log("ran: after beforeEach " + attempts.beforeEach), { retry: 1 });
-          });
-          describe("afterEach", () => {
-            afterEach(${hook("afterEach failed in attempt 1", "++attempts.afterEach === 1")});
-            it("passes in attempt 2", () => console.log("ran: before afterEach"), { retry: 1 });
-          });
-          it("onTestFinished passes in attempt 2", () => {
-            onTestFinished(${hook("onTestFinished failed in attempt 1", "++attempts.onTestFinished === 1")});
-            console.log("ran: before onTestFinished");
-          }, { retry: 1 });
+        describe("beforeEach", () => {
+          beforeEach(${hook("beforeEach failed in attempt 1", "++attempts.beforeEach === 1")});
+          it("passes in attempt 2", () => console.log("ran: after beforeEach " + attempts.beforeEach), { retry: 1 });
         });
-        describe("test.failing", () => {
-          describe("afterEach", () => {
-            afterEach(${hook("afterEach failed after test.failing")});
-            it.failing("passes", () => {
-              throw new Error("the expected failure");
-            });
+        describe("afterEach", () => {
+          afterEach(${hook("afterEach failed in attempt 1", "++attempts.afterEach === 1")});
+          it("passes in attempt 2", () => console.log("ran: before afterEach"), { retry: 1 });
+        });
+        it("onTestFinished passes in attempt 2", () => {
+          onTestFinished(${hook("onTestFinished failed in attempt 1", "++attempts.onTestFinished === 1")});
+          console.log("ran: before onTestFinished");
+        }, { retry: 1 });
+        describe("test.fails", () => {
+          describe("beforeEach", () => {
+            beforeEach(${hook("beforeEach failed before test.fails")});
+            it.fails("passes", () => console.log("ran: the test.fails body"));
           });
-          it.failing("onTestFinished passes", () => {
-            onTestFinished(${hook("onTestFinished failed after test.failing")});
-            throw new Error("the expected failure");
+          describe("afterEach", () => {
+            afterEach(${hook("afterEach failed after test.fails")});
+            it.fails("passes", () => console.log("ran: before the afterEach of test.fails"));
           });
         });
       `,
@@ -469,22 +465,85 @@ describe("an error passed to a hook's done() fails that hook, like a throw from 
         "before afterEach",
         "before onTestFinished",
         "before onTestFinished",
+        "before the afterEach of test.fails",
       ],
       results: [
         "error: beforeEach failed in attempt 1",
-        "(pass) retry > beforeEach > passes in attempt 2 (attempt 2)",
+        "(pass) beforeEach > passes in attempt 2 (attempt 2)",
         "error: afterEach failed in attempt 1",
-        "(pass) retry > afterEach > passes in attempt 2 (attempt 2)",
+        "(pass) afterEach > passes in attempt 2 (attempt 2)",
         "error: onTestFinished failed in attempt 1",
-        "(pass) retry > onTestFinished passes in attempt 2 (attempt 2)",
-        "error: afterEach failed after test.failing",
-        "(pass) test.failing > afterEach > passes",
-        "error: onTestFinished failed after test.failing",
-        "(pass) test.failing > onTestFinished passes",
+        "(pass) onTestFinished passes in attempt 2 (attempt 2)",
+        "(pass) test.fails > beforeEach > passes",
+        "(pass) test.fails > afterEach > passes",
         "5 pass",
         "0 fail",
       ],
       exitCode: 0,
+    });
+  });
+
+  // Once the test has a result that is not a failure, the runner keeps it when a hook of that test fails. A throw
+  // from the hook is printed and fails nothing. The error of done() stays an unhandled error there, which fails the
+  // run. When a throw fails the test in these rows, ExecutionSequence::active_entry_can_fail() has to say so too.
+  test.concurrent("after the callback of a test.failing or todo test threw, it stays an unhandled error", async () => {
+    const files = (hook: Hook) => `
+      import { afterEach, describe, it, onTestFinished } from "bun:test";
+      const fail = () => {
+        throw new Error("the expected failure");
+      };
+      describe("test.failing", () => {
+        describe("afterEach", () => {
+          afterEach(${hook("afterEach failed after test.failing")});
+          it.failing("passes", fail);
+        });
+        it.failing("onTestFinished passes", () => {
+          onTestFinished(${hook("onTestFinished failed after test.failing")});
+          fail();
+        });
+      });
+      describe("test.todo", () => {
+        afterEach(${hook("afterEach failed after test.todo")});
+        it.todo("is todo", fail);
+      });
+    `;
+    const [done, thrown] = await Promise.all([
+      runFixture(files(hooks["done(err) before the hook returns"]), ["--todo"]),
+      runFixture(files(hooks["a throw"]), ["--todo"]),
+    ]);
+    expect(thrown).toEqual({
+      ran: [],
+      results: [
+        "error: afterEach failed after test.failing",
+        "(pass) test.failing > afterEach > passes",
+        "error: onTestFinished failed after test.failing",
+        "(pass) test.failing > onTestFinished passes",
+        "error: the expected failure",
+        "error: afterEach failed after test.todo",
+        "(todo) test.todo > is todo",
+        "2 pass",
+        "0 fail",
+      ],
+      exitCode: 0,
+    });
+    expect(done).toEqual({
+      ran: [],
+      results: [
+        "# Unhandled error between tests",
+        "error: afterEach failed after test.failing",
+        "(pass) test.failing > afterEach > passes",
+        "# Unhandled error between tests",
+        "error: onTestFinished failed after test.failing",
+        "(pass) test.failing > onTestFinished passes",
+        "error: the expected failure",
+        "# Unhandled error between tests",
+        "error: afterEach failed after test.todo",
+        "(todo) test.todo > is todo",
+        "2 pass",
+        "0 fail",
+        "3 errors",
+      ],
+      exitCode: 1,
     });
   });
 

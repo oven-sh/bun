@@ -284,6 +284,12 @@ impl ExecutionSequence {
         false
     }
 
+    /// Whether an error from the active entry can fail this sequence. Once the test has a result that is not a
+    /// failure, `Execution::handle_uncaught_exception` keeps that result when a hook fails.
+    pub(crate) fn active_entry_can_fail(&self) -> bool {
+        self.active_entry == self.test_entry || self.result == Result::Pending || self.result.is_fail()
+    }
+
     /// For `test.failing`, `Result::Pass` means the callback threw, which is a failed attempt here.
     fn attempt_failed(&self) -> bool {
         match self.entry_mode() {

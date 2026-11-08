@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -331,8 +331,9 @@ describe("node:test", () => {
 
   // A test body that an uncaught error left pending calls t.skip() while the next run of the same test is active.
   // The mark must not reach that run. Only a build whose allocator gives the entry of the next run the address of
-  // the freed one can get this wrong, and not in every run. A debug build needs minutes for the 600 runs.
-  test.skipIf(isDebug)("should not skip a test for a t.skip() from an earlier --rerun-each run", async () => {
+  // the freed one can get this wrong, and not in every run. ASAN keeps freed memory in quarantine, so an ASAN build
+  // never reuses the address. A debug build needs minutes for the 600 runs.
+  test.skipIf(isDebug || isASAN)("should not skip a test for a t.skip() from an earlier --rerun-each run", async () => {
     const { exitCode, stderr } = await runTests(["32-rerun-late-skip.mjs"], {}, ["--rerun-each=600"]);
     const lines = stderr.replaceAll("\r\n", "\n").split("\n");
     expect({

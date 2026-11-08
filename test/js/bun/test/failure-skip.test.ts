@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // `via` is how the fixture reports a failure: a throw, or the done callback of the hook or test.
-async function runFailureSkip(failurePoints: string[], via: "throw" | "done"): Promise<string> {
+async function runFailureSkip(failurePoints: string[], via: "throw" | "done") {
   const result = await Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/failure-skip.fixture.ts"],
     stdout: "pipe",
@@ -14,17 +14,18 @@ async function runFailureSkip(failurePoints: string[], via: "throw" | "done"): P
   const stderr = await result.stderr.text();
   const messages = stdout.matchAll(/%%<([^>]+)>%%/g);
 
-  return [...messages].map(([_, msg]) => msg).join(",");
+  return { ran: [...messages].map(([_, msg]) => msg).join(","), exitCode };
 }
 
-// A failure through done(err) skips what the same failure through a throw skips.
+// A failure through done(err) skips what the same failure through a throw skips, and both fail the run.
 async function testFailureSkip(failurePoints: string[]): Promise<string> {
   const [viaThrow, viaDone] = await Promise.all([
     runFailureSkip(failurePoints, "throw"),
     runFailureSkip(failurePoints, "done"),
   ]);
-  expect(viaDone).toBe(viaThrow);
-  return viaThrow;
+  expect(viaDone).toEqual(viaThrow);
+  expect(viaThrow.exitCode).toBe(failurePoints.length > 0 ? 1 : 0);
+  return viaThrow.ran;
 }
 
 describe("failure-skip", async () => {

@@ -415,14 +415,12 @@ fn run(
             && (Instant::now() > deadline || resident_bytes_of(child) > limits.memory_bytes)
         {
             hit_a_limit = true;
-            // SAFETY: takes integers.
-            unsafe { libc::kill(-child, libc::SIGKILL) };
+            bun_spawn::ffi::kill(-child, libc::SIGKILL);
         }
     }
     if child > 0 {
         // What the program started and left behind.
-        // SAFETY: takes integers.
-        unsafe { libc::kill(-child, libc::SIGKILL) };
+        bun_spawn::ffi::kill(-child, libc::SIGKILL);
     }
     let end = match libc::WIFSIGNALED(status) {
         _ if hit_a_limit => End::HitALimit,

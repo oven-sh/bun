@@ -1,0 +1,18 @@
+# without BuiltinCalls nobody looks at what is called, and without TypedOperations nobody knows which keys an object has: the call stays
+# RUN: walk f2 mechanisms=all-BuiltinCalls
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: = NewArray
+# CHECK: = Call
+# RUN(TYPED): walk f2 mechanisms=none+DirectCalls+BuiltinCalls
+# TYPED-LABEL: code f2:Body
+# TYPED-NOT: = NewArray
+# TYPED: ObjectValues
+# -- source: own-keys-of-an-object-in-sight-are-written-out.ts
+# declare function sink(...values: unknown[]): void;
+# function keys(i: number) { const o = { a: i, b: 1 }; return Object.keys(o); }
+# function values(i: number) { const o = { a: i, b: 1 }; return Object.values(o); }
+# function entries(i: number) { const o = { a: i, b: 1 }; return Object.entries(o); }
+# function handed(i: number) { const o = { c: i, d: 1 }; sink(o); return Object.values(o); }
+# sink(keys, values, entries, handed);
+# -- end of source
+# f1 = keys, f2 = values, f3 = entries, f4 = handed

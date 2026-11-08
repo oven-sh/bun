@@ -5,7 +5,7 @@ use bun_ast::Log;
 use bun_core::strings;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::fold::{Constant, Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
-use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::hir_from_data::DataModule;
 use bun_sema::session::Arena;
 
 use self::DefinedValue::GlobalPath;
@@ -18,10 +18,10 @@ use crate::ir::{
     TypeId, ValueId, ValueView, print_function,
 };
 use crate::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, ModuleName, Resolution, ResolveRequest,
+    DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, ModuleName, Resolution, ResolveRequest,
     SourceFile, SourceProvider, WithoutServices,
 };
-use crate::lower::Fragment;
+use crate::lower::{Fragment, UnitTables};
 
 const IS_FREE_NAME: u32 = 1 << 0;
 const IS_FOR_TYPE_OF: u32 = 1 << 1;
@@ -117,28 +117,8 @@ impl SourceProvider for Defines<'_> {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed> {
+    ) -> Result<DataModule<'s>, DataFailure> {
         WithoutServices.parse_data(file, arena, atoms, log)
-    }
-
-    fn run_macro<'s>(
-        &self,
-        call: &MacroCall<'_, 's>,
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        WithoutServices.run_macro(call, arena, atoms, log)
-    }
-
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        WithoutServices.bundle_pages(pages, arena, atoms, log)
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
@@ -250,15 +230,16 @@ fn decode_call(operation: ValueView<'_>) -> CallOperation {
 
 struct Probe {
     fragment: Fragment,
+    tables: Box<UnitTables>,
     index: usize,
 }
 
 impl fmt::Display for Probe {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let names = NameTables {
-            strings: &self.fragment.strings,
-            property_keys: &self.fragment.property_keys,
-            types: &self.fragment.types,
+            strings: &self.tables.strings,
+            property_keys: &self.tables.property_keys,
+            types: &self.tables.types,
         };
         let (id, function) = &self.fragment.functions[self.index];
         let mut text = String::new();
@@ -331,12 +312,12 @@ impl Probe {
     }
 
     fn string_text(&self, string: StringId) -> &BStr {
-        BStr::new(self.fragment.strings.get(string))
+        BStr::new(self.tables.strings.get(string))
     }
 
     #[track_caller]
     fn key_text(&self, key: PropertyKeyId) -> &BStr {
-        let text = self.fragment.property_keys.get(key).text;
+        let text = self.tables.property_keys.get(key).text;
         self.string_text(text.expect("the key is a text"))
     }
 
@@ -378,7 +359,7 @@ impl Probe {
         let (Opcode::Convert, &[_, expected, ..]) = (conversion.opcode, conversion.fields) else {
             panic!("{} is no Convert:\n{self}", conversion.id);
         };
-        let expected = self.fragment.types.get(TypeId::from_word(expected));
+        let expected = self.tables.types.get(TypeId::from_word(expected));
         &expected.builtins
     }
 
@@ -410,7 +391,7 @@ impl Probe {
     fn reads_of(&self, name: &str) -> Vec<PropertyRead> {
         let mut reads = self.reads();
         reads.retain(|read| {
-            let text = self.fragment.property_keys.get(read.key).text;
+            let text = self.tables.property_keys.get(read.key).text;
             text.is_some_and(|text| self.string_text(text) == name)
         });
         reads
@@ -444,7 +425,7 @@ impl Probe {
         self.function().body.for_each_reference(&mut |reference| {
             let string = match reference {
                 Reference::String(string) => Some(string),
-                Reference::PropertyKey(key) => self.fragment.property_keys.get(key).text,
+                Reference::PropertyKey(key) => self.tables.property_keys.get(key).text,
                 _ => None,
             };
             is_named |= string.is_some_and(|string| self.string_text(string) == text);
@@ -459,12 +440,17 @@ fn lower_file(defines: &[(&str, DefinedValue)], name: &str, source: &str) -> Pro
     let mut lowered = lower_program_with_provider(&files, &default_settings(), &provider);
     assert_eq!(lowered.len(), 1);
     let fragment = lowered.remove(0).1.fragment;
+    let tables = fragment.tables.take();
     let index = fragment.functions.iter().position(|(_, function)| {
-        let text = function.name.map(|name| fragment.strings.get(name));
+        let text = function.name.map(|name| tables.strings.get(name));
         text == Some(&b"probe"[..])
     });
     let index = index.expect("the file defines a function named probe");
-    Probe { fragment, index }
+    Probe {
+        fragment,
+        tables,
+        index,
+    }
 }
 
 fn lower_body(defines: &[(&str, DefinedValue)], body: &str) -> Probe {
@@ -503,6 +489,33 @@ fn local_binding_is_not_the_defined_name() {
     let probe = lower_file(PATHS, "main.js", source);
     probe.expect_parameter(probe.returned());
     assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
+    assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+}
+
+#[test]
+fn name_in_place_is_the_binding_at_hand() {
+    let source = "export function probe(probeTarget) { return PROBE_NAME; }";
+    let probe = lower_file(PATHS, "main.js", source);
+    probe.expect_parameter(probe.returned());
+    assert_eq!(probe.count(Opcode::PropGet), 0, "{probe}");
+    assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+
+    let source = "export function probe(Symbol) { return PROBE_SYMBOL; }";
+    let probe = lower_file(BUILTINS, "main.js", source);
+    probe.expect_parameter(probe.returned());
+    assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+}
+
+#[test]
+fn first_name_of_a_path_in_place_is_the_binding_at_hand() {
+    let source = "export function probe(probeHolder) { return PROBE_PATH; }";
+    let probe = lower_file(PATHS, "main.js", source);
+    assert_eq!(probe.count(Opcode::PropGet), 2, "{probe}");
+    assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
+
+    let source = "export function probe(probeHolder) { return process.env.PROBE_ALIAS; }";
+    let probe = lower_file(PATHS, "main.js", source);
+    assert_eq!(probe.count(Opcode::PropGet), 1, "{probe}");
     assert_eq!(probe.count(Opcode::Builtin), 0, "{probe}");
 }
 
@@ -673,6 +686,18 @@ fn typeof_defined_name() {
         path.reads().iter().all(|read| !read.is_for_type_of),
         "{path}"
     );
+}
+
+#[test]
+fn typeof_path_that_a_define_turns_into_a_name() {
+    let defines = [("holder.flag", GlobalPath("probeTarget"))];
+    for body in ["return typeof holder.flag;", "return typeof (holder.flag);"] {
+        let probe = lower_body(&defines, body);
+        let operand = ValueId::from_word(probe.only(Opcode::TypeOf).fields[0]);
+        let read = probe.read_of(operand);
+        assert!(read.is_free_name && !read.is_for_type_of, "{probe}");
+        probe.expect_path(operand, &["probeTarget"]);
+    }
 }
 
 #[test]

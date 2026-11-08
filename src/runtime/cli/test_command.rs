@@ -1739,11 +1739,9 @@ pub(crate) fn react_compiler_filter(
                 let absolute =
                     resolve_path::join_abs_string::<bun_path::platform::Auto>(root, &[written]);
                 let absolute = with_forward_slashes(absolute);
-                // Without its `./`, a `!` that came after it would start the pattern and negate it.
-                let written = match written.strip_prefix(b"./") {
-                    Some(rest) => bun_glob::literal_head(rest),
-                    None => std::borrow::Cow::Borrowed(written),
-                };
+                // The matcher negates a pattern that starts with `!`. An entry names a folder or files, and `exclude` leaves them out.
+                let written =
+                    bun_glob::literal_head(written.strip_prefix(b"./").unwrap_or(written));
                 ReactCompilerEntry {
                     written: Box::from(&*written),
                     absolute: Box::from(absolute.strip_suffix(b"/").unwrap_or(&absolute)),

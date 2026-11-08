@@ -5,6 +5,8 @@
 test/cli/test/bun-test.test.ts: --react-compiler > a compiled file is cached whatever its size ["--react-compiler"]
 test/cli/test/bun-test.test.ts: --react-compiler > a pattern
 test/cli/test/bun-test.test.ts: --react-compiler > exclude alone
+test/cli/test/bun-test.test.ts: --react-compiler > excluding such a folder
+test/cli/test/bun-test.test.ts: --react-compiler > excluding such a folder after `./`
 test/cli/test/bun-test.test.ts: --react-compiler > false, and the flag
 test/cli/test/bun-test.test.ts: --react-compiler > folders
 test/cli/test/bun-test.test.ts: --react-compiler > in a workspace, run from apps/web > "." is the run directory

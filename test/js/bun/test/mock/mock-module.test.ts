@@ -6859,7 +6859,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
   const partlyMocked = `[0.2, "USD", 12, "12 USD", 1]`;
   const whollyMocked = `[0.5, "USD", 20, "20 USD", 1]`;
 
-  test.each(isolationFlags)("is evaluated first, so the mock isn't assigned over %j", async args => {
+  test.each(isolationFlags)("is patched once its body has run, so the mock isn't assigned over %j", async args => {
     await expectFixturesToPass(
       {
         ...linked("importOriginal, import statement", spreadsOriginal + statement, partlyMocked),
@@ -6894,7 +6894,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
     );
   });
 
-  // Its body can't run at once then, and would assign over a patch that is made before it.
+  // Its body runs when that factory has settled, and would assign over a patch that is made before it.
   test.each(isolationFlags)("an import of its own has an async factory from a preload %j", async args => {
     await expectFixturesToPass(
       {
@@ -6932,6 +6932,44 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
       },
       1,
       args,
+    );
+  });
+
+  // The mock patches the module right behind its body, so a module that imports it reads the mock while it loads too.
+  test("an import of its own has an async factory from a preload, and its importer reads it while it loads", async () => {
+    await expectFixturesToPass(
+      {
+        "bunfig.toml": `[test]\npreload = ["./mocks-region.ts"]`,
+        "mocks-region.ts": `
+          import { vi } from "bun:test";
+          vi.mock("./region", async importOriginal => ({ ...(await importOriginal()) }));
+        `,
+        "region.ts": `export const region = "EU";`,
+        "tax.ts": `
+          import { region } from "./region";
+          export const rate = region === "EU" ? 0.2 : 0.1;
+          export let label = "real " + region;
+          export class Tax {}
+          export function round() { return "real"; }
+        `,
+        "invoice.ts": `
+          import { rate, label, round, Tax } from "./tax";
+          export const atLoad = [rate, label, round(), Tax.name];
+        `,
+        "mocks-tax.ts": `
+          import { vi } from "bun:test";
+          vi.mock("./tax", () => ({ rate: 1, label: "mock", round: () => "mock", Tax: class Mock {} }));
+        `,
+        "linked.test.ts": `
+          import "./mocks-tax";
+          import { expect, test } from "bun:test";
+          import { atLoad } from "./invoice";
+          test("every kind of export is the mock's while the importer loads", () => {
+            expect(atLoad).toEqual([1, "mock", "mock", "Mock"]);
+          });
+        `,
+      },
+      1,
     );
   });
 
@@ -7235,7 +7273,9 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
             await expect(import("./all")).rejects.toThrow("throws.ts threw");
             vi.mock("./tax", () => ({ rate: 0.5 }));
             expect((await import("./tax")).rate).toBe(0.5);
-            expect(() => vi.mock("./throws-too", async importOriginal => ({ ...(await importOriginal()) }))).toThrow("throws-too.ts threw");
+            // The mock doesn't run the module. Whatever imports the module does, and that is where its error is thrown.
+            vi.mock("./throws-too", async importOriginal => ({ ...(await importOriginal()) }));
+            await expect(import("./throws-too")).rejects.toThrow("throws-too.ts threw");
           });
         `,
       },
@@ -8685,6 +8725,568 @@ describe.concurrent("a module that is mocked while a module which imports it has
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("SyntaxError: Export named 'extra' not found in module");
     expect(exitCode).toBe(1);
+  });
+
+  // The module that makes the mock may be an ES module too. It runs when the imports of its importer are all linked, whatever
+  // the order in which the loader is handed the files. So the module that it mocks is linked, and its body has yet to start.
+  // The mock waits for that body, which runs in its turn, and patches the module right behind it.
+  describe("by an ES module, when the module is linked and its body has yet to start", () => {
+    type Options = NonNullable<Parameters<typeof asked>[3]>;
+    // asked() with mocks.mjs in the place of mocks.cjs.
+    const askedByESModule = (name: string, mocks: string, expected: string, options: Options = {}) => {
+      const { [`${name}/mocks.cjs`]: _, ...files } = asked(name, "", expected, { first: "./mocks.mjs", ...options });
+      return { ...files, [`${name}/mocks.mjs`]: `import { jest, mock, vi } from "bun:test";\n${mocks}` };
+    };
+    const setUp = (name: string) => `(globalThis.isSetUp ??= {})[${JSON.stringify(name)}] = true;`;
+    const afterSetup = (name: string, rest = `export const rate = "real";`) => `
+      if (!globalThis.isSetUp?.[${JSON.stringify(name)}]) throw new Error("the module ran before the setup file");
+      ${count(name)};
+      ${rest}
+    `;
+    // The test file imports setup.mjs between the module that makes the mock and the module that is mocked, and the module
+    // throws if it runs ahead of it.
+    const behindSetup = (name: string, mocks: string, expected: string, options: Options = {}) => ({
+      ...askedByESModule(name, mocks, expected, { then: `import "./setup.mjs";`, tax: afterSetup(name), ...options }),
+      [`${name}/setup.mjs`]: setUp(name),
+    });
+    const everyDelivery: [string, Delivery][] = [
+      ["by the transpiler threads", byThreads],
+      ["at once", atOnce],
+    ];
+
+    describe.each(functions)("%s() patches it behind its body, whatever it is", fn => {
+      test.each(everyDelivery)("with the files handed back %s", async (_, delivery) => {
+        const of = (kind: string) => `${fn}() of ${kind}`;
+        const pkg = (type: string) => `${type}-tax-${functions.indexOf(fn)}`;
+        const files = {
+          ...behindSetup(of("an ES module"), mocks("./tax.js", fn), mocked),
+          ...behindSetup(of("a TypeScript file"), mocks("./tax.ts", fn), mocked, { specifier: "./tax.ts" }),
+          ...behindSetup(of("an ES package"), mocks(pkg("esm"), fn), mocked, { specifier: pkg("esm") }),
+          [`node_modules/${pkg("esm")}/package.json`]: `{ "name": "${pkg("esm")}", "type": "module", "main": "index.js" }`,
+          [`node_modules/${pkg("esm")}/index.js`]: afterSetup(of("an ES package")),
+          // The loader has run a CommonJS module by the time it runs the first ES module, so that one is patched at the call.
+          ...askedByESModule(
+            of("a CommonJS module"),
+            mocks("./tax.cjs", fn),
+            mocked,
+            commonJS(of("a CommonJS module")),
+          ),
+          ...askedByESModule(of("a CommonJS package"), mocks(pkg("cjs"), fn), mocked, { specifier: pkg("cjs") }),
+          [`node_modules/${pkg("cjs")}/package.json`]: `{ "name": "${pkg("cjs")}", "main": "index.js" }`,
+          [`node_modules/${pkg("cjs")}/index.js`]: `${count(of("a CommonJS package"))}; exports.rate = "real";`,
+          ...askedByESModule(
+            of("a JSON file"),
+            mocks("./tax.json", fn, `{ default: { rate: "mock" }, rate: "mock" }`),
+            `["mock", "mock", "mock", 0]`,
+            { specifier: "./tax.json", tax: `{ "rate": "real" }` },
+          ),
+          ...askedByESModule(
+            of("a text file"),
+            mocks("./tax.txt", fn, `{ default: "mock" }`),
+            `["mock", "mock", "mock", 0]`,
+            {
+              specifier: "./tax.txt",
+              exported: "default",
+              tax: "real",
+            },
+          ),
+          ...askedByESModule(
+            of("a builtin"),
+            mocks("node:path", fn, `{ sep: "mock" }`),
+            `["mock", "mock", "mock", 0]`,
+            {
+              specifier: "node:path",
+              exported: "sep",
+            },
+          ),
+        };
+        await expectFixturesToPassWith(delivery, files, 8);
+      });
+    });
+
+    test("wherever the module that mocks it is, and whatever the module imports", async () => {
+      // The two modules of a cycle run one after the other, and the one that the graph comes to first runs last.
+      const cycle = (name: string, then: string, atLoad: string) => ({
+        ...askedByESModule(
+          name,
+          `mock.module("./tax.js", () => ({ rate: () => "mock" }));`,
+          `[expect.any(Function), "${atLoad}", "mock", 1, "mock"]`,
+          {
+            then,
+            tax: `import { now } from "./cart.js"; ${count(name)}; export function rate() { return "real"; } export const fromCart = () => now();`,
+            seen: "rate()",
+          },
+        ),
+        [`${name}/cart.js`]: `import { rate } from "./tax.js"; export const atLoad = rate(); export const now = () => rate();`,
+      });
+      const files = {
+        ...behindSetup("behind an ES module", mocks(), mocked, { first: "./first.js" }),
+        "behind an ES module/first.js": `import "./mocks.mjs";`,
+        ...behindSetup("with a third importer", mocks(), mocked, {
+          imports: `
+            import { atLoad as atLoadOfThird, now as nowOfThird } from "./third.js";
+            test("the third importer", () => expect([atLoadOfThird, nowOfThird()]).toEqual(["mock", "mock"]));
+          `,
+        }),
+        "with a third importer/third.js": `import { rate } from "./tax.js"; export const atLoad = rate; export const now = () => rate;`,
+        ...askedByESModule("a CommonJS module between them", mocks(), mocked, {
+          then: `import "./setup.cjs";`,
+          tax: afterSetup("a CommonJS module between them"),
+        }),
+        "a CommonJS module between them/setup.cjs": setUp("a CommonJS module between them"),
+        // A module that is in a cycle with it, and that runs ahead of it, reads what the module has before its body runs.
+        ...cycle("in a cycle that the graph comes to at the module", ``, "real"),
+        ...cycle("in a cycle that the graph comes to at its importer", `import "./cart.js";`, "mock"),
+        // The module behind a module that exports it again is the one that has the export, so it is the one that is patched.
+        ...behindSetup("through a module that exports it again", mocks("./barrel.js"), mocked, {
+          specifier: "./barrel.js",
+          imports: `
+            import { rate as behind } from "./tax.js";
+            test("the module behind it", () => expect(behind).toBe("mock"));
+          `,
+        }),
+        "through a module that exports it again/barrel.js": `export * from "./tax.js";`,
+        "through a module that exports it again/tax.js": afterSetup("through a module that exports it again"),
+        // The loader has yet to come to the module, or is running what the module imports, or waits for an import of it that awaits.
+        ...askedByESModule("that imports the module which mocks it", mocks(), mocked, {
+          tax: `import "./mocks.mjs"; ${count("that imports the module which mocks it")}; export const rate = "real";`,
+        }),
+        ...askedByESModule(
+          "that the test file imports first, and that imports the module which mocks it",
+          mocks(),
+          mocked,
+          {
+            first: "./tax.js",
+            tax: `import "./mocks.mjs"; ${count("that the test file imports first, and that imports the module which mocks it")}; export const rate = "real";`,
+          },
+        ),
+        ...askedByESModule(
+          "that imports the module which mocks it, which awaits first",
+          `await null; ${mocks()}`,
+          mocked,
+          {
+            tax: `import "./mocks.mjs"; ${count("that imports the module which mocks it, which awaits first")}; export const rate = "real";`,
+          },
+        ),
+        ...behindSetup("by a module that awaits then", `${mocks()} await null;`, mocked),
+        // A factory is called when its module has run, so the factories are called in the order of the imports.
+        ...behindSetup(
+          "with another module, which the test file imports ahead of it",
+          `
+            globalThis.factories = [];
+            mock.module("./tax.js", () => (globalThis.factories.push("tax.js"), { rate: "mock" }));
+            mock.module("./other.js", () => (globalThis.factories.push("other.js"), { other: "mock" }));
+          `,
+          `["mock", "mock", "mock", 1, "mock", ["other.js", "tax.js"]]`,
+          { then: `import "./setup.mjs"; import { other } from "./other.js";`, seen: "other, globalThis.factories" },
+        ),
+        "with another module, which the test file imports ahead of it/other.js": `export const other = "real";`,
+        // Its body runs when the test reads the module, and not before.
+        "that the test file defers/mocks.mjs": `import { mock } from "bun:test";\n${mocks()}`,
+        "that the test file defers/setup.mjs": setUp("that the test file defers"),
+        "that the test file defers/tax.js": afterSetup("that the test file defers"),
+        "that the test file defers/asked.test.js": `
+          import "./mocks.mjs";
+          import "./setup.mjs";
+          import defer * as tax from "./tax.js";
+          import { expect, test } from "bun:test";
+          test("that the test file defers", () => {
+            expect(${counted("that the test file defers")}).toBe(0);
+            expect([tax.rate, ${counted("that the test file defers")}]).toEqual(["mock", 1]);
+          });
+        `,
+      };
+      await expectFixturesToPass(files, 14);
+    });
+
+    test("and is the original again when the mock is removed before its body runs", async () => {
+      // [the module as its importers see it, how often its body ran, how often the factory was called]
+      const removed = (name: string, fn: string, remove: string) =>
+        askedByESModule(
+          name,
+          `${fn}("./tax.js", () => (${count(`the factory of ${name}`)}, { rate: "mock" }))${remove}`,
+          `["real", "real", "real", 1, 0]`,
+          { seen: counted(`the factory of ${name}`) },
+        );
+      const files = {
+        ...removed("vi.unmock", "vi.mock", `; vi.unmock("./tax.js");`),
+        ...removed("jest.unmock", "jest.mock", `; jest.unmock("./tax.js");`),
+        ...removed("vi.doUnmock", "vi.doMock", `; vi.doUnmock("./tax.js");`),
+        ...removed("jest.dontMock", "jest.doMock", `; jest.dontMock("./tax.js");`),
+        ...removed("[Symbol.dispose]", "vi.doMock", `[Symbol.dispose]();`),
+        // The factory of a mock that another mock replaces before the module has run is never called.
+        ...askedByESModule(
+          "mocked again",
+          `mock.module("./tax.js", () => (${count("the factory that is replaced")}, { rate: "first" })); ${mocks()}`,
+          `["mock", "mock", "mock", 1, 0]`,
+          { seen: counted("the factory that is replaced") },
+        ),
+        ...askedByESModule(
+          "mocked, not mocked, and mocked again",
+          `vi.doMock("./tax.js", () => ({ rate: "first" })); vi.doUnmock("./tax.js"); ${mocks("./tax.js", "vi.doMock")}`,
+          mocked,
+        ),
+        // Until the mock patches the module, require() gets what the factory returns, and the body has yet to run.
+        ...askedByESModule(
+          "required by the module that mocks it",
+          `${mocks()} globalThis.required = [require("./tax.js").rate, ${counted("required by the module that mocks it")}];`,
+          `["mock", "mock", "mock", 1, ["mock", 0]]`,
+          { seen: "globalThis.required" },
+        ),
+        // vi.doUnmock() is not hoisted above the calls before it, as vi.unmock() is.
+        ...askedByESModule(
+          "required, and then not mocked any more",
+          `${mocks()} globalThis.required = require("./tax.js").rate; vi.doUnmock("./tax.js");`,
+          `["real", "real", "real", 1, "mock"]`,
+          { seen: "globalThis.required" },
+        ),
+        ...askedByESModule(
+          "required, and then mocked again",
+          `${mocks("./tax.js", "mock.module", `{ rate: "first" }`)} const first = require("./tax.js").rate; ${mocks()} globalThis.required = [first, require("./tax.js").rate];`,
+          `["mock", "mock", "mock", 1, ["first", "mock"]]`,
+          { seen: "globalThis.required" },
+        ),
+      };
+      await expectFixturesToPass(files, 10);
+    });
+
+    test("whatever the mock is made of", async () => {
+      const returnsReal = (name: string) => `${count(name)}; export const rate = () => "real";`;
+      const kept = (name: string) => ({
+        tax: `${count(name)}; export const rate = "real"; export const other = "kept";`,
+        imports: `import { other } from "./tax.js";`,
+        seen: "other",
+      });
+      const files = {
+        // A factory is called when the body of its module has run, which is after the body of the module that made the mock.
+        ...askedByESModule(
+          "a factory that reads a variable assigned after the call",
+          `let made; mock.module("./tax.js", () => ({ rate: made })); made = "mock";`,
+          mocked,
+        ),
+        ...askedByESModule(
+          "a factory that reads a constant declared after the call",
+          `mock.module("./tax.js", () => ({ rate: MADE })); const MADE = "mock";`,
+          mocked,
+        ),
+        ...askedByESModule(
+          "a hoisted factory that reads a constant declared after the call",
+          `vi.mock("./tax.js", () => ({ rate: MADE })); const MADE = "mock";`,
+          mocked,
+        ),
+        // Its importers don't wait for a factory that is pending. The tests do. The call returns nothing to wait for.
+        ...askedByESModule(
+          "an async factory",
+          `globalThis.returned = mock.module("./tax.js", async () => (await null, { rate: "mock" }));`,
+          `["mock", "real", "mock", 1, undefined]`,
+          { seen: "globalThis.returned" },
+        ),
+        ...askedByESModule(
+          "a factory that takes the original",
+          `mock.module("./tax.js", async importOriginal => ({ ...(await importOriginal()), rate: "mock" }));`,
+          `["mock", "real", "mock", 1, "kept"]`,
+          kept("a factory that takes the original"),
+        ),
+        ...askedByESModule(
+          "a factory that awaits vi.importActual()",
+          `vi.mock("./tax.js", async () => ({ ...(await vi.importActual("./tax.js")), rate: "mock" }));`,
+          `["mock", "real", "mock", 1, "kept"]`,
+          kept("a factory that awaits vi.importActual()"),
+        ),
+        // The module has run when the factory is called, so the factory gets the module itself, not a second copy of it.
+        ...askedByESModule(
+          "a factory that requires the original",
+          `mock.module("./tax.js", () => ({ ...require("./tax.js"), rate: "mock" }));`,
+          `["mock", "mock", "mock", 1, "kept"]`,
+          kept("a factory that requires the original"),
+        ),
+        ...askedByESModule(
+          "a factory that calls jest.requireActual()",
+          `jest.mock("./tax.js", () => ({ ...jest.requireActual("./tax.js"), rate: "mock" }));`,
+          `["mock", "mock", "mock", 1, "kept"]`,
+          kept("a factory that calls jest.requireActual()"),
+        ),
+        // The module that the mock waits for is the original. Whoever asks for the original while the mock waits gets that
+        // module, whose body runs once: at once for jest.requireActual(), and in its turn for vi.importActual().
+        ...askedByESModule(
+          "vi.importActual() by the module that mocks it",
+          `${mocks()} globalThis.actual = (await vi.importActual("./tax.js")).rate;`,
+          `["mock", "mock", "mock", 1, "real"]`,
+          { seen: "globalThis.actual" },
+        ),
+        ...askedByESModule(
+          "jest.requireActual() by the module that mocks it",
+          `${mocks()} globalThis.actual = [jest.requireActual("./tax.js").rate, ${counted("jest.requireActual() by the module that mocks it")}];`,
+          `["mock", "mock", "mock", 1, ["real", 1]]`,
+          { seen: "globalThis.actual" },
+        ),
+        ...askedByESModule(
+          "no factory",
+          `vi.mock("./tax.js");`,
+          `[expect.any(Function), expect.any(Function), expect.any(Function), 1, undefined, undefined]`,
+          { tax: returnsReal("no factory"), seen: "atLoad(), now()()" },
+        ),
+        ...askedByESModule(
+          "a spy",
+          `vi.mock("./tax.js", { spy: true });`,
+          `[expect.any(Function), expect.any(Function), expect.any(Function), 1, "real", 1]`,
+          { tax: returnsReal("a spy"), seen: "atLoad(), atLoad.mock.calls.length" },
+        ),
+        ...askedByESModule("a file in __mocks__", `vi.mock("./tax.js");`, `["mock", "real", "mock", 1]`),
+        "a file in __mocks__/__mocks__/tax.js": `export const rate = "mock";`,
+        ...askedByESModule(
+          "every kind of export",
+          `mock.module("./tax.js", () => ({ default: "mock", rate: "mock", round: () => "mock", Tax: class Mock {}, unit: "mock" }));`,
+          `["mock", "mock", "mock", 1, ["mock", "mock", "Mock", "mock"]]`,
+          {
+            tax: `${count("every kind of export")}; export const rate = "real"; export default "real"; export function round() { return "real"; } export class Tax {} export var unit = "real";`,
+            imports: `import byDefault, { round, Tax, unit } from "./tax.js";`,
+            seen: "[byDefault, round(), Tax.name, unit]",
+          },
+        ),
+        // A module that awaits at its top level is patched when its evaluation has settled. Its importers have run by then.
+        ...askedByESModule("a module that awaits", mocks(), `["mock", "last", "mock", 1]`, {
+          tax: `${count("a module that awaits")}; export let rate = "real"; await null; rate = "last";`,
+        }),
+        ...askedByESModule("a module that may await and doesn't", mocks(), mocked, {
+          tax: `${count("a module that may await and doesn't")}; export const rate = "real"; if (globalThis.neverSet) await null;`,
+        }),
+      };
+      await expectFixturesToPass(files, 16);
+    });
+
+    // The modules that are linked to the module read it whatever the registry has under its name when its body runs.
+    test("and the registry is reset, or lets go of the module, before its body runs", async () => {
+      const files = {
+        ...behindSetup("jest.resetModules()", `${mocks()} jest.resetModules();`, mocked),
+        ...behindSetup("vi.resetModules()", `${mocks()} vi.resetModules();`, mocked),
+        // The next import of the module loads the mock, whose factory is not called a second time.
+        ...behindSetup(
+          "jest.resetModules(), and the test imports the module again",
+          `mock.module("./tax.js", () => (${count("the factory that is called once")}, { rate: "mock" })); jest.resetModules();`,
+          `["mock", "mock", "mock", 1, "mock", 1]`,
+          {
+            imports: `const again = await import("./tax.js");`,
+            seen: `again.rate, ${counted("the factory that is called once")}`,
+          },
+        ),
+        ...behindSetup(
+          "required, and then jest.resetModules()",
+          `${mocks()} globalThis.required = require("./tax.js").rate; jest.resetModules();`,
+          `["mock", "mock", "mock", 1, "mock"]`,
+          { seen: "globalThis.required" },
+        ),
+        ...askedByESModule(
+          "no factory, and then vi.resetModules()",
+          `vi.mock("./tax.js"); vi.resetModules();`,
+          `[expect.any(Function), expect.any(Function), expect.any(Function), 1, undefined]`,
+          {
+            tax: `${count("no factory, and then vi.resetModules()")}; export const rate = () => "real";`,
+            seen: "atLoad()",
+          },
+        ),
+        ...askedByESModule(
+          "a spy, and then vi.resetModules()",
+          `vi.mock("./tax.js", { spy: true }); vi.resetModules();`,
+          `[expect.any(Function), expect.any(Function), expect.any(Function), 1, "real", 1]`,
+          {
+            tax: `${count("a spy, and then vi.resetModules()")}; export const rate = () => "real";`,
+            seen: "atLoad(), atLoad.mock.calls.length",
+          },
+        ),
+        ...behindSetup("delete require.cache", `${mocks()} delete require.cache[require.resolve("./tax.js")];`, mocked),
+      };
+      await expectFixturesToPass(files, 7);
+    });
+
+    // shop.mjs imports the module that makes the mock, the setup file, the module and cart.js, in that order.
+    const graph = (name: string) => ({
+      [`${name}/mocks.mjs`]: `import { mock } from "bun:test";\n${mocks()}`,
+      [`${name}/setup.mjs`]: setUp(name),
+      [`${name}/tax.js`]: afterSetup(name),
+      [`${name}/cart.js`]: `import { rate } from "./tax.js"; export const atLoad = rate; export const now = () => rate;`,
+      [`${name}/shop.mjs`]: `
+        import "./mocks.mjs";
+        import "./setup.mjs";
+        import { rate } from "./tax.js";
+        import { atLoad, now } from "./cart.js";
+        export const seen = () => [rate, atLoad, now(), ${counted(name)}];
+      `,
+    });
+
+    test.each(isolationFlags)("whatever loads the graph %j", async args => {
+      const files = {
+        ...graph("a module that the test file imports"),
+        "a module that the test file imports/asked.test.js": `
+          import { seen } from "./shop.mjs";
+          import { expect, test } from "bun:test";
+          test("a module that the test file imports", () => expect(seen()).toEqual(${mocked}));
+        `,
+        ...graph("import() in a test"),
+        "import() in a test/asked.test.js": `
+          import { expect, test } from "bun:test";
+          test("import() in a test", async () => expect((await import("./shop.mjs")).seen()).toEqual(${mocked}));
+        `,
+        ...graph("require() in a test"),
+        "require() in a test/asked.test.js": `
+          import { expect, test } from "bun:test";
+          test("require() in a test", () => expect(require("./shop.mjs").seen()).toEqual(${mocked}));
+        `,
+      };
+      await expectFixturesToPass(files, 3, args);
+    });
+
+    test("in a preload, in a program that bun runs, and in one that bun -p prints", async () => {
+      using dir = tempDir("mock-module", {
+        ...graph("preload"),
+        "pre.mjs": `import { seen } from "./preload/shop.mjs"; globalThis.seenByPreload = seen();`,
+        "pre.test.js": `
+          import { expect, test } from "bun:test";
+          test("the preload", () => expect(globalThis.seenByPreload).toEqual(${mocked}));
+        `,
+        ...graph("program"),
+        "entry.mjs": `
+          import { seen } from "./program/shop.mjs";
+          export const all = () => seen().join(" ");
+          if (process.argv.includes("print")) console.log(all());
+        `,
+      });
+      for (const [cmd, expected] of [
+        [[bunExe(), "entry.mjs", "print"], { stdout: "mock mock mock 1\n", stderr: "" }],
+        [[bunExe(), "-p", `(await import("./entry.mjs")).all()`], { stdout: "mock mock mock 1\n", stderr: "" }],
+        [
+          [bunExe(), "test", "--preload", "./pre.mjs", "./pre.test.js"],
+          { stdout: expect.any(String), stderr: expect.stringContaining(" 1 pass\n 0 fail\n") },
+        ],
+      ] as const) {
+        await using proc = Bun.spawn({ cmd: [...cmd], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr: stderr.trim() && stderr, exitCode }).toEqual({ ...expected, exitCode: 0 });
+      }
+    });
+
+    // Every test file is asked.test.js under a name of its own.
+    test.each([...isolationFlags, [["--parallel=2"]]] as [string[]][])(
+      "for every test file that imports the module which mocks it %j",
+      async args => {
+        const sharedByESModule = (name: string, mocks: string, expected: (file: number) => string) => {
+          const files: Record<string, string> = {};
+          for (let file = 1; file <= 3; file++) {
+            const { [`${name}/asked.test.js`]: test, ...others } = behindSetup(name, mocks, expected(file));
+            Object.assign(files, others, { [`${name}/${file}.test.js`]: test });
+          }
+          return files;
+        };
+        const files = {
+          // A module that an earlier file has left loaded is patched at the call, like every module that has loaded, and the
+          // factory is called then. A file that starts with nothing loaded, as each one does with --isolate, is a first file.
+          ...sharedByESModule(
+            "a factory that reads what is assigned after the call",
+            `let made; mock.module("./tax.js", () => ({ rate: made })); made = "mock";`,
+            file => (file === 1 || args.length ? mocked : `[undefined, undefined, undefined, 1]`),
+          ),
+          ...(args.length ? {} : sharedByESModule("a factory that reads nothing", mocks(), () => mocked)),
+        };
+        await expectFixturesToPass(files, inOrder(files).length, [...args, ...inOrder(files)]);
+      },
+    );
+
+    // What a factory throws is thrown where the factory is called, which is behind the body of the module.
+    test("a factory that throws fails the load of the module, and not the call that made the mock", async () => {
+      using dir = tempDir("mock-module", {
+        "mocks.mjs": `
+          import { mock } from "bun:test";
+          try {
+            mock.module("./tax.js", () => { throw new Error("the factory threw"); });
+            console.log("the call returned");
+          } catch {
+            console.log("the call threw");
+          }
+        `,
+        "tax.js": `console.log("the module ran"); export const rate = "real";`,
+        "throws.test.js": `
+          import "./mocks.mjs";
+          import { rate } from "./tax.js";
+          import { test } from "bun:test";
+          test("never runs", () => {});
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./throws.test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("the call returned\nthe module ran\n");
+      expect(stderr).toContain("error: the factory threw");
+      expect(exitCode).toBe(1);
+    });
+
+    // Nothing runs the body of a module that a failed load has left linked, until something imports the module again.
+    test("and no load comes to the module: its body and its factory wait for the next import of it", async () => {
+      await expectFixturesToPass(
+        {
+          "throws.js": `throw new Error("throws.js threw");`,
+          "tax.js": `${count("tax.js")}; export const rate = "real";`,
+          "all.js": `import "./throws.js"; import "./tax.js";`,
+          "1.test.js": `
+            import { expect, mock, test } from "bun:test";
+            test("the next import runs the module, and gets the mock", async () => {
+              await expect(import("./all.js")).rejects.toThrow("throws.js threw");
+              const factory = mock(() => ({ rate: "mock" }));
+              mock.module("./tax.js", factory);
+              expect([${counted("tax.js")}, factory.mock.calls.length]).toEqual([0, 0]);
+              expect([(await import("./tax.js")).rate, ${counted("tax.js")}, factory.mock.calls.length]).toEqual(["mock", 1, 1]);
+            });
+          `,
+          "idle.js": `${count("idle.js")}; export const rate = "real";`,
+          "both.js": `import "./throws.js"; import "./idle.js";`,
+          "2.test.js": `
+            import { expect, mock, test } from "bun:test";
+            test("nothing imports the module again: require() gets the mock, and the body never runs", async () => {
+              await expect(import("./both.js")).rejects.toThrow("throws.js threw");
+              const factory = mock(() => ({ rate: "mock" }));
+              mock.module("./idle.js", factory);
+              expect([require("./idle.js").rate, ${counted("idle.js")}, factory.mock.calls.length]).toEqual(["mock", 0, 1]);
+            });
+          `,
+          // The module that the mock of an earlier file still waited for is loaded anew, and is the original.
+          "3.test.js": `
+            import { expect, test } from "bun:test";
+            import { rate } from "./idle.js";
+            test("the next test file gets the original", () => expect([rate, ${counted("idle.js")}]).toEqual(["real", 1]));
+          `,
+        },
+        3,
+        ["./1.test.js", "./2.test.js", "./3.test.js"],
+      );
+    });
+
+    // As in Vitest, vi.mock() of a package mocks it for the project's own modules, and a library that imports it keeps the
+    // original. The package is linked for the library alone here, and its body has yet to start.
+    test("vi.mock() leaves a package to the library that is linked to it", async () => {
+      await expectFixturesToPass(
+        {
+          "node_modules/rates/package.json": `{ "name": "rates", "type": "module", "main": "index.js" }`,
+          "node_modules/rates/index.js": `${count("rates")}; export const rate = "real";`,
+          "node_modules/till/package.json": `{ "name": "till", "type": "module", "main": "index.js" }`,
+          "node_modules/till/index.js": `import { rate } from "rates"; export const atLoad = rate; export const now = () => rate;`,
+          "mocks.mjs": `import { vi } from "bun:test";\nvi.mock("rates", () => ({ rate: "mock" }));`,
+          "library.test.js": `
+            import "./mocks.mjs";
+            import { atLoad, now } from "till";
+            import { expect, test } from "bun:test";
+            test("the library keeps the original, and the project gets the mock", async () => {
+              expect([atLoad, now(), ${counted("rates")}]).toEqual(["real", "real", 1]);
+              expect([(await import("rates")).rate, now(), ${counted("rates")}]).toEqual(["mock", "real", 1]);
+            });
+          `,
+        },
+        1,
+      );
+    });
   });
 });
 

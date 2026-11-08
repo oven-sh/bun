@@ -34,9 +34,9 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > an import of its own has an async factory from a preload ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > an import of its own has an async factory from a preload []
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > every file that imports the module that mocks gets the mock
-test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is evaluated first, so the mock isn't assigned over ["--isolate"]
-test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is evaluated first, so the mock isn't assigned over ["--isolate=modules"]
-test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is evaluated first, so the mock isn't assigned over []
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is patched once its body has run, so the mock isn't assigned over ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is patched once its body has run, so the mock isn't assigned over ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is patched once its body has run, so the mock isn't assigned over []
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > isn't evaluated ahead of an import that is being evaluated, or if it is the module of an earlier mock
 test/js/bun/test/mock/mock-module.test.ts: a module that is mocked while a module which imports it has yet to be linked > after a load that failed, the next import loads the mock in place of the module, with the files handed back at once
 test/js/bun/test/mock/mock-module.test.ts: a module that is mocked while a module which imports it has yet to be linked > after a load that failed, the next import loads the mock in place of the module, with the files handed back by the transpiler threads

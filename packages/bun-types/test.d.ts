@@ -69,6 +69,10 @@ declare module "bun:test" {
      * still pending, the exports are overwritten once it settles and the
      * returned promise resolves after that. Otherwise nothing is returned.
      *
+     * If the module is still loading for a module that imports it, or is
+     * loaded and has yet to run, `factory` is called once the module has run,
+     * and nothing is returned.
+     *
      * @param id module ID to mock
      * @param factory a function returning an object used as the exports of the mocked module. It receives a function
      * that loads the real module.

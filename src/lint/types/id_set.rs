@@ -1,34 +1,33 @@
-//! Sets and maps of handles, by their ids.
+//! Sets and maps of handles, keyed by id.
 //!
-//! A handle is a pointer to its file and an id. Two handles are equal where their ids are, so a
-//! set of them is a set of ids: a few inline, then a bit for each, in pages.
+//! A handle is a pointer to its file plus an id. Two handles are equal if their ids are, so a set of handles is a set
+//! of ids: a few stored inline, then one bit per id, in pages.
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::marker::PhantomData;
 
-/// The index of what a handle stands for, among the things of its kind in the program of its file.
+/// The index of the thing a handle refers to, among everything of that kind in its file's program.
 pub trait Indexed: Copy {
     fn index(self) -> u32;
 }
 
-/// How many ids a set holds before it has a bit for each.
+/// A set with more ids than this switches to one bit per id.
 const FEW: usize = 8;
 
-/// The bits of 512 ids that follow each other: a cache line.
+/// The bits for 512 consecutive ids: one cache line.
 type Page = [u64; 8];
 
 #[inline]
-fn place(id: u32) -> (u32, usize, u64) {
+fn bit_position(id: u32) -> (u32, usize, u64) {
     (id >> 9, ((id >> 6) & 7) as usize, 1 << (id & 63))
 }
 
 #[derive(Default)]
 struct Ids {
     few: SmallVec<[u32; FEW]>,
-    /// Empty while `few` holds the set. By the upper bits of an id: ids are given out in order, so
-    /// a set is a few runs, but a type that a query makes has an id with a high bit, far from
-    /// those of the program.
+    /// Empty while `few` holds the set. Keyed by an id's upper bits. Ids are handed out in order, so a set is a few
+    /// runs, but a type created by a query has an id with a high bit set, far from the program's own.
     pages: FxHashMap<u32, Page>,
     len: usize,
 }
@@ -38,12 +37,12 @@ impl Ids {
         if self.pages.is_empty() {
             return self.few.contains(&id);
         }
-        let (page, word, bit) = place(id);
+        let (page, word, bit) = bit_position(id);
         self.pages.get(&page).is_some_and(|it| it[word] & bit != 0)
     }
 
     fn set(&mut self, id: u32) -> bool {
-        let (page, word, bit) = place(id);
+        let (page, word, bit) = bit_position(id);
         let word = &mut self.pages.entry(page).or_default()[word];
         let is_new = *word & bit == 0;
         *word |= bit;
@@ -77,7 +76,7 @@ impl Ids {
                 self.few.len() != before
             }
             false => {
-                let (page, word, bit) = place(id);
+                let (page, word, bit) = bit_position(id);
                 self.pages.get_mut(&page).is_some_and(|it| {
                     let was_there = it[word] & bit != 0;
                     it[word] &= !bit;
@@ -96,7 +95,7 @@ impl Ids {
     }
 }
 
-/// A set of `T` by id. It cannot be iterated: what is listed is kept in a list.
+/// A set of `T` keyed by id. It can't be iterated, so keep a separate list if you need the elements.
 pub struct IdSet<T> {
     ids: Ids,
     of: PhantomData<fn(T)>,
@@ -118,7 +117,7 @@ impl<T: Indexed> IdSet<T> {
         Self::default()
     }
 
-    /// Whether it was not in the set.
+    /// Returns true if it wasn't already in the set.
     #[inline]
     pub fn insert(&mut self, it: T) -> bool {
         self.ids.insert(it.index())
@@ -129,7 +128,7 @@ impl<T: Indexed> IdSet<T> {
         self.ids.contains(it.index())
     }
 
-    /// Whether it was in the set.
+    /// Returns true if it was in the set.
     #[inline]
     pub fn remove(&mut self, it: T) -> bool {
         self.ids.remove(it.index())
@@ -162,7 +161,7 @@ impl<T: Indexed> FromIterator<T> for IdSet<T> {
     }
 }
 
-/// From ids to `V`: a few pairs inline, then a table of ids.
+/// A map from ids to `V`: a few pairs inline, then a hash table.
 struct IdsTo<V> {
     few: SmallVec<[(u32, V); 4]>,
     /// Empty while `few` holds the map.
@@ -231,7 +230,7 @@ impl<V> IdsTo<V> {
     }
 }
 
-/// A map from `T` by id. It cannot be iterated.
+/// A map keyed by `T`'s id. It can't be iterated.
 pub struct IdMap<T, V> {
     ids: IdsTo<V>,
     of: PhantomData<fn(T)>,
@@ -256,7 +255,7 @@ impl<T: Indexed, V> IdMap<T, V> {
         Self::default()
     }
 
-    /// What `key` had before.
+    /// Returns `key`'s previous value.
     #[inline]
     pub fn insert(&mut self, key: T, value: V) -> Option<V> {
         self.ids.insert(key.index(), value)
@@ -292,7 +291,7 @@ impl<T: Indexed, V> IdMap<T, V> {
         self.ids.len()
     }
 
-    /// The value of `key`, which is `value()` if it had none.
+    /// Returns `key`'s value, inserting `value()` if it had none.
     #[inline]
     pub fn get_or_insert_with(&mut self, key: T, value: impl FnOnce() -> V) -> &mut V {
         self.ids.get_or_insert_with(key.index(), value)

@@ -730,6 +730,102 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       },
     );
 
+    // A callback runs in the store of its own call, also when that call was made outside every store. What completes
+    // it doesn't matter: an event of the socket, which has the store of `new WebSocket()`, or a terminate() call.
+    test.skipIf(!builtin).each(
+      [
+        { transport: "native", options: {} },
+        { transport: "stream", options: { family: 4 } },
+      ].flatMap(row => ["the peer reads", "terminate()", "a peer reset"].map(how => ({ ...row, how }))),
+    )(
+      "callbacks of buffered sends run in the AsyncLocalStorage store of their own call after $how, on the $transport transport",
+      async ({ transport, options, how }) => {
+        const storage = new AsyncLocalStorage<string>();
+        const store = () => storage.getStore() ?? "no store";
+        await using client = await storage.run("the constructor's", () =>
+          openClient(implementation, { perMessageDeflate: false, ...options }),
+        );
+        const { ws, conn } = client;
+        await fillSendBuffer(client);
+        const calls: string[][] = [];
+        const { promise: done, resolve } = Promise.withResolvers<void>();
+        const callback =
+          (call: string) =>
+          (...args: unknown[]) => {
+            const shown = args.map(arg => (arg instanceof Error ? "Error" : show(arg))).join(", ");
+            if (calls.push([call, shown, store()]) === 5) resolve();
+          };
+        const closeStore = new Promise<string>(resolve => ws.on("close", () => resolve(store())));
+        storage.run("the first sender's", () => ws.send("a", callback("send")));
+        ws.send("b", callback("send"));
+        ws.ping("c", undefined, callback("ping"));
+        ws.pong("d", undefined, callback("pong"));
+        storage.run("the last sender's", () => ws.send("e", callback("send")));
+        if (how === "the peer reads") conn.socket.resume();
+        else if (how === "terminate()") storage.run("the terminator's", () => ws.terminate());
+        else conn.reset();
+        await done;
+        const argument = how === "the peer reads" ? "null" : "Error";
+        expect(calls).toEqual([
+          ["send", argument, "the first sender's"],
+          ["send", argument, "no store"],
+          ["ping", argument, "no store"],
+          ["pong", argument, "no store"],
+          ["send", argument, "the last sender's"],
+        ]);
+        // The store of a callback ends with it. On the stream transport, 'close' is the 'close' of `_socket` instead.
+        if (transport === "native" && how !== "the peer reads") expect(await closeStore).toBe("the constructor's");
+      },
+    );
+
+    // Each callback is called on its own: it is not a method of the queue, and a store that it enters doesn't reach
+    // the next callback. npm ws on Node calls a queued callback as a method of a node:stream write entry, and a store
+    // that a callback enters reaches the callbacks that complete with it.
+    test.skipIf(!builtin).each(["inside a store", "outside every store"])(
+      "a buffered send's callback has no `this` and doesn't pass on the store that it enters, on a socket made %s",
+      async where => {
+        const storage = new AsyncLocalStorage<string>();
+        const open = () => openClient(implementation, { perMessageDeflate: false });
+        await using client = await (where === "inside a store" ? storage.run("the constructor's", open) : open());
+        const { ws, conn } = client;
+        await fillSendBuffer(client);
+        const { promise: seen, resolve } = Promise.withResolvers<unknown[]>();
+        let receiver: unknown = "not called";
+        ws.send("a", function (this: unknown) {
+          receiver = this;
+          storage.enterWith("the first callback's");
+        });
+        ws.send("b", () => resolve([receiver, storage.getStore() ?? "no store"]));
+        conn.socket.resume();
+        expect(await seen).toEqual([undefined, "no store"]);
+      },
+    );
+
+    // The async context also says which Bun.ModuleGraph is running. The events of a socket that a graph made are the
+    // graph's. Over node:http, which `family` selects, every callback waits for one of them.
+    test.skipIf(!builtin)("a callback runs in the Bun.ModuleGraph context of its own call", async () => {
+      const graph = new Bun.ModuleGraph();
+      try {
+        await using client = await graph.run(() => openClient(implementation, { perMessageDeflate: false, family: 4 }));
+        const { ws } = client;
+        const owners: string[] = [];
+        const { promise: done, resolve } = Promise.withResolvers<void>();
+        const callback = () => {
+          const current = Bun.ModuleGraph.current;
+          owners.push(current === graph ? "the graph" : current ? "another graph" : "the host");
+          if (owners.length === 4) resolve();
+        };
+        ws.send("a", callback);
+        ws.ping("b", undefined, callback);
+        ws.pong("c", undefined, callback);
+        graph.run(() => ws.send("d", callback));
+        await done;
+        expect(owners).toEqual(["the host", "the host", "the host", "the graph"]);
+      } finally {
+        graph.dispose();
+      }
+    });
+
     test("terminate() passes an Error to the callbacks of buffered sends", async () => {
       await using client = await openClient(implementation, { perMessageDeflate: false });
       const { results, sent, settled } = await fillSendBuffer(client);
@@ -950,6 +1046,22 @@ describe.each(implementations)("ws client send ($name)", ({ ws: implementation, 
       expect(await callOnClosedSocket(ws, (ws, callback) => ws.ping("abcd", callback))).toBe(`${closed}, +4`);
       expect(await conn.remainingFrames()).toEqual([]);
     });
+
+    test.each(["send", "ping", "pong"] as const)(
+      "still OPEN after `_socket.destroy()`: %s() calls back with an Error and sends nothing",
+      async method => {
+        await using client = await openClient(implementation, { perMessageDeflate: false });
+        const { ws, conn } = client;
+        const events: unknown[] = [];
+        ws.on("close", code => events.push(code));
+        ws._socket!.destroy();
+        ws[method]("abcd", (error?: NodeJS.ErrnoException | null) => events.push(error?.code));
+        expect(ws.readyState).toBe(WebSocket.OPEN);
+        await client.closed;
+        expect(events).toEqual(["ERR_STREAM_DESTROYED", 1006]);
+        expect(await conn.remainingFrames()).toEqual([]);
+      },
+    );
 
     test("after a failed connection", async () => {
       const ws = new WebSocket("ws://127.0.0.1:" + (await closedPort()));

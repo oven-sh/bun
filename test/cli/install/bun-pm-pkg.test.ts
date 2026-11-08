@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -572,7 +572,7 @@ describe.concurrent("bun pm pkg", () => {
 
       expect(await runPmPkg(["get", "config.max"], String(dir))).toEqual({ output: "null\n", error: "", code: 0 });
 
-      // values that overflow, and a rewrite of the literals that are there
+      // Values that overflow, and a rewrite of the existing literals.
       expect(await runPmPkg(["set", "limit=1e400", "low=-1e400", "--json"], String(dir))).toEqual({
         output: "",
         error: "",
@@ -586,7 +586,7 @@ describe.concurrent("bun pm pkg", () => {
         low: null,
       });
 
-      // bun can read what it wrote
+      // Bun can read what it wrote.
       const after = await runPmPkg(["get", "config"], String(dir));
       expect(JSON.parse(after.output)).toEqual({ max: null, min: null, tiny: 0, ok: 1.5 });
       expect(after.error).toBe("");
@@ -868,7 +868,7 @@ describe.concurrent("bun pm pkg", () => {
       });
     });
 
-    it("should leave package.json alone when the path does not lead anywhere", async () => {
+    it("should not change package.json when the path doesn't lead anywhere", async () => {
       using dir = makeTestDir();
       const before = await readRaw(dir);
       const { error, code } = await runPmPkg(
@@ -1274,7 +1274,7 @@ describe.concurrent("bun pm pkg", () => {
         error: "",
         code: 0,
       });
-      // Only one element has it: one value, printed bare.
+      // Only one element has it, so a single value is printed bare.
       expect(await runPmPkg(["get", "contributors.email"], readonlyDir)).toEqual({
         output: '"john@example.com"\n',
         error: "",
@@ -1455,6 +1455,23 @@ describe.concurrent("bun pm pkg", () => {
       expect(error).toContain("No bin file found at ./nonexistent2.js");
       expect(code).toBe(0);
       expect((await readPkg(multiIssueDir)).name).toBe("multiple-issues-package");
+    });
+
+    it("should warn about a bin path longer than the path buffer", async () => {
+      const binPath =
+        "./" +
+        Array(Math.ceil(MAX_PATH_BYTES / 200) + 1)
+          .fill(Buffer.alloc(200, "a").toString())
+          .join("/") +
+        ".js";
+      using longBinDir = tempDir("pm-pkg-long-bin", {
+        "package.json": JSON.stringify({ name: "LONG-BIN-PACKAGE", version: "1.0.0", bin: { b: binPath } }, null, 2),
+      });
+
+      const { error, code } = await runPmPkg(["fix"], longBinDir);
+      expect(error).toContain(`No bin file found at ${binPath}`);
+      expect((await readPkg(longBinDir)).name).toBe("long-bin-package");
+      expect(code).toBe(0);
     });
 
     it("should not crash on empty bin object", async () => {

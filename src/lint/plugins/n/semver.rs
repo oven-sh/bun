@@ -1,4 +1,4 @@
-//! The `Range` and `subset` of node-semver that eslint-plugin-n uses, on the semver of `bun install`.
+//! node-semver's `Range` and `subset`, which eslint-plugin-n uses, built on `bun install`'s semver implementation.
 
 use bun_core::{handle_oom, strings};
 use bun_semver::query::{self, Group};
@@ -7,9 +7,9 @@ use bun_semver::{SlicedString, Version};
 
 #[derive(Clone)]
 pub(crate) struct Range {
-    /// As it is written, with single spaces.
+    /// The source text, with runs of whitespace collapsed to single spaces.
     pub(crate) raw: Vec<u8>,
-    /// Its prereleases are parts of `raw`.
+    /// Its prerelease tags are slices of `raw`.
     group: Group,
 }
 
@@ -49,16 +49,14 @@ impl Range {
             .filter(|it| !it.is_empty())
             .collect::<Vec<_>>()
             .join(&b" "[..]);
-        let mut group = handle_oom(query::parse(&raw, SlicedString::init(&raw, &raw)));
+        let group = handle_oom(query::parse(&raw, SlicedString::init(&raw, &raw)));
         if group.has_skipped() {
             return None;
         }
-        // Nothing reads it, and in a clone it would be the address of the `raw` of the original.
-        group.input = std::ptr::from_ref::<[u8]>(b"");
         Some(Range { raw, group })
     }
 
-    /// `^a || ^b || >=latest`, for `versions` of which the first is the latest.
+    /// `^a || ^b || >=latest`. The first of `versions` must be the latest.
     pub(crate) fn since(versions: &[[u8; 3]]) -> Option<Range> {
         let latest = gte(version_of(*versions.first()?));
         let carets = versions

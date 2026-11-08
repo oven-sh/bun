@@ -1,9 +1,10 @@
-// oxlint against `bun lint` on the scripts in `.vue`, `.svelte` and `.astro` files.
+// Compares `bun lint` with oxlint on the scripts in `.vue`, `.svelte` and `.astro` files.
 //
 //     bun oxlint.ts [--show=3] <oxlint> <directory> <pattern> -- <bun lint, as a command>
 //
-// Both run in `<directory>` with the `.oxlintrc.json` below and `-f json` on the files that match `<pattern>`. Compared for each
-// file: the rule, the line and the column of every diagnostic. The texts are ESLint's here, and so is where a diagnostic ends.
+// Both tools run in `<directory>` with the `.oxlintrc.json` below and `-f json` on the files that match `<pattern>`.
+// For each file it compares every diagnostic's rule, line and column. It doesn't compare message text or end positions,
+// because `bun lint` uses ESLint's here.
 
 import { Glob } from "bun";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -45,7 +46,7 @@ const files = [...new Glob(pattern).scanSync({ cwd: directory })].filter(it => !
 async function run(cmd: string[]) {
   const byFile = new Map<string, string[]>();
   const started = performance.now();
-  // The command line has an end.
+  // Run in batches to stay under the command line length limit.
   for (let at = 0; at < files.length; at += 500) {
     const child = Bun.spawn({
       cmd: [...cmd, "-c", configFile, "-f", "json", ...files.slice(at, at + 500)],

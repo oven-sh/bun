@@ -5,13 +5,13 @@ use bun_lint::rule::Plugin;
 /// This rule enforces proper case for numeric literals.
 pub struct NumberLiteralCase;
 
-const UPPERCASE_PREFIX: Message =
-    Message::new("", "Unexpected number literal prefix in uppercase.");
-const UPPERCASE_EXPONENTIAL_NOTATION: Message =
-    Message::new("", "Unexpected exponential notation in uppercase.");
-const LOWERCASE_HEXADECIMAL_DIGITS: Message =
-    Message::new("", "Unexpected hexadecimal digits in lowercase.");
-const UPPERCASE_PREFIX_AND_LOWERCASE_HEXADECIMAL_DIGITS: Message = Message::new(
+const UPPERCASE_PREFIX: &Message =
+    &Message::new("", "Unexpected number literal prefix in uppercase.");
+const UPPERCASE_EXPONENTIAL_NOTATION: &Message =
+    &Message::new("", "Unexpected exponential notation in uppercase.");
+const LOWERCASE_HEXADECIMAL_DIGITS: &Message =
+    &Message::new("", "Unexpected hexadecimal digits in lowercase.");
+const UPPERCASE_PREFIX_AND_LOWERCASE_HEXADECIMAL_DIGITS: &Message = &Message::new(
     "",
     "Unexpected number literal prefix in uppercase and hexadecimal digits in lowercase.",
 );
@@ -46,7 +46,7 @@ impl Rule for NumberLiteralCase {
                     (false, true) => (LOWERCASE_HEXADECIMAL_DIGITS, raw_span.shrink(2, 0)),
                     (false, false) => return,
                 };
-                // The `n` of a `BigInt` stays.
+                // Keep the `n` of a `BigInt`.
                 let upper = |it: &u8| {
                     if *it == b'n' {
                         b'n'

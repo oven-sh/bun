@@ -5,7 +5,7 @@ use std::ops::Range;
 /// Enforce uppercase characters for the value of the escape sequence.
 pub struct EscapeCase;
 
-const ESCAPE_CASE: Message = Message::new("", "Use uppercase characters for the value of the escape sequence.");
+const ESCAPE_CASE: &Message = &Message::new("", "Use uppercase characters for the value of the escape sequence.");
 
 impl Rule for EscapeCase {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "escape-case", Kind::Suggestion).fixable(Fixable::Code);
@@ -77,7 +77,8 @@ fn check(span: Span, is_regex: bool, cx: &Cx<EscapeCase>) {
     }
 }
 
-/// Where the digits of `\xAB`, `ꯍ`, `\u{ABC}` are in `value`, and in a regular expression the letter of `\cA`.
+/// Visits the ranges of the digits of `\xAB`, `ꯍ` and `\u{ABC}` in `value`, and in a regular expression the letter of
+/// `\cA`.
 fn for_each_escaped_value(value: &[u8], is_regex: bool, visit: &mut dyn FnMut(Range<usize>)) {
     let is_hex = |range: Range<usize>| value.get(range).is_some_and(|it| it.iter().all(u8::is_ascii_hexdigit));
     let (mut at, mut in_escape) = (0, false);

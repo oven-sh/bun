@@ -78,7 +78,7 @@ pub mod config_version;
 pub mod dependency;
 pub mod hosted_git_info;
 pub mod integrity;
-pub mod padding_checker;
+mod padding_checker;
 pub mod postinstall_optimizer;
 
 /// `ExternalSlice<T>` and `VersionedURLType<I>` live in `bun_install_types`
@@ -457,7 +457,8 @@ impl RunCommand {
             }
             buf[..exe_dir.len()].copy_from_slice(exe_dir);
             if exe_dir.ends_with(bun_core::w!("\\bun-node")) {
-                // Running as the `bun.exe` link (nested `bun run`): this is the directory.
+                // The process is running as the `bun.exe` link (a nested `bun run`), so this is
+                // already the directory.
                 (exe_dir.len(), "")
             } else {
                 buf[exe_dir.len()] = b'\\' as u16;
@@ -565,43 +566,36 @@ impl RunCommand {
             // (macOS), so it always resolves to the REAL bun regardless of
             // how the process was invoked. It's memoized via `Once`, so the
             // cost is paid once per process.
-            let argv0_z: &ZStr = if !optional_bun_path.is_empty() {
-                // When the caller pre-supplied a path, that path is the symlink
-                // target.
-                // SAFETY: callers pass a slice borrowed from a `ZStr` (argv[0] /
-                // self_exe_path / static literal), so `ptr[len] == 0` holds.
-                unsafe { ZStr::from_raw(optional_bun_path.as_ptr(), optional_bun_path.len()) }
-            } else {
-                // Ask the OS for the real absolute path first. Fall back to an
-                // absolute `argv[0]` only if that fails — never trust a bare
-                // `argv[0]` as the target here, because on nested `--bun` the
-                // inner process's `argv[0]` IS `<BUN_NODE_DIR>/bun`.
-                match bun_core::self_exe_path() {
-                    Ok(self_path) if !self_path.as_bytes().is_empty() => {
-                        *optional_bun_path = self_path.as_bytes();
-                        self_path
+            //
+            // Ask the OS for the real absolute path first. Fall back to an
+            // absolute `argv[0]` only if that fails — never trust a bare
+            // `argv[0]` as the target here, because on nested `--bun` the
+            // inner process's `argv[0]` IS `<BUN_NODE_DIR>/bun`.
+            let argv0_z: &ZStr = match bun_core::self_exe_path() {
+                Ok(self_path) if !self_path.as_bytes().is_empty() => {
+                    *optional_bun_path = self_path.as_bytes();
+                    self_path
+                }
+                result => {
+                    let argv0_bytes = argv0.as_bytes();
+                    if argv0_bytes.starts_with(dir.as_bytes()) {
+                        // `self_exe_path()` failed and `argv[0]` is the shim
+                        // under `BUN_NODE_DIR` (nested `--bun`). Using it as
+                        // the target would recreate the #30711 self-loop; the
+                        // OUTER bun already planted working shims and PATH, so
+                        // leave them untouched.
+                        return Ok(());
                     }
-                    result => {
-                        let argv0_bytes = argv0.as_bytes();
-                        if argv0_bytes.starts_with(dir.as_bytes()) {
-                            // `self_exe_path()` failed and `argv[0]` is the shim
-                            // under `BUN_NODE_DIR` (nested `--bun`). Using it as
-                            // the target would recreate the #30711 self-loop; the
-                            // OUTER bun already planted working shims and PATH, so
-                            // leave them untouched.
-                            return Ok(());
-                        }
-                        if argv0_bytes.first() == Some(&b'/') {
-                            *optional_bun_path = argv0_bytes;
-                            argv0
-                        } else {
-                            // No usable target — propagate the OS error when we
-                            // have one, otherwise leave PATH unmodified.
-                            return match result {
-                                Err(e) => Err(e.into()),
-                                Ok(_) => Ok(()),
-                            };
-                        }
+                    if argv0_bytes.first() == Some(&b'/') {
+                        *optional_bun_path = argv0_bytes;
+                        argv0
+                    } else {
+                        // No usable target — propagate the OS error when we
+                        // have one, otherwise leave PATH unmodified.
+                        return match result {
+                            Err(e) => Err(e.into()),
+                            Ok(_) => Ok(()),
+                        };
                     }
                 }
             };
@@ -687,7 +681,7 @@ impl RunCommand {
             let dir_slice_len = prefix.len() + dir_len;
 
             let image_path = win::exe_path_w();
-            // Hard links have no target to read back; compare file identity instead.
+            // A hard link has no target to read back, so compare file identity instead.
             let image_stat = bun_sys::File::openat_os_path(
                 bun_sys::Fd::cwd(),
                 image_path,
@@ -699,7 +693,7 @@ impl RunCommand {
 
             for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // `name` includes its NUL terminator; the link path ends before it.
+                // `name` includes its NUL terminator, and the link path ends before it.
                 let link_len = dir_slice_len + name.len() - 1;
                 let mut made_dir = false;
                 let mut replaced = false;
@@ -712,7 +706,7 @@ impl RunCommand {
                     }
                     match win::Win32Error::get() {
                         win::Win32Error::ALREADY_EXISTS => {
-                            // As in the POSIX EEXIST branch: a rebuilt bun is another file.
+                            // As in the POSIX EEXIST branch: a rebuilt bun is a different file.
                             let keep = image_stat.as_ref().is_none_or(|image| {
                                 bun_sys::openat_windows(
                                     bun_sys::Fd::cwd(),
@@ -820,17 +814,18 @@ impl RunCommand {
         let env_loader = this_transpiler.env_mut();
         Self::seed_script_env(env_loader);
 
-        // Overwrite like npm: an outer `bun run` in another project may have left a stale value.
+        // Overwrite it like npm does, because an outer `bun run` in another project may have left a
+        // stale value.
         env_loader.map.put(
             b"npm_config_local_prefix",
-            bun_fs::FileSystem::instance().top_level_dir(),
+            bun_fs::FileSystem::get().top_level_dir(),
         )?;
 
-        // `npm_package_*` is per package; see `spawn_package_lifecycle_scripts`.
+        // `npm_package_*` is set per package. See `spawn_package_lifecycle_scripts`.
         Ok(this_transpiler)
     }
 
-    /// What `bun run` and lifecycle scripts both find in their environment.
+    /// Sets the variables that both `bun run` and lifecycle scripts have in their environment.
     pub fn seed_script_env(env_loader: &mut bun_dotenv::Loader) {
         use bun_core::Global;
 

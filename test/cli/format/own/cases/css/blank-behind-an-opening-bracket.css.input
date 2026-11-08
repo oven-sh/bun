@@ -1,6 +1,5 @@
 a {
-  --color: [ 'red', 'green', 'blue' ];
-  --c2: ['red' ];
+  --color: [ "red", "green", "blue" ];
   --c3: [ a b ];
   grid-template-columns: [ a ] 1fr [ b ];
 }

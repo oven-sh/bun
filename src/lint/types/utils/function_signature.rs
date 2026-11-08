@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 
 #[derive(Copy, Clone, Debug)]
 enum RestTypeKind<'a> {
-    /// The type of an element of the array, or the type of the parameter if it is no array.
+    /// The array's element type, or the parameter's type if it isn't an array.
     ArrayOrOther(Type<'a>),
     Tuple(TypeList<'a>),
 }
@@ -18,8 +18,7 @@ struct RestType<'a> {
     kind: RestTypeKind<'a>,
 }
 
-/// `FunctionSignature`: the types of the parameters of the function that a call calls, one for each
-/// argument in turn.
+/// `FunctionSignature`: the parameter types of the function a call resolves to, handed out one per argument.
 #[derive(Clone, Debug)]
 pub struct FunctionSignature<'a> {
     has_consumed_arguments: bool,
@@ -29,14 +28,14 @@ pub struct FunctionSignature<'a> {
 }
 
 impl<'a> FunctionSignature<'a> {
-    /// `FunctionSignature.create(checker, tsNode)`, for a call, a `new` or a tagged template.
-    /// A call that resolves to no signature has no parameters.
+    /// `FunctionSignature.create(checker, tsNode)`, for a call, a `new` or a tagged template. If the call doesn't
+    /// resolve to a signature, there are no parameters.
     pub fn create(ts_node: impl Located<'a>) -> FunctionSignature<'a> {
         Self::with_rest_type(ts_node, rest_type_of_base_constraint)
     }
 
-    /// tsgolint's `newFunctionSignature(typeChecker, node)` of `no_unsafe_argument.go`: the rest
-    /// type is its `getRestType()`.
+    /// tsgolint's `newFunctionSignature(typeChecker, node)` from `no_unsafe_argument.go`. The rest type comes from its
+    /// `getRestType()`.
     pub fn new_function_signature(ts_node: impl Located<'a>) -> FunctionSignature<'a> {
         Self::with_rest_type(ts_node, get_rest_type)
     }
@@ -72,14 +71,13 @@ impl<'a> FunctionSignature<'a> {
         }
     }
 
-    /// `consumeRemainingArguments()`: after a spread argument, how many arguments there are is
-    /// unknown.
+    /// `consumeRemainingArguments()`: after a spread argument, the number of arguments is unknown.
     pub fn consume_remaining_arguments(&mut self) {
         self.has_consumed_arguments = true;
     }
 
-    /// `getNextParameterType()`: the type of the parameter that the next argument is for. `None`:
-    /// there are more arguments than parameters.
+    /// `getNextParameterType()`: the type of the parameter the next argument is passed to. `None` if there are more
+    /// arguments than parameters.
     pub fn get_next_parameter_type(&mut self) -> Option<Type<'a>> {
         let index = self.parameter_type_index;
         self.parameter_type_index += 1;
@@ -100,7 +98,7 @@ impl<'a> FunctionSignature<'a> {
     }
 }
 
-/// typescript-eslint: of the base constraint, the elements of a tuple, or else the number index type.
+/// typescript-eslint's version: takes the base constraint, then a tuple's elements or else the number index type.
 fn rest_type_of_base_constraint<'a>(ty: Type<'a>) -> RestTypeKind<'a> {
     let constrained_type = ty.get_base_constraint_of_type().unwrap_or(ty);
     match constrained_type.is_tuple_type() {
@@ -113,8 +111,8 @@ fn rest_type_of_base_constraint<'a>(ty: Type<'a>) -> RestTypeKind<'a> {
     }
 }
 
-/// tsgolint's `getRestType()`: only an array or a tuple is taken apart, and no constraint is
-/// looked at. A type parameter, a union and an interface that extends `Array` stay as they are.
+/// tsgolint's `getRestType()`: only unpacks an array or a tuple, and ignores constraints. A type parameter, a union and
+/// an interface that extends `Array` are returned unchanged.
 fn get_rest_type<'a>(ty: Type<'a>) -> RestTypeKind<'a> {
     if ty.is_array_type() {
         return RestTypeKind::ArrayOrOther(ty.get_type_arguments().get(0).unwrap_or(ty));

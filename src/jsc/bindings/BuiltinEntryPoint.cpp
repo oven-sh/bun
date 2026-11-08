@@ -24,7 +24,7 @@ extern "C" JSPromise* Bun__loadBuiltinEntryPoint(Zig::GlobalObject* globalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto id = entryPoint == BuiltinEntryPoint::Bake ? InternalModuleRegistry::InternalBake : InternalModuleRegistry::InternalHtml;
-    JSValue module = globalObject->internalModuleRegistry()->requireId(globalObject, vm, id);
+    JSValue module = DeclaredModuleLoad::requireForCommandLine(globalObject, id);
     if (scope.exception()) [[unlikely]] {
         return JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
     }
@@ -48,6 +48,9 @@ extern "C" JSPromise* Bun__loadBuiltinEntryPoint(Zig::GlobalObject* globalObject
     if (!promise) [[unlikely]] {
         BUN_PANIC("Failed to load the built-in entry point");
     }
+    // The VM reports a rejection of the entry point. Without this, the rejection tracker reports it
+    // again, as an unhandled rejection.
+    promise->markAsHandled();
     return promise;
 }
 

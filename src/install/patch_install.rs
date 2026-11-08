@@ -134,7 +134,7 @@ fn resolve_patchfile_path<'a>(
 /// Returns `None` after logging a parse error. `log` copies the lines it quotes from `source`, so
 /// `log` may outlive `source`.
 pub(crate) fn parse_patch_source<'a>(
-    source: &'a Source,
+    source: &'a Source<'a>,
     log: &mut Log,
 ) -> Option<bun_patch::PatchFile<'a>> {
     let at = |offset: usize| Range {
@@ -360,7 +360,6 @@ impl PatchTask {
             // after `determine_preinstall_state` consumes it.
             let pkg_meta_id = pkg.meta.id;
             let pkg_name = pkg.name;
-            let pkg_resolution_tag = pkg.resolution.tag;
             let name_and_version_hash = calc_hash.name_and_version_hash;
             let dep_behavior = manager.lockfile.buffers.dependencies[dep_id as usize].behavior;
 
@@ -408,12 +407,6 @@ impl PatchTask {
                             is_required,
                             dep_id,
                             &pkg_again,
-                            match pkg_resolution_tag {
-                                crate::resolution_real::Tag::Npm => {
-                                    Authorization::AllowAuthorization
-                                }
-                                _ => Authorization::NoAuthorization,
-                            },
                         ) {
                             // --offline and not cached: already reported / skipped; nothing to patch
                             Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
@@ -605,7 +598,8 @@ impl PatchTask {
             }
         }
 
-        // 6. rename to cache dir; the name holds the hash of the patch, and a folder there is a hit
+        // 6. Rename it into the cache directory. The name includes the hash of the patch, so a
+        //    folder that's already there is a cache hit.
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath.as_zstr();
         if let Err(mut e) = staging.publish(patch.cache_dir, cache_dir_subpath_z, &|_| true) {
             e.err = e.err.with_path(cache_dir_subpath_z.as_bytes());
@@ -727,7 +721,7 @@ impl PatchTask {
                 logger: Log::init(),
             }),
             manager: bun_ptr::BackRef::new_mut(manager),
-            project_dir: FileSystem::instance().top_level_dir(),
+            project_dir: FileSystem::get().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,
@@ -804,7 +798,7 @@ impl PatchTask {
                 install_context: None,
             }),
             manager: bun_ptr::BackRef::new_mut(pkg_manager),
-            project_dir: FileSystem::instance().top_level_dir(),
+            project_dir: FileSystem::get().top_level_dir(),
             task: ThreadPoolTask {
                 node: ThreadPoolNode::default(),
                 callback: Self::run_from_thread_pool,
@@ -816,7 +810,6 @@ impl PatchTask {
 }
 
 use crate::PreinstallState;
-use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager_task::Id as TaskId;

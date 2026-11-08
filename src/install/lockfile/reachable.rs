@@ -4,7 +4,8 @@ use crate::lockfile::package::{Meta, PackageColumns as _};
 use crate::lockfile_real::Lockfile;
 use crate::npm::{Architecture, Libc, OperatingSystem};
 use crate::package_manager::WorkspaceFilter;
-use crate::{DependencyID, PackageID, PackageManager};
+use crate::resolution::Tag as ResolutionTag;
+use crate::{DependencyID, PackageID, PackageManager, PackageNameHash};
 use bun_collections::DynamicBitSet;
 use bun_core::UnwrapOrOom;
 
@@ -87,25 +88,9 @@ impl Options {
 pub(crate) struct Linked {
     /// The packages that this install links, given `--production`, `--omit` and `--filter`.
     packages: Option<DynamicBitSet>,
-    members_outside: Option<DynamicBitSet>,
 }
 
 impl Linked {
-    /// A cached `Lockfile::is_member_outside`. That function inspects the workspace's path, and
-    /// this one is called for every dependency edge.
-    pub(crate) fn is_member_outside(&mut self, lockfile: &Lockfile, pkg_id: PackageID) -> bool {
-        let outside = self.members_outside.get_or_insert_with(|| {
-            let mut outside = DynamicBitSet::init_empty(lockfile.packages.len()).unwrap_or_oom();
-            for id in 0..lockfile.packages.len() {
-                if lockfile.is_member_outside(id as PackageID) {
-                    outside.set(id);
-                }
-            }
-            outside
-        });
-        outside.is_set(pkg_id as usize)
-    }
-
     /// An optional peer of `parent_pkg_id` whose package only an omitted group asked for.
     pub(crate) fn omits_optional_peer(
         &mut self,
@@ -203,6 +188,101 @@ pub(crate) fn required_without(
 }
 
 // Out-of-range ids (invalid_package_id) are treated as already seen.
+/// Returns the dependency of `owner` that provides `name_hash` to the packages below it. Any regular
+/// dependency does. So does a peer dependency of the root or of a workspace, resolved or not,
+/// because it's installed like one of the project's regular dependencies. An `npm:` alias of a
+/// package with a different name doesn't provide. See `enqueue::alias_of_every_dependent`.
+pub(crate) fn peer_provider(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    owner: PackageID,
+    name_hash: PackageNameHash,
+) -> Option<DependencyID> {
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let packages = lockfile.packages.items_resolution();
+    let names = lockfile.packages.items_name_hash();
+    let is_project = matches!(
+        packages[owner as usize].tag,
+        ResolutionTag::Root | ResolutionTag::Workspace
+    );
+    let list = lockfile.packages.items_dependencies()[owner as usize];
+    (list.begin() as usize..list.end() as usize)
+        .filter(|&id| {
+            let dep = &deps[id];
+            dep.name_hash == name_hash
+                && if dep.behavior.is_peer() {
+                    is_project && !dep.behavior.is_optional_peer()
+                } else {
+                    names.get(resolutions[id] as usize) == Some(&name_hash)
+                }
+        })
+        .min_by_key(|&id| deps[id].behavior.is_peer())
+        .map(|id| id as DependencyID)
+}
+
+/// Returns the packages that nothing provides a peer dependency on `name_hash` for: the ones that
+/// aren't a provider and aren't below one.
+///
+/// pnpm decides this for each path to a package. bun.lock has one resolution per dependency and the
+/// hoisted linker usually installs one copy of a package, so a provider on any path counts.
+pub(crate) fn packages_without_peer_provider(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    name_hash: PackageNameHash,
+) -> DynamicBitSet {
+    let lists = lockfile.packages.items_dependencies();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let mut provided = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+    let mut stack: Vec<PackageID> = (0..lists.len() as PackageID)
+        .filter(|&id| peer_provider(lockfile, resolutions, id, name_hash).is_some())
+        .collect();
+    for &id in &stack {
+        provided.set(id as usize);
+    }
+    while let Some(id) = stack.pop() {
+        let list = lists[id as usize];
+        for row in list.begin() as usize..list.end() as usize {
+            // Hoisting rebinds peers, so following them would make the result depend on when this
+            // is called.
+            if !dependencies[row].behavior.is_peer() && mark(&mut provided, resolutions[row]) {
+                stack.push(resolutions[row]);
+            }
+        }
+    }
+    provided.toggle_all();
+    provided
+}
+
+/// Returns the packages that nothing provides a peer dependency on `name_hash` for in at least one
+/// place where they're used: the ones that can be reached from the root without passing a provider.
+pub(crate) fn packages_reached_without_peer_provider(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    name_hash: PackageNameHash,
+) -> DynamicBitSet {
+    let lists = lockfile.packages.items_dependencies();
+    let dependencies = lockfile.buffers.dependencies.as_slice();
+    let mut seen = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+    let mut reached = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+    let mut stack: Vec<PackageID> = Vec::new();
+    if mark(&mut seen, 0) {
+        stack.push(0);
+    }
+    while let Some(id) = stack.pop() {
+        if peer_provider(lockfile, resolutions, id, name_hash).is_some() {
+            continue;
+        }
+        reached.set(id as usize);
+        let list = lists[id as usize];
+        for row in list.begin() as usize..list.end() as usize {
+            if !dependencies[row].behavior.is_peer() && mark(&mut seen, resolutions[row]) {
+                stack.push(resolutions[row]);
+            }
+        }
+    }
+    reached
+}
+
 fn mark(seen: &mut DynamicBitSet, id: PackageID) -> bool {
     let index = id as usize;
     if seen.is_set_allow_out_of_bound(index, true) {

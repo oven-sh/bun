@@ -1,5 +1,37 @@
+FAIL typescript-eslint/prefer-readonly#87 messages differ
+FAIL react/jsx-newline#60 messages differ
+FAIL markdown/no-space-in-emphasis#145 messages differ
+FAIL markdown/no-space-in-emphasis#151 messages differ
+FAIL markdown/no-space-in-emphasis#157 messages differ
+FAIL markdown/no-space-in-emphasis#158 messages differ
+FAIL markdown/no-space-in-emphasis#160 messages differ
+FAIL markdown/no-space-in-emphasis#161 messages differ
+FAIL markdown/no-space-in-emphasis#162 messages differ
+FAIL markdown/no-space-in-emphasis#168 messages differ
+FAIL markdown/no-space-in-emphasis#175 messages differ
+FAIL markdown/no-space-in-emphasis#176 messages differ
+FAIL markdown/no-space-in-emphasis#178 messages differ
+FAIL markdown/no-space-in-emphasis#181 messages differ
+FAIL markdown/no-space-in-emphasis#185 messages differ
+FAIL markdown/no-space-in-emphasis#186 messages differ
+FAIL markdown/no-space-in-emphasis#187 messages differ
+FAIL markdown/no-space-in-emphasis#188 messages differ
+FAIL markdown/no-space-in-emphasis#189 messages differ
+FAIL markdown/no-space-in-emphasis#190 messages differ
+FAIL markdown/no-space-in-emphasis#191 messages differ
+FAIL markdown/no-space-in-emphasis#194 messages differ
+FAIL markdown/no-space-in-emphasis#196 messages differ
+FAIL markdown/no-space-in-emphasis#197 messages differ
+FAIL markdown/no-space-in-emphasis#198 messages differ
+FAIL markdown/no-space-in-emphasis#199 messages differ
+FAIL markdown/no-space-in-emphasis#202 messages differ
+FAIL markdown/no-space-in-emphasis#203 messages differ
+FAIL markdown/no-space-in-emphasis#204 messages differ
+FAIL markdown/no-space-in-emphasis#205 messages differ
 
 0 cases have their messages in another order
 
-532 rules, 532 without failures, 0 not implemented
-71379 cases passed, 0 failed, 306 skipped
+4 cases have a fix that --fix holds back
+
+532 rules, 529 without failures, 0 not implemented
+71349 cases passed, 30 failed, 306 skipped

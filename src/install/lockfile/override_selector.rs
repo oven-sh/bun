@@ -67,7 +67,8 @@ pub(crate) fn parse_selector(key: &[u8]) -> Result<Selector<'_>, SelectorError> 
     parse_yarn_path(key)
 }
 
-/// pnpm's `parent>child` delimiter (`/[^ |@]>/`): the first `>` not after a space, `|`, `@`, or the `:` of yarn's `name@npm:>=1`.
+/// Finds pnpm's `parent>child` delimiter (`/[^ |@]>/`): the first `>` that doesn't come after a
+/// space, `|`, `@`, or the `:` in Yarn's `name@npm:>=1`.
 fn pnpm_delimiter(key: &[u8]) -> Option<usize> {
     let mut from = 1;
     while from < key.len() {

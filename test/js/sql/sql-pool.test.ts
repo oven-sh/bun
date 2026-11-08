@@ -84,6 +84,39 @@ async function unhandledRejections(url: string) {
         reserved.release();
       }
       await sql.begin(tx => row("execute() in a transaction", () => bad(tx).execute(), tx)).catch(() => {});
+      await row("cancel(), then execute()", () => good().cancel().execute());
+      let ended;
+      await sql.begin(async tx => { ended = tx; });
+      await row("execute() on a transaction that ended", () => good(ended).execute());
+      if (sql.options.adapter !== "sqlite") {
+        const released = await sql.reserve();
+        released.release();
+        await row("execute() on a reservation that was released", () => good(released).execute());
+        const cold = new Bun.SQL(process.env.SQL_URL, { max: 1 });
+        await row("execute(), then close({ timeout: 0 })", () => { good(cold).execute(); cold.close({ timeout: 0 }); });
+        const holder = await sql.reserve();
+        await row("execute(), then cancel() while it waits for a connection", () => { good().execute().cancel(); holder.release(); });
+        async function stillQueued(name, close) {
+          const full = new Bun.SQL(process.env.SQL_URL, { max: 1 });
+          await full.reserve();
+          reported.length = 0;
+          good(full).execute();
+          await close(full);
+          await new Promise(setImmediate);
+          result[name] = reported.join();
+        }
+        // The timer of close() does not keep the process alive.
+        const alive = setInterval(() => {}, 2 ** 30);
+        await stillQueued("execute(), still queued when the time of close({ timeout }) runs out", full => full.close({ timeout: 0.001 }));
+        await stillQueued("execute(), still queued when close({ timeout: 0 }) overtakes close({ timeout })", full => {
+          full.close({ timeout: 60 });
+          return full.close({ timeout: 0 });
+        });
+        clearInterval(alive);
+      }
+      const closed = new Bun.SQL(process.env.SQL_URL, { max: 1 });
+      await closed.close();
+      await row("execute() on a pool that is closed", () => good(closed).execute());
       await sql.close();
       console.log(JSON.stringify(result));
       `,
@@ -97,7 +130,7 @@ async function unhandledRejections(url: string) {
 }
 
 /** Without a listener. Not in a top-level await: while one is pending, Bun reports the rejection and goes on. */
-async function outlivesAQueryThatIsOnlyStarted(url: string) {
+async function outlivesAQueryThatIsOnlyStarted(url: string, closeTimeout?: number) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -105,11 +138,21 @@ async function outlivesAQueryThatIsOnlyStarted(url: string) {
       `
       const sql = new Bun.SQL(process.env.SQL_URL, { max: 1 });
       (async () => {
-        await sql.unsafe("select 1");
-        sql.unsafe("select * from bun_pool_no_such_table").execute();
-        await sql.unsafe("select 1");
+        // The timer of close() does not keep the process alive.
+        const alive = setInterval(() => {}, 2 ** 30);
+        if (${closeTimeout} !== undefined) {
+          // Behind a reservation the query is still queued when the time runs out.
+          if (${closeTimeout} > 0) await sql.reserve();
+          sql.unsafe("select 1").execute();
+          await sql.close({ timeout: ${closeTimeout} });
+        } else {
+          await sql.unsafe("select 1");
+          sql.unsafe("select * from bun_pool_no_such_table").execute();
+          await sql.unsafe("select 1");
+        }
         await new Promise(setImmediate);
         console.log("alive");
+        clearInterval(alive);
         await sql.close();
       })();
       `,
@@ -129,6 +172,18 @@ const onlyStarted = {
   "execute() in a transaction": "",
   "finally(f)": "",
 };
+/** Only started, and rejected before it had a connection. */
+const refusedInSilence = {
+  "cancel(), then execute()": "",
+  "execute() on a transaction that ended": "",
+};
+const refusedInSilenceByAServer = {
+  ...refusedInSilence,
+  "execute() on a reservation that was released": "",
+  "execute(), then close({ timeout: 0 })": "",
+  "execute(), still queued when close({ timeout: 0 }) overtakes close({ timeout })": "",
+};
+const refusedAloud = { "execute() on a pool that is closed": "query" };
 const handled = {
   "catch(f)": "",
   "then(f, g)": "",
@@ -155,6 +210,10 @@ describe.concurrent("sqlite: a failure that nobody handles", () => {
       result: { ...handled, "execute()": "query", "execute() in a transaction": "", "finally(f)": "" },
       exitCode: 0,
     });
+  });
+
+  test("of a query that is only started and refused before it runs", async () => {
+    expect(await reported()).toMatchObject({ result: { ...refusedInSilence, ...refusedAloud }, exitCode: 0 });
   });
 
   test("of what then() and catch() return, and what a handler throws, is reported as of any promise", async () => {
@@ -651,6 +710,38 @@ for (const server of servers) {
         });
       });
 
+      test("of a query that is only started and refused before it has a connection is not reported", async () => {
+        expect(await reported()).toMatchObject({ result: refusedInSilenceByAServer, exitCode: 0 });
+      });
+
+      test("of a query that is only started, with close({ timeout: 0 }) behind it, does not end the process", async () => {
+        await container.ready;
+        expect(await outlivesAQueryThatIsOnlyStarted(server.url(container.host, container.port), 0)).toEqual({
+          stdout: "alive\n",
+          exitCode: 0,
+        });
+      });
+
+      test("of a query that is only started and still queued when the time of close({ timeout }) runs out ends the process", async () => {
+        await container.ready;
+        const { exitCode } = await outlivesAQueryThatIsOnlyStarted(server.url(container.host, container.port), 0.001);
+        expect(exitCode).toBe(1);
+      });
+
+      test("of a query that is only started is reported for a closed pool and a cancel() while it waits", async () => {
+        expect(await reported()).toMatchObject({
+          result: { ...refusedAloud, "execute(), then cancel() while it waits for a connection": "query" },
+          exitCode: 0,
+        });
+      });
+
+      test("of a query that is only started is reported when the time of close({ timeout }) runs out", async () => {
+        expect(await reported()).toMatchObject({
+          result: { "execute(), still queued when the time of close({ timeout }) runs out": "query" },
+          exitCode: 0,
+        });
+      });
+
       test("of what then() and catch() return, and what a handler throws, is reported as of any promise", async () => {
         expect(await reported()).toMatchObject({ result: reportedLikeAnyPromise, exitCode: 0 });
       });
@@ -1018,6 +1109,7 @@ describe.each(scripted)("$adapter, scripted server", script => {
   const serving = (socket: net.Socket) => script.ready(socket, true);
   async function serverOf(onSocket: (socket: net.Socket, nth: number) => void) {
     const sockets: net.Socket[] = [];
+    let probes = 0;
     const { port, server } = await listeningServer(socket => {
       socket.on("error", () => {});
       onSocket(socket, sockets.push(socket));
@@ -1025,6 +1117,14 @@ describe.each(scripted)("$adapter, scripted server", script => {
     return {
       port,
       sockets,
+      /** How many connections the pool has dialed. One of our own is accepted after them. */
+      async dials() {
+        const probe = net.connect(port, "127.0.0.1");
+        await once(probe, "connect");
+        while (!sockets.some(socket => socket.remotePort === probe.localPort)) await nextTurn();
+        probe.destroy();
+        return sockets.length - ++probes;
+      },
       async [Symbol.asyncDispose]() {
         for (const socket of sockets) socket.destroy();
         server.close();
@@ -1091,7 +1191,8 @@ describe.each(scripted)("$adapter, scripted server", script => {
     await using sql = new SQL({ url: url(server.port), max: 3, onclose: closed.hit });
     const queries = [1, 2, 3].map(() => outcome(sql.unsafe("select 1").simple()));
     expect(await Promise.all(queries)).toEqual(Array(3).fill("resolved"));
-    expect(server.sockets.length).toBe(3);
+    // And one more if the pause is over when the login comes.
+    expect(server.sockets.length).toBeLessThanOrEqual(4);
   });
 
   test.concurrent("a pool that lost connections grows by one dial for each caller that waits", async () => {
@@ -1107,19 +1208,20 @@ describe.each(scripted)("$adapter, scripted server", script => {
     await closed.reached(2);
     [1, 2].forEach(() => outcome(sql.unsafe("select 1").execute()));
     await connected.reached(4);
-    // Accepted after whatever the pool would have dialed.
-    const probe = net.connect(server.port, "127.0.0.1");
-    await once(probe, "connect");
-    probe.destroy();
-    while (server.sockets.length < 5) await nextTurn();
-    expect(server.sockets.length).toBe(5);
+    expect(await server.dials()).toBe(4);
   });
 
   test.concurrent("the connection that is up drains for a reservation that nothing can be dialed for", async () => {
-    await using server = await serverOf((socket, nth) => (nth === 1 ? ready(socket) : refuseLogin(socket)));
+    let answerWith = ready;
+    await using server = await serverOf(socket => answerWith(socket));
+    const connected = new Calls();
     const closed = new Calls();
-    await using sql = new SQL({ url: url(server.port), max: 2, onclose: closed.hit });
+    await using sql = new SQL({ url: url(server.port), max: 2, onconnect: connected.hit, onclose: closed.hit });
     await sql.connect();
+    await connected.reached(2);
+    // One is lost, and somebody else takes its place.
+    answerWith = refuseLogin;
+    server.sockets[1].destroy();
     await closed.reached(1);
     const busy = outcome(sql.unsafe("select 1").simple().execute());
     const reservation = sql.reserve();
@@ -1132,6 +1234,228 @@ describe.each(scripted)("$adapter, scripted server", script => {
     await once(server.sockets[0], "data");
     answer(server.sockets[0]);
     expect(await outcome(later)).toBe("resolved");
+  });
+
+  describe("a caller that finds no connection ready is dialed for, whatever the server said before", () => {
+    const query = (sql: SQL) => sql.unsafe("select 1").simple();
+
+    describe.each([2, 10])("max: %d, one place when the pool starts, then room", max => {
+      test.concurrent.each([
+        [
+          "reserve()",
+          async (sql: SQL) => {
+            using _ = await sql.reserve();
+            await query(sql);
+          },
+        ],
+        ["begin()", (sql: SQL) => sql.begin(() => query(sql))],
+      ])("a query of the pool inside %s", async (_, nested) => {
+        let answerWith = (socket: net.Socket, nth: number) => (nth === 1 ? serving(socket) : refuseLogin(socket));
+        await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+        const closed = new Calls();
+        await using sql = new SQL({ url: url(server.port), max, onclose: closed.hit });
+        await query(sql);
+        await closed.reached(max - 1);
+        answerWith = serving;
+        expect(await outcome(nested(sql))).toBe("resolved");
+      });
+    });
+
+    test.concurrent("when one dial of the start was refused and the other gets no answer", async () => {
+      await using server = await serverOf((socket, nth) => {
+        if (nth === 1) refuseLogin(socket);
+        if (nth > 2) serving(socket);
+      });
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 2, connectionTimeout: 0, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      const first = outcome(query(sql));
+      await closed.reached(1);
+      expect([await outcome(query(sql)), await first]).toEqual(["resolved", "resolved"]);
+      expect(server.sockets.length).toBe(3);
+    });
+
+    test.concurrent("when its only connection is reserved and an earlier dial gets no answer", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth === 1 ? serving(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 3, connectionTimeout: 0, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      using held = await sql.reserve();
+      await closed.reached(2);
+      // The first caller's dials: one gets no answer, the other is refused.
+      const before = server.sockets.length;
+      answerWith = (socket, nth) => void (nth > before + 1 && refuseLogin(socket));
+      const first = outcome(query(sql));
+      await closed.reached(3);
+      answerWith = serving;
+      expect([await outcome(query(sql)), await first]).toEqual(["resolved", "resolved"]);
+    });
+
+    test.concurrent("the callers that wait when every connection is cut get a pool of `max` again", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth <= 3 ? ready(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const connected = new Calls();
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 6, onconnect: connected.hit, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await Promise.all([connected.reached(3), closed.reached(3)]);
+      answerWith = ready;
+      // Two for each connection, six wait.
+      for (let i = 0; i < 12; i++) void outcome(sql.unsafe("select 1").execute());
+      for (const socket of server.sockets.slice(0, 3)) socket.destroy();
+      await connected.reached(9);
+      expect(await server.dials()).toBe(12);
+    });
+  });
+
+  test.concurrent.each([
+    [1, true],
+    [2, false],
+  ])("behind %d reservations that wait for 2 busy connections, a query gets one of them: %p", async (ahead, served) => {
+    await using server = await serverOf(ready);
+    const connected = new Calls();
+    const sql = new SQL({ url: url(server.port), max: 2, onconnect: connected.hit });
+    await using _ = unanswered(sql);
+    await sql.connect();
+    await connected.reached(2);
+    for (let i = 0; i < 2; i++) void outcome(sql.unsafe("select 1").execute());
+    for (let i = 0; i < ahead; i++) void outcome(sql.reserve());
+    const query = sql.unsafe("select 1").execute();
+    void outcome(query);
+    expect(query.active).toBe(served);
+  });
+
+  describe("while a connection is ready, the pool grows with care", () => {
+    const waits = (sql: SQL) => void outcome(sql.unsafe("select 1").execute());
+
+    test.concurrent.each([1, 4])("a pool that lost %d of 5 connections has 5 again", async lost => {
+      await using server = await serverOf(ready);
+      const connected = new Calls();
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 5, onconnect: connected.hit, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await connected.reached(5);
+      for (const socket of server.sockets.slice(0, lost)) socket.destroy();
+      await closed.reached(lost);
+      for (let i = 0; i < 5; i++) waits(sql);
+      await connected.reached(5 + lost);
+      expect(await server.dials()).toBe(5 + lost);
+    });
+
+    test.concurrent("callers that wait at a server without a place do not cost a login each", async () => {
+      await using server = await serverOf((socket, nth) => (nth === 1 ? serving(socket) : refuseLogin(socket)));
+      await using sql = new SQL({ url: url(server.port), max: 5 });
+      for (let i = 0; i < 40; i++) {
+        // The second one has to wait.
+        await Promise.all([sql.unsafe("select 1").simple(), sql.unsafe("select 1").simple()]);
+      }
+      // Five for the start of the pool, then one after each pause.
+      expect(server.sockets.length).toBeLessThan(25);
+    });
+
+    test.concurrent("after a failed dial it asks for one more at a time", async () => {
+      let answerWith: (socket: net.Socket) => void = ready;
+      await using server = await serverOf(socket => answerWith(socket));
+      const connected = new Calls();
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 5, onconnect: connected.hit, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await connected.reached(5);
+      // Four are lost, and somebody else takes their places.
+      answerWith = refuseLogin;
+      for (const socket of server.sockets.slice(1)) socket.destroy();
+      await closed.reached(4);
+      waits(sql);
+      waits(sql);
+      await closed.reached(5);
+      // The next dial gets no answer.
+      answerWith = () => {};
+      while (server.sockets.length === 6) {
+        waits(sql);
+        await nextTurn();
+      }
+      for (let i = 0; i < 5; i++) waits(sql);
+      expect(await server.dials()).toBe(7);
+    });
+
+    test.concurrent("a pool that started at a server with one place grows when there is room", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth === 1 ? ready(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const connected = new Calls();
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 4, onconnect: connected.hit, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await closed.reached(3);
+      answerWith = ready;
+      while (connected.count < 4) {
+        waits(sql);
+        await nextTurn();
+      }
+      expect(await server.dials()).toBe(7);
+    });
+
+    test.concurrent("a login shows that there is room: the callers that already wait are dialed for", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth <= 2 ? ready(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const connected = new Calls();
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 5, onconnect: connected.hit, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await Promise.all([connected.reached(2), closed.reached(3)]);
+      answerWith = ready;
+      waits(sql);
+      waits(sql);
+      // Nobody releases, and nobody else arrives.
+      const waiting = [1, 2, 3, 4].map(() => sql.reserve());
+      server.sockets[1].destroy();
+      const held = await Promise.all(waiting);
+      expect(await server.dials()).toBe(9);
+      for (const reserved of held) reserved.release();
+    });
+
+    test.concurrent.each(["reserve", "begin"] as const)(
+      "the logins of a start do not start the pool again for %s() callers",
+      async how => {
+        const late: net.Socket[] = [];
+        await using server = await serverOf((socket, nth) => (nth <= 2 ? void late.push(socket) : refuseLogin(socket)));
+        const connected = new Calls();
+        const closed = new Calls();
+        const sql = new SQL({ url: url(server.port), max: 5, onconnect: connected.hit, onclose: closed.hit });
+        await using _ = unanswered(sql);
+        const held: unknown[] = [];
+        for (let i = 0; i < 6; i++) {
+          void outcome(how === "reserve" ? sql.reserve().then(reserved => held.push(reserved)) : sql.begin(() => {}));
+        }
+        // The refusals come first, so each login finds the pool below `max`, and a caller takes it for itself at once.
+        await closed.reached(3);
+        for (const socket of late) ready(socket);
+        await Promise.all([connected.reached(2), closed.reached(4)]);
+        // Five for the start, and the one more that the last login asks for.
+        expect(await server.dials()).toBe(6);
+      },
+    );
+
+    test.concurrent("a connection that it loses is replaced at once, whatever the server said before", async () => {
+      let answerWith = (socket: net.Socket, nth: number) => (nth <= 2 ? ready(socket) : refuseLogin(socket));
+      await using server = await serverOf((socket, nth) => answerWith(socket, nth));
+      const closed = new Calls();
+      const sql = new SQL({ url: url(server.port), max: 12, onclose: closed.hit });
+      await using _ = unanswered(sql);
+      await sql.connect();
+      await closed.reached(10);
+      answerWith = ready;
+      waits(sql);
+      waits(sql);
+      const waiting = [1, 2].map(() => outcome(sql.reserve().then(reserved => reserved.release())));
+      server.sockets[1].destroy();
+      expect(await Promise.all(waiting)).toEqual(["resolved", "resolved"]);
+    });
   });
 
   test.concurrent("a server that refuses everybody is dialed `max` times for callers that wait together", async () => {
@@ -1165,12 +1489,7 @@ describe.each(scripted)("$adapter, scripted server", script => {
     expect(await connecting).toBe(prefix + "CONNECTION_CLOSED");
 
     password.resolve("");
-    // Accepted after whatever the pool would have dialed.
-    const probe = net.connect(server.port, "127.0.0.1");
-    await once(probe, "connect");
-    probe.destroy();
-    while (server.sockets.length === 0) await nextTurn();
-    expect(server.sockets.length).toBe(1);
+    expect(await server.dials()).toBe(0);
   });
 
   // Not concurrent: setSystemTime() is for the whole process.

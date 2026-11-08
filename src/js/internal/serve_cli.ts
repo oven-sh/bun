@@ -1,10 +1,13 @@
 // The parts of `bun ./index.html` (internal/html.ts) and `bun bake` (internal/bake.ts) that start
 // the server and talk to the terminal.
-import type { Serve, Server } from "bun";
+import type { Serve } from "bun";
+type Server<T> = Bun.Server<T>;
 
 const path = require("node:path");
 
 const env = Bun.env;
+
+const isRestarting = $bindgen("bake_plugins.bind.ts", "isRestarting");
 
 type ServeFlags = {
   /** `undefined` until `--host` or `--hostname` sets it. */
@@ -17,19 +20,29 @@ function defaultServeFlags(): ServeFlags {
   return { hostname: undefined, port: undefined, console: false };
 }
 
+/** The port in the value of `name`: a whole number from 0 to 65535. */
+function parsePort(name: string, value: string): number {
+  const port = Number(value);
+  // Only digits: `Number()` also reads " ", "0x1F90" and "1e3".
+  if (!/^\d+$/.test(value) || port > 65535) {
+    throw new Error(`"${name}" needs a port from 0 to 65535, not "${value}".`);
+  }
+  return port;
+}
+
 /** Sets the hostname, and the port if there is one: `host`, `host:3000`, `::1`, `[::1]` or `[::1]:3000`. */
 function applyHost(name: string, value: string, flags: ServeFlags) {
   const end = value.startsWith("[") ? value.indexOf("]") : -1;
   if (end !== -1) {
     flags.hostname = value.slice(1, end);
     const rest = value.slice(end + 1);
-    if (rest.startsWith(":")) flags.port = parseInt(rest.slice(1), 10);
+    if (rest.startsWith(":")) flags.port = parsePort(name, rest.slice(1));
   } else {
     const colon = value.indexOf(":");
     // More than one `:` is an IPv6 address without a port.
     if (colon !== -1 && colon === value.lastIndexOf(":")) {
       flags.hostname = value.slice(0, colon);
-      flags.port = parseInt(value.slice(colon + 1), 10);
+      flags.port = parsePort(name, value.slice(colon + 1));
     } else {
       flags.hostname = value;
     }
@@ -66,7 +79,7 @@ function parseServeFlag(args: string[], i: number, flags: ServeFlags): number {
       continue;
     }
     if (name === "--port") {
-      flags.port = parseInt(value, 10);
+      flags.port = parsePort(name, value);
     } else {
       applyHost(name, value, flags);
     }
@@ -197,11 +210,16 @@ function printBannerAndHandleShortcuts(banner: Banner) {
 
   // Keyboard shortcuts
   if (!installed && process.stdin.isTTY) {
-    // Handle Ctrl+C and other termination signals
-    process.on("SIGINT", () => process.exit());
-    process.on("SIGHUP", () => process.exit());
-    process.on("SIGTERM", () => process.exit());
-    process.stdin.on("data", data => {
+    // Handle Ctrl+C and other termination signals. Not during a restart, which sends one of them to
+    // run the app's listeners: `process.exit()` would end the restart before the listeners after
+    // this one run.
+    const exit = () => {
+      if (!isRestarting()) process.exit();
+    };
+    process.on("SIGINT", exit);
+    process.on("SIGHUP", exit);
+    process.on("SIGTERM", exit);
+    process.stdin.on("data", (data: Buffer) => {
       const key = data.toString().toLowerCase().replaceAll("\r\n", "\n");
 
       switch (key) {
@@ -216,7 +234,7 @@ function printBannerAndHandleShortcuts(banner: Banner) {
           break;
 
         case "o\n":
-          const url = latestServer!.url.toString();
+          const url = (latestServer!.url as URL).toString();
 
           // TODO: copy the AppleScript from create-react-app or Vite.
           const opener =
@@ -229,7 +247,7 @@ function printBannerAndHandleShortcuts(banner: Banner) {
                   ? ["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url]
                   : ["xdg-open", url];
           try {
-            Bun.spawn(opener).exited.catch(() => {});
+            (Bun.spawn(opener).exited as Promise<number>).catch(() => {});
           } catch {
             // `Bun.spawn` throws when the opener is not installed. The URL is in the banner.
             console.log(`Could not open a browser. Open ${url}`);

@@ -8,7 +8,7 @@ use bun_lint::utils::ts_utils::{
     upper_case_first,
 };
 use bun_lint_eslint::rules::require_await::{
-    MISSING_AWAIT, REMOVE_ASYNC, State, mark_function_around, node_with_async_keyword,
+    MISSING_AWAIT, REMOVE_ASYNC, State, mark_enclosing_function, node_with_async_keyword,
 };
 
 /// Disallow async functions which do not return promises and have no `await` expression.
@@ -22,17 +22,17 @@ fn is_thenable_expression(node: Expr) -> bool {
     is_thenable(node, node.ty())
 }
 
-/// Upstream asks about the `expression` of the `ts.ReturnStatement`, which has the parentheses.
+/// Upstream gets the type of the `ts.ReturnStatement`'s `expression`, which includes the parentheses.
 fn is_thenable_return(statement: Stmt) -> bool {
     matches!(statement.kind(), StmtKind::Return(Some(argument))
         if is_thenable(argument, argument.ts_node_with_parentheses().get_type_at_location()))
 }
 
-/// Whether `func` returns something thenable.
+/// True if `func` returns something thenable.
 fn returns_thenable(func: Func, is_oxlint: bool) -> bool {
     if func.is_arrow() {
-        // typescript-eslint looks at every child of the arrow function that is neither a block nor an
-        // `await`, which the parameters are too. tsgolint looks at the body only.
+        // typescript-eslint checks every child of the arrow function that's neither a block nor an `await`, which
+        // includes the parameters. tsgolint only checks the body.
         let has_thenable_parameter = !is_oxlint
             && func.params().iter().any(|param| {
                 match param.default().is_none() && !param.is_rest() {
@@ -59,7 +59,7 @@ fn has_async_iterator(ty: Type) -> bool {
     ty.is_unresolved() || get_well_known_symbol_property_of_type(ty, "asyncIterator").is_some()
 }
 
-/// Whether the generator `func` delegates to an async generator or yields something thenable.
+/// True if the generator `func` delegates to an async generator or yields something thenable.
 fn is_async_yield(func: Func, is_oxlint: bool) -> bool {
     func.yields().any(|node| {
         let Some((Some(argument), star)) = node.as_yield() else {
@@ -85,7 +85,7 @@ fn remove_async<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Option<Vec<Fix>> {
     let async_token = file.tokens_in(node).find(|token| token.value() == b"async")?;
     let after = file.tokens_after(async_token).with_comments().next()?;
     let next_token = file.token_after(async_token)?;
-    // Without the `async`, what follows could continue the line before.
+    // Without the `async`, the next token could continue the previous line.
     let add_semi_colon = (next_token.is_punctuator("[") || next_token.is_punctuator("("))
         && (matches!(node, Node::Member(_)) || is_start_of_expression_statement(node))
         && needs_preceding_semicolon(node);
@@ -136,19 +136,19 @@ impl Rule for RequireAwait {
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        mark_function_around(node.into(), cx);
+        mark_enclosing_function(node.into(), cx);
     }
 
     fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if node.as_for_of().is_some_and(|(.., is_await)| is_await) {
-            mark_function_around(node.into(), cx);
+            mark_enclosing_function(node.into(), cx);
         }
     }
 
     #[inline]
     fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if node.var_kind() == VarKind::AwaitUsing {
-            mark_function_around(node.into(), cx);
+            mark_enclosing_function(node.into(), cx);
         }
     }
 
@@ -163,14 +163,14 @@ impl Rule for RequireAwait {
                 continue;
             }
             let name = get_function_name_with_kind(func, false);
-            let place = match cx.language().is_oxlint {
+            let report_span = match cx.language().is_oxlint {
                 true => tsgolint_function_head_loc(func),
                 false => get_function_head_loc(func),
             };
-            cx.report(place, MISSING_AWAIT)
+            cx.report(report_span, MISSING_AWAIT)
                 .claims(func)
                 .data("name", upper_case_first(&name).into_owned())
-                .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| remove_async(fixer, func));
+                .suggest_behavior_change(REMOVE_ASYNC, &[], |fixer| remove_async(fixer, func));
         }
     }
 }

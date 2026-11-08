@@ -3,6 +3,7 @@
 import { JSON5 } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 describe("escape sequences", () => {
   test("\\v vertical tab", () => {
@@ -1364,6 +1365,18 @@ describe("input types", () => {
     const parsed = JSON5.parse(input);
     const expected: any = [1, 2, 3];
     expect(parsed).toEqual(expected);
+  });
+
+  test("an asset of Bun.build() parses as its bytes, and one written to outdir is refused", async () => {
+    using dir = tempDir("json5-build-output", {
+      "entry.js": `import doc from "./doc.json5" with { type: "file" };\nconsole.log(doc);`,
+      "doc.json5": "{a: 1, b: [1, 2,],}",
+    });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const assetOf = (build: Bun.BuildOutput) => build.outputs.find(output => output.kind === "asset")!;
+    expect(JSON5.parse(assetOf(await Bun.build({ entrypoints })) as any)).toEqual({ a: 1, b: [1, 2] });
+    const written = assetOf(await Bun.build({ entrypoints, outdir: join(String(dir), "out") }));
+    expect(() => JSON5.parse(written as any)).toThrow("File blob cannot be used here");
   });
 
   test("throws on no arguments", () => {

@@ -231,14 +231,11 @@ pub fn edit_trusted_dependencies(
 ) -> Result<(), bun_alloc::AllocError> {
     let mut len = names_to_add.len();
 
-    let mut trusted_dependencies: &[Expr] = &[];
-    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
-            // this function; lifetime erased per the parser's `Str` convention.
-            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
-        }
-    }
+    let query = package_json.as_property(TRUSTED_DEPENDENCIES_STRING);
+    let trusted_dependencies: &[Expr] = match query.as_ref().map(|q| &q.expr.data) {
+        Some(bun_ast::ExprData::EArray(arr)) => arr.items.slice(),
+        _ => &[],
+    };
 
     let mut i = len;
     while i > 0 {
@@ -267,7 +264,7 @@ pub fn edit_trusted_dependencies(
 
     let mut needs_new_trusted_dependencies_list = true;
     let mut trusted_dependencies_array: Expr = 'brk: {
-        if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+        if let Some(query) = query {
             if matches!(query.expr.data, bun_ast::ExprData::EArray(_)) {
                 needs_new_trusted_dependencies_list = false;
                 break 'brk query.expr;
@@ -446,7 +443,8 @@ pub(crate) fn edit_update_entries(
             let Some((key_str, value_literal)) = string_pair(dep) else {
                 continue;
             };
-            // `catalog:` references are never rewritten; the root catalog entry is updated instead.
+            // `catalog:` references are never rewritten. The root's catalog entry is updated
+            // instead.
             if literal_tag(value_literal) == dependency::Tag::Catalog
                 || !selected(key_str, value_literal)
             {
@@ -488,11 +486,17 @@ pub(crate) fn edit_update_entries(
             // it, and `--latest` leaves it alone when it already allows the resolved version.
             let is_peer = group.prop == DependencyGroup::PEER.prop;
             let resolved = resolution.npm().version;
+            // A package in both devDependencies and peerDependencies has two lockfile entries, so
+            // check the peer one.
             let allowed = is_peer
-                && workspace_dep.version.try_npm().is_some_and(|npm_version| {
-                    npm_version
-                        .version
-                        .satisfies(resolved, string_buf, string_buf)
+                && workspace_deps.iter().any(|row| {
+                    row.behavior.is_peer()
+                        && row.name_hash == workspace_dep.name_hash
+                        && row.version.try_npm().is_some_and(|npm_version| {
+                            npm_version
+                                .version
+                                .satisfies(resolved, string_buf, string_buf)
+                        })
                 });
             let Some(new_version) = updated_version_literal(
                 &entry.original_version_literal,
@@ -619,7 +623,8 @@ pub(crate) fn steers_catalogs_to_latest(manager: &PackageManager) -> bool {
     !manager.updating_catalogs.is_empty() && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
 }
 
-/// An entry that only an override reaches keeps its range: no row carries a version back to it.
+/// A catalog entry that's only used through an override keeps its range, because no dependency
+/// reports a version back to it.
 #[cold]
 #[inline(never)]
 pub(crate) fn steer_used_catalogs_to_latest(
@@ -632,7 +637,7 @@ pub(crate) fn steer_used_catalogs_to_latest(
     let package_json_cache = &mut manager.workspace_package_json_cache;
     let lockfile = parsed.unwrap_or(&mut *manager.lockfile);
 
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = strings::without_trailing_slash(FileSystem::get().top_level_dir());
     let mut path_buf = path_buffer_pool::get();
     // The root's package.json, then each member's.
     for workspace in 0..=lockfile.workspace_paths.count() {
@@ -681,7 +686,8 @@ pub(crate) fn steer_used_catalogs_to_latest(
     Ok(())
 }
 
-/// On the loaded lockfile, before the differ: the summary prints an entry's move as an update row.
+/// Runs on the loaded lockfile, before the differ, so that the summary can print a catalog entry's
+/// change as an update.
 pub(crate) fn record_catalog_originals(
     manager: &mut PackageManager,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -728,7 +734,8 @@ pub(crate) fn record_catalog_originals(
     Ok(())
 }
 
-/// Writes the literal each recorded catalog entry resolved to into the root AST; returns `changed`.
+/// Writes the literal that each recorded catalog entry resolved to into the root AST. Returns true
+/// if anything changed.
 pub(crate) fn edit_catalogs_after_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
@@ -935,13 +942,15 @@ pub(crate) enum Declared {
     Removed,
 }
 
-/// What becomes of the entry `list` already has for a package `bun add` puts into `target`.
+/// Decides what happens to the entry that `list` already has for a package that `bun add` puts into
+/// `target`.
 pub(crate) fn fate_of_declared(list: &[u8], target: &[u8], move_to_target: bool) -> Declared {
     let peer = DependencyGroup::PEER.prop;
     if list == target {
         Declared::TakesSpec
     } else if !move_to_target {
-        // A peer entry and the entry of another list may share a name: neither replaces the other.
+        // A peer entry and an entry in another list can have the same name. Neither replaces the
+        // other.
         if (list == peer) == (target == peer) {
             Declared::TakesSpec
         } else {
@@ -950,7 +959,7 @@ pub(crate) fn fate_of_declared(list: &[u8], target: &[u8], move_to_target: bool)
     } else if list == peer {
         Declared::Stays
     } else if target == peer && list == DependencyGroup::DEV.prop {
-        // What provides the peer during development follows its range.
+        // The entry that provides the peer during development follows the peer's range.
         Declared::TakesSpec
     } else {
         Declared::Removed
@@ -1013,7 +1022,7 @@ pub(crate) fn edit(
     let fold_positionals = !options.before_install
         && manager.subcommand == Subcommand::Add
         && manager.options.add_catalog.is_none();
-    // `(slot of a request, another slot that takes what it gets)`
+    // Pairs of (the slot of a request, another slot that gets the same value).
     let mut also_declared = Vec::new();
 
     // There are three possible scenarios here
@@ -1040,7 +1049,7 @@ pub(crate) fn edit(
                     None
                 };
                 if let Some(name) = resolved_name {
-                    // An optional peer's row is not folded into: left to the rebuild below.
+                    // An optional peer isn't updated here. The rebuild below handles it.
                     let optional_peer = current_package_json
                         .as_property(b"peerDependenciesMeta")
                         .and_then(|meta| meta.expr.as_property(name))
@@ -1071,7 +1080,7 @@ pub(crate) fn edit(
                     }
                     if let Some(slot) = slot {
                         remove_entry(current_package_json, dependency_list, request.get_name());
-                        request.e_string = Some(slot.as_ptr());
+                        request.e_string = Some(slot);
                         remaining -= 1;
                         changed = true;
                         i += 1;
@@ -1155,8 +1164,7 @@ pub(crate) fn edit(
                                                     .expr
                                                     .data
                                                     .e_string()
-                                                    .expect("infallible: variant checked")
-                                                    .as_ptr(),
+                                                    .expect("infallible: variant checked"),
                                             );
                                             remaining -= 1;
                                         } else {
@@ -1213,8 +1221,7 @@ pub(crate) fn edit(
                                                     request.e_string = Some(
                                                         v.data
                                                             .e_string()
-                                                            .expect("infallible: variant checked")
-                                                            .as_ptr(),
+                                                            .expect("infallible: variant checked"),
                                                     );
                                                     remaining -= 1;
                                                     break 'dependency_group;
@@ -1300,7 +1307,8 @@ pub(crate) fn edit(
                     bun_ast::Loc::EMPTY,
                 ));
 
-                // Read by the `workspace:` arm of the write-back below; the others overwrite it.
+                // Read by the `workspace:` arm of the write-back below. The other arms overwrite
+                // it.
                 let declared: &[u8] = match new_dependencies[k]
                     .value
                     .as_ref()
@@ -1322,8 +1330,7 @@ pub(crate) fn edit(
                         .unwrap()
                         .data
                         .e_string()
-                        .unwrap()
-                        .as_ptr(),
+                        .unwrap(),
                 );
                 break;
             }
@@ -1426,25 +1433,8 @@ pub(crate) fn edit(
         &[]
     };
     for request in updates.iter_mut() {
-        if let Some(e_string) = request.e_string {
-            // SAFETY: `e_string` is a `*mut E::EString` captured at one of two provenance sites:
-            //   (a) the freshly `Expr::allocate`d empty value string in `new_dependencies` (the
-            //       `e_string().unwrap().as_ptr()` call inside the `while k < new_dependencies.len()`
-            //       loop) — backed by `manager.ast_arena`, which is process-lifetime; or
-            //   (b) a pre-existing slot from the parsed `current_package_json` input tree
-            //       (`value.expr.data.e_string()` / `v.data.e_string()` in the earlier
-            //       dependency-group scan) — backed by the thread-local Expr
-            //       Store, which the *caller* guarantees stays live for the duration of `edit`
-            //       (it owns the parsed tree).
-            // Note: `ExprDisabler::scope()` at function entry is a debug guard that *forbids*
-            // Store use, not a keep-alive — it exists precisely so that the (a)-path nodes are
-            // never Store-backed. The `*current_package_json = Expr::allocate(...)` reassignments
-            // above only overwrite a Copy `Expr` handle; they never reset either arena. The Expr
-            // tree references the slot via `StoreRef` (a Copy `NonNull`) and no `&`/`&mut`
-            // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
-            // so this is the sole mutable borrow.
-            let e_string = unsafe { &mut *e_string };
-            // `bun update <pkg>` only moves registry entries; `bun add` replaces any.
+        if let Some(mut e_string) = request.e_string {
+            // `bun update <pkg>` only moves registry entries. `bun add` replaces any entry.
             if manager.subcommand == Subcommand::Update
                 && !literal_tag(e_string.data.slice()).is_npm()
             {
@@ -1453,7 +1443,8 @@ pub(crate) fn edit(
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
-                // Nothing satisfies it, or `picks_latest_tag` steers it later: stays as declared.
+                // Either nothing satisfies it, or `picks_latest_tag` handles it later, so it stays
+                // as declared.
                 if update_to_latest
                     || (manager.subcommand == Subcommand::Update && !options.before_install)
                 {
@@ -1523,8 +1514,7 @@ pub(crate) fn edit(
                                     current_package_json,
                                     DependencyGroup::PEER.prop,
                                     request.name,
-                                )
-                                .map(|slot| slot.as_ptr());
+                                );
                             match updated_version_literal(
                                 original,
                                 resolved,
@@ -1571,7 +1561,8 @@ pub(crate) fn edit(
 
                 // A range that linked a workspace member has nothing to move to.
                 resolution::Tag::Workspace if manager.subcommand == Subcommand::Update => continue,
-                // Not the bound row: an unchanged resolution keeps the old row's literal.
+                // Don't use the bound dependency, because an unchanged resolution keeps the old
+                // dependency's literal.
                 resolution::Tag::Workspace => match literal_tag(e_string.data.slice()) {
                     dependency::Tag::Workspace => e_string.data.slice(),
                     // An `npm:` alias stays as written. `workspace:*` would look the workspace up
@@ -1618,7 +1609,7 @@ pub(crate) fn edit(
             let mut declared = groups.iter().filter_map(|(group, _)| entry(group));
             if let Some(slot) = declared
                 .next()
-                .filter(|slot| request.e_string == Some(slot.as_ptr()))
+                .filter(|slot| request.e_string == Some(*slot))
             {
                 also_declared.extend(declared.map(|other| (slot, other)));
             }

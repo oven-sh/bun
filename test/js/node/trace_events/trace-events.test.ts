@@ -43,20 +43,22 @@ test("http.client.request span is closed when the proxy CONNECT tunnel fails", a
   expect({ phases: phases.sort(), exitCode }).toEqual({ phases: ["b", "e"], exitCode: 0 });
 });
 
-// fs.rm is one native call. Its span is the lstat that Node's rm starts with, also for a recursive call and for a
-// call that throws.
+// fs.rm is one native call. Its span has the name of the lstat that Node's rm starts with. Node's rmSync runs no lstat
+// for `recursive` with `force`, so that call has no span. A call that throws closes its span. Node opens none for it.
 test("every form of fs.rm emits one balanced lstat span", async () => {
   using dir = tempDir("trace-events-rm", {
     "main.mjs": `
       import fs from "node:fs";
-      for (const tree of ["callback", "promise", "sync"]) fs.mkdirSync(tree + "/a", { recursive: true });
-      fs.writeFileSync("file.txt", "");
+      for (const tree of ["callback", "promise", "sync", "forced"]) fs.mkdirSync(tree + "/a", { recursive: true });
+      for (const file of ["file.txt", "sync.txt"]) fs.writeFileSync(file, "");
       try {
         fs.rm(123, () => {});
       } catch (err) {
         console.log("threw", err.code);
       }
+      fs.rmSync("sync.txt");
       fs.rmSync("sync", { recursive: true });
+      fs.rmSync("forced", { recursive: true, force: true });
       await fs.promises.rm("promise", { recursive: true });
       fs.rm("callback", { recursive: true }, first => {
         fs.rm("file.txt", second => console.log("removed", first ?? second));
@@ -91,7 +93,7 @@ test("every form of fs.rm emits one balanced lstat span", async () => {
   expect({ stdout, async: phases("lstat"), sync: phases("fs.sync.lstat"), exitCode }).toEqual({
     stdout: "threw ERR_INVALID_ARG_TYPE\nremoved null\n",
     async: "bbbbeeee",
-    sync: "BE",
+    sync: "BBEE",
     exitCode: 0,
   });
 });

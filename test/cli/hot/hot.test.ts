@@ -1,7 +1,18 @@
 import { spawn } from "bun";
+import { dlopen } from "bun:ffi";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -927,4 +938,397 @@ it.each([
     stdout: ["first load", "collected", "third load", ""],
     stderr: [],
   });
+});
+
+/** Returns a function that resolves to `true` once the stream's text includes `wanted`, or to the full text at EOF. */
+function follow(stream: ReadableStream<Uint8Array>) {
+  const reader = stream.getReader();
+  let text = "";
+  return async (wanted: string) => {
+    while (!text.includes(wanted)) {
+      const { value, done } = await reader.read();
+      if (done) return text;
+      text += Buffer.from(value).toString();
+    }
+    return true;
+  };
+}
+
+/** Windows only. Suspends the process while `change` runs, so all of its file events are queued on resume. */
+function whileSuspended(pid: number, change: () => void) {
+  const kernel32 = dlopen("kernel32.dll", {
+    OpenProcess: { args: ["u32", "i32", "u32"], returns: "ptr" },
+    CloseHandle: { args: ["ptr"], returns: "i32" },
+  });
+  const ntdll = dlopen("ntdll.dll", {
+    NtSuspendProcess: { args: ["ptr"], returns: "i32" },
+    NtResumeProcess: { args: ["ptr"], returns: "i32" },
+  });
+  const PROCESS_SUSPEND_RESUME = 0x0800;
+  const handle = kernel32.symbols.OpenProcess(PROCESS_SUSPEND_RESUME, 0, pid);
+  expect(handle).not.toBeNull();
+  let resumed: number;
+  try {
+    expect(ntdll.symbols.NtSuspendProcess(handle)).toBe(0);
+    change();
+  } finally {
+    resumed = ntdll.symbols.NtResumeProcess(handle);
+    kernel32.symbols.CloseHandle(handle);
+    kernel32.close();
+    ntdll.close();
+  }
+  expect(resumed).toBe(0);
+}
+
+it.if(isWindows)("notices a deleted import in a burst of file events", async () => {
+  using dir = tempDir("hot-burst", {
+    "main.js": `import "./mods/a.js";\nimport "./mods/b.js";\nconsole.log("loaded");\n`,
+    "mods/a.js": "export {};",
+    "mods/b.js": "export {};",
+    "other/keep": "",
+  });
+  const root = String(dir);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("loaded")).toBe(true);
+
+  whileSuspended(runner.pid, () => {
+    // The pending read completes with only the first change.
+    writeFileSync(join(root, "other", "first"), "");
+    unlinkSync(join(root, "mods", "b.js"));
+    for (let i = 0; i < 200; i++) writeFileSync(join(root, "other", String(i)), "");
+  });
+  expect(await stderr("Cannot find module './mods/b.js'")).toBe(true);
+
+  writeFileSync(join(root, "main.js"), `import "./mods/a.js";\nconsole.log("reloaded");\n`);
+  expect(await stdout("reloaded")).toBe(true);
+});
+
+it.if(isWindows)("dev server survives a burst of file events that includes a deleted import", async () => {
+  // The watcher dispatches at most 128 events per batch, so use more files than that.
+  const count = 150;
+  const main = (from: number, log: string) =>
+    Array.from({ length: count - from }, (_, i) => `import "./mods/${from + i}.ts";\n`).join("") +
+    `console.log(${JSON.stringify(log)});\n`;
+  using dir = tempDir("dev-server-burst", {
+    "index.html": `<script type="module" src="./main.ts"></script>`,
+    "main.ts": main(0, "first bundle"),
+    ...Object.fromEntries(Array.from({ length: count }, (_, i) => [`mods/${i}.ts`, `console.log(${i});`])),
+    "other/keep": "",
+    "server.ts": `
+        import html from "./index.html";
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+        await Bun.write("url", server.url.href);
+        console.log("listening");
+      `,
+  });
+  const root = String(dir);
+  await using runner = spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  expect(await follow(runner.stdout)("listening")).toBe(true);
+  const url = readFileSync(join(root, "url"), "utf8");
+  const bundle = async () => {
+    // A failed build's page has no script, and the build fails while main.ts imports the deleted file.
+    const src = /src="([^"]+)"/.exec(await (await fetch(url)).text())?.[1];
+    return src ? await (await fetch(new URL(src, url))).text() : "";
+  };
+  expect(await bundle()).toContain("first bundle");
+
+  whileSuspended(runner.pid, () => {
+    // The pending read completes with only the first change.
+    writeFileSync(join(root, "other", "first"), "");
+    unlinkSync(join(root, "mods", "0.ts"));
+    for (let i = 1; i < count; i++) writeFileSync(join(root, "mods", `${i}.ts`), `console.log(${i}, "again");`);
+  });
+
+  writeFileSync(join(root, "main.ts"), main(1, "second bundle"));
+  while (!(await bundle()).includes("second bundle"));
+});
+
+// Other platforms evict the deleted import and stop watching its path, so "second" is never printed.
+it.todoIf(!isWindows)("reloads when a deleted import is recreated", async () => {
+  using dir = tempDir("hot-import-back", {
+    "main.js": `import "./imported.js";\n`,
+    "imported.js": `console.log("first");`,
+  });
+  const root = String(dir);
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("first")).toBe(true);
+
+  unlinkSync(join(root, "imported.js"));
+  expect(await stderr("Cannot find module './imported.js'")).toBe(true);
+
+  writeFileSync(join(root, "imported.js"), `console.log("second");`);
+  expect(await stdout("second")).toBe(true);
+});
+
+// The Windows watcher never reads the cached listing.
+it.skipIf(isWindows)("survives a directory event for a folder whose cached listing failed to read", async () => {
+  using dir = tempDir("hot-dir-read-error", {
+    "trace.log": "",
+    "src/lib/a.ts": `export {};`,
+    "src/fence/f.ts": `export {};`,
+    "src/main.ts": `
+      import "./lib/a.ts";
+      import "./fence/f.ts";
+      import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+      // The watch follows the renamed folder. Listing "lib" now fails with ENOTDIR.
+      renameSync("lib", "lib.away");
+      writeFileSync("lib", "");
+      // The watcher logs each batch before handling it, so the first batch is done once the second is logged.
+      const trace = process.env.BUN_WATCHER_TRACE;
+      for (let i = 0; i < 2; i++) {
+        const from = statSync(trace).size;
+        mkdirSync("fence/" + i);
+        while (!readFileSync(trace, "latin1").slice(from).includes("/fence/")) await Bun.sleep(1);
+      }
+      await import("./lib/b.ts").catch(() => console.log("import failed"));
+      writeFileSync("lib.away/c.ts", "");
+      console.log("ready");
+      setInterval(() => {}, 1e6);
+    `,
+  });
+  const cwd = join(String(dir), "src");
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+    env: { ...bunEnv, BUN_WATCHER_TRACE: join(String(dir), "trace.log") },
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("import failed\nready")).toBe(true);
+
+  writeFileSync(join(cwd, "main.ts"), `console.log("reloaded");\nprocess.exit(0);\n`);
+  expect(await stdout("reloaded")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// Only inotify reports the changed entry's name, and PATH_MAX is 1024 on macOS.
+it.skipIf(!isLinux).each([
+  ["a new file whose path is longer than PATH_MAX", Buffer.alloc(247, "n") + ".ts"],
+  ["an import whose path is PATH_MAX long", Buffer.alloc(245, "n") + ".png"],
+])("survives %s", async (_, name) => {
+  using dir = tempDir("hot-long-path", {});
+  // Folder + separator + name is 4097 bytes for the first name and 4096 bytes for the second.
+  const folderLength = 3846;
+  let cwd = realpathSync(String(dir));
+  while (folderLength - cwd.length > 256) cwd = join(cwd, Buffer.alloc(200, "d").toString());
+  cwd = join(cwd, Buffer.alloc(folderLength - cwd.length - 1, "e").toString());
+  mkdirSync(cwd, { recursive: true });
+  // The absolute path is too long for a syscall, so use a relative path.
+  const create = `require("node:fs").writeFileSync("${name}", "");`;
+  const isImport = name.endsWith(".png");
+  if (isImport) {
+    await using setup = spawn({ cmd: [bunExe(), "-e", create], cwd, env: bunEnv });
+    expect(await setup.exited).toBe(0);
+  }
+  writeFileSync(
+    join(cwd, "main.ts"),
+    `${isImport ? `import "./${name}";` : create}\nconsole.log("ready");\nsetInterval(() => {}, 1e6);\n`,
+  );
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.ts"],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  expect(await stdout("ready")).toBe(true);
+
+  writeFileSync(join(cwd, "main.ts"), `console.log("reloaded");\nprocess.exit(0);\n`);
+  expect(await stdout("reloaded")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+// BUN_DESTRUCT_VM_ON_EXIT frees the VM at exit. The writes make sure the watcher thread is busy at that point.
+it.skipIf(!isASAN)("stops the file watcher thread before the VM is freed at exit", async () => {
+  async function run() {
+    using dir = tempDir("hot-exit", {
+      "main.js": `
+        import "./dep.js";
+        globalThis.loads = (globalThis.loads ?? 0) + 1;
+        if (globalThis.loads === 3) process.exit(0);
+      `,
+      "dep.js": `export default 0;`,
+    });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+      env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    let exited = false;
+    runner.exited.then(() => (exited = true));
+    for (let i = 0; !exited; i++) {
+      for (let j = 0; j < 20; j++) writeFileSync(join(String(dir), "dep.js"), `export default ${i};`);
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    return await runner.exited;
+  }
+  expect(await Promise.all([run(), run(), run(), run()])).toEqual([0, 0, 0, 0]);
+});
+
+// --hot and --watch intern a module's transpiled text in the VM.
+it("throws ERR_STRING_TOO_LONG for a module whose transpiled text exceeds the string limit", async () => {
+  using dir = tempDir("hot-string-limit", {
+    "big.cjs": `const s = ${JSON.stringify(Buffer.alloc(200 * 1024, "x").toString())};\nmodule.exports = { len: s.length };\n`,
+    "small.cjs": `module.exports = { ok: 2 };\n`,
+    "entry.cjs": `
+      let big;
+      try {
+        big = "loaded:" + require("./big.cjs").len;
+      } catch (e) {
+        big = "caught:" + (e?.code ?? e?.name);
+      }
+      console.log(JSON.stringify({ big, small: require("./small.cjs").ok }));
+      process.exit(0);
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "entry.cjs"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(64 * 1024) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ big: "caught:ERR_STRING_TOO_LONG", small: 2 }) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.each(["--hot", "--watch"])("%s keeps running and reloading after uncaught exceptions", async flag => {
+  using dir = tempDir("hot-uncaught", {
+    "main.js": `
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          queueMicrotask(() => {
+            throw new Error("from " + new URL(req.url).pathname);
+          });
+          return new Response("ok");
+        },
+      });
+      (async () => {
+        for (let i = 1; i <= 2; i++) await fetch(new URL("/" + i, server.url));
+        console.log("still running");
+      })();
+      // The timers of a run stop at its first uncaught exception. On Windows, libuv goes on firing them.
+      if (process.platform !== "win32") setTimeout(() => process.exit(1), 1);
+      throw new Error("from the entry point");
+    `,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("still running")).toBe(true);
+  expect(await stderr("error: from /2")).toBe(true);
+
+  writeFileSync(
+    join(String(dir), "main.js"),
+    `setTimeout(() => {\n  console.log("timer fired");\n  process.exit(0);\n}, 1);\n`,
+  );
+  expect(await stdout("timer fired")).toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+it.each([
+  [
+    "a throw",
+    `setInterval(() => console.log("failed run's interval in run " + globalThis.run), 1);\nthrow new Error("the bug");`,
+  ],
+  ["a syntax error", `const = ;`],
+])("--hot keeps the timers of earlier runs when a save fixes %s", async (_, bug) => {
+  const source = (run: number, tail: string) => `
+    globalThis.run = ${run};
+    globalThis.kept ??= setInterval(() => console.log("kept interval in run " + globalThis.run), 1);
+    require("fs").watchFile("watched", { interval: 1 }, () => {
+      console.log("watchFile listener of run ${run}");
+      if (${run} === 3) process.exit(0);
+    });
+    ${tail}
+  `;
+  using dir = tempDir("hot-kept-timers", { "main.js": source(1, ""), "watched": "" });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stdout("kept interval in run 1")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), source(2, bug));
+  expect(await stderr("error: ")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), source(3, ""));
+  expect(await stdout("kept interval in run 3")).toBe(true);
+  writeFileSync(join(String(dir), "watched"), "changed");
+  expect(await stdout("watchFile listener of run 3")).toBe(true);
+  expect(await stdout("failed run's interval in run 3")).not.toBe(true);
+  expect(await runner.exited).toBe(0);
+});
+
+it("--hot does not emit beforeExit to the listeners of a failed run", async () => {
+  using dir = tempDir("hot-failed-before-exit", {
+    "main.js": `process.on("beforeExit", () => process.exit(1));\nthrow new Error("the bug");`,
+  });
+  await using runner = spawn({
+    cmd: [bunExe(), "--hot", "--no-clear-screen", "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const stdout = follow(runner.stdout);
+  const stderr = follow(runner.stderr);
+  expect(await stderr("error: the bug")).toBe(true);
+
+  writeFileSync(join(String(dir), "main.js"), `console.log("fixed");`);
+  expect(await stdout("fixed")).toBe(true);
+  writeFileSync(join(String(dir), "main.js"), `console.log("still running");\nprocess.exit();`);
+  expect(await stdout("still running")).toBe(true);
+  expect(await runner.exited).toBe(0);
 });

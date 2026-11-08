@@ -7,7 +7,7 @@ use bun_lint::rule::Plugin;
 /// The scope prop should be used only on `<th>` elements.
 pub struct Scope;
 
-const SCOPE: Message = Message::new("", "The `scope` prop can only be used on `<th>` elements");
+const SCOPE: &Message = &Message::new("", "The `scope` prop can only be used on `<th>` elements");
 
 impl Rule for Scope {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "scope", Kind::Problem).fixable(Fixable::Code);

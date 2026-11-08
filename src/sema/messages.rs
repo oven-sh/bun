@@ -1,8 +1,9 @@
 //! TypeScript's diagnostic messages, by code.
 //!
 //! `messages.txt` has one `code<tab>category<tab>text` line per message, sorted by code. It's generated from
-//! `internal/diagnostics/diagnostics_generated.go` of typescript-go 7.0.2 (Copyright Microsoft Corporation, Apache License 2.0)
-//! and isn't edited by hand. Release builds embed it compressed and inflate it when the first message is looked up.
+//! `internal/diagnostics/diagnostics_generated.go` of typescript-go 7.0.2 (Copyright Microsoft Corporation, Apache
+//! License 2.0) and isn't edited by hand. Release builds embed it compressed and inflate it when the first message is
+//! looked up.
 
 use bun_core::strings;
 
@@ -26,14 +27,13 @@ impl Category {
     }
 }
 
-/// Bytes as text, for the tools that write baselines.
+/// Converts bytes to text for the tools that write baselines.
 #[cfg(feature = "baselines")]
 pub fn text(bytes: &[u8]) -> String {
     bstr::BStr::new(bytes).to_string()
 }
 
-/// The category and the text of the message with `code`. `{0}`, `{1}`, ... are placeholders for its
-/// arguments.
+/// Returns the category and text of message `code`. `{0}`, `{1}`, ... are placeholders for its arguments.
 pub fn message(code: u32) -> Option<(Category, &'static str)> {
     static MESSAGES: bun_core::Once<Vec<(u32, Category, &'static str)>> = bun_core::Once::new();
     let messages = MESSAGES.get_or_init(parse);

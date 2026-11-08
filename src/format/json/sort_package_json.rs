@@ -1,6 +1,6 @@
 //! Sorts the keys of a `package.json`.
 //!
-//! There are two orders, and each is a table of the known keys with what to do with the value of each:
+//! There are two orders. Each is a table of the known keys and how to handle each key's value:
 //! - `oxfmt.rs`: oxfmt's `sortPackageJson`.
 //! - `npm.rs`: `prettier-plugin-packagejson`.
 //!
@@ -10,11 +10,11 @@
 //! Sorting here only moves members. It reorders the nodes of the formatter's tree, and the writer still prints every name and
 //! every value from its source text, as it does without sorting:
 //! - Numbers and strings stay as written. A key is decoded only to compare it.
-//! - Members with the same key all stay, in the order they're written in.
+//! - Members with the same key all stay, in source order.
 //! - A key like `"10"` sorts like any other key. In the plugin's JavaScript objects such keys always come first.
 //! - The text doesn't have to be strict JSON. Whatever the `json-stringify` parser accepts is sorted.
 //!
-//! One thing is removed, as both tools do: a string that is in a list like `keywords` for the second time.
+//! One thing is removed, as in both tools: a duplicate string in a list like `keywords`.
 
 mod npm;
 mod oxfmt;
@@ -42,14 +42,14 @@ pub struct Plugin {
     /// `packageSortOrder`: these keys come before all others.
     pub first: Vec<Vec<u8>>,
     /// The working directory has `yarn.lock`, `.yarn/`, `.yarnrc.yml`, `pnpm-lock.yaml` or `pnpm-workspace.yaml`.
-    pub has_files_of_yarn_or_pnpm: bool,
+    pub has_yarn_or_pnpm_files: bool,
 }
 
-/// What to do with the value of a key.
+/// How to handle a key's value.
 #[derive(Copy, Clone)]
 enum Over {
     Nothing,
-    /// Of an array of strings, keep the first of each.
+    /// In an array of strings, drop duplicates.
     Unique,
     /// The same, and sort them.
     UniqueSorted,
@@ -68,7 +68,7 @@ enum Over {
     /// Sort like the top level.
     Fields,
     /// Sort by name, with oxfmt's `sortScripts`.
-    ScriptsOfOxfmt,
+    OxfmtScripts,
     // The rest is in `npm.rs`.
     Dependencies,
     DependenciesMeta,
@@ -81,10 +81,10 @@ enum Over {
     PnpmOverrides,
 }
 
-/// What to do with the values of some keys of an object.
+/// How to handle the values of some of an object's keys.
 type Properties = &'static [(&'static str, Over)];
 
-const KEPT: Over = Over::Nothing;
+const AS_IS: Over = Over::Nothing;
 const SORTED: Over = Over::Keys(&[], &[]);
 
 /// A member of an object.
@@ -113,7 +113,7 @@ impl<'a> Document<'a> {
             .unwrap_or_default()
     }
 
-    /// The nodes directly in the container at `index`. In an object, names and values take turns.
+    /// The nodes directly in the container at `index`. In an object, names and values alternate.
     fn children(self, index: u32) -> impl Iterator<Item = u32> + use<'a> {
         let end = self.nodes.get(index as usize).map_or(0, |it| it.next);
         let mut at = index + 1;
@@ -139,7 +139,7 @@ impl<'a> Document<'a> {
         names.map(member).collect()
     }
 
-    /// What is between the quotes of the string or template at `index`, decoded.
+    /// The decoded text between the quotes of the string or template at `index`.
     fn string(self, index: u32) -> Option<Cow<'a, [u8]>> {
         if !matches!(self.kind(index)?, Kind::String | Kind::Template) {
             return None;
@@ -152,7 +152,7 @@ impl<'a> Document<'a> {
         })
     }
 
-    /// The key that the name at `index` is to JavaScript.
+    /// The name at `index` as a JavaScript property key.
     fn key(self, index: u32) -> Cow<'a, [u8]> {
         let source = self.source(index);
         match self.kind(index) {
@@ -163,7 +163,7 @@ impl<'a> Document<'a> {
         }
     }
 
-    /// The value of `key` in the object at `index`: the last one, as for `JSON.parse`. `None` if that's no object.
+    /// The value of `key` in the object at `index`: the last one, as for `JSON.parse`. `None` if it isn't an object.
     fn get(self, index: u32, key: &[u8]) -> Option<u32> {
         if self.kind(index)? != Kind::Object {
             return None;
@@ -189,7 +189,7 @@ impl<'a> Document<'a> {
     }
 }
 
-/// What a step needs to know besides the value that it sorts.
+/// The state a step needs besides the value it sorts.
 struct Context<'a> {
     document: Document<'a>,
     /// The known keys of the top level, in order.
@@ -234,12 +234,12 @@ fn sort_fields(members: &mut [Member<'_>], context: &Context<'_>) {
     });
 }
 
-/// Where the children of some containers go.
+/// The new order of some containers' children.
 #[derive(Default)]
 struct Plan {
-    /// By the index of a container: its elements, or the names of its members, in their new order.
+    /// Keyed by a container's index: its elements, or its members' names, in their new order.
     orders: FxHashMap<u32, Vec<u32>>,
-    /// The elements that are left out.
+    /// The dropped elements.
     removed: Vec<u32>,
 }
 
@@ -337,8 +337,8 @@ impl Plan {
                 sort_fields(members, context);
                 properties = context.fields;
             }
-            Over::ScriptsOfOxfmt if context.sorts_scripts => sort_keys(members, &[], context),
-            Over::ScriptsOfOxfmt => {}
+            Over::OxfmtScripts if context.sorts_scripts => sort_keys(members, &[], context),
+            Over::OxfmtScripts => {}
             Over::Dependencies => npm::sort_dependencies(members, context),
             Over::DependenciesMeta => {
                 npm::sort_by_package_name(members);
@@ -356,7 +356,7 @@ impl Plan {
             Over::EslintRules => npm::sort_eslint_rules(members),
             Over::PrettierConfig => {
                 npm::sort_prettier_config(members);
-                properties = npm::OVERRIDES_OF_PRETTIER;
+                properties = npm::PRETTIER_OVERRIDES;
             }
             Over::PnpmConfig => {
                 sort_keys(members, npm::PNPM_KEYS, context);
@@ -370,8 +370,8 @@ impl Plan {
             }
         }
         for member in members.iter() {
-            let of_key = properties.iter().find(|it| it.0.as_bytes() == &*member.key);
-            match of_key.map_or(inner, |it| it.1) {
+            let matching_property = properties.iter().find(|it| it.0.as_bytes() == &*member.key);
+            match matching_property.map_or(inner, |it| it.1) {
                 Over::Nothing => {}
                 over => pending.push((member.name + 1, over)),
             }
@@ -382,7 +382,7 @@ impl Plan {
         }
     }
 
-    /// The nodes of `old` in their new order. A container is still followed by what is in it.
+    /// The nodes of `old` in their new order. A container is still followed by its contents.
     fn apply(mut self, old: &[Node]) -> Vec<Node> {
         crate::sort::sort(&mut self.removed);
         let removed_before = |index: u32| self.removed.partition_point(|it| *it < index) as u32;
@@ -416,7 +416,7 @@ impl Plan {
     }
 }
 
-/// Sorts `tree`, which is the tree of `text`, read by the `json-stringify` parser.
+/// Sorts `tree`, which the `json-stringify` parser built from `text`.
 pub(super) fn sort(text: &[u8], tree: &mut Tree, how: &SortPackageJson) {
     let document = Document {
         text,

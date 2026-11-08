@@ -68,8 +68,8 @@ pub(super) fn report(
     how: How,
 ) -> Result<Vec<u8>, Fatal> {
     let own = configs.for_directory(cwd)?;
-    let shown = |file: &[u8]| paths::relative(cwd, file);
-    let file = configs.path_of_config(&own).map(shown);
+    let to_relative = |file: &[u8]| paths::relative(cwd, file);
+    let file = configs.config_file_path(&own).map(to_relative);
     let is_oxfmt = configs.is_oxfmt_for(&own);
     let is_svelte_off = configs.turns_svelte_off(&own, cwd);
     let found = files.found.iter().filter_map(|it| match it {
@@ -80,21 +80,21 @@ pub(super) fn report(
     let (mut plugins, mut nested) = (Plugins::default(), Vec::new());
     for target in found {
         let (scope, path) = (&target.scope, &target.path);
-        let named = configs.packages_of_plugins(scope, Some(path));
+        let named = configs.plugin_packages(scope, Some(path));
         let missing = configs.missing_plugins(scope, Some(path)).iter();
-        // With `svelte = false` nobody does what the plugin for it does.
-        let is_in_use = |it: &&[u8]| !(is_svelte_off && config::is_plugin_for_svelte(it));
+        // With `svelte = false`, nothing does the Svelte plugin's job, so it isn't in use.
+        let is_in_use = |it: &&[u8]| !(is_svelte_off && config::is_svelte_plugin(it));
         named
             .chain(missing.map(|it| &it[..]))
             .filter(is_in_use)
             .for_each(|it| plugins.add(it, config::is_built_in_plugin(it)));
-        nested.extend(configs.path_of_config(scope).map(shown));
+        nested.extend(configs.config_file_path(scope).map(to_relative));
     }
     let mut nested = sorted(nested);
     nested.retain(|it| Some(it) != file.as_ref());
     // Prettier loads every plugin listed in a file's config, so all of them have to stay installed.
     let for_files = files.handed_over.iter().flat_map(|(_, target)| {
-        let named = configs.packages_of_plugins(&target.scope, Some(&target.path));
+        let named = configs.plugin_packages(&target.scope, Some(&target.path));
         std::iter::once(&b"prettier"[..]).chain(named)
     });
     // Packages that aren't installed yet are needed too. They're the reason some files can't go to Prettier.
@@ -141,9 +141,9 @@ pub(super) fn report(
             {
                 Some(Need::SkippedFiles)
             } else if let Some(file) = &file {
-                let is_asked =
-                    name == b"prettier-plugin-tailwindcss" && configs.classes.asks_plugin();
-                (is_asked || loaded.iter().any(|it| it == name))
+                let provides_tailwind = name == b"prettier-plugin-tailwindcss"
+                    && configs.classes.uses_bundled_tailwind();
+                (provides_tailwind || loaded.iter().any(|it| it == name))
                     .then(|| Need::Configuration(file.clone()))
             } else {
                 (is_oxfmt && matches!(name, b"oxfmt" | b"vite-plus")).then_some(Need::Defaults)
@@ -260,12 +260,15 @@ pub(super) fn report(
     write_count(&mut out, colors, formatted, what);
     if by_prettier.count() > 0 {
         let what = noun(by_prettier.count(), "file goes", "files go");
-        let what = format!("{what} to your installed Prettier: {}", by_prettier.shown());
+        let what = format!(
+            "{what} to your installed Prettier: {}",
+            by_prettier.summary()
+        );
         write_count(&mut out, colors, by_prettier.count(), &what);
     }
     if not_formatted.count() > 0 {
         let what = noun(not_formatted.count(), "file", "files");
-        let what = format!("{what} cannot be formatted: {}", not_formatted.shown());
+        let what = format!("{what} cannot be formatted: {}", not_formatted.summary());
         write_count(&mut out, colors, not_formatted.count(), &what);
     }
     if files.left_for_plugins > 0 {

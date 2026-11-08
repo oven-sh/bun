@@ -1,4 +1,4 @@
-//! Questions about the source text around a position.
+//! Queries about the source text around a position.
 
 use bun_core::strings::{
     contains_js_line_break, js_line_break_len, js_line_break_len_back, js_whitespace_len,
@@ -53,18 +53,18 @@ impl<'a> SourceText<'a> {
         self.text.get(position as usize).copied()
     }
 
-    /// White space that is not ASCII counts as a space, and so does the vertical tab, which `u8::is_ascii_whitespace` does not
-    /// know. U+2028 and U+2029 count as `\n`.
+    /// Non-ASCII whitespace counts as a space, and so does the vertical tab, which `u8::is_ascii_whitespace` doesn't
+    /// include. U+2028 and U+2029 count as `\n`.
     pub(crate) fn all_bytes(self, span: Span, predicate: impl Fn(u8) -> bool) -> bool {
         let mut rest = self.text_for(&span);
         while let Some(at) = rest.iter().position(|&b| !predicate(b)) {
             rest = &rest[at..];
-            let stands_for = match js_line_break_len(rest) {
+            let equivalent_byte = match js_line_break_len(rest) {
                 0 => b' ',
                 _ => b'\n',
             };
             let len = js_whitespace_len(rest);
-            if (len < 2 && rest[0] != 0x0B) || !predicate(stands_for) {
+            if (len < 2 && rest[0] != 0x0B) || !predicate(equivalent_byte) {
                 return false;
             }
             rest = &rest[len..];
@@ -81,17 +81,16 @@ impl<'a> SourceText<'a> {
         has_line_terminator(self.text_for(&span))
     }
 
-    /// Prettier's `hasNewlineInRange`, which does not know U+2028 and U+2029.
+    /// Prettier's `hasNewlineInRange`, which ignores U+2028 and U+2029.
     pub(crate) fn has_newline_in_range(self, span: Span) -> bool {
         bun_core::strings::index_of_any(self.text_for(&span), b"\n\r").is_some()
     }
 
-    /// The number of line breaks between `end` and the next thing that is not whitespace. 0 if
-    /// there is nothing more.
+    /// The number of line breaks between `end` and the next non-whitespace character. 0 at the end of the file.
     pub(crate) fn lines_after(self, end: u32) -> usize {
         let (mut rest, mut count) = (self.from(end), 0);
         loop {
-            // What there is between most nodes.
+            // Fast path: this is what's between most nodes.
             while let [first @ (b' ' | b'\t' | b'\n'), after @ ..] = rest {
                 count += usize::from(*first == b'\n');
                 rest = after;
@@ -108,11 +107,11 @@ impl<'a> SourceText<'a> {
         }
     }
 
-    /// The number of line breaks between the previous token and `span`, or the comments that lead
-    /// up to it, the first of which is `first_unprinted_comment`. Parentheses around `span` are
-    /// looked through.
+    /// The number of line breaks between the previous token and `span`, or the comments leading up to it, the first of
+    /// which is `first_unprinted_comment`. Looks through parentheses around `span`.
     ///
-    /// `looks_past_comma`: in `a: 1\n\n, b: 2` the comma is on the line of what follows it, and the line breaks before it count.
+    /// `looks_past_comma`: in `a: 1\n\n, b: 2` the comma is on the line of what follows it, and the line breaks before
+    /// it count.
     pub(crate) fn get_lines_before(
         self,
         span: Span,
@@ -134,7 +133,7 @@ impl<'a> SourceText<'a> {
         let mut following = self.from(span.end);
         let mut before = self.to(start);
         loop {
-            // What there is between most nodes.
+            // Fast path: this is what's between most nodes.
             while let [rest @ .., last @ (b' ' | b'\t' | b'\n')] = before {
                 before = rest;
                 if *last == b'\n' {
@@ -149,7 +148,7 @@ impl<'a> SourceText<'a> {
                 continue;
             }
             if let [rest @ .., b'('] = before {
-                // The line breaks inside the parentheses do not count.
+                // Line breaks inside the parentheses don't count.
                 following = following.trim_ascii_start();
                 match following.split_first() {
                     Some((b')', rest)) => following = rest,
@@ -174,7 +173,7 @@ impl<'a> SourceText<'a> {
         }
     }
 
-    /// Whether only spaces and tabs are between the previous line break and `position`.
+    /// True if only spaces and tabs are between the previous line break and `position`.
     pub(crate) fn has_line_terminator_before(self, position: u32) -> bool {
         let before = self.to(position);
         let end = before
@@ -184,7 +183,7 @@ impl<'a> SourceText<'a> {
         js_line_break_len_back(&before[..end]) != 0
     }
 
-    /// Whether only spaces and tabs are between `position` and the next line break.
+    /// True if only spaces and tabs are between `position` and the next line break.
     pub(crate) fn has_line_terminator_after(self, position: u32) -> bool {
         let after = self.from(position);
         let start = after
@@ -194,8 +193,7 @@ impl<'a> SourceText<'a> {
         js_line_break_len(&after[start..]) != 0
     }
 
-    /// Whether there is a line break between `position` and the next token, which can be in or
-    /// after a comment.
+    /// True if there's a line break between `position` and the next token, which can be in or after a comment.
     pub(crate) fn has_line_terminator_after_skipping_comments(self, position: u32) -> bool {
         let mut rest = self.from(position);
         loop {

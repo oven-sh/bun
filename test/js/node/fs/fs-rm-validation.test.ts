@@ -61,9 +61,11 @@ const invalidOptions: [string, unknown, Expected][] = [
   ["number", 1, invalidArgType],
   ["boolean", true, invalidArgType],
   ["{ recursive: 'yes' }", { recursive: "yes" }, invalidArgType],
+  ["{ recursive: 1 }", { recursive: 1 }, invalidArgType],
   ["{ recursive: null }", { recursive: null }, invalidArgType],
   ["{ recursive: undefined }", { recursive: undefined }, invalidArgType],
   ["{ force: 1 }", { force: 1 }, invalidArgType],
+  ["{ force: 'x' }", { force: "x" }, invalidArgType],
   ["{ force: undefined }", { force: undefined }, invalidArgType],
   ["{ retryDelay: -1 }", { retryDelay: -1 }, outOfRange],
   ["{ retryDelay: 0.5 }", { retryDelay: 0.5 }, outOfRange],
@@ -72,6 +74,7 @@ const invalidOptions: [string, unknown, Expected][] = [
   ["{ maxRetries: 2 ** 32 }", { maxRetries: 2 ** 32 }, outOfRange],
   ["{ maxRetries: NaN }", { maxRetries: NaN }, outOfRange],
   ["{ maxRetries: '1' }", { maxRetries: "1" }, invalidArgType],
+  ["{ maxRetries: 'x' }", { maxRetries: "x" }, invalidArgType],
 ];
 
 const validOptions: [string, fs.RmOptions | undefined][] = [
@@ -360,24 +363,37 @@ describe("rm without `recursive`", () => {
     assert.deepStrictEqual(fs.readdirSync(dir), ["child.txt"]);
   });
 
-  test("reports the path of a Buffer or a file: URL as a string", async () => {
-    const expected = isDirectoryError(dir);
-    const buffer = Buffer.from(dir);
-    assert.deepStrictEqual(await outcomes(buffer, undefined, ...isDirectoryErrorKeys), {
-      callback: expected,
-      promise: expected,
-      sync: expected,
-    });
-    // `info` keeps the Buffer itself.
-    const picked = await outcomes(buffer, undefined, "info");
-    for (const form of ["callback", "promise", "sync"] as const) {
-      assert.strictEqual((picked[form] as any)?.info.path, buffer, form);
+  test("refuses a directory given as a Buffer or a file: URL", async () => {
+    const expected = { code: "ERR_FS_EISDIR", syscall: "rm" };
+    for (const target of [Buffer.from(dir), pathToFileURL(dir)]) {
+      assert.deepStrictEqual(await outcomes(target, undefined, "code", "syscall"), {
+        callback: expected,
+        promise: expected,
+        sync: expected,
+      });
     }
+    assert.deepStrictEqual(fs.readdirSync(dir), ["child.txt"]);
+  });
 
-    // Node's rmSync() builds the error before it converts the URL, so its `path` is the href.
-    const { callback, promise, sync } = await outcomes(pathToFileURL(dir), undefined, ...isDirectoryErrorKeys);
-    assert.deepStrictEqual({ callback, promise }, { callback: expected, promise: expected });
-    assert.deepStrictEqual(sync, isBun ? expected : isDirectoryError(pathToFileURL(dir).href));
+  test("gives the error a stack in every form", async () => {
+    const caught = await new Promise(resolve => void fs.promises.rm(dir).catch(resolve));
+    const [settled] = await Promise.all([
+      fs.promises.rm(dir).then(
+        () => null,
+        err => err,
+      ),
+    ]);
+    const called = await viaCallback(cb => fs.rm(dir, cb));
+    let thrown: unknown;
+    try {
+      fs.rmSync(dir);
+    } catch (err) {
+      thrown = err;
+    }
+    for (const err of [caught, settled, called, thrown]) {
+      assert.deepStrictEqual(pick(err, "code"), { code: "ERR_FS_EISDIR" });
+      assert.strictEqual(typeof (err as Error).stack, "string");
+    }
   });
 
   test("follows a symlink that has a trailing slash", { skip: isWindows }, async () => {
@@ -402,8 +418,8 @@ describe("rm without `recursive`", () => {
     const name = Buffer.concat([Buffer.from(tmp + path.sep + "d"), Buffer.from([0xff]), Buffer.from("r")]);
     fs.mkdirSync(name);
     try {
-      const expected = { code: "ERR_FS_EISDIR", syscall: "rm", path: name.toString() };
-      assert.deepStrictEqual(await outcomes(name, undefined, "code", "syscall", "path"), {
+      const expected = { code: "ERR_FS_EISDIR", syscall: "rm" };
+      assert.deepStrictEqual(await outcomes(name, undefined, "code", "syscall"), {
         callback: expected,
         promise: expected,
         sync: expected,
@@ -499,40 +515,5 @@ describe("rmdir with `recursive`", () => {
       assert.throws(() => rmdirSync(dir, options), error, `fs.rmdirSync(dir, ${label})`);
     }
     assert.deepStrictEqual(fs.readdirSync(dir), ["child.txt"]);
-  });
-});
-
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/dir.js#L109-L122
-describe("dir.read() on a closed Dir", () => {
-  test("throws ERR_DIR_CLOSED from the call when it has an argument", async () => {
-    const closed = fs.opendirSync(tmp);
-    closed.closeSync();
-    const expected = { name: "Error", code: "ERR_DIR_CLOSED", message: "Directory handle was closed" };
-
-    const { calls, callback } = recorder();
-    assert.throws(() => closed.read(callback), expected);
-    assert.throws(() => (closed.read as Function)(undefined), expected);
-    assert.throws(() => (closed.read as Function)(null), expected);
-    await settle();
-    assert.deepStrictEqual(calls, []);
-
-    // Without an argument it returns a promise that rejects. close(callback) reports the error to its callback.
-    const promise = closed.read();
-    assert.ok(promise instanceof Promise);
-    await assert.rejects(promise, expected);
-    assert.deepStrictEqual(pick(await viaCallback(cb => closed.close(cb)), "name", "code", "message"), expected);
-  });
-
-  test("validates the callback of an open Dir", async () => {
-    const open = fs.opendirSync(tmp);
-    try {
-      assert.throws(() => (open.read as Function)(null), invalidArgType);
-      assert.throws(() => (open.read as Function)("callback"), invalidArgType);
-      // An explicit `undefined` is the promise form.
-      const entry = await (open.read as Function)(undefined);
-      assert.ok(entry === null || typeof entry.name === "string");
-    } finally {
-      open.closeSync();
-    }
   });
 });

@@ -1,19 +1,327 @@
 //! Construction of union and intersection types.
 
 use super::*;
+use crate::util::{FxHashMap, FxHashSet, PositionSet, fx_hash};
 
-/// The sort key of a declaration: library files first, then by file, then by position.
-/// `compareNodes`
-type Place = (bool, FileId, u32);
+/// A declaration's sort key for `compareNodes`: library files first, then by file, then by position.
+type DeclarationPosition = (bool, FileId, u32);
 
 /// The members of a union or an intersection under construction.
 type Flat = smallvec::SmallVec<[TypeId; 16]>;
 
-/// `getIntersectionKey`: the set, `IntersectionFlagsNoConstraintReduction`, and without that flag
-/// the alias.
+/// What the flags of an intersection's members say about it.
+#[derive(Copy, Clone, Default)]
+struct MembersByFlags {
+    /// `includes` in `addTypeToIntersection`.
+    includes: u32,
+    /// The first member that has one of the `tf::UNIT` flags.
+    unit: Option<TypeId>,
+}
+
+impl MembersByFlags {
+    /// `ty`, which has `flags`, as the only member. The missing type is the member `undefined`.
+    fn of(ty: TypeId, flags: u32) -> MembersByFlags {
+        let unit = match ty {
+            TypeId::MISSING => TypeId::UNDEFINED,
+            _ => ty,
+        };
+        MembersByFlags {
+            includes: flags & tf::INCLUDES_MASK,
+            unit: (flags & tf::UNIT != 0).then_some(unit),
+        }
+    }
+
+    /// Adds the members of `other`.
+    fn add(&mut self, other: MembersByFlags) {
+        // No value has two different unit types. Setting the `object` flag next to the unit flags signals that to
+        // `has_disjoint_domains`.
+        if other.unit.is_some() && other.unit != self.unit && self.includes & tf::UNIT != 0 {
+            self.includes |= tf::NON_PRIMITIVE;
+        }
+        self.includes |= other.includes;
+        self.unit = self.unit.or(other.unit);
+    }
+}
+
+/// How much `create_union` read to build its result.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Inspected {
+    /// Only the members. It evaluated nothing, so a second call with the same types has no observable effect.
+    Members,
+    /// Also whether string literal types match pattern literal types. That depends only on the two types, so the same
+    /// types give the same result for any caller.
+    Patterns,
+    /// Also the constraints of type variables.
+    Constraints,
+}
+
+/// Not in tsgo. `x = new A(); .. x = new B(); ..`: each join adds a class to the union of the join before, and `removeSubtypes`
+/// removes a class only in favor of a class it derives from. So where none of the classes stands above another it compares
+/// the new one with all the others to remove nothing, which takes the square of the number of joins.
+#[derive(Default)]
+pub(super) struct UnrelatedClasses {
+    /// Classes without type parameters, none of which stands above another. The instance type of each has a property, and
+    /// none with a unit type.
+    classes: FxHashSet<Sym>,
+    /// All that stands above one of `classes`.
+    above: FxHashSet<Sym>,
+    /// Unions in which every member is the instance type of one of `classes`, or a primitive, and `void` doesn't stand beside
+    /// `undefined`.
+    unions: FxHashSet<TypeId>,
+}
+
+/// Not in tsgo. `[() => import("./a"), () => import("./b"), ..]`: what the members of a union give in the end. `ways` are the ways
+/// that lead from a member to an object type, each step the result of the only signature, which takes nothing (`None`; one
+/// such step at most), or the only type argument of a reference to a type that is covariant in it, and the name of the first required property of that
+/// object type with a unit type.
+/// `of_members` has for each member the number of its way and that unit type, a literal or a unique symbol. Two members with
+/// one way and different units are unrelated, as two object types with such a property are for `removeSubtypes`. That costs a thousandth of the
+/// comparison, which goes the same way through a relation for every step.
+struct UnitsBehindResults {
+    ways: Vec<(smallvec::SmallVec<[Option<Sym>; 4]>, Atom)>,
+    of_members: Vec<(u32, TypeId)>,
+}
+
+impl UnitsBehindResults {
+    const NOT_ASKED: u32 = u32::MAX;
+    const NO_WAY: u32 = u32::MAX - 1;
+
+    #[inline(always)]
+    fn are_known_to_differ(&self, source: usize, target: usize) -> bool {
+        let (source, target) = (self.of_members[source], self.of_members[target]);
+        source.0 == target.0 && source.0 < Self::NO_WAY && source.1 != target.1
+    }
+}
+
+/// Not in tsgo. A union that has the members of the union `from`, and `added` at the place `at`. What is made of the members
+/// of a union one by one (a property, its type, the signatures of that type) is made here of what was made for `from`, and
+/// of `added`: n unions that each have one member more than the one before take n steps then, and not n * n.
+///
+/// Shorter unions than `MIN_MEMBERS` are gone through where that takes less than looking up what is known of another union.
+#[derive(Copy, Clone)]
+pub(super) struct Growth {
+    pub(super) from: TypeId,
+    pub(super) added: TypeId,
+    pub(super) at: usize,
+}
+
+impl Growth {
+    pub(super) const MIN_MEMBERS: usize = 8;
+}
+
+/// A member of a union that's being merged, with the data `CompareTypes` looks at first.
+#[derive(Copy, Clone)]
+struct Ranked<'p> {
+    ty: TypeId,
+    /// `sort_order_flags`
+    flags: u32,
+    /// `sort_name`, once `has_name` is set. Most members are never compared with a member of another run that has the
+    /// same flags.
+    name: Option<&'p [u8]>,
+    name_start: u64,
+    has_name: bool,
+}
+
+impl Ranked<'_> {
+    #[inline]
+    fn compare_names(&self, other: &Self) -> std::cmp::Ordering {
+        self.name_start
+            .cmp(&other.name_start)
+            .then_with(|| some_first(self.name, other.name))
+    }
+}
+
+fn start_of_name(name: Option<&[u8]>) -> u64 {
+    let Some(name) = name else {
+        return u64::MAX;
+    };
+    match name.first_chunk::<8>() {
+        Some(start) => u64::from_be_bytes(*start),
+        None => {
+            let start = name
+                .iter()
+                .fold(0u64, |start, &byte| start << 8 | u64::from(byte));
+            start.checked_shl(8 * (8 - name.len()) as u32).unwrap_or(0)
+        }
+    }
+}
+
+type Run<'p> = smallvec::SmallVec<[Ranked<'p>; 16]>;
+
+/// When one run is at least this many times as long as the other, the shorter run's members are inserted one by one
+/// with a binary search.
+const MUCH_LONGER: usize = 8;
+
+/// More runs than this are sorted as one list. Every member then takes part in a comparison anyway, so every name is
+/// looked up, and the standard library's sort exploits runs too.
+const MAX_RUNS_TO_MERGE: usize = 8;
+
+/// See `join_by_position`.
+const MAX_STEPS_PER_POSITION: usize = 32;
+
+/// `UnionReduction`. `UnionReductionSubtype` compares the members, so calls with it aren't cached.
+#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+enum Reduction {
+    None,
+    /// See `union_ex`.
+    Literal {
+        merge_constrained: bool,
+    },
+}
+
+/// The arguments of `getUnionTypeEx`.
+#[derive(Copy, Clone)]
+struct UnionArguments<'a> {
+    reduction: Reduction,
+    types: &'a [TypeId],
+    alias: Option<(Sym, &'a [TypeId])>,
+}
+
+impl<'a> UnionArguments<'a> {
+    fn alias_type_arguments(&self) -> &'a [TypeId] {
+        self.alias.map_or(&[][..], |alias| alias.1)
+    }
+
+    /// Hashes only the length and both ends of a long list, because a list of hundreds of types is mostly seen once.
+    /// `UnionCalls::get` compares the whole list.
+    fn hash(&self) -> u64 {
+        const END: usize = 16;
+        let (first, last) = match self.types.len() > 2 * END {
+            true => (&self.types[..END], &self.types[self.types.len() - END..]),
+            false => (self.types, &[][..]),
+        };
+        fx_hash(&(self.reduction, self.alias, self.types.len(), first, last))
+    }
+}
+
+#[derive(Copy, Clone)]
+struct CachedUnionCall {
+    /// `UnionArguments::hash`
+    hash: u64,
+    reduction: Reduction,
+    alias: Option<Sym>,
+    /// Offset of the types in `UnionCalls::types`. The alias type arguments follow them.
+    start: u32,
+    /// Number of types. 0 means the slot is empty.
+    types: u32,
+    alias_type_arguments: u32,
+    answer: TypeId,
+}
+
+/// FOR SPEED: the most recent `getUnionTypeEx` calls that `recent_unions` and `recent_unreduced_unions`, which only
+/// hold pairs, don't cover, with their results. A hit returns before anything is flattened. The types are stored in the
+/// order they were passed.
+///
+/// Only a call that reads nothing but its members is cached (`Inspected::Members`). Such a call creates types only the
+/// first time, its marks persist, and it evaluates nothing. So the slow path would find the same type again with no
+/// other side effect.
+///
+/// A direct-mapped cache, like `instantiate::Recent`. It belongs to one checker, and a new call overwrites whatever was
+/// in its slot.
+#[derive(Default)]
+pub(super) struct UnionCalls {
+    /// Empty at first, then a power-of-two length.
+    slots: Vec<CachedUnionCall>,
+    /// A hash shifted right by this amount is an index into `slots`.
+    shift: u32,
+    /// Number of calls added since `slots` last grew.
+    added: usize,
+    /// The types of the calls in `slots`, and of calls that were overwritten.
+    types: Vec<TypeId>,
+}
+
+impl UnionCalls {
+    const MAX_SLOTS: usize = 1 << 12;
+    /// Everything is dropped once `types` would grow past this. That only costs time.
+    const MAX_TYPES: usize = 1 << 20;
+    const EMPTY: CachedUnionCall = CachedUnionCall {
+        hash: 0,
+        reduction: Reduction::None,
+        alias: None,
+        start: 0,
+        types: 0,
+        alias_type_arguments: 0,
+        answer: TypeId::NEVER,
+    };
+
+    #[inline]
+    fn slot_index(&self, hash: u64) -> usize {
+        (hash.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> self.shift) as usize
+    }
+
+    /// `arguments` has at least one type, and `hash` is its hash.
+    #[inline]
+    fn get(&self, hash: u64, arguments: &UnionArguments) -> Option<TypeId> {
+        let call = self.slots.get(self.slot_index(hash))?;
+        if call.hash != hash
+            || call.types as usize != arguments.types.len()
+            || call.reduction != arguments.reduction
+            || call.alias != arguments.alias.map(|alias| alias.0)
+        {
+            return None;
+        }
+        let len = (call.types + call.alias_type_arguments) as usize;
+        let (types, alias_type_arguments) =
+            self.types[call.start as usize..][..len].split_at(call.types as usize);
+        (types == arguments.types && alias_type_arguments == arguments.alias_type_arguments())
+            .then_some(call.answer)
+    }
+
+    fn put(&mut self, hash: u64, arguments: &UnionArguments, answer: TypeId) {
+        let alias_type_arguments = arguments.alias_type_arguments();
+        let len = arguments.types.len() + alias_type_arguments.len();
+        if len > Self::MAX_TYPES {
+            return;
+        }
+        if self.types.len() + len > Self::MAX_TYPES {
+            self.slots.fill(Self::EMPTY);
+            self.types.clear();
+            self.added = 0;
+        }
+        if self.added == self.slots.len() && self.added < Self::MAX_SLOTS {
+            self.grow();
+        }
+        self.added += 1;
+        let slot = self.slot_index(hash);
+        self.slots[slot] = CachedUnionCall {
+            hash,
+            reduction: arguments.reduction,
+            alias: arguments.alias.map(|alias| alias.0),
+            start: self.types.len() as u32,
+            types: arguments.types.len() as u32,
+            alias_type_arguments: alias_type_arguments.len() as u32,
+            answer,
+        };
+        self.types.extend_from_slice(arguments.types);
+        self.types.extend_from_slice(alias_type_arguments);
+    }
+
+    #[cold]
+    fn grow(&mut self) {
+        let len = (self.slots.len() * 4).max(64);
+        let old = std::mem::replace(&mut self.slots, vec![Self::EMPTY; len]);
+        self.shift = 64 - len.trailing_zeros();
+        self.added = 0;
+        for call in old {
+            if call.types != 0 {
+                let slot = self.slot_index(call.hash);
+                self.slots[slot] = call;
+            }
+        }
+    }
+}
+
+/// `getIntersectionKey`: the set, `IntersectionFlagsNoConstraintReduction`, and the alias if that flag isn't set.
 pub(super) type IntersectionKey = (Box<[TypeId]>, bool, Option<(Sym, Box<[TypeId]>)>);
 
-/// `T & P` as `constrained_type_variable` takes it apart.
+impl crate::util::Windowed for IntersectionKey {
+    #[inline]
+    fn window(&self) -> crate::util::Window {
+        crate::util::Window::of_type(self.0.iter().map(|it| it.0).max().unwrap_or(0))
+    }
+}
+
+/// `T & P`, as split up by `constrained_type_variable`.
 #[derive(Copy, Clone)]
 struct ConstrainedTypeVariable {
     /// `T`
@@ -24,21 +332,21 @@ struct ConstrainedTypeVariable {
     constraint: TypeId,
 }
 
-/// The pattern literal types of a union by the text they start with. A string literal only matches
-/// a template literal type whose first text it starts with: that is the first test of
-/// `inferFromLiteralPartsToTemplateLiteral`. With thousands of literals and of patterns, testing
-/// every pair dominates the time of the check.
+/// A union's pattern literal types, indexed by the text they start with. A string literal can only match a template
+/// literal type if it starts with the template's first text, which is the first test in
+/// `inferFromLiteralPartsToTemplateLiteral`. With thousands of literals and patterns, testing every pair dominates the
+/// check time.
 struct PatternsByPrefix<'p> {
-    /// The first text and the index of each template literal type, sorted.
+    /// Each template literal type's first text and index, sorted.
     sorted: Vec<(&'p [u8], u32)>,
     /// For each entry of `sorted`, the nearest earlier entry whose text is a prefix of its text.
     parent: Vec<u32>,
-    /// The indices of the other patterns, which are string mappings.
+    /// Indices of the other patterns, which are string mappings.
     others: Vec<u32>,
 }
 
 impl<'p> PatternsByPrefix<'p> {
-    const WORTHWHILE: usize = 16;
+    const MIN_PATTERNS: usize = 16;
     const NONE: u32 = u32::MAX;
 
     fn new(c: &Checker<'p, '_>, patterns: &[TypeId]) -> Self {
@@ -74,12 +382,12 @@ impl<'p> PatternsByPrefix<'p> {
         }
     }
 
-    /// The indices of the patterns that `value` may match, ascending.
+    /// Collects the indices of the patterns that `value` may match, in ascending order.
     fn candidates(&self, value: &[u8], into: &mut Vec<u32>) {
         into.clear();
         into.extend_from_slice(&self.others);
-        // A text that `value` starts with sorts before `value`, and every text between the two
-        // starts with it too. So it is the last text that sorts before `value`, or a prefix of it.
+        // A text that `value` starts with sorts before `value`, and every text between the two starts with it too. So
+        // it's either the last text that sorts before `value` or a prefix of that text.
         let after = self.sorted.partition_point(|&(text, _)| text <= value);
         if let Some(last) = after.checked_sub(1) {
             let text = self.sorted[last].0;
@@ -105,7 +413,7 @@ const _: () = assert!(
         && TypeId::SYMBOL.0 < 32
 );
 
-/// The other kinds have no alias, no name and no symbol.
+/// The kinds that can have an alias, a name or a symbol.
 const NAMED: u32 = tf::OBJECT
     | tf::UNION
     | tf::INTERSECTION
@@ -116,7 +424,7 @@ const NAMED: u32 = tf::OBJECT
     | tf::ENUM
     | tf::UNIQUE_ES_SYMBOL;
 
-/// `Some`, a name or a declaration, sorts before `None`.
+/// `Some` (a name or a declaration) sorts before `None`.
 fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
     match (a, b) {
         (Some(a), Some(b)) => a.cmp(&b),
@@ -126,9 +434,12 @@ fn some_first<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
     }
 }
 
-/// A stable sort for `CompareTypes`, which is not a total order: `slice::sort_by` may panic.
-/// A comparison of two instantiations of one alias is expensive, and what is sorted is often nearly
-/// in order or made of sorted runs. A binary insertion sort compares twice as often there.
+fn sort_by_id(types: &mut [TypeId]) {
+    types.sort_unstable_by_key(|ty| ty.arrival_order());
+}
+
+/// A stable sort for `CompareTypes`. Comparing two instantiations of one alias is expensive, and the input is often
+/// nearly sorted or made of sorted runs, where a binary insertion sort needs twice as many comparisons.
 fn merge_sort_by<T: Copy>(
     items: &mut [T],
     compare: &mut impl FnMut(&T, &T) -> std::cmp::Ordering,
@@ -192,16 +503,20 @@ impl<'p, 's> Checker<'p, 's> {
         self.union_ex(types, true)
     }
 
-    /// `merge_constrained`: whether `T & P1 | T & P2` reduces to `T`. It does not for intersections
-    /// created without inspecting the constraint of `T`, which lack
-    /// `ObjectFlagsIsConstrainedTypeVariable`.
+    /// `merge_constrained`: true if `T & P1 | T & P2` reduces to `T`. It doesn't for intersections created without
+    /// inspecting `T`'s constraint, which lack `ObjectFlagsIsConstrainedTypeVariable`.
     fn union_ex(&mut self, types: &[TypeId], merge_constrained: bool) -> TypeId {
+        self.union_ex_inspecting(types, merge_constrained).0
+    }
+
+    /// `union_ex`, which also returns true if the call is known to be `Inspected::Members`.
+    fn union_ex_inspecting(&mut self, types: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
         // The union of two types is the same in either order.
         let pair = match *types {
-            [] => return TypeId::NEVER,
-            [one] => return one,
-            // `addTypeToUnion` sets `TypeFlagsIncludesError`: only a list of one type is returned
-            // unchanged.
+            [] => return (TypeId::NEVER, true),
+            [one] => return (one, true),
+            // `addTypeToUnion` sets `TypeFlagsIncludesError`, so the error type is returned unchanged only from a list
+            // of one.
             [a, b]
                 if a == b
                     && !self.is_error_type(a)
@@ -216,7 +531,7 @@ impl<'p, 's> Checker<'p, 's> {
                             | TypeId::UNIQUE_LITERAL
                     ) =>
             {
-                return a;
+                return (a, true);
             }
             [a, b] if merge_constrained => Some(if a.arrival_order() < b.arrival_order() {
                 (a, b)
@@ -225,16 +540,31 @@ impl<'p, 's> Checker<'p, 's> {
             }),
             _ => None,
         };
-        if let Some((a, b)) = pair
-            && let Some(known) = self.recent_unions.get(a.0, b.0)
-        {
-            return TypeId(known);
+        if let Some((a, b)) = pair {
+            if let Some(known) = self.recent_unions.get(a.0, b.0) {
+                return (TypeId(known), false);
+            }
+            let (union, inspected) = self.create_union(types, merge_constrained);
+            if inspected != Inspected::Constraints {
+                self.recent_unions.put(a.0, b.0, union.0);
+            }
+            return (union, inspected == Inspected::Members);
         }
-        let (union, is_plain) = self.create_union(types, merge_constrained);
-        if is_plain && let Some((a, b)) = pair {
-            self.recent_unions.put(a.0, b.0, union.0);
+
+        let call = UnionArguments {
+            reduction: Reduction::Literal { merge_constrained },
+            types,
+            alias: None,
+        };
+        let hash = call.hash();
+        if let Some(known) = self.union_calls.get(hash, &call) {
+            return (known, true);
         }
-        union
+        let (union, inspected) = self.create_union(types, merge_constrained);
+        if inspected == Inspected::Members {
+            self.union_calls.put(hash, &call, union);
+        }
+        (union, inspected == Inspected::Members)
     }
 
     /// `getUnionType(types, UnionReductionNone)`: `A | B | ...` with every member preserved,
@@ -245,8 +575,8 @@ impl<'p, 's> Checker<'p, 's> {
         if let [one] = types {
             return *one;
         }
-        // The contextual type `Commands[T] | undefined` becomes the constraint, a union of
-        // hundreds of object types, next to `undefined`, for every property of an argument.
+        // For the contextual type `Commands[T] | undefined`, every property of an argument requests the union of the
+        // constraint, which has hundreds of object types, and `undefined`.
         if let [a, b] = *types {
             if let Some(known) = self.recent_unreduced_unions.get(a.0, b.0) {
                 return TypeId(known);
@@ -255,69 +585,106 @@ impl<'p, 's> Checker<'p, 's> {
             self.recent_unreduced_unions.put(a.0, b.0, union.0);
             return union;
         }
-        self.create_unreduced_union(types)
+        if types.is_empty() {
+            return self.create_unreduced_union(types);
+        }
+        let call = UnionArguments {
+            reduction: Reduction::None,
+            types,
+            alias: None,
+        };
+        let hash = call.hash();
+        if let Some(known) = self.union_calls.get(hash, &call) {
+            return known;
+        }
+        let union = self.create_unreduced_union(types);
+        self.union_calls.put(hash, &call, union);
+        union
     }
 
     fn create_unreduced_union(&mut self, types: &[TypeId]) -> TypeId {
         let mut members = Flat::new();
-        for &ty in types {
-            self.add_to_union(&mut members, ty);
+        let is_sorted = self.add_in_order(&mut members, types);
+        if !is_sorted {
+            self.add_in_id_order(&mut members, types);
         }
-        members.sort_unstable_by_key(|m| m.arrival_order());
-        members.dedup();
         if members.first() == Some(&TypeId::UNRESOLVED) {
             return TypeId::UNRESOLVED;
         }
-        // `addTypeToUnion`: without strictNullChecks null and undefined are never members. If there
-        // are no other members the result is never.
+        // `addTypeToUnion`: without strictNullChecks, null and undefined are never members. If there are no other
+        // members, the result is never.
         if !self.p.files.options.strict_null_checks {
             members.retain(|m| !m.is_undefined() && !m.is_null());
         }
-        self.sort_type_set(types, &mut members);
-        match members[..] {
-            [] => TypeId::NEVER,
-            _ => self.union_of_named_unions(types, &members),
-        }
+        self.union_of_type_set(types, members, is_sorted, FirstRequest::NONE)
     }
 
-    /// `getUnionTypeWorker` with `UnionReductionLiteral`. Also returns whether only the members
-    /// were inspected, in which case the same types give the same result for any caller.
-    #[inline(never)]
-    fn create_union(&mut self, actual: &[TypeId], merge_constrained: bool) -> (TypeId, bool) {
-        let mut members = Flat::new();
-        for &ty in actual {
-            self.add_to_union(&mut members, ty);
+    /// Adds the members of `types`, deduplicated and sorted by id.
+    fn add_in_id_order(&self, members: &mut Flat, types: &[TypeId]) {
+        for &ty in types {
+            self.add_to_union(members, ty);
         }
-        members.sort_unstable_by_key(|m| m.arrival_order());
+        sort_by_id(members);
         members.dedup();
+    }
+
+    /// The end of `getUnionTypeWorker`. Returns the union of `members`, which is what's left of the `typeSet` of
+    /// `actual`. `first_request`: see `Types::as_first_request`.
+    fn union_of_type_set(
+        &mut self,
+        actual: &[TypeId],
+        mut members: Flat,
+        is_sorted: bool,
+        first_request: FirstRequest,
+    ) -> TypeId {
+        if !is_sorted {
+            self.sort_types(&mut members);
+        }
+        if members.is_empty() {
+            return TypeId::NEVER;
+        }
+        (self.types()).as_first_request(first_request, || {
+            self.union_of_named_unions(actual, &members)
+        })
+    }
+
+    /// `getUnionTypeWorker` with `UnionReductionLiteral`.
+    #[inline(never)]
+    fn create_union(&mut self, actual: &[TypeId], merge_constrained: bool) -> (TypeId, Inspected) {
+        let mut members = Flat::new();
+        // If so, no member is `any` or `unknown`.
+        let mut is_sorted = self.add_in_order(&mut members, actual);
+        if !is_sorted {
+            self.add_in_id_order(&mut members, actual);
+        }
         // `TypeFlagsIncludesWildcard`
-        if members.contains(&TypeId::WILDCARD) {
-            return (TypeId::WILDCARD, true);
+        if !is_sorted && members.contains(&TypeId::WILDCARD) {
+            return (TypeId::WILDCARD, Inspected::Members);
         }
         // `TypeFlagsIncludesError`: the error type takes precedence over `any` and `unknown`.
-        if members.first() != Some(&TypeId::UNRESOLVED)
+        if !is_sorted
+            && members.first() != Some(&TypeId::UNRESOLVED)
             && members.iter().any(|&member| self.is_error_type(member))
         {
-            return (TypeId::ERROR, true);
+            return (TypeId::ERROR, Inspected::Members);
         }
         match members[..] {
-            [] => return (TypeId::NEVER, true),
+            [] => return (TypeId::NEVER, Inspected::Members),
             // The unresolved type, `any` and `unknown`, in this order of precedence, absorb all
             // other members. They have the lowest ids.
-            [TypeId::UNRESOLVED, TypeId::ANY, ..] => return (TypeId::ANY, true),
+            [TypeId::UNRESOLVED, TypeId::ANY, ..] => return (TypeId::ANY, Inspected::Members),
             [
                 first @ (TypeId::UNRESOLVED | TypeId::ANY | TypeId::UNKNOWN),
                 ..,
             ] => {
-                return (first, true);
+                return (first, Inspected::Members);
             }
-            [only] => return (only, true),
+            [only] => return (only, Inspected::Members),
             _ => {}
         }
-        // `addTypeToUnion`: without strictNullChecks every type includes null and undefined, and
-        // they are never members. If there are no other members the result is null in preference to
-        // undefined, in its non-widening form if any input was non-widening
-        // (`TypeFlagsIncludesNonWideningType`).
+        // `addTypeToUnion`: without strictNullChecks, every type includes null and undefined, and they are never
+        // members. If there are no other members, the result is null in preference to undefined, in its non-widening
+        // form if any input was non-widening (`TypeFlagsIncludesNonWideningType`).
         if !self.p.files.options.strict_null_checks {
             let null = members.iter().any(|m| m.is_null());
             let not_widened = members
@@ -331,21 +698,25 @@ impl<'p, 's> Checker<'p, 's> {
                     (false, true) => TypeId::UNDEFINED,
                     (false, false) => TypeId::UNDEFINED_WIDENING,
                 };
-                return (left, true);
+                return (left, Inspected::Members);
             }
         }
-        // A bit for each type that is present among those with the lowest ids. They sort first.
+        // One bit for each member among the types with the lowest ids. In id order these come first.
         let mut low = 0u32;
-        for m in members.iter().take_while(|m| m.arrival_order() < 32) {
-            low |= 1 << m.arrival_order();
+        for m in members.iter() {
+            if m.arrival_order() < 32 {
+                low |= 1 << m.arrival_order();
+            } else if !is_sorted {
+                break;
+            }
         }
         let has = |t: TypeId| low & 1 << t.arrival_order() != 0;
         // The missing type is redundant next to the regular `undefined`.
         if has(TypeId::MISSING) && has(TypeId::UNDEFINED) {
             members.retain(|m| *m != TypeId::MISSING);
         }
-        let mut is_plain = true;
-        // `includes&TypeFlagsIncludesInstantiable`, of a member that is removed.
+        let mut inspected = Inspected::Members;
+        // `includes&TypeFlagsIncludesInstantiable`, set by a member that gets removed.
         let mut includes_removed_pattern = false;
         if members.len() > 1 {
             let (mut any_fresh, mut has_pattern, mut has_constrained) = (false, false, false);
@@ -360,8 +731,7 @@ impl<'p, 's> Checker<'p, 's> {
                     TypeData::Template { .. } | TypeData::StringMapping { .. } => {
                         has_pattern = true
                     }
-                    // `constrained_type_variable` returns nothing for an intersection of any other
-                    // form.
+                    // `constrained_type_variable` returns `None` for any other form of intersection.
                     TypeData::Intersection(parts) => {
                         if let [a, b] = parts[..]
                             && (self.is_type_variable(a) || self.is_type_variable(b))
@@ -381,11 +751,14 @@ impl<'p, 's> Checker<'p, 's> {
                 has(TypeId::SYMBOL),
             );
             if string || number || bigint || symbol || any_fresh {
-                let snapshot = if any_fresh {
+                let mut snapshot = if any_fresh {
                     Flat::from_slice(&members[..])
                 } else {
                     Flat::new()
                 };
+                if is_sorted {
+                    sort_by_id(&mut snapshot);
+                }
                 members.retain(|m| {
                     let m = *m;
                     match self.data(m) {
@@ -423,37 +796,59 @@ impl<'p, 's> Checker<'p, 's> {
                 let has_pattern = has_pattern && !string;
                 let has_constrained = has_constrained && merge_constrained;
                 if has_pattern || has_constrained {
-                    // Whether a pattern matches a literal depends on the two alone.
-                    is_plain = !has_constrained;
+                    inspected = match has_constrained {
+                        true => Inspected::Constraints,
+                        false => Inspected::Patterns,
+                    };
                     // Both evaluate something for each member, and evaluation order determines the
                     // creation order of types. tsgo keeps the set sorted from the start.
-                    self.sort_type_set(actual, &mut members);
+                    if !is_sorted {
+                        self.sort_types(&mut members);
+                    }
                 }
                 if has_pattern {
                     self.remove_string_literals_matched_by_template_literals(&mut members);
                 }
                 if has_constrained {
                     self.remove_constrained_type_variables(&mut members);
+                    // This may have added a type variable, which leaves the members sorted by id.
+                    is_sorted = false;
                 }
             }
         }
-        // Up to here they were ordered by id.
-        self.sort_type_set(actual, &mut members);
-        let first_new_type_id = self.types().first_new_type_id();
-        let union = match members[..] {
-            [] => TypeId::NEVER,
-            _ => self.union_of_named_unions(actual, &members),
+
+        let first_request = match includes_removed_pattern {
+            true => FirstRequest::WITHOUT_PRIMITIVE_UNION,
+            false => FirstRequest::NONE,
         };
-        if includes_removed_pattern && self.types().is_new_since(union, first_new_type_id) {
-            self.types().mark_without_primitive_union(union);
-        }
-        (union, is_plain)
+        // Members that aren't sorted have been in id order up to here.
+        let union = self.union_of_type_set(actual, members, is_sorted, first_request);
+        self.note_growth(actual, union);
+        (union, inspected)
     }
 
-    /// The end of `getUnionTypeWorker`: the union of `members`, in order and at least one, which was
-    /// built from `actual`. It has a denormalized `origin` if some of `actual` are named unions, or
-    /// were built from named unions, and no member belongs to two of them. A named union that has
-    /// all of them is the result, also if a reduction has left one member of it.
+    fn note_growth(&mut self, actual: &[TypeId], union: TypeId) {
+        let [a, b] = *actual else {
+            return;
+        };
+        let (from, added) = match self.is_union(a) {
+            true => (a, b),
+            false => (b, a),
+        };
+        let (fewer, all) = (self.parts(from), self.parts(union));
+        if fewer.len() < 2 || all.len() != fewer.len() + 1 {
+            return;
+        }
+        let at = fewer.iter().zip(all).take_while(|(x, y)| x == y).count();
+        if all[at] == added && fewer[at..] == all[at + 1..] {
+            self.grown_unions.insert(union, Growth { from, added, at });
+        }
+    }
+
+    /// The end of `getUnionTypeWorker`. Returns the union of `members`, which are sorted, non-empty, and built from
+    /// `actual`. The union gets a denormalized `origin` if some of `actual` are named unions, or were built from named
+    /// unions, and no member belongs to two of them. If one named union contains all the members, it's the result, even
+    /// if a reduction left only one of its members.
     fn union_of_named_unions(&self, actual: &[TypeId], members: &[TypeId]) -> TypeId {
         let mut named: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
         self.add_named_unions(&mut named, actual);
@@ -518,6 +913,13 @@ impl<'p, 's> Checker<'p, 's> {
         )
     }
 
+    /// True if `addNamedUnions` adds something for `ty`.
+    pub(super) fn has_named_unions(&self, ty: TypeId) -> bool {
+        let mut named = smallvec::SmallVec::new();
+        self.add_named_unions(&mut named, &[ty]);
+        !named.is_empty()
+    }
+
     /// `addNamedUnions`. `boolean` has no alias, even if an alias refers to it.
     fn add_named_unions(&self, named: &mut smallvec::SmallVec<[TypeId; 4]>, types: &[TypeId]) {
         for &t in types {
@@ -548,12 +950,12 @@ impl<'p, 's> Checker<'p, 's> {
         if patterns.is_empty() {
             return;
         }
-        let by_prefix = (patterns.len() >= PatternsByPrefix::WORTHWHILE)
+        let by_prefix = (patterns.len() >= PatternsByPrefix::MIN_PATTERNS)
             .then(|| PatternsByPrefix::new(self, &patterns));
         let mut candidates: Vec<u32> = Vec::new();
         for m in std::mem::take(members) {
-            // For a type with `TypeFlagsStringLiteral`: the value, and whether it is the plain
-            // string literal type of that value.
+            // For a type with `TypeFlagsStringLiteral`: its value, and whether it's the plain string literal type of
+            // that value.
             let (value, is_plain) = match *self.data(m) {
                 TypeData::StringLit { value, fresh } => (value, !fresh),
                 TypeData::EnumLit {
@@ -599,11 +1001,10 @@ impl<'p, 's> Checker<'p, 's> {
             || self.is_empty_anonymous_object_type(ty)
     }
 
-    /// For `T & P` or `P & T`, where `T` is a type variable whose constraint consists only of
-    /// primitives, `object` and `{}`, and `P` is one of those: `T`, `P` and the constraint of `T`.
-    /// An intersection of this form that `getIntersectionTypeEx` does not reduce is the one it
-    /// marks `ObjectFlagsIsConstrainedTypeVariable`. `includes_empty_object`: the intersected types
-    /// include or included a `{}`, in which case `P` may be any type.
+    /// For `T & P` or `P & T`, where `T` is a type variable whose constraint consists only of primitives, `object` and
+    /// `{}`, and `P` is one of those, returns `T`, `P` and `T`'s constraint. `getIntersectionTypeEx` marks an
+    /// intersection of this form that it doesn't reduce with `ObjectFlagsIsConstrainedTypeVariable`.
+    /// `includes_empty_object`: the intersected types include or included a `{}`, in which case `P` may be any type.
     fn constrained_type_variable(
         &mut self,
         a: TypeId,
@@ -640,8 +1041,8 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `ObjectFlagsIsConstrainedTypeVariable` of `ty`, the intersection of `a` and `b`. Where no
-    /// request of `getIntersectionTypeEx` is on record, the flag that a request for `a & b` gives.
+    /// `ObjectFlagsIsConstrainedTypeVariable` of `ty`, the intersection of `a` and `b`. If no `getIntersectionTypeEx`
+    /// request was recorded for it, returns the flag that a request for `a & b` would set.
     fn is_constrained_type_variable(&mut self, ty: TypeId, a: TypeId, b: TypeId) -> bool {
         if let Some(known) = self.types().is_constrained_type_variable(ty) {
             return known;
@@ -652,8 +1053,7 @@ impl<'p, 's> Checker<'p, 's> {
             .is_some()
     }
 
-    /// `removeConstrainedTypeVariables`: `T & P1 | T & P2` reduces to `T` once the `P`s cover the
-    /// whole constraint of `T`.
+    /// `removeConstrainedTypeVariables`: `T & P1 | T & P2` reduces to `T` once the `P`s cover `T`'s whole constraint.
     fn remove_constrained_type_variables(&mut self, members: &mut Flat) {
         // (member, T, P)
         let mut constrained: Vec<(TypeId, TypeId, TypeId)> = Vec::new();
@@ -694,9 +1094,9 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// A union in which no member is a subtype of another. `UnionReductionSubtype`
+    /// Returns a union in which no member is a subtype of another. `UnionReductionSubtype`
     pub fn union_reduced(&mut self, types: &[TypeId]) -> TypeId {
-        // `unionOfUnionTypes`: the error type is stored too, and is reported once.
+        // `unionOfUnionTypes`. The error type is cached too, so the error is reported once.
         let key = match *types {
             [a, b] if !self.is_union(a) && !self.is_union(b) => None,
             [a, b] if a.arrival_order() < b.arrival_order() => Some((a, b)),
@@ -717,16 +1117,28 @@ impl<'p, 's> Checker<'p, 's> {
         union
     }
 
+    pub fn union_members_compared(&self) -> u64 {
+        self.union_members_compared
+    }
+
     /// `getUnionTypeWorker` with `UnionReductionSubtype`.
     fn create_reduced_union(&mut self, types: &[TypeId]) -> TypeId {
         // An existing union is left unchanged.
         if let [only] = types {
             return *only;
         }
+        let before = self.non_cacheable_mark();
         let union = self.union(types);
         let TypeData::Union(members) = self.data(union) else {
             return union;
         };
+        if self.has_only_unrelated_members(types, members) {
+            if before == self.non_cacheable_mark() {
+                self.unions_without_subtypes.insert(union, false);
+                self.unrelated_classes.unions.insert(union);
+            }
+            return union;
+        }
         let mut members: Vec<TypeId> = members.to_vec();
         // `removeRedundantLiteralTypes`, reduceVoidUndefined: `void` includes `undefined`.
         if members.contains(&TypeId::VOID) {
@@ -738,16 +1150,25 @@ impl<'p, 's> Checker<'p, 's> {
             .iter()
             .any(|&m| self.flags(m) & tf::STRUCTURED_OR_INSTANTIABLE != 0)
         {
-            return match is_reduced {
-                true => self.union_of_named_unions(types, &members),
-                false => union,
-            };
+            if !is_reduced {
+                return union;
+            }
+            return self.union_of_named_unions(types, &members);
         }
         let len = members.len();
         let mut actual: Vec<TypeId> = Vec::with_capacity(len);
         for &ty in types {
             actual.extend_from_slice(self.parts(ty));
         }
+        // The sort asks for a position at every comparison.
+        let first_positions = (actual.len() > 64).then(|| {
+            let mut positions: FxHashMap<TypeId, usize> = FxHashMap::default();
+            positions.reserve(actual.len());
+            for (position, &ty) in actual.iter().enumerate() {
+                positions.entry(ty).or_insert(position);
+            }
+            positions
+        });
         let is_created_by_expression = |c: &Self, m: TypeId| {
             matches!(
                 c.data(m),
@@ -760,10 +1181,10 @@ impl<'p, 's> Checker<'p, 's> {
                     | TypeData::Tuple { .. }
             )
         };
-        // `removeSubtypes` iterates over the members from last to first in `CompareTypes` order,
-        // which therefore decides which of two mutual subtypes is removed. Where that order falls
-        // back to ids, declared types stay in the order of their ids, in which `members` has them,
-        // and come before types created by expressions, which keep the given order.
+        // `removeSubtypes` iterates over the members from last to first in `CompareTypes` order, so that order decides
+        // which of two mutual subtypes is removed. Where it falls back to ids, declared types stay in id order, which
+        // is how `members` has them, and come before types created by expressions, which keep the order they were
+        // passed in.
         let key = |c: &Self, m: TypeId| {
             let created_by_expression = match c.data(m) {
                 // `{ ...t, a: 1 }`
@@ -772,7 +1193,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => is_created_by_expression(c, m),
             };
-            let position = || actual.iter().position(|&g| g == m).unwrap_or(usize::MAX);
+            let position = || match &first_positions {
+                Some(positions) => positions.get(&m).copied().unwrap_or(usize::MAX),
+                None => actual.iter().position(|&g| g == m).unwrap_or(usize::MAX),
+            };
             created_by_expression.then(position)
         };
         let mut compare = |&x: &TypeId, &y: &TypeId| {
@@ -780,12 +1204,39 @@ impl<'p, 's> Checker<'p, 's> {
                 .then_with(|| key(self, x).cmp(&key(self, y)))
         };
         merge_sort_by(&mut members, &mut compare, &mut Vec::new());
-        // hasEmptyObject: next to an empty object type, primitives are candidates for removal too:
-        // `{} | 0` is `{}`.
+        // hasEmptyObject: next to an empty object type, primitives are candidates for removal too. `{} | 0` is `{}`.
         let has_empty_object = members.iter().any(|&m| {
             m == TypeId::EMPTY_OBJECT || self.is_object_type(m) && self.is_empty_object_type(m)
         });
         const HAS_PROPERTIES: u32 = tf::OBJECT | tf::INTERSECTION | tf::INSTANTIABLE_NON_PRIMITIVE;
+        // Two members of a union that came out of here whole were compared then, and neither was removed.
+        let reduced_before = types
+            .iter()
+            .copied()
+            .filter(|ty| {
+                self.unions_without_subtypes
+                    .get(ty)
+                    .is_some_and(|&with_primitives| with_primitives || !has_empty_object)
+            })
+            .max_by_key(|&ty| self.parts(ty).len());
+        let was_compared: Vec<bool> = match reduced_before {
+            Some(reduced) => {
+                let parts: crate::util::FxHashSet<TypeId> =
+                    self.parts(reduced).iter().copied().collect();
+                members.iter().map(|m| parts.contains(m)).collect()
+            }
+            None => vec![false; len],
+        };
+        // `x = new A(); .. x = new B(); ..`: each join adds a member to the union of the join before, and whoever goes through
+        // all the pairs of that union again to find that they were compared takes the cube of the number of joins.
+        let not_compared: Vec<usize> = (0..len).filter(|&j| !was_compared[j]).collect();
+        let literals = self.literals_of_union(&members);
+        // The places of the members that are removed here, descending: the members are gone through from the last.
+        let mut removed_places: Vec<usize> = Vec::new();
+        let mut units_behind_results = UnitsBehindResults {
+            ways: Vec::new(),
+            of_members: vec![(UnitsBehindResults::NOT_ASKED, TypeId::NEVER); len],
+        };
         let mut keep = vec![true; len];
         let mut count = 0usize;
         for i in (0..len).rev() {
@@ -806,28 +1257,66 @@ impl<'p, 's> Checker<'p, 's> {
                     let rest = self.union(&others);
                     if self.is_strict_subtype(source, rest) {
                         keep[i] = false;
+                        removed_places.push(i);
                     }
                     continue;
                 }
             }
-            // The first property with a unit type. Members that differ in it need no comparison.
+            // The first property with a unit type. Members that differ in it don't need a comparison.
             let key_property = if source_flags & HAS_PROPERTIES != 0 {
                 self.first_unit_property(source)
             } else {
                 None
             };
-            for j in 0..len {
+            let mut next = 0usize;
+            // The members that this one is held against. Every other member counts, and nothing else is done for it: it was
+            // compared with this one earlier, or it is a literal that requires a name that this literal lacks.
+            let mut not_compared = not_compared.iter().copied();
+            let mut held_against = match was_compared[i] {
+                true => None,
+                false => literals.held_against(i),
+            };
+            let passes_over_some = was_compared[i] || held_against.is_some();
+            while next < len {
+                if passes_over_some {
+                    let stop = match &mut held_against {
+                        Some(places) => places.next(),
+                        None => not_compared.next(),
+                    };
+                    let stop = stop.unwrap_or(len);
+                    let removed = removed_places.partition_point(|&place| place >= next)
+                        - removed_places.partition_point(|&place| place >= stop);
+                    let passed = stop - next - removed - (next <= i && i < stop) as usize;
+                    if count <= 100_000
+                        && 100_000 < count + passed
+                        && (100_000 / (len - i)) * len > 1_000_000
+                    {
+                        self.error_at_current_node(2590);
+                        return TypeId::ERROR;
+                    }
+                    count += passed;
+                    next = stop;
+                    if next == len {
+                        break;
+                    }
+                }
+                let j = next;
+                next += 1;
                 if i == j || !keep[j] {
                     continue;
                 }
                 let target = members[j];
-                // At this rate the total exceeds a million comparisons: too complex to represent, so
-                // the result is the error type.
+                // At this rate the total would exceed a million comparisons. That's too complex to represent, so the
+                // result is the error type.
                 if count == 100_000 && (count / (len - i)) * len > 1_000_000 {
                     self.error_at_current_node(2590);
                     return TypeId::ERROR;
                 }
                 count += 1;
+                self.union_members_compared += 1;
+                if units_behind_results.are_known_to_differ(i, j) {
+                    continue;
+                }
                 if let Some((name, unit)) = key_property
                     && self.flags(target) & HAS_PROPERTIES != 0
                     && let Some(other) = self.type_of_property(target, name)
@@ -836,8 +1325,11 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     continue;
                 }
-                // `emptyObjectType`, which has no symbol, is not removed in favor of an empty type
-                // that has one.
+                // A literal is no subtype of one that requires a name that it lacks. That costs a hundredth of the comparison.
+                if literals.lacks_required_property(i, j) {
+                    continue;
+                }
+                // `emptyObjectType`, which has no symbol, isn't removed in favor of an empty type that has one.
                 if (source == TypeId::EMPTY_OBJECT || self.is_unknown_empty_object(source))
                     && match self.data(target) {
                         TypeData::Anon { .. } => true,
@@ -848,55 +1340,405 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     continue;
                 }
-                // An object type is a subtype of no primitive.
+                // An object type is never a subtype of a primitive.
                 if source_flags & tf::OBJECT != 0 && self.is_primitive(target) {
                     continue;
                 }
                 // A class type is removed only in favor of a class it derives from, regardless of
-                // structural similarity.
-                if self.is_strict_subtype(source, target)
-                    && (!self.is_class_instance(source)
-                        || !self.is_class_instance(target)
-                        || self.is_type_derived_from(source, target))
+                // structural similarity. That is asked first: it costs a hundredth of the comparison.
+                if self.is_class_instance(source)
+                    && self.is_class_instance(target)
+                    && !self.is_type_derived_from(source, target)
                 {
+                    continue;
+                }
+                if key_property.is_none() {
+                    self.look_for_unit_behind_results(&mut units_behind_results, &members, i);
+                    self.look_for_unit_behind_results(&mut units_behind_results, &members, j);
+                    if units_behind_results.are_known_to_differ(i, j) {
+                        continue;
+                    }
+                }
+                if self.is_strict_subtype(source, target) {
                     keep[i] = false;
+                    removed_places.push(i);
                     break;
                 }
             }
         }
-        if !is_reduced && keep.iter().all(|&k| k) {
-            return union;
+        let number_kept = keep.iter().filter(|&&k| k).count();
+        let reduced = if !is_reduced && number_kept == len {
+            union
+        } else {
+            let kept: Flat = members
+                .iter()
+                .zip(&keep)
+                .filter(|(_, k)| **k)
+                .map(|(&m, _)| m)
+                .collect();
+            self.union_of_type_set(types, kept, false, FirstRequest::NONE)
+        };
+        // A named union that has all the members that are left is the result as it is, with the members that were removed.
+        if before == self.non_cacheable_mark() && self.parts(reduced).len() == number_kept {
+            self.unions_without_subtypes
+                .insert(reduced, has_empty_object);
+            if !has_empty_object && self.join_unrelated_classes(self.parts(reduced)) {
+                self.unrelated_classes.unions.insert(reduced);
+            }
         }
-        let mut kept: Flat = members
-            .iter()
-            .zip(&keep)
-            .filter(|(_, k)| **k)
-            .map(|(&m, _)| m)
-            .collect();
-        self.sort_type_set(types, &mut kept);
-        match kept[..] {
-            [] => TypeId::NEVER,
-            _ => self.union_of_named_unions(types, &kept),
+        reduced
+    }
+
+    /// True if the members of the union of `types`, `members`, are primitives and classes none of which stands above another
+    /// (`UnrelatedClasses`): `removeSubtypes` removes none of them.
+    fn has_only_unrelated_members(&mut self, types: &[TypeId], members: &[TypeId]) -> bool {
+        // A union that came out of `removeSubtypes` whole and wasn't noted then has a member of another kind.
+        let is_of_another_kind = |ty: &TypeId| {
+            self.unions_without_subtypes.contains_key(ty)
+                && !self.unrelated_classes.unions.contains(ty)
+        };
+        if self.has_too_many_pairs(members) || types.iter().any(is_of_another_kind) {
+            return false;
+        }
+        // One more class beside members that are known to be such. A primitive may be the `undefined` that `void` includes.
+        let adds_to = |whole: TypeId, added: TypeId| {
+            self.unrelated_classes.unions.contains(&whole) && self.flags(added) & tf::OBJECT != 0
+        };
+        match *types {
+            [whole, added] if adds_to(whole, added) => self.join_unrelated_classes(&[added]),
+            [added, whole] if adds_to(whole, added) => self.join_unrelated_classes(&[added]),
+            _ => self.join_unrelated_classes(members),
         }
     }
 
-    /// `removeSubtypes`, keyProperty: the first property of `ty` whose type is a unit type, and
-    /// that type. The types of the preceding properties are resolved on the way, as
-    /// `removeSubtypes` does.
+    /// Error 2590 of `removeSubtypes`, where it removes nothing and there's no empty object type: every member that isn't a
+    /// primitive, from the last to the first, is compared with all the others.
+    fn has_too_many_pairs(&self, members: &[TypeId]) -> bool {
+        let len = members.len();
+        if len * len <= 100_000 {
+            return false;
+        }
+        let is_compared = |m: &&TypeId| self.flags(**m) & tf::STRUCTURED_OR_INSTANTIABLE != 0;
+        // The one in whose turn the count reaches 100,000.
+        let turn = 100_000 / (len - 1) + 1;
+        turn <= members.iter().filter(is_compared).count() && (100_000 / turn) * len > 1_000_000
+    }
+
+    /// True if each of `members` is a primitive or the instance type of one of `UnrelatedClasses::classes`, which those that
+    /// can join. What it resolves on the way is what `removeSubtypes` resolves first for such members, in the same order:
+    /// whether one is empty, from the first on, then the first unit property, from the last back.
+    fn join_unrelated_classes(&mut self, members: &[TypeId]) -> bool {
+        let mut joining: smallvec::SmallVec<[(TypeId, Sym); 4]> = smallvec::SmallVec::new();
+        let (mut has_void, mut has_undefined, mut has_class) = (false, false, false);
+        for &member in members {
+            if self.is_primitive(member) && self.flags(member) & tf::STRUCTURED_OR_INSTANTIABLE == 0
+            {
+                has_void |= member == TypeId::VOID;
+                has_undefined |= member.is_undefined();
+                continue;
+            }
+            let TypeData::Ref {
+                target,
+                args: TypeArguments::Given(args),
+            } = self.data(member)
+            else {
+                return false;
+            };
+            if !args.is_empty() {
+                return false;
+            }
+            has_class = true;
+            if self.unrelated_classes.classes.contains(target) {
+                continue;
+            }
+            // Every object type derives from the global `Object`, and every function type from `Function`.
+            if !self.files().flags(*target).contains(SymFlags::CLASS)
+                || self.unrelated_classes.above.contains(target)
+                || self.is_reference_to_global(member, known::Object, 0)
+                || self.is_reference_to_global(member, known::Function, 0)
+            {
+                return false;
+            }
+            joining.push((member, *target));
+        }
+        // `void` includes `undefined`. Primitives alone are nothing to remember.
+        if has_void && has_undefined || !has_class {
+            return false;
+        }
+        let before = self.non_cacheable_mark();
+        if joining.iter().any(|it| self.is_empty_object_type(it.0)) {
+            return false;
+        }
+        // All that stands above those that join. Only what is stored is final.
+        let mut above: Vec<Sym> = Vec::new();
+        let mut listed = FxHashSet::default();
+        let mut visited = 0;
+        let mut classes = joining.iter().map(|it| it.1);
+        while let Some(class) = classes.next().or_else(|| {
+            visited += 1;
+            above.get(visited - 1).copied()
+        }) {
+            let Some(bases) = self.p.base_types.get_ref(&self.task, &class) else {
+                return false;
+            };
+            for &base in bases.iter() {
+                let TypeData::Ref { target: base, .. } = *self.data(base) else {
+                    return false;
+                };
+                if self.unrelated_classes.classes.contains(&base) {
+                    return false;
+                }
+                if listed.insert(base) {
+                    above.push(base);
+                }
+            }
+        }
+        if joining.iter().any(|it| listed.contains(&it.1))
+            || (joining.iter().rev()).any(|it| self.first_unit_property(it.0).is_some())
+            || before != self.non_cacheable_mark()
+        {
+            return false;
+        }
+        (self.unrelated_classes.classes).extend(joining.iter().map(|it| it.1));
+        self.unrelated_classes.above.extend(above);
+        true
+    }
+
+    /// `removeSubtypes`, keyProperty: returns the first property of `ty` whose type is a unit type, and that type.
+    /// Resolves the types of the preceding properties on the way, like `removeSubtypes`.
     fn first_unit_property(&mut self, ty: TypeId) -> Option<(Atom, TypeId)> {
-        let apparent = self.apparent_type(ty);
+        // `getPropertiesOfType`
+        let apparent = self.reduced_apparent_type(ty);
+        let apparent = match self.is_union(apparent) {
+            true => self.union_as_object(apparent),
+            false => apparent,
+        };
         let members = self.members(apparent)?;
         for prop in &members.shape().props {
-            let of_prop = self.type_of_prop(prop, members.mapper);
-            if self.is_unit(of_prop) {
-                return Some((prop.name, self.with_freshness(of_prop, false)));
+            let prop_type = self.type_of_prop(prop, members.mapper);
+            if self.is_unit(prop_type) {
+                return Some((prop.name, self.with_freshness(prop_type, false)));
             }
         }
         None
     }
 
+    /// Reads what is resolved and resolves nothing, so that nothing is resolved earlier than the comparison would, or
+    /// that it never would. A member with something unresolved on its way is looked at again at its next comparison.
+    fn look_for_unit_behind_results(
+        &mut self,
+        units: &mut UnitsBehindResults,
+        members: &[TypeId],
+        place: usize,
+    ) {
+        if units.of_members[place].0 != UnitsBehindResults::NOT_ASKED {
+            return;
+        }
+        let mut steps: smallvec::SmallVec<[Option<Sym>; 4]> = smallvec::SmallVec::new();
+        let mut passed: smallvec::SmallVec<[TypeId; 4]> = smallvec::SmallVec::new();
+        let mut at = members[place];
+        let no_way = (UnitsBehindResults::NO_WAY, TypeId::NEVER);
+        let mut has_passed_signature = false;
+        loop {
+            // Two instantiations of one alias are related by the variances of the alias, whatever they hold.
+            let is_made_with_arguments =
+                (self.alias_of_type(at)).is_some_and(|(_, arguments)| !arguments.is_empty());
+            if passed.contains(&at) || !self.is_object_type(at) || is_made_with_arguments {
+                units.of_members[place] = no_way;
+                return;
+            }
+            passed.push(at);
+            if let &TypeData::Ref { target, .. } = self.data(at) {
+                let declared = self.declared_type(target);
+                match self.type_arguments(declared).len() {
+                    0 => break,
+                    1 => {}
+                    // By the variances of them all.
+                    _ => {
+                        units.of_members[place] = no_way;
+                        return;
+                    }
+                }
+                let Some(variances) = self.p.variances.get(&self.task, &target) else {
+                    return;
+                };
+                let (Some(&argument), [super::relate::COVARIANT]) =
+                    (self.type_arguments(at).first(), variances)
+                else {
+                    units.of_members[place] = no_way;
+                    return;
+                };
+                steps.push(Some(target));
+                at = argument;
+                continue;
+            }
+            if self.resolved_members(at).is_none() {
+                return;
+            }
+            let Some(signature) = self.single_call_signature(at) else {
+                break;
+            };
+            // Without parameters the comparison of two such signatures gets as far as their results.
+            let has_only_result = match *self.types().sig(signature) {
+                SigData::Decl { file, func, mapper } => {
+                    let declaration = &self.hir(file)[func];
+                    mapper == MapperId::IDENTITY
+                        && declaration.params.is_empty()
+                        && declaration.type_params.is_empty()
+                        && !std::mem::replace(&mut has_passed_signature, true)
+                }
+                _ => false,
+            };
+            if !has_only_result {
+                units.of_members[place] = no_way;
+                return;
+            }
+            let Some(result) = self.cached_return_type(signature) else {
+                return;
+            };
+            steps.push(None);
+            at = result;
+        }
+        if steps.is_empty() {
+            units.of_members[place] = no_way;
+            return;
+        }
+        let Some(properties) = self.resolved_members(at) else {
+            return;
+        };
+        units.of_members[place] = no_way;
+        if properties.mapper != MapperId::IDENTITY {
+            return;
+        }
+        for prop in &properties.shape().props {
+            let resolved = match prop.source {
+                _ if prop.mapper != MapperId::IDENTITY => return,
+                PropSource::Type(resolved) => Some(resolved),
+                PropSource::Symbol(symbol) => self.p.symbol_types.get(&self.task, &symbol),
+                _ => return,
+            };
+            let Some(resolved) = resolved else {
+                units.of_members[place].0 = UnitsBehindResults::NOT_ASKED;
+                return;
+            };
+            // A member of an enum is a subtype of the literal of its value, and `undefined` of everything without `strictNullChecks`.
+            let is_told_apart = self.is_unit(resolved)
+                && self.flags(resolved) & (tf::ENUM | tf::ENUM_LITERAL | tf::NULLABLE) == 0;
+            if !is_told_apart || prop.flags.contains(PropFlags::OPTIONAL) {
+                continue;
+            }
+            let way = (steps, prop.name);
+            let number = (units.ways.iter().position(|known| *known == way)).unwrap_or_else(|| {
+                units.ways.push(way);
+                units.ways.len() - 1
+            });
+            units.of_members[place] = (number as u32, self.with_freshness(resolved, false));
+            return;
+        }
+    }
+
     fn is_class_instance(&self, ty: TypeId) -> bool {
         matches!(self.data(ty), TypeData::Ref { target, .. } if self.files().flags(*target).contains(SymFlags::CLASS))
+    }
+
+    /// The result of `filter` for the union `ty` of `members`, of which `kept` remain.
+    #[inline(never)]
+    fn filtered_union(&mut self, ty: TypeId, members: &[TypeId], kept: &[TypeId]) -> TypeId {
+        match kept[..] {
+            [] => TypeId::NEVER,
+            [only] => only,
+            _ => {
+                // Keeps what remains of a denormalized origin, unless a member inside one of its unions was
+                // removed.
+                let mut new_origin = OriginKey::None;
+                let left: Vec<TypeId>;
+                if let UnionOrigin::Union(origin) = self.origin(ty) {
+                    left = origin
+                        .iter()
+                        .copied()
+                        .filter(|u| self.is_union(*u) || kept.contains(u))
+                        .collect();
+                    if origin.len() - left.len() == members.len() - kept.len() {
+                        if let [only] = left[..] {
+                            return only;
+                        }
+                        new_origin = OriginKey::Union(&left);
+                    }
+                }
+                // `ObjectFlagsPrimitiveUnion` is forwarded.
+                let first_request = match self.is_primitive_union(ty) {
+                    true => FirstRequest::NONE,
+                    false => FirstRequest::WITHOUT_PRIMITIVE_UNION,
+                };
+                let types = self.types();
+                let union = types.as_first_request(first_request, || {
+                    types.intern_key_with(
+                        TypeKey::Union(kept),
+                        &ProvenanceKey {
+                            alias: None,
+                            origin: new_origin,
+                            is_enum: false,
+                            stored_under: None,
+                            is_array_literal: false,
+                            is_array_pattern: false,
+                            has_other_instantiation: false,
+                        },
+                    )
+                });
+                if self.has_only_unrelated_classes(ty) {
+                    self.unrelated_classes.unions.insert(union);
+                }
+                union
+            }
+        }
+    }
+
+    /// True if `union` is one of `UnrelatedClasses::unions`.
+    pub(super) fn has_only_unrelated_classes(&self, union: TypeId) -> bool {
+        self.unrelated_classes.unions.contains(&union)
+    }
+
+    /// `filterType` for a union that has grown by a member: `so_far` is its result for `growth.from`, and `keeps_added`
+    /// what the filter says of the new member. What it returns has grown by that member too.
+    pub(super) fn filter_grown_union(
+        &mut self,
+        ty: TypeId,
+        growth: Growth,
+        so_far: TypeId,
+        keeps_added: bool,
+    ) -> Option<TypeId> {
+        if !matches!(self.origin(ty), UnionOrigin::None) {
+            return None;
+        }
+        let kept_so_far: &[TypeId] = match so_far.is_never() {
+            true => &[],
+            false => self.parts(so_far),
+        };
+        if !keeps_added {
+            return Some(self.filtered_union(ty, self.parts(ty), kept_so_far));
+        }
+        if so_far == growth.from {
+            return Some(ty);
+        }
+        // How many of the members in front of the new one were kept.
+        let mut at = 0;
+        for member in &self.parts(growth.from)[..growth.at] {
+            at += usize::from(kept_so_far.get(at) == Some(member));
+        }
+        let mut kept = Vec::with_capacity(kept_so_far.len() + 1);
+        kept.extend_from_slice(&kept_so_far[..at]);
+        kept.push(growth.added);
+        kept.extend_from_slice(&kept_so_far[at..]);
+        let union = self.filtered_union(ty, self.parts(ty), &kept);
+        if kept_so_far.len() >= 2 {
+            let (from, added) = (so_far, growth.added);
+            self.grown_unions.insert(union, Growth { from, added, at });
+        }
+        Some(union)
+    }
+
+    pub(super) fn growth_of(&self, union: TypeId) -> Option<Growth> {
+        self.grown_unions.get(&union).copied()
     }
 
     /// `filterType`
@@ -917,49 +1759,7 @@ impl<'p, 's> Checker<'p, 's> {
                         kept.push(m);
                     }
                 }
-                match kept[..] {
-                    [] => TypeId::NEVER,
-                    [only] => only,
-                    _ => {
-                        // The remainder of a denormalized origin, unless a member inside one of its
-                        // unions was removed.
-                        let mut new_origin = OriginKey::None;
-                        let left: Vec<TypeId>;
-                        if let UnionOrigin::Union(origin) = self.origin(ty) {
-                            left = origin
-                                .iter()
-                                .copied()
-                                .filter(|u| self.is_union(*u) || kept.contains(u))
-                                .collect();
-                            if origin.len() - left.len() == members.len() - kept.len() {
-                                if let [only] = left[..] {
-                                    return only;
-                                }
-                                new_origin = OriginKey::Union(&left);
-                            }
-                        }
-                        let first_new_type_id = self.types().first_new_type_id();
-                        let filtered = self.types().intern_key_with(
-                            TypeKey::Union(&kept),
-                            &ProvenanceKey {
-                                alias: None,
-                                origin: new_origin,
-                                is_enum: false,
-                                stored_under: None,
-                                is_array_literal: false,
-                                is_array_pattern: false,
-                                has_other_instantiation: false,
-                            },
-                        );
-                        // `ObjectFlagsPrimitiveUnion` is forwarded.
-                        if self.types().is_new_since(filtered, first_new_type_id)
-                            && !self.is_primitive_union(ty)
-                        {
-                            self.types().mark_without_primitive_union(filtered);
-                        }
-                        filtered
-                    }
-                }
+                self.filtered_union(ty, members, &kept)
             }
             TypeData::Intrinsic(
                 Intrinsic::Never
@@ -1015,6 +1815,23 @@ impl<'p, 's> Checker<'p, 's> {
         self.map_type_ex(ty, &mut f, true)
     }
 
+    #[inline(never)]
+    fn mapped_union(
+        &mut self,
+        ty: TypeId,
+        types: &[TypeId],
+        mapped: &[TypeId],
+        no_reductions: bool,
+    ) -> TypeId {
+        if *mapped == *types {
+            ty
+        } else if no_reductions {
+            self.union_unreduced(mapped)
+        } else {
+            self.union(mapped)
+        }
+    }
+
     /// `mapTypeEx`
     fn map_type_ex<F: FnMut(&mut Self, TypeId) -> TypeId>(
         &mut self,
@@ -1024,34 +1841,21 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         match self.data(ty) {
             TypeData::Union(members) => {
-                let types: &[TypeId] = match self.origin(ty) {
+                let origin = self.origin(ty);
+                let may_hold_unions = matches!(origin, UnionOrigin::Union(_));
+                let types: &[TypeId] = match origin {
                     UnionOrigin::Union(origin) => origin,
                     _ => members,
                 };
                 let mut mapped: smallvec::SmallVec<[TypeId; 8]> = smallvec::SmallVec::new();
                 for &s in types {
-                    mapped.push(if self.is_union(s) {
+                    mapped.push(if may_hold_unions && self.is_union(s) {
                         self.map_type_ex(s, f, no_reductions)
                     } else {
                         f(self, s)
                     });
                 }
-                if mapped[..] == *types {
-                    ty
-                } else if let Some(kept) = self.union_of_kept_members(types, &mapped) {
-                    debug_assert!({
-                        let union = match no_reductions {
-                            true => self.union_unreduced(&mapped),
-                            false => self.union(&mapped),
-                        };
-                        kept == union || self.has_compared_without_total_order.get()
-                    });
-                    kept
-                } else if no_reductions {
-                    self.union_unreduced(&mapped)
-                } else {
-                    self.union(&mapped)
-                }
+                self.mapped_union(ty, types, &mapped, no_reductions)
             }
             TypeData::Intrinsic(
                 Intrinsic::Never
@@ -1064,35 +1868,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// FOR SPEED: the union of `mapped`, if each is the member of `types` it was mapped from or
-    /// `never`, as when a type guard narrows a union of object types. What is kept is in order, and
-    /// no reduction applies to object types, so there is nothing to sort or to remove.
-    fn union_of_kept_members(&self, types: &[TypeId], mapped: &[TypeId]) -> Option<TypeId> {
-        let is_object = |t: TypeId| self.flags(t) & tf::OBJECT != 0;
-        let mut kept: smallvec::SmallVec<[TypeId; 8]> = smallvec::SmallVec::new();
-        for (&from, &to) in types.iter().zip(mapped) {
-            if to == TypeId::NEVER {
-                continue;
-            }
-            let is_reduced = match self.data(to) {
-                TypeData::Intersection(parts) => parts.iter().all(|&part| is_object(part)),
-                _ => is_object(to),
-            };
-            if to != from || !is_reduced {
-                return None;
-            }
-            kept.push(to);
-        }
-        Some(match kept[..] {
-            [] => TypeId::NEVER,
-            _ => self.union_of_named_unions(mapped, &kept),
-        })
-    }
-
     /// `isPatternLiteralPlaceholderType`
     pub(super) fn is_pattern_literal_placeholder(&self, ty: TypeId) -> bool {
         if let TypeData::Intersection(parts) = self.data(ty) {
-            // One placeholder or more, and object types that only tag it.
+            // At least one placeholder, plus object types that only tag it.
             let mut seen_placeholder = false;
             for &part in parts.iter() {
                 let flags = self.flags(part);
@@ -1111,7 +1890,7 @@ impl<'p, 's> Checker<'p, 's> {
             || self.is_pattern_literal(ty)
     }
 
-    /// A template literal or string mapping type with no generic part: `a${string}`,
+    /// True for a template literal or string mapping type with no generic part, like `a${string}` or
     /// `Uppercase<string>`. `isPatternLiteralType`
     pub(super) fn is_pattern_literal(&self, ty: TypeId) -> bool {
         match self.data(ty) {
@@ -1128,65 +1907,59 @@ impl<'p, 's> Checker<'p, 's> {
         self.intersection_ex(types, false, None)
     }
 
-    /// The same, but `T & P` is not reduced using the constraint of `T`.
-    /// `IntersectionFlagsNoConstraintReduction`
+    /// Like `intersection`, but `T & P` isn't reduced using `T`'s constraint. `IntersectionFlagsNoConstraintReduction`
     pub(super) fn intersection_without_constraint_reduction(&mut self, types: &[TypeId]) -> TypeId {
         self.intersection_ex(types, true, None)
     }
 
-    /// `addTypesToIntersection`, `addTypeToIntersection`: order is preserved, because it matters
-    /// for overloads, and only duplicates are removed. Returns `includes` with the flags the types
-    /// add to it.
+    /// `addTypesToIntersection`, `addTypeToIntersection`. Preserves the order, which matters for overloads, and only
+    /// removes duplicates. Returns `found` plus what the types add.
     fn add_types_to_intersection(
         &mut self,
         set: &mut Flat,
-        mut includes: u32,
+        mut found: MembersByFlags,
         types: &[TypeId],
-    ) -> u32 {
+    ) -> MembersByFlags {
         for &ty in types {
             let ty = self.regular(ty);
             if let TypeData::Intersection(inner) = self.data(ty) {
-                includes = self.add_types_to_intersection(set, includes, inner);
+                found = self.add_types_to_intersection(set, found, inner);
                 continue;
             }
             // Only the first of the types that count as `{}` is added.
             if self.is_empty_anonymous_object_type(ty) {
-                if includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
-                    includes |= tf::INCLUDES_EMPTY_OBJECT;
+                if found.includes & tf::INCLUDES_EMPTY_OBJECT == 0 {
+                    found.includes |= tf::INCLUDES_EMPTY_OBJECT;
                     set.push(ty);
                 }
                 continue;
             }
             let flags = self.flags(ty);
+            let one = MembersByFlags::of(ty, flags);
             if flags & (tf::ANY | tf::UNKNOWN) != 0 {
                 if ty == TypeId::UNRESOLVED {
-                    includes |= tf::INCLUDES_UNRESOLVED;
+                    found.includes |= tf::INCLUDES_UNRESOLVED;
                 }
                 if self.is_error_type(ty) {
-                    includes |= tf::INCLUDES_ERROR;
+                    found.includes |= tf::INCLUDES_ERROR;
                 }
                 if ty == TypeId::WILDCARD {
-                    includes |= tf::INCLUDES_WILDCARD;
+                    found.includes |= tf::INCLUDES_WILDCARD;
                 }
             } else if self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0 {
-                let ty = if ty == TypeId::MISSING {
-                    includes |= tf::INCLUDES_MISSING_TYPE;
-                    TypeId::UNDEFINED
-                } else {
-                    ty
-                };
-                if !set.contains(&ty) {
-                    // No value has two different unit types. The `object` flag next to the unit
-                    // flags signals that to the code further on.
-                    if flags & tf::UNIT != 0 && includes & tf::UNIT != 0 {
-                        includes |= tf::NON_PRIMITIVE;
-                    }
-                    set.push(ty);
+                let member = one.unit.unwrap_or(ty);
+                if member != ty {
+                    found.includes |= tf::INCLUDES_MISSING_TYPE;
                 }
+                if !set.contains(&member) {
+                    set.push(member);
+                }
+                found.add(one);
+                continue;
             }
-            includes |= flags & tf::INCLUDES_MASK;
+            found.includes |= one.includes;
         }
-        includes
+        found
     }
 
     /// `getIntersectionTypeEx`, with an alias.
@@ -1217,19 +1990,40 @@ impl<'p, 's> Checker<'p, 's> {
         if let [only] = types {
             return *only;
         }
-        // `UnionOfUnionKey`
-        if let (Some((alias, _)), &[a, b]) = (alias, types)
-            && (self.is_union(a) || self.is_union(b))
+        let Some((alias, type_arguments)) = alias else {
+            return self.union_ex(types, merge_constrained);
+        };
+        let call = UnionArguments {
+            reduction: Reduction::Literal { merge_constrained },
+            types,
+            alias: Some((alias, type_arguments)),
+        };
+        let hash = (!types.is_empty()).then(|| call.hash());
+        if let Some(hash) = hash
+            && let Some(known) = self.union_calls.get(hash, &call)
         {
-            self.get_symbol_id(alias);
+            return known;
         }
-        let created = self.union_ex(types, merge_constrained);
-        match alias {
-            Some((alias, type_arguments)) if self.is_union(created) => {
-                self.union_type_with_alias(created, alias, type_arguments)
-            }
-            _ => created,
+        let (union, is_kept) = self.create_union_with_alias(&call, alias, merge_constrained);
+        if is_kept && let Some(hash) = hash {
+            self.union_calls.put(hash, &call, union);
         }
+        union
+    }
+
+    /// `union_ex_inspecting` with an alias. `alias` is `call`'s alias.
+    fn create_union_with_alias(
+        &mut self,
+        call: &UnionArguments,
+        alias: Sym,
+        merge_constrained: bool,
+    ) -> (TypeId, bool) {
+        let (created, inspects_members) = self.union_ex_inspecting(call.types, merge_constrained);
+        if !self.is_union(created) {
+            return (created, inspects_members);
+        }
+        let union = self.union_type_with_alias(created, alias, call.alias_type_arguments());
+        (union, inspects_members)
     }
 
     /// `getIntersectionTypeEx`
@@ -1240,7 +2034,8 @@ impl<'p, 's> Checker<'p, 's> {
         alias: Option<(Sym, &[TypeId])>,
     ) -> TypeId {
         let mut set = Flat::with_capacity(types.len());
-        let includes = self.add_types_to_intersection(&mut set, 0, types);
+        let found = self.add_types_to_intersection(&mut set, MembersByFlags::default(), types);
+        let includes = found.includes;
         if includes & tf::NEVER != 0 {
             return if set.contains(&TypeId::SILENT_NEVER) {
                 TypeId::SILENT_NEVER
@@ -1252,20 +2047,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId::UNRESOLVED;
         }
         let strict = self.p.files.options.strict_null_checks;
-        // No value is both an object and null or undefined, or belongs to two disjoint domains.
-        let is_in_another_too = |domain: u32| {
-            includes & domain != 0 && includes & (tf::DISJOINT_DOMAINS & !domain) != 0
-        };
-        if strict
-            && includes & tf::NULLABLE != 0
-            && includes & (tf::OBJECT | tf::NON_PRIMITIVE | tf::INCLUDES_EMPTY_OBJECT) != 0
-            || is_in_another_too(tf::NON_PRIMITIVE)
-            || is_in_another_too(tf::STRING_LIKE)
-            || is_in_another_too(tf::NUMBER_LIKE)
-            || is_in_another_too(tf::BIGINT_LIKE)
-            || is_in_another_too(tf::ES_SYMBOL_LIKE)
-            || is_in_another_too(tf::VOID_LIKE)
-        {
+        if Self::has_disjoint_domains(includes, strict) {
             return TypeId::NEVER;
         }
         if includes & (tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) != 0
@@ -1283,8 +2065,7 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::ANY
             };
         }
-        // Without strictNullChecks null and undefined were not added to the set, and the
-        // intersection reduces to them.
+        // Without strictNullChecks, null and undefined weren't added to the set, and the intersection reduces to them.
         if !strict && includes & tf::NULLABLE != 0 {
             return if includes & tf::INCLUDES_EMPTY_OBJECT != 0 {
                 TypeId::NEVER
@@ -1294,10 +2075,9 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeId::NULL
             };
         }
-        // `{}` is removed next to a type that cannot be null or undefined
-        // (`TypeFlagsDefinitelyNonNullable`), which is not known of a union. `U & {}`, where `U` is
-        // a union of only such types, is `U` after distribution, so distribution is skipped.
-        // `boolean` and enum unions have such a flag themselves, and are not distributed over.
+        // `{}` is removed next to a type that can't be null or undefined (`TypeFlagsDefinitelyNonNullable`). A union
+        // doesn't have that flag. `U & {}`, where `U` is a union of only such types, is `U` after distribution, so
+        // distribution is skipped. `boolean` and enum unions have such a flag themselves and aren't distributed over.
         let is_distributed_over = includes & tf::INCLUDES_EMPTY_OBJECT != 0
             && includes & tf::DEFINITELY_NON_NULLABLE == 0
             && set.len() == 2
@@ -1334,7 +2114,7 @@ impl<'p, 's> Checker<'p, 's> {
             1 => return set[0],
             _ => {}
         }
-        // `T & P` is reduced using the constraint of `T`.
+        // `T & P` is reduced using `T`'s constraint.
         let mut is_constrained_type_variable = false;
         if !no_constraint_reduction
             && let [a, b] = set[..]
@@ -1350,8 +2130,8 @@ impl<'p, 's> Checker<'p, 's> {
             if self.is_strict_subtype(constraint, primitive) {
                 return variable;
             }
-            // `T & number` is never: no member of the constraint of `T` is a subtype of `P`, and
-            // `P` is not a subtype of the constraint of `T`.
+            // `T & number` is never, because no member of `T`'s constraint is a subtype of `P` and `P` isn't a subtype
+            // of `T`'s constraint.
             let parts = self.parts(constraint);
             if !(parts.len() > 1 && parts.iter().any(|&p| self.is_strict_subtype(p, primitive)))
                 && !self.is_strict_subtype(primitive, constraint)
@@ -1361,20 +2141,23 @@ impl<'p, 's> Checker<'p, 's> {
             is_constrained_type_variable = true;
         }
         let alias_in_key = alias.filter(|_| !no_constraint_reduction);
-        if let Some((alias, _)) = alias_in_key {
-            self.get_symbol_id(alias);
-        }
         if includes & tf::UNION == 0 {
-            let created =
-                self.intern_key_with_alias(TypeKey::Intersection(&set), alias, OriginKey::None);
+            let first_request = match is_constrained_type_variable {
+                _ if no_constraint_reduction || set.len() != 2 => FirstRequest::NONE,
+                true => FirstRequest::CONSTRAINED_TYPE_VARIABLE,
+                false => FirstRequest::NO_CONSTRAINED_TYPE_VARIABLE,
+            };
+            let created = (self.types()).as_first_request(first_request, || {
+                self.intern_key_with_alias(TypeKey::Intersection(&set), alias, OriginKey::None)
+            });
             if !no_constraint_reduction && set.len() == 2 {
                 self.types()
                     .set_constrained_type_variable(created, is_constrained_type_variable);
             }
             return created;
         }
-        // `intersectionTypes`: the cached result for the same types and alias. The number of
-        // `types` is not in the key: the first request decides whether the set is split in halves.
+        // `intersectionTypes`: the cached result for the same types and alias. The length of `types` isn't in the key,
+        // so the first request decides whether the set is split in halves.
         let key: IntersectionKey = (
             Box::from(&set[..]),
             no_constraint_reduction,
@@ -1387,11 +2170,55 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.begin_scope();
         let result = self.distribute_intersection(types.len(), set, no_constraint_reduction, alias);
         match (result, self.end_scope_by_counters(scope)) {
-            // `return c.errorType`, before the result is stored: the next request reports again.
+            // `return c.errorType`, before the result is stored, so the next request reports again.
             (None, _) => TypeId::ERROR,
             (Some(result), Ok(stored)) => table.insert(&self.task, key, result, stored),
             (Some(result), Err(_)) => result,
         }
+    }
+
+    /// True if no value is in all the types that have added `includes`: none is both an object and null or undefined, or
+    /// belongs to two disjoint domains.
+    #[inline]
+    fn has_disjoint_domains(includes: u32, strict_null_checks: bool) -> bool {
+        let overlaps_another_domain = |domain: u32| {
+            includes & domain != 0 && includes & (tf::DISJOINT_DOMAINS & !domain) != 0
+        };
+        strict_null_checks
+            && includes & tf::NULLABLE != 0
+            && includes & (tf::OBJECT | tf::NON_PRIMITIVE | tf::INCLUDES_EMPTY_OBJECT) != 0
+            || overlaps_another_domain(tf::NON_PRIMITIVE)
+            || overlaps_another_domain(tf::STRING_LIKE)
+            || overlaps_another_domain(tf::NUMBER_LIKE)
+            || overlaps_another_domain(tf::BIGINT_LIKE)
+            || overlaps_another_domain(tf::ES_SYMBOL_LIKE)
+            || overlaps_another_domain(tf::VOID_LIKE)
+    }
+
+    /// Returns `None` if `add_types_to_intersection` does more with `ty` than read flags: it replaces a fresh literal
+    /// type, asks an object type that can count as `{}` for its members, or meets `any`, `unknown` or `never`.
+    fn members_by_flags(&self, ty: TypeId) -> Option<MembersByFlags> {
+        if !self.has_no_fresh_literal(ty) {
+            return None;
+        }
+        let members = match self.data(ty) {
+            TypeData::Intersection(members) => &members[..],
+            _ => std::slice::from_ref(&ty),
+        };
+        let mut found = MembersByFlags::default();
+        for &member in members {
+            let flags = self.flags(member);
+            let is_read_by_flags = match self.data(member) {
+                TypeData::Intersection(_) => false,
+                TypeData::Ref { .. } | TypeData::Tuple { .. } => true,
+                _ => flags & (tf::OBJECT | tf::ANY | tf::UNKNOWN | tf::NEVER) == 0,
+            };
+            if !is_read_by_flags {
+                return None;
+            }
+            found.add(MembersByFlags::of(member, flags));
+        }
+        Some(found)
     }
 
     /// `checkCrossProductUnion`
@@ -1399,7 +2226,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.checked_cross_product_union_size(types).is_some()
     }
 
-    /// `getCrossProductUnionSize`, if `checkCrossProductUnion` accepts it.
+    /// `getCrossProductUnionSize`, or `None` if `checkCrossProductUnion` rejects it.
     fn checked_cross_product_union_size(&mut self, types: &[TypeId]) -> Option<usize> {
         let size = self.get_cross_product_union_size(types);
         if size >= 100_000 {
@@ -1409,13 +2236,43 @@ impl<'p, 's> Checker<'p, 's> {
         Some(size)
     }
 
+    /// `checked_cross_product_union_size` of the set that `distribute_intersection` is left with.
+    fn checked_size_of_distribution(&mut self, set: &[TypeId]) -> Option<usize> {
+        let size = self.get_cross_product_union_size(set);
+        if size < 100_000 {
+            return Some(size);
+        }
+        // `is_primitive_union` says no to both, whatever `is_without_primitive_union` says.
+        let has_primitive_types_alone = |t: TypeId| {
+            let mut members = self.parts(t).iter();
+            members.all(|&member| self.is_member_of_primitive_union(member))
+        };
+        let is_refused_to_everybody =
+            set.len() == 2 && !set.iter().any(|&t| has_primitive_types_alone(t));
+        match is_refused_to_everybody {
+            true => self.refuse_cross_product_of_two_unions(),
+            false => self.error_at_current_node(2590),
+        }
+        None
+    }
+
     /// `getCrossProductUnionSize`
     fn get_cross_product_union_size(&self, types: &[TypeId]) -> usize {
         (types.iter()).fold(1, |size, &t| size.saturating_mul(self.parts(t).len()))
     }
 
-    /// `getIntersectionType` for types some of which are unions. `actual`: the number of types in
-    /// the request. `None`: `checkCrossProductUnion` has refused the set.
+    /// `isUnionWithUndefined`, `isUnionWithNull` look at the first two members: `compareTypes` puts those like `undefined`
+    /// first and those like `null` next.
+    fn leading_nullish_members(&self, union: TypeId) -> impl Iterator<Item = TypeId> + use<'p> {
+        let members = self.parts(union);
+        let is_nullish = |m: &TypeId| m.is_undefined() || m.is_null();
+        let leading = members.iter().take_while(|m| is_nullish(m)).count();
+        debug_assert!(!members[leading..].iter().any(is_nullish));
+        members[..leading].iter().copied()
+    }
+
+    /// `getIntersectionType` for types some of which are unions. `actual`: the number of types in the request. Returns
+    /// `None` if `checkCrossProductUnion` rejected the set.
     fn distribute_intersection(
         &mut self,
         actual: usize,
@@ -1424,13 +2281,13 @@ impl<'p, 's> Checker<'p, 's> {
         alias: Option<(Sym, &[TypeId])>,
     ) -> Option<TypeId> {
         if self.intersect_unions_of_primitive_types(&mut set) {
-            // Happens only once: at most one such union is left.
+            // This recurses only once, because at most one such union is left.
             return Some(self.intersection_ex(&set, no_constraint_reduction, alias));
         }
         // `(A | undefined) & (B | undefined)` is `A & B | undefined`, and likewise for `null`.
         if set
             .iter()
-            .all(|&t| self.is_union(t) && self.contains_undefined(t))
+            .all(|&t| self.is_union(t) && self.leading_nullish_members(t).any(|m| m.is_undefined()))
         {
             let undefined = if set.iter().any(|&t| self.contains_missing_type(t)) {
                 TypeId::MISSING
@@ -1446,7 +2303,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if set
             .iter()
-            .all(|&t| self.is_union(t) && self.parts(t).iter().any(|m| m.is_null()))
+            .all(|&t| self.is_union(t) && self.leading_nullish_members(t).any(|m| m.is_null()))
         {
             for t in &mut set {
                 *t = self.filter(*t, |_, m| !m.is_null());
@@ -1455,8 +2312,8 @@ impl<'p, 's> Checker<'p, 's> {
             let types = [rest, TypeId::NULL];
             return Some(self.union_ex_with_alias(&types, !no_constraint_reduction, alias));
         }
-        // `A & B & C & D` is `(A & B) & (C & D)`: much of a half may reduce to never. Not applied
-        // to two types, which would recurse forever.
+        // `A & B & C & D` is `(A & B) & (C & D)`, because much of a half may reduce to never. Not applied to two types,
+        // which would recurse forever.
         if set.len() >= 3 && actual > 2 {
             let middle = set.len() / 2;
             let left = self.intersection_ex(&set[..middle], no_constraint_reduction, None);
@@ -1464,24 +2321,49 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(self.intersection_ex(&[left, right], no_constraint_reduction, alias));
         }
         // `X & (A | B) & (C | D)` is `X & A & C | X & A & D | X & B & C | X & B & D`.
-        let size = self.checked_cross_product_union_size(&set)?;
+        let size = self.checked_size_of_distribution(&set)?;
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
         let mut constituents = set.to_vec();
+        // `("a" & keyof T | "b" & keyof T | ..) & ("a" & keyof U | "b" & keyof U | ..)`: nearly every combination has two
+        // different literal types, and the flags say so. `members_by_flags` of the alternatives of each of `set`, and
+        // where those of each begin.
+        let strict = self.p.files.options.strict_null_checks;
+        let mut by_flags: smallvec::SmallVec<[Option<MembersByFlags>; 16]> = Default::default();
+        let mut starts: smallvec::SmallVec<[usize; 4]> = Default::default();
+        for &ty in set.iter().filter(|_| strict) {
+            starts.push(by_flags.len());
+            let alternatives = self.parts(ty).iter();
+            by_flags.extend(alternatives.map(|&it| self.members_by_flags(it)));
+        }
         for i in 0..size {
             let mut n = i;
+            // `add_types_to_intersection` of the combination, or `None` if it takes more than the flags.
+            let mut combined = strict.then(MembersByFlags::default);
             for j in (0..set.len()).rev() {
+                let mut chosen = 0;
                 if let TypeData::Union(alternatives) = self.data(set[j]) {
-                    constituents[j] = alternatives[n % alternatives.len()];
+                    chosen = n % alternatives.len();
+                    constituents[j] = alternatives[chosen];
                     n /= alternatives.len();
                 }
+                let start = starts.get(j).copied().unwrap_or(0);
+                let one = by_flags.get(start + chosen).copied().flatten();
+                combined = combined.zip(one).map(|(mut all, one)| {
+                    all.add(one);
+                    all
+                });
+            }
+            if combined.is_some_and(|it| Self::has_disjoint_domains(it.includes, strict)) {
+                continue;
             }
             let one = self.intersection_ex(&constituents, no_constraint_reduction, None);
             if !one.is_never() {
                 intersections.push(one);
             }
         }
-        // The denormalized `origin`: where a constituent is an intersection and the origin has fewer constituents than the union.
+        // The union gets a denormalized `origin` if a constituent is an intersection and the origin has fewer
+        // constituents than the union.
         if !(intersections.iter().any(|&t| self.is_intersection(t))
             && self.constituent_count_of_types(&intersections)
                 > self.constituent_count_of_types(&set))
@@ -1517,8 +2399,8 @@ impl<'p, 's> Checker<'p, 's> {
         types.iter().map(|&t| self.constituent_count(t)).sum()
     }
 
-    /// `extractRedundantTemplateLiterals`: `get${T}` is redundant next to `"getX"`. `false`: the
-    /// intersection is empty, as for `get${string}` and `"setX"`.
+    /// `extractRedundantTemplateLiterals`: `get${T}` is redundant next to `"getX"`. Returns false if the intersection
+    /// is empty, as for `get${string}` and `"setX"`.
     fn extract_redundant_template_literals(&mut self, set: &mut Flat) -> bool {
         let literals: Vec<TypeId> = set
             .iter()
@@ -1533,9 +2415,9 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             for &literal in &literals {
-                let fits = match *self.data(literal) {
-                    // An enum member matches a template literal type by its value, and is not a
-                    // member of a string mapping type.
+                let is_matched = match *self.data(literal) {
+                    // An enum member matches a template literal type by its value, and is never a member of a string
+                    // mapping type.
                     TypeData::EnumLit {
                         value: EnumValue::String(value),
                         ..
@@ -1546,7 +2428,7 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     _ => self.is_subtype(literal, pattern),
                 };
-                if fits {
+                if is_matched {
                     set.remove(i);
                     break;
                 }
@@ -1558,9 +2440,9 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// `ObjectFlagsPrimitiveUnion`: a union with no member that has `TypeFlagsNotPrimitiveUnion`.
-    /// `object` is allowed. `void`, template literal types and `keyof T` are not. `filterType`
-    /// forwards the flag, so what it is the first to create from another union lacks it.
+    /// `ObjectFlagsPrimitiveUnion`: a union with no member that has `TypeFlagsNotPrimitiveUnion`. `object` is allowed.
+    /// `void`, template literal types and `keyof T` aren't. `filterType` forwards the flag, so a union that it's the
+    /// first to create from a union without the flag lacks it too.
     fn is_primitive_union(&self, ty: TypeId) -> bool {
         let TypeData::Union(parts) = self.data(ty) else {
             return false;
@@ -1568,16 +2450,20 @@ impl<'p, 's> Checker<'p, 's> {
         if self.types().is_without_primitive_union(ty) {
             return false;
         }
-        parts.iter().all(|&p| {
-            let flags = self.flags(p);
-            flags & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
-                && flags & (tf::VOID | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) == 0
-        })
+        parts.iter().all(|&p| self.is_member_of_primitive_union(p))
     }
 
-    /// `intersectUnionsOfPrimitiveTypes`: multiple unions of primitives, which is what `keyof (A |
-    /// B | C)` produces, are intersected as sets. The common members replace the first union, and
-    /// the other unions are removed. `false`: there are fewer than two.
+    /// It has no `TypeFlagsNotPrimitiveUnion`.
+    #[inline]
+    fn is_member_of_primitive_union(&self, ty: TypeId) -> bool {
+        let flags = self.flags(ty);
+        flags & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
+            && flags & (tf::VOID | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) == 0
+    }
+
+    /// `intersectUnionsOfPrimitiveTypes`: intersects multiple unions of primitives, which is what `keyof (A | B | C)`
+    /// produces, as sets. The common members replace the first union, and the other unions are removed. Returns false
+    /// if there are fewer than two.
     fn intersect_unions_of_primitive_types(&mut self, set: &mut Flat) -> bool {
         let unions: Vec<TypeId> = set
             .iter()
@@ -1594,8 +2480,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if !checked.insert(t) || !self.each_union_contains(&unions, t) {
                     continue;
                 }
-                // `undefined` and the missing type match each other. The missing type is the one
-                // that stays.
+                // `undefined` and the missing type match each other. The missing type wins.
                 if t == TypeId::UNDEFINED && common.contains(&TypeId::MISSING) {
                     continue;
                 }
@@ -1617,7 +2502,7 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
-    /// `eachUnionContains`: `"a"` is in a union that has `string`.
+    /// `eachUnionContains`. A union that has `string` contains `"a"`.
     fn each_union_contains(&self, unions: &[TypeId], t: TypeId) -> bool {
         for &union in unions {
             let has = |expected: TypeId| self.contains_type(self.parts(union), expected);
@@ -1653,16 +2538,16 @@ impl<'p, 's> Checker<'p, 's> {
         matches!(self.data(ty), TypeData::Synth(shape) if shape.literal == Literalness::OfUnknown)
     }
 
-    /// `ty` without `undefined`, including the missing type.
+    /// Returns `ty` without `undefined` and the missing type.
     pub fn without_undefined(&mut self, ty: TypeId) -> TypeId {
         self.filter(ty, |_, m| !m.is_undefined())
     }
 
     pub fn contains_undefined(&self, ty: TypeId) -> bool {
-        self.parts(ty).iter().any(|m| m.is_undefined())
+        self.is_some_type_of_kind(ty, tf::UNDEFINED)
     }
 
-    // ───────────────────────────── the order of the members of a union ─────────────────────────────
+    // ───────────────────────────── union member order ─────────────────────────────
 
     /// `getSortOrderFlags`
     fn sort_order_flags(&self, ty: TypeId) -> u32 {
@@ -1673,12 +2558,12 @@ impl<'p, 's> Checker<'p, 's> {
         flags
     }
 
-    /// `getTypeNameSymbol`, its name. `alias`: `t.alias.symbol`.
+    /// The name of the symbol that `getTypeNameSymbol` returns. `alias`: `t.alias.symbol`.
     fn type_name(&self, ty: TypeId, alias: Option<Sym>) -> Option<&'p [u8]> {
         let files = self.files();
         let name = match (alias, self.data(ty)) {
             (Some(alias), _) => files.symbol(alias).name,
-            // The `this` type has the symbol of its class.
+            // The `this` type has its class's symbol.
             (None, &TypeData::Ref { target: sym, .. } | &TypeData::ThisParam(sym)) => {
                 files.symbol(sym).name
             }
@@ -1688,7 +2573,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             _ => return None,
         };
-        // `InternalSymbolNameClass`, of a class expression without a name.
+        // `InternalSymbolNameClass`, for a class expression without a name.
         Some(if name.is_none() {
             &b"\xFEclass"[..]
         } else if name == known::missing {
@@ -1698,11 +2583,11 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// The position of the first declaration of `sym`. `compareSymbols`
-    fn symbol_place(&self, sym: Sym) -> Option<Place> {
+    /// The position of `sym`'s first declaration. `compareSymbols`
+    fn symbol_position(&self, sym: Sym) -> Option<DeclarationPosition> {
         let files = self.files();
         let (file, decl) = if files.flags(sym).contains(SymFlags::MERGED) {
-            files.decls(sym).first().copied()?
+            files.decls_of(sym).first().copied()?
         } else {
             (sym.file, files.symbol(sym).decls.first().copied()?)
         };
@@ -1710,17 +2595,16 @@ impl<'p, 's> Checker<'p, 's> {
         Some((!files.module(file).is_lib, file, pos))
     }
 
-    /// The declaration position of the symbol of `ty`, or of the syntax it is the type of. A
-    /// synthesized type has none here.
-    fn sort_place(&self, ty: TypeId) -> Option<Place> {
-        let at = |file: FileId, pos: u32| -> Option<Place> {
+    /// The declaration position of `ty`'s symbol, or of the syntax it's the type of. A synthesized type has none here.
+    fn sort_position(&self, ty: TypeId) -> Option<DeclarationPosition> {
+        let at = |file: FileId, pos: u32| -> Option<DeclarationPosition> {
             Some((!self.files().module(file).is_lib, file, pos))
         };
         match *self.data(ty) {
             TypeData::Ref { target: sym, .. }
             | TypeData::ThisParam(sym)
             | TypeData::Enum { symbol: sym, .. }
-            | TypeData::EnumLit { member: sym, .. } => self.symbol_place(sym),
+            | TypeData::EnumLit { member: sym, .. } => self.symbol_position(sym),
             TypeData::Anon { origin, .. } => match origin {
                 Origin::TypeLiteral(file, node) | Origin::Mapped(file, node) => {
                     at(file, self.hir(file)[node].pos)
@@ -1732,7 +2616,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | Origin::Function(sym)
                 | Origin::EnumObject(sym)
                 | Origin::Module(sym)
-                | Origin::Namespace { module: sym, .. } => self.symbol_place(sym),
+                | Origin::Namespace { module: sym, .. } => self.symbol_position(sym),
                 _ => None,
             },
             TypeData::Fns { ref decls, .. } => decls
@@ -1740,8 +2624,8 @@ impl<'p, 's> Checker<'p, 's> {
                 .and_then(|&(file, func)| at(file, self.hir(file)[func].start)),
             TypeData::Synth(ref shape) => match shape.symbol_declared_at {
                 Some((file, pos, _)) => at(file, pos),
-                // `getOrCreateTypeFromSignature`: the symbol has the declaration of the signature.
-                // That of `getInstantiatedTypePart` has none, and comes after those that have one.
+                // `getOrCreateTypeFromSignature`: the symbol has the signature's declaration. The symbol of
+                // `getInstantiatedTypePart` has none, and sorts after those that have one.
                 None if shape.literal == Literalness::No
                     && shape.instantiation_expression.is_none()
                     && shape.props.is_empty()
@@ -1760,7 +2644,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::TypeParam(file, tp, _) => at(file, self.hir(file)[tp].pos),
             TypeData::Cond { file, node, .. } => at(file, self.hir(file)[node].pos),
             TypeData::UniqueSymbol { symbol, .. } => match symbol {
-                UniqueSymbolDeclaration::Variable(variable) => self.symbol_place(variable),
+                UniqueSymbolDeclaration::Variable(variable) => self.symbol_position(variable),
                 UniqueSymbolDeclaration::Member(file, member) => {
                     at(file, self.hir(file)[member].name_pos)
                 }
@@ -1790,14 +2674,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// The sort key `compareNodes` uses for a node at `pos` of `file`: the index of the file in the
-    /// program (`fileIndexMap`), then the position. Library files come first.
-    pub(super) fn place_in_program_order(&self, file: FileId, pos: u32) -> (bool, u32, u32) {
+    /// The sort key `compareNodes` uses for a node at `pos` in `file`: the file's index in the program
+    /// (`fileIndexMap`), then the position. Library files come first.
+    pub(super) fn position_in_program_order(&self, file: FileId, pos: u32) -> (bool, u32, u32) {
         let files = self.files();
         (!files.module(file).is_lib, files.rank_of_file(file), pos)
     }
 
-    /// `t.symbol.Declarations[0]` of an object type: the file and the position.
+    /// `t.symbol.Declarations[0]` of an object type, as a file and a position.
     pub(super) fn symbol_declaration_of_object_type(
         &self,
         ty: TypeId,
@@ -1810,12 +2694,12 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Synth(ref shape) => shape.symbol_declared_at.map_or(ExprId::NONE, |it| it.2),
             _ => ExprId::NONE,
         };
-        self.sort_place(ty).map(|place| (place.1, place.2, literal))
+        self.sort_position(ty)
+            .map(|sort_key| (sort_key.1, sort_key.2, literal))
     }
 
-    /// `Shape::mapper` for a type that gets `t.symbol`, the symbol of an object literal
-    /// (`newAnonymousType(t.symbol, ..)`): what the outer type parameters of the literal are mapped
-    /// to in `ty`.
+    /// `Shape::mapper` for a type that gets `t.symbol`, the symbol of an object literal (`newAnonymousType(t.symbol,
+    /// ..)`). It's what `ty` maps the literal's outer type parameters to.
     pub(super) fn mapper_of_object_literal_type(&self, ty: TypeId) -> MapperId {
         match *self.data(ty) {
             TypeData::Anon {
@@ -1838,13 +2722,13 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// `compareSymbols`, limited to the comparison of the first declarations.
-    fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
-        let place = |symbol: Sym| {
-            let (_, file, pos) = self.symbol_place(symbol)?;
-            Some(self.place_in_program_order(file, pos))
+    /// `compareSymbols`, limited to comparing the first declarations.
+    pub(super) fn compare_symbols(&self, s: Sym, t: Sym) -> std::cmp::Ordering {
+        let program_position = |symbol: Sym| {
+            let (_, file, pos) = self.symbol_position(symbol)?;
+            Some(self.position_in_program_order(file, pos))
         };
-        some_first(place(s), place(t))
+        some_first(program_position(s), program_position(t))
     }
 
     /// `compareTypeNames`
@@ -1853,19 +2737,21 @@ impl<'p, 's> Checker<'p, 's> {
         let (x, y) = (self.alias_symbol_of_type(a), self.alias_symbol_of_type(b));
         some_first(self.type_name(a, x), self.type_name(b, y)).then_with(|| match (x, y) {
             (Some(s), Some(t)) if s == t => {
-                let arguments = |ty: TypeId| self.alias_of_type(ty).map_or(Vec::new(), |it| it.1);
+                let arguments =
+                    |ty: TypeId| self.alias_of_type(ty).map(|it| it.1).unwrap_or_default();
                 self.compare_type_lists(&arguments(a), &arguments(b))
             }
             (None, None) => std::cmp::Ordering::Equal,
-            // Two symbols of one name. What follows orders the two, but it does not order two
-            // instantiations of one alias, so the order of three types can be a cycle.
+            // TypeScript 7.1: two symbols with the same name are ordered by their declarations. In 7.0 they're equal.
             _ => {
-                let has_arguments =
-                    |ty: TypeId| self.alias_of_type(ty).is_some_and(|it| !it.1.is_empty());
-                if has_arguments(a) || has_arguments(b) {
-                    self.has_compared_without_total_order.set(true);
-                }
-                std::cmp::Ordering::Equal
+                let declaration = |ty: TypeId, alias: Option<Sym>| {
+                    let (_, file, pos) = match alias {
+                        Some(alias) => self.symbol_position(alias),
+                        None => self.sort_position(ty),
+                    }?;
+                    Some(self.position_in_program_order(file, pos))
+                };
+                some_first(declaration(a, x), declaration(b, y))
             }
         })
     }
@@ -1880,9 +2766,9 @@ impl<'p, 's> Checker<'p, 's> {
         self.compare_type_lists(&targets(x), &targets(y))
     }
 
-    /// `compareTypeMappers` for a `SimpleTypeMapper` or an `ArrayTypeMapper` of instantiations of
-    /// the same declaration, which have the same sources. A declared type has no mapper, which
-    /// comes last. Here it has one of identity pairs.
+    /// `compareTypeMappers` for a `SimpleTypeMapper` or an `ArrayTypeMapper` of instantiations of the same declaration,
+    /// which have the same sources. In tsgo a declared type has no mapper, which sorts last. Here it has a mapper of
+    /// identity pairs.
     fn compare_type_mappers(&self, x: MapperId, y: MapperId) -> std::cmp::Ordering {
         match (self.is_instantiating(x), self.is_instantiating(y)) {
             (true, true) => self.compare_targets_of_type_mappers(x, y),
@@ -1931,17 +2817,17 @@ impl<'p, 's> Checker<'p, 's> {
         let atoms = &self.atoms();
         let types = |x: TypeId, y: TypeId| self.compare_types_without_ids(x, y);
         let lists = |x: &[TypeId], y: &[TypeId]| self.compare_type_lists(x, y);
-        let place = |t: TypeId| {
-            let (_, file, pos) = self.sort_place(t)?;
-            Some(self.place_in_program_order(file, pos))
+        let program_position = |t: TypeId| {
+            let (_, file, pos) = self.sort_position(t)?;
+            Some(self.position_in_program_order(file, pos))
         };
-        // A synthesized type does not always say where its symbol is declared.
+        // A synthesized type doesn't always record where its symbol is declared.
         let has_symbol = |t: TypeId| match self.data(t) {
             TypeData::Synth(shape) => Self::shape_has_symbol(shape),
             _ => false,
         };
-        // `compareSymbols` of a symbol and its `cloneTypeAsModuleType` clone falls back to the
-        // symbol ids. Here the symbol comes first, then the clones in the order of the imports.
+        // `compareSymbols` of a symbol and its `cloneTypeAsModuleType` clone falls back to the symbol ids. Here the
+        // symbol comes first, then the clones in import order.
         let originating_import = |t: TypeId| match *self.data(t) {
             TypeData::Anon {
                 origin:
@@ -1954,18 +2840,18 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // Among object types with the same symbol, or none, type references come first. A tuple is
         // a type reference and has no symbol.
-        let is_no_reference =
+        let is_not_reference =
             |t: TypeId| !matches!(self.data(t), TypeData::Ref { .. } | TypeData::Tuple { .. });
-        let are_of_one_symbol = matches!(
+        let have_same_target = matches!(
             (self.data(a), self.data(b)),
             (TypeData::Ref { target: s, .. }, TypeData::Ref { target: t, .. }) if s == t
         );
         if flags & NAMED != 0 {
             let by_symbol = self
                 .compare_type_names(a, b)
-                .then_with(|| match are_of_one_symbol {
+                .then_with(|| match have_same_target {
                     true => Equal,
-                    false => some_first(place(a), place(b))
+                    false => some_first(program_position(a), program_position(b))
                         .then_with(|| {
                             some_first(
                                 self.name_of_symbol_without_declarations(a),
@@ -1976,16 +2862,15 @@ impl<'p, 's> Checker<'p, 's> {
                         .then_with(|| has_symbol(b).cmp(&has_symbol(a))),
                 })
                 .then_with(|| originating_import(a).cmp(&originating_import(b)))
-                .then_with(|| is_no_reference(a).cmp(&is_no_reference(b)));
+                .then_with(|| is_not_reference(a).cmp(&is_not_reference(b)));
             if by_symbol.is_ne() {
                 return by_symbol;
             }
         }
-        // References that are not deferred are ordered by their type arguments. Deferred ones with
-        // the same target are ordered by the source position of the reference, and instantiations
-        // of the same reference by their mappers, never by their type arguments, which may be the
-        // references themselves. One that is not deferred has no node and comes last
-        // (`compareNodes`).
+        // References that aren't deferred are ordered by their type arguments. Deferred ones with the same target are
+        // ordered by the reference's source position, and instantiations of the same reference by their mappers, never
+        // by their type arguments, which may be the references themselves. A reference that isn't deferred has no node
+        // and comes last (`compareNodes`).
         let arguments = |x: &TypeArguments, y: &TypeArguments| match (x, y) {
             (TypeArguments::Given(x), TypeArguments::Given(y)) => lists(x, y),
             _ => {
@@ -1993,7 +2878,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let node = |deferred: Option<&DeferredTypeArguments>| {
                     let deferred = deferred?;
                     let pos = self.hir(deferred.file)[deferred.node].pos;
-                    Some(self.place_in_program_order(deferred.file, pos))
+                    Some(self.position_in_program_order(deferred.file, pos))
                 };
                 some_first(node(x), node(y)).then_with(|| match (x, y) {
                     (Some(x), Some(y)) => self.compare_type_mappers(x.mapper, y.mapper),
@@ -2001,7 +2886,8 @@ impl<'p, 's> Checker<'p, 's> {
                 })
             }
         };
-        // Where one type is always created from the other, the order of their ids in tsgo is a function of the two types.
+        // Where one type is always created from the other, the order of their ids in tsgo is a function of the two
+        // types.
         let creation_step = |t: TypeId| match *self.data(t) {
             // `getFreshTypeOfLiteralType`
             TypeData::StringLit { fresh, .. }
@@ -2069,7 +2955,7 @@ impl<'p, 's> Checker<'p, 's> {
                     _ => lists(self.parts(a), self.parts(b)),
                 })
             }
-            // Its members are in source order.
+            // An intersection's members are in source order.
             (TypeData::Intersection(x), TypeData::Intersection(y)) => lists(x, y),
             (TypeData::StringLit { value: x, .. }, TypeData::StringLit { value: y, .. })
             | (TypeData::UniqueSymbol { name: x, .. }, TypeData::UniqueSymbol { name: y, .. }) => {
@@ -2083,11 +2969,34 @@ impl<'p, 's> Checker<'p, 's> {
                     .then_with(|| x.partial_cmp(&y).unwrap_or(Equal))
             }
             (TypeData::BoolLit { value: x, .. }, TypeData::BoolLit { value: y, .. }) => x.cmp(y),
-            // tsgo orders them by id, and creates `zeroBigIntType` with the checker.
-            (TypeData::BigIntLit { text: x, .. }, TypeData::BigIntLit { text: y, .. }) => {
-                let is_zero =
-                    |text: Atom| atoms.bytes(text).iter().all(|&c| c == b'0' || c == b'n');
-                is_zero(*y).cmp(&is_zero(*x))
+            // TypeScript 7.1: by value.
+            (
+                TypeData::BigIntLit {
+                    text: x,
+                    negative: is_x_negative,
+                    ..
+                },
+                TypeData::BigIntLit {
+                    text: y,
+                    negative: is_y_negative,
+                    ..
+                },
+            ) => {
+                let digits = |text: Atom| {
+                    let text = atoms.bytes(text);
+                    let text = text.strip_suffix(b"n").unwrap_or(text);
+                    &text[text.iter().take_while(|&&c| c == b'0').count()..]
+                };
+                let (x, y) = (digits(*x), digits(*y));
+                let by_magnitude = x.len().cmp(&y.len()).then_with(|| x.cmp(y));
+                match (
+                    *is_x_negative && !x.is_empty(),
+                    *is_y_negative && !y.is_empty(),
+                ) {
+                    (true, true) => by_magnitude.reverse(),
+                    (false, false) => by_magnitude,
+                    (is_x_negative, is_y_negative) => is_y_negative.cmp(&is_x_negative),
+                }
             }
             (
                 TypeData::Marker(Marker::Restrictive(x)),
@@ -2106,8 +3015,8 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 rank(x).cmp(&rank(y))
             }
-            // tsgo: by name, then by id. The ids of intrinsic types are constants: `TypeStore::new` interns them in the order of
-            // `well_known!`.
+            // tsgo: by name, then by id. The ids of intrinsic types are constants, because `TypeStore::new` interns
+            // them in the order of `well_known!`.
             (TypeData::Intrinsic(_), TypeData::Intrinsic(_)) => {
                 a.arrival_order().cmp(&b.arrival_order())
             }
@@ -2145,11 +3054,24 @@ impl<'p, 's> Checker<'p, 's> {
                     .then_with(|| lists(x, y))
             }
             // TypeScript orders them by id, in the order `getSpreadType` created them: `mapType`
-            // iterates over the left operand, and for each of its members over the right.
+            // iterates over the left operand, and for each of its members over the right. Likewise
+            // `getInstantiationExpressionType`, one expression after the other.
             (TypeData::Synth(x), TypeData::Synth(y)) => match (x.created_from, y.created_from) {
-                (Some((l, r)), Some((m, s))) => (x.spread_rank.cmp(&y.spread_rank))
-                    .then_with(|| types(l, m))
-                    .then_with(|| types(r, s)),
+                (Some((l, r)), Some((m, s))) => {
+                    let node = |shape: &Shape| {
+                        let (file, pos) = match shape.instantiation_expression? {
+                            InstantiationExpression::Expr(file, e) => (file, self.hir(file)[e].pos),
+                            InstantiationExpression::TypeNode(file, node) => {
+                                (file, self.hir(file)[node].pos)
+                            }
+                        };
+                        Some(self.position_in_program_order(file, pos))
+                    };
+                    some_first(node(x), node(y))
+                        .then_with(|| x.spread_rank.cmp(&y.spread_rank))
+                        .then_with(|| types(l, m))
+                        .then_with(|| types(r, s))
+                }
                 _ => match (x.single_signature_arguments, y.single_signature_arguments) {
                     (Some(x), Some(y)) => types(x, y),
                     (x, y) => y.is_some().cmp(&x.is_some()),
@@ -2172,8 +3094,22 @@ impl<'p, 's> Checker<'p, 's> {
             (TypeData::TypeParam(_, _, x), TypeData::TypeParam(_, _, y)) => {
                 self.compare_targets_of_type_mappers(*x, *y)
             }
-            // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`: a type without a mapper
-            // comes last.
+            // TypeScript 7.1: by source, mapped type and constraint. 7.0 falls back to the ids.
+            (
+                TypeData::ReverseMapped {
+                    source: s,
+                    mapped: m,
+                    of: c,
+                },
+                TypeData::ReverseMapped {
+                    source: t,
+                    mapped: n,
+                    of: d,
+                },
+            ) => types(*s, *t)
+                .then_with(|| types(*m, *n))
+                .then_with(|| types(*c, *d)),
+            // `ObjectFlagsObjectTypeKindMask`, then `compareTypeMappers`, where a type without a mapper comes last.
             (x, y) => {
                 let kind = |data: &TypeData| match data {
                     TypeData::Anon {
@@ -2184,7 +3120,6 @@ impl<'p, 's> Checker<'p, 's> {
                     TypeData::EvolvingArray(_) => 3,
                     _ => 0,
                 };
-                let kind_of_both_is_mapped = kind(x) == 1 && kind(y) == 1;
                 let mapper = |data: &TypeData| match *data {
                     TypeData::Anon { mapper, .. } | TypeData::Fns { mapper, .. } => Some(mapper),
                     _ => None,
@@ -2192,18 +3127,13 @@ impl<'p, 's> Checker<'p, 's> {
                 kind(x)
                     .cmp(&kind(y))
                     .then_with(|| match (mapper(x), mapper(y)) {
-                        // `instantiateAnonymousType` combines the mapper of a mapped type with one
-                        // for its fresh type parameter, and `compareTypeMappers` does not order a
-                        // `CompositeTypeMapper`, so the ids decide.
-                        (Some(x), Some(y)) if kind_of_both_is_mapped => {
-                            self.is_instantiating(y).cmp(&self.is_instantiating(x))
-                        }
+                        // TypeScript 7.1: also for two mapped types, without the mapper for the fresh type parameter.
                         (Some(x), Some(y)) => self.compare_type_mappers(x, y),
                         (x, y) => y.is_some().cmp(&x.is_some()),
                     })
             }
         };
-        // The calls of `checkObjectLiteral` for one literal, in the order in which they return.
+        // The `checkObjectLiteral` calls for one literal, in the order they return.
         let check_of_literal = |t: TypeId| match *self.data(t) {
             TypeData::Anon {
                 origin:
@@ -2225,56 +3155,21 @@ impl<'p, 's> Checker<'p, 's> {
             .then_with(|| creation_step(a).cmp(&creation_step(b)))
     }
 
-    /// `CompareTypes`: the order of the constituents of a union, and of an origin that is a union. Where tsgo falls back to the type ids,
-    /// this falls back to `creation_order`.
+    /// `CompareTypes`: the order of a union's constituents, and of an origin that is a union. Where tsgo falls back to
+    /// the type ids, this falls back to `content_order`.
     #[inline]
     pub fn compare_types(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         match (self.data(a), self.data(b)) {
-            // FOR SPEED: the members of `keyof` of a large type, and of a template literal type.
-            // They have the same flags and no name: the text decides, then the freshness.
-            (
-                &TypeData::StringLit { value: x, fresh: f },
-                &TypeData::StringLit { value: y, fresh: g },
-            ) if x != y || f != g => {
-                let atoms = &self.atoms();
-                match atoms.bytes(x).cmp(atoms.bytes(y)).then_with(|| f.cmp(&g)) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
-                    order => order,
-                }
-            }
-            // Likewise: the value decides (`cmp.Compare`: NaN first), then the freshness.
-            (
-                &TypeData::NumberLit { bits: x, fresh: f },
-                &TypeData::NumberLit { bits: y, fresh: g },
-            ) if x != y || f != g => {
-                let (x, y) = (f64::from_bits(x), f64::from_bits(y));
-                let by_value = (y.is_nan().cmp(&x.is_nan()))
-                    .then_with(|| x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal));
-                match by_value.then_with(|| f.cmp(&g)) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
-                    order => order,
-                }
-            }
-            // The members of an enum. They have the same flags, no alias and no name: the
-            // declarations decide.
-            (&TypeData::EnumLit { member: s, .. }, &TypeData::EnumLit { member: t, .. })
-                if s != t =>
-            {
-                match self.compare_symbols(s, t) {
-                    std::cmp::Ordering::Equal => self.compare_types_ordered_by(a, b, a, b),
-                    order => order,
-                }
-            }
             (TypeData::Intersection(_), TypeData::Intersection(_)) => {
                 let (s, t) = self.members_that_order_intersections(a, b);
-                self.compare_types_ordered_by(a, b, s, t)
+                self.compare_types_ordered_by(s, t)
             }
-            _ => self.compare_types_ordered_by(a, b, a, b),
+            _ => self.compare_types_ordered_by(a, b),
         }
     }
 
-    /// `compareTypeLists` calls `CompareTypes`: of two intersections, the first pair of distinct
-    /// members decides, by the ids if nothing else orders the two.
+    /// `compareTypeLists` calls `CompareTypes`, so the first pair of distinct members decides the order of two
+    /// intersections, by id if nothing else orders that pair.
     fn members_that_order_intersections(&self, a: TypeId, b: TypeId) -> (TypeId, TypeId) {
         let (mut s, mut t) = (a, b);
         while let (TypeData::Intersection(x), TypeData::Intersection(y)) =
@@ -2288,154 +3183,359 @@ impl<'p, 's> Checker<'p, 's> {
         (s, t)
     }
 
-    /// `compare_types(a, b)`. `s`, `t`: see `members_that_order_intersections`.
-    fn compare_types_ordered_by(
-        &self,
-        a: TypeId,
-        b: TypeId,
-        s: TypeId,
-        t: TypeId,
-    ) -> std::cmp::Ordering {
-        let types = self.types();
-        types.take_has_ordered_by_own_id();
-        let order = self
-            .compare_types_without_ids(s, t)
-            .then_with(|| types.creation_order(s, t));
-        // Here, or further in: `mapping_in_declaration_order`.
-        if types.take_has_ordered_by_own_id() {
-            types.mark_ordered_by_id(a);
-            types.mark_ordered_by_id(b);
-        }
-        order
+    /// `CompareTypes` for `s` and `t`, which decide the order of two types. See `members_that_order_intersections`.
+    fn compare_types_ordered_by(&self, s: TypeId, t: TypeId) -> std::cmp::Ordering {
+        self.compare_types_without_ids(s, t)
+            .then_with(|| self.content_order(s, t))
     }
 
-    /// See `Types::creation_order`.
+    /// See `Types::content_order`.
     #[inline]
-    pub(super) fn creation_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
-        self.types().creation_order(a, b)
+    pub(super) fn content_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+        self.types().content_order(a, b)
     }
 
-    /// `slices.BinarySearchFunc(types, t, CompareTypes)`, with its probes: where the order is not
-    /// total, the place that is found depends on them.
-    fn binary_search_types(&self, types: &[TypeId], t: TypeId) -> (usize, bool) {
-        let (mut i, mut j) = (0, types.len());
-        while i < j {
-            let h = (i + j) / 2;
-            if self.compare_types(types[h], t).is_lt() {
-                i = h + 1;
-            } else {
-                j = h;
-            }
-        }
-        // Only a type and itself compare equal.
-        (i, types.get(i) == Some(&t))
+    /// `slices.BinarySearchFunc(types, t, CompareTypes)`. Only a type and itself compare equal.
+    fn binary_search_types(&self, types: &[TypeId], t: TypeId) -> Result<usize, usize> {
+        types.binary_search_by(|&member| self.compare_types(member, t))
     }
 
     /// `insertType`
     fn insert_type(&self, types: &mut Flat, t: TypeId) {
-        if let (index, false) = self.binary_search_types(types, t) {
+        if let Err(index) = self.binary_search_types(types, t) {
             types.insert(index, t);
         }
     }
 
-    /// `addTypesToUnion`, without `includes`.
-    fn add_types_to_union(&self, type_set: &mut Flat, types: &[TypeId]) {
-        let mut last_type = None;
-        for &t in types {
-            if last_type == Some(t) {
-                continue;
-            }
-            match self.data(t) {
-                TypeData::Union(members) => self.add_types_to_union(type_set, members),
-                _ => self.add_type_to_union(type_set, t),
-            }
-            last_type = Some(t);
+    /// The name, which is the first thing `CompareTypes` orders types with the same `sort_order_flags` by. All string
+    /// literals have the same flags and no name, so their text decides.
+    fn sort_name(&self, ty: TypeId, flags: u32) -> Option<&'p [u8]> {
+        match *self.data(ty) {
+            TypeData::StringLit { value, .. } => Some(self.atoms().bytes(value)),
+            _ if flags & NAMED != 0 => self.type_name(ty, self.alias_symbol_of_type(ty)),
+            _ => None,
         }
     }
 
-    /// `addTypeToUnion`, without `includes`.
-    fn add_type_to_union(&self, type_set: &mut Flat, t: TypeId) {
-        let flags = self.flags(t);
-        if flags & tf::NEVER == 0
-            && (self.p.files.options.strict_null_checks || flags & tf::NULLABLE == 0)
-        {
-            self.insert_type(type_set, t);
-        }
-    }
-
-    /// Puts `members`, what is left of the `typeSet` of `getUnionTypeWorker(actual, ..)`, into the
-    /// order of that set.
-    fn sort_type_set(&self, actual: &[TypeId], members: &mut Flat) {
-        // FOR SPEED: a total order gives one result, however it is reached.
-        self.sort_types(members);
-        if !self.has_compared_without_total_order.get() {
-            return;
-        }
-        // A type that the search does not find again is a member twice.
-        let mut type_set = Flat::new();
-        self.add_types_to_union(&mut type_set, actual);
-        type_set.retain(|t| members.contains(t));
-        // `removeConstrainedTypeVariables` inserts the type variable.
-        for &member in members.iter() {
-            if !type_set.contains(&member) {
-                self.insert_type(&mut type_set, member);
-            }
-        }
-        *members = type_set;
-    }
-
-    /// Sorts by `CompareTypes`. `has_compared_without_total_order` tells whether that is an order
-    /// of `types`.
-    pub(super) fn sort_types(&self, types: &mut [TypeId]) {
-        self.has_compared_without_total_order.set(false);
+    /// Sorts by `CompareTypes`.
+    fn sort_types(&self, types: &mut [TypeId]) {
         if types.len() < 3 {
             return types.sort_by(|&a, &b| self.compare_types(a, b));
         }
-        // FOR SPEED: `CompareTypes` orders by the flags, then by the names. tsgo reads both from
-        // the type. Here the alias of a type is found through its declaration, so the name of each
-        // type is looked up once, not for every comparison. String literals have one value of the
-        // flags and no name: their text decides.
-        let atoms = self.atoms();
-        let mut keys: smallvec::SmallVec<[(u32, Option<&[u8]>, TypeId); 16]> = types
-            .iter()
-            .map(|&ty| {
-                let flags = self.sort_order_flags(ty);
-                let name = match *self.data(ty) {
-                    TypeData::StringLit { value, .. } => Some(atoms.bytes(value)),
-                    _ if flags & NAMED != 0 => self.type_name(ty, self.alias_symbol_of_type(ty)),
-                    _ => None,
-                };
-                (flags, name, ty)
-            })
-            .collect();
-        keys.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| some_first(a.1, b.1)));
-        let mut buffer = Vec::new();
-        for of_one_name in keys.chunk_by_mut(|a, b| (a.0, a.1) == (b.0, b.1)) {
-            let mut compare = |a: &(_, _, TypeId), b: &(_, _, TypeId)| self.compare_types(a.2, b.2);
-            merge_sort_by(of_one_name, &mut compare, &mut buffer);
+        let mut ranked: Run<'p> = types.iter().map(|&ty| self.ranked(ty)).collect();
+        self.sort_ranked(&mut ranked);
+        for (ty, sorted) in types.iter_mut().zip(ranked) {
+            *ty = sorted.ty;
         }
-        for (ty, key) in types.iter_mut().zip(keys) {
-            *ty = key.2;
-        }
-        debug_assert!(
-            self.has_compared_without_total_order.get()
-                || types.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le())
-        );
+        debug_assert!(types.is_sorted_by(|&a, &b| self.compare_types(a, b).is_le()));
     }
 
-    /// `containsType` for the members of a union. It tests identity, and a comparison of two types
-    /// costs more than a linear scan over hundreds of ids.
+    fn ranked(&self, ty: TypeId) -> Ranked<'p> {
+        Ranked {
+            ty,
+            flags: self.sort_order_flags(ty),
+            name: None,
+            name_start: u64::MAX,
+            has_name: false,
+        }
+    }
+
+    #[inline]
+    fn look_up_name(&self, ranked: &mut Ranked<'p>) {
+        if !ranked.has_name {
+            ranked.name = self.sort_name(ranked.ty, ranked.flags);
+            ranked.name_start = start_of_name(ranked.name);
+            ranked.has_name = true;
+        }
+    }
+
+    /// Sorts by `CompareTypes`. Duplicates end up next to each other.
+    ///
+    /// FOR SPEED: `CompareTypes` orders by the flags, then by the names. tsgo reads both from the type. Here a type's
+    /// alias is found through its declaration, so each type's name is looked up once instead of for every comparison.
+    fn sort_ranked(&self, types: &mut [Ranked<'p>]) {
+        for ranked in types.iter_mut() {
+            self.look_up_name(ranked);
+        }
+        types.sort_by(|a, b| a.flags.cmp(&b.flags).then_with(|| a.compare_names(b)));
+        let mut buffer = Vec::new();
+        for same_name_group in types.chunk_by_mut(|a, b| (a.flags, a.name) == (b.flags, b.name)) {
+            if same_name_group.len() < 2 {
+                continue;
+            }
+            let mut compare = |a: &Ranked<'p>, b: &Ranked<'p>| match a.ty == b.ty {
+                true => std::cmp::Ordering::Equal,
+                false => self.compare_types(a.ty, b.ty),
+            };
+            merge_sort_by(same_name_group, &mut compare, &mut buffer);
+        }
+    }
+
+    /// FOR SPEED: fills the empty `members` with the deduplicated members of `actual` in `CompareTypes` order, without
+    /// sorting what's already sorted. Returns false if `members` is still empty and the caller has to sort.
+    ///
+    /// Most of the types a union is built from are unions, whose members are sorted. The caller also has to look at
+    /// the members if one of them is `any` or `unknown`, which absorb the whole union.
+    fn add_in_order(&self, members: &mut Flat, actual: &[TypeId]) -> bool {
+        let mut runs = 0;
+        for &ty in actual {
+            // `any` and `unknown` have the lowest flags, so they come first.
+            if let Some(&first) = self.parts(ty).first()
+                && self.flags(first) & (tf::ANY | tf::UNKNOWN) != 0
+            {
+                return false;
+            }
+            runs += usize::from(self.is_union(ty));
+        }
+        // Two types that aren't unions take one comparison either way.
+        if runs == 0 && actual.len() < 3 {
+            return false;
+        }
+        // Next to a single union, the search for a type's position also tells whether the union already has it.
+        if runs < 2 || !self.join_by_position(members, actual) {
+            self.merge_sorted_runs(members, actual);
+        }
+        true
+    }
+
+    /// FOR SPEED: narrowing removes members from a union, and where the branches join, the remaining members are
+    /// combined again. If the members of each of `actual` are a subsequence of one union's members, then their union
+    /// has the members at all those positions, in that order, and nothing needs to be compared. The longest of `actual` is
+    /// tried. Returns false if `members` is still empty.
+    fn join_by_position(&self, members: &mut Flat, actual: &[TypeId]) -> bool {
+        let (mut total, mut all) = (0, &[][..]);
+        for &ty in actual {
+            let parts = self.parts(ty);
+            total += parts.len();
+            if parts.len() > all.len() {
+                all = parts;
+            }
+        }
+        // Each of `actual` is searched for from the start of `all`, which isn't worth it if `all` is much longer than
+        // the requested union.
+        if actual.len() * all.len() > MAX_STEPS_PER_POSITION * total {
+            return false;
+        }
+        let Some(positions) = self.positions_in(all, actual) else {
+            return false;
+        };
+        members.extend(positions.iter().map(|at| all[at]));
+        true
+    }
+
+    /// Returns the positions of the members of `actual` in `all`, the members of a union, if `all` has every one of
+    /// them. A type that isn't a union counts as its only member.
+    fn positions_in(&self, all: &[TypeId], actual: &[TypeId]) -> Option<PositionSet> {
+        let mut positions = PositionSet::new(all.len());
+        for &ty in actual {
+            let mut after = 0;
+            for member in self.parts(ty) {
+                after += all[after..].iter().position(|it| it == member)? + 1;
+                positions.insert(after - 1);
+            }
+        }
+        Some(positions)
+    }
+
+    /// Merges the members of `actual`.
+    fn merge_sorted_runs(&self, members: &mut Flat, actual: &[TypeId]) {
+        let mut unions: smallvec::SmallVec<[&'p [TypeId]; 4]> = smallvec::SmallVec::new();
+        // The types that aren't unions form one run. They're sorted unless they're already in order.
+        let (mut singles, mut are_in_order) = (Run::new(), true);
+        for &ty in actual {
+            let parts = self.parts(ty);
+            match *parts {
+                [] => {}
+                [only] => {
+                    let mut single = self.ranked(only);
+                    if are_in_order && let Some(last) = singles.last_mut() {
+                        are_in_order = self.compare_ranked(last, &mut single).is_lt();
+                    }
+                    singles.push(single);
+                }
+                _ => unions.push(parts),
+            }
+        }
+        if !are_in_order {
+            self.sort_ranked(&mut singles);
+            singles.dedup_by_key(|it| it.ty);
+        }
+        match unions[..] {
+            [] => members.extend(singles.iter().map(|it| it.ty)),
+            [run] if singles.len() <= 1 || singles.len() * MUCH_LONGER <= run.len() => {
+                self.insert_into_run(members, run, &mut singles);
+            }
+            _ => {
+                let merged = self.merge_runs(&unions, &singles);
+                members.extend(merged.iter().map(|it| it.ty));
+            }
+        }
+    }
+
+    /// Adds the members of `run` and `singles`, two sorted runs, to `members`, deduplicated and in order.
+    /// Binary-searches for the position of each of `singles` and copies the rest.
+    fn insert_into_run(&self, members: &mut Flat, run: &[TypeId], singles: &mut [Ranked<'p>]) {
+        let mut from = 0;
+        for single in singles {
+            let (mut low, mut high) = (from, run.len());
+            while low < high {
+                let middle = (low + high) / 2;
+                let mut member = self.ranked(run[middle]);
+                if self.compare_ranked(&mut member, single).is_lt() {
+                    low = middle + 1;
+                } else {
+                    high = middle;
+                }
+            }
+            members.extend_from_slice(&run[from..low]);
+            if run.get(low) != Some(&single.ty) {
+                members.push(single.ty);
+            }
+            from = low;
+        }
+        members.extend_from_slice(&run[from..]);
+    }
+
+    /// Merges `unions` and `singles`, all of them sorted runs, into one deduplicated sorted run.
+    fn merge_runs(&self, unions: &[&[TypeId]], singles: &[Ranked<'p>]) -> Run<'p> {
+        let (mut runs, mut merged) = (Run::new(), Run::new());
+        // Where each run ends.
+        let mut ends: smallvec::SmallVec<[usize; 8]> = smallvec::SmallVec::new();
+        for at in 0..unions.len() + usize::from(!singles.is_empty()) {
+            let start = runs.len();
+            match unions.get(at) {
+                Some(run) => runs.extend(run.iter().map(|&ty| self.ranked(ty))),
+                None => runs.extend_from_slice(singles),
+            }
+            // A run that begins after the end of the previous run extends it.
+            let (before, added) = runs.split_at_mut(start);
+            if let Some(last) = before.last_mut()
+                && self.compare_ranked(last, &mut added[0]).is_lt()
+            {
+                ends.pop();
+            }
+            ends.push(runs.len());
+        }
+        if ends.len() > MAX_RUNS_TO_MERGE {
+            self.sort_ranked(&mut runs);
+            runs.dedup_by_key(|it| it.ty);
+            return runs;
+        }
+        // So far no run begins after the end of the previous one.
+        let mut may_follow = false;
+        while ends.len() > 1 {
+            merged.clear();
+            let mut merged_ends: smallvec::SmallVec<[usize; 8]> = smallvec::SmallVec::new();
+            let mut start = 0;
+            for pair in ends.chunks(2) {
+                let end = pair[pair.len() - 1];
+                match *pair {
+                    [middle, _] => {
+                        let (left, right) = runs[start..end].split_at_mut(middle - start);
+                        self.merge_two_runs(left, right, may_follow, &mut merged);
+                    }
+                    _ => merged.extend_from_slice(&runs[start..end]),
+                }
+                merged_ends.push(merged.len());
+                start = end;
+            }
+            std::mem::swap(&mut runs, &mut merged);
+            ends = merged_ends;
+            may_follow = true;
+        }
+        runs
+    }
+
+    /// Merges `left` and `right` into `merged`, deduplicated and in order. Neither is empty. `may_follow`: `right` may
+    /// begin after the end of `left`.
+    fn merge_two_runs(
+        &self,
+        left: &mut [Ranked<'p>],
+        right: &mut [Ranked<'p>],
+        may_follow: bool,
+        merged: &mut Run<'p>,
+    ) {
+        let last = left.len() - 1;
+        if may_follow && self.compare_ranked(&mut left[last], &mut right[0]).is_lt() {
+            merged.extend_from_slice(left);
+            merged.extend_from_slice(right);
+            return;
+        }
+        let (long, short) = match left.len() >= right.len() {
+            true => (left, right),
+            false => (right, left),
+        };
+        if short.len() * MUCH_LONGER <= long.len() {
+            // Each search starts at the position found for the previous item.
+            let mut from = 0;
+            for item in short.iter_mut() {
+                let (mut low, mut high) = (from, long.len());
+                while low < high {
+                    let middle = (low + high) / 2;
+                    if self.compare_ranked(&mut long[middle], item).is_lt() {
+                        low = middle + 1;
+                    } else {
+                        high = middle;
+                    }
+                }
+                merged.extend_from_slice(&long[from..low]);
+                if long.get(low).is_none_or(|it| it.ty != item.ty) {
+                    merged.push(*item);
+                }
+                from = low;
+            }
+            merged.extend_from_slice(&long[from..]);
+            return;
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < long.len() && j < short.len() {
+            match self.compare_ranked(&mut long[i], &mut short[j]) {
+                std::cmp::Ordering::Less => {
+                    merged.push(long[i]);
+                    i += 1;
+                }
+                // Only a type and itself compare equal.
+                std::cmp::Ordering::Equal => j += 1,
+                std::cmp::Ordering::Greater => {
+                    merged.push(short[j]);
+                    j += 1;
+                }
+            }
+        }
+        merged.extend_from_slice(&long[i..]);
+        merged.extend_from_slice(&short[j..]);
+    }
+
+    /// `compare_types`. As in `sort_types`, a type's name is looked up once.
+    fn compare_ranked(&self, a: &mut Ranked<'p>, b: &mut Ranked<'p>) -> std::cmp::Ordering {
+        if a.ty == b.ty {
+            return std::cmp::Ordering::Equal;
+        }
+        if a.flags != b.flags {
+            return a.flags.cmp(&b.flags);
+        }
+        self.look_up_name(a);
+        self.look_up_name(b);
+        a.compare_names(b)
+            .then_with(|| self.compare_types(a.ty, b.ty))
+    }
+
+    /// `containsType` for the members of a union. It tests identity, and comparing two types costs more than a linear
+    /// scan over hundreds of ids.
     pub(super) fn contains_type(&self, types: &[TypeId], t: TypeId) -> bool {
         if types.len() <= 512 {
             return types.contains(&t);
         }
-        self.binary_search_types(types, t).1
+        self.binary_search_types(types, t).is_ok()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::PatternsByPrefix;
+    use super::{PatternsByPrefix, Reduction, UnionArguments, UnionCalls};
+    use crate::bind::SymbolId;
+    use crate::program::{FileId, Sym};
+    use crate::types::TypeId;
 
     /// Every string over `ab` of at most `len` bytes.
     fn strings(len: usize) -> Vec<Vec<u8>> {
@@ -2459,7 +3559,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn candidates_are_the_patterns_whose_first_text_is_a_prefix() {
         let (texts, values) = (strings(4), strings(6));
-        // Every third text is left out, every fifth is there twice, and two patterns have no text.
+        // Every third text is skipped, every fifth appears twice, and two patterns have no text.
         let mut patterns: Vec<(&[u8], u32)> = Vec::new();
         for (at, text) in texts.iter().enumerate().filter(|(at, _)| at % 3 != 0) {
             for _ in 0..1 + usize::from(at % 5 == 0) {
@@ -2478,6 +3578,148 @@ mod tests {
                     .map(|p| p.1),
             );
             assert_eq!(found, expected, "{:?}", bstr::BStr::new(value));
+        }
+    }
+
+    fn get(calls: &UnionCalls, call: &UnionArguments) -> Option<TypeId> {
+        calls.get(call.hash(), call)
+    }
+
+    #[test]
+    fn cached_call_matches_only_identical_arguments() {
+        let alias = |id: u32| Sym {
+            file: FileId(0),
+            id: SymbolId(id),
+        };
+        let literal = Reduction::Literal {
+            merge_constrained: true,
+        };
+        let (types, answer) = ([TypeId(40), TypeId(50), TypeId(60)], TypeId(70));
+        let call = UnionArguments {
+            reduction: literal,
+            types: &types,
+            alias: Some((alias(1), &types[..1])),
+        };
+        let mut calls = UnionCalls::default();
+        assert_eq!(get(&calls, &call), None);
+        calls.put(call.hash(), &call, answer);
+        assert_eq!(get(&calls, &call), Some(answer));
+        let others = [
+            UnionArguments {
+                types: &[TypeId(50), TypeId(40), TypeId(60)],
+                ..call
+            },
+            UnionArguments {
+                types: &types[..2],
+                ..call
+            },
+            // The same ids, split differently between types and alias type arguments.
+            UnionArguments {
+                types: &[TypeId(40), TypeId(50), TypeId(60), TypeId(40)],
+                alias: Some((alias(1), &[])),
+                ..call
+            },
+            UnionArguments {
+                reduction: Reduction::None,
+                ..call
+            },
+            UnionArguments {
+                reduction: Reduction::Literal {
+                    merge_constrained: false,
+                },
+                ..call
+            },
+            UnionArguments {
+                alias: None,
+                ..call
+            },
+            UnionArguments {
+                alias: Some((alias(2), &types[..1])),
+                ..call
+            },
+            UnionArguments {
+                alias: Some((alias(1), &types[1..2])),
+                ..call
+            },
+            UnionArguments {
+                alias: Some((alias(1), &types[..2])),
+                ..call
+            },
+        ];
+        for (at, other) in others.iter().enumerate() {
+            assert_eq!(get(&calls, other), None, "{at}");
+        }
+        for (at, other) in others.iter().enumerate() {
+            calls.put(other.hash(), other, TypeId(at as u32));
+            assert_eq!(get(&calls, other), Some(TypeId(at as u32)));
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn cached_calls_are_evicted_but_never_mixed_up() {
+        let mut calls = UnionCalls::default();
+        let types_of = |at: u32, len: usize| -> Vec<TypeId> {
+            (0..len as u32).map(|i| TypeId(at * 7 + i)).collect()
+        };
+        // Long enough for `slots` to reach its full size, and for `types` to be dropped a few times.
+        let lens = [2, 3, 8, 9, 100, 5000];
+        let count = 3 * UnionCalls::MAX_SLOTS as u32;
+        let mut found = 0;
+        for at in 0..count {
+            let types = types_of(at, lens[at as usize % lens.len()]);
+            let call = UnionArguments {
+                reduction: Reduction::None,
+                types: &types,
+                alias: None,
+            };
+            calls.put(call.hash(), &call, TypeId(at));
+            assert_eq!(get(&calls, &call), Some(TypeId(at)));
+            assert!(calls.types.len() <= UnionCalls::MAX_TYPES);
+            // An earlier call either still has its own answer or is gone.
+            let earlier = at / 2;
+            let types = types_of(earlier, lens[earlier as usize % lens.len()]);
+            let call = UnionArguments {
+                types: &types,
+                ..call
+            };
+            let known = get(&calls, &call);
+            assert!(known.is_none() || known == Some(TypeId(earlier)));
+            found += u32::from(known.is_some());
+        }
+        assert!(found > 0 && found < count);
+        assert_eq!(calls.slots.len(), UnionCalls::MAX_SLOTS);
+        let too_long = vec![TypeId(1); UnionCalls::MAX_TYPES + 1];
+        let call = UnionArguments {
+            reduction: Reduction::None,
+            types: &too_long,
+            alias: None,
+        };
+        calls.put(call.hash(), &call, TypeId(1));
+        assert_eq!(get(&calls, &call), None);
+    }
+
+    #[test]
+    fn long_lists_differing_in_the_middle_are_distinct() {
+        fn call(types: &[TypeId]) -> UnionArguments<'_> {
+            UnionArguments {
+                reduction: Reduction::None,
+                types,
+                alias: None,
+            }
+        }
+        for len in [32, 33, 100] {
+            let types: Vec<TypeId> = (0..len).map(TypeId).collect();
+            let mut other = types.clone();
+            other[len as usize / 2] = TypeId(1000);
+            // Only a list of more than 32 has a middle that its hash skips.
+            assert_eq!(call(&types).hash() == call(&other).hash(), len > 32);
+            let mut calls = UnionCalls::default();
+            calls.put(call(&types).hash(), &call(&types), TypeId(1));
+            assert_eq!(get(&calls, &call(&types)), Some(TypeId(1)));
+            assert_eq!(get(&calls, &call(&other)), None);
+            calls.put(call(&other).hash(), &call(&other), TypeId(2));
+            assert_eq!(get(&calls, &call(&other)), Some(TypeId(2)));
         }
     }
 }

@@ -1,0 +1,6 @@
+<template>
+  <p><b>a</b><textarea> </textarea></p>
+  <p>{{ a }}<textarea> </textarea></p>
+  <p><A /><textarea> </textarea></p>
+  <p><textarea> </textarea><b>a</b></p>
+</template>

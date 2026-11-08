@@ -16,8 +16,7 @@ unsafe extern "C" fn EncodedSlice__freeGlobal(ptr: *const u8, _len: usize) {
         .cast_mut()
         .cast::<c_void>();
     if bun_alloc::USE_MIMALLOC {
-        // SAFETY: read-only heap-region probe.
-        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(untagged) });
+        debug_assert!(bun_alloc::mimalloc::mi_is_in_heap_region(untagged));
     }
     // SAFETY: untagged ptr was allocated by the default allocator.
     unsafe { bun_alloc::default_alloc::free(untagged) };
@@ -63,6 +62,8 @@ pub trait EncodedSliceJsc: Sized {
     /// Transfers ownership of a globally-allocated buffer to JSC's
     /// external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    /// As `to_external_value`, `None` where that throws.
+    fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue>;
     /// `JSON.parse` over the bytes.
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     /// Like `to_external_value` but with a caller-supplied `ctx` + finalizer
@@ -96,6 +97,10 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
         EncodedSlice__toValueGC(self, global)
     }
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        self.try_to_external_value(global)
+            .ok_or_else(|| global.throw_string_too_long())
+    }
+    fn try_to_external_value(&self, global: &JSGlobalObject) -> Option<JSValue> {
         if self.len > bun_core::String::max_length() {
             // SAFETY: contract — bytes were allocated by the default (global)
             // allocator. `default_alloc::free` agrees with the
@@ -108,11 +113,11 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
                         .cast::<core::ffi::c_void>(),
                 )
             };
-            return Err(global.throw_string_too_long());
+            return None;
         }
         // SAFETY: `self` is a valid `&EncodedSlice`; `JSGlobalObject` is an opaque
         // `UnsafeCell`-backed handle so `&` → `*mut` is its intended FFI shape.
-        Ok(unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) })
+        Some(unsafe { cpp::EncodedSlice__toExternalValue(self, global.as_ptr()) })
     }
     fn to_json_object(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `self` is a live `&EncodedSlice` for the duration of the call.

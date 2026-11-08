@@ -129,6 +129,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
 
     if (status & SQLQueryStatus.cancelled) {
+      // as in onQuerySettled()
+      $pokePromiseAsHandled(this);
       this.reject(this[_adapter].queryCancelledError());
       return;
     }
@@ -292,6 +294,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return super.$then.$apply(this, arguments);
   }
 
+  catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null): Promise<T | TResult>;
   catch() {
     this.#runTagged();
     return super.catch.$apply(this, arguments);

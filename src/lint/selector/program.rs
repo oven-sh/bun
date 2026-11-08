@@ -1,5 +1,5 @@
-//! What a selector is compiled to: flat vectors, in which an operation refers to its operands by
-//! index. Every name in the selector is resolved here, so that matching compares numbers.
+//! The compiled form of a selector: flat vectors, where an operation refers to its operands by
+//! index. Every name in the selector is resolved here, so matching only compares numbers.
 
 use crate::estree::{Field, FieldEntry, NodeType};
 use crate::regex::Regex;
@@ -8,7 +8,7 @@ use crate::utils::text;
 /// The index of an [`Op`] in [`Program::ops`].
 pub(super) type Id = u32;
 
-/// Some consecutive elements of one of the vectors of a [`Program`].
+/// A range of consecutive elements in one of a [`Program`]'s vectors.
 #[derive(Copy, Clone, Default)]
 pub(super) struct Run {
     pub(super) start: u32,
@@ -37,7 +37,7 @@ impl Run {
     }
 }
 
-/// A set of types of nodes.
+/// A set of node types.
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
 pub(super) struct TypeSet([u64; 3]);
 
@@ -48,10 +48,10 @@ impl TypeSet {
         TypeSet::where_(|it| types.contains(&it))
     }
 
-    /// The types for which `holds`.
-    pub(super) fn where_(holds: impl Fn(NodeType) -> bool) -> TypeSet {
+    /// The types for which `predicate` returns true.
+    pub(super) fn where_(predicate: impl Fn(NodeType) -> bool) -> TypeSet {
         let mut set = TypeSet::default();
-        for &node_type in NodeType::ALL.iter().filter(|it| holds(**it)) {
+        for &node_type in NodeType::ALL.iter().filter(|it| predicate(**it)) {
             set.0[node_type as usize / 64] |= 1 << (node_type as usize % 64);
         }
         set
@@ -84,22 +84,22 @@ pub(super) enum Op {
     Wildcard,
     /// `Name`, `#Name`
     Identifier {
-        /// The type of that name, whatever the case: `esquery` ignores it. `None`: there is none.
+        /// The type with that name, ignoring case like `esquery` does. `None` if there is none.
         node_type: Option<NodeType>,
-        /// The name is written like that of the type. ESLint looks selectors up by the name.
+        /// True if the name is spelled exactly like the type's. ESLint looks selectors up by name.
         is_exact: bool,
     },
     /// `:statement`, `:expression`, ..
     Class {
         types: TypeSet,
-        /// The `new` and the `target` of `new.target` are not expressions.
+        /// The `new` and the `target` of `new.target` aren't expressions.
         excludes_names_of_meta_properties: bool,
-        /// It is written `:function`, which is the one class that ESLint knows the types of.
-        is_written_function: bool,
+        /// True if it's spelled `:function`, the only class whose types ESLint knows.
+        is_function_class: bool,
     },
     /// In [`Program::bytes`].
     UnknownClass(Run),
-    /// The node that a `:has()` is asked about.
+    /// The node that a `:has()` is being tested on.
     ExactNode,
     /// `.a.b`, in [`Program::keys`].
     Field(Run),
@@ -112,7 +112,7 @@ pub(super) enum Op {
     /// `:has()`
     Has {
         selectors: Run,
-        /// Each starts with `>`.
+        /// True if each one starts with `>`.
         is_about_children: bool,
     },
     /// `left > right`
@@ -143,13 +143,13 @@ pub(super) enum Op {
     NthChild(i32),
 }
 
-/// What is known about the first key of the path of an attribute from a type beside it: in
-/// `CallExpression[callee.name="a"]` the `callee` is that of a `CallExpression`.
+/// Information about the first key in an attribute's path, derived from a type name next to the
+/// attribute: in `CallExpression[callee.name="a"]` the `callee` is a `CallExpression`'s.
 #[derive(Copy, Clone)]
 pub(super) enum Bound {
-    /// It is a property that nodes have besides their fields.
+    /// It's a property that nodes have besides their fields.
     No,
-    /// It is this field, of whatever type the node is.
+    /// It's this field, whatever the node's type is.
     Field(Field),
     Entry(&'static FieldEntry),
     /// No node, or none of that type, has such a field.
@@ -159,13 +159,13 @@ pub(super) enum Bound {
 /// A name in a path.
 #[derive(Copy, Clone)]
 pub(super) struct Key {
-    /// The field of nodes that has this name.
+    /// The node field with this name.
     pub(super) field: Option<Field>,
-    /// What else has this name.
+    /// Anything else with this name.
     pub(super) property: Property,
 }
 
-/// A property of a node that is not a field, or of a value that is not a node.
+/// A property of a node that isn't a field, or of a value that isn't a node.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum Property {
     None,
@@ -173,30 +173,30 @@ pub(super) enum Property {
     Parent,
     Range,
     Loc,
-    /// Of a `loc`, and of a node of espree.
+    /// On a `loc`, and on an espree node.
     Start,
     End,
     Line,
     Column,
     Length,
     Index(u32),
-    /// Of the `value` of a `TemplateElement`.
+    /// On a `TemplateElement`'s `value`.
     Cooked,
     Raw,
-    /// Of the `regex` of a `Literal`.
+    /// On a `Literal`'s `regex`.
     Pattern,
-    /// The same, and of a `RegExp`.
+    /// Same, and on a `RegExp`.
     Flags,
     Source,
     LastIndex,
-    /// `global`, `ignoreCase`, ..: whether a `RegExp` has this flag.
+    /// `global`, `ignoreCase`, ..: true if a `RegExp` has this flag.
     HasFlag(u8),
 }
 
 impl Property {
-    /// Nodes have it, besides their fields.
+    /// True if nodes have it, besides their fields.
     #[inline]
-    pub(super) fn is_of_nodes(self) -> bool {
+    pub(super) fn is_node_property(self) -> bool {
         use Property::*;
         matches!(self, Type | Parent | Range | Loc | Start | End)
     }
@@ -237,7 +237,7 @@ impl Key {
     }
 }
 
-/// What `typeof` says.
+/// The result of `typeof`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(super) enum JsType {
     Undefined,
@@ -249,7 +249,7 @@ pub(super) enum JsType {
 }
 
 impl JsType {
-    /// `None`: no value in an ESTree is of that type.
+    /// `None` if no value in an ESTree has that type.
     pub(super) fn named(name: &[u8]) -> Option<JsType> {
         Some(match name {
             b"undefined" => JsType::Undefined,
@@ -271,7 +271,7 @@ pub(super) enum Relation {
     GreaterOrEqual,
 }
 
-/// What the value at the end of the path of an attribute is tested for.
+/// The test applied to the value at the end of an attribute's path.
 pub(super) enum Test {
     /// `[a]`
     Exists,
@@ -295,11 +295,11 @@ pub(super) enum Test {
 pub(super) struct Literal {
     /// `String(value)`
     pub(super) text: Box<[u8]>,
-    /// It is written as a number.
+    /// True if it's written as a number.
     pub(super) is_number: bool,
     /// `Number(value)`
     pub(super) number: f64,
-    /// The value that is not a string of which `text` is the string.
+    /// The non-string value whose `String(value)` is `text`.
     pub(super) names: Names,
 }
 

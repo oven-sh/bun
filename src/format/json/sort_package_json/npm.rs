@@ -1,4 +1,4 @@
-//! The order of `prettier-plugin-packagejson`.
+//! `prettier-plugin-packagejson`'s order.
 //!
 //! The plugin runs the npm package [`sort-package-json`](https://github.com/keithamus/sort-package-json) (MIT license, Keith
 //! Cirkel) on the text before Prettier formats it. This is a port of version 3.7.1 of that package, which is what version 3.0.2
@@ -16,7 +16,7 @@
 //!   the file, and for this parser any range is the whole file.
 
 use super::{
-    Context, Document, KEPT, Member, Over, Plugin, Properties, SORTED, sort_by, sort_keys,
+    AS_IS, Context, Document, Member, Over, Plugin, Properties, SORTED, sort_by, sort_keys,
 };
 use bun_collections::index_sort::{apply_permutation_in_place, identity};
 use bun_core::{handle_oom, strings};
@@ -123,7 +123,7 @@ pub(super) const ESLINT_PROPERTIES: Properties = &[
     ("rules", Over::EslintRules),
     ("settings", SORTED),
 ];
-pub(super) const OVERRIDES_OF_PRETTIER: Properties = &[(
+pub(super) const PRETTIER_OVERRIDES: Properties = &[(
     "overrides",
     Over::Each(&Over::Keys(&[], &[("options", SORTED)])),
 )];
@@ -145,48 +145,48 @@ pub(super) const PNPM_KEYS: &[&str] = &[
 
 /// The known keys, in order.
 const FIELDS: Properties = &[
-    ("$schema", KEPT),
-    ("name", KEPT),
-    ("displayName", KEPT),
-    ("version", KEPT),
-    ("stableVersion", KEPT),
-    ("private", KEPT),
-    ("description", KEPT),
+    ("$schema", AS_IS),
+    ("name", AS_IS),
+    ("displayName", AS_IS),
+    ("version", AS_IS),
+    ("stableVersion", AS_IS),
+    ("private", AS_IS),
+    ("description", AS_IS),
     ("categories", Over::Unique),
     ("keywords", Over::Unique),
-    ("homepage", KEPT),
+    ("homepage", AS_IS),
     ("bugs", Over::Keys(&["url", "email"], &[])),
     ("repository", URL),
     ("funding", URL),
     ("license", URL),
-    ("qna", KEPT),
+    ("qna", AS_IS),
     ("author", PERSON),
     ("maintainers", Over::Each(&PERSON)),
     ("contributors", Over::Each(&PERSON)),
-    ("publisher", KEPT),
-    ("sideEffects", KEPT),
-    ("type", KEPT),
-    ("imports", KEPT),
+    ("publisher", AS_IS),
+    ("sideEffects", AS_IS),
+    ("type", AS_IS),
+    ("imports", AS_IS),
     ("exports", Over::Exports),
-    ("main", KEPT),
-    ("svelte", KEPT),
-    ("umd:main", KEPT),
-    ("jsdelivr", KEPT),
-    ("unpkg", KEPT),
-    ("module", KEPT),
-    ("source", KEPT),
-    ("jsnext:main", KEPT),
-    ("browser", KEPT),
-    ("react-native", KEPT),
-    ("types", KEPT),
-    ("typesVersions", KEPT),
-    ("typings", KEPT),
-    ("style", KEPT),
-    ("example", KEPT),
-    ("examplestyle", KEPT),
-    ("assets", KEPT),
+    ("main", AS_IS),
+    ("svelte", AS_IS),
+    ("umd:main", AS_IS),
+    ("jsdelivr", AS_IS),
+    ("unpkg", AS_IS),
+    ("module", AS_IS),
+    ("source", AS_IS),
+    ("jsnext:main", AS_IS),
+    ("browser", AS_IS),
+    ("react-native", AS_IS),
+    ("types", AS_IS),
+    ("typesVersions", AS_IS),
+    ("typings", AS_IS),
+    ("style", AS_IS),
+    ("example", AS_IS),
+    ("examplestyle", AS_IS),
+    ("assets", AS_IS),
     ("bin", SORTED),
-    ("man", KEPT),
+    ("man", AS_IS),
     (
         "directories",
         Over::Keys(&["lib", "bin", "man", "doc", "example", "test"], &[]),
@@ -197,30 +197,30 @@ const FIELDS: Properties = &[
     ("scripts", Over::Scripts),
     ("betterScripts", Over::Scripts),
     ("wireit", Over::Values(&WIREIT_SCRIPT)),
-    ("l10n", KEPT),
+    ("l10n", AS_IS),
     ("contributes", SORTED),
     ("activationEvents", Over::Unique),
     ("husky", Over::In(&[("hooks", GIT_HOOKS)])),
     ("simple-git-hooks", GIT_HOOKS),
-    ("pre-commit", KEPT),
+    ("pre-commit", AS_IS),
     ("commitlint", SORTED),
-    ("lint-staged", KEPT),
-    ("nano-staged", KEPT),
+    ("lint-staged", AS_IS),
+    ("nano-staged", AS_IS),
     ("config", SORTED),
     ("nodemonConfig", SORTED),
     ("browserify", SORTED),
     ("babel", SORTED),
-    ("browserslist", KEPT),
+    ("browserslist", AS_IS),
     ("xo", SORTED),
     ("prettier", Over::PrettierConfig),
     ("eslintConfig", Over::EslintConfig),
-    ("eslintIgnore", KEPT),
+    ("eslintIgnore", AS_IS),
     ("npmpkgjsonlint", SORTED),
     ("npmPackageJsonLintConfig", SORTED),
     ("npmpackagejsonlint", SORTED),
     ("release", SORTED),
     ("remarkConfig", SORTED),
-    ("stylelint", KEPT),
+    ("stylelint", AS_IS),
     ("ava", SORTED),
     ("jest", SORTED),
     ("jest-junit", SORTED),
@@ -242,30 +242,30 @@ const FIELDS: Properties = &[
     ("bundleDependencies", Over::UniqueSorted),
     ("extensionPack", Over::UniqueSorted),
     ("extensionDependencies", Over::UniqueSorted),
-    ("flat", KEPT),
-    ("packageManager", KEPT),
+    ("flat", AS_IS),
+    ("packageManager", AS_IS),
     ("engines", SORTED),
     ("engineStrict", SORTED),
     ("devEngines", DEV_ENGINES),
     ("volta", Over::Keys(&["node", "npm", "yarn"], &[])),
-    ("languageName", KEPT),
-    ("os", KEPT),
-    ("cpu", KEPT),
+    ("languageName", AS_IS),
+    ("os", AS_IS),
+    ("cpu", AS_IS),
     ("preferGlobal", SORTED),
     ("publishConfig", SORTED),
-    ("icon", KEPT),
+    ("icon", AS_IS),
     (
         "badges",
         Over::Each(&Over::Keys(&["description", "url", "href"], &[])),
     ),
     ("galleryBanner", SORTED),
-    ("preview", KEPT),
-    ("markdown", KEPT),
+    ("preview", AS_IS),
+    ("markdown", AS_IS),
     ("pnpm", Over::PnpmConfig),
 ];
 
 /// `defaultNpmScripts`
-const SCRIPTS_OF_NPM: [&[u8]; 11] = [
+const NPM_SCRIPTS: [&[u8]; 11] = [
     b"install",
     b"pack",
     b"prepare",
@@ -318,7 +318,7 @@ fn sorts_dependencies_like_npm(document: Document<'_>, plugin: &Plugin) -> bool 
             .and_then(|it| document.get(it, b"npm")),
     )
     .is_some()
-        || !plugin.has_files_of_yarn_or_pnpm
+        || !plugin.has_yarn_or_pnpm_files
 }
 
 /// `sortDependencies`
@@ -419,8 +419,9 @@ fn min_version(range: &[u8]) -> Option<Lowest> {
 
 /// `sortObjectBySemver`, for `pnpm.overrides`: `a@1>b` comes before `a@2`. `members` are sorted by name.
 ///
-/// The package ignores everything after the first `>`, so to it `a@>=1` has no range, like `a`. When it compares two such keys, it
-/// always says that the first argument is smaller. V8's sort always passes the later element first, so they end up reversed.
+/// The package ignores everything after the first `>`, so to it `a@>=1` has no range, like `a`. When it compares two
+/// such keys, it always reports the first argument as smaller. V8's sort always passes the later element first, so they
+/// end up reversed.
 pub(super) fn sort_by_version(members: &mut [Member<'_>]) {
     /// `parseNameAndVersionRange`, with the lowest version of the range.
     struct Selector<'k> {
@@ -429,7 +430,7 @@ pub(super) fn sort_by_version(members: &mut [Member<'_>]) {
         rank: u8,
         lowest: Option<Lowest>,
         /// The index of the first member that has this key.
-        place: usize,
+        first_index: usize,
     }
     let mut selectors: Vec<Selector<'_>> = Vec::with_capacity(members.len());
     for (index, member) in members.iter().enumerate() {
@@ -446,15 +447,15 @@ pub(super) fn sort_by_version(members: &mut [Member<'_>]) {
             (false, None) => 2,
         };
         let previous = index.checked_sub(1).and_then(|it| members.get(it));
-        let place = match (previous, selectors.last()) {
-            (Some(previous), Some(selector)) if previous.key == member.key => selector.place,
+        let first_index = match (previous, selectors.last()) {
+            (Some(previous), Some(selector)) if previous.key == member.key => selector.first_index,
             _ => index,
         };
         selectors.push(Selector {
             name,
             rank,
             lowest,
-            place,
+            first_index,
         });
     }
     let mut order = identity(members.len());
@@ -464,7 +465,7 @@ pub(super) fn sort_by_version(members: &mut [Member<'_>]) {
         };
         let by_version = || match (&a.lowest, &b.lowest) {
             (Some(a), Some(b)) => a.order(b),
-            _ if a.rank == 0 => b.place.cmp(&a.place),
+            _ if a.rank == 0 => b.first_index.cmp(&a.first_index),
             _ => Ordering::Equal,
         };
         strings::locale_compare(a.name, b.name)
@@ -495,30 +496,32 @@ fn runs_in_sequence(line: &[u8]) -> bool {
         ) || strings::js_whitespace_len(after) > 0
     };
     // The offsets of `word` in `line`, starting at `from`.
-    let places = |word: &'static [u8], mut from: usize| {
+    let occurrences = |word: &'static [u8], mut from: usize| {
         std::iter::from_fn(move || {
             let at = from + strings::index_of(line.get(from..)?, word)?;
             from = at + 1;
             Some(at)
         })
     };
-    if (places(b"run-s", 0).filter(starts_at)).any(|at| ends_at(at + b"run-s".len())) {
+    if (occurrences(b"run-s", 0).filter(starts_at)).any(|at| ends_at(at + b"run-s".len())) {
         return true;
     }
     // The first match has the most text after it.
-    let arguments = places(b"npm-run-all", 0).filter(starts_at).find_map(|at| {
-        let rest = &line[at + b"npm-run-all".len()..];
-        let rest = rest.strip_prefix(b"2").unwrap_or(rest);
-        rest.starts_with(b" ").then(|| line.len() - rest.len() + 1)
-    });
+    let arguments = occurrences(b"npm-run-all", 0)
+        .filter(starts_at)
+        .find_map(|at| {
+            let rest = &line[at + b"npm-run-all".len()..];
+            let rest = rest.strip_prefix(b"2").unwrap_or(rest);
+            rest.starts_with(b" ").then(|| line.len() - rest.len() + 1)
+        });
     arguments.is_some_and(|from| {
         [&b"--sequential"[..], b"--serial", b"-s"]
             .into_iter()
-            .any(|flag| places(flag, from).any(|at| ends_at(at + flag.len())))
+            .any(|flag| occurrences(flag, from).any(|at| ends_at(at + flag.len())))
     })
 }
 
-/// `hasSequentialScript`: some script runs others in the order they're written in, like `run-s build:*`.
+/// `hasSequentialScript`: some script runs others in source order, like `run-s build:*`.
 fn has_sequential_script(document: Document<'_>) -> bool {
     let dependencies = document.get(0, b"devDependencies");
     let depends_on = |name: &[u8]| dependencies.is_some_and(|it| document.get(it, name).is_some());
@@ -537,7 +540,7 @@ fn has_sequential_script(document: Document<'_>) -> bool {
 }
 
 /// The order of `sortScriptNames`: `a:b` is in the group `a`, which comes before `a-b`.
-fn order_of_script_names(a: &[u8], b: &[u8]) -> Ordering {
+fn compare_script_names(a: &[u8], b: &[u8]) -> Ordering {
     // Where the group's name ends, and where the rest starts after the colon.
     let split = |name: &[u8]| match strings::index_of_char_usize(name, b':') {
         None | Some(0) => (name.len(), None),
@@ -568,7 +571,7 @@ pub(super) fn sort_scripts(scripts: &mut [Member<'_>], keeps_order: bool) {
                 .strip_prefix(b"pre")
                 .or_else(|| name.strip_prefix(b"post"));
             let omitted = omitted.unwrap_or(name);
-            if SCRIPTS_OF_NPM.contains(&omitted) || all.contains(omitted) {
+            if NPM_SCRIPTS.contains(&omitted) || all.contains(omitted) {
                 prefixable.insert(omitted);
                 return omitted;
             }
@@ -576,21 +579,21 @@ pub(super) fn sort_scripts(scripts: &mut [Member<'_>], keeps_order: bool) {
         })
         .collect();
     if !keeps_order {
-        crate::sort::sort_by(&mut names, |a, b| order_of_script_names(a, b));
+        crate::sort::sort_by(&mut names, |a, b| compare_script_names(a, b));
     }
-    // Where each script goes: the first place that names it.
+    // Each script's rank: the first position that mentions it.
     let mut ranks: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
-    let mut place = |name: Vec<u8>| {
+    let mut assign_rank = |name: Vec<u8>| {
         let rank = ranks.len();
         ranks.entry(name).or_insert(rank);
     };
     for name in names {
         if prefixable.contains(name) {
-            place([&b"pre"[..], name].concat());
-            place(name.to_vec());
-            place([&b"post"[..], name].concat());
+            assign_rank([&b"pre"[..], name].concat());
+            assign_rank(name.to_vec());
+            assign_rank([&b"post"[..], name].concat());
         } else {
-            place(name.to_vec());
+            assign_rank(name.to_vec());
         }
     }
     let rank = |name: &[u8]| ranks.get(name).copied().unwrap_or(usize::MAX);

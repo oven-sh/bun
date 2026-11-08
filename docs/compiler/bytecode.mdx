@@ -204,10 +204,10 @@ ls -lh dist/
 
 ```txt
 -rw-r--r--  1 user  staff   245K  index.js
--rw-r--r--  1 user  staff   1.1M  index.js.jsc
+-rw-r--r--  1 user  staff   368K  index.js.jsc
 ```
 
-The `.jsc` file should be 2-8x larger than the `.js` file.
+The `.jsc` file is usually larger than the `.js` file: typically 1-2.5x its size, or 1.5-5x with `--minify`. It can also be smaller.
 
 To log whether Bun uses the bytecode, set `BUN_JSC_verboseDiskCache=1` in your environment.
 
@@ -323,7 +323,7 @@ This is why you need to deploy both the `.js` and `.jsc` files: the `.jsc` file 
 
 ## The tradeoff: file size
 
-Bytecode files are typically 2-8x larger than the source code.
+Bytecode files are typically 1-2.5x the size of the source code, or 1.5-5x with `--minify`, which usually shrinks the source far more than the bytecode. The ratio depends on your code: long names lower it, so a `.jsc` file can be smaller than its `.js` file, and many small functions tend to raise it.
 
 ### Why is bytecode so much larger?
 
@@ -386,7 +386,7 @@ Using `--minify` before bytecode generation helps:
 - Constant folding → fewer constants in the pool
 
 **The tradeoff**:
-You're trading 2-8x larger files for 2-4x faster startup. For CLIs, this is usually worth it. For long-running servers where a few megabytes of disk space don't matter, it's even less of an issue.
+You're trading larger files for 2-4x faster startup. For CLIs, this is usually worth it. For long-running servers where a few megabytes of disk space don't matter, it's even less of an issue.
 
 ## Versioning and portability
 

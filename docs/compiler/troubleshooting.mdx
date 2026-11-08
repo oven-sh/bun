@@ -57,6 +57,7 @@ A build looks for type errors in your own files. It doesn't report the ones in `
 | ----------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `... because built-in objects are read-only`                | [Don't replace built-ins](/compiler/compatibility#built-in-objects-are-read-only) |
 | `Cannot load ...: it isn't in this executable`              | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
+| The same, for a file that is an entry point                 | [Make its path from `import.meta.dir`](/compiler/compatibility#dynamic-imports)   |
 | `Cannot find module`, only on another machine               | [Add the file as an entry point](/compiler/compatibility#dynamic-imports)         |
 | `Cannot find module` for a relative path to a data file     | [Name its folder or extension](/compiler/compatibility#dynamic-imports)           |
 | `... was not compiled into this executable`                 | Use that API once in your own code                                                |

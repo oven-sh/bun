@@ -184,7 +184,7 @@ To build for macOS x64:
 
 ### Supported targets
 
-The segments of the `--target` value can appear in any order, as long as they're delimited by `-`.
+A `--target` value that names a platform starts with `bun-`. The segments after it can appear in any order, as long as they're delimited by `-`.
 
 | --target             | Operating System | Architecture | Libc  |
 | -------------------- | ---------------- | ------------ | ----- |
@@ -377,7 +377,7 @@ await Bun.build({
 - **Several profiles** cover several ways of starting the app: `--bytecode-order=interactive.order,oneshot.order`. List the most common one first.
 - **Only the layout changes.** The program behaves the same, and builds stay reproducible. The profile contains hashes, not source code.
 - `%p` in `BUN_BYTECODE_ORDER_OUT` becomes the process id. `Worker` threads are recorded too.
-- `bytecodeOrderStats()` from `bun:jsc` reports how many loaded functions the profile covered (`hot`) or missed (`cold`). A growing share of `cold` means it is time to record again.
+- `bytecodeOrderStats()` from `bun:jsc` counts the functions that the current thread has loaded from the bytecode: `hot` for those that the recorded run used, `cold` for those that it didn't use, and `unknown` for those that the recorded build didn't have, because they are new or changed. `hotBytes`, `coldBytes` and `unknownBytes` are their sizes in bytes, and `regions` is the size of each part of the bytecode. A growing share of `cold` or `unknown` means it is time to record again. Without a profile, it returns `null`.
 
 ### JIT policy
 
@@ -388,6 +388,7 @@ await Bun.build({
   entrypoints: ["./app.ts"],
   compile: { outfile: "./myapp", jitPolicy: 8 },
   bytecode: true,
+  format: "esm", // for the top-level await in app.ts
 });
 ```
 
@@ -751,7 +752,7 @@ Use the `with { type: "file" }` [import attribute](https://github.com/tc39/propo
 import icon from "./icon.png" with { type: "file" };
 
 console.log(icon);
-// During development: "./icon.png"
+// During development: "/path/to/project/icon.png" (absolute path)
 // After compilation: "/$bunfs/root/icon-a1b2c3d4.png" (internal path)
 ```
 

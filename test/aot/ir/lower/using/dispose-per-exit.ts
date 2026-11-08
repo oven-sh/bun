@@ -1,4 +1,5 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="exits"
 // CHECK: [[helper]] = Builtin builtin=CompilerHelpersGetDisposeMethod
 // CHECK-NEXT: [[method]] = Call [[helper]], -, [[resource]]

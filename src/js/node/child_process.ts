@@ -281,7 +281,7 @@ type ExecCallback = (error: ExecException | null, stdout: string | Buffer, stder
 function execFile(file, args, options?, callback?: ExecCallback) {
   ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
   // A failure names the arguments, and it comes later: the message shows them as they are now.
-  args = copyArray(args);
+  if ($isJSArray(args)) args = copyArray(args);
 
   options = {
     __proto__: null,

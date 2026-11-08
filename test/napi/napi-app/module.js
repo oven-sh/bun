@@ -2014,4 +2014,54 @@ nativeTests.test_threadsafe_function_call_js_throws = async () => {
   console.log("done", seen);
 };
 
+// napi_create_external_buffer(env, 0, NULL, ...) gives a Buffer whose ArrayBuffer is detached, in Node and in
+// Bun. A program that hands it to a node: module did nothing wrong, and the module reads it as the empty Buffer
+// it is.
+nativeTests.test_empty_external_buffer_is_an_empty_input = async () => {
+  const { once } = require("node:events");
+  const { createServer } = require("node:http");
+  const { Duplex } = require("node:stream");
+  const { StringDecoder } = require("node:string_decoder");
+  const tls = require("node:tls");
+  const zlib = require("node:zlib");
+  const empty = () => nativeTests.create_empty_external_buffer();
+  console.log("length", empty().length, "detached", empty().buffer.detached);
+
+  const decoder = new StringDecoder("utf8");
+  const decoded = [decoder.write(Buffer.from([0xe2, 0x82])), decoder.write(empty()), decoder.end(empty())];
+  console.log("StringDecoder", JSON.stringify(decoded));
+
+  const gzip = zlib.createGzip();
+  const output = [];
+  gzip.on("data", chunk => output.push(chunk));
+  gzip.write("hello");
+  gzip.write(empty());
+  gzip.end(" world");
+  await once(gzip, "end");
+  console.log("zlib.createGzip()", JSON.stringify(zlib.gunzipSync(Buffer.concat(output)).toString()));
+
+  const { promise: compressed, resolve: onCompressed } = Promise.withResolvers();
+  zlib.gzip(empty(), (error, result) => onCompressed(error ? error.message : zlib.gunzipSync(result).length));
+  console.log("zlib.gzip()", await compressed);
+
+  const { promise: url, resolve: onRequest } = Promise.withResolvers();
+  const server = createServer((req, res) => {
+    onRequest(req.url);
+    res.end();
+  });
+  const socket = new Duplex({ read() {}, write: (chunk, encoding, callback) => callback() });
+  server.emit("connection", socket);
+  socket.emit("data", empty());
+  socket.emit("data", Buffer.from("GET /after HTTP/1.1\r\nHost: a\r\n\r\n"));
+  console.log("http.Server", await url);
+  socket.destroy();
+
+  try {
+    tls.setDefaultCACertificates([empty()]);
+    console.log("tls.setDefaultCACertificates() accepted it");
+  } catch (error) {
+    console.log("tls.setDefaultCACertificates()", error.code);
+  }
+};
+
 module.exports = nativeTests;

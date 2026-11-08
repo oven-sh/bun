@@ -19,7 +19,7 @@ const NumberIsNaN = Number.isNaN;
 const NumberIsInteger = Number.isInteger;
 const MathMax = Math.max;
 
-const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
+const { isAnyArrayBuffer, isArrayBufferView, isUint8Array } = require("node:util/types");
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
 const { Transform, finished } = require("node:stream");
@@ -66,7 +66,7 @@ for (const ckey of ObjectKeys(codes)) {
 function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCallback) {
   validateFunction(callback, "callback");
   // Streams do not support non-Uint8Array ArrayBufferViews yet. Convert it to a Buffer without copying.
-  if (isArrayBufferView(buffer)) {
+  if (isArrayBufferView(buffer) && !isUint8Array(buffer)) {
     buffer = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
   } else if (isAnyArrayBuffer(buffer)) {
     buffer = Buffer.from(buffer);

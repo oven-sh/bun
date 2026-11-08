@@ -445,6 +445,20 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).not.toContain("FAIL");
     });
 
+    // An addon returns this Buffer for a result of no bytes, so a program that reads it did nothing wrong.
+    it("node: modules read an empty external buffer as an empty Buffer", async () => {
+      const result = await checkSameOutput("test_empty_external_buffer_is_an_empty_input", []);
+      expect(result.split(/\r?\n/)).toEqual([
+        "length 0 detached true",
+        'StringDecoder ["","","\ufffd"]',
+        'zlib.createGzip() "hello world"',
+        "zlib.gzip() 0",
+        "http.Server /after",
+        "tls.setDefaultCACertificates() ERR_CRYPTO_OPERATION_FAILED",
+        "resolved to undefined",
+      ]);
+    });
+
     it("finalize_cb is tied to the ArrayBuffer lifetime, not the Buffer view", async () => {
       const result = await checkSameOutput("test_external_buffer_data_lifetime", []);
       expect(result).toContain("PASS: external buffer data intact through ArrayBuffer after GC");

@@ -400,7 +400,7 @@ fn iterate_included_project_tree(
                     }
 
                     // `index.js` matches only at the root, `**/index.js` at any depth
-                    if include.glob.r#match(entry_subpath.as_bytes()).matches() {
+                    if include.matches(entry_subpath.as_bytes()) {
                         included = true;
                     }
                 }
@@ -416,8 +416,7 @@ fn iterate_included_project_tree(
                         continue;
                     }
 
-                    let result = exclude.glob.r#match(entry_subpath.as_bytes());
-                    if result.is_negated() && !result.matches() {
+                    if exclude.matches(entry_subpath.as_bytes()) {
                         included = false;
                     }
                 }
@@ -1045,6 +1044,7 @@ fn iterate_project_tree(
             depth: 1,
             // matching is done from the root directory
             has_rel_path: false,
+            has_negated: false,
         });
     }
 
@@ -1313,6 +1313,7 @@ fn is_unconditionally_excluded(
         .map(|pattern| (pattern, IgnorePatternsKind::Default))
 }
 
+#[derive(Clone, Copy)]
 enum Exclusion<'a> {
     Included,
     Excluded(&'a [u8], IgnorePatternsKind),
@@ -1347,12 +1348,10 @@ fn is_excluded<'a>(
         return Exclusion::Excluded(pattern, kind);
     }
 
-    let (mut ignored, mut ignore_pattern, mut ignore_kind): (bool, &[u8], IgnorePatternsKind) =
-        match inherited {
-            Some((pattern, kind)) => (true, &**pattern, *kind),
-            None => (false, b"".as_slice(), IgnorePatternsKind::Npmignore),
-        };
-    let mut walk_only = false;
+    let mut exclusion = match inherited {
+        Some((pattern, kind)) => Exclusion::Excluded(&**pattern, *kind),
+        None => Exclusion::Included,
+    };
 
     // then check default ignore list. None of the defaults contain slashes
     // so just match against entry name
@@ -1362,9 +1361,7 @@ fn is_excluded<'a>(
             continue;
         }
         if glob::r#match(pattern, entry_name).matches() {
-            ignored = true;
-            ignore_pattern = pattern;
-            ignore_kind = IgnorePatternsKind::Default;
+            exclusion = Exclusion::Excluded(pattern, IgnorePatternsKind::Default);
 
             // break. doesn't matter if more default patterns
             // match this path
@@ -1374,6 +1371,7 @@ fn is_excluded<'a>(
 
     // lastly, check each .npmignore/.gitignore from root directory to
     // the current directory.
+    let is_directory = entry.kind == bun_sys::FileKind::Directory;
     for ignore in ignores {
         let mut rel: &[u8] = entry_subpath.as_bytes();
         if ignore.has_rel_path {
@@ -1385,61 +1383,13 @@ fn is_excluded<'a>(
                 }
             }
         }
-        for pattern in ignore.list.iter() {
-            if pattern.flags.contains(PatternFlags::DIRS_ONLY)
-                && entry.kind != bun_sys::FileKind::Directory
-            {
-                continue;
-            }
-
-            let match_path = if pattern.flags.contains(PatternFlags::REL_PATH) {
-                rel
-            } else {
-                entry_name
-            };
-            let result = pattern.glob.r#match(match_path);
-            if result.is_negated() {
-                if !result.matches() {
-                    ignored = false;
-                } else if ignored
-                    && entry.kind == bun_sys::FileKind::Directory
-                    && negation_reaches_below(pattern, rel)
-                {
-                    walk_only = true;
-                }
-            } else if result.matches() {
-                ignored = true;
-                walk_only = false;
-                ignore_pattern = pattern.glob.pattern();
-                ignore_kind = ignore.kind;
-            }
+        match ignore.has_negated {
+            true => ignore.apply::<true>(&mut exclusion, entry_name, rel, is_directory),
+            false => ignore.apply::<false>(&mut exclusion, entry_name, rel, is_directory),
         }
     }
 
-    if !ignored {
-        Exclusion::Included
-    } else if walk_only {
-        Exclusion::WalkOnly(ignore_pattern, ignore_kind)
-    } else {
-        Exclusion::Excluded(ignore_pattern, ignore_kind)
-    }
-}
-
-/// Returns true if a negated pattern could match a path below the directory `dir_rel`.
-fn negation_reaches_below(pattern: &Pattern, dir_rel: &[u8]) -> bool {
-    // Without a slash it un-ignores entries of the directories that are walked, and opens none.
-    if !pattern.flags.contains(PatternFlags::REL_PATH) {
-        return false;
-    }
-    let mut glob_segments = strings::split(&pattern.glob.pattern()[b"!".len()..], b"/");
-    for dir_name in strings::split(dir_rel, b"/") {
-        match glob_segments.next() {
-            Some(b"**") => return true,
-            Some(segment) if glob::r#match(segment, dir_name).matches() => {}
-            _ => return false,
-        }
-    }
-    glob_segments.next().is_some()
+    exclusion
 }
 
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
@@ -1510,7 +1460,7 @@ pub(crate) fn published_files(
             &mut path_spill,
             file_entry_str,
         );
-        match Pattern::from_utf8(normalized.as_bytes()) {
+        match Pattern::of_files_entry(file_entry_str, normalized.as_bytes()) {
             Some(parsed) if parsed.flags.contains(PatternFlags::NEGATED) => excludes.push(parsed),
             Some(parsed) => includes.push(parsed),
             None => {}
@@ -2746,68 +2696,129 @@ fn edit_root_package_json(
         .into())
 }
 
-/// A glob pattern used to ignore or include files in the project tree.
-/// Might come from .npmignore, .gitignore, or `files` in package.json
-pub(crate) struct Pattern {
-    pub(crate) glob: glob::Prepared<CowString>,
-    pub(crate) flags: PatternFlags,
-}
+use pattern::{Pattern, PatternFlags};
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct PatternFlags: u8 {
-        /// beginning or middle slash (leading slash was trimmed)
-        const REL_PATH = 1 << 0;
-        /// can only match directories (had an ending slash, also trimmed)
-        const DIRS_ONLY = 1 << 1;
-        /// true if the pattern starts with `!`
-        const NEGATED = 1 << 2;
+/// Only this module builds a `Pattern` or gives its text to the matcher.
+mod pattern {
+    use super::{CowString, glob, strings};
+
+    /// A glob pattern from .npmignore, .gitignore or `files` in package.json, to ignore or include files.
+    pub(super) struct Pattern {
+        /// Has no `!` that the matcher negates for. `PatternFlags::NEGATED` is the negation of the line or entry.
+        glob: glob::Prepared<CowString>,
+        pub(super) flags: PatternFlags,
     }
-}
 
-impl Pattern {
-    pub(crate) fn from_utf8(pattern: &[u8]) -> Option<Pattern> {
-        let mut flags = PatternFlags::empty();
-        // Any number of leading `!` counts as one.
-        let mut remain = strings::trim_leading_char(pattern, b'!');
-        flags.set(PatternFlags::NEGATED, remain.len() != pattern.len());
-        if let Some(trimmed) = remain.strip_suffix(b"/") {
-            flags |= PatternFlags::DIRS_ONLY;
-            remain = trimmed;
+    bitflags::bitflags! {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub(super) struct PatternFlags: u8 {
+            /// beginning or middle slash (leading slash was trimmed)
+            const REL_PATH = 1 << 0;
+            /// can only match directories (had an ending slash, also trimmed)
+            const DIRS_ONLY = 1 << 1;
+            /// the line, or the `files` entry once its path is normalized, starts with `!` (also trimmed)
+            const NEGATED = 1 << 2;
         }
-        if let Some(trimmed) = remain.strip_prefix(b"/") {
-            flags |= PatternFlags::REL_PATH;
-            remain = trimmed;
-        } else if strings::index_of_char_usize(remain, b'/').is_some_and(|i| i != remain.len() - 1)
-        {
-            flags |= PatternFlags::REL_PATH;
-        }
-        if remain.is_empty() {
-            return None;
+    }
+
+    impl Pattern {
+        /// A line of an ignore file.
+        pub(super) fn of_ignore_line(line: &[u8]) -> Option<Pattern> {
+            // Any number of leading `!` counts as one.
+            let positive = strings::trim_leading_char(line, b'!');
+            Pattern::new(positive, positive.len() != line.len())
         }
 
-        let negation: &[u8] = match flags.contains(PatternFlags::NEGATED) {
-            // In npm and git this `!` negates and the `(` is a plain character. Side by side they would start a group.
-            true if remain.starts_with(b"(") => b"!\\",
-            true => b"!",
-            false => b"",
-        };
-        Some(Pattern {
-            glob: glob::Prepared::new(CowString::init_owned(
-                [negation, remain].concat().into_boxed_slice(),
-            )),
-            flags,
+        /// An entry of `files` and its normalized path. `./!name` is `!name` by then, and its `!` is still part of the name.
+        pub(super) fn of_files_entry(written: &[u8], normalized: &[u8]) -> Option<Pattern> {
+            match written.starts_with(b"!") {
+                true => Pattern::of_ignore_line(normalized),
+                false => Pattern::new(normalized, false),
+            }
+        }
+
+        /// `positive` is the pattern without the `!`s that negate it.
+        fn new(positive: &[u8], is_negated: bool) -> Option<Pattern> {
+            let mut flags = PatternFlags::empty();
+            flags.set(PatternFlags::NEGATED, is_negated);
+            let mut remain = positive;
+            if let Some(trimmed) = remain.strip_suffix(b"/") {
+                flags |= PatternFlags::DIRS_ONLY;
+                remain = trimmed;
+            }
+            if let Some(trimmed) = remain.strip_prefix(b"/") {
+                flags |= PatternFlags::REL_PATH;
+                remain = trimmed;
+            } else if strings::index_of_char_usize(remain, b'/')
+                .is_some_and(|i| i != remain.len() - 1)
+            {
+                flags |= PatternFlags::REL_PATH;
+            }
+            if remain.is_empty() {
+                return None;
+            }
+
+            // The `!` of `/!name` and `./!name` is part of the name, and the matcher would negate the glob for it.
+            let escape: &[u8] = match glob::matcher::negations(remain) {
+                0 => b"",
+                _ => b"\\",
+            };
+            Some(Pattern {
+                glob: glob::Prepared::new(CowString::init_owned(
+                    [escape, remain].concat().into_boxed_slice(),
+                )),
+                flags,
+            })
+        }
+
+        #[inline]
+        pub(super) fn matches(&self, path: &[u8]) -> bool {
+            let result = self.glob.r#match(path);
+            debug_assert!(!result.is_negated());
+            result.matches()
+        }
+
+        /// The pattern as the matcher reads it.
+        #[inline]
+        pub(super) fn text(&self) -> &[u8] {
+            self.glob.pattern()
+        }
+
+        /// A negated entry of `files` as the ignore rule that it is inside a directory that `files` includes.
+        pub(super) fn as_positive(&self) -> Pattern {
+            debug_assert!(self.flags.contains(PatternFlags::NEGATED));
+            Pattern {
+                glob: glob::Prepared::new(self.glob.source().borrow()),
+                flags: self.flags.difference(PatternFlags::NEGATED),
+            }
+        }
+
+        /// Returns true if this negated pattern could match a path below the directory `dir_rel`.
+        pub(super) fn reaches_below(&self, dir_rel: &[u8]) -> bool {
+            // Without a slash it un-ignores entries of the directories that are walked, and opens none.
+            if !self.flags.contains(PatternFlags::REL_PATH) {
+                return false;
+            }
+            let mut pieces = strings::split(self.glob.pattern(), b"/");
+            for dir_name in strings::split(dir_rel, b"/") {
+                match pieces.next() {
+                    Some(b"**") => return true,
+                    Some(piece) if piece_matches(piece, dir_name) => {}
+                    _ => return false,
+                }
+            }
+            pieces.next().is_some()
+        }
+    }
+
+    /// Matches one `/` piece of a pattern against a name. A `!` that starts the piece is part of the name, not a negation.
+    fn piece_matches(piece: &[u8], name: &[u8]) -> bool {
+        let (bangs, rest) = piece.split_at(glob::matcher::negations(piece));
+        name.strip_prefix(bangs).is_some_and(|name| {
+            let result = glob::r#match(rest, name);
+            debug_assert!(!result.is_negated());
+            result.matches()
         })
-    }
-
-    /// Invert a negated pattern to a positive pattern
-    pub(crate) fn as_positive(&self) -> Pattern {
-        debug_assert!(self.flags.contains(PatternFlags::NEGATED));
-        Pattern {
-            // remove the leading `!`
-            glob: glob::Prepared::new(self.glob.source().borrow_subslice(1, None)),
-            flags: self.flags.difference(PatternFlags::NEGATED),
-        }
     }
 }
 
@@ -2817,6 +2828,8 @@ struct IgnorePatterns {
     pub depth: usize,
     /// At least one of the patterns has a leading or middle slash, so a relative path is needed.
     pub has_rel_path: bool,
+    /// At least one of the patterns is negated.
+    pub has_negated: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
@@ -2910,6 +2923,7 @@ impl IgnorePatterns {
 
         let mut patterns: Vec<Pattern> = Vec::new();
         let mut has_rel_path = false;
+        let mut has_negated = false;
 
         for line in strings::split(strings::without_utf8_bom(&contents), b"\n") {
             // comment
@@ -2917,10 +2931,11 @@ impl IgnorePatterns {
                 continue;
             }
             let line = line.strip_suffix(b"\r").unwrap_or(line);
-            let Some(parsed) = Pattern::from_utf8(Self::trim_trailing_spaces(line)) else {
+            let Some(parsed) = Pattern::of_ignore_line(Self::trim_trailing_spaces(line)) else {
                 continue;
             };
             has_rel_path |= parsed.flags.contains(PatternFlags::REL_PATH);
+            has_negated |= parsed.flags.contains(PatternFlags::NEGATED);
             patterns.push(parsed);
         }
 
@@ -2929,7 +2944,49 @@ impl IgnorePatterns {
             kind: ignore_kind,
             depth: dir_depth,
             has_rel_path,
+            has_negated,
         })
+    }
+
+    /// The last pattern that matches an entry decides. `NEGATIONS` is `has_negated`, false for most lists.
+    #[inline(always)]
+    fn apply<'a, const NEGATIONS: bool>(
+        &'a self,
+        exclusion: &mut Exclusion<'a>,
+        entry_name: &[u8],
+        rel: &[u8],
+        is_directory: bool,
+    ) {
+        debug_assert!(NEGATIONS == self.has_negated);
+        // A pattern that ends with `/` matches only a directory.
+        let skipped = match is_directory {
+            true => PatternFlags::empty(),
+            false => PatternFlags::DIRS_ONLY,
+        };
+        for pattern in self.list.iter() {
+            if pattern.flags.intersects(skipped) {
+                continue;
+            }
+
+            let match_path = if pattern.flags.contains(PatternFlags::REL_PATH) {
+                rel
+            } else {
+                entry_name
+            };
+            let matches = pattern.matches(match_path);
+            if NEGATIONS && pattern.flags.contains(PatternFlags::NEGATED) {
+                if matches {
+                    *exclusion = Exclusion::Included;
+                } else if let Exclusion::Excluded(by, kind) = *exclusion
+                    && is_directory
+                    && pattern.reaches_below(rel)
+                {
+                    *exclusion = Exclusion::WalkOnly(by, kind);
+                }
+            } else if matches {
+                *exclusion = Exclusion::Excluded(pattern.text(), self.kind);
+            }
+        }
     }
 }
 

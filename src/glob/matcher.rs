@@ -2033,7 +2033,7 @@ fn class_has(glob: &[u8], open: u32, c: u32) -> Option<bool> {
 
 /// Counts the leading `!`s that negate the result.
 #[inline(always)]
-pub(crate) fn negations(glob: &[u8]) -> usize {
+pub fn negations(glob: &[u8]) -> usize {
     let bangs = glob.iter().take_while(|it| **it == b'!').count();
     // The `!` of `!(a)` starts a group.
     bangs - usize::from(bangs > 0 && glob.get(bangs) == Some(&b'('))

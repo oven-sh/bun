@@ -14,7 +14,7 @@
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
 // `bun.ptr.CowSlice(T)` / `CowSliceZ` — the lifetime-free struct port (owns or
-// borrows a raw slice with `init_owned`/`borrow_subslice`/`length`). Callers
+// borrows a raw slice with `init_owned`/`borrow`/`length`). Callers
 // that need the struct-shaped API (e.g. `pack_command::Pattern`) reach for
 // `cow_slice::CowSlice<u8>`.
 #[path = "CowSlice.rs"]

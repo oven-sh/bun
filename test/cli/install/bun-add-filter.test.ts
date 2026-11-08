@@ -408,6 +408,17 @@ test.concurrent("braces around a list of names select by name", async () => {
   await expectAddedOnlyTo(dir, before, ["pkg-a", "pkg-b"]);
 });
 
+test.concurrent("a list of names can hold scoped names", async () => {
+  const dir = await makeMonorepo({ "pkg-a": { name: "@acme/a" }, "pkg-b": { name: "@acme/b" } });
+  const before = await allPackageJsonTexts(dir);
+
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "{@acme/a,@acme/b}"], dir);
+  expect(stderr).toBe("Saved lockfile\n");
+  expect(exitCode).toBe(0);
+
+  await expectAddedOnlyTo(dir, before, ["pkg-a", "pkg-b"]);
+});
+
 test.concurrent("a negated list of names keeps add and remove away from them", async () => {
   const dir = await makeMonorepo();
 

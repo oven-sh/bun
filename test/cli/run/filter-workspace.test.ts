@@ -1078,6 +1078,20 @@ describe("selectors", () => {
     expect(await ranIn(["--filter", "{lib,}"], String(dir))).toEqual({ ran: ["lib"], error: undefined, exitCode: 0 });
   });
 
+  // In cwd_root `@scoped/scoped` prints `scriptd`, and pkga, pkgb and pkgc print `scripta`, `scriptb` and `scriptc`.
+  test.concurrent("a list of names can hold a scoped name", async () => {
+    expect(await ranIn(["--filter", "{@scoped/scoped,pkga}"], cwd_root)).toEqual({
+      ran: ["scripta", "scriptd"],
+      error: undefined,
+      exitCode: 0,
+    });
+    expect(await ranIn(["--filter", "!{@scoped/scoped,pkga}"], cwd_root)).toEqual({
+      ran: ["scriptb", "scriptc"],
+      error: undefined,
+      exitCode: 0,
+    });
+  });
+
   // `malformed1` in cwd_root has no name. Its script prints `malformed1`.
   test.concurrent("a name glob that matches the empty string skips a package.json without a name", async () => {
     expect(await ranIn(["--filter", "{pkga,}"], cwd_root)).toEqual({ ran: ["scripta"], error: undefined, exitCode: 0 });

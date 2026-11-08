@@ -73,6 +73,10 @@ impl Slot {
 #[derive(Copy, Clone)]
 struct DefaultedParameter {
     annotation: TypeNodeId,
+    /// `T` of a default value `x as T`, which is the type of a parameter without an annotation.
+    asserted: TypeNodeId,
+    /// The default value is `(x as T)!`, a `NonNullable<T>`.
+    is_non_null: bool,
     is_name: bool,
     /// A `?` on it is an error: a parameter behind it has to be passed.
     is_before_required: bool,
@@ -221,6 +225,19 @@ fn may_have_default_without_slot(text: &[u8], at: u32) -> bool {
     text.get(after) == Some(&b'=') && token_end(text, after, false) == after + 1
 }
 
+/// `T` where `value` is `x as T`, also under `satisfies` or `!`, and whether it is under a `!`.
+fn asserted_type(file: &File<'_>, mut value: ExprId) -> Option<(TypeNodeId, bool)> {
+    let mut is_non_null = false;
+    loop {
+        match file[value].kind {
+            ExprKind::As { ty, .. } => return Some((ty, is_non_null)),
+            ExprKind::Satisfies { expr, .. } => value = expr,
+            ExprKind::NonNull(expr) => (value, is_non_null) = (expr, true),
+            _ => return None,
+        }
+    }
+}
+
 /// Each parameter of `file` that has a default value, by where it starts.
 fn defaulted_parameters(file: &File<'_>) -> FxHashMap<u32, DefaultedParameter> {
     let mut found = FxHashMap::default();
@@ -232,10 +249,14 @@ fn defaulted_parameters(file: &File<'_>) -> FxHashMap<u32, DefaultedParameter> {
         let parameters = function.params.iter().map(|parameter| &file[parameter]);
         for (place, parameter) in parameters.enumerate() {
             if parameter.default.is_some() {
+                let (asserted, is_non_null) =
+                    asserted_type(file, parameter.default).unwrap_or_default();
                 found.insert(
                     file[parameter.pat].pos,
                     DefaultedParameter {
                         annotation: parameter.ty,
+                        asserted,
+                        is_non_null,
                         is_name: matches!(file[parameter.pat].kind, PatKind::Ident(_)),
                         is_before_required: last_required.is_some_and(|last| place < last),
                     },
@@ -253,6 +274,32 @@ impl<'a, 's> Syntax<'a, 's> {
 
     fn before_trivia(&self, at: u32) -> u32 {
         skip_trivia_back(self.text, at as usize) as u32
+    }
+
+    /// `["b"]["c"]` for the `.b.c` of a `typeof a.b.c` whose `a` ends at `end`, and where that ends.
+    fn members_behind(&self, mut end: u32) -> (u32, Vec<u8>) {
+        let mut members = Vec::new();
+        loop {
+            let dot = self.after_trivia(end);
+            if self.byte(dot) != b'.' {
+                return (end, members);
+            }
+            let name = self.after_trivia(dot + 1);
+            members.extend_from_slice(&[b"[\"", self.word(name), b"\"]"].concat());
+            end = self.token_end(name);
+        }
+    }
+
+    /// Where the `typeof` before the name at `at` starts.
+    fn typeof_before(&self, at: u32) -> Option<u32> {
+        let end = self.before_trivia(at) as usize;
+        let start = end.checked_sub(6)?;
+        let is_word = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$');
+        let is_keyword = &self.text[start..end] == b"typeof"
+            && !start
+                .checked_sub(1)
+                .is_some_and(|before| is_word(self.text[before]));
+        is_keyword.then_some(start as u32)
     }
 
     fn byte(&self, at: u32) -> u8 {
@@ -2736,13 +2783,29 @@ fn link(
                 }
             }
             for &(at, binding) in types.locals.iter().filter(|_| index < mapped) {
-                if let Some(new) = generated
-                    .get(&(index as u32, binding))
-                    .map(|&offset| output.word(offset))
-                    .filter(|new| *new != syntax.word(at))
-                {
-                    edits.push((at, syntax.token_end(at), new.to_vec()));
+                let Some(&offset) = generated.get(&(index as u32, binding)) else {
+                    continue;
+                };
+                let (new, end) = (output.word(offset), syntax.token_end(at));
+                if new == syntax.word(at) {
+                    continue;
                 }
+                // `typeof a` where the output has the default value of `a` in the function body: its parameter takes `undefined`.
+                let query = syntax.typeof_before(at).filter(|_| {
+                    let is_default = |parameter: &Param| {
+                        parameter.default.is_some() && syntax.file[parameter.pat].pos == binding
+                    };
+                    !may_have_default_without_slot(output.text, offset)
+                        && syntax.file.params.iter().any(is_default)
+                });
+                edits.push(match query {
+                    Some(start) => {
+                        let (end, members) = syntax.members_behind(end);
+                        let head = [&b"Exclude<typeof "[..], new, b", undefined>"].concat();
+                        (start, end, [head, members].concat())
+                    }
+                    None => (at, end, new.to_vec()),
+                });
             }
             edits.extend(
                 types
@@ -3241,8 +3304,29 @@ impl<'a> Transfer<'_, 'a, '_> {
                             }
                         }
                         (None, is_before_required) => {
-                            let noted = (module.and_then(|module| module.types))
-                                .and_then(|types| types.parameter_type(key));
+                            let types = module.and_then(|module| module.types);
+                            let is_asserted =
+                                types.is_some_and(|types| types.asserted_parameters.contains(&key));
+                            let asserted =
+                                module.zip(default.asserted.some().filter(|_| is_asserted));
+                            let asserted = asserted.and_then(|(module, asserted)| {
+                                let (start, end) = module.syntax.type_span(asserted);
+                                let text = module.text(start, end);
+                                let is_function = is_before_required
+                                    && module.syntax.is_parenthesized_in_a_union(asserted);
+                                let (open, close): (&[u8], &[u8]) =
+                                    match (default.is_non_null, is_function) {
+                                        (true, _) => (b"NonNullable<", b">"),
+                                        (false, true) => (b"(", b")"),
+                                        (false, false) => (b"", b""),
+                                    };
+                                // `typeof a` can name a parameter that the output has as a variable of the function body.
+                                let is_in_scope = !bun_core::strings::contains(&text, b"typeof");
+                                is_in_scope.then(|| [open, &text[..], close].concat())
+                            });
+                            // The checker says the type where no `as` does, if it names nothing.
+                            let noted = (asserted.as_deref())
+                                .or_else(|| types.and_then(|types| types.parameter_type(key)));
                             let (written, text) = match (noted, is_before_required) {
                                 (Some(noted), true) => (
                                     Unannotated::Typed,
@@ -3602,7 +3686,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 .chain(properties)
                 .filter_map(|(initializer, place, key)| Some((initializer.some()?, (place, key?))))
                 .collect();
-            let enum_member_cast = |expr: ExprId| {
+            let enum_member_type = |expr: ExprId| {
                 let ExprKind::Dot { obj, .. } = syntax.file[expr].kind else {
                     return None;
                 };
@@ -3610,13 +3694,13 @@ impl<'a> Transfer<'_, 'a, '_> {
                 let name = linked
                     .enum_names
                     .get(&(index as u32, syntax.file.exprs.get(obj.idx())?.pos))?;
-                Some([&b" as "[..], name, b".", syntax.word(name_pos)].concat())
+                Some([&name[..], b".", syntax.word(name_pos)].concat())
             };
             let mut chains = syntax.cast_chains();
             let operands: FxHashSet<ExprId> = chains.iter().map(|chain| chain.operand).collect();
             let members = (0..syntax.file.exprs.len() as u32)
                 .map(ExprId)
-                .filter(|&expr| !operands.contains(&expr) && enum_member_cast(expr).is_some());
+                .filter(|&expr| !operands.contains(&expr) && enum_member_type(expr).is_some());
             chains.extend(members.map(|expr| CastChain {
                 operand: expr,
                 outermost: expr,
@@ -3642,7 +3726,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }) else {
                     continue;
                 };
-                let member = enum_member_cast(chain.operand).filter(|_| is_literal(operand));
+                let member = enum_member_type(chain.operand).filter(|_| is_literal(operand));
                 if member.is_none() && chain.casts.is_empty() {
                     continue;
                 }
@@ -3661,22 +3745,27 @@ impl<'a> Transfer<'_, 'a, '_> {
                     Level::Member
                 };
                 let (mut opens, mut suffix) = (0usize, Vec::new());
+                let is_member = member.is_some();
                 if let Some(member) = member {
-                    suffix.extend_from_slice(&member);
+                    suffix.extend_from_slice(&[b" as ", &member[..]].concat());
                     level = Level::Compare;
-                    let binding = widened.get(&chain.outermost).copied();
-                    let declared = binding.and_then(|(place, key)| {
+                    let kinds = || chain.casts.iter().map(|&cast| &syntax.file[cast].kind);
+                    // Under an `as` the place has the type of the `as`. Without one it has the enum, which `0 as E.M` does not widen to.
+                    let is_asserted = kinds().any(|kind| matches!(kind, ExprKind::As { .. }));
+                    let is_const = kinds().any(|kind| matches!(kind, ExprKind::AsConst(_)));
+                    let binding = widened.get(&chain.outermost).filter(|_| !is_asserted);
+                    let declared = binding.and_then(|&(place, key)| {
                         output_places.get(&(place, index as u32, key)).copied()
                     });
                     // With `--minify-syntax`, `declared` is the variable of a moved default value. The parameter is typed too.
-                    let moved = binding.and_then(|(_, key)| {
+                    let moved = binding.and_then(|&(_, key)| {
                         let unannotated = &self.moved_defaults.unannotated;
                         unannotated.get(&(index as u32, key)).copied()
                     });
                     if let Some(name) = linked.enum_names.get(&(index as u32, source_position)) {
-                        // Under a cast the default value has the type of the cast, and the parameter stays `any`.
-                        if let Some((parameter, written)) = moved.filter(|_| chain.casts.is_empty())
-                        {
+                        // `E.M as const` is the member, and does not widen to the enum.
+                        let name = if is_const { &member } else { name };
+                        if let Some((parameter, written)) = moved {
                             let text = match written {
                                 Unannotated::Typed => Vec::new(),
                                 Unannotated::Required => {
@@ -3695,6 +3784,10 @@ impl<'a> Transfer<'_, 'a, '_> {
                     }
                 }
                 for &cast in &chain.casts {
+                    // `0 as E.M` has the type of `E.M as const`, and is no operand of an `as const` (TS1355).
+                    if is_member && matches!(syntax.file[cast].kind, ExprKind::AsConst(_)) {
+                        continue;
+                    }
                     if level.lt(syntax.level_required_by_cast(cast)) {
                         opens += 1;
                         suffix.push(b')');
@@ -4355,6 +4448,8 @@ pub struct ModuleTypes {
     pub constants: Vec<(u32, Box<[u8]>)>,
     /// The type of each parameter with a default value and no annotation, if it names nothing. See [`module_types`].
     pub parameters: Vec<(u32, Box<[u8]>)>,
+    /// Each of those with the type of its default value `x as T`. A callback can have another from its context.
+    pub asserted_parameters: Vec<u32>,
     pub functions_returning_undefined: Vec<u32>,
     pub globals: Vec<u32>,
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
@@ -4673,20 +4768,21 @@ pub fn module_types(
         let unannotated = (noted.iter().zip(0u32..)).filter(|(parameter, _)| {
             parameter.default.is_some() && parameter.ty.is_none() && is_name(parameter.pat)
         });
+        let mut asserted_parameters = Vec::new();
         for (parameter, id) in unannotated {
-            // `copy_casts` names the enum of a default value that is a member of one, and no other type fits beside it.
-            let value = hir.skip_type_assertions(parameter.default);
-            let value = services.type_at_location(NodeRef {
-                file,
-                node: hir.node(value),
-            });
-            if services.type_flags(value).intersects(TypeFlags::ENUM_LIKE) {
-                continue;
-            }
             let ty = services.type_at_location(NodeRef {
                 file,
                 node: hir.node(ParamId(id)),
             });
+            let default = NodeRef {
+                file,
+                node: hir.node(parameter.default),
+            };
+            if asserted_type(hir, parameter.default).is_some()
+                && services.type_at_location(default) == ty
+            {
+                asserted_parameters.push(hir[parameter.pat].pos);
+            }
             let flags = services.type_flags(ty);
             if flags.intersects(names_nothing) && !flags.contains(TypeFlags::ENUM_LITERAL) {
                 let format = TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION;
@@ -4735,6 +4831,7 @@ pub fn module_types(
             exports,
             constants,
             parameters,
+            asserted_parameters,
             functions_returning_undefined,
             globals,
             augmented_modules,

@@ -148,6 +148,14 @@ export function useRange(first: number = 1, start = 0, end: number): number {
   const [value] = useState(first);
   return value + start + end;
 }
+export enum Unit {
+  Px,
+  Em,
+}
+export function useCell(first: number = 1, unit = Unit.Px as Unit | null): string {
+  const [value] = useState(first);
+  return value + String(unit);
+}
 `,
   };
   const hookFlags = ["--outdir", "out", "--dts", "--react-compiler", "--target=bun"];
@@ -169,8 +177,9 @@ export function useRange(first: number = 1, start = 0, end: number): number {
   test("--react-compiler: such a parameter still takes no other type", async () => {
     using dir = tempDir("build-dts-react-compiler-callers", {
       ...hooks,
-      "uses.ts": `import { useBoth, useRange } from "./out/index.aot";
+      "uses.ts": `import { Unit, useBoth, useCell, useRange } from "./out/index.aot";
 export const sums: number[] = [useBoth(), useBoth(1), useBoth(1, 2), useRange(undefined, undefined, 1), useRange(1, 2, 3)];
+export const cells: string[] = [useCell(), useCell(1, null), useCell(1, Unit.Em)];
 // @ts-expect-error
 useBoth("1");
 // @ts-expect-error
@@ -179,6 +188,8 @@ useBoth(1, "2");
 useRange(1, 2);
 // @ts-expect-error
 useRange(1, "0", 1);
+// @ts-expect-error
+useCell(1, "px");
 `,
     });
     const built = await bun(String(dir), "build", "./src/index.tsx", ...hookFlags);

@@ -152,6 +152,76 @@ export { join };
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
   });
 
+  // The bundle has `0` for `Unit.Px`, and the typed file has `0 as Unit.Px`. That does not widen to `Unit` as `Unit.Px`
+  // does, so a place without an annotation takes `: Unit`. Under an `as`, the place has the type of the `as`.
+  test.each([
+    ["", {}],
+    [", with minify.syntax", { minify: { syntax: true } }],
+  ])("a place without an annotation whose value is an enum member under a cast%s", async (_, options) => {
+    using dir = tempDir("build-api-dts-enum-cast", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/index.ts": `export enum Unit {
+  Px,
+  Em,
+}
+export enum Color {
+  Red = "red",
+}
+export function useIt(first = 1, unit = Unit.Px as Unit | null) {
+  unit = null;
+  return [first, unit];
+}
+export function only(unit = Unit.Px as Unit | null) {
+  return unit;
+}
+let current = Color.Red as string;
+export function paint(color: string): string {
+  current = color;
+  return current;
+}
+export class Box {
+  unit = Unit.Px as Unit | undefined;
+  clear(): void {
+    this.unit = undefined;
+  }
+}
+export function constant(unit = Unit.Em as const): Unit.Em {
+  return unit;
+}
+export function widened(unit = Unit.Px, other = Unit.Px satisfies Unit, third = Unit.Px!) {
+  unit = Unit.Em;
+  other = Unit.Em;
+  third = Unit.Em;
+  return [unit, other, third];
+}
+console.log(useIt(), useIt(1, null), useIt(1, Unit.Em), only(null), paint("blue"), new Box().unit, constant(), widened());
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      target: "bun",
+      dts: true,
+      ...options,
+    });
+    expect(built.logs).toEqual([]);
+    // The name of an enum can have a number behind it, and each value has the name of its member in a comment.
+    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8")
+      .replace(/\b(Unit|Color)\d+/g, "$1")
+      .replace(/ \/\* \w+ \*\//g, "");
+    expect(typed).toContain("function useIt(first = 1, unit = 0 as Unit.Px as Unit | null) {");
+    expect(typed).toContain("function only(unit = 0 as Unit.Px as Unit | null) {");
+    expect(typed).toContain(`current = "red" as Color.Red as string;`);
+    expect(typed).toContain("  unit = 0 as Unit.Px as Unit | undefined;");
+    // `0 as Unit.Em` is what `Unit.Em as const` is.
+    expect(typed).toContain("function constant(unit: Unit.Em = 1 as Unit.Em): Unit.Em {");
+    expect(typed).toContain(
+      "function widened(unit: Unit = 0 as Unit.Px, other: Unit = 0 as Unit.Px satisfies Unit, third: Unit = (0 as Unit.Px)!) {",
+    );
+  });
+
   test("two builds at once keep their files apart", async () => {
     using dir = tempDir("build-api-dts-twice", {
       ...Object.fromEntries(Object.entries(project).map(([path, text]) => ["a/" + path, text])),
@@ -223,9 +293,38 @@ export function usePadded(first: number = 1, unit = Unit.Em, pad = 2, text: stri
   const [value] = useState(text);
   return value.padStart(pad + first) + Unit[unit];
 }
-export function useCast(first = 1, unit = Unit.Px as Unit | null, color = Color.Red as string): string {
+interface Options {
+  label: string;
+}
+export function useCast(
+  first = 1,
+  unit = Unit.Px as Unit | null,
+  color = Color.Red as string,
+  last = Unit.Em!,
+  exact = Unit.Px as const,
+  known = (Unit.Em as Unit | null)!,
+  options = { label: "x" } as Options,
+): string {
   const [value] = useState(first);
-  return value + String(unit) + color;
+  return value + String(unit) + color + Unit[last] + Unit[exact] + Unit[known] + options.label;
+}
+export function useParse(first = 1, parse = Number as (text: string) => number, text: string): number {
+  const [value] = useState(first);
+  return value + parse(text);
+}
+export function useTyped(first = 1, second = 2 as typeof first): string {
+  const [value] = useState(first);
+  return value + second.toFixed(1);
+}
+export function useCell(first = 1, unit = Unit.Px as Unit | null): string {
+  const [value] = useState(first);
+  if (unit === null) return value + "none";
+  switch (unit) {
+    case Unit.Px:
+      return value + "px";
+    case Unit.Em:
+      return value + "em";
+  }
 }
 export function useNested(base: number): number {
   const [value] = useState(base);
@@ -237,12 +336,12 @@ function pad(value: number): number;
 function pad(value: any): any {
   return value;
 }
-type Step = (base: number, scale?: number, by?: number) => number;
+type Step = (base: number, scale?: number, by?: number, unit?: Unit | null) => number;
 export function useStepper(n: number): Step {
   const [value] = useState(n);
-  const step: Step = (base, scale = 1, by = value) => {
+  const step: Step = (base, scale = 1, by = value, unit = Unit.Px as Unit) => {
     const next: number = pad(by);
-    return base * scale + next;
+    return base * scale + next + (unit ?? 0);
   };
   return step;
 }
@@ -258,6 +357,7 @@ export function plain(first: number = 1, second: number = 2): number {
   const calls = `console.log(useBoth(), useBoth(5), useStep(), useRange(undefined, undefined, 5), useFormat(undefined, undefined, 1));
 console.log(useName(), usePoint(), useUnit(), usePadded(undefined, undefined, undefined, "a"), useNested(1));
 console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain(), useCast(), useCast(1, null, "blue"));
+console.log(useCell(), useCell(1, null), useCell(1, Unit.Em), useParse(undefined, undefined, "1"), useTyped());
 `;
   // The parameters of each function, from the second one on where the first one is the compiler's. The first default
   // value of a list is where the `length` of the function ends, and how the compiler prints it is not the subject here.
@@ -295,8 +395,15 @@ console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain(), us
     // `Unit.Px` is `0` in the bundle, and the parameter has the type of the enum.
     useUnit: expect.stringMatching(/^t1\?: Unit\d*$/),
     usePadded: expect.stringMatching(/^t1: Unit\d* \| undefined, t2: number \| undefined, text: string$/),
-    // Under a cast the default value has the type of the cast and not of its enum: the parameter has no type.
-    useCast: "t1?, t2?",
+    // An `as` on the default value is the type of the parameter. Under `!` it has the enum, under `as const` the member.
+    useCast: expect.stringMatching(
+      /^t1\?: Unit\d* \| null, t2\?: string, t3\?: Unit\d*, t4\?: Unit\d*\.Px, t5\?: NonNullable<Unit\d* \| null>, t6\?: Options$/,
+    ),
+    useParse: "t1: ((text: string) => number) | undefined, text: string",
+    // `typeof first` is not the type of `t0`, which takes `undefined`. The type checker says what `second` is.
+    useTyped: "t1?: number",
+    // Its `switch` has a `case` for each value only if `unit` has its type.
+    useCell: expect.stringMatching(/^t1\?: Unit\d* \| null$/),
     useNested: "base: number",
     pad: "value: any",
     useStepper: "n: number",
@@ -321,8 +428,10 @@ console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain(), us
     expect(parametersIn(typed)).toEqual(parameters);
     // The default value has its type from the annotation.
     expect(typed).toContain("let point: [number, number] = t1 === undefined ? [");
-    // Without an annotation, a callback takes the type of its parameter from where it is passed to.
-    expect(typed).toMatch(/let step: Step = \(base, t0[^,]*, t1\?\) => \{/);
+    // Without an annotation, a callback takes the type of its parameter from where it is passed to. An `as` on the
+    // default value does not change that.
+    expect(typed).toMatch(/let step: Step = \(base, t0[^,]*, t1\?, t2\?\) => \{/);
+    expect(typed).toContain("2 as Exclude<typeof t0, undefined>");
   });
 
   test("in a module that is not checked", async () => {

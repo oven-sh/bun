@@ -81,7 +81,7 @@ const pkg = {
 pkg.name;
 ```
 
-If you pass a `.json` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export, except `__esModule`.
+If you pass a `.json` file as an entrypoint to the bundler, Bun converts it to a `.js` module. The default export is the parsed value. When that value is an object, each top-level key that is a valid identifier is also a named export, except `__esModule`.
 
 <CodeGroup>
 
@@ -210,7 +210,7 @@ var config = {
 };
 ```
 
-If you pass a `.yaml` or `.yml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed object. Each top-level key that is a valid identifier is also a named export, except `__esModule`.
+If you pass a `.yaml` or `.yml` file as an entrypoint, Bun converts it to a `.js` module. The default export is the parsed value. When that value is an object, each top-level key that is a valid identifier is also a named export, except `__esModule`.
 
 <CodeGroup>
 

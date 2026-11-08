@@ -5699,6 +5699,27 @@ JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject* glob
 }
 #endif
 
+bool isExportUninitialized(JSC::JSGlobalObject* globalObject, JSC::JSModuleNamespaceObject* moduleNamespace, const JSC::Identifier& name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // `import defer` has a namespace object of its own, which evaluates the module before it reads.
+    bool isDeferred = moduleNamespace->moduleRecord()->getModuleNamespace(globalObject) != moduleNamespace;
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isDeferred)
+        return false;
+    Zig::ExportVariable variable = Zig::findExportVariable(globalObject, moduleNamespace, name);
+    RETURN_IF_EXCEPTION(scope, false);
+    // A mock and a builtin keep their exports in an object, and a read of it can run code. Only a source text module has variables with a dead zone.
+    if (!variable.record || !variable.record->inherits<JSC::JSModuleRecord>())
+        return false;
+    if (variable.record->moduleEnvironment()->readVariable(vm, variable.offset))
+        return false;
+    // A read of `export * as` makes its namespace object and does not throw. The module that stands for a mock has no variable that is empty once it is linked.
+    ASSERT(variable.localName != vm.propertyNames->starNamespacePrivateName && !variable.record->hasLiveExports());
+    return true;
+}
+
 } // namespace Bun
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

@@ -3080,6 +3080,7 @@ fn for_each_sorted_property(
 }
 
 /// Past `max_width` properties, calls `each` once with an empty key and the number left over.
+/// An export of a module namespace that isn't set yet is undefined here, as for `member`.
 fn for_each_property(
     global: &JSGlobalObject,
     object: JSValue,
@@ -3143,6 +3144,7 @@ fn is_array(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
 }
 
 /// `value[name]` as JS does it: primitives work, null and undefined throw, `Object.prototype` is searched.
+/// One difference: an export of a module namespace that isn't set yet is undefined, as in a module object of Vitest.
 pub(crate) fn member(global: &JSGlobalObject, value: JSValue, name: &'static str) -> JsResult<JSValue> {
     unsafe extern "C" {
         fn SnapshotFormat__get(global: &JSGlobalObject, value: JSValue, name: *const u8, length: usize) -> JSValue;
@@ -3158,6 +3160,7 @@ fn item(global: &JSGlobalObject, value: JSValue, index: u32) -> JsResult<JSValue
     jsc::host_fn::from_js_host_call(global, || SnapshotFormat__getIndex(global, value, index))
 }
 
+/// `value[key]`, read as `member` reads.
 pub(crate) fn member_by_value(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JsResult<JSValue> {
     unsafe extern "C" {
         safe fn SnapshotFormat__getByValue(global: &JSGlobalObject, value: JSValue, key: JSValue) -> JSValue;
@@ -3837,7 +3840,7 @@ impl Formatter<'_> {
         Ok(())
     }
 
-    /// jest-snapshot's plugins, in its order. Every read, call and conversion mirrors the JS so bad input fails alike.
+    /// jest-snapshot's plugins, in its order. Every read (see `member`), call and conversion mirrors the JS so bad input fails alike.
     fn print_with_plugin(&mut self, out: &mut Vec<u8>, value: JSValue) -> JsResult<bool> {
         let global = self.global_this;
         let type_of = member(global, value, "$$typeof")?;

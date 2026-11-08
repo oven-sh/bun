@@ -1,9 +1,11 @@
 #include "root.h"
 
+#include "BunPlugin.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ArrayConstructor.h>
 #include <JavaScriptCore/JSFunctionInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/Operations.h>
@@ -37,6 +39,35 @@ enum class SnapshotKind : uint8_t {
 static NEVER_INLINE JSValue getMember(JSGlobalObject* globalObject, JSValue value, PropertyName name)
 {
     return value.get(globalObject, name);
+}
+
+// A module namespace throws for the read of an export that is not set yet. These formats print undefined for it, which is what the modules of Vitest and of Babel read there. Empty: the exception is another one and stays pending.
+static NEVER_INLINE JSValue undefinedIfExportIsUnset(JSGlobalObject* globalObject, JSValue holder, PropertyName name)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* moduleNamespace = dynamicDowncast<JSModuleNamespaceObject>(holder);
+    if (!moduleNamespace)
+        return {};
+    auto* exception = scope.exception();
+    if (!scope.tryClearException())
+        return {};
+    bool isUnset = Bun::isExportUninitialized(globalObject, moduleNamespace, Identifier::fromUid(vm, name.uid()));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isUnset)
+        return jsUndefined();
+    scope.throwException(globalObject, exception);
+    return {};
+}
+
+// In place of RETURN_IF_EXCEPTION after getMember(). False: an exception is pending.
+static ALWAYS_INLINE bool didGetMember(JSGlobalObject* globalObject, ThrowScope& scope, JSValue holder, PropertyName name, JSValue& member)
+{
+    if (scope.exception()) [[unlikely]] {
+        member = undefinedIfExportIsUnset(globalObject, holder, name);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return true;
 }
 
 static NEVER_INLINE Identifier toKey(JSGlobalObject* globalObject, JSValue key)
@@ -135,6 +166,42 @@ static bool isStateOfMockFunction(JSGlobalObject* globalObject, JSObject* object
     return object->getPrototypeDirect() == global->mockModule.mockObjectStructure.getInitializedOnMainThread(global)->storedPrototype();
 }
 
+// Asked for its enumerable keys only, a module namespace reads every export, as Object.keys() does, and throws for one that is not set yet. Asked for every key it reads none.
+static NEVER_INLINE PropertyNameArray::PropertyNameVector enumerableKeysOfNamespaceWithUnsetExport(JSGlobalObject* globalObject, JSObject* object, size_t listed)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* moduleNamespace = dynamicDowncast<JSModuleNamespaceObject>(object);
+    // That of a mock lists the object its factory returned, which can run code.
+    if (!moduleNamespace || moduleNamespace->moduleRecord()->hasLiveExports())
+        return {};
+    auto* exception = scope.exception();
+    if (!scope.tryClearException())
+        return {};
+
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    moduleNamespace->methodTable()->getOwnPropertyNames(moduleNamespace, globalObject, properties, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, {});
+    const auto& names = properties.data()->propertyNameVector();
+    // Both listings take the exports in one order, and the first one lists a name once its read returned. So it threw at the export after the `listed` names that it got to.
+    bool isUnset = listed < names.size() && Bun::isExportUninitialized(globalObject, moduleNamespace, names[listed]);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!isUnset) {
+        scope.throwException(globalObject, exception);
+        return {};
+    }
+    PropertyNameArray::PropertyNameVector keys;
+    for (const Identifier& name : names) {
+        // [[HasProperty]] reads no export either, and says that Symbol.toStringTag is not enumerable.
+        PropertySlot slot(moduleNamespace, PropertySlot::InternalMethodType::HasProperty);
+        bool hasKey = moduleNamespace->methodTable()->getOwnPropertySlot(moduleNamespace, globalObject, name, slot);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (hasKey && !(slot.attributes() & PropertyAttribute::DontEnum))
+            keys.append(name);
+    }
+    return keys;
+}
+
 extern "C" void SnapshotFormat__forEachProperty(JSGlobalObject* globalObject, EncodedJSValue encodedObject, bool isForVitest, bool isSorted, uint32_t maxWidth, void* context, bool (*each)(void* context, EncodedJSValue key, EncodedJSValue value))
 {
     auto& vm = getVM(globalObject);
@@ -149,9 +216,12 @@ extern "C" void SnapshotFormat__forEachProperty(JSGlobalObject* globalObject, En
 
     PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, );
 
     auto keys = properties.data()->propertyNameVector();
+    if (scope.exception()) [[unlikely]] {
+        keys = enumerableKeysOfNamespaceWithUnsetExport(globalObject, object, keys.size());
+        RETURN_IF_EXCEPTION(scope, );
+    }
     // Own properties in Jest and Vitest, prototype getters in Bun.
     Identifier lastCall;
     if (isStateOfMockFunction(globalObject, object)) {
@@ -172,7 +242,8 @@ extern "C" void SnapshotFormat__forEachProperty(JSGlobalObject* globalObject, En
             return;
         }
         JSValue member = getMember(globalObject, object, key);
-        RETURN_IF_EXCEPTION(scope, );
+        if (!didGetMember(globalObject, scope, object, key, member))
+            return;
         // Jest only defines lastCall after the first call.
         if (key == lastCall && !isForVitest && member.isUndefined())
             continue;
@@ -245,7 +316,8 @@ extern "C" EncodedJSValue SnapshotFormat__get(JSGlobalObject* globalObject, Enco
         return {};
     }
     JSValue member = getMember(globalObject, value, identifier);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (!didGetMember(globalObject, scope, value, identifier, member))
+        return {};
     return JSValue::encode(member);
 }
 
@@ -273,7 +345,8 @@ extern "C" EncodedJSValue SnapshotFormat__getByValue(JSGlobalObject* globalObjec
         return {};
     }
     JSValue member = getMember(globalObject, value, key);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (!didGetMember(globalObject, scope, value, key, member))
+        return {};
     return JSValue::encode(member);
 }
 

@@ -41,7 +41,7 @@ test("random", () => {
 
 ## Mock Function Properties
 
-`mock()` returns a new function decorated with additional properties. Its `length` is the `length` of the function you pass, or `0` if you pass none.
+`mock()` returns a new function decorated with additional properties. Its `length` is the `length` of the function you pass. It is `0` if you pass no function, or if that `length` is not a number.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { mock } from "bun:test";

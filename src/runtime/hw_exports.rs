@@ -73,9 +73,8 @@ pub(crate) fn remap_stack_frame_positions(
     // nothing else on that thread will.
     let on_js_thread = VirtualMachine::get_or_null().is_some();
     bun_core::output::Source::configure_thread();
-    // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
-    // the raw ptr because it forwards to the C++-side remapper.
-    unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
+    // SAFETY: `frames[..frames_count]` is a live C++ array that only this call touches.
+    vm.remap_stack_frame_positions(unsafe { bun_core::ffi::slice_mut(frames, frames_count) });
     if !on_js_thread {
         bun_core::output::flush();
     }
@@ -163,8 +162,7 @@ pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSV
 pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
     let vm = global.bun_vm().as_mut();
     if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
-        // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
-        unsafe { (*current_ipc).data().disconnect() };
+        current_ipc.data().disconnect();
     }
 }
 
@@ -194,7 +192,7 @@ mod sql_hooks {
         // an embedded field with stable address for the VM lifetime.
         unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
     }
-    unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
+    fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
         crate::jsc_hooks::timer_all().cast()
     }
     unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
@@ -226,7 +224,7 @@ mod sql_hooks {
         let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
         cache.get_or_create_opts(opts, err)
     }
-    unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
+    fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;
         match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
             Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
@@ -281,19 +279,12 @@ mod sql_hooks {
 pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
     let global = cx.global();
     let result = result.to_js();
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
+    bun_jsc::ConsoleObject::message_with_type_and_level(
+        bun_jsc::ConsoleObject::MessageType::Log,
+        bun_jsc::ConsoleObject::MessageLevel::Log,
+        global,
+        &[result],
+    );
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
@@ -301,19 +292,12 @@ pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLoca
 pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
     let global = cx.global();
     let result = result.to_js();
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
+    bun_jsc::ConsoleObject::message_with_type_and_level(
+        bun_jsc::ConsoleObject::MessageType::Log,
+        bun_jsc::ConsoleObject::MessageLevel::Log,
+        global,
+        &[result],
+    );
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }

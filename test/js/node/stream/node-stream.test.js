@@ -1773,6 +1773,18 @@ describe("fromList string chunk boundary (nodejs/node#61884)", () => {
   });
 });
 
+it.each([
+  ["base64", "YWJjZA=="],
+  ["base64url", "YWJjZA"],
+  ["hex", "61626364"],
+])("setEncoding(%j) after the end keeps what the decoder holds back", (encoding, expected) => {
+  const r = new Readable({ read() {} });
+  r.push(Buffer.from("abcd"));
+  r.push(null);
+  r.setEncoding(encoding);
+  expect(r.read()).toBe(expected);
+});
+
 describe("maybeReadMore is a no-op while a read is in flight (nodejs/node#60454)", () => {
   it("does not schedule a redundant _read while kReading is set", async () => {
     let reads = 0;

@@ -3,7 +3,7 @@
 // CHECK-NOT: ReturnCall
 // CHECK-LABEL: function {{*}}name="cast"
 // CHECK: [[castCall]] = Call
-// CHECK-NEXT: ReturnCall [[castCall]] casts=[{declared={type=undefined|null|number|string site=w{{*}}}}, {declared={type=number site=w{{*}}}}
+// CHECK-NEXT: ReturnCall [[castCall]] casts=[{declared={type=number}}]
 // CHECK-LABEL: function {{*}}name="comma"
 // CHECK: = Call {{*}}calleeName="h"
 // CHECK-NOT: ReturnCall

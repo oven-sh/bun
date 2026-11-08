@@ -1,0 +1,24 @@
+# -- source: row-of-stores-that-creates-nothing-tests-no-order-word.ts
+# declare function report(value: unknown): void;
+# class Exchange { awaitsClose = false; detachedFrom: object | null = null; flags = 0; }
+# interface Reply { exchange: Exchange; done: boolean; }
+# function Reply(this: Reply) { this.exchange = new Exchange(); this.done = false; }
+# function hidden(value: unknown): void { report(typeof value); }
+# function serve(owner: object): Reply {
+#   const reply = new (Reply as any)() as Reply;
+#   const exchange = reply.exchange;
+#   exchange.awaitsClose = true;
+#   hidden(owner);
+#   exchange.awaitsClose = false;
+#   exchange.detachedFrom = owner;
+#   reply.done = true;
+#   return reply;
+# }
+# for (let i = 0; i < 4; i++) { const reply = serve({ i }); report(reply); report(reply.exchange); report(JSON.stringify(reply) + Object.keys(reply.exchange).join()); }
+# -- end of source
+# f3 = serve
+# RUN: walk f3 mechanisms=all-Inlining
+# CHECK-LABEL: code f3:Body
+# CHECK: PutSlot {{*}}key="detachedFrom"
+# RUN(NONE): walk f3 mechanisms=all-Inlining
+# NONE-NOT: HasKeyOrder

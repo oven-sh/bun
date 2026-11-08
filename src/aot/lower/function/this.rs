@@ -1,8 +1,9 @@
-use bun_sema::bind::{FnOwner, ScopeId, ScopeKind};
+use bun_sema::bind::{FnOwner, FunctionFlags, ScopeId, ScopeKind};
 use bun_sema::hir::{FnId, FnKind};
+use bun_sema::module_format::evaluates_own_this;
 
-use crate::ir::generated::{BlockFrequency, HomeObjectKind, ModuleKind, RuntimeErrorKind};
-use crate::ir::{DeclaredType, TypeTable, ValueId};
+use crate::ir::generated::{HomeObjectKind, ModuleKind, RuntimeErrorKind};
+use crate::ir::{TypeTable, ValueId};
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, class};
 
@@ -15,13 +16,21 @@ enum LexicalOwner {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    /// The scope is that of a field's value, and the constructor evaluates the value itself.
     pub(in crate::lower) fn is_code_of_constructor(&self, scope: ScopeId) -> bool {
         let ScopeKind::FieldInitializer(member) = self.bound.scopes[scope.idx()].kind else {
             return false;
         };
-        let (settings, transpiled) = (self.compiled.settings, self.transpiled.as_ref());
-        class::is_evaluated_in_constructor(self.hir, self.bound, settings, transpiled, member)
+        let signed = &self.classes.fields_under_signed_members;
+        class::is_evaluated_in_constructor(self.hir, self.bound, self.compiled, signed, member)
+    }
+
+    pub(in crate::lower) fn find_scope_of_evaluating_constructor(
+        &self,
+        scope: ScopeId,
+    ) -> Option<ScopeId> {
+        let constructor = self.bound.constructor_of_field_value(self.hir, scope)?;
+        self.is_code_of_constructor(scope)
+            .then(|| self.bound.fns[constructor.idx()].scope)
     }
 }
 
@@ -54,17 +63,35 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `bun run` replaces the `this` of a file that has ES module syntax with `undefined`, in a CommonJS file with `import.meta` too.
     pub(crate) fn lower_this_expression(&mut self) -> ValueId {
         match self.find_lexical_owner() {
             LexicalOwner::File(_) if self.file.compiled.analysis.has_esm_syntax => {
-                self.builder.undefined()
+                self.builder.null()
             }
             _ => self.get_this(),
         }
     }
 
+    fn judges_say_that_this_is_read(&self) -> bool {
+        let LexicalOwner::Function(_, function) = self.find_lexical_owner() else {
+            return true;
+        };
+        let (hir, bound) = (self.file.hir, self.file.bound);
+        !matches!(
+            hir.runtime_function_kind(function),
+            FnKind::Decl | FnKind::Expr
+        ) || bound.fns[function.idx()].contains_this
+            || bound
+                .function_flags(function)
+                .contains(FunctionFlags::HAS_DIRECT_EVAL)
+            || evaluates_own_this(hir, function, self.file.compiled.analysis.jsx_takes_this())
+    }
+
     pub(crate) fn get_this(&mut self) -> ValueId {
+        debug_assert!(
+            self.judges_say_that_this_is_read(),
+            "the lowering takes `this` in a function that reads none by the judges of `this`"
+        );
         match self.find_lexical_owner() {
             LexicalOwner::Generated => self.get_entry_this(),
             LexicalOwner::File(scope) => match self.file.inputs.modules.kind(self.file.file) {
@@ -82,7 +109,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // The exports object of a CommonJS module, `undefined` in an ES module: what the loader passes, whatever the checker says.
     pub(in crate::lower) fn is_this_of_module(&self) -> bool {
         matches!(self.find_lexical_owner(), LexicalOwner::File(_))
     }
@@ -90,13 +116,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn get_derived_constructor_this(&mut self, owner: ScopeId) -> ValueId {
         let value = self.get_slot(owner, ScopeSlot::This);
         let split = self.split_on_type(value, TypeTable::ABSENT);
-        self.builder
-            .set_frequency(split.taken, BlockFrequency::Unlikely);
         self.builder.switch_to(split.taken);
-        let position = self.position();
-        self.set_position_to_last_recorded();
         self.emit_throw_runtime_error(RuntimeErrorKind::UninitializedThis, None);
-        self.set_position(position);
         self.builder.switch_to(split.not_taken);
         let binding = BindingRef::Slot(owner, ScopeSlot::This);
         if let Some(local) = self.scopes.find_local(binding) {
@@ -118,8 +139,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let old = self.get_slot(owner, ScopeSlot::This);
         let split = self.split_on_type(old, TypeTable::ABSENT);
-        self.builder
-            .set_frequency(split.not_taken, BlockFrequency::Unlikely);
         self.builder.switch_to(split.not_taken);
         self.emit_throw_runtime_error(RuntimeErrorKind::ThisAlreadyBound, None);
         self.builder.switch_to(split.taken);
@@ -168,21 +187,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             LexicalOwner::Generated | LexicalOwner::File(_) => {
                 (HomeObjectKind::Object, self.builder.undefined())
             }
-        }
-    }
-}
-
-// An arrow function reads the `this` of the function around it.
-pub(in crate::lower) fn find_this_position(
-    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
-) -> Option<DeclaredType> {
-    match lowering.find_lexical_owner() {
-        LexicalOwner::Generated => None,
-        LexicalOwner::File(scope)
-        | LexicalOwner::Function(scope, _)
-        | LexicalOwner::FieldInitializer(scope) => {
-            let binding = BindingRef::Slot(scope, ScopeSlot::This);
-            Some(lowering.file.stored_position(binding))
         }
     }
 }

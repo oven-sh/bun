@@ -1,0 +1,11 @@
+status: 0
+oracle: none
+---
+dict dict
+b'CCCCCCCC'
+dict dict
+b'RRRRRRRR'
+0 dict
+b'MMMMMMMM'
+bytes bytes b'S' True
+dict dict False 1

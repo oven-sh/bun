@@ -1,0 +1,14 @@
+status: 0
+oracle: none
+---
+(<class '__main__.T'>, <class 'object'>) 4 []
+AttributeError: 'T' object has no attribute 'raw' | AttributeError: 'T' object has no attribute 'value'
+None | None | {'raw': b'x', 'value': b'y'}
+raw TypeError: descriptor 'raw' for 'c_char_Array_4' objects doesn't apply to a 'T' object | TypeError: descriptor 'raw' for 'c_char_Array_4' objects doesn't apply to a 'T' object
+value TypeError: descriptor 'value' for 'c_char_Array_4' objects doesn't apply to a 'T' object | TypeError: descriptor 'value' for 'c_char_Array_4' objects doesn't apply to a 'T' object
+(<class '__main__.T'>, <class 'object'>) 16 []
+AttributeError: 'T' object has no attribute 'raw' | AttributeError: 'T' object has no attribute 'value'
+None | None | {'raw': b'x', 'value': b'y'}
+value TypeError: descriptor 'value' for 'c_wchar_Array_4' objects doesn't apply to a 'T' object | TypeError: descriptor 'value' for 'c_wchar_Array_4' objects doesn't apply to a 'T' object
+b'ab\x00\x00' b'ab'
+b'ab\x00\x00' b'ab' 4

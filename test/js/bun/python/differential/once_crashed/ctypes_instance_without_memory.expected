@@ -1,0 +1,47 @@
+status: 0
+oracle: none
+---
+p[0] | S
+    [('__del__', 'S', 8)]
+p[1] | S
+    [('__del__', 'S', 8)]
+p[2] | ValueError access through a pointer beyond the memory of the object it points into
+    []
+p[-1] | ValueError access through a pointer beyond the memory of the object it points into
+    []
+w.contents | ValueError access through a pointer beyond the memory of the object it points into
+    []
+w[0] | ValueError access through a pointer beyond the memory of the object it points into
+    []
+null.contents | ValueError NULL pointer access
+    []
+from_buffer, too small | ValueError Buffer size too small (8 instead of at least 400 bytes)
+    []
+from_buffer | S
+    [('__del__', 'S', 8)]
+from_buffer_copy, too small | ValueError Buffer size too small (8 instead of at least 400 bytes)
+    []
+K() | K
+    ['asked']
+array[1] | K
+    ['asked']
+pointer[1] | K
+    ['asked']
+pointer.contents | K
+    ['asked']
+from_buffer | K
+    ['asked']
+from_buffer_copy | K
+    ['asked']
+from_address | K
+    ['asked']
+a field | K
+    ['asked']
+in_dll | K
+    ['asked']
+MemoryError
+finalized []
+bytes ValueError NULL pointer access
+memoryview ValueError NULL pointer access
+value ValueError NULL pointer access
+END

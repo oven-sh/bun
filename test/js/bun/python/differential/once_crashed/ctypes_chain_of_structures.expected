@@ -1,0 +1,6 @@
+status: 0
+oracle: none
+---
+5 6
+too many initializers
+duplicate values for field 'a'

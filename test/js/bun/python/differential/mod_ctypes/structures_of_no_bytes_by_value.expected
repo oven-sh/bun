@@ -1,0 +1,23 @@
+status: 0
+script: b5236c78353b4c24
+---
+argument Empty | RuntimeError ffi_prep_cif failed
+second argument Empty | RuntimeError ffi_prep_cif failed
+declared Empty | RuntimeError ffi_prep_cif failed
+result Empty | RuntimeError ffi_prep_cif failed
+argument NoFields | RuntimeError ffi_prep_cif failed
+second argument NoFields | RuntimeError ffi_prep_cif failed
+declared NoFields | RuntimeError ffi_prep_cif failed
+result NoFields | RuntimeError ffi_prep_cif failed
+argument NoItems | RuntimeError ffi_prep_cif failed
+second argument NoItems | RuntimeError ffi_prep_cif failed
+declared NoItems | RuntimeError ffi_prep_cif failed
+result NoItems | RuntimeError ffi_prep_cif failed
+argument EmptyUnion | RuntimeError ffi_prep_cif failed
+second argument EmptyUnion | RuntimeError ffi_prep_cif failed
+declared EmptyUnion | RuntimeError ffi_prep_cif failed
+result EmptyUnion | RuntimeError ffi_prep_cif failed
+argument Holds | int 0
+second argument Holds | int 5
+declared Holds | int 6
+result Holds | Holds 

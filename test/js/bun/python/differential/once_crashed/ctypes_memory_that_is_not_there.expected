@@ -1,0 +1,96 @@
+status: 0
+oracle: none
+---
+--- a class is assigned that takes the instance for more than it is
+c_wchar_Array_16 64 64 | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | (16,) | 64 | AttributeError: 'c_wchar_Array_16' object has no attribute 'raw' | 0
+c_wchar_Array_4000 64 64 | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | (64,) | 64 | AttributeError: 'c_wchar_Array_4000' object has no attribute 'raw' | 0
+c_char_Array_64 64 64 | 64 | 64 | None | (64,) | 64 | 64 | 0
+c_char_Array_65 64 64 | 64 | 64 | None | (64,) | 64 | 64 | 0
+c_ubyte_Array_400000 64 64 | 64 | 64 | 0 | (64,) | 64 | AttributeError: 'c_ubyte_Array_400000' object has no attribute 'raw' | AttributeError: 'c_ubyte_Array_400000' object has no attribute 'value'
+c_ubyte_Array_1000_Array_1000 64 64 | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | (64,) | 64 | AttributeError: 'c_ubyte_Array_1000_Array_1000' object has no attribute 'raw' | AttributeError: 'c_ubyte_Array_1000_Array_1000' object has no attribute 'value'
+c_int_Array_16 64 64 | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | (16,) | 64 | AttributeError: 'c_int_Array_16' object has no attribute 'raw' | AttributeError: 'c_int_Array_16' object has no attribute 'value'
+c_int_Array_17 64 64 | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | (64,) | 64 | AttributeError: 'c_int_Array_17' object has no attribute 'raw' | AttributeError: 'c_int_Array_17' object has no attribute 'value'
+ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small | 1 | ArgumentError: argument 1: ValueError: the memory of the instance is too small
+0 | 8
+--- an array as the parameter of a callback: C passes a pointer
+4000 True False
+--- a class is given its fields by a hook, between the look at the buffer and the making of the instance
+from_buffer ValueError: Buffer size too small (8 instead of at least 100000 bytes) 100000
+from_buffer_copy ValueError: Buffer size too small (8 instead of at least 100000 bytes) 100000
+--- a result type is given its fields by a callback, while the call is under way
+None
+100004 100004
+--- what a pointer points into goes away while the value is converted
+ValueError: the memory that the pointer was made to point into is no longer there 0
+ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: operation forbidden on released memoryview object
+--- the conversion makes the pointer point elsewhere: the value goes there
+[1, 2] [9, 4]
+--- beyond what the pointer points into
+0 1 | None
+3 4 | None
+4 ValueError: access through a pointer beyond the memory of the object it points into | ValueError: access through a pointer beyond the memory of the object it points into
+-1 ValueError: access through a pointer beyond the memory of the object it points into | ValueError: access through a pointer beyond the memory of the object it points into
+1000 ValueError: access through a pointer beyond the memory of the object it points into | ValueError: access through a pointer beyond the memory of the object it points into
+2305843009213693952 ValueError: access through a pointer beyond the memory of the object it points into | ValueError: access through a pointer beyond the memory of the object it points into
+4611686018427387904 5 | None
+-4611686018427387904 5 | None
+9223372036854775807 ValueError: access through a pointer beyond the memory of the object it points into | ValueError: access through a pointer beyond the memory of the object it points into
+-9223372036854775808 5 | None
+slice(0, 8, None) b'abcdefgh'
+slice(0, 16, None) b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00'
+slice(0, 17, None) ValueError: access through a pointer beyond the memory of the object it points into
+slice(7, None, -1) ValueError: slice stop is required
+slice(-1, 3, None) ValueError: access through a pointer beyond the memory of the object it points into
+slice(4611686018427387904, 4611686018427387906, None) ValueError: access through a pointer beyond the memory of the object it points into
+slice(0, 4611686018427387904, None) ValueError: access through a pointer beyond the memory of the object it points into
+slice(0, 9223372036854775807, 4611686018427387904) ValueError: access through a pointer beyond the memory of the object it points into
+slice(5, 5, None) b''
+slice(8, 2, None) b''
+ValueError: NULL pointer access | ValueError: NULL pointer access | b'' | ValueError: NULL pointer access | ValueError: NULL pointer access | ValueError: NULL pointer access
+--- the type of the items is given its fields after the type of the array was made
+16 0 100000 | 0 | b'' | ValueError: the memory of the instance is too small | ValueError: the memory of the instance is too small
+--- of the pointers in a structure one has lost what it points into; the others have not
+7 | 16843009 | None | 16843009 | b'h' | b'hello'
+ValueError: the memory that the pointer was made to point into is no longer there | 16843009 | None | 16843009 | b'h' | b'hello'
+9 | 16843009 | None | 16843009 | b'h' | b'hello'
+--- many pointers in one structure: each is looked up under its own place
+286331153 | ValueError: access through a pointer beyond the memory of the object it points into
+ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | 286331153 | 286331153
+--- a pointer in something that was stored whole: what is kept for it came along
+inner.p 4 | ValueError: access through a pointer beyond the memory of the object it points into
+inners[1].p 4 | ValueError: access through a pointer beyond the memory of the object it points into
+outer.s.p 4 | ValueError: access through a pointer beyond the memory of the object it points into
+outer.a[2] 4 | ValueError: access through a pointer beyond the memory of the object it points into
+outers[1].s.p 4 | ValueError: access through a pointer beyond the memory of the object it points into
+outers[1].a[2] 4 | ValueError: access through a pointer beyond the memory of the object it points into
+inners[2].p 16843009 | memory of C
+outer.a[0] 16843009 | memory of C
+outers[1].a[0] 16843009 | memory of C
+inner.p ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+inners[1].p ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+outer.s.p ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+outer.a[2] ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+outers[1].s.p ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+outers[1].a[2] ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+inners[2].p 16843009 | memory of C
+outer.a[0] 16843009 | memory of C
+outers[1].a[0] 16843009 | memory of C
+--- what a place was once made to point into has gone; the pointer that is there now points to memory of C
+16843009
+16843009
+16843009 16843009
+16843009
+16843009
+--- it has gone, and is looked at by another way than it was stored by
+ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+--- a pointer type that points to no type: the pointer is looked at first
+ValueError: NULL pointer access | ValueError: NULL pointer access | ValueError: NULL pointer access
+TypeError: abstract class | TypeError: abstract class | TypeError: abstract class
+--- the memory has moved under a view that is good: an instance over an instance over a bytearray
+2004318071 | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | 2004318071
+--- a hook releases the view that from_buffer() has just made
+ctypes.cdata/buffer ValueError: operation forbidden on released memoryview object
+ctypes.cdata ValueError: operation forbidden on released memoryview object
+0

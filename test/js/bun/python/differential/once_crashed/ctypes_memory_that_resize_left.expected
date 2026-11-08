@@ -1,0 +1,19 @@
+status: 0
+oracle: none
+---
+--- a pointer from before, 64
+None 1094795585 ValueError: access through a pointer beyond the memory of the object it points into b'\x00\x00\x00\x00' 0
+None 1094795585 ValueError: access through a pointer beyond the memory of the object it points into b'\x00\x00\x00\x00' 0
+0 ValueError: access through a pointer beyond the memory of the object it points into
+--- an argument from before, 64
+b'\x00' 0
+--- a pointer from before, 4096
+None 1094795585 ValueError: access through a pointer beyond the memory of the object it points into b'\x00\x00\x00\x00' 0
+None 1094795585 ValueError: access through a pointer beyond the memory of the object it points into b'\x00\x00\x00\x00' 0
+0 ValueError: access through a pointer beyond the memory of the object it points into
+--- an argument from before, 4096
+b'\x00' 0
+--- what is kept is not for the program to see
+['PyCArrayType']
+--- step by step
+8187920 b'0123456789abcdef' b'0123456789abcdef' b'0123456789abcdef'

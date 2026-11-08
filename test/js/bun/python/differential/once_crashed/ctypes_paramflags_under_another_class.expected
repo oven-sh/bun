@@ -1,0 +1,29 @@
+status: 0
+oracle: none
+---
+(5,) | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples
+    TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | 3
+((),) | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples
+    TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | 3
+(('x',),) | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples
+    TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | 3
+((1.5,),) | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples
+    TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | 3
+([1],) | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples
+    TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | 3
+((1,),) | 3 | TypeError: not enough arguments | TypeError: not enough arguments
+    None | 3
+((1, 'n'),) | 3 | TypeError: required argument 'n' missing | 4
+    None | 3
+((1, 5),) | 3 | TypeError: required argument '5' missing | TypeError: required argument '5' missing
+    TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | 3
+((1, 'n', -7),) | 3 | 7 | 4
+    None | 3
+((2,),) | TypeError: c_int 'out' parameter must be passed as default value | TypeError: c_int 'out' parameter must be passed as default value | TypeError: c_int 'out' parameter must be passed as default value
+    TypeError: 'out' parameter 1 must be a pointer type, not c_int | 3
+((1180591620717411303424,),) | 3 | TypeError: not enough arguments | TypeError: not enough arguments
+    TypeError: paramflags must be a sequence of (int [,string [,value]]) tuples | 3
+((4, 'n', 3),) | ValueError: paramflag 4 not yet implemented | ValueError: paramflag 4 not yet implemented | ValueError: paramflag 4 not yet implemented
+    TypeError: paramflag value 4 not supported | 3
+((1,), (1,)) | 3 | TypeError: this function takes at least 1 argument (0 given) | TypeError: this function takes at least 1 argument (0 given)
+    ValueError: paramflags must have the same length as argtypes | 3

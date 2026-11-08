@@ -1,0 +1,27 @@
+status: 0
+oracle: none
+---
+c_int slice(9223372036854775807, -2, -1) MemoryError: 
+c_int slice(9223372036854775807, -9223372036854775808, -1) MemoryError: 
+c_int slice(-9223372036854775808, 9223372036854775807, 1) MemoryError: 
+c_int slice(-9223372036854775808, 9223372036854775807, 9223372036854775807) ValueError: access through a pointer beyond the memory of the object it points into
+c_int slice(9223372036854775807, -9223372036854775808, -9223372036854775807) ValueError: access through a pointer beyond the memory of the object it points into
+c_int slice(9223372036854775807, -9223372036854775808, -9223372036854775808) ValueError: access through a pointer beyond the memory of the object it points into
+c_int slice(0, 9223372036854775807, 1) MemoryError: 
+c_int slice(-2, 9223372036854775807, 1) MemoryError: 
+c_char slice(9223372036854775807, -2, -1) MemoryError: 
+c_char slice(9223372036854775807, -9223372036854775808, -1) MemoryError: 
+c_char slice(-9223372036854775808, 9223372036854775807, 1) MemoryError: 
+c_char slice(-9223372036854775808, 9223372036854775807, 9223372036854775807) MemoryError: 
+c_char slice(9223372036854775807, -9223372036854775808, -9223372036854775807) MemoryError: 
+c_char slice(9223372036854775807, -9223372036854775808, -9223372036854775808) MemoryError: 
+c_char slice(0, 9223372036854775807, 1) ValueError: access through a pointer beyond the memory of the object it points into
+c_char slice(-2, 9223372036854775807, 1) MemoryError: 
+c_wchar slice(9223372036854775807, -2, -1) MemoryError: 
+c_wchar slice(9223372036854775807, -9223372036854775808, -1) MemoryError: 
+c_wchar slice(-9223372036854775808, 9223372036854775807, 1) MemoryError: 
+c_wchar slice(-9223372036854775808, 9223372036854775807, 9223372036854775807) MemoryError: 
+c_wchar slice(9223372036854775807, -9223372036854775808, -9223372036854775807) MemoryError: 
+c_wchar slice(9223372036854775807, -9223372036854775808, -9223372036854775808) MemoryError: 
+c_wchar slice(0, 9223372036854775807, 1) MemoryError: 
+c_wchar slice(-2, 9223372036854775807, 1) MemoryError: 

@@ -1,0 +1,32 @@
+status: 0
+oracle: none
+---
+4 True
+True
+True
+0 4 5
+--- a structure that contains itself: it is refused, and has its fields all the same, as in CPython
+Structure AttributeError: Structure or union cannot contain itself 0 AttributeError: _fields_ is final
+RuntimeError: ffi_prep_cif failed
+RuntimeError: ffi_prep_cif failed
+4 4 0 0
+Structure AttributeError: Structure or union cannot contain itself 4 AttributeError: _fields_ is final
+RecursionError: maximum recursion depth exceeded
+RecursionError: maximum recursion depth exceeded
+8 16 RecursionError: maximum recursion depth exceeded RecursionError: maximum recursion depth exceeded
+Structure None 4 AttributeError: _fields_ is final
+0
+<__main__.S object
+8 8 0 0
+Union AttributeError: Structure or union cannot contain itself 0 AttributeError: _fields_ is final
+RuntimeError: ffi_prep_cif failed
+RuntimeError: ffi_prep_cif failed
+4 4 0 0
+Union AttributeError: Structure or union cannot contain itself 4 AttributeError: _fields_ is final
+RecursionError: maximum recursion depth exceeded
+RecursionError: maximum recursion depth exceeded
+4 16 RecursionError: maximum recursion depth exceeded RecursionError: maximum recursion depth exceeded
+Union None 4 AttributeError: _fields_ is final
+0
+<__main__.S object
+4 8 0 0

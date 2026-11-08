@@ -1,0 +1,40 @@
+status: 0
+oracle: none
+---
+NoInfo TypeError: _type_ must have storage info
+NoInfo sizeof TypeError: this type has no size
+NoInfo instance TypeError: abstract class
+NoInfo from_address TypeError: abstract class
+NoInfo from_buffer TypeError: abstract class
+NoInfo from_buffer_copy TypeError: abstract class
+NoInfo from_param TypeError: expected NoInfo instance instead of int
+NoInfo times TypeError: _type_ must have storage info
+NoInfo pointer TypeError: <class '__main__.NoInfo'> must have storage info
+NoInfo field TypeError: this type has no size
+NoInfo argtype NotImplementedError: ctypes: callback parameters that are not ctypes types are not supported on this platform yet
+NoInfo restype TypeError: abstract class
+NoInfo derived TypeError: _type_ must have storage info
+NoInfo again SystemError: StgInfo of 'NoInfo' is already initialized.
+NoInfo buffer_info TypeError: not a ctypes type or object
+NoInfo alignment TypeError: no alignment info
+TooLarge OverflowError: array too large
+TooLarge sizeof TypeError: this type has no size
+TooLarge instance TypeError: abstract class
+TooLarge from_address TypeError: abstract class
+TooLarge from_buffer TypeError: abstract class
+TooLarge from_buffer_copy TypeError: abstract class
+TooLarge from_param TypeError: expected TooLarge instance instead of int
+TooLarge times TypeError: _type_ must have storage info
+TooLarge pointer TypeError: <class '__main__.TooLarge'> must have storage info
+TooLarge field TypeError: this type has no size
+TooLarge argtype NotImplementedError: ctypes: callback parameters that are not ctypes types are not supported on this platform yet
+TooLarge restype TypeError: abstract class
+TooLarge derived OverflowError: array too large
+TooLarge again SystemError: StgInfo of 'TooLarge' is already initialized.
+TooLarge buffer_info TypeError: not a ctypes type or object
+TooLarge alignment TypeError: no alignment info
+TypeError: _type_ must have storage info
+TypeError: abstract class
+TypeError: abstract class
+['TypeError: this type has no size'] 6 3
+LP_c_char_Array_4611686018427387904 ('&(4611686018427387904)<c', 0, ())

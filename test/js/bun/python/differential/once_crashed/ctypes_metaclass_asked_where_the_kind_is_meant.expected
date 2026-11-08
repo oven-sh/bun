@@ -1,0 +1,14 @@
+status: 0
+oracle: none
+---
+1 TypeError: expected Byte instance, got NoneType
+TypeError: expected Byte instance, got NoneType
+TypeError: expected Byte instance, got NoneType
+TypeError: incompatible types, c_char_Array_3 instance instead of Byte instance
+{b'\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01'}
+b'b' False
+False
+TypeError: Incomplete 'out' parameter points to no type
+TypeError: Empty 'out' parameter points to no type
+TypeError: Empty 'out' parameter points to no type
+TypeError: NoArray 'out' parameter points to no type

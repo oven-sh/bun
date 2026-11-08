@@ -1,0 +1,9 @@
+status: 0
+oracle: none
+---
+the last of 32 | 0
+the last of 33 | 0
+the first and the last of 33 | (0, 0)
+two beyond | (0, 0)
+in, out beyond | CArgObject
+of both kinds | (0, 'CArgObject', 0)

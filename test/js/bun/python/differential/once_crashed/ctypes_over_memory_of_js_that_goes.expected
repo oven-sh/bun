@@ -1,0 +1,86 @@
+status: 0
+oracle: none
+---
+shrunk
+  0 | 7 | None | 4096 | 4096
+  0 | 1 | None | [0, 0, 0] | 'c_long'
+  1 | 1 | None
+  JSRangeError: RangeError: ArrayBuffer resize failed with new byte length 16 4096
+  0 | 1 | None | 4096 | 4096
+  0 | 1 | None | [0, 0, 0] | 'c_long'
+  1 | 1 | None
+  the pointer is left: JSRangeError: RangeError: ArrayBuffer resize failed with new byte length 16 4096 1
+  nothing is left: None 16
+grown
+  0 | 7 | None | 4096 | 4096
+  0 | 1 | None | [0, 0, 0] | 'c_long'
+  1 | 1 | None
+  None 8192
+  0 | 1 | None | 4096 | 4096
+  0 | 1 | None | [0, 0, 0] | 'c_long'
+  1 | 1 | None
+  the pointer is left: None 8192 1
+  nothing is left: None 8192
+handed on
+  0 | 7 | None | 4096 | 4096
+  0 | 1 | None | [0, 0, 0] | 'c_long'
+  1 | 1 | None
+  4096 4096
+  0 | 1 | None | 4096 | 4096
+  0 | 1 | None | [0, 0, 0] | 'c_long'
+  1 | 1 | None
+  the pointer is left: 4096 4096 1
+  nothing is left: 4096 0
+cloned away
+  0 | 7 | None | 4096 | 4096
+  0 | 1 | None | [0, 0, 0] | 'c_long'
+  1 | 1 | None
+  4096 4096
+  0 | 1 | None | 4096 | 4096
+  0 | 1 | None | [0, 0, 0] | 'c_long'
+  1 | 1 | None
+  the pointer is left: 4096 4096 1
+  nothing is left: 4096 0
+--- the view that holds the memory is released by hand: the memory stays for as long as anything made of the instance is there
+  7 | 7 | 7 | ValueError: operation forbidden on released memoryview object
+  '0x7' | None | 1
+  7 | 7 | 7 | ValueError: operation forbidden on released memoryview object
+  7 | None | 1 | 4096 4096
+  4096 0
+--- an mmap lets go of its memory as soon as nothing is exported, whatever is pinned: from then on it is gone
+  BufferError: cannot close exported pointers exist | 7
+  7 | 7 | 7
+  None
+  ValueError: operation forbidden on released memoryview object | ValueError: operation forbidden on released memoryview object | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: operation forbidden on released memoryview object
+  BufferError: mmap can't resize with extant buffers exported. | 7
+  7 | 7 | 7
+  None
+  ValueError: operation forbidden on released memoryview object | ValueError: operation forbidden on released memoryview object | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: operation forbidden on released memoryview object
+  BufferError: mmap can't resize with extant buffers exported. | 7
+  7 | 7 | 7
+  None
+  ValueError: operation forbidden on released memoryview object | ValueError: operation forbidden on released memoryview object | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: operation forbidden on released memoryview object
+  BufferError: cannot close exported pointers exist | 7
+  7 | 7 | 7
+  None
+  ValueError: operation forbidden on released memoryview object | ValueError: operation forbidden on released memoryview object | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: operation forbidden on released memoryview object
+--- the memory of a WebAssembly.Memory that grows is another buffer from then on
+  0 | 7 | None | 4096 | 4096
+  0 | 1 | None | [0, 0, 0] | 'c_long'
+  1 | 1 | None
+  1 0
+  BufferError: the ArrayBuffer was detached or shrunk | BufferError: the ArrayBuffer was detached or shrunk | BufferError: the ArrayBuffer was detached or shrunk | BufferError: the ArrayBuffer was detached or shrunk | BufferError: the ArrayBuffer was detached or shrunk
+  ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+  ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there | ValueError: the memory that the pointer was made to point into is no longer there
+--- an audit hook is told of from_buffer() before the memory is held
+  the hook, ctypes.cdata/buffer: None
+  BufferError: the ArrayBuffer was detached or shrunk 16
+  the hook, ctypes.cdata/buffer: None
+  BufferError: the ArrayBuffer was detached or shrunk 4095
+  the hook, ctypes.cdata/buffer: None
+  'c_long_Array_512' 4104
+  the hook, ctypes.cdata/buffer: 4096
+  BufferError: the ArrayBuffer was detached or shrunk 0
+--- the bytes of a small typed array lie with the array until its buffer is asked for, which from_buffer() does
+16 False b'AAAA' | 1094795585 | None | 1
+64 False b'AAAA' | 1094795585 | None | 1

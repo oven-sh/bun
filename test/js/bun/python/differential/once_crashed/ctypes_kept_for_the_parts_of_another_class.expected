@@ -1,0 +1,23 @@
+status: 0
+oracle: none
+---
+--- made without parts, given a class with two
+dict 2
+b'AAAAAAAA' b'BBBBBBBB' 3000 3000
+--- it kept something before
+b'CCCC' b'CCCCCCCC' b'BBBBBBBB' dict ['1', 'ffffffff']
+--- over a buffer: the view stays
+b'AAAAAAAA' b'BBBBBBBB' ['0', '1', 'ffffffff'] BufferError: Existing exports of data: object cannot be re-sized
+--- pointers
+1 2 ValueError: access through a pointer beyond the memory of the object it points into
+--- an array of them
+IndexError: invalid index IndexError: invalid index 0
+--- the other way: made with parts, given a class without
+b'CCCCCCCC' dict
+b'CCCCCCCC' b'BBBBBBBB'
+--- given the class of a pointer: what it points to, and what that keeps
+b'AAAAAAAA' b'BBBBBBBB' dict ['0', '1']
+--- the value of an instance that lies in another: a field of a class derived from a simple type is read as an instance
+dict 2
+b'AAAAAAAA' b'BBBBBBBB' 3000 3000
+b'AAAAAAAA' b'BBBBBBBB' dict

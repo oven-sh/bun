@@ -1,0 +1,12 @@
+status: 0
+oracle: none
+---
+1 StructParam_Type
+Large int
+1 StructParam_Type
+TooLarge int
+AttributeError Structure or union cannot contain itself
+800 0 0 800
+ValueError the memory of the instance is too small
+['AttributeError Structure or union cannot contain itself'] 800
+END

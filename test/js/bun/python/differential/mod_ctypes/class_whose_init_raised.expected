@@ -1,0 +1,75 @@
+status: 0
+script: f96cebf549bd4567
+---
+NoFlags TypeError: class must define _flags_ which must be an integer True
+NoFlags sizeof 8
+NoFlags instance 8
+NoFlags bool False
+NoFlags again SystemError: StgInfo of 'NoFlags' is already initialized.
+NoFlags times 24
+BadArgtypes TypeError: item 1 in _argtypes_ has no from_param method True
+BadArgtypes sizeof 8
+BadArgtypes instance 8
+BadArgtypes bool False
+BadArgtypes again SystemError: StgInfo of 'BadArgtypes' is already initialized.
+BadArgtypes times 24
+BadRestype TypeError: _restype_ must be a type, a callable, or None True
+BadRestype sizeof 8
+BadRestype instance 8
+BadRestype bool False
+BadRestype again SystemError: StgInfo of 'BadRestype' is already initialized.
+BadRestype times 24
+BadFields TypeError: this type has no size True
+BadFields sizeof 0
+BadFields instance 0
+BadFields bool True
+BadFields again SystemError: StgInfo of 'BadFields' is already initialized.
+BadFields times 0
+BadUnion TypeError: 'int' object is not iterable True
+BadUnion sizeof 0
+BadUnion instance 0
+BadUnion bool True
+BadUnion again SystemError: StgInfo of 'BadUnion' is already initialized.
+BadUnion times 0
+BadTarget TypeError: <class 'int'> must have storage info True
+BadTarget sizeof 8
+BadTarget instance TypeError: Cannot create instance: has no _type_
+BadTarget bool TypeError: Cannot create instance: has no _type_
+BadTarget again SystemError: StgInfo of 'BadTarget' is already initialized.
+BadCode AttributeError: class must define a '_type_' attribute which must be
+one of these characters: 'cbBhHiIlLdfuzZqQPOv?g',
+or one of these strings: 'Zf', 'Zd', 'Zg'. True
+BadCode sizeof TypeError: this type has no size
+BadCode instance TypeError: abstract class
+BadCode bool TypeError: abstract class
+BadCode again AttributeError: class must define a '_type_' attribute which must be
+one of these characters: 'cbBhHiIlLdfuzZqQPOv?g',
+or one of these strings: 'Zf', 'Zd', 'Zg'.
+BadCode times TypeError: _type_ must have storage info
+NoLength AttributeError: class must define a '_length_' attribute True
+NoLength sizeof TypeError: this type has no size
+NoLength instance TypeError: abstract class
+NoLength bool TypeError: abstract class
+NoLength again AttributeError: class must define a '_length_' attribute
+NoLength times TypeError: _type_ must have storage info
+NoType AttributeError: class must define a '_type_' attribute True
+NoType sizeof TypeError: this type has no size
+NoType instance TypeError: abstract class
+NoType bool TypeError: abstract class
+NoType again AttributeError: class must define a '_type_' attribute
+NoType times TypeError: _type_ must have storage info
+SystemError: StgInfo of 'c_int' is already initialized.
+SystemError: StgInfo of 'c_int_Array_3' is already initialized.
+SystemError: StgInfo of 'LP_c_int' is already initialized.
+SystemError: StgInfo of 'CFunctionType' is already initialized.
+SystemError: StgInfo of 'S' is already initialized.
+TypeError: Cannot create instance: has no _type_
+TypeError: abstract class
+TypeError: cast() argument 2 must be a pointer type, not _ctypes.Array
+TypeError: cast() argument 2 must be a pointer type, not _ctypes.Structure
+<CFunctionType objec
+RuntimeError: NULL stginfo unexpected
+RuntimeError: NULL stginfo unexpected
+TypeError: 'out' parameter 1 must be a pointer type, not _ctypes.Structure
+[0, 0]
+0

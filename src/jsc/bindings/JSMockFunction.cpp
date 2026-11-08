@@ -535,6 +535,8 @@ public:
 #endif
             if (auto* fn = dynamicDowncast<JSFunction>(value)) {
             nameToUse = fn->name(vm);
+            // name() makes an exception scope for a bound function, and lets no exception out.
+            scope.assertNoException();
             // `const f = () => {}` and `{ f: () => {} }` only have an ecmaName().
             if (nameToUse.isEmpty() && !fn->isHostFunction())
                 nameToUse = fn->jsExecutable()->ecmaName().string();

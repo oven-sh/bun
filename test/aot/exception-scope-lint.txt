@@ -120,7 +120,6 @@ BunPlugin.cpp | Zig::factoryOfCompiledMockThatWaits | unchecked-exit | JSC::JSOb
 BunPlugin.cpp | Zig::mockModule | pending-call | JSC::JSValue::toString > JSC::JSString::view
 BunPlugin.cpp | Zig::resolveModuleMockSpecifier | unchecked-exit | JSC::JSString::value > JSC::JSString::value
 JSFunctionParametersSource.cpp | Bun__JSFunction__compiledSource | pending-call | JSC::AOT::CompiledCallee::sourceText > JSC::JSString::value
-JSMockFunction.cpp | Bun::JSMockFunction::copyNameAndLength | pending-call | JSC::JSFunction::name > JSC::JSObject::get
 JSMockFunction.cpp | Bun::JSMockFunction::materializeInstances | pending-call | JSC::JSObject::getIndexQuickly > JSC::JSObject::getIndexQuickly
 JSMockFunction.cpp | Bun::JSMockFunction::materializeInstances | unchecked-exit | JSC::JSObject::getIndexQuickly > JSC::JSObject::getIndexQuickly
 JSMockFunction.cpp | spyOn | pending-call | JSC::AOT::isMemberTakenForConstant > Bun::getOwnPropertyStorage

@@ -4376,9 +4376,10 @@ if (isBun) {
 
       test.concurrent("vi: the automocks of a module", async () => {
         const { bunEnv, bunExe, tempDir } = require("harness");
+        // No export is a built-in: with `spy`, the automocker replaces the methods of a class in place, on its prototype.
         const source = `
           export function three(a, b, c) {}
-          export const native = Date;
+          export const proxy = new Proxy(function (a, b, c, d, e) {}, {});
           export class K { method(a, b, c, d) {} }
         `;
         using dir = tempDir("mock-length-module", {
@@ -4394,16 +4395,16 @@ if (isBun) {
 
             const own = mocked => Object.getOwnPropertyDescriptor(mocked, "length");
             const writable = value => ({ value, writable: true, enumerable: false, configurable: true });
-            const lengths = exports => [exports.three, exports.native, exports.K.prototype.method, new exports.K().method].map(own);
+            const lengths = exports => [exports.three, exports.proxy, exports.K.prototype.method, new exports.K().method].map(own);
 
             test("vi.mock(path)", () => {
-              expect(lengths(automocked)).toEqual([3, 7, 4, 0].map(writable));
+              expect(lengths(automocked)).toEqual([3, 5, 4, 0].map(writable));
             });
             test("vi.mock(path, { spy: true })", () => {
-              expect(lengths(spied)).toEqual([3, 7, 4, 4].map(writable));
+              expect(lengths(spied)).toEqual([3, 5, 4, 4].map(writable));
             });
             test("vi.importMock(path)", async () => {
-              expect(lengths(await vi.importMock("./imported.js"))).toEqual([3, 7, 4, 0].map(writable));
+              expect(lengths(await vi.importMock("./imported.js"))).toEqual([3, 5, 4, 0].map(writable));
             });
           `,
         });
@@ -4421,12 +4422,14 @@ if (isBun) {
 
       // Vitest 5.0.3 and Jest 30.5.2 wrote the snapshots in ./mock-fn-lengths, so each row there is what that runner gives.
       test.concurrent("the rows that Vitest and Jest wrote", async () => {
-        const { bunEnv, bunExe } = require("harness");
+        const { bunEnv, bunExe, tempDir } = require("harness");
+        // A copy, away from test/node_modules: with the "vitest" package in reach, a run with `--aot` takes three times as long.
+        using dir = tempDir("mock-fn-lengths", import.meta.dir + "/mock-fn-lengths");
         await using proc = Bun.spawn({
           cmd: [bunExe(), "test", "./vitest.fixture.ts", "./jest.fixture.js"],
           // With CI set, Bun writes no snapshot.
           env: { ...bunEnv, CI: "true" },
-          cwd: import.meta.dir + "/mock-fn-lengths",
+          cwd: String(dir),
           stdout: "pipe",
           stderr: "pipe",
         });

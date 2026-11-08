@@ -406,8 +406,8 @@ ${chain}
   test("a local that is `0` on one path and `-0` on the other is the first of the two, as it is for oxlint", async () => {
     const { diagnostics, files, exit } = await report(small.zeros);
     expect(diagnostics).toEqual(expected.reports.zeros.diagnostics);
-    // `first-is-minus.jsx` is linted and has no report: `1 / -0 > 0` is false.
-    expect(Object.keys(diagnostics)).toEqual(["equal.jsx", "first.jsx", "same.jsx"]);
+    // In `first-is-minus.jsx` the first zero is `-0`, and the test is `1 / zero < 0`.
+    expect(Object.keys(diagnostics)).toEqual(["equal.jsx", "first-is-minus.jsx", "first.jsx", "same.jsx"]);
     expect(files).toBe(expected.reports.zeros.files);
     expect(exit).toBe(1);
   });
@@ -628,8 +628,11 @@ describe.concurrent(
         ],
         "typescript.tsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
         // A local that is `0` on one path and `-0` on the other is the first of the two, as it is for the plugin,
-        // whose compiler is older than facebook/react#37995. `zeros/first-is-minus.jsx` has no report.
+        // whose compiler is older than facebook/react#37995.
         "zeros/equal.jsx": ["react-hooks/set-state-in-render 8:19-8:27 Error: Cannot call setState during render"],
+        "zeros/first-is-minus.jsx": [
+          "react-hooks/set-state-in-render 8:21-8:29 Error: Cannot call setState during render",
+        ],
         "zeros/first.jsx": ["react-hooks/set-state-in-render 8:21-8:29 Error: Cannot call setState during render"],
         "zeros/same.jsx": ["react-hooks/set-state-in-render 8:21-8:29 Error: Cannot call setState during render"],
       });

@@ -266,7 +266,7 @@ const zeros: Files = {
   "same.jsx": zeroOnEachPath("0", "0", "1 / zero > 0"),
   "equal.jsx": zeroOnEachPath("0", "-0", "zero === 0"),
   "first.jsx": zeroOnEachPath("0", "-0", "1 / zero > 0"),
-  "first-is-minus.jsx": zeroOnEachPath("-0", "0", "1 / zero > 0"),
+  "first-is-minus.jsx": zeroOnEachPath("-0", "0", "1 / zero < 0"),
 };
 
 /** These aren't React's hooks, despite their names. */

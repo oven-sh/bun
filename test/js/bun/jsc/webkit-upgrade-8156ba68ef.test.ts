@@ -4,15 +4,72 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import vm from "node:vm";
 
-// Coverage for the WebKit 1d4bed41ac sync. The first three cases pin an observable difference between the old and the
-// new JavaScriptCore. The others pin what had to stay the same in code that the sync rewrote: the microtask
-// dispatcher, the cache of proxy traps, a store through a proxy onto a property with a native setter, Object.freeze()
-// and Object.seal() of arrays, the string cache of JSON.parse, calls with a spread argument, and what
-// `bun build --bytecode` makes of such a call.
+// Coverage for the WebKit 8156ba68ef sync. The first six cases, and the one about SharedArrayBuffer, pin an observable
+// difference between the old and the new JavaScriptCore. The others pin what had to stay the same in code that the
+// sync rewrote: the microtask dispatcher, the cache of proxy traps, a store through a proxy onto a property with a
+// native setter, Object.freeze() and Object.seal() of arrays, the string cache of JSON.parse, calls with a spread
+// argument, what `bun build --bytecode` makes of such a call, the fast paths of JSON.stringify, Float16 numbers in
+// compiled code, and the hash tables behind sparse arrays, maps and sets.
 // The sources that depend on how JavaScriptCore compiles run in a process of their own, so that Bun's transpiler and
 // the other tests leave them alone.
 
-describe.concurrent("WebKit 1d4bed41ac upgrade", () => {
+describe.concurrent("WebKit 8156ba68ef upgrade", () => {
+  // The default value of a parameter named a variable of a function two levels out, and the body declared the same
+  // name. The name was looked for no further than the body (419e6e4204), so the call threw a ReferenceError.
+  test("the default value of a parameter reads an outer variable that the body declares again", () => {
+    const run = new Function(`
+      function outer() {
+        var x = "outer";
+        function middle() {
+          function inner(a = x) { var x = "body"; return a; }
+          return inner();
+        }
+        return middle();
+      }
+      var y = "top";
+      const throughArrows = (function () {
+        return (function () {
+          return ((a = () => y) => { var y = "body"; return a(); })();
+        })();
+      })();
+      return [outer(), throughArrows];
+    `);
+    expect(run()).toEqual(["outer", "top"]);
+  });
+
+  // A typed array in the prototype chain decides a store to an index, whoever the receiver is, and ignores an index
+  // that it does not have (890b90dce3). The receiver got an own property before.
+  test("a store to an index that a typed array in the prototype chain does not have is ignored", () => {
+    const object = Object.create(new Uint8Array(4));
+    object[10] = 99;
+    expect(Reflect.set(object, 11, 1)).toBe(true);
+    (function (this: any) {
+      "use strict";
+      this[12] = 1;
+    }).call(object);
+    expect({ keys: Reflect.ownKeys(object), read: object[10] }).toEqual({ keys: [], read: undefined });
+
+    // An index that the typed array has becomes a property of the receiver, as before.
+    const prototype = new Uint8Array(4);
+    const inside = Object.create(prototype);
+    inside[1] = 7;
+    expect({ keys: Reflect.ownKeys(inside), read: inside[1], ofPrototype: prototype[1] }).toEqual({
+      keys: ["1"],
+      read: 7,
+      ofPrototype: 0,
+    });
+  });
+
+  // new WebAssembly.Suspending(f) marks an import and is no function (a2bc1ad990). It was a function, and a call of
+  // it from JavaScript threw a SuspendError.
+  test("a WebAssembly.Suspending object is not callable", () => {
+    const Suspending = (WebAssembly as any).Suspending;
+    const marker = new Suspending(() => 1);
+    expect(typeof marker).toBe("object");
+    expect(marker instanceof Suspending).toBe(true);
+    expect(() => marker()).toThrow(TypeError);
+  });
+
   // The replacer's first result is kept while the other matches run. Its characters were read again at the end with
   // the width they had at the start (61b3aecb0c). A property write in between can swap them for an atom of the other
   // width. The result was then the 16-bit characters read as bytes.
@@ -1147,5 +1204,237 @@ describe.concurrent("WebKit 1d4bed41ac upgrade", () => {
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(await Bun.file(path.join(String(dir), "out", "entry.js.jsc")).exists()).toBe(true);
     expect(await run(path.join("out", "entry.js"))).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  });
+
+  // Options::useSharedArrayBuffer is Options::alwaysUseSharedArrayBuffer now (9e3f76240a), so the name of the
+  // environment variable changed with it.
+  test("BUN_JSC_alwaysUseSharedArrayBuffer=0 takes SharedArrayBuffer away", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log(typeof SharedArrayBuffer)"],
+      env: { ...bunEnv, BUN_JSC_alwaysUseSharedArrayBuffer: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "undefined\n", exitCode: 0 });
+    expect(typeof SharedArrayBuffer).toBe("function");
+  });
+});
+
+// These keep the thread for a while in a debug build, so they run one at a time, after the tests above.
+describe("WebKit 8156ba68ef upgrade, in loops", () => {
+  // JSON.stringify keeps the keys of the structures it has written and copies them for the next object of the same
+  // structure (aeca1a989f). That code is new beside Bun's own fast paths. A replacer function takes the general path,
+  // which must write the same text.
+  test("JSON.stringify writes lists of objects of one shape as the general path does", () => {
+    let seed = 20261108;
+    const random = () => {
+      seed = (Math.imul(seed, 1103515245) + 12345) >>> 0;
+      return seed / 4294967296;
+    };
+    const pick = <T>(list: T[]): T => list[(random() * list.length) | 0];
+    const names = ["id", "name", "value", "x", "y", "kind", "flag", "list", "k9", "aLongerNameOfAProperty", 'q"uote'];
+    const strings = [
+      "",
+      "a",
+      "plain",
+      'with "quotes"',
+      "line\nbreak",
+      "caf\u00e9",
+      "\u4e2d\u6587",
+      "\ud800",
+      "y".repeat(300),
+    ];
+    const leaf = () =>
+      pick<() => unknown>([
+        () => (random() * 2000 - 1000) | 0,
+        () => random() * 1e6,
+        () => pick([NaN, -0, 1e21, 1e-7, 2147483648]),
+        () => random() < 0.5,
+        () => null,
+        () => undefined,
+        () => pick(strings),
+        () => "s" + ((random() * 100) | 0),
+      ])();
+    const shape = (count: number) => {
+      const keys: string[] = [];
+      while (keys.length < count) {
+        const key = pick(names);
+        if (!keys.includes(key)) keys.push(key);
+      }
+      return keys;
+    };
+    const objectOf = (keys: string[], depth: number) => {
+      const object: Record<string, unknown> = {};
+      for (const key of keys) object[key] = depth > 0 && random() < 0.15 ? listOf(depth - 1, 6) : leaf();
+      return object;
+    };
+    const listOf = (depth: number, longest: number): unknown[] => {
+      const shapes = [shape(1 + ((random() * 7) | 0)), shape((random() * 4) | 0)];
+      const list: unknown[] = [];
+      const length = (random() * longest) | 0;
+      for (let i = 0; i < length; i++)
+        list.push(random() < 0.85 ? objectOf(shapes[0], depth) : objectOf(shapes[1], depth));
+      return list;
+    };
+    const identity = (_key: string, value: unknown) => value;
+    let longest = 0;
+    for (let round = 0; round < 16; round++) {
+      // Every eighth list outgrows the buffer on the stack.
+      const value = listOf(2, round % 8 === 7 ? 150 : 8);
+      const gap = pick([undefined, undefined, 2, "\t"]);
+      const text = JSON.stringify(value, null, gap);
+      expect(text).toBe(JSON.stringify(value, identity, gap));
+      longest = Math.max(longest, text.length);
+    }
+    expect(longest).toBeGreaterThan(8192);
+
+    // A member that is undefined is left out, also when it is the first and when it is the only one.
+    const members = [
+      { a: 1, b: 2 },
+      { a: undefined, b: 3 },
+      { a: 4, b: undefined },
+      { a: undefined, b: undefined },
+    ];
+    expect(JSON.stringify(members)).toBe('[{"a":1,"b":2},{"b":3},{"a":4},{}]');
+    expect(JSON.stringify(members, null, 1)).toBe(
+      '[\n {\n  "a": 1,\n  "b": 2\n },\n {\n  "b": 3\n },\n {\n  "a": 4\n },\n {}\n]',
+    );
+
+    // Two results of 8-bit characters that are longer than 128 KB, then one with a 16-bit character near its end, then
+    // 8-bit again.
+    const rows = Array.from({ length: 3000 }, (_, i) => ({ id: i, name: "row" + i, tags: ["a", "b"] }));
+    const row = (i: number, name: string) => `{"id":${i},"name":"${name}","tags":["a","b"]}`;
+    const plain = JSON.stringify(rows);
+    expect(plain.length).toBeGreaterThan(128 * 1024);
+    expect(plain.startsWith("[" + row(0, "row0") + "," + row(1, "row1") + ",")).toBe(true);
+    expect(plain.endsWith("," + row(2999, "row2999") + "]")).toBe(true);
+    expect(JSON.stringify(rows) === plain).toBe(true);
+    rows[2990].name = "\u4e2d\u6587";
+    const wide = JSON.stringify(rows);
+    expect(wide.length).toBe(plain.length - "row2990".length + 2);
+    expect(wide.slice(wide.indexOf(row(2989, "row2989")))).toBe(
+      Array.from({ length: 11 }, (_, i) => row(2989 + i, i === 1 ? "\u4e2d\u6587" : "row" + (2989 + i))).join(",") +
+        "]",
+    );
+    rows[2990].name = "row2990";
+    expect(JSON.stringify(rows) === plain).toBe(true);
+  });
+
+  // x86-64 converts Float16 numbers with F16C instructions now (60af4b364c), where the CPU has them. The loops run
+  // often enough for the optimizing compilers.
+  test("Float16Array and DataView round to the nearest Float16 in compiled code", () => {
+    const values = [
+      0,
+      -0,
+      1.5,
+      0.1,
+      -0.1,
+      65504,
+      65519.99,
+      65520,
+      -65520,
+      5.960464477539063e-8,
+      2.980232238769531e-8,
+      1e-10,
+      NaN,
+      Infinity,
+    ];
+    const store = new Function(
+      "array",
+      "values",
+      `
+      for (let i = 0; i < values.length; i++) array[i] = values[i];
+      let sum = 0;
+      for (let i = 0; i < values.length; i++) sum += array[i] === array[i] ? 1 : 0;
+      return sum;
+    `,
+    );
+    const view = new Function(
+      "data",
+      "values",
+      `
+      for (let i = 0; i < values.length; i++) data.setFloat16(i * 2, values[i], true);
+      let same = 0;
+      for (let i = 0; i < values.length; i++) same += Object.is(data.getFloat16(i * 2, true), Math.f16round(values[i])) ? 1 : 0;
+      return same;
+    `,
+    );
+    const array = new Float16Array(values.length);
+    const data = new DataView(new ArrayBuffer(values.length * 2));
+    for (let i = 0; i < 6000; i++) {
+      store(array, values);
+      view(data, values);
+    }
+    expect(store(array, values)).toBe(values.length - 1);
+    expect(view(data, values)).toBe(values.length);
+    expect(Array.from(array)).toEqual(values.map(value => Math.f16round(value)));
+    expect(Array.from(array).slice(0, 11)).toEqual([
+      0,
+      -0,
+      1.5,
+      0.0999755859375,
+      -0.0999755859375,
+      65504,
+      65504,
+      Infinity,
+      -Infinity,
+      5.960464477539063e-8,
+      0,
+    ]);
+  });
+
+  // WTF::HashTable keeps a status byte for each slot and no empty or deleted values in the slots (53bedf6450).
+  // Bun's engine grows such a table in its own way where memory may run out, and reads the table of a sparse array
+  // without a call in compiled programs.
+  test("sparse arrays, maps, sets and weak maps keep their members through growth and deletes", () => {
+    const sparse: number[] = [];
+    const indices: number[] = [];
+    for (let i = 0; i < 600; i++) {
+      const index = 100000 + i * 7919;
+      sparse[index] = i;
+      indices.push(index);
+    }
+    for (let i = 0; i < indices.length; i += 3) delete sparse[indices[i]];
+    for (let i = 0; i < 100; i++) sparse[4000000000 + i] = -i;
+    let sum = 0;
+    for (let i = 0; i < indices.length; i++)
+      sum += i % 3 ? (sparse[indices[i]] === i ? 1 : 0) : sparse[indices[i]] === undefined ? 1 : 0;
+    expect(sum).toBe(indices.length);
+    expect(Object.keys(sparse).length).toBe(400 + 100);
+    expect(sparse[4000000099]).toBe(-99);
+    expect(sparse[99999]).toBeUndefined();
+
+    const map = new Map<unknown, number>();
+    const set = new Set<unknown>();
+    const weak = new WeakMap<object, number>();
+    const keys: object[] = [];
+    const count = 1000;
+    for (let i = 0; i < count; i++) {
+      const key = { i };
+      keys.push(key);
+      map.set("k" + i, i);
+      map.set(i + 0.5, i);
+      set.add(key);
+      weak.set(key, i);
+    }
+    for (let i = 0; i < count; i += 2) {
+      map.delete("k" + i);
+      set.delete(keys[i]);
+      weak.delete(keys[i]);
+    }
+    Bun.gc(true);
+    expect([map.size, set.size]).toEqual([count * 1.5, count / 2]);
+    let found = 0;
+    for (let i = 1; i < count; i += 2)
+      found += map.get("k" + i) === i && set.has(keys[i]) && weak.get(keys[i]) === i ? 1 : 0;
+    for (let i = 0; i < count; i += 2) found += !map.has("k" + i) && !set.has(keys[i]) && !weak.has(keys[i]) ? 1 : 0;
+    expect(found).toBe(count);
+
+    // Property names go through the table of atoms, symbols through the registry.
+    const names: Record<string, number> = {};
+    for (let i = 0; i < 3000; i++) names["name" + i] = i;
+    expect(names.name2999 + Object.keys(names).length).toBe(5999);
+    expect(Symbol.for("webkit-upgrade-8156ba68ef")).toBe(Symbol.for("webkit-upgrade-" + "8156ba68ef"));
   });
 });

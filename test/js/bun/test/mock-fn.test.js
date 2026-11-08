@@ -2323,13 +2323,22 @@ describe("spyOn", () => {
 
   test("process.env converts the value to a string, as an assignment does", () => {
     process.env.REPLACE_PROPERTY_TEST = "original";
-    const replaced = jest.replaceProperty(process.env, "REPLACE_PROPERTY_TEST", 1);
-    expect(process.env.REPLACE_PROPERTY_TEST).toBe("1");
-    replaced.replaceValue(true);
-    expect(process.env.REPLACE_PROPERTY_TEST).toBe("true");
-    replaced.restore();
-    expect(process.env.REPLACE_PROPERTY_TEST).toBe("original");
-    delete process.env.REPLACE_PROPERTY_TEST;
+    try {
+      const replaced = jest.replaceProperty(process.env, "REPLACE_PROPERTY_TEST", 1);
+      expect(process.env.REPLACE_PROPERTY_TEST).toBe("1");
+      replaced.replaceValue(true);
+      expect(process.env.REPLACE_PROPERTY_TEST).toBe("true");
+      replaced.restore();
+      expect(process.env.REPLACE_PROPERTY_TEST).toBe("original");
+    } finally {
+      delete process.env.REPLACE_PROPERTY_TEST;
+    }
+  });
+
+  test("refuses to add a property to an object that is not extensible", () => {
+    const target = Object.freeze(Object.create({ value: 1 }));
+    expect(() => jest.replaceProperty(target, "value", 2)).toThrow(TypeError);
+    expect(Object.hasOwn(target, "value")).toBe(false);
   });
 
   test("restore and replaceValue work when destructured", () => {
@@ -2434,6 +2443,19 @@ describe("spyOn", () => {
     expect(target.value).toBe(1);
   });
 
+  test("restore on a restored handle puts back the original of a later replacement of the same property", () => {
+    // As in a describe() with afterEach(() => replaced.restore()), whose tests call jest.replaceProperty() again.
+    const target = { value: 1 };
+    const replaced = jest.replaceProperty(target, "value", 2);
+    replaced.restore();
+    const later = jest.replaceProperty(target, "value", 3);
+    expect(later).not.toBe(replaced);
+    replaced.restore();
+    expect(target.value).toBe(1);
+    later.restore();
+    expect(target.value).toBe(1);
+  });
+
   test("a symbol key", () => {
     const key = Symbol("value");
     const target = { [key]: 1 };
@@ -2526,24 +2548,43 @@ describe("spyOn", () => {
       );
     });
 
-    test("import.meta.env", () => {
-      expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV]).toEqual(["test", false, true]);
-      const mode = jest.replaceProperty(import.meta.env, "MODE", "production");
-      const dev = jest.replaceProperty(import.meta.env, "DEV", false);
-      expect([import.meta.env.MODE, process.env.MODE, import.meta.env.DEV]).toEqual([
-        "production",
-        "production",
-        false,
-      ]);
-      mode.restore();
-      dev.restore();
-      expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV, "DEV" in process.env]).toEqual([
-        "test",
-        false,
-        true,
-        false,
-      ]);
-    });
+    test.skipIf("MODE" in process.env || "DEV" in process.env || "PROD" in process.env || "TZ" in process.env)(
+      "import.meta.env",
+      () => {
+        expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV]).toEqual(["test", false, true]);
+        const mode = jest.replaceProperty(import.meta.env, "MODE", "production");
+        const dev = jest.replaceProperty(import.meta.env, "DEV", false);
+        expect([import.meta.env.MODE, process.env.MODE, import.meta.env.DEV]).toEqual([
+          "production",
+          "production",
+          false,
+        ]);
+        mode.restore();
+        dev.restore();
+        expect([import.meta.env.MODE, "MODE" in process.env, import.meta.env.DEV, "DEV" in process.env]).toEqual([
+          "test",
+          false,
+          true,
+          false,
+        ]);
+        // A variable that is set keeps the string it had, not the boolean import.meta.env shows.
+        process.env.PROD = "0";
+        try {
+          const prod = jest.replaceProperty(import.meta.env, "PROD", true);
+          expect([import.meta.env.PROD, process.env.PROD]).toEqual([true, "1"]);
+          prod.restore();
+          expect([import.meta.env.PROD, process.env.PROD]).toEqual([false, "0"]);
+        } finally {
+          delete process.env.PROD;
+        }
+        // TZ is an own accessor of process.env while it is not set. The restore deletes it, which puts the zone back.
+        const zone = new Date(0).getTimezoneOffset();
+        const tz = jest.replaceProperty(import.meta.env, "TZ", "Asia/Tokyo");
+        expect(new Date(0).getTimezoneOffset()).toBe(-540);
+        tz.restore();
+        expect([new Date(0).getTimezoneOffset(), process.env.TZ]).toEqual([zone, undefined]);
+      },
+    );
 
     test("through a Proxy", () => {
       const target = { value: 1 };
@@ -2553,6 +2594,8 @@ describe("spyOn", () => {
           traps.push(["defineProperty", key]);
           return Reflect.defineProperty(target, key, descriptor);
         },
+        // The restore defines what the target holds, not what the trap answers.
+        get: () => 99,
       });
       const replaced = jest.replaceProperty(proxy, "value", 2);
       expect(target.value).toBe(2);
@@ -2562,6 +2605,25 @@ describe("spyOn", () => {
         ["defineProperty", "value"],
         ["defineProperty", "value"],
       ]);
+      // A `has` trap that claims a key no descriptor describes.
+      expect(() => jest.replaceProperty(new Proxy({}, { has: () => true }), "value", 2)).toThrow(
+        "Property `value` does not exist in the provided object",
+      );
+      // The write runs a trap that replaces other properties, which moves the records around.
+      const objects = Array.from({ length: 20 }, () => ({ value: 1 }));
+      const busy = new Proxy(
+        { value: 1 },
+        {
+          defineProperty(target, key, descriptor) {
+            for (const object of objects) jest.replaceProperty(object, "value", 2);
+            return Reflect.defineProperty(target, key, descriptor);
+          },
+        },
+      );
+      const first = jest.replaceProperty(busy, "value", 2);
+      expect(jest.replaceProperty(busy, "value", 3)).toBe(first);
+      jest.restoreAllMocks();
+      expect([busy.value, ...objects.map(object => object.value)]).toEqual(Array(21).fill(1));
     });
   }
 });

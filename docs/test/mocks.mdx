@@ -289,7 +289,7 @@ test("replace a property", () => {
 });
 ```
 
-As in Jest, the property must exist and be configurable. For a method use `spyOn(object, "method")`, and for a getter or setter use `spyOn(object, "property", "get")` or `"set"`. Unlike Jest, Bun also replaces a property that is not writable, and keeps its attributes.
+As in Jest, the property must exist and be configurable. For a method use `spyOn(object, "method")`, and for a getter or setter use `spyOn(object, "property", "get")` or `"set"`. Unlike Jest, Bun also replaces a property that is not writable, and keeps its attributes, and it replaces an export of a module namespace object, as `spyOn()` does.
 
 ### Classes
 

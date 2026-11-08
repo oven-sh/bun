@@ -276,15 +276,22 @@ export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boole
       if (value) {
         stream.push(value);
       } else {
+        // Every read in flight resolves at EOF. The first one ends the stream.
+        if (stream_reachedEof) return;
         // EOF. Nothing is left to read, so release the native reader before
         // push(null) runs user 'readable' listeners; the process must be able
         // to exit even if one of them throws or never drains the buffer.
         stream_reachedEof = true;
         disown();
+        // A flowing stream reads by itself. A 'data' consumer that called pause() ends it with resume() or read().
+        const state = stream._readableState;
+        const endsItself = state.flowing === true || (state.paused && !state.readableListening);
         // push(null) instead of emitting 'end' by hand so read(n) can still
         // return the buffered < n byte remainder and 'end'/'readableEnded'
         // come from the stream machinery once the buffer drains.
         stream.push(null);
+        // A net.Socket stdin: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L231-L232
+        if (!endsItself && (isTTY || fdType !== BunProcessStdinFdType.file)) originalRead.$call(stream, 0);
       }
     } catch (err) {
       if (value) triggerRead.$call(stream, undefined);

@@ -4204,6 +4204,46 @@ describe.concurrent("what onLoad returns for the original of a mocked module", (
     expect(exitCode).toBe(0);
   });
 
+  // With --isolate, a later file gets a module of an earlier file from a cache when the key and the contents are the same.
+  it.each([[["onload.test.ts", "module.test.ts"]], [["module.test.ts", "onload.test.ts"]]])(
+    "is another module than the one build.module() makes for the same key %j",
+    async order => {
+      const files = {
+        "k.js": "",
+        "onload.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          Bun.plugin({
+            name: "onload",
+            setup(build) {
+              build.onLoad({ filter: /k\\.js$/ }, () => ({ contents: "export const stack = new Error().stack;", loader: "js" }));
+            },
+          });
+          vi.mock("./k.js", () => ({ stack: "mock" }));
+          test("the original that onLoad serves", async () => {
+            expect((await vi.importActual("./k.js")).stack).toMatch(/[\\\\/]k\\.js:1:\\d+/);
+          });
+        `,
+        "module.test.ts": `
+          import { expect, test } from "bun:test";
+          import { join } from "node:path";
+          const id = join(import.meta.dir, "k.js") + "?actual";
+          Bun.plugin({
+            name: "module",
+            setup(build) {
+              build.module(id, () => ({ contents: "export const stack = new Error().stack;", loader: "js" }));
+            },
+          });
+          test("a module of build.module() with that key and those contents", async () => {
+            expect((await import(id)).stack).toMatch(/[\\\\/]k\\.js\\?actual:1:\\d+/);
+          });
+        `,
+      };
+      const { stderr, exitCode } = await run(files, ["test", "--isolate", ...order.map(file => "./" + file)]);
+      expect(stderr).toContain(" 2 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // onLoad is shown "t.ts" for an import of "./t.ts?actual" too: the text of the key can't say who wrote it.
   it("is named by the path onLoad was shown, and by nothing else", async () => {
     const files = {

@@ -2120,8 +2120,7 @@ pub mod printer {
     }
 
     /// Writes `text` in ASCII: an escape stands for each code point that is not printed as it is.
-    // Each caller names its kind, so the loop is compiled for that kind alone.
-    #[inline(always)]
+    #[inline(always)] // Each caller names its kind, so the loop is compiled for that kind alone.
     pub fn write_raw_text_ascii<W: PrinterWriter + ?Sized>(
         text: &[u8],
         start: usize,

@@ -2793,7 +2793,8 @@ mod pattern {
             }
         }
 
-        /// Returns true if this negated pattern could match a path below the directory `dir_rel`.
+        /// Returns true if this negated pattern could match below the directory `dir_rel`. Out of line: the pattern loop seldom calls it.
+        #[inline(never)]
         pub(super) fn reaches_below(&self, dir_rel: &[u8]) -> bool {
             // Without a slash it un-ignores entries of the directories that are walked, and opens none.
             if !self.flags.contains(PatternFlags::REL_PATH) {

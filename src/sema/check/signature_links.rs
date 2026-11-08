@@ -147,11 +147,11 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn return_type_source(&self, sig: SigId) -> ReturnTypeSource {
         match *self.types().sig(sig) {
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ret: TypeId::UNRESOLVED,
                 ref of,
                 ..
-            } if of.len() > 1 => ReturnTypeSource::Signature,
+            }) if of.len() > 1 => ReturnTypeSource::Signature,
             SigData::WithReturn {
                 sig: of,
                 ret: TypeId::UNRESOLVED,
@@ -173,7 +173,7 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(source, ReturnTypeSource::Other) {
             return self.derive_return_type(sig);
         }
-        let is_idle = |c: &Self, q: Query| !(c.may_be_in_flight(q) && c.stack.contains(&q));
+        let is_idle = |c: &Self, q: Query| !c.is_in_flight(q);
         let (ty, stored) = self.derive_settled(
             |c| c.derive_return_type(sig),
             |c, _| match source {

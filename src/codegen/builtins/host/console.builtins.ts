@@ -5,7 +5,7 @@ const terminal = ["ExternalState"];
 const formatted = b.printedByFormatter("colors", "depth");
 
 // console.table makes a row of each value, of a function too, and a column of each of its keys.
-const printing = (withoutCode: b.TableType, values: readonly b.UseSpec[] = [formatted, b.functionsOnlyNamed]) =>
+const printing = (withoutCode: b.TableType, values: readonly b.UseSpec[] = [formatted]) =>
   [
     {
       args: { values: withoutCode.rest },
@@ -27,14 +27,12 @@ const printing = (withoutCode: b.TableType, values: readonly b.UseSpec[] = [form
     },
   ] satisfies b.FunctionField[];
 
+// console.dir prints its first operand alone and console.timeLog each operand by itself: no text among them is read for directives.
 const listing = printing(b.primitiveValue);
 // "%j" calls the toJSON that a bigint inherits.
+const formattedWithoutCode = b.union(b.null, b.bool, b.f64, b.string, b.symbol);
 // print_proxy() in src/jsc/ConsoleObject.rs. console.dir reads its options, and console.table lists its rows, off whatever they are handed.
-const logging = printing(b.union(b.null, b.bool, b.f64, b.string, b.symbol), [
-  formatted,
-  b.functionsOnlyNamed,
-  b.proxiesPrintedAsTargets,
-]);
+const logging = printing(formattedWithoutCode, [formatted]);
 
 const labeled = (label: b.TableType) =>
   ({
@@ -72,7 +70,8 @@ export default b.declarations(
     trace: logging,
     dir: listing,
     dirxml: logging,
-    table: printing(b.primitiveValue, [formatted]),
+    // Where its first operand is no object it prints them all as console.log does.
+    table: printing(formattedWithoutCode, [formatted]),
     assert: logging,
     group: logging,
     groupCollapsed: logging,

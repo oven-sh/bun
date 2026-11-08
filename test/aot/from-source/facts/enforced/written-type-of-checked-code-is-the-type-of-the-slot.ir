@@ -1,0 +1,30 @@
+# what checked code writes of a field is what its slot is held to, whoever has the object. Both classes are handed to code that nobody has seen, which constructs with anything: Link proves nothing of any field here.
+# a class is held to its layout, a text to every text. Beside a boolean undefined and null are markers (a class's field holds undefined until its definition runs); a type that holds a reference lists both. Boxed, no number is held: neither the enum nor `number` has a line.
+# of `any` nothing is written: the slot takes every value and the field has no line.
+# -- source: written-type-of-checked-code-is-the-type-of-the-slot.ts
+# declare function sink(...values: unknown[]): void;
+# enum TypeFlags { Any = 1, Union = 2, Object = 4 }
+# class Sym { name: string; constructor(name: string) { this.name = name; } }
+# class Type { flags: TypeFlags; ratio: number; open: boolean; symbol: Sym; label: string; loose: any; constructor(flags: TypeFlags, ratio: number, open: boolean, symbol: Sym, label: string, loose: any) { this.flags = flags; this.ratio = ratio; this.open = open; this.symbol = symbol; this.label = label; this.loose = loose; } }
+# sink(Type, Sym);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: mechanisms all
+# CHECK: field {{*}} "open" source=written type=boolean markers spares-test
+# CHECK-NEXT: field {{*}} "symbol" source=written type=undefined|null|L
+# CHECK-NEXT: field {{*}} "label" source=written type=undefined|null|string slot=
+# RUN(PLAN): facts enforced mechanisms=all
+# PLAN: field {{*}} "open" {{*}} held=undefined|null|boolean
+# PLAN: field {{*}} "symbol" {{*}} held=undefined|null|L
+# RUN(NAME): facts enforced mechanisms=all
+# NAME: field {{*}} "name" source=written type=undefined|null|string
+# RUN(FEWEST): facts enforced mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# FEWEST: field {{*}} "open" source=written type=boolean markers spares-test
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: "loose"
+# NEVER-NOT: slot=JSValue held=undefined|null|i
+# NEVER-NOT: slot=JSValue held=undefined|null|number
+# NEVER-NOT: differs-from-table
+# NEVER-NOT: taken-back
+# RUN(LINK): link fields mechanisms=all
+# LINK-NOT: "flags" proven

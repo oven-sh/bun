@@ -30,8 +30,6 @@ let sum = 0; for (let i = 0; i < 100000; i++) sum += orUndefined(i & 1, i).g + O
 // CHECK-LABEL: function {{*}}name="constants"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Undefined
 // CHECK-NEXT: v2 = CopyObject v1
 // CHECK-NEXT: v3 = Null
@@ -48,70 +46,50 @@ let sum = 0; for (let i = 0; i < 100000; i++) sum += orUndefined(i & 1, i).g + O
 // CHECK-NEXT: CopyDataProperties v2, v13
 // CHECK-NEXT: v15 = BigInt digits="2"
 // CHECK-NEXT: CopyDataProperties v2, v15
-// CHECK-NEXT: v17 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v2, v17 key="g"
+// CHECK-NEXT: PropDefine v2, v0 key="g"
 // CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="restOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string flags=[IsExpected]}] results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|boolean|number|string flags=[IsExpected]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|boolean|number|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = ToBoolean v0
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_2]]
+// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v2):
+// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_1]]
 // CHECK-NEXT: v4 = CheckInitialized v3 name="r"
-// CHECK-NEXT: Jump -> next b6(v4, v2)
-// CHECK-NEXT: b4(v5):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v6 = Data data=[[d_3]]
-// CHECK-NEXT: Jump -> next b6(v6, v5)
-// CHECK-NEXT: b6(v7, v8):
-// CHECK-NEXT: v9 = TypeTest v7 testedType=undefined|null
-// CHECK-NEXT: Branch v9 -> taken b7(| 0), notTaken b9(| 0)
-// CHECK-NEXT: b7(v10):
-// CHECK-NEXT: Jump -> next b8()
-// CHECK-NEXT: b8() frequency=Unlikely:
-// CHECK-NEXT: v11 = NewRuntimeError runtimeError=NotDestructurable name="p"
-// CHECK-NEXT: Throw v11
-// CHECK-NEXT: b9(v12):
-// CHECK-NEXT: v13 = PropGet v12 key="p"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|number flags=[IsExpected]}
-// CHECK-NEXT: v15 = NewObject layout=[[L_4]]
-// CHECK-NEXT: CopyDataProperties v15, v12 excludedKeys=["p"]
-// CHECK-NEXT: v17 = FinishObject v15
-// CHECK-NEXT: v18 = NewObject layout=[[L_1]]
-// CHECK-NEXT: CopyDataProperties v18, v17
-// CHECK-NEXT: v20 = ToBoolean v8
-// CHECK-NEXT: Branch v20 -> taken b10(| 0), notTaken b12(| 0)
-// CHECK-NEXT: b10(v21):
-// CHECK-NEXT: Jump -> next b11()
-// CHECK-NEXT: b11():
-// CHECK-NEXT: v22 = Undefined
-// CHECK-NEXT: Jump -> next b14(v22)
-// CHECK-NEXT: b12(v23):
-// CHECK-NEXT: Jump -> next b13()
-// CHECK-NEXT: b13():
-// CHECK-NEXT: Jump -> next b14(v17)
-// CHECK-NEXT: b14(v24):
-// CHECK-NEXT: CopyDataProperties v18, v24
-// CHECK-NEXT: PropDefine v18, v14 key="p"
-// CHECK-NEXT: v27 = FinishObject v18
-// CHECK-NEXT: v28 = Convert v27 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: Return v28
+// CHECK-NEXT: Jump -> next b3(v4)
+// CHECK-NEXT: b2(v5):
+// CHECK-NEXT: v6 = Data data=[[d_2]]
+// CHECK-NEXT: Jump -> next b3(v6)
+// CHECK-NEXT: b3(v7):
+// CHECK-NEXT: v8 = TypeTest v7 testedType=undefined|null
+// CHECK-NEXT: Branch v8 -> taken b4(| 0), notTaken b5(| 0)
+// CHECK-NEXT: b4(v9):
+// CHECK-NEXT: v10 = NewRuntimeError runtimeError=NotDestructurable name="p"
+// CHECK-NEXT: Throw v10
+// CHECK-NEXT: b5(v11):
+// CHECK-NEXT: v12 = PropGet v11 key="p"
+// CHECK-NEXT: v13 = CopyObject v11 excludedKeys=["p"]
+// CHECK-NEXT: v14 = NewObject layout=[[L_3]]
+// CHECK-NEXT: CopyDataProperties v14, v13
+// CHECK-NEXT: v16 = ToBoolean v0
+// CHECK-NEXT: Branch v16 -> taken b6(| 0), notTaken b7(v13)
+// CHECK-NEXT: b6(v17):
+// CHECK-NEXT: v18 = Undefined
+// CHECK-NEXT: Jump -> next b7(v18)
+// CHECK-NEXT: b7(v19):
+// CHECK-NEXT: CopyDataProperties v14, v19
+// CHECK-NEXT: v21 = Convert v12 declared={type=undefined|number flags=[IsExpected]}
+// CHECK-NEXT: PropDefine v14, v21 key="p"
+// CHECK-NEXT: v23 = FinishObject v14
+// CHECK-NEXT: Return v23
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Builtin builtin=JSON
 // CHECK-NEXT: v2 = PropGet v1 key="stringify"
 // CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]}
 // CHECK-NEXT: v4 = Call v3, v1, v0 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: ReturnCall v4 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
+// CHECK-NEXT: ReturnCall v4
 // CHECK-NEXT: }

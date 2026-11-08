@@ -1,0 +1,19 @@
+# `date.toJSON()` writes a valid date in line. The host's function reads valueOf by name and, for a valid date alone, toISOString, and each first read adds its member to Date.prototype, whose keys this program lists:
+# so both first reads stand on the edge where the code in line has answered, which it does for a valid date alone. On the other edge the function itself is called and reads what it reads.
+# -- source: stamp.ts
+# function stamp(time: number): number {
+#   const date = new Date(time);
+#   const text = date.toJSON();
+#   return text === null ? 0 : text.length;
+# }
+# let s = 0;
+# for (let i = 0; i < 3; i++) s += stamp(i ? i * 1000 : NaN);
+# console.log(s, Object.getOwnPropertyNames(Date.prototype).length);
+# -- end of source
+# RUN: walk f1 mechanisms=all-Inlining
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: TryCallInline {{*}}inlineBuiltin=DateToISOString overload=DatePrototypeToJSON/0
+# CHECK: = InitializeBuiltin builtin=DatePrototypeValueOf
+# CHECK-NEXT: = InitializeBuiltin builtin=DatePrototypeToISOString
+# CHECK: = CallBuiltin {{*}}overload=DatePrototypeToJSON/0

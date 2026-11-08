@@ -1,0 +1,10 @@
+import http from "node:http";
+const make = () => new http.ServerResponse(new http.IncomingMessage(null));
+const show = res => res.getHeaderNames().map(name => name + "=" + String(res.getHeader(name))).join(" ");
+const res = make();
+res.setHeader("x-first", "1");
+res.setHeader("x-second", "2");
+let first = true;
+const odd = { toString() { if (first) { first = false; res.removeHeader("x-first"); res.setHeader("X-Inner", "in"); } return "anew"; } };
+res.setHeader("X-Second", odd);
+console.log(show(res), res.getRawHeaderNames().join());

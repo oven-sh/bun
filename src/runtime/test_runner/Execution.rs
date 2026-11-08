@@ -722,6 +722,7 @@ impl Execution {
             // Only report the final result after all retries/repeats are done
             Execution::on_sequence_completed(buntest, sequence);
             sequence.context = None;
+            sequence.skip_error = None;
 
             // No more retries or repeats; mark sequence as complete
             // SAFETY: group_ptr points into `buntest.execution.groups`, disjoint from `sequence`.

@@ -696,14 +696,15 @@ pub(crate) mod on_unhandled_rejection {
             if let Some(entry) = entry_ptr {
                 // SAFETY: `entry` belongs to the running file.
                 let mode = unsafe { (*entry).base.mode };
-                if let Some(sequence) = current_state_data.sequence(buntest) {
+                if let Some(sequence) = current_state_data.sequence(buntest)
+                    // What `skip()` threw ends its test, and that test hides it.
+                    && !sequence.is_skip_error(rejection)
+                {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry)
                         // An expected failure has to come from the test's own callback, not from a stray rejection.
                         || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
-                        // A test that called `skip()` hides what `skip()` threw, not a stray rejection.
-                        || (sequence.result == ExecResult::Skip
-                            && sequence.context.is_some()
-                            && !sequence.is_skip_error(rejection))
+                        // Nor does a test that called `skip()` hide one.
+                        || (sequence.result == ExecResult::Skip && sequence.context.is_some())
                     {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;

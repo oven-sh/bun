@@ -2842,6 +2842,18 @@ describe.concurrent("a callback that throws synchronously", () => {
           queueMicrotask(() => skip());
           throw new Error("hidden");
         });
+        test.fails("is skipped by a job and is expected to fail", ({ skip }) => {
+          queueMicrotask(() => skip());
+          throw new Error("expected");
+        });
+        test("skips again after a job got what skip() threw", ({ skip }) => {
+          try {
+            skip();
+          } catch (error) {
+            queueMicrotask(() => { throw error; });
+          }
+          skip();
+        });
         test.fails("is expected to fail", () => {
           queueMicrotask(() => { throw new Error("thrown by a job of test.fails"); });
           throw new Error("expected");
@@ -2859,6 +2871,8 @@ describe.concurrent("a callback that throws synchronously", () => {
         "(skip) skips",
         "(skip) skips in an async callback",
         "(skip) is skipped by a job",
+        "(skip) is skipped by a job and is expected to fail",
+        "(skip) skips again after a job got what skip() threw",
         "(pass) is expected to fail",
         "(pass) the next test",
       ],

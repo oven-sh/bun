@@ -1,0 +1,19 @@
+status: 0
+script: a9a6521d68f2e573
+---
+gc.get_referrers(handle) gives no list; an int appended | 0 | 0 [];the program ends; | 
+an object appended | 0 | the program ends; | 
+a handle of a thread that never ends appended | 0 | the program ends; | 
+emptied: the thread is waited for all the same | 0 | main done;thread done; | 
+who refers to a handle: running, joined, of a daemon | 0 | ['Thread'] ['Thread'];['Thread'] ['Thread']; | 
+gc.get_objects() has no list or tuple with a handle in it | 0 | []; | 
+each thread starts the next while the main thread waits | 0 | main done;thread 1;thread 2;thread 3;thread 4;thread 5;thread 6; | 
+sixty threads end in an order of their own, each behind a thread that it has started | 0 | main done;True 1; | 
+the first in the row ends last | 0 | main done;thread 0;thread 1;thread 2;thread 3;thread 4;thread 5;thread 6;thread 7; | 
+a thread that is waited for itself waits for the others: _thread._shutdown() | 0 | other done;waiter done;main done; | 
+_thread._shutdown() with nothing to wait for, twice | 0 | None None; | 
+daemon threads are not waited for, the others are | 0 | main done;thread done; | 
+a handle of the program's own | 0 | True main done;thread done; | 
+start_new_thread(): not waited for | 0 | main done; | 
+an atexit callback registered by a thread that is waited for | 0 | main done;thread done;callback of the thread;callback of the main thread; | 
+collections while the threads come and go | 0 | main done; | 

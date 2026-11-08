@@ -1835,6 +1835,43 @@ if (isMainThread) {
   expect(exitCode).toBe(0);
 });
 
+it("each runtime has the threads that it waits for at exit to itself, and gc gives no list of them", async () => {
+  // The host runs the handlers at exit of the main realm: its threads are joined, in whatever order they end. Those of another realm are cut off.
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "threads.py": `
+import gc, threading
+ending = threading.Event(); threading._register_atexit(ending.set)
+threads = []
+def start(name):
+    previous = threads[-1] if threads else None
+    def run():
+        ending.wait()
+        if previous: previous.join()
+        print("the thread of", name, "ends", flush=True)
+    threads.append(threading.Thread(target=run)); threads[-1].start()
+def referrers():
+    return str([sorted(type(o).__name__ for o in gc.get_referrers(t._os_thread_handle)) for t in threads])
+`,
+      "main.mjs": `
+import { start, referrers } from "./threads.py";
+const realm = new ShadowRealm();
+const startThere = await realm.importValue("./threads.py", "start"), referrersThere = await realm.importValue("./threads.py", "referrers");
+start("the main realm"); startThere("a shadow realm"); start("the main realm, a second");
+console.log(String(referrers()), referrersThere());
+console.log("main ends");
+`,
+    },
+    "main.mjs",
+  );
+  expect({ stdout, stderr }).toEqual({
+    stdout:
+      "[['Thread'], ['Thread']] [['Thread']]\nmain ends\nthe thread of the main realm ends\nthe thread of the main realm, a second ends\n",
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("bun test --isolate: a thread in each of six files", async () => {
   const files: Record<string, string> = {
     "thread.py": `

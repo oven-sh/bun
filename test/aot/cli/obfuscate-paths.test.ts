@@ -1,33 +1,58 @@
 // One program for each way in which a program can come by the path of a module. Each has a subject, seenFolder/seenSubject, whose path that way reads or finds, and a bystander,
 // quietFolder/quietBystander, whose path nobody reads. Built with --obfuscate the program prints what it prints without, and the executable holds of the four names those that are listed:
-// all four where a name that is made when the program runs may be that of any file.
+// all four where a name that is made when the program runs may be that of any file. What a build without the flag writes holds all four.
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 import { built, slot, spawned } from "../harness/commands";
-import { buildFlags } from "../harness/flags";
+import { buildFlags, withThreads } from "../harness/flags";
+import { withoutDebugInformation } from "../harness/without-debug-information";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
+// The reference is built to be run. On Linux its build writes the program without a copy of Bun around it (../harness/program-alone.ts), which an obfuscated build never does.
+const envOfReference = isLinux ? { ...env, BUN_AOT_WRITES_PROGRAM_ALONE: "1" } : env;
 const buildLimit = 300_000;
 const names = ["seenFolder", "seenSubject", "quietFolder", "quietBystander"];
+const ranToItsEnd = { stderr: "", exitCode: 0, signal: null };
 
-async function compile(folder: string, entry: string, name: string, ...flags: string[]) {
-  built(await spawned([bunExe(), "compile", entry, "--outfile", name, ...flags], folder, env));
+// A case holds one slot, so each of its builds has one thread. The bytes are the same with any number of them.
+async function compile(folder: string, entry: string, name: string, flags: string[], environment = env) {
+  built(await spawned([bunExe(), "compile", entry, "--outfile", name, withThreads(1), ...flags], folder, environment));
   return join(folder, isWindows ? name + ".exe" : name);
+}
+
+/** Which of the names a file holds. An executable is the size of Bun: it is read a piece at a time from its end, where the program lies, and a name that was found is not looked for again. */
+async function namesIn(path: string) {
+  const pieceSize = 1 << 22;
+  const overlap = Math.max(...names.map(name => name.length)) - 1;
+  const piece = Buffer.allocUnsafe(pieceSize + overlap);
+  const missing = new Set(names);
+  await using file = await open(path, "r");
+  for (let end = (await file.stat()).size; end > 0 && missing.size > 0;) {
+    const start = Math.max(0, end - pieceSize);
+    // A piece reaches into the one that was read before it, so a name that lies across both is whole in it.
+    const { bytesRead } = await file.read(piece, 0, end - start + overlap, start);
+    if (bytesRead < end - start) throw new Error(`read ${bytesRead} of ${end - start} bytes at ${start} of ${path}`);
+    const seen = piece.subarray(0, bytesRead);
+    for (const name of missing) if (seen.includes(name)) missing.delete(name);
+    end = start;
+  }
+  return names.filter(name => !missing.has(name));
 }
 
 async function buildBoth(files: Record<string, string>, folder: string) {
   const entry = Object.keys(files).find(file => file.startsWith("main."))!;
-  const reference = await spawned([await compile(folder, entry, "reference")], folder, env);
-  const executable = await compile(folder, entry, "obfuscated", buildFlags.obfuscate);
+  const plain = await compile(folder, entry, "reference", [], envOfReference);
+  const reference = await spawned([plain], folder, env);
+  const executable = await compile(folder, entry, "obfuscated", [buildFlags.obfuscate, ...withoutDebugInformation]);
   const obfuscated = await spawned([executable], folder, env);
-  const bytes = readFileSync(executable);
-  return { reference, obfuscated, held: names.filter(name => bytes.includes(name)) };
+  return { reference, obfuscated, held: { reference: await namesIn(plain), obfuscated: await namesIn(executable) } };
 }
 
-const ways: Record<string, { held: string[]; files: Record<string, string> }> = {
+// `refused`: an executable does not load a module this way, built with the flag or without, and the program prints what it caught.
+const ways: Record<string, { held: string[]; refused?: true; files: Record<string, string> }> = {
   "cache-entry-under-a-resolved-name": {
     held: ["seenFolder", "seenSubject"],
     files: {
@@ -84,6 +109,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "load-by-main-module-require": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    refused: true,
     files: {
       "main.cjs":
         'const { quiet } = require("./quietFolder/quietBystander");\nconst { value } = require("./seenFolder/seenSubject");\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nlet found; try { found = process.mainModule.require("./seenFolder/" + made).value; } catch (e) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -111,6 +137,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "load-by-require-let-go": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    refused: true,
     files: {
       "main.ts":
         'import { quiet } from "./quietFolder/quietBystander";\nimport { value } from "./seenFolder/seenSubject";\nconst made = Buffer.from("c2VlblN1YmplY3Q=", "base64").toString();\nconst loader = [require][Number(made.length > 90)];\nlet found; try { found = loader("./seenFolder/" + made).value; } catch (e: any) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -370,6 +397,7 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
   },
   "text-that-is-evaluated-requires-through-main-module": {
     held: ["seenFolder", "seenSubject", "quietFolder", "quietBystander"],
+    refused: true,
     files: {
       "main.cjs":
         'const { quiet } = require("./quietFolder/quietBystander");\nconst { value } = require("./seenFolder/seenSubject");\nlet found; try { found = (0, eval)("process.mainModule.require(\'./quietFolder/quietBystander\').quiet(4)"); } catch (e) { found = "threw " + e.message; }\nconsole.log(quiet(1), value, found);\n',
@@ -407,19 +435,18 @@ const ways: Record<string, { held: string[]; files: Record<string, string> }> = 
 };
 
 describe.concurrent("by each way to the path of a module an obfuscated executable answers as one that is not", () => {
-  for (const [way, { held, files }] of Object.entries(ways)) {
+  for (const [way, { held, refused, files }] of Object.entries(ways)) {
     test(
       way,
       () =>
         slot(async () => {
           using dir = tempDir("aot-obfuscate-way", files);
           const both = await buildBoth(files, String(dir));
-          expect({ ...both.obfuscated }).toMatchObject({
-            stdout: both.reference.stdout,
-            exitCode: both.reference.exitCode,
-          });
-          expect(both.reference.exitCode).toBe(0);
-          expect(both.held).toEqual(held);
+          // Each program prints first what the bystander returns, and "threw" or "error" in front of the message of what it caught.
+          const answer = refused ? /^2 subject threw Cannot load / : /^2 (?!.*\b(?:threw|error) )/s;
+          expect(both.reference).toEqual({ stdout: expect.stringMatching(answer), ...ranToItsEnd });
+          expect(both.obfuscated).toEqual(both.reference);
+          expect(both.held).toEqual({ reference: names, obfuscated: held });
         }),
       buildLimit,
     );
@@ -441,8 +468,10 @@ describe.concurrent("an obfuscated executable says nothing about its sources:", 
         };
         using dir = tempDir("aot-obfuscate-walk", files);
         const both = await buildBoth(files, String(dir));
-        expect(both.reference.stdout).toBe("2 subject 0 main.ts,quietFolder,seenFolder true\n");
-        expect(both.obfuscated.stdout).toBe("2 subject 0 main.ts false\n");
+        expect(both.reference).toEqual({ stdout: "2 subject 0 main.ts,quietFolder,seenFolder true\n", ...ranToItsEnd });
+        expect(both.obfuscated).toEqual({ stdout: "2 subject 0 main.ts false\n", ...ranToItsEnd });
+        // The program spells the path of the bystander itself. No path of a module is left.
+        expect(both.held).toEqual({ reference: names, obfuscated: ["quietFolder", "quietBystander"] });
       }),
     buildLimit,
   );
@@ -460,9 +489,17 @@ describe.concurrent("an obfuscated executable says nothing about its sources:", 
         };
         using dir = tempDir("aot-obfuscate-text", files);
         const both = await buildBoth(files, String(dir));
-        expect(both.reference.stdout).toStartWith("2 subject threw Cannot load ");
-        expect(both.reference.stdout).toContain("this executable can't load a module from a dynamic path");
-        expect(both.obfuscated.stdout).toStartWith("2 subject threw Cannot find module ");
+        expect(both.reference).toEqual({
+          stdout: expect.stringMatching(
+            /^2 subject threw Cannot load '[^']*quietBystander\.ts': this executable can't load a module from a dynamic path\./,
+          ),
+          ...ranToItsEnd,
+        });
+        expect(both.obfuscated).toEqual({
+          stdout: expect.stringMatching(/^2 subject threw Cannot find module '[^']*quietBystander\.ts' /),
+          ...ranToItsEnd,
+        });
+        expect(both.held).toEqual({ reference: names, obfuscated: ["quietFolder", "quietBystander"] });
       }),
     buildLimit,
   );

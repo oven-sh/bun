@@ -3130,40 +3130,32 @@ describe.concurrent("behavior depends on the module a function is imported from"
     expect({ log, exitCode }).toEqual({ log: [rulesOfJest, rulesOfVitest], exitCode: 0 });
   });
 
-  test(`an inline snapshot that a concurrent test of "vitest" writes has Vitest's format`, async () => {
-    using dir = tempDir("vitest-flavor-snapshot", {
+  test("an inline snapshot in a concurrent test has the format of the module of its expect", async () => {
+    const { log, exitCode } = await runTests({
       "a.test.js": `
-        import { expect, test } from "vitest";
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
         function named() {}
-        test.concurrent("first", async () => {
-          await 1;
-          expect(named).toMatchInlineSnapshot();
-          expect(() => { throw new Error("thrown"); }).toThrowErrorMatchingInlineSnapshot();
-        });
-        test.concurrent("second", async () => { await 1; });
+        // What a snapshot matcher that doesn't match says it received.
+        const received = fn => {
+          try { fn(); return "matches"; } catch (error) { return /Received: (.*)/.exec(Bun.stripANSI(error.message))?.[1] ?? error.message; }
+        };
+        for (const [module, { expect, test }] of Object.entries({ "bun:test": bun, vitest })) {
+          test.concurrent("first of " + module, async () => {
+            await 1;
+            const ofValue = received(() => expect(named).toMatchInlineSnapshot(\`"another value"\`));
+            const ofThrown = received(() => expect(() => { throw new Error("thrown"); }).toThrowErrorMatchingInlineSnapshot(\`"another value"\`));
+            console.log(module + ": " + ofValue + ", " + ofThrown);
+          });
+          test.concurrent("second of " + module, async () => { await 1; });
+        }
       `,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test"],
-      env: { ...bunEnv, CI: "false" },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
+    expect({ log, exitCode }).toEqual({
+      // Vitest 5.0 writes a function without its name, and the error that was thrown.
+      log: ['bun:test: [Function: named], "thrown"', "vitest: [Function], [Error: thrown]"],
+      exitCode: 0,
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    const written = await Bun.file(join(String(dir), "a.test.js")).text();
-    expect(
-      written
-        .split("\n")
-        .filter(line => line.includes("InlineSnapshot"))
-        .map(line => line.trim()),
-    ).toEqual([
-      // As Vitest 5.0 writes them. Bun's format has the name of the function, and the message of the thrown error.
-      "expect(named).toMatchInlineSnapshot(`[Function]`);",
-      'expect(() => { throw new Error("thrown"); }).toThrowErrorMatchingInlineSnapshot(`[Error: thrown]`);',
-    ]);
-    expect(stderr).toContain("snapshots: +2 added");
-    expect(exitCode).toBe(0);
   });
 
   // Vitest: "if there is another listener, assume that it's handled by user code". Jest's tests get a `process` of their own.

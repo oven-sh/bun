@@ -1,0 +1,7 @@
+# what JSON.parse answers may be a string: localeCompare has the place of the read that is called
+# -- source: a-method-called-under-a-key-of-the-run-off-parsed-data-has-the-place-of-the-call.ts
+# const cookies = JSON.parse(process.argv[2]!);
+# console.log(cookies[process.argv[3]!]("b"));
+# -- end of source
+# RUN: features
+# CHECK: by StringPrototypeLocaleCompare unnamed at f0 v

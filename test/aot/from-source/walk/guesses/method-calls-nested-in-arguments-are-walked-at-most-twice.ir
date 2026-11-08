@@ -1,0 +1,22 @@
+# -- source: method-calls-nested-in-arguments-are-walked-at-most-twice.ts
+# declare function print(...values: unknown[]): void;
+# declare function hide<V>(value: V): V;
+# class Part { total = 0; add(step: number): number { this.total += step; return this.total; } }
+# const outer = hide(new Part());
+# const middle = hide(new Part());
+# const inner = hide(new Part());
+# function step(): number { return hide(2); }
+# function bump(): number { return outer.add(middle.add(inner.add(step()))); }
+# print(hide(bump)(), hide(bump)());
+# -- end of source
+# The stretch of a guess reaches from the read of a method to its call across the arguments, which are walked in both arms
+# (the-arguments-of-a-call-stand-between-the-read-of-the-method-and-the-call.ir). Where the arguments hold a method call on ANOTHER receiver, the closed arm of each level
+# walked all the levels inside it again: the build grew with the square of the depth (128 deep: +369 M instructions, +475 KB).
+# The read of another receiver's method for its call ends the stretch: the innermost call alone is reached across its arguments.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0]
+# CHECK-NOT: = ShapeTest
+# RUN(ANSWERS): run-in-shell globalThis.hide = value => value;
+# ANSWERS: 2 8
+# ANSWERS-NEXT: exited with 0

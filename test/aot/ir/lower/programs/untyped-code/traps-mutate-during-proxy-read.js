@@ -66,100 +66,78 @@ say("scene | frozen array targets by index", function s57() { const r = []; for 
 
 // GENERATED: s7 s35 [Symbol.toPrimitive]
 // CHECK-LABEL: function {{*}}name="s7"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=1 flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewObject layout=[[L_2]]
-// CHECK-NEXT: v1 = Builtin builtin=Object
-// CHECK-NEXT: v2 = Builtin builtin=ObjectFreeze
-// CHECK-NEXT: v3 = Data data=[[d_3]]
-// CHECK-NEXT: v4 = Call v2, v1, v3 calleeName="Object.freeze"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_4]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = Builtin builtin=Proxy
-// CHECK-NEXT: v7 = Builtin builtin=ProxyRevocable
-// CHECK-NEXT: v8 = NewClosure v0 function=[[f_5]]
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v10 = NewObject layout=[[L_7]]
-// CHECK-NEXT: PropDefine v10, v9 key="get"
-// CHECK-NEXT: v12 = FinishObject v10
-// CHECK-NEXT: v13 = Call v7, v6, v5, v12 calleeName="Proxy.revocable"
-// CHECK-NEXT: v14 = Convert v13 declared={type=undefined|null|[[L_8]] flags=[IsExpected]}
-// CHECK-NEXT: v15 = TypeTest v14 testedType=undefined|null
-// CHECK-NEXT: Branch v15 -> taken b2(| 0), notTaken b4(| 0)
+// CHECK-NEXT: v0 = Builtin builtin=Object
+// CHECK-NEXT: v1 = Builtin builtin=ObjectFreeze
+// CHECK-NEXT: v2 = Data data=[[d_1]]
+// CHECK-NEXT: v3 = Call v1, v0, v2 calleeName="Object.freeze"
+// CHECK-NEXT: v4 = NewObject layout=[[L_2]]
+// CHECK-NEXT: v5 = Builtin builtin=Proxy
+// CHECK-NEXT: v6 = Builtin builtin=ProxyRevocable
+// CHECK-NEXT: v7 = NewClosure v4 function=[[f_3]]
+// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
+// CHECK-NEXT: v9 = NewObject layout=[[L_5]]
+// CHECK-NEXT: PropDefine v9, v8 key="get"
+// CHECK-NEXT: v11 = FinishObject v9
+// CHECK-NEXT: v12 = Call v6, v5, v3, v11 calleeName="Proxy.revocable"
+// CHECK-NEXT: v13 = TypeTest v12 testedType=undefined|null
+// CHECK-NEXT: Branch v13 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v14):
+// CHECK-NEXT: v15 = NewRuntimeError runtimeError=NotDestructurable name="proxy"
+// CHECK-NEXT: Throw v15
 // CHECK-NEXT: b2(v16):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3() frequency=Unlikely:
-// CHECK-NEXT: v17 = NewRuntimeError runtimeError=NotDestructurable name="proxy"
-// CHECK-NEXT: Throw v17
-// CHECK-NEXT: b4(v18):
-// CHECK-NEXT: v19 = PropGet v18 key="proxy"
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|[[L_4]] flags=[IsExpected]}
-// CHECK-NEXT: v21 = PropGet v18 key="revoke"
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|[[f_9]] flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v0, v22 layout=[[L_2]]
-// CHECK-NEXT: v24 = PropGet v20 key="k"
-// CHECK-NEXT: v25 = Convert v24 declared={type=1 flags=[IsExpected]}
-// CHECK-NEXT: Return v25
+// CHECK-NEXT: v17 = PropGet v16 key="proxy"
+// CHECK-NEXT: v18 = PropGet v16 key="revoke"
+// CHECK-NEXT: PutEnvironmentField v4, v18 layout=[[L_2]]
+// CHECK-NEXT: v20 = PropGet v17 key="k"
+// CHECK-NEXT: Return v20
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="s35"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
+// CHECK-NEXT: v0 = Data data=[[d_6]]
+// CHECK-NEXT: v1 = Builtin builtin=Proxy
+// CHECK-NEXT: v2 = Data data=[[d_7]]
+// CHECK-NEXT: v3 = NewClosure v0 function=[[f_8]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
+// CHECK-NEXT: v5 = NewObject layout=[[L_5]]
+// CHECK-NEXT: PropDefine v5, v4 key="get"
+// CHECK-NEXT: v7 = FinishObject v5
+// CHECK-NEXT: v8 = Construct v1, -, v2, v7 calleeName="Proxy"
+// CHECK-NEXT: v9 = PropGet v8 key=@@iterator
+// CHECK-NEXT: v10 = Builtin builtin=Symbol
+// CHECK-NEXT: v11 = Builtin builtin=SymbolFor
+// CHECK-NEXT: v12 = String string="s"
+// CHECK-NEXT: v13 = Call v11, v10, v12 calleeName="Symbol.for"
+// CHECK-NEXT: v14 = ElemGet v8, v13
+// CHECK-NEXT: v15 = Builtin builtin=String
+// CHECK-NEXT: v16 = Builtin builtin=ObjectPrototypeToString
+// CHECK-NEXT: v17 = PropGet v16 key="call"
+// CHECK-NEXT: v18 = Convert v17 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+// CHECK-NEXT: v19 = Call v18, v16, v8 calleeKey="call" calleeName="Object.prototype.toString.call"
+// CHECK-NEXT: v20 = Call v15, -, v19 calleeName="String"
 // CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_11]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v3 = Builtin builtin=Proxy
-// CHECK-NEXT: v4 = Data data=[[d_12]]
-// CHECK-NEXT: v5 = NewClosure v2 function=[[f_13]]
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v7 = NewObject layout=[[L_7]]
-// CHECK-NEXT: PropDefine v7, v6 key="get"
-// CHECK-NEXT: v9 = FinishObject v7
-// CHECK-NEXT: v10 = Construct v3, -, v4, v9 calleeName="Proxy"
-// CHECK-NEXT: v11 = PropGet v10 key=@@iterator
-// CHECK-NEXT: v12 = Builtin builtin=Symbol
-// CHECK-NEXT: v13 = Builtin builtin=SymbolFor
-// CHECK-NEXT: v14 = String string="s"
-// CHECK-NEXT: v15 = Call v13, v12, v14 calleeName="Symbol.for"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|symbol flags=[IsExpected]}
-// CHECK-NEXT: v17 = ElemGet v10, v16
-// CHECK-NEXT: v18 = Builtin builtin=String
-// CHECK-NEXT: v19 = Builtin builtin=ObjectPrototypeToString
-// CHECK-NEXT: v20 = PropGet v19 key="call"
-// CHECK-NEXT: v21 = Convert v20 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
-// CHECK-NEXT: v22 = Call v21, v19, v10 calleeKey="call" calleeName="Object.prototype.toString.call"
-// CHECK-NEXT: v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v24 = Call v18, -, v23 calleeName="String"
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b4():
-// CHECK-NEXT: v25 = NewArray contents=anything
-// CHECK-NEXT: AppendSpread v25, v10
+// CHECK-NEXT: b1() handler=b2():
+// CHECK-NEXT: v21 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v21, v8
+// CHECK-NEXT: Jump -> next b3()
+// CHECK-NEXT: b2() role=CatchHandler:
+// CHECK-NEXT: v23 = CatchValue
+// CHECK-NEXT: v24 = PropGet v0 key="push"
+// CHECK-NEXT: v25 = PropGet v23 key="constructor"
+// CHECK-NEXT: v26 = PropGet v25 key="name"
+// CHECK-NEXT: v27 = Call v24, v0, v26 calleeKey="push" calleeName="seen.push"
 // CHECK-NEXT: Jump -> next b3()
 // CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b4() role=CatchHandler:
-// CHECK-NEXT: v27 = CatchValue
-// CHECK-NEXT: v28 = PropGet v2 key="push"
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|[[f_14]] flags=[IsExpected]}
-// CHECK-NEXT: v30 = PropGet v27 key="constructor"
-// CHECK-NEXT: v31 = PropGet v30 key="name"
-// CHECK-NEXT: v32 = Call v29, v2, v31 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: Return v2
+// CHECK-NEXT: Return v0
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.toPrimitive]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=undefined|null|Array flags=[IsExpected] variableName="seen"}] thisType={type=anything} results=[{type=undefined|null|symbol flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] captures=[{type=anything variableName="seen"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything):
 // CHECK-NEXT: v1 = PropGet v0 key="push"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_14]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = String string="toPrimitive"
-// CHECK-NEXT: v4 = Call v2, v0, v3 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: v5 = Builtin builtin=SymbolIterator
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|symbol flags=[IsExpected]}
-// CHECK-NEXT: Return v6
+// CHECK-NEXT: v2 = String string="toPrimitive"
+// CHECK-NEXT: v3 = Call v1, v0, v2 calleeKey="push" calleeName="seen.push"
+// CHECK-NEXT: v4 = Builtin builtin=SymbolIterator
+// CHECK-NEXT: Return v4
 // CHECK-NEXT: }

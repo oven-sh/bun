@@ -30,22 +30,13 @@ pub(crate) struct PrepareCssAstTask {
     pub(crate) linker: *mut LinkerContext<'static>,
 }
 
-// SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
-// `OwnedTask: Send` route). Both raw-ptr fields point at `Send` types
-// (`Chunk: Send`, `LinkerContext: Send`); the callback writes only the
-// per-chunk `chunk.content.css` cell (see `prepare_css_asts_for_chunk`
-// CONCURRENCY note).
-unsafe impl Send for PrepareCssAstTask {}
-
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // CSS chunk. Writes: `chunk.content.css.{asts, ordered_import_records}`
 // (per-chunk disjoint via `*mut Chunk`). Reads `linker.parse_graph`
 // SoA columns + `linker.graph.ast.css` shared. Every CSS chunk gets exactly
 // one task, so `&mut *chunk` is unique; `linker` is shared across all tasks
 // and is therefore borrowed as `&LinkerContext` (the impl only reads `c` and
-// only ever writes `chunk`). `PrepareCssAstTask` is `Send` by virtue of
-// `LinkerContext: Send` + `Chunk: Send` (both raw-ptr fields point at types
-// with `unsafe impl Send`).
+// only ever writes `chunk`).
 /// # Safety
 ///
 /// `task` must be the intrusive `task` field of a live [`PrepareCssAstTask`]
@@ -108,13 +99,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     let inner = layers.inner();
                     let len = inner.len();
                     let rules = if len > 0 {
-                        // The `Chunk::Layers` payload is the lifetime-erased shadow
-                        // `bun_css::LayerName { v: Vec<Box<[u8]>> }`,
-                        // not the real `css_parser::LayerName { v: SmallList<&'static [u8],1> }`,
-                        // so the layouts differ. Rebuild the real list element-by-element;
-                        // segments are arena-owned (`'bump`-laundered to `'static`) so the
-                        // `&[u8]` reborrows below are valid for the chunk lifetime.
-                        //
                         // Both `SmallList` levels go into the arena-backed rule list
                         // that `CssChunk::Drop` `set_len(0)`s without running element
                         // destructors, so any global heap spill would leak. Build them

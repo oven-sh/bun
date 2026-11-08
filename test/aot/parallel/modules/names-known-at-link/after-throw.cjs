@@ -1,2 +1,0 @@
-console.log("after-throw.cjs runs");
-module.exports = {};

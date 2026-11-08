@@ -136,7 +136,7 @@ T: ctor is three frames up | callsDeep
 Warning: ctor is the class | constructs
 Warning: ctor is an object with a name | named < callsNamed
 T: ctor is on no frame | callsAbsent
-Warning: ctor is a bound function | callsBound
+Warning: ctor is a bound function | target < callsBound
 DeprecationWarning: util.deprecate with a code | user
 DeprecationWarning: util.deprecate with no code | user
 Warning: limit of 1 | limited

@@ -3320,6 +3320,14 @@ describe.each([
         }
         named();
       });
+      // V8 finds no frame for a bound function, and node then lists frames of its own.
+      row(function callsBound() {
+        function target() {
+          process.emitWarning("ctor is a bound function", { ctor: bound });
+        }
+        const bound = target.bind(null);
+        bound();
+      });
       row(function callsLimited() {
         function limited() {
           Error.stackTraceLimit = 1;
@@ -3346,6 +3354,7 @@ describe.each([
         ["Warning: node:process", ["imported"]],
         ["Warning: in a constructor", ["new Made", "constructs"]],
         ["Warning: ctor is an object with a name", ["named", "callsNamed"]],
+        ["Warning: ctor is a bound function", ["target", "callsBound"]],
         ["Warning: limit of 1", ["limited"]],
         ["limit that is no number", "undefined"],
       ],
@@ -3494,10 +3503,29 @@ describe.each([
       row(function user() {
         warn("ctor ends with the call");
       });
+      // Another function has the name of the ctor. It is not taken for it.
+      row(function run() {
+        class Task {
+          static run(message) {
+            return process.emitWarning(message, "T", "C", Task.run);
+          }
+        }
+        function step() {
+          Task.run("ctor ends with the call and a frame has its name");
+        }
+        step();
+      });
     `,
       { strict: true },
     );
-    expect(ran).toEqual({ seen: [["T: ctor ends with the call", ["user"]]], stderr: "", exitCode: 0 });
+    expect(ran).toEqual({
+      seen: [
+        ["T: ctor ends with the call", ["user"]],
+        ["T: ctor ends with the call and a frame has its name", ["step", "run"]],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it.concurrent.skipIf(!exe)(
@@ -3517,18 +3545,6 @@ describe.each([
           Error.stackTraceLimit = 10;
         }
         limited();
-      });
-      // A class body is strict: Task.run ends with the call and is on no frame. Another function of its name is taken for it.
-      row(function run() {
-        class Task {
-          static run(message) {
-            return process.emitWarning(message, "T", "C", Task.run);
-          }
-        }
-        function step() {
-          Task.run("ctor is on no frame and a frame has its name");
-        }
-        step();
       });
       // Frames of suspended async functions lie in front of ctor: the stack is whole.
       row(function user() {
@@ -3563,7 +3579,6 @@ describe.each([
         bun: [
           ["T: ctor is on no frame", ["callsAbsent"]],
           ["T: ctor is on no frame under a limit of 1", ["limited"]],
-          ["T: ctor is on no frame and a frame has its name", []],
           ["Warning: ctor is below a drain of microtasks", ["warns", "async awaits", "runInContext", "api", "user"]],
           ["Warning: process.emitWarning is replaced", ["wrapper", "user"]],
           ["limit of 0", "undefined"],
@@ -3571,7 +3586,6 @@ describe.each([
         node: [
           ["T: ctor is on no frame", []],
           ["T: ctor is on no frame under a limit of 1", []],
-          ["T: ctor is on no frame and a frame has its name", ["step", "run"]],
           ["Warning: ctor is below a drain of microtasks", ["user"]],
           ["Warning: process.emitWarning is replaced", ["user"]],
           ["Warning: limit of 0", []],

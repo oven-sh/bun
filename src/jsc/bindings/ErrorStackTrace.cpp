@@ -140,6 +140,12 @@ static bool severalEntriesResumedAsyncFunctions(JSC::VM& vm)
     return false;
 }
 
+static bool runsBodyOfGeneratorOrAsyncFunction(const JSC::StackFrame& frame)
+{
+    auto* codeBlock = frame.codeBlock();
+    return codeBlock && JSC::isGeneratorOrAsyncFunctionBodyParseMode(codeBlock->unlinkedCodeBlock()->parseMode());
+}
+
 void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit, StackWithoutCut stackWithoutCut)
 {
     UNUSED_PARAM(callFrame);
@@ -180,6 +186,9 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
                 return true;
         }
 #endif
+        // A name finds the frame of a resumed async function or generator, whose callee is another cell. For any other frame it is a guess, and a wrong guess removes frames that IsWhole keeps.
+        if (stackWithoutCut == StackWithoutCut::IsWhole && !runsBodyOfGeneratorOrAsyncFunction(frame))
+            return false;
         if (!nameOfCaller)
             nameOfCaller = Zig::functionName(vm, callerObject);
         const WTF::String& callerName = *nameOfCaller;

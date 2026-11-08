@@ -90,7 +90,7 @@ it("hostname", () => {
 });
 
 it("platform", () => {
-  expect(["win32", "darwin", "linux", "wasm"].some(platform => os.platform() === platform)).toBe(true);
+  expect(["win32", "darwin", "linux", "android", "wasm"].some(platform => os.platform() === platform)).toBe(true);
 });
 
 it("release", () => {

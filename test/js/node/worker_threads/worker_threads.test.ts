@@ -1193,7 +1193,15 @@ test("the global of a node worker is not an EventTarget, and it can inherit from
 
 // A realm made inside a node worker is a realm of that worker: its global has no scope either.
 test("a ShadowRealm inside a node worker has no Web Worker globals", async () => {
-  const names = ["self", "postMessage", "addEventListener", "removeEventListener", "dispatchEvent", "onmessage", "onerror"];
+  const names = [
+    "self",
+    "postMessage",
+    "addEventListener",
+    "removeEventListener",
+    "dispatchEvent",
+    "onmessage",
+    "onerror",
+  ];
   const w = new Worker(
     `const { parentPort } = require("node:worker_threads");
      parentPort.postMessage(new ShadowRealm().evaluate(${JSON.stringify(`${JSON.stringify(names)}.filter(name => name in globalThis).join()`)}));`,

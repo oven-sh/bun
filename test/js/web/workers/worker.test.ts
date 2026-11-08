@@ -860,3 +860,81 @@ describe("worker_threads", () => {
     expect(message).toEqual("hello");
   });
 });
+
+// addEventListener, removeEventListener, dispatchEvent and postMessage of a global are made at
+// the first read of their names. Before that read a store, a delete and a definition find what
+// they found when the four were rows of the global's static table: a writable data property.
+test("the event functions of the global take a store, a delete and a definition before their first read", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const out = {};
+       globalThis.postMessage = 5;
+       out.stored = [typeof postMessage, Object.getOwnPropertyDescriptor(globalThis, "postMessage")];
+       out.deleted = [delete globalThis.addEventListener, "addEventListener" in globalThis];
+       Object.defineProperty(globalThis, "dispatchEvent", { value: 7 });
+       out.defined = Object.getOwnPropertyDescriptor(globalThis, "dispatchEvent");
+       const read = removeEventListener;
+       out.read = [typeof read, read === removeEventListener, read.length, read.name, Object.getOwnPropertyDescriptor(globalThis, "removeEventListener").value === read];
+       out.enumerable = Object.keys(globalThis).includes("removeEventListener");
+       console.log(JSON.stringify(out));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    out: {
+      stored: ["number", { value: 5, writable: true, enumerable: true, configurable: true }],
+      deleted: [true, false],
+      defined: { value: 7, writable: true, enumerable: true, configurable: true },
+      read: ["function", true, 2, "removeEventListener", true],
+      enumerable: true,
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// Only a worker of node:worker_threads is without the Web Worker scope. A Web Worker that loads
+// that module keeps the seven names, and its parentPort stands for them.
+test("a Web Worker that loads node:worker_threads keeps its scope, and parentPort stands for it", async () => {
+  const source = `
+    const { parentPort, isMainThread } = require("node:worker_threads");
+    const names = ["self", "onmessage", "onerror", "postMessage", "addEventListener", "removeEventListener", "dispatchEvent"];
+    parentPort.on("message", data => parentPort.postMessage({ echo: data, present: names.filter(name => name in globalThis), isMainThread }));
+    parentPort.postMessage("ready");`;
+  const url = URL.createObjectURL(new Blob([source]));
+  const worker = new Worker(url);
+  try {
+    const received: unknown[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    worker.onerror = event => reject(new Error(event.message));
+    worker.onmessage = event => {
+      received.push(event.data);
+      if (event.data === "ready") worker.postMessage("ping");
+      else resolve();
+    };
+    await promise;
+    expect(received).toEqual([
+      "ready",
+      {
+        echo: "ping",
+        present: [
+          "self",
+          "onmessage",
+          "onerror",
+          "postMessage",
+          "addEventListener",
+          "removeEventListener",
+          "dispatchEvent",
+        ],
+        isMainThread: false,
+      },
+    ]);
+  } finally {
+    worker.terminate();
+    URL.revokeObjectURL(url);
+  }
+});

@@ -19,7 +19,15 @@ if (isMainThread) {
   });
   console.log("a Web Worker\n" + (await web));
 } else {
-  const names = ["self", "onmessage", "onerror", "postMessage", "addEventListener", "removeEventListener", "dispatchEvent"];
+  const names = [
+    "self",
+    "onmessage",
+    "onerror",
+    "postMessage",
+    "addEventListener",
+    "removeEventListener",
+    "dispatchEvent",
+  ];
   const told = [];
   const attempt = (label, action) => {
     try {
@@ -28,10 +36,35 @@ if (isMainThread) {
       told.push(label + ": " + error.name + ": " + error.message);
     }
   };
-  attempt("typeof", () => [typeof self, typeof onmessage, typeof onerror, typeof postMessage, typeof addEventListener, typeof removeEventListener, typeof dispatchEvent].join());
+  attempt("typeof", () =>
+    [
+      typeof self,
+      typeof onmessage,
+      typeof onerror,
+      typeof postMessage,
+      typeof addEventListener,
+      typeof removeEventListener,
+      typeof dispatchEvent,
+    ].join(),
+  );
   attempt("in", () => names.map(name => name in globalThis).join());
-  attempt("members", () => [typeof globalThis.self, typeof globalThis.onmessage, typeof globalThis.onerror, typeof globalThis.postMessage, typeof globalThis.addEventListener, typeof globalThis.removeEventListener, typeof globalThis.dispatchEvent].join());
-  attempt("own names", () => Object.getOwnPropertyNames(globalThis).filter(name => names.includes(name)).sort().join());
+  attempt("members", () =>
+    [
+      typeof globalThis.self,
+      typeof globalThis.onmessage,
+      typeof globalThis.onerror,
+      typeof globalThis.postMessage,
+      typeof globalThis.addEventListener,
+      typeof globalThis.removeEventListener,
+      typeof globalThis.dispatchEvent,
+    ].join(),
+  );
+  attempt("own names", () =>
+    Object.getOwnPropertyNames(globalThis)
+      .filter(name => names.includes(name))
+      .sort()
+      .join(),
+  );
   attempt("self", () => self === globalThis);
   attempt("onmessage", () => onmessage);
   attempt("onerror", () => onerror);
@@ -39,10 +72,22 @@ if (isMainThread) {
   attempt("addEventListener", () => addEventListener.length);
   attempt("removeEventListener", () => removeEventListener.length);
   attempt("dispatchEvent", () => dispatchEvent.length);
-  attempt("a call behind a test", () => (typeof addEventListener === "function" ? (addEventListener("told", () => {}), "called") : "left out"));
-  attempt("what a library takes the thread for", () => (typeof self !== "undefined" && typeof postMessage === "function" && typeof addEventListener === "function" ? "a Web Worker" : "a Worker of node"));
+  attempt("a call behind a test", () =>
+    typeof addEventListener === "function" ? (addEventListener("told", () => {}), "called") : "left out",
+  );
+  attempt("what a library takes the thread for", () =>
+    typeof self !== "undefined" && typeof postMessage === "function" && typeof addEventListener === "function"
+      ? "a Web Worker"
+      : "a Worker of node",
+  );
   const port = parentPort;
-  attempt("a store to a member", () => ((globalThis.dispatchEvent = 1), typeof dispatchEvent + " " + JSON.stringify(Object.getOwnPropertyDescriptor(globalThis, "dispatchEvent"))));
+  attempt(
+    "a store to a member",
+    () => (
+      (globalThis.dispatchEvent = 1),
+      typeof dispatchEvent + " " + JSON.stringify(Object.getOwnPropertyDescriptor(globalThis, "dispatchEvent"))
+    ),
+  );
   attempt("a store to a name", () => ((removeEventListener = 2), typeof removeEventListener));
   attempt("a store to a handler", () => ((globalThis.onerror = 3), String(onerror)));
   port.postMessage(told.join("\n"));

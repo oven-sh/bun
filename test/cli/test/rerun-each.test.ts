@@ -468,6 +468,12 @@ describe("--rerun-each and preload-level beforeAll/afterAll", () => {
       events: [before, "test a", "test a", after],
       exitCode: 1,
     },
+    {
+      name: "once when a rejection is reported during the first load of the last file",
+      args: ["--rerun-each=2", "./a.test.ts", "./stray-on-first-run.test.ts"],
+      events: [before, "test a", "test a", "test e", "test e", after],
+      exitCode: 1,
+    },
   ])("$name", async ({ preload: file = "./preload.ts", args, events, exitCode }) => {
     expect(await run(["--preload", file, ...args])).toEqual({ events, exitCode });
   });
@@ -491,21 +497,6 @@ describe("--rerun-each and preload-level beforeAll/afterAll", () => {
     ]);
     expect(twice).toEqual({ events: [before, "test a", "test a", after], exitCode: 1 });
     expect(once).toEqual({ events: [before, "test a", after], exitCode: 1 });
-  });
-
-  test.concurrent("once when a rejection is reported during the first load of the last file", async () => {
-    const { events, exitCode } = await run([
-      ...preload,
-      "--rerun-each=2",
-      "./a.test.ts",
-      "./stray-on-first-run.test.ts",
-    ]);
-    // Only the hooks: the rejection decides how many of the file's own tests run.
-    expect({ hooks: events?.filter(event => event.startsWith("preload")), last: events?.at(-1), exitCode }).toEqual({
-      hooks: [before, after],
-      last: after,
-      exitCode: 1,
-    });
   });
 
   // A beforeAll that fails skips the tests of the run that it is part of. Later runs and later files

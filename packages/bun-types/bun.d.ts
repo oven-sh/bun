@@ -3876,6 +3876,11 @@ declare module "bun" {
      * call throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`. Use it to make sure that an
      * executable can't do something, such as load native code: `remove: ["native-code"]`.
      *
+     * Two features go against this. After `"sql"`, a read of `Bun.sql` or `Bun.SQL` throws the
+     * error, so `typeof Bun.sql` throws too. After `"intl"`, some `Intl` calls in compiled code
+     * print the feature and end the process with exit code 70, and no `catch` runs. One of them
+     * is `new Intl.NumberFormat("en").format(n)`.
+     *
      * A name can't be in both `allow` and `remove`.
      */
     remove?: Bun.Build.TrimFeature[];

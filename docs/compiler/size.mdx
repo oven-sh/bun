@@ -44,17 +44,17 @@ If the report starts with `blocked by`, your program or a dependency could reach
 | `blocked by`      | Your program                                                      |
 | ----------------- | ----------------------------------------------------------------- |
 | `eval`            | Calls `eval` or `new Function` on a computed string               |
-| `runtime-code`    | Uses `node:vm` or `Bun.plugin`                                    |
+| `runtime-code`    | Uses `node:vm`, `Bun.plugin` or `Bun.build`                       |
 | `native-code`     | Uses `bun:ffi` or a native addon                                  |
 | `dynamic-import`  | Imports a computed path, or starts a `Worker` from a computed one |
 | `external-import` | Imports an `--external` package or a URL                          |
 | `build-option`    | Is built with `--compile-inspector`                               |
 
-The name `constructor` blocks `--trim` as well. The `constructor` of a function is `Function`, so `fn[key](code)` makes code from a string when `key` is `"constructor"`. If code that your program can run holds the string `"constructor"`, the report shows `eval` and `dynamic-import`. Code in a dependency counts too. A read of `.constructor` can do the same, as in `v.constructor === Object` or `this.constructor.name` in a subclass of `Error`. The `constructor()` method of a class blocks nothing.
+The name `constructor` blocks `--trim` as well. The `constructor` of an ordinary function is `Function`, so `fn[key](code)` makes code from a string when `key` is `"constructor"`. If code that your program can run holds the string `"constructor"`, the report shows `eval` and `dynamic-import`. Code in a dependency counts too. A read of `.constructor` can do the same, as in `v.constructor === Object` or `this.constructor.name` in a subclass of `Error`. So can an object key, a static method or a function with that name. The `constructor()` that makes the instances of a class blocks nothing.
 
-[`--disallow-code-generation-from-strings`](#turn-off-code-from-strings) clears these lines. The executable can still be larger than it is without the name.
+The `eval` and `dynamic-import` lines for this name have no place yet. [`--disallow-code-generation-from-strings`](#turn-off-code-from-strings) clears them. The executable can still be larger than it is without the name.
 
-For a read of `Bun` under a name that the build can't work out, as in `Bun[name]`, the report shows `runtime-code`, `native-code` and `dynamic-import`. The read [counts as a use of every member](#using-a-removed-feature) of `Bun`, and `Bun.plugin` and `Bun.build` are among them.
+If the build can't follow what your code does with `Bun`, the report shows `runtime-code`, `native-code` and `dynamic-import`. That is so for a name that the build can't work out, as in `Bun[name]`, and for a `Bun` that your code passes on, as in `helper(Bun)`. Each [counts as a use of every member](#using-a-removed-feature) of `Bun`, and `Bun.plugin` and `Bun.build` are among them.
 
 A `Worker` started from a constant path, URL or string is compiled with your program and blocks nothing. One started from a computed string (a `blob:` or `data:` URL, or `eval: true` in `node:worker_threads`) keeps the interpreter and the transpiler, about 7 MB, and so does a computed path.
 
@@ -76,7 +76,7 @@ A dependency that calls `new Function` is the most common reason `--trim` is blo
 
 Bun removes code, not names. `typeof HTMLRewriter` and `typeof Bun.Glob` give the same result as before. A call throws an `Error` with the code `ERR_FEATURE_REMOVED` and a message that says how to keep the feature.
 
-With `--trim` alone, your own code only runs into this through a name that isn't known until run time. Code that the compiler never sees, like a string passed to `eval` or to a `Worker`, finds the APIs that the rest of your program uses and no others. Members of `Bun`, `Intl`, `Temporal` and `WebAssembly` count as used where your code names them, as in `Bun.file(path)` or `value.toLocaleString()`. If the build can't work out `name`, `Bun[name]` counts as a use of every member of `Bun`, and `Intl[name]` as a use of every member of `Intl`. A copy of `Bun`, like `{ ...Bun }`, counts the same way. A call of a method under such a name keeps nothing of `Intl` or `Temporal`: `(5)[name]()` throws when `name` is `"toLocaleString"`, unless other code keeps that part of `Intl`, as `new Intl.NumberFormat()` does. `bun test` runs your source files, so it can't find these errors. Test the executable itself.
+With `--trim` alone, your own code only runs into this through a name that isn't known until run time. Code that the compiler never sees, like a string passed to `eval` or to a `Worker`, finds the APIs that the rest of your program uses and no others. If `--trim` keeps every API, as it does with `--compile-inspector`, that code finds them all. Members of `Bun`, `Intl`, `Temporal` and `WebAssembly` count as used where your code names them, as in `Bun.file(path)` or `value.toLocaleString()`. If the build can't work out `name`, `Bun[name]` counts as a use of every member of `Bun`, and `Intl[name]` as a use of every member of `Intl`. A copy of `Bun`, like `{ ...Bun }`, counts the same way, and so does a `Bun` that your code passes to a function. A method that your code calls on a value under such a name keeps nothing of `Intl` or `Temporal`: `(5)[name]()` throws when `name` is `"toLocaleString"`, unless other code keeps that part of `Intl`, as `new Intl.NumberFormat()` does. `bun test` runs your source files, so it can't find these errors. Test the executable itself.
 
 In `Bun.build`, `trim: { allow: ["color"] }` keeps a feature that only a string passed to `eval` or to a `Worker`, or a native addon uses. `allow: ["intl"]` and `allow: ["temporal"]` keep the methods that your code only calls under a computed name. `trim: { remove: ["sqlite"] }` takes a feature out even if your code uses it. Neither has a command-line flag.
 
@@ -84,7 +84,7 @@ With `remove`, a name doesn't always answer and a call doesn't always throw. Aft
 
 ### Feature names
 
-`allow` and `remove` take these names. Your editor completes them from the type `Bun.Build.TrimFeature`, and `--explain=trim` prints them in parentheses after the feature that it kept or removed. `cli` and `native-code` never appear there: the report prints the names of their parts, such as `lint` and `ffi`. Each size is roughly what the feature's own code adds. A feature keeps the features that it needs too, and a program that uses it can keep more. `--explain=trim` lists what was kept and why.
+`allow` and `remove` take these names. Your editor completes them from the type `Bun.Build.TrimFeature`, and `--explain=trim` prints them in parentheses after the feature that it kept or removed. `cli` and `native-code` never appear there: the report prints the names of their parts, such as `lint` and `ffi`. A name that you list in `allow` stands at the end of the line, as in `listed in compile.trim.allow (cli)`. Each size is roughly what the feature's own code adds. A feature keeps the features that it needs too, and a program that uses it can keep more. `--explain=trim` lists what was kept and why.
 
 <Accordion title="All feature names">
 

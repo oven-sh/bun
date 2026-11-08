@@ -70,6 +70,7 @@ import {
   getSecret,
   isBuildkite,
   isCI,
+  isDocsOnlyChange,
   isGithubAction,
   markBuildkiteStepReported,
   parseJunitFileSuites,
@@ -4245,10 +4246,9 @@ async function main(): Promise<void> {
   let doRunTests = true;
   if (isCI) {
     // allFiles can be empty if the GitHub API call failed (bad token, rate
-    // limit, non-PR build). [].every() is vacuously true, which would skip the
-    // entire suite and exit 0 — so require at least one file before treating
-    // the change set as docs-only.
-    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
+    // limit, non-PR build). An empty list is never docs-only: to skip the
+    // entire suite and exit 0 then would report green without a test.
+    if (isDocsOnlyChange(allFiles)) {
       doRunTests = false;
     }
   }

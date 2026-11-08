@@ -46956,13 +46956,6 @@
     "windows": 11800,
     "windows-aarch64": 11500
   },
-  "cli/compiler-docs-links.test.ts": {
-    "default": 1200,
-    "asan": 400,
-    "musl": 100,
-    "windows": 200,
-    "windows-aarch64": 200
-  },
   "cli/format/bunfig.test.ts": {
     "default": 400,
     "asan": 5800,

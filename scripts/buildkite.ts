@@ -426,11 +426,21 @@ export async function getLastSuccessfulBuild(): Promise<BuildkiteBuild | undefin
 interface GithubPullRequestFile {
   filename: string;
   status: string;
+  /** Where a moved file was. */
+  previous_filename?: string;
 }
 
 /**
- * The files of the pull request this Buildkite build is for, and the ones
- * among them that it adds; none when the build is not for a pull request.
+ * The paths that a pull request changes with one file. GitHub lists a moved file once, under its new path. The file is
+ * gone from its old path, so that path changes too.
+ */
+export function pullRequestFilePaths({ filename, previous_filename }: GithubPullRequestFile): string[] {
+  return previous_filename ? [filename, previous_filename] : [filename];
+}
+
+/**
+ * The paths that the pull request of this Buildkite build changes, and the
+ * files among them that it adds; none when the build is not for a pull request.
  */
 export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFiles: string[] }> {
   const allFiles: string[] = [];
@@ -450,10 +460,10 @@ export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFi
       throw new Error(`GitHub API ${response.status} ${response.statusText} on page ${page}: ${JSON.stringify(files)}`);
     }
     console.log(`-> page ${page}, found ${files.length} items`);
-    for (const { filename, status } of files) {
-      allFiles.push(filename);
-      if (status === "added") {
-        newFiles.push(filename);
+    for (const file of files) {
+      allFiles.push(...pullRequestFilePaths(file));
+      if (file.status === "added") {
+        newFiles.push(file.filename);
       }
     }
     if (files.length < perPage) {
@@ -462,6 +472,24 @@ export async function getPullRequestFiles(): Promise<{ allFiles: string[]; newFi
   }
   console.log(`- PR ${pullRequest}, ${allFiles.length} files, ${newFiles.length} new files`);
   return { allFiles, newFiles };
+}
+
+/**
+ * Whether CI skips a pull request that changes these paths: no build of bun, and no test of the suite. Each path is
+ * under docs/, and none is under docs/lint/rules/. The build embeds the rule pages in bun (`lintRuleDocs` in
+ * scripts/glob-sources.ts), and `index.mdx` and `reports.json` beside them are written from what that bun prints.
+ *
+ * Tests of the suite also read pages of docs/compiler. Those pages stay in the skip on purpose: a docs-only edit of
+ * one is first tested on main.
+ *
+ * A query that fails leaves an empty list, so an empty list is never docs-only.
+ */
+export function isDocsOnlyChange(files: string[]): boolean {
+  return (
+    files.length > 0 &&
+    files.every(file => file.startsWith("docs/")) &&
+    !files.some(file => file.startsWith("docs/lint/rules/"))
+  );
 }
 
 /**

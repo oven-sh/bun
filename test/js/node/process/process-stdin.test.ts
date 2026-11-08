@@ -91,8 +91,8 @@ test.concurrent("stdin with 'readable' event handler should receive data when pa
     env: bunEnv,
   });
 
-  proc.stdin.write("abc\n");
-  proc.stdin.write("def\n");
+  // One write: the child can read between two writes, and then it gets two chunks.
+  proc.stdin.write("abc\ndef\n");
   proc.stdin.end();
 
   await proc.exited;
@@ -539,10 +539,10 @@ describe("'end' at EOF on a pipe, socket or terminal", () => {
   // "open pipe" gets neither.
   type Stdin = "pipe" | "ready pipe" | "open pipe" | "file";
   async function run(stdin: Stdin, input: string, body: string) {
-    using dir = tempDir("stdin-eof", { "empty": "" });
+    using dir = stdin === "file" ? tempDir("stdin-eof", { "empty": "" }) : undefined;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", header + body],
-      stdin: stdin === "file" ? Bun.file(join(String(dir), "empty")) : "pipe",
+      stdin: dir ? Bun.file(join(String(dir), "empty")) : "pipe",
       stdout: "pipe",
       stderr: "pipe",
       env: bunEnv,

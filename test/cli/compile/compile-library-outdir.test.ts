@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "fs";
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, substDrive, tempDir, unprivilegedSpawnOptions } from "harness";
 import { join } from "path";
 
@@ -62,7 +62,7 @@ const hasShortNames =
   })();
 
 // No file under `dir` is written, changed or removed.
-async function expectRefused(dir: string, cwd: string, args: string[], stderr: string, user = {}) {
+async function expectRefused(dir: string, cwd: string, args: string[], stderr: unknown, user = {}) {
   const before = filesIn(dir);
   expect(await compile(cwd, args, user)).toEqual({ stdout: "", stderr, exitCode: 1 });
   expect(filesIn(dir)).toEqual(before);
@@ -156,6 +156,8 @@ describe.concurrent("bun compile --library --outdir", () => {
     const underShortName = join(String(dir), "LONG-D~1", "packages/shapes");
     await expectRefused(long, project, ["--outdir", underShortName], outdirHoldsProject(project));
     await expectRefused(long, underShortName, ["--outdir", project], outdirHoldsProject(project));
+    const entryPoint = join(underShortName, "src/index.js");
+    await expectRefused(long, project, [entryPoint, "--outdir", "src"], entryPointInsideOutdir(entryPoint));
   });
 
   // A name in another case is not the name of the project folder. The real path of the folder that it opens is.
@@ -165,6 +167,18 @@ describe.concurrent("bun compile --library --outdir", () => {
     await expectRefused(String(dir), project, ["--outdir", "../SHAPES"], outdirHoldsProject(project));
   });
 
+  test.skipIf(!isCaseInsensitive)("an entry point whose folder is named in another case is refused", async () => {
+    using dir = workspace();
+    const project = join(String(dir), "packages/shapes");
+    for (const root of [[], ["--root", "src"]]) {
+      const args = ["SRC/index.js", ...root, "--outdir", "src"];
+      await expectRefused(String(dir), project, args, entryPointInsideOutdir("SRC/index.js"));
+    }
+  });
+
+  const linksPackageJson = (written: string) =>
+    `error: --library writes a package.json into --outdir, but ${written} is a link to the project's own package.json. Choose another --outdir\n`;
+
   test("a folder whose package.json is a link to the project's own is refused", async () => {
     using dir = workspace();
     const project = join(String(dir), "packages/shapes");
@@ -172,9 +186,21 @@ describe.concurrent("bun compile --library --outdir", () => {
     const installed = join(String(dir), "packages/app/node_modules/@acme/shapes");
     mkdirSync(installed, { recursive: true });
     linkSync(join(project, "package.json"), join(installed, "package.json"));
-    const refused = `error: --library writes a package.json into --outdir, but ${join(installed, "package.json")} is a link to the project's own package.json. Choose another --outdir\n`;
+    const refused = linksPackageJson(join(installed, "package.json"));
     await expectRefused(String(dir), project, ["--outdir", "../app/node_modules/@acme/shapes"], refused);
   });
+
+  // A symbolic link to a file needs a privilege on Windows.
+  test.skipIf(isWindows)(
+    "without --outdir, a dist/package.json that links to the project's own is refused",
+    async () => {
+      using dir = workspace();
+      const project = join(String(dir), "packages/shapes");
+      mkdirSync(join(project, "dist"));
+      symlinkSync("../package.json", join(project, "dist/package.json"));
+      await expectRefused(String(dir), project, [], linksPackageJson(join(project, "dist/package.json")));
+    },
+  );
 
   test.each([
     ["src/", "src/index.js"],
@@ -197,14 +223,28 @@ describe.concurrent("bun compile --library --outdir", () => {
   });
 
   test.each([
-    [["sources/index.js", "--outdir", "src"]],
-    [["sources/index.js", "--root", "sources", "--outdir", "src"]],
-    [["sources/index.js", "--root", "src", "--outdir", "src"]],
-  ])("the folder of an entry point is refused when a link leads to the entry point: %j", async args => {
+    ["sources/index.js", []],
+    ["sources/index.js", ["--root", "sources"]],
+    ["sources/index.js", ["--root", "src"]],
+    ["sources", ["--root", "src"]],
+  ])("%j with %j is refused when a link leads to it and --outdir is its real folder", async (entryPoint, root) => {
     using dir = workspace();
     const project = join(String(dir), "packages/shapes");
     linkFolder(join(project, "src"), join(project, "sources"));
-    await expectRefused(String(dir), project, args, entryPointInsideOutdir("sources/index.js"));
+    const args = [entryPoint, ...root, "--outdir", "src"];
+    await expectRefused(String(dir), project, args, entryPointInsideOutdir(entryPoint));
+  });
+
+  // `shape` and `sr` start as `shapes` and `src` do, and they are other folders.
+  test.each([
+    ["missing.js", "../shape"],
+    ["src/missing.js", "sr"],
+  ])("%j is not inside --outdir %j", async (entryPoint, outdir) => {
+    using dir = workspace();
+    const project = join(String(dir), "packages/shapes");
+    mkdirSync(join(project, outdir));
+    const notFound = `error: ModuleNotFound resolving ${JSON.stringify(entryPoint)} (entry point)\n`;
+    await expectRefused(String(dir), project, [entryPoint, "--outdir", outdir], notFound);
   });
 
   const noEntryPoint = (project: string) =>
@@ -222,14 +262,33 @@ describe.concurrent("bun compile --library --outdir", () => {
     await expectRefused(String(dir), project, ["--outdir", outdir], noEntryPoint(project));
   });
 
+  // On Windows the working directory keeps the link, so the project folder has two names there.
+  test("without an entry point, a file in --outdir is not a source where a link led to the working directory", async () => {
+    using dir = tempDir("library-outdir-earlier-build", { packages: { shapes: earlierBuild } });
+    const project = join(String(dir), "packages/shapes");
+    linkFolder(join(String(dir), "packages"), join(String(dir), "link"));
+    const cwd = join(String(dir), "link/shapes");
+    const refused = isWindows ? expect.stringContaining("error: No entry point.") : noEntryPoint(project);
+    await expectRefused(String(dir), cwd, ["--outdir", join(project, "dist")], refused);
+  });
+
   // The rest run a whole build.
   test.each(["dist/", "dist\\"])("%j, a link to a folder outside the project, is written to", async outdir => {
+    const projectPackageJson = JSON.stringify({
+      name: "shapes",
+      version: "1.0.0",
+      main: "dist/index.js",
+      bin: "./cli.js",
+    });
     using dir = tempDir("library-outdir-accepted", {
       shapes: {
-        "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", main: "dist/index.js", bin: "./cli.js" }),
+        "package.json": projectPackageJson,
         "index.js": `export const from = "the source";\n`,
       },
-      elsewhere: { "index.js": `export const from = "an earlier build";\n` },
+      elsewhere: {
+        "package.json": JSON.stringify({ name: "an earlier build" }),
+        "index.js": `export const from = "an earlier build";\n`,
+      },
     });
     const project = join(String(dir), "shapes");
     linkFolder(join(String(dir), "elsewhere"), join(project, "dist"));
@@ -239,6 +298,10 @@ describe.concurrent("bun compile --library --outdir", () => {
     });
     expect(readdirSync(join(String(dir), "elsewhere")).sort()).toEqual(built);
     expect(readFileSync(join(String(dir), "elsewhere/index.js"), "utf8")).toContain("the source");
+    expect(JSON.parse(readFileSync(join(String(dir), "elsewhere/package.json"), "utf8"))).toMatchObject({
+      name: "shapes",
+    });
+    expect(readFileSync(join(project, "package.json"), "utf8")).toBe(projectPackageJson);
   });
 
   test(".. is resolved before a link is followed, and every file is written there", async () => {
@@ -256,12 +319,16 @@ describe.concurrent("bun compile --library --outdir", () => {
     expect(readFileSync(join(project, "package.json"), "utf8")).toBe(packageJson);
   });
 
-  // The run ends with the error about the root directory, as without this check.
-  test("an entry point outside --root is not taken to be inside an --outdir that holds --root", async () => {
+  // `--outdir` holds the root directory and no entry point. The run ends with the error about the root directory.
+  test.each([
+    [".", (project: string) => ["src/index.js", "--root", "out/root", "--outdir", "out"]],
+    ["tools/build", (project: string) => ["../../src/index.js", join(project, "src/other.js"), "--outdir", "."]],
+  ])("from %j, an entry point outside --outdir is not taken to be inside it", async (from, args) => {
     using dir = workspace();
     const project = join(String(dir), "packages/shapes");
-    mkdirSync(join(project, "out/root"), { recursive: true });
-    expect(await compile(project, ["src/index.js", "--root", "out/root", "--outdir", "out"])).toMatchObject({
+    for (const folder of ["out/root", "tools/build"]) mkdirSync(join(project, folder), { recursive: true });
+    writeFileSync(join(project, "src/other.js"), `export const corners = 4;\n`);
+    expect(await compile(join(project, from), args(project))).toMatchObject({
       stderr: expect.stringContaining("because it is outside the root directory"),
       exitCode: 1,
     });

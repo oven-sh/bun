@@ -138,8 +138,8 @@ fn real_path(directory: &[u8]) -> Option<Vec<u8>> {
 struct Outdir {
     // `--outdir` on the working directory, with `.` and `..` resolved and no separator at its end.
     folder: Vec<u8>,
-    // Where `folder` leads, when a link on the way to it makes that another path.
-    real: Option<Vec<u8>>,
+    // Other paths of `folder`: its real path, and its path below the project folder as that is spelled.
+    aliases: Vec<Vec<u8>>,
     as_written: Vec<u8>,
 }
 
@@ -152,7 +152,7 @@ impl Outdir {
         let folder = join_abs_string::<Auto>(working_directory, &[as_written]);
         let mut outdir = Outdir {
             folder: without_trailing_slash_windows_path(folder).to_vec(),
-            real: None,
+            aliases: Vec::new(),
             as_written: as_written.to_vec(),
         };
         if outdir.holds(&project.directory) {
@@ -167,18 +167,27 @@ impl Outdir {
         if let Ok(real) = opened.get_fd_path(&mut buffer) {
             let real: &[u8] = real;
             // A working directory from `getcwd()` has no link in it. On Windows it is kept as it was spelled.
-            let project_directory = match cfg!(windows) {
+            let project_real = match cfg!(windows) {
                 true => real_path(&project.directory),
                 false => None,
             };
-            let project_directory = project_directory.as_deref().unwrap_or(&project.directory);
+            let project_directory = project_real.as_deref().unwrap_or(&project.directory);
             if is_or_holds(real, project_directory) {
                 return Err(LibraryError::OutdirHoldsProject {
                     outdir: real.to_vec(),
                 });
             }
             if real != outdir.folder {
-                outdir.real = Some(real.to_vec());
+                outdir.aliases.push(real.to_vec());
+            }
+            if let Some(project_real) = &project_real
+                && project_real[..] != project.directory[..]
+                && let Some([separator, below @ ..]) = real.strip_prefix(&project_real[..])
+                && bun_paths::is_sep_native(*separator)
+            {
+                outdir
+                    .aliases
+                    .push(absolute_path(&project.directory, below));
             }
         }
         if let Some(package_json) = &project.package_json
@@ -197,7 +206,7 @@ impl Outdir {
 
     fn holds(&self, path: &[u8]) -> bool {
         let holds = |folder: &[u8]| is_or_holds(folder, path);
-        holds(&self.folder) || self.real.as_deref().is_some_and(holds)
+        holds(&self.folder) || self.aliases.iter().any(|alias| holds(alias))
     }
 }
 
@@ -270,7 +279,7 @@ impl Library {
         ctx.bundler_options.outdir = self.outdir.folder.as_slice().into();
     }
 
-    // `root_directory` is the real path of `--root`, or of the folder that the entry points share.
+    // An output lands on an entry point only if `--outdir` holds the root directory, which the build resolved.
     #[cold]
     pub(crate) fn check_root_directory(
         &self,
@@ -282,16 +291,12 @@ impl Library {
             return;
         }
         let working_directory = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
-        // Only with `--root` can an entry point be outside the root directory.
-        let is_in_root = |entry_point: &[u8]| {
-            if ctx.bundler_options.root_dir.is_empty() {
-                return true;
-            }
+        let is_inside = |entry_point: &[u8]| {
             let path = absolute_path(working_directory, entry_point);
-            let folder = real_path(&path).or_else(|| real_path(bun_paths::dirname(&path)?));
-            folder.is_some_and(|folder| is_or_holds(root_directory, &folder))
+            let real = real_path(&path).or_else(|| real_path(bun_paths::dirname(&path)?));
+            real.is_some_and(|real| self.outdir.holds(&real))
         };
-        if let Some(entry_point) = entry_points.iter().find(|it| is_in_root(it)) {
+        if let Some(entry_point) = entry_points.iter().find(|it| is_inside(it)) {
             let entry_point = entry_point.to_vec();
             LibraryError::EntryPointInsideOutdir { entry_point }.exit();
         }

@@ -1,6 +1,6 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
-import { afterEach, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
 import { createContext, runInContext } from "node:vm";
@@ -2181,4 +2181,110 @@ test.concurrent("a stack taken while a CommonJS module loads names the frame of 
     stderr: "",
   });
   expect(exitCode).toBe(0);
+});
+
+// V8 gives every error whose Error.stackTraceLimit is a number a `stack`. With no frame (a limit of 0, or an
+// error made on the event loop with no JavaScript running) it is the header alone: "name: message".
+describe("an error with no frame has a stack of its header", () => {
+  const withLimit = (limit, fn) => {
+    const original = Error.stackTraceLimit;
+    Error.stackTraceLimit = limit;
+    try {
+      return fn();
+    } finally {
+      Error.stackTraceLimit = original;
+    }
+  };
+
+  test("new Error under a limit of 0, a negative limit and NaN", () => {
+    expect(withLimit(0, () => new Error("x").stack)).toBe("Error: x");
+    expect(withLimit(-1, () => new Error("x").stack)).toBe("Error: x");
+    expect(withLimit(NaN, () => new Error("x").stack)).toBe("Error: x");
+    expect(withLimit(0, () => new TypeError("x").stack)).toBe("TypeError: x");
+    expect(withLimit(0, () => new Error("").stack)).toBe("Error");
+  });
+
+  test("a limit that is not a number leaves stack unset, as in V8", () => {
+    expect(withLimit(undefined, () => new Error("x").stack)).toBeUndefined();
+    expect(withLimit("5", () => new Error("x").stack)).toBeUndefined();
+  });
+
+  test("a subclass, and a name or message set before the first read", () => {
+    class MyError extends Error {}
+    expect(withLimit(0, () => new MyError("m").stack)).toBe("Error: m");
+    const renamed = withLimit(0, () => new Error("x"));
+    renamed.name = "Renamed";
+    renamed.message = "y";
+    expect(renamed.stack).toBe("Renamed: y");
+  });
+
+  test("the stack is a non-enumerable own property, and there is no position", () => {
+    const error = withLimit(0, () => new Error("x"));
+    expect(Object.keys(error)).toEqual([]);
+    expect(error.stack).toBe("Error: x");
+    expect(Object.getOwnPropertyNames(error).sort()).toEqual(["message", "stack"]);
+    expect(Object.getOwnPropertyDescriptor(error, "stack")).toMatchObject({
+      value: "Error: x",
+      enumerable: false,
+      writable: true,
+      configurable: true,
+    });
+  });
+
+  test("a runtime error thrown under a limit of 0", () => {
+    const stack = withLimit(0, () => {
+      try {
+        null.x;
+      } catch (e) {
+        return e.stack;
+      }
+    });
+    expect(stack).toBe("TypeError: null is not an object (evaluating 'null.x')");
+  });
+
+  test("Error.prepareStackTrace is called with an empty array of call sites", () => {
+    const calls = [];
+    Error.prepareStackTrace = (error, callSites) => {
+      calls.push(callSites.length);
+      return "prepared";
+    };
+    expect(withLimit(0, () => new Error("x").stack)).toBe("prepared");
+    expect(calls).toEqual([0]);
+  });
+
+  test("Error.captureStackTrace under a limit of 0 gives the header alone", () => {
+    const object = {};
+    withLimit(0, () => Error.captureStackTrace(object));
+    expect(object.stack).toBe("Error");
+    const error = new Error("x");
+    withLimit(0, () => Error.captureStackTrace(error));
+    expect(error.stack).toBe("Error: x");
+    const named = withLimit(0, () => {
+      const e = new Error("x");
+      e.name = "Custom";
+      Error.captureStackTrace(e);
+      return e;
+    });
+    expect(named.stack).toBe("Custom: x");
+  });
+
+  test("Error.captureStackTrace with a number limit still captures frames", () => {
+    function f1() {
+      const error = {};
+      Error.captureStackTrace(error);
+      return error.stack;
+    }
+    const stack = withLimit(10, f1);
+    expect(stack).toMatch(/^Error\n    at f1 /);
+  });
+
+  test("an error made on the event loop with no JavaScript running", async () => {
+    // No async function awaits the rejected promise, so there is no async frame to attach: this is the error
+    // as it is at the top level of a module, or in a callback.
+    const { promise, resolve } = Promise.withResolvers();
+    Bun.file("/nonexistent-path/x.txt").text().catch(resolve);
+    const error = await promise;
+    expect(error.code).toBe("ENOENT");
+    expect(error.stack).toBe(`${error.name}: ${error.message}`);
+  });
 });

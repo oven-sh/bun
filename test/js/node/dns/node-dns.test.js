@@ -1152,6 +1152,56 @@ test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR q
 // as the c-ares code `ETIMEOUT`. CI cannot point getaddrinfo at a failing
 // resolver, so this drives the same mapping the system backend, fetch() and
 // Bun.connect() use with the raw EAI_* status.
+// The error of a lookup is made on the event loop, with no JavaScript frame. Its stack is then the header
+// alone, "DNSException: getaddrinfo ENOTFOUND a..b", as in Node. A name with an empty label is refused
+// before any resolver is asked, so this does not depend on the network.
+describe("the error of a name that does not resolve has a stack", () => {
+  const header = error => `${error.name}: ${error.message}`;
+
+  test("dns.lookup with a callback", async () => {
+    const error = await new Promise(resolve => dns.lookup("a..b", resolve));
+    expect(error).toMatchObject({ code: "ENOTFOUND", syscall: "getaddrinfo", hostname: "a..b" });
+    expect(error.stack).toBe(header(error));
+    expect(error.stack).toBe("DNSException: getaddrinfo ENOTFOUND a..b");
+  });
+
+  test("dns.promises.lookup with no async function awaiting it", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    dns_promises.lookup("a..b").catch(resolve);
+    const error = await promise;
+    expect(error.code).toBe("ENOTFOUND");
+    expect(error.stack).toBe(header(error));
+  });
+
+  test("dns.promises.lookup awaited at the top level", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import dns from "node:dns/promises";
+         try { await dns.lookup("a..b"); } catch (e) { console.log(JSON.stringify({ stack: e.stack, code: e.code })); }`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr }).toEqual({
+      stdout: { stack: "DNSException: getaddrinfo ENOTFOUND a..b", code: "ENOTFOUND" },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("dns.promises.lookup awaited in an async function keeps the async frames", async () => {
+    async function inner() {
+      await dns_promises.lookup("a..b");
+    }
+    const error = await inner().then(null, e => e);
+    expect(error.stack).toMatch(/^DNSException: getaddrinfo ENOTFOUND a\.\.b\n    at (async )?inner /);
+  });
+});
+
 describe("getaddrinfo status mapping", () => {
   test("EAI_AGAIN is reported as EAI_AGAIN, like Node", () => {
     const err = dnsGetaddrinfoError("EAI_AGAIN", "redis.example");

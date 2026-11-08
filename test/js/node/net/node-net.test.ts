@@ -740,6 +740,14 @@ it("should handle connection error (unix)", done => {
   });
 });
 
+it("the error of a host that does not resolve has a stack", async () => {
+  // The error is made on the event loop, with no JavaScript frame: its stack is the header alone, as in Node.
+  const socket = connect(1, "a..b");
+  const [error] = await once(socket, "error");
+  expect(error).toMatchObject({ code: "ENOTFOUND", syscall: "getaddrinfo", hostname: "a..b" });
+  expect(error.stack).toBe(`${error.name}: ${error.message}`);
+});
+
 it("Socket has a prototype", () => {
   function Connection() {}
   function Connection2() {}

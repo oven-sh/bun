@@ -1512,6 +1512,11 @@ extern "C" void Bun__promises__emitUnhandledRejectionWarning(JSC::JSGlobalObject
         CLEAR_IF_EXCEPTION(scope);
         if (vm.hasPendingTerminationException()) [[unlikely]]
             return;
+        // The warning's own stack is materialized on the first read of `stack`, over whatever is there.
+        uncheckedDowncast<JSC::ErrorInstance>(warning)->materializeErrorInfoIfNeeded(vm);
+        CLEAR_IF_EXCEPTION(scope);
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return;
         warning->putDirect(vm, vm.propertyNames->stack, reasonStack);
     }
     if (!reasonStack) {

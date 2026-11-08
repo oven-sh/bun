@@ -2791,6 +2791,13 @@ describe("readFileSync", () => {
 });
 
 describe("readFile", () => {
+  it("the error of a callback has a stack", async () => {
+    // The error is made on the event loop, with no JavaScript frame: its stack is the header alone, as in Node.
+    const error: any = await new Promise(resolve => readFile("/nonexistent-path/x.txt", resolve));
+    expect(error.code).toBe("ENOENT");
+    expect(error.stack).toBe(`${error.name}: ${error.message}`);
+  });
+
   it("works", async () => {
     gc();
     await new Promise((resolve, reject) => {
@@ -5881,7 +5888,7 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
             fs.write(fd, buffer, offset, length, position, (err, bytesWritten, buf) => {
               calls.push([err?.code, bytesWritten, buf === buffer]);
               if (err?.code === "EAGAIN") {
-                for (let left = filled; left > 0;)
+                for (let left = filled; left > 0; )
                   left -= fs.readSync(reader, scratch, 0, Math.min(left, scratch.length));
               }
               cb(err, bytesWritten, buf);

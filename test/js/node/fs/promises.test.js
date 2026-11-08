@@ -259,8 +259,8 @@ test("fs.promises async stack through Promise subclass", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Subclass .then() may not preserve the reaction chain — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  // Subclass .then() may not preserve the reaction chain: the stack is then the header alone.
+  expect(caught.stack).toStartWith(`${caught.name}: ${caught.message}`);
 });
 
 test("fs.promises async stack through custom thenable", async () => {
@@ -282,8 +282,8 @@ test("fs.promises async stack through custom thenable", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Custom thenables break the direct reaction chain — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  // Custom thenables break the direct reaction chain: the stack is then the header alone.
+  expect(caught.stack).toStartWith(`${caught.name}: ${caught.message}`);
 });
 
 test("fs.promises async stack with Promise.all", async () => {
@@ -300,8 +300,8 @@ test("fs.promises async stack with Promise.all", async () => {
 
   expect(caught).toBeDefined();
   expect(caught.code).toBe("ENOENT");
-  // Promise.all uses combinator context — must not crash.
-  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+  // Promise.all uses combinator context: the stack is then the header alone.
+  expect(caught.stack).toStartWith(`${caught.name}: ${caught.message}`);
 });
 
 it("an unused FileHandle.writer() does not prevent close()", async () => {

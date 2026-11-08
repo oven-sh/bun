@@ -36,7 +36,10 @@ describe("WebKit 7b485a76e9 upgrade", () => {
       // Only the Error constructor's own property counts, as in V8.
       (TypeError as any).stackTraceLimit = 1;
       expect(depth()).toBe(3);
+      // NaN is a limit of 0, as in V8: the stack is the header alone. A limit that is not a number leaves it unset.
       Error.stackTraceLimit = NaN;
+      expect(new Error("x").stack).toBe("Error: x");
+      Error.stackTraceLimit = "3";
       expect(new Error("x").stack).toBeUndefined();
     } finally {
       delete (TypeError as any).stackTraceLimit;

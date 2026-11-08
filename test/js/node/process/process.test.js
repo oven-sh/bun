@@ -3224,6 +3224,38 @@ it.each([
   expect(exitCode).toBe(0);
 });
 
+it("the unhandled rejection warning carries the stack of a reason that has no frame", async () => {
+  // A reason made with no frame has a stack of its header alone. The warning that carries it is made with no
+  // frame too, and materializing its own stack must not replace the one copied from the reason.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--unhandled-rejections=warn",
+      "-e",
+      `process.removeAllListeners("warning");
+       process.on("warning", w => console.log(JSON.stringify([w.name, w.stack])));
+       Error.stackTraceLimit = 0;
+       Promise.reject(new Error("boom"));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const warnings = stdout
+    .trim()
+    .split("\n")
+    .map(line => JSON.parse(line));
+  expect({ warnings, stderr }).toEqual({
+    warnings: [
+      ["UnhandledPromiseRejectionWarning", "UnhandledPromiseRejectionWarning: Error: boom"],
+      ["UnhandledPromiseRejectionWarning", "Error: boom"],
+    ],
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("removeAllListeners('warning') silences the default print", async () => {
   await using proc = Bun.spawn({
     cmd: [

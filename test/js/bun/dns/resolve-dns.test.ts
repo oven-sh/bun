@@ -141,6 +141,49 @@ describe("dns", () => {
     });
   });
 
+  // The error of a lookup is made on the event loop, with no JavaScript frame. Its stack is then the header
+  // alone, as in Node, and a library that splits `error.stack` does not throw. A name with an empty label is
+  // refused before any resolver is asked, so this does not depend on the network.
+  describe("the error of a name that does not resolve has a stack", () => {
+    test("lookup() awaited at the top level", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `try { await Bun.dns.lookup("a..b"); } catch (e) { console.log(JSON.stringify({ stack: e.stack, code: e.code, own: Object.getOwnPropertyNames(e).includes("line") })); }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout), stderr }).toEqual({
+        stdout: { stack: "DNSException: getaddrinfo ENOTFOUND a..b", code: "DNS_ENOTFOUND", own: false },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // No async function awaits the rejected promise, so there is no async frame to attach.
+    const rejection = (promise: Promise<unknown>) => {
+      const { promise: rejected, resolve } = Promise.withResolvers<any>();
+      promise.catch(resolve);
+      return rejected;
+    };
+
+    test("lookup() with no async function awaiting it", async () => {
+      const error = await rejection(dns.lookup("a..b"));
+      expect(error).toMatchObject({ code: "DNS_ENOTFOUND", name: "DNSException" });
+      expect(error.stack).toBe("DNSException: getaddrinfo ENOTFOUND a..b");
+    });
+
+    test("resolve() with no async function awaiting it", async () => {
+      const error = await rejection(dns.resolve("a..b", "A"));
+      expect(error.code).toBe("DNS_ENOTFOUND");
+      expect(error.stack).toBe(`${error.name}: ${error.message}`);
+    });
+  });
+
   test("lookup() with oversized .local hostname rejects via system backend in subprocess", async () => {
     // A `.local` suffix forces the c-ares backend to fall through to the
     // system resolver, which is the path that wrote past its stack buffer.

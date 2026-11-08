@@ -168,7 +168,7 @@ test.todo("multipart formdata base64", async () => {
   await using server = createServer(async (req, res) => {
     res.setHeader("content-type", "multipart/form-data; boundary=----formdata-bun-0.5786922755719377");
 
-    for (let offset = 0; offset < formRaw.length;) {
+    for (let offset = 0; offset < formRaw.length; ) {
       res.write(formRaw.slice(offset, (offset += 2)));
       await new Promise(resolve => setTimeout(resolve));
     }
@@ -430,7 +430,7 @@ test("unresolvable hostname rejects with the resolver error", async () => {
       `const out = [];
        const report = p => p.then(
          () => "resolved",
-         ({ name, code, syscall, hostname, message }) => ({ name, code, syscall, hostname, message }),
+         ({ name, code, syscall, hostname, message, stack }) => ({ name, code, syscall, hostname, message, stack }),
        );
        for (let i = 0; i < 3; i++) {
          out.push(await report(fetch("http://" + ${JSON.stringify(host)} + "/")));
@@ -461,6 +461,8 @@ test("unresolvable hostname rejects with the resolver error", async () => {
     syscall: "getaddrinfo",
     hostname,
     message: `getaddrinfo ENOTFOUND ${hostname}`,
+    // The error is made on the event loop, with no JavaScript frame: its stack is the header alone, as in Node.
+    stack: `TypeError: getaddrinfo ENOTFOUND ${hostname}`,
   });
   // `out` is the raw stdout if it is not JSON (the subprocess crashed), so the
   // failure diff shows what the child actually printed alongside stderr.

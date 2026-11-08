@@ -3145,11 +3145,11 @@ describe("writeFileSync", () => {
     writeFileSync(path, "bun", { mode: 33188 });
     const stat = fs.statSync(path);
     // open(2) masks the requested mode with the process umask (0o077 on
-    // Android/Termux). Derive the mask from a file created with the default
-    // mode (0o666) in the same directory: process.umask() clears the mask for an
+    // Android/Termux). Derive the mask from a file that openSync creates with
+    // mode 0o666 in the same directory: process.umask() clears the mask for an
     // instant and can race with concurrent tests that create files.
     const plain = `${dir}/writeFileSyncDefaultMode.txt`;
-    writeFileSync(plain, "bun");
+    closeSync(openSync(plain, "w", 0o666));
     const umask = 0o666 & ~fs.statSync(plain).mode;
     expect(stat.mode).toBe(isWindows ? 33206 : 33188 & ~umask);
 

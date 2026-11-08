@@ -90,7 +90,8 @@ it("hostname", () => {
 });
 
 it("platform", () => {
-  expect(["win32", "darwin", "linux", "wasm"].some(platform => os.platform() === platform)).toBe(true);
+  expect(["win32", "darwin", "linux", "wasm", "android"].some(platform => os.platform() === platform)).toBe(true);
+  expect(os.platform()).toBe(process.platform);
 });
 
 it("release", () => {
@@ -117,7 +118,7 @@ it("userInfo", () => {
   const info = os.userInfo();
 
   if (process.platform !== "win32") {
-    expect(info.username).toBe(process.env.USER);
+    expect(info.username).toBe(process.env.USER ?? "unknown");
     expect(info.shell).toBe(process.env.SHELL || "unknown");
     expect(info.uid >= 0).toBe(true);
     expect(info.gid >= 0).toBe(true);

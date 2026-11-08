@@ -49,7 +49,7 @@
 namespace Zig {
 bool runCompiledMock(Zig::GlobalObject*, JSC::AOT::ModuleID);
 JSC::JSPromise* evaluateOriginalOfCompiledMock(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& hasFactory);
-void didStartImportOfCompiledFile(Zig::GlobalObject*, const String& path);
+void didStartImportOfCompiledFile(Zig::GlobalObject*, const ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached);
 bool layMocksOfBodiesAgain(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached);
 JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isAskedAbout, JSC::AOT::FactoryAskedForBy, JSC::JSValue& state);
 uint64_t callOfFactoryOfCompiledMockThatHasNotSettled(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& refusesEveryRequire);
@@ -1879,11 +1879,11 @@ static uint32_t willLoad(JSGlobalObject* globalObject, AOT::ModuleID fileThatWro
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
-static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, const String& path)
+static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, const String& path, const ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached)
 {
     if (!isBunTest)
         return;
-    Zig::didStartImportOfCompiledFile(defaultGlobalObject(globalObject), path);
+    Zig::didStartImportOfCompiledFile(defaultGlobalObject(globalObject), isReached);
     didStartDynamicImport(defaultGlobalObject(globalObject), import, path);
 }
 

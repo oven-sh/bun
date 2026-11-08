@@ -13,5 +13,5 @@
 # -- end of source
 # REQUIRES: x86_64
 # AS-USERS-BUILD: the encoder's question at each read of a slot is asked in every build, and under the check of the runner the allocation is checked, which finds the same
-# DIAGNOSTIC: SpillSlotLacksItsValue
+# DIAGNOSTIC: SpillSlotLacksItsValue f3
 # RUN: emit f3 mechanisms=all testing=SpillsThatStepsReadAreTakenToBeReadByNone

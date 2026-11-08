@@ -720,13 +720,24 @@ fn read_path_given_to_create_require(
         None,
     )
     .ok_or(UnreadPath)?;
+    let is_url_from_own_file = matches!(
+        found.resolved_form,
+        Some(ResolvedForm::Url | ResolvedForm::UrlObject)
+    );
     let ([ImportSpecifier::Constant(path)], true, false) = (
         &found.alternatives[..],
-        found.start_at_own_directory,
+        found.start_at_own_directory || is_url_from_own_file,
         found.is_out_of_data_file,
     ) else {
         return Err(UnreadPath);
     };
+    let from_own_folder = match inputs.atoms.bytes(*path) {
+        above if is_url_from_own_file && above.starts_with(b"../") => {
+            inputs.atoms.intern(&[b"./", above].concat())
+        }
+        _ => *path,
+    };
+    let path = &from_own_folder;
     let text = inputs.atoms.bytes(*path);
     let Some(below) = text.strip_prefix(b"./") else {
         paths_read.push((given, *path));
@@ -1308,7 +1319,8 @@ fn find_exports_that_take(
         return Vec::new();
     };
     let find_written = |name: Atom| written_names.find_expressions(hir, name);
-    let exports = find_names_exported_for(hir, bound, function, &find_written);
+    let exported = written_names.exported_names(hir, bound);
+    let exports = find_names_exported_for(hir, bound, exported, function, &find_written);
     let changers = exports.into_iter().map(|export| ExportedFileChanger {
         export,
         place: place as u32,

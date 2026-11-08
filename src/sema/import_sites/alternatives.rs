@@ -1,6 +1,6 @@
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
 use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
-use super::parameters::{find_values_passed_for_pattern, is_exported};
+use super::parameters::{ExportedNames, find_values_passed_for_pattern, is_exported};
 use super::touched_exports::{is_only_tested, stands_in_function_with_arguments};
 use super::{
     ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
@@ -8,8 +8,8 @@ use super::{
 };
 use crate::atom::{Atom, known};
 use crate::bind::{
-    Binding, BindingInitializer, BindingKind, BindingStability, CommonJsVariable, Decl, FnOwner,
-    FunctionFlags, Parent, PatParent, StoreKind, SymbolId, UNREACHABLE,
+    Binding, BindingInitializer, BindingKind, BindingStability, Bound, CommonJsVariable, Decl,
+    FnOwner, FunctionFlags, Parent, PatParent, StoreKind, SymbolId, UNREACHABLE,
 };
 use crate::fold::{
     Constant, FoldedValue, MembersBehindNames, PathBelowFolder, apply_binary, apply_template,
@@ -268,9 +268,14 @@ pub(super) struct WrittenNames(
     MembersBehindNames,
     OnceCell<Vec<u32>>,
     RefCell<FxHashMap<Atom, Vec<(SymbolId, ExprId)>>>,
+    OnceCell<ExportedNames>,
 );
 
 impl WrittenNames {
+    pub(super) fn exported_names(&self, hir: &File<'_>, bound: &Bound<'_>) -> &ExportedNames {
+        self.4.get_or_init(|| ExportedNames::new(hir, bound))
+    }
+
     fn find(&self, hir: &File<'_>, name: Atom) -> &[(Atom, ExprId)] {
         let all = self.0.get_or_init(|| {
             let exprs = (0..).map(ExprId).zip(hir.exprs.iter());
@@ -549,7 +554,7 @@ fn find_alternatives_with(mut follower: Follower<'_, '_, '_>, argument: ExprId) 
             Held::Text(text) => (text, None),
             Held::Resolved(text, form) => (text, Some(form)),
             Held::Url(text) => (text, Some(ResolvedForm::UrlObject)),
-            Held::Primitive(_) | Held::Other => continue,
+            Held::Primitive(_) | Held::Function(_) | Held::Other => continue,
             _ => return None,
         };
         texts.push(text);
@@ -1774,12 +1779,33 @@ impl Follower<'_, '_, '_> {
                 bound
                     .dynamic_lookup_scope(NodeData::Expr(mention))
                     .is_none()
-                    && (bound.is_store_target(mention)
+                    && (self.stores_without_handing_on(mention)
                         || self.find_push(mention).is_some()
                             && self.is_initialized_with_list(symbol)
                         || self.find_add(mention).is_some() && self.is_initialized_with_set(symbol)
                         || self.keeps_as_written(mention))
             })
+    }
+
+    fn stores_without_handing_on(&mut self, mention: ExprId) -> bool {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        if !bound.is_store_target(mention) {
+            return false;
+        }
+        match bound.parent_of_expr(self.outermost_cast(mention)) {
+            Parent::Expr(assignment)
+                if matches!(
+                    hir[assignment].kind,
+                    ExprKind::Assign {
+                        op: Some(BinOp::And | BinOp::Or | BinOp::Nullish),
+                        ..
+                    }
+                ) =>
+            {
+                self.keeps_as_written(assignment)
+            }
+            _ => true,
+        }
     }
 
     fn holds_what_cannot_be_changed(&mut self, e: ExprId) -> bool {

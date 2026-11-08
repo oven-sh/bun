@@ -162,6 +162,14 @@ export async function expectEveryTestPasses(args: string[], cwd?: string, env?: 
     stderr: expect.any(String),
     exitCode: listed ? 1 : 0,
   });
+  // A file with a line `# AS-USERS-BUILD:` shows nothing where the checks are on from outside: testaot does not run it, says what turns them on, and counts it among
+  // the passed. Its own assertions and sanitizer may; a check word may where this call passes one. Anything else leaves the file unrun in a run that looks green.
+  const asksForCheck = args.some(arg => arg.startsWith("--option=check="));
+  const notRun = [...lines, ...stderr.split(/\r?\n/)]
+    .filter(line => line.startsWith("NOT RUN, not as users build here: "))
+    .filter(line => !/^NOT RUN, not as users build here: this testaot has (assertions|the sanitizer): /.test(line))
+    .filter(line => !(asksForCheck && line.startsWith("NOT RUN, not as users build here: the command line asks for a check: ")));
+  expect(notRun).toEqual([]);
   const [, passed, todo] = /^(\d+) passed, \d+ failed, (\d+) todo$/.exec(lines.at(-1)!)!;
   return Number(passed) + Number(todo);
 }

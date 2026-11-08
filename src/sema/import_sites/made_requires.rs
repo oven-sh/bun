@@ -478,7 +478,12 @@ fn starts_at_own_folder(
             }
             _ => None,
         };
+        let is_url_from_own_file = matches!(expr_kind(hir, e), Some(ExprKind::New(call))
+            if hir[call].args.len() == 2
+                && is_free_name(hir, bound, hir.skip_type_assertions(hir[call].callee), &[known::URL])
+                && names_own_file_behind(text, hir.id_at(hir[call].args, 1), parts_left, left));
         names_own_folder(text, e, left)
+            || is_url_from_own_file
             || first.is_some_and(|first| starts_at_own_folder(text, first, parts_left, left))
     })
 }

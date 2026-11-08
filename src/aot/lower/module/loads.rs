@@ -801,6 +801,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) {
         let bytes = self.file.queries.atom_bytes(written).to_vec();
         let below = self.emit_text(bytes.strip_prefix(b".").unwrap_or(&bytes));
+        let given_base = path;
         let is_text = self.builder.type_test(path, TypeTable::STRING);
         let of_text = self.create_block();
         let other = self.create_block();
@@ -836,6 +837,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.jump(other);
 
         self.continue_in(other);
+        let is_object = self.builder.type_test(given_base, TypeTable::OBJECT);
+        let of_object = self.create_block();
+        let neither = self.create_block();
+        self.builder
+            .branch(is_object, Edge::to(of_object), Edge::to(neither));
+
+        self.continue_in(of_object);
+        let href = self.file.intern_bytes(b"href");
+        let href = PropertyName::Constant(self.file.text_key(href));
+        let given = self.emit_get(given_base, href);
+        for directory in self.emit_own_directories() {
+            let expected = self.builder.strcat(&[directory, below]);
+            let expected = self.emit_url_of_path(expected);
+            let is_as_written = self.builder.strict_eq(given, expected);
+            let otherwise = self.create_block();
+            self.builder
+                .branch(is_as_written, Edge::to(as_written), Edge::to(otherwise));
+            self.continue_in(otherwise);
+        }
+        self.jump(neither);
+
+        self.continue_in(neither);
     }
 
     fn emit_url_of_path(&mut self, path: ValueId) -> ValueId {

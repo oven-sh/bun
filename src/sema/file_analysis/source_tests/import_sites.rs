@@ -1489,6 +1489,14 @@ const TARGET: Fold<'static> = Fold {
 
 const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
     (
+        "const uses = { a: './a', quiet() {}, b: './b' }; for (const name in uses) if (typeof uses[name] === 'string') require(uses[name]);",
+        &["./a", "./b"],
+    ),
+    (
+        "let table = { a: './a' }; table ??= null; require(table.a);",
+        &["./a"],
+    ),
+    (
         "import { fileURLToPath } from 'node:url'; await import(fileURLToPath(new URL(`./a/${x}.js`, import.meta.url)));",
         &["./a/*.js"],
     ),
@@ -1811,6 +1819,9 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
 ];
 
 const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "let table = { a: './a' }; function get() { return (table ??= null); } get().a = './c'; require(table.a);",
+    "let table = { x: { a: './a' } }; hand((table ||= {}).x); require(table.x.a);",
+    "const uses = { quiet() {} }; for (const name in uses) require(uses[name]);",
     "const Reflect = other; const uses = { a(found) {}, b: found => found }; for (const name of Reflect.ownKeys(uses)) require(name);",
     "var uses = { a(found) {}, b: found => found }; uses = other; for (const name in uses) require(name);",
     "const uses = { a(found) {}, b: found => found }; for (const name of Object.keys?.(uses)) require(name);",

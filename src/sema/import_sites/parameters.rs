@@ -5,8 +5,9 @@ use crate::bind::{
 use crate::fold::Decisions;
 use crate::hir::{
     ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, IdList, ImportEqualsId, NodeData,
-    PatKind, PropKey, StmtKind,
+    PatId, PatKind, PropKey, StmtKind,
 };
+use crate::util::FxHashMap;
 use smallvec::SmallVec;
 
 pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool {
@@ -21,9 +22,68 @@ pub fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool 
 
 type FindWritten<'a> = &'a dyn Fn(Atom) -> Vec<ExprId>;
 
+type Places = SmallVec<[u32; 1]>;
+
+#[derive(Default)]
+pub struct ExportedNames {
+    of_functions: FxHashMap<FnId, Places>,
+    of_patterns: FxHashMap<PatId, Places>,
+    of_local_names: FxHashMap<SymbolId, Places>,
+}
+
+impl ExportedNames {
+    pub fn new(hir: &File<'_>, bound: &Bound<'_>) -> ExportedNames {
+        let mut names = ExportedNames::default();
+        let exports = bound.table(bound.symbol(bound.file_symbol).exports);
+        for (place, &(_, symbol)) in (0..).zip(exports) {
+            for &declaration in bound.symbol(symbol).decls {
+                names.note(hir, bound, declaration, place);
+            }
+        }
+        names
+    }
+
+    fn note(&mut self, hir: &File<'_>, bound: &Bound<'_>, declaration: Decl, place: u32) {
+        let value = match declaration {
+            Decl::Fn(declared) => {
+                return self.of_functions.entry(declared).or_default().push(place);
+            }
+            Decl::Var(pattern) => return self.of_patterns.entry(pattern).or_default().push(place),
+            Decl::ExportSpec(specifier) => {
+                if !hir[hir[specifier].export].has_module_specifier
+                    && let Binding::Symbol(local) = bound.exported_binding(specifier)
+                {
+                    self.of_local_names.entry(local).or_default().push(place);
+                }
+                return;
+            }
+            Decl::ExportExpr(statement) => match hir[statement].kind {
+                StmtKind::ExportDefault(value) => value,
+                _ => return,
+            },
+            Decl::ExportsProperty(assignment) => match hir[assignment].kind {
+                ExprKind::Assign {
+                    op: None, value, ..
+                } => value,
+                _ => return,
+            },
+            _ => return,
+        };
+        let value = hir.skip_type_assertions(value);
+        match (hir[value].kind, bound.binding(value)) {
+            (ExprKind::Fn(written), _) => self.of_functions.entry(written).or_default().push(place),
+            (ExprKind::Ident(_), Binding::Symbol(local)) => {
+                self.of_local_names.entry(local).or_default().push(place);
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn find_names_exported_for(
     hir: &File<'_>,
     bound: &Bound<'_>,
+    exported: &ExportedNames,
     function: FnId,
     find_written: FindWritten<'_>,
 ) -> SmallVec<[Atom; 2]> {
@@ -37,38 +97,17 @@ pub fn find_names_exported_for(
         },
         _ => None,
     };
-    let is_function = |value: ExprId| {
-        let value = hir.skip_type_assertions(value);
-        match hir[value].kind {
-            ExprKind::Fn(written) => written == function,
-            ExprKind::Ident(_) => {
-                local.is_some_and(|it| bound.binding(value) == Binding::Symbol(it))
-            }
-            _ => false,
-        }
-    };
-    let exports_function = |declaration: Decl| match declaration {
-        Decl::Fn(declared) => declared == function,
-        Decl::Var(pattern) => Some(pattern) == initialized,
-        Decl::ExportSpec(specifier) => {
-            let statement = hir[hir[specifier].export];
-            !statement.has_module_specifier
-                && local.is_some_and(|it| bound.exported_binding(specifier) == Binding::Symbol(it))
-        }
-        Decl::ExportExpr(statement) => {
-            matches!(hir[statement].kind, StmtKind::ExportDefault(value) if is_function(value))
-        }
-        Decl::ExportsProperty(assignment) => {
-            matches!(hir[assignment].kind, ExprKind::Assign { op: None, value, .. } if is_function(value))
-        }
-        _ => false,
-    };
+    let found = [
+        exported.of_functions.get(&function),
+        initialized.and_then(|it| exported.of_patterns.get(&it)),
+        local.and_then(|it| exported.of_local_names.get(&it)),
+    ];
+    let mut places: SmallVec<[u32; 2]> = found.into_iter().flatten().flatten().copied().collect();
+    places.sort_unstable();
+    places.dedup();
     let exports = bound.table(bound.symbol(bound.file_symbol).exports);
-    let exported = exports.iter().filter(|&&(_, symbol)| {
-        let mut declarations = bound.symbol(symbol).decls.iter();
-        declarations.any(|&declaration| exports_function(declaration))
-    });
-    exported.map(|&(export, _)| export).collect()
+    let names = places.into_iter().map(|place| exports[place as usize].0);
+    names.collect()
 }
 
 pub fn find_parameter_named(

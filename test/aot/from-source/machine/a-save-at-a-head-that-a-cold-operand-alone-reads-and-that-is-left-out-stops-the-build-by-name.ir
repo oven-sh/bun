@@ -13,5 +13,5 @@
 # -- end of source
 # REQUIRES: x86_64
 # AS-USERS-BUILD: the check of the allocation where a head leaves out a Save runs in every build, and under the check of the runner the allocation is checked anyway
-# DIAGNOSTIC: SpillSlotLacksItsValue
+# DIAGNOSTIC: SpillSlotLacksItsValue f3
 # RUN: emit f3 mechanisms=all testing=SavesAtHeadsThatPatchesAloneReadAreLeftOut

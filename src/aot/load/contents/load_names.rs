@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::sync::OnceLock;
 
 use bun_ast::Target;
@@ -14,15 +15,16 @@ use bun_sema::hir::{
     PropKey, PropKind, Span, StmtKind,
 };
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, ends_in_call_that_reads_frame_of_caller,
-    find_names_exported_for, find_parameter_named, find_values_of_parameter, find_written_arms,
-    gives_first_argument_to_own_require, is_name_read_by_transpiler, is_name_written_out,
+    ExportedNames, ImportSite, ImportSiteKind, ImportSpecifier,
+    ends_in_call_that_reads_frame_of_caller, find_names_exported_for, find_parameter_named,
+    find_values_of_parameter, find_written_arms, gives_first_argument_to_own_require,
+    is_name_read_by_transpiler, is_name_written_out,
 };
 use bun_sema::program::{CodeAnswer, CodeView, FileId, Files};
 use bun_sema::resolve::{
     CodeFailure, CodeResolution, ComputedResolution, ExternalKind, FinishedFile, SiteResolution,
 };
-use bun_sema::util::{FxHashMap, SharedSort};
+use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::{SmallVec, smallvec};
 
 use super::entry_points::is_relative_path;
@@ -43,7 +45,7 @@ pub(crate) struct NamedModule {
     pub module: RuntimeModule,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct LoadUnderParameter {
     pub property: Atom,
     pub place: u32,
@@ -753,17 +755,27 @@ fn find_parameter_that_names_load(
 fn find_loads_under_parameter(
     request: &FinishedFile<'_, '_>,
     site: &ImportSite,
+    exported_names: &OnceCell<ExportedNames>,
+    written_names: &OnceCell<FxHashMap<Atom, Vec<ExprId>>>,
 ) -> SmallVec<[LoadUnderParameter; 2]> {
     let (hir, bound) = (request.hir, request.bound);
     let Some((function, place, requires)) = find_parameter_that_names_load(request, site) else {
         return SmallVec::new();
     };
     let find_written = |written: Atom| -> Vec<ExprId> {
-        let all = (0..hir.exprs.len() as u32).map(ExprId);
-        all.filter(|&it| matches!(hir[it].kind, ExprKind::Ident(name) if name == written))
-            .collect()
+        let all = written_names.get_or_init(|| {
+            let mut all: FxHashMap<Atom, Vec<ExprId>> = FxHashMap::default();
+            for (expression, node) in (0..).map(ExprId).zip(hir.exprs.iter()) {
+                if let ExprKind::Ident(name) = node.kind {
+                    all.entry(name).or_default().push(expression);
+                }
+            }
+            all
+        });
+        all.get(&written).cloned().unwrap_or_default()
     };
-    let mut properties = find_names_exported_for(hir, bound, function, &find_written);
+    let exported = exported_names.get_or_init(|| ExportedNames::new(hir, bound));
+    let mut properties = find_names_exported_for(hir, bound, exported, function, &find_written);
     let kind = hir.runtime_function_kind(function);
     match (kind, bound.fns[function.idx()].owner) {
         (FnKind::Method, FnOwner::Member(member)) => {
@@ -1109,7 +1121,12 @@ impl ContentsScan<'_, '_> {
         names.loads_by_unknown_name |= may_name_library_module && !is_path_alone;
         names.loads_by_path_alone |= is_path_alone;
         names.loads_by_unknown_path |= argument_kind == LoadArgument::ModuleOrPath;
-        (names.under_parameters).extend(find_loads_under_parameter(request, site));
+        (names.under_parameters).extend(find_loads_under_parameter(
+            request,
+            site,
+            &self.exported_names,
+            &self.written_names,
+        ));
         let requires = !matches!(site.kind, ImportSiteKind::ImportCall(_));
         let arms = find_written_arms(request.hir, request.bound, &analysis.decisions, site);
         (names.written_arms_of_unknown_names).extend(arms.iter().map(|&arm| (arm, requires)));
@@ -1258,6 +1275,8 @@ impl ContentsScan<'_, '_> {
         if loads.is_empty() {
             return;
         }
+        let mut listed: FxHashSet<LoadUnderParameter> =
+            names.under_parameters.iter().copied().collect();
         for mention in (0..hir.exprs.len() as u32).map(ExprId) {
             if !matches!(hir[mention].kind, ExprKind::Ident(_))
                 || !bound.is_evaluated_ident(mention)
@@ -1297,7 +1316,7 @@ impl ContentsScan<'_, '_> {
                         place,
                         requires,
                     };
-                    if !names.under_parameters.contains(&load) {
+                    if listed.insert(load) {
                         names.under_parameters.push(load);
                     }
                 }

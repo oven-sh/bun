@@ -1484,6 +1484,22 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/everyday-gathering-programs-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-gathering-programs-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-gathering-programs-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-gathering-programs-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/everyday-mocks-1.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -2857,6 +2873,26 @@
     "asan": 240000
   },
   "aot/trim-report-features-by-operand.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/turns-of-three-statements-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/turns-of-three-statements-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/turns-of-three-statements-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/turns-of-three-statements-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/turns-of-three-statements-by-name.test.ts": {
     "default": 60000,
     "asan": 240000
   },

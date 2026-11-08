@@ -34,13 +34,6 @@ test("bun test gives the second import the new mock from the eighth job on", asy
   expect(await linesOf()).toEqual(said);
 });
 
-test("the compiled run prints one line", async () => {
-  expect(await linesOf("--aot")).toHaveLength(1);
+test("the compiled run prints what bun test prints", async () => {
+  expect(await linesOf("--aot")).toEqual(said);
 });
-
-test.failing(
-  "it prints what bun test prints: a wrong answer today: under `bun test --aot` the second import still gets the old answer, where `bun test` gives it the new mock from the eighth job on",
-  async () => {
-    expect(await linesOf("--aot")).toEqual(said);
-  },
-);

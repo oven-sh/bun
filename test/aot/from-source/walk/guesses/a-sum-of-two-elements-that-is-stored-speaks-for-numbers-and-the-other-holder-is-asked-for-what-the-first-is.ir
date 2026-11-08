@@ -7,10 +7,13 @@
 # stood beside it: so the front asked both holders for a list of anything and all else ran closed: two Float64Arrays of 1,000: 248,950 instructions, plain Bun 6,076.
 # A sum of two elements under indexes says "numbers or texts": bytes and views are named beside the lists (lists of texts fail the question for their storage and take the copy of a list of anything, as before);
 # and in the copy for views the other holder, whose word from use is a list of anything, is asked for what the first is. 27,201.
+# A sum of two elements that is stored keeps fractions too: the views of fractions have copies of their own, in which no access tells the kind; the six other kinds share one.
 # f1 = go
 # RUN: walk f1:Body mechanisms=all
-# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
-# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
+# CHECK: = TypeTest {{*}} testedType=Float64Array
+# CHECK: = TypeTest {{*}} testedType=Float64Array
+# CHECK: = PutTypedArrayElement {{*}} typedArrayType=10 level=Proven [keyIsIntegral, isInsideView]
+# CHECK: = TypeTest {{*}} testedType=Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8ClampedArray
 # CHECK: = PutTypedArrayElement {{*}} level=Proven [keyIsIntegral, isInsideView]
 # RUN(ANSWERS): run-in-shell mechanisms=all
 # ANSWERS: 0.75 -32765 7 bd 4 3.5 1

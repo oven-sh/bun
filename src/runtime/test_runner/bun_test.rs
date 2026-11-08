@@ -12,7 +12,7 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
-use crate::cli::test_command::CommandLineReporter;
+use crate::cli::test_command::{CommandLineReporter, FailureCapture, TestFailure};
 use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
 };
@@ -1601,36 +1601,41 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
-        let mut unhandled_failure: Option<crate::cli::test_command::TestFailure> = None;
-        let failure_ctx: *mut core::ffi::c_void = 'ctx: {
+        let is_unhandled = matches!(
+            handle_status,
+            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
+                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
+        );
+
+        let is_reporting_uncaught = self.is_reporting_uncaught;
+        let mut unhandled_failure: Option<TestFailure> = None;
+        let mut capture: Option<FailureCapture> = 'capture: {
             let Some(reporter) = self.reporter else {
-                break 'ctx core::ptr::null_mut();
+                break 'capture None;
             };
             // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
             let reporter = unsafe { &mut *reporter.as_ptr() };
             if !reporter.jest.test_options.reporters.junit {
-                core::ptr::null_mut()
-            } else if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
-                match self
-                    .execution
-                    .get_current_and_valid_execution_sequence(user_data)
-                {
-                    // Points into `execution.sequences`, a boxed slice that lives until the file is done.
-                    Some((sequence, _)) => (&raw mut sequence.failure).cast(),
-                    None => core::ptr::null_mut(),
-                }
+                None
+            } else if is_unhandled {
+                Some(FailureCapture::new(&raw mut unhandled_failure))
             } else {
-                core::ptr::from_mut(&mut unhandled_failure).cast()
+                self.execution
+                    .get_current_and_valid_execution_sequence(user_data)
+                    .map(|(sequence, _)| {
+                        // Before the print, so that it holds whatever the printer reports of the error.
+                        if is_reporting_uncaught {
+                            sequence.failure.get_or_insert_default().uncaught = true;
+                        }
+                        // `sequence.failure` is in `execution.sequences`, a boxed slice that lives until the file is done.
+                        FailureCapture::new(&raw mut sequence.failure)
+                    })
             }
         };
 
         self.bun_test_root.on_before_print();
-        if matches!(
-            handle_status,
-            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
-                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
-        ) {
+        if is_unhandled {
             // SAFETY: reporter is Some (asserted by call sites that reach here);
             // `NonNull<CommandLineReporter>` carries write provenance from
             // `enter_file`'s `&mut`; single-threaded, no other borrow live.
@@ -1644,35 +1649,23 @@ impl BunTest {
         }
 
         let vm = global_this.bun_vm().as_mut();
-        if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception =
-                Some(crate::cli::test_command::TestFailure::record_cb);
-            vm.on_print_error_zig_exception_ctx = failure_ctx;
+        // A report can start inside the print of another one (a getter that calls `reportError`), so restore the outer capture.
+        let outer_capture = (vm.on_print_error, vm.on_print_error_ctx);
+        if let Some(capture) = capture.as_mut() {
+            vm.on_print_error = Some(FailureCapture::record_cb);
+            vm.on_print_error_ctx = core::ptr::from_mut(capture).cast();
         }
         print_error(vm, global_this, exception, None);
-        if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception = None;
-            vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
-            // SAFETY: `failure_ctx` is one of the two `Option<TestFailure>` above, and the callback is done with it.
-            let slot: &mut Option<crate::cli::test_command::TestFailure> =
-                unsafe { &mut *failure_ctx.cast() };
-            crate::cli::test_command::TestFailure::record_log_message(slot, exception);
-            if let Some(failure) = slot
-                && handle_status == HandleUncaughtExceptionResult::ShowHandledError
-            {
-                failure.uncaught |= self.is_reporting_uncaught;
-            }
-        }
-        if let (Some(failure), Some(reporter)) = (unhandled_failure, self.reporter) {
-            // SAFETY: as above.
-            unsafe { &mut *reporter.as_ptr() }.record_unhandled_error(self.file_id, failure);
+        (vm.on_print_error, vm.on_print_error_ctx) = outer_capture;
+
+        if is_unhandled && capture.is_some() {
+            // The error is counted above, so it is recorded, with or without what the printer reported of it.
+            // SAFETY: `capture` is `Some`, so the reporter is; the same provenance as above.
+            unsafe { &mut *self.reporter.unwrap().as_ptr() }
+                .record_unhandled_error(self.file_id, unhandled_failure);
         }
 
-        if matches!(
-            handle_status,
-            HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
-                | HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe
-        ) {
+        if is_unhandled {
             bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
         }
 

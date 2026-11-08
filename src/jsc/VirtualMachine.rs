@@ -60,6 +60,16 @@ pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, 
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
 pub type ExceptionList = Vec<crate::exception_list::JsException>;
 
+/// One error, as the error printer hands it to [`VirtualMachine::on_print_error`].
+#[derive(Clone, Copy)]
+pub enum PrintedError<'a, 'e> {
+    Exception(&'a ZigException<'e>),
+    /// A `BuildMessage` prints from its `Msg`, so it has no `ZigException`.
+    BuildMessage(&'a bun_ast::Msg),
+    /// A `ResolveMessage` prints from its `Msg`, so it has no `ZigException`.
+    ResolveMessage(&'a bun_ast::Msg),
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // VirtualMachine struct (file-level @This())
 // ──────────────────────────────────────────────────────────────────────────
@@ -353,13 +363,13 @@ pub struct VirtualMachine {
     /// `bun test`: what is running is a test or a hook of Vitest's. There, an error that a `process` listener takes is
     /// not the runner's, and arrays of different lengths are never equal.
     pub is_running_vitest_entry: bool,
-    /// When set, `print_error_instance_body` calls this with the remapped
-    /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
-    /// so observers can read name/message/stack without re-running the
-    /// formatter. Installed by `bun test --reporter=junit` around
-    /// `run_error_handler`.
-    pub on_print_error_zig_exception: Option<fn(*mut c_void, &ZigException<'_>)>,
-    pub on_print_error_zig_exception_ctx: *mut c_void,
+    /// When set, the error printer calls this with each error it reports while
+    /// side effects are allowed, whether or not it writes the error, so
+    /// observers can read name/message/stack without re-running the formatter.
+    /// Every leaf of the printer reports through `report_printed_error`.
+    /// Installed by `bun test --reporter=junit` around `run_error_handler`.
+    pub on_print_error: Option<fn(*mut c_void, PrintedError<'_, '_>)>,
+    pub on_print_error_ctx: *mut c_void,
     pub(crate) is_handling_uncaught_exception: bool,
     pub(crate) exit_on_uncaught_exception: bool,
     /// An earlier `--hot` run ended with an unhandled error. Its `beforeExit` listeners are still registered.
@@ -6763,6 +6773,13 @@ impl VirtualMachine {
         }
     }
 
+    #[inline]
+    fn report_printed_error(&self, printed: PrintedError<'_, '_>) {
+        if let Some(hook) = self.on_print_error {
+            hook(self.on_print_error_ctx, printed);
+        }
+    }
+
     fn print_error_from_maybe_private_data(
         &mut self,
         value: JSValue,
@@ -6786,6 +6803,10 @@ impl VirtualMachine {
             // `as_class_ref` is the audited `as_::<T>() → &T` backref-deref;
             // R-2: shared borrow — `logged` is `Cell<bool>`.
             if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
+                // Outside the `logged` latch: a message that printed before is still part of this report.
+                if allow_side_effects {
+                    self.report_printed_error(PrintedError::BuildMessage(&build_error.msg));
+                }
                 if !build_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
@@ -6805,6 +6826,9 @@ impl VirtualMachine {
                 bun_core::Output::flush();
                 return true;
             } else if let Some(resolve_error) = value.as_class_ref::<crate::ResolveMessage>() {
+                if allow_side_effects {
+                    self.report_printed_error(PrintedError::ResolveMessage(&resolve_error.msg));
+                }
                 if !resolve_error.logged.get() {
                     if self.had_errors {
                         let _ = writer.write_all(b"\n");
@@ -7473,9 +7497,7 @@ impl VirtualMachine {
             if let Some(debugger) = self.debugger.as_deref_mut() {
                 debugger.lifecycle_reporter_agent.report_error(exception);
             }
-            if let Some(cb) = self.on_print_error_zig_exception {
-                cb(self.on_print_error_zig_exception_ctx, exception);
-            }
+            self.report_printed_error(PrintedError::Exception(&*exception));
         }
 
         // Defer the GitHub-annotation print to scope exit.

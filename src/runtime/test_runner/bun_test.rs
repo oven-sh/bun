@@ -533,6 +533,8 @@ pub(crate) struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub(crate) active_file: BunTestPtrOptional,
     pub(crate) hook_scope: Box<DescribeScope>,
+    /// How `hook_scope`'s `around_all` set-ups and `before_all` hooks ended in the file that ran them.
+    set_up: SetUp,
     /// `RefData` pointers handed to `Promise.then()`. Tracked here (process-lifetime)
     /// so a never-settled promise's `+1` stays reachable; do not free orphans —
     /// a queued reaction may still consume them.
@@ -558,6 +560,7 @@ impl BunTestRoot {
         BunTestRoot {
             active_file: None,
             hook_scope,
+            set_up: SetUp::NotRun,
             pending_then_refs: std::cell::RefCell::new(Vec::new()),
             file_generation: 0,
         }
@@ -578,6 +581,7 @@ impl BunTestRoot {
             test_id_for_debugger: 0,
             line_no: 0,
         });
+        self.set_up = SetUp::NotRun;
     }
 
     pub(crate) fn mark_timed_out(&self, group_index: usize, timed_out: EntryData) {
@@ -603,9 +607,8 @@ impl BunTestRoot {
     /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
     /// `hook_scope`, and the `pending_then_refs` Vec.
     pub(crate) fn deinit_for_exit(&mut self) {
-        if self.active_file.is_some() {
-            self.exit_file();
-        }
+        // Not `exit_file()`: `--bail` gets here while `handle_test_completed` still borrows a sequence that `exit_file()` reads.
+        self.drop_active_file();
         self.reset_hook_scope_for_test_isolation();
         // `pending_then_refs` holds the `+1` `RefData` ref taken at
         // `Promise.then()` time so a never-settled promise's box stays
@@ -664,13 +667,32 @@ impl BunTestRoot {
             default_concurrent,
             first_last,
         ));
+        // As in a file that fails to load: none of its `describe()` callbacks, hooks or tests run.
+        bun_test.get().collection.root_scope.failed = self.failed_set_up_before(first_last).is_some();
         self.active_file = Some(bun_test);
+    }
+
+    /// The failed set-up that keeps a file from running its tests. A file that runs the set-up hooks decides that in its own order.
+    fn failed_set_up_before(&self, first_last: FirstLast) -> Option<FailedSetUp> {
+        match self.set_up {
+            SetUp::Failed(failed) if !first_last.first => Some(failed),
+            _ => None,
+        }
     }
 
     pub(crate) fn exit_file(&mut self) {
         let _g = group_begin!();
 
         debug_assert!(self.active_file.is_some());
+        if let Some(set_up) = self.active_file.as_ref().and_then(|active| active.set_up_outcome())
+            && self.set_up != SetUp::Passed
+        {
+            self.set_up = set_up;
+        }
+        self.drop_active_file();
+    }
+
+    fn drop_active_file(&mut self) {
         if let Some(active) = &self.active_file {
             // SAFETY: single-threaded; no other `&mut BunTest` is live during
             // teardown. Write goes through `UnsafeCell` (see `BunTestCell::get`).
@@ -741,6 +763,23 @@ pub(crate) struct FirstLast {
     pub(crate) last: bool,
 }
 
+/// How the preload's `aroundAll` set-ups and `beforeAll` hooks ended. The first file runs them, and `--rerun-each` runs them again with each repeat of it.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum SetUp {
+    NotRun,
+    /// A repeat that fails them doesn't undo this: what the run that passed set up is still there.
+    Passed,
+    /// No file after the first one runs a test.
+    Failed(FailedSetUp),
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum FailedSetUp {
+    /// The preload's `afterAll` hooks are inside the `aroundAll` that failed, so they don't run either.
+    AroundAll,
+    BeforeAll,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Phase {
     #[strum(serialize = "collection")]
@@ -769,6 +808,8 @@ pub(crate) struct BunTest {
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
     pub(crate) first_last: FirstLast,
+    /// How many of the preload's `aroundAll` set-ups, then how many of its `beforeAll` hooks, lead this file's order.
+    set_up_hooks: (usize, usize),
     pub(crate) extra_execution_entries: Vec<*mut ExecutionEntry>,
     /// Heap-boxed bitwise clones of hook entries from `Order::generate_order_test`.
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
@@ -815,6 +856,7 @@ impl BunTest {
             result_queue: ResultQueue::init(),
             default_concurrent,
             first_last,
+            set_up_hooks: (0, 0),
             extra_execution_entries: Vec::new(),
             cloned_hook_entries: Vec::new(),
             // `EventLoopTimer` has no `Default`; `init_paused` sets
@@ -827,6 +869,18 @@ impl BunTest {
             file_end: None,
             unclaimed: Default::default(),
         }
+    }
+
+    /// How the preload's set-up hooks ended in this file. `None` if it ran none, or was abandoned before one of them ended.
+    fn set_up_outcome(&self) -> Option<SetUp> {
+        let (around_all, before_all) = self.set_up_hooks;
+        let hooks = &self.execution.sequences[..around_all + before_all];
+        if let Some(failed) = hooks.iter().position(|sequence| sequence.result.is_fail()) {
+            let failed = if failed < around_all { FailedSetUp::AroundAll } else { FailedSetUp::BeforeAll };
+            return Some(SetUp::Failed(failed));
+        }
+        let passed = !hooks.is_empty() && hooks.iter().all(|sequence| sequence.result == Execution::Result::Pass);
+        passed.then_some(SetUp::Passed)
     }
 
     /// Must be called before the order is generated, or `file_end` never runs.
@@ -1276,6 +1330,9 @@ impl BunTest {
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
+                // `set_up_outcome()` reads the hooks' results by position: each one is a group of one sequence.
+                debug_assert_eq!(order.sequences.len(), order.groups.len());
+                let set_up_hooks = (aroundall_order.end - aroundall_order.start, beforeall_order.end - beforeall_order.start);
                 let describe_seq_start = order.sequences.len();
                 order.generate_order_describe(&mut self.collection.root_scope)?;
                 let describe_seq_end = order.sequences.len();
@@ -1299,7 +1356,10 @@ impl BunTest {
                     }
                 }
                 beforeall_order.set_failure_skip_to(&mut order);
-                let afterall_order: Order::AllOrderResult = if self.first_last.last {
+                // In the file that ran it, a failed `aroundAll` set-up skips past the `afterAll` hooks. They are inside it.
+                let runs_after_all =
+                    self.first_last.last && root.failed_set_up_before(self.first_last) != Some(FailedSetUp::AroundAll);
+                let afterall_order: Order::AllOrderResult = if runs_after_all {
                     order.generate_all_order(&root.hook_scope.after_all, true)?
                 } else {
                     Order::AllOrderResult::EMPTY
@@ -1318,6 +1378,7 @@ impl BunTest {
                     unsafe { (*reporter.as_ptr()).jest.summary.shuffled += 1 };
                 }
                 self.execution.load_from_order(&mut order);
+                self.set_up_hooks = set_up_hooks;
                 debug::dump_order(&self.execution)?;
                 Ok(Advance::Cont)
             }
@@ -2143,7 +2204,8 @@ pub(crate) struct DescribeScope {
     /// What `test_context_around::capture_async_context()` returned when an `around_all` hook last called `runSuite()`.
     pub(crate) async_context: Option<Strong>,
 
-    /// if true, the describe callback threw an error. do not run any tests declared in this scope.
+    /// if true, do not run any tests declared in this scope: the describe callback threw an error, or this is the
+    /// scope of a file that failed to load or that follows a failed preload set-up.
     pub(crate) failed: bool,
 
     pub(crate) task: Option<Strong>,

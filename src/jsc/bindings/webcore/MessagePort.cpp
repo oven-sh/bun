@@ -428,9 +428,7 @@ bool MessagePort::virtualHasPendingActivity() const
     // the context dies; node retains more — it never collects an entangled port at all.
     if (m_hasCloseEventListener.load(std::memory_order_acquire) && !m_closeEventDispatched)
         return true;
-    // The port's own listeners only: a parentPort delivering to `self.onmessage` (the global-scope
-    // count hasMessageEventListener() adds) is rooted by the worker global for the worker's life, and
-    // this GC-thread path stays a single plain-bool read.
+    // A single plain-bool read on this GC-thread path.
     if (!m_hasMessageEventListener)
         return false;
 

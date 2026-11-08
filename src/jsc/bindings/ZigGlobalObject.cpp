@@ -1720,6 +1720,11 @@ WebCore::EventTarget& GlobalObject::eventTarget()
     return globalEventScope;
 }
 
+bool GlobalObject::exposesGlobalEventScope() const
+{
+    return !WebCore::clientData(vm())->isNodeWorkerVM();
+}
+
 JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
@@ -2221,6 +2226,28 @@ static inline JSC::EncodedJSValue jsFunctionDispatchEventBody(JSC::JSGlobalObjec
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDispatchEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsFunctionDispatchEventBody(lexicalGlobalObject, callFrame, dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject));
+}
+
+// One CustomGetterSetter answers for addEventListener, removeEventListener, dispatchEvent and postMessage of a global.
+// The first read of a name makes its function and stores it over the getter, as the static table did for its rows.
+JSC_DEFINE_CUSTOM_GETTER(globalEventScopeFunction, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName propertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    Zig::GlobalObject* globalObject = globalObjectForEventHandler(lexicalGlobalObject, thisValue);
+    StringView name { propertyName.uid() };
+    JSC::JSFunction* function;
+    if (name == "addEventListener"_s)
+        function = JSC::JSFunction::create(vm, globalObject, 2, "addEventListener"_s, jsFunctionAddEventListener, ImplementationVisibility::Public);
+    else if (name == "removeEventListener"_s)
+        function = JSC::JSFunction::create(vm, globalObject, 2, "removeEventListener"_s, jsFunctionRemoveEventListener, ImplementationVisibility::Public);
+    else if (name == "dispatchEvent"_s)
+        function = JSC::JSFunction::create(vm, globalObject, 1, "dispatchEvent"_s, jsFunctionDispatchEvent, ImplementationVisibility::Public);
+    else
+        function = JSC::JSFunction::create(vm, globalObject, 1, "postMessage"_s, JSC::removableFunction<Bun::Feature::PostMessage, JSC::RemovedFeatureStub::Throw, jsFunctionPostMessage>(), ImplementationVisibility::Public);
+    // A program compiled ahead of time may have made the member immutable.
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    globalObject->putDirect(vm, propertyName, function, 0);
+    return JSValue::encode(function);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(getterSubtleCrypto, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -3680,8 +3707,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    // Web Worker global scope surface: absent in a node:worker_threads worker, as in node.
-    if (!clientData->isNodeWorkerVM()) {
+    if (exposesGlobalEventScope()) {
         putDirectAccessor(
             this,
             builtinNames.selfPublicName(),
@@ -3695,10 +3721,10 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
         putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
 
-        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "addEventListener"_s), 2, jsFunctionAddEventListener, ImplementationVisibility::Public, NoIntrinsic, 0);
-        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "removeEventListener"_s), 2, jsFunctionRemoveEventListener, ImplementationVisibility::Public, NoIntrinsic, 0);
-        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "dispatchEvent"_s), 1, jsFunctionDispatchEvent, ImplementationVisibility::Public, NoIntrinsic, 0);
-        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "postMessage"_s), 1, jsFunctionPostMessage, ImplementationVisibility::Public, NoIntrinsic, 0);
+        // The static table is one for every global, so these four are not rows of it.
+        auto* functionAtFirstRead = JSC::CustomGetterSetter::create(vm, globalEventScopeFunction, nullptr);
+        for (ASCIILiteral name : { "addEventListener"_s, "removeEventListener"_s, "dispatchEvent"_s, "postMessage"_s })
+            putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, name), functionAtFirstRead, PropertyAttribute::CustomValue | 0);
     }
 
     // ----- Extensions to Built-in objects -----

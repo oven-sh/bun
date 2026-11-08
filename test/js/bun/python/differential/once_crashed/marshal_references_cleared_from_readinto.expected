@@ -1,0 +1,7 @@
+status: 0
+oracle: none
+---
+a list of 51 that ends with frozenset({7})
+seen from readinto(): [51]
+SystemError: an item of a list was to be written that the list does not have any more
+seen from readinto(): [51]

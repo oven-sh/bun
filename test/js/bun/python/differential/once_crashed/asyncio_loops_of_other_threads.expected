@@ -1,0 +1,7 @@
+status: 0
+script: ae5da6f011b3a8d0
+---
+the task of each other loop: [True, True, True, True, True, True]
+dicts of (loop, task): 0
+the main thread: True
+the others: [True, True, True, True, True, True]

@@ -1,0 +1,18 @@
+status: 0
+oracle: none
+---
+1 int remove_done_callback SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 int set_result SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 int cancel SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 str remove_done_callback SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 str set_result SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 str cancel SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 tuple remove_done_callback SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 tuple set_result SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 tuple cancel SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 tuple remove_done_callback SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 tuple set_result SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 tuple cancel SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 object remove_done_callback SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 object set_result SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there
+1 object cancel SystemError: the list of the callbacks of a Future holds something that add_done_callback() has not put there

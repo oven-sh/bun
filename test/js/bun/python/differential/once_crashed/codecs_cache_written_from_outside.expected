@@ -1,0 +1,30 @@
+status: 0
+oracle: none
+---
+[]
+1 [['cp037']]
+int SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+int SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+int SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+int SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+str SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+str SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+str SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+str SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+tuple SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+tuple SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+tuple SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+tuple SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+list SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+list SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+list SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+list SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+object SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+object SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+object SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+object SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+tuple SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+tuple SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+tuple SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+tuple SystemError: the cache of codecs has something for 'cp037' that no search function has returned: not a tuple of four
+b'\xa7'

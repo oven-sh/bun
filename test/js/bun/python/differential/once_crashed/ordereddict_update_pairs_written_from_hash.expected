@@ -1,0 +1,13 @@
+status: 0
+script: 52a4bc4e62d836ec
+---
+int -> TypeError 'int' object is not iterable | 1
+None -> TypeError 'NoneType' object is not iterable | 1
+() -> ValueError need more than 0 values to unpack | 1
+(1,) -> ValueError need more than 1 value to unpack | 1
+(1, 2, 3) -> ValueError too many values to unpack (expected 2) | 1
+'ab' -> update() returned: [(1, 1), ('a', 'b')]
+'abc' -> ValueError too many values to unpack (expected 2) | 1
+[K(7), 7] -> update() returned: [(1, 1), (7, 7)]
+T((1, 2)) -> update() returned: [(1, 1), ('from', '__iter__')]
+object -> TypeError 'object' object is not iterable | 1

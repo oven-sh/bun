@@ -1,0 +1,13 @@
+status: 0
+oracle: none
+---
+True int [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception
+True str [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception
+True tuple [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception
+True object [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception
+True type [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception
+False int [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception
+False str [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception
+False tuple [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception
+False object [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception
+False type [0] SystemError: the list of what the clauses of an except* have raised holds something that is no exception

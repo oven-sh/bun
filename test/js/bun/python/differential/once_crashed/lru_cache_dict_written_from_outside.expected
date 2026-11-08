@@ -1,0 +1,11 @@
+status: 0
+oracle: none
+---
+2 4
+1 [2]
+int SystemError: the dict of an lru_cache holds something that the cache has not put there
+str SystemError: the dict of an lru_cache holds something that the cache has not put there
+tuple SystemError: the dict of an lru_cache holds something that the cache has not put there
+object SystemError: the dict of an lru_cache holds something that the cache has not put there
+_lru_cache_wrapper SystemError: the dict of an lru_cache holds something that the cache has not put there
+2 4 6 CacheInfo(hits=2, misses=3, maxsize=4, currsize=3)

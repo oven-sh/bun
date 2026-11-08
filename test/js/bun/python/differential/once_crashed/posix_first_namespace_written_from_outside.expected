@@ -1,0 +1,10 @@
+status: 0
+oracle: none
+---
+1
+int set by JS b'set by JS'
+NoneType set by JS b'set by JS'
+str set by JS b'set by JS'
+list set by JS b'set by JS'
+object set by JS b'set by JS'
+gone set by JS b'set by JS'

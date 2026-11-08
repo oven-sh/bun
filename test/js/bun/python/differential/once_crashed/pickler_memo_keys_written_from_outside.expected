@@ -1,0 +1,30 @@
+status: 0
+oracle: none
+---
+[3]
+one more: int copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one more: int assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: int copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: int assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one more: float copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one more: float assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: float copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: float assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one more: NoneType copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one more: NoneType assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: NoneType copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: NoneType assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one more: str copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one more: str assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: str copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: str assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one more: object copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one more: object assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: object copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+in the place of another: object assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one less: copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one less: assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+as it was: copy no exception
+as it was: assign no exception
+[0, 1, 2]
+[['x']] [['y'], ['y'], ['x']] True True

@@ -1,0 +1,13 @@
+status: 0
+oracle: none
+---
+1 [[1]]
+str int SystemError: the dict of a poll object holds something that register() has not put there
+float int SystemError: the dict of a poll object holds something that register() has not put there
+NoneType int SystemError: the dict of a poll object holds something that register() has not put there
+int str SystemError: the dict of a poll object holds something that register() has not put there
+int NoneType SystemError: the dict of a poll object holds something that register() has not put there
+int int SystemError: the dict of a poll object holds something that register() has not put there
+int int SystemError: the dict of a poll object holds something that register() has not put there
+[]
+True

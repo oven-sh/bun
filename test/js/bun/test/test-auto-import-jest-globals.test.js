@@ -200,6 +200,14 @@ describe.concurrent("a file that imports from a test module", () => {
             test("test", () => expect(1).toBe(1));
           });
         `,
+        // TypeScript drops an import that nothing uses. The declaration still counts as an import of the module.
+        "e-imports-a-name-that-nothing-uses.test.ts": `import { mock } from "bun:test"; ${own}`,
+        "f-imports-a-type.test.ts": `
+          import type { Mock } from "bun:test";
+          describe("builtin beside a type", () => {
+            test("test", () => expect(1).toBe(1));
+          });
+        `,
       });
       const { stdout, stderr, exitCode } = await run(String(dir), ["test", "--preload=./preload.ts", flag]);
       expect({
@@ -208,6 +216,8 @@ describe.concurrent("a file that imports from a test module", () => {
         exitCode,
       }).toEqual({
         stdout: [
+          "own describe",
+          "own expect true",
           "own describe",
           "own expect true",
           "own describe",
@@ -223,6 +233,9 @@ describe.concurrent("a file that imports from a test module", () => {
           "(pass) test",
           "(pass) the other globals",
           "(pass) builtin > test",
+          "(pass) test",
+          "(pass) the other globals",
+          "(pass) builtin beside a type > test",
         ],
         exitCode: 0,
       });

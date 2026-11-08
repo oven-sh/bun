@@ -1,12 +1,12 @@
 use std::borrow::Cow;
 
 use bun_paths::resolve_path::basename;
-use bun_sema::atom::{Interner, known};
+use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, RuntimeBindOptions};
 use bun_sema::file_analysis::{FileInputs, analyze_file};
 use bun_sema::fold::FoldOptions;
-use bun_sema::hir::{File, FileKind, find_transpiled_mark};
-use bun_sema::import_sites::{ImportSpecifier, JsxMode};
+use bun_sema::hir::{FileKind, find_transpiled_mark};
+use bun_sema::import_sites::JsxMode;
 use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::resolve::{ScriptKind, is_declaration_file_name};
 use bun_sema::session::Session;
@@ -15,16 +15,7 @@ use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 use crate::builtins::table::{self, BuiltinId, BuiltinName, MemberLookup, Mutability, Scope};
 use crate::load::fold_inputs::create_application_fold_inputs;
 use crate::load::host_platform;
-
-fn writes_import_of_values_from_vitest(hir: &File<'_>) -> bool {
-    hir.imports.iter().any(|import| {
-        import.spec == known::vitest
-            && !import.type_only
-            && (import.default.is_some()
-                || import.namespace.is_some()
-                || import.named.iter().any(|name| !hir[name].type_only))
-    })
-}
+use crate::load::test_runner_names::{MODULE_OF_VITEST, imports};
 
 pub(crate) fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
     if find_transpiled_mark(text).is_some() {
@@ -72,9 +63,9 @@ pub(crate) fn imports_vitest(path: &[u8], text: &[u8]) -> bool {
         own_name: arena.alloc_slice_copy(basename(path)),
     };
     let (_, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
-    let mut sites = analysis.import_sites.iter();
-    sites.any(|site| site.specifier == ImportSpecifier::Constant(known::vitest))
-        || writes_import_of_values_from_vitest(&hir)
+    imports(analysis.import_sites, &hir, &atoms, |module| {
+        module == MODULE_OF_VITEST
+    })
 }
 
 fn find_locked_member_of(holder: BuiltinId, name: BuiltinName) -> Option<BuiltinId> {

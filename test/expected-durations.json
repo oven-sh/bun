@@ -4371,6 +4371,10 @@
     "windows": 1000,
     "windows-aarch64": 1000
   },
+  "aot/a-file-keeps-a-global-of-a-preload-beside-an-import-that-typescript-drops.test.ts": {
+    "default": 3000,
+    "asan": 12000
+  },
   "aot/test-runner-names-without-an-import.test.ts": {
     "default": 8300,
     "asan": 25700,

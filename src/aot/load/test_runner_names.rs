@@ -7,7 +7,7 @@ use bun_sema::hir::{
     ImportId, ImportSpec, Keyword, ListAt, NameKind, PatKind, PatProp, PropKey, PropKind, Span,
     StmtId, StmtKind, TextRange, TypeNodeId, TypeNodeKind, UnOp, VarDecl, VarKind,
 };
-use bun_sema::import_sites::ImportSpecifier;
+use bun_sema::import_sites::{ImportSite, ImportSpecifier};
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::resolve::{TransformRequest, TreeChange};
 use bun_sema::session::Arena;
@@ -22,7 +22,7 @@ use crate::load::react_compiler::module_items::{
 };
 
 const MODULE: &[u8] = b"bun:test";
-const MODULE_OF_VITEST: &[u8] = b"vitest";
+pub(crate) const MODULE_OF_VITEST: &[u8] = b"vitest";
 const MODULE_OF_CHAI: &[u8] = b"chai";
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
 const NAME_OF_VITEST_PREFIX: &[u8] = b"%vitest:";
@@ -89,24 +89,31 @@ pub(crate) fn name_asked_of_scope_objects(name: &[u8]) -> Option<&[u8]> {
         .find_map(|prefix| name.strip_prefix(*prefix))
 }
 
-fn imports(
-    request: &TransformRequest<'_, '_>,
+pub(crate) fn imports(
+    import_sites: &[ImportSite],
+    hir: &File<'_>,
     atoms: &Interner<'_>,
     is_wanted: fn(&[u8]) -> bool,
 ) -> bool {
-    let mut sites = request.analysis.import_sites.iter();
+    let mut sites = import_sites.iter();
     sites.any(|site| match site.specifier {
         ImportSpecifier::Constant(specifier) => is_wanted(atoms.bytes(specifier)),
         ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => {
             false
         }
-    })
+    }) || writes_import_of_values(hir, atoms, is_wanted)
 }
 
-fn writes_import_of_values(hir: &File<'_>, module: Atom) -> bool {
+// An import that TypeScript drops has no site: no value uses its names, or it stands in a `declare` block. The parser of `bun test` keeps its record.
+fn writes_import_of_values(
+    hir: &File<'_>,
+    atoms: &Interner<'_>,
+    is_wanted: fn(&[u8]) -> bool,
+) -> bool {
     hir.imports.iter().any(|import| {
-        import.spec == module
-            && !import.type_only
+        !import.type_only
+            && import.spec.is_some()
+            && is_wanted(atoms.bytes(import.spec))
             && (import.default != Atom::NONE
                 || import.namespace != Atom::NONE
                 || import.named.iter().any(|name| !hir[name].type_only))
@@ -544,9 +551,11 @@ pub(crate) fn import_used_names<'s>(
     request: &mut TransformRequest<'_, 's>,
     file_of_run: FileOfTestRun,
 ) -> TreeChange {
+    let sites = request.analysis.import_sites;
     let is_of_vitest = file_of_run.has_globals_of_vitest
-        || imports(request, atoms, |module| module == MODULE_OF_VITEST)
-        || writes_import_of_values(request.hir, atoms.intern(MODULE_OF_VITEST));
+        || imports(sites, request.hir, atoms, |module| {
+            module == MODULE_OF_VITEST
+        });
     let module = if is_of_vitest {
         MODULE_OF_VITEST
     } else {
@@ -576,7 +585,7 @@ pub(crate) fn import_used_names<'s>(
         locals.collect()
     };
     let of_runner = with_prefix(LOCAL_NAME_PREFIX);
-    let keeps_own_globals = imports(request, atoms, is_test_module);
+    let keeps_own_globals = imports(sites, request.hir, atoms, is_test_module);
     let mut file = FileBuilder::from_file(request.hir);
     if let Some(hoisting) = &hoisting {
         hoisting.apply(&mut file, atoms);
@@ -1163,6 +1172,47 @@ mod tests {
         ];
         for (name, text, expected) in rows {
             assert_eq!(describe_own_globals(name, text), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn an_import_that_typescript_drops_is_an_import_of_the_runner() {
+        const ASKED: &str = "%globals-left-alone & 4 ? describe : %test:describe";
+        let rows = [
+            ("import { mock } from 'bun:test'; describe;", ASKED),
+            ("import { vi } from 'vitest'; describe;", ASKED),
+            (
+                "import { jest as j } from '@jest/globals'; describe;",
+                ASKED,
+            ),
+            ("import runner from 'bun:test'; describe;", ASKED),
+            ("import * as runner from 'bun:test'; describe;", ASKED),
+            (
+                "import runner, { type Mock } from 'bun:test'; describe;",
+                ASKED,
+            ),
+            (
+                "import { type Mock, mock } from 'bun:test'; describe;",
+                ASKED,
+            ),
+            (
+                "import { mock } from 'bun:test'; let m: typeof mock; describe;",
+                ASKED,
+            ),
+            ("import type { Mock } from 'bun:test'; describe;", ""),
+            ("import { type Mock } from 'bun:test'; describe;", ""),
+            (
+                "import { type Mock, type Spy } from 'vitest'; describe;",
+                "",
+            ),
+            (
+                "declare module 'elsewhere' { import type { Mock } from 'bun:test'; } describe;",
+                "",
+            ),
+            ("import { readFileSync } from 'node:fs'; describe;", ""),
+        ];
+        for (text, expected) in rows {
+            assert_eq!(describe_own_globals("a.test.ts", text), expected, "{text}");
         }
     }
 

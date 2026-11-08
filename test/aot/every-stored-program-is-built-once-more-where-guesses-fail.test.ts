@@ -19,7 +19,8 @@ console.log(sum([1, 2, 3.5]), sum([4, 5, 6]));
 async function driven(words: string[], environment: Record<string, string> = {}, head = "", text = program) {
   using folder = tempDir("where-guesses-fail", { "tsconfig.json": "{}", "sums.ts": head + text });
   const root = String(folder);
-  const { BUILDKITE_BUILD_NUMBER: _, ...env } = bunEnv;
+  // One of these programs stops on purpose. A crash report that a passing test file leaves behind is laid on the next file that fails, which then gets no second try.
+  const { BUILDKITE_BUILD_NUMBER: _, BUN_CRASH_REPORT_URL: __, ...env } = bunEnv;
   const { stdout, stderr, exitCode } = await run(
     [bunExe(), join(import.meta.dir, "run-parallel.ts"), `--root=${root}`, "--jobs=3", ...words, join(root, "sums.ts")],
     root,

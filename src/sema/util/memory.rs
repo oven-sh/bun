@@ -96,9 +96,20 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
     /// Returns the address of element `index`. If its chunk isn't allocated yet, `make` allocates it.
     #[inline]
     fn slot_or_install(&self, index: u32, make: fn(usize, A) -> Box<[E], A>) -> *mut E {
+        self.slot_or_install_in_range(index, || true, make)
+    }
+
+    #[inline]
+    fn slot_or_install_in_range(
+        &self,
+        index: u32,
+        is_in_range: impl FnOnce() -> bool,
+        make: fn(usize, A) -> Box<[E], A>,
+    ) -> *mut E {
         let Located { chunk, offset } = Self::locate(index);
         let mut base = self.bases[chunk].load(Ordering::Acquire);
         if base.is_null() {
+            assert!(is_in_range(), "the index is out of range");
             base = self.install(chunk, make);
         }
         base.wrapping_add(offset)
@@ -973,18 +984,16 @@ impl<C: Zeroed + Sync, A: Allocator + Clone> Cells<C, A> {
     /// Returns the cell at `index` for writing, and makes its granule if needed.
     #[inline]
     pub fn cell(&self, index: u32) -> &C {
+        let is_in_range = || index.checked_add(1 << FIRST_CELLS_BITS).is_some();
+        let make = AtomicU32::zeroed_slice_in;
+        let entry =
+            self.directory
+                .slot_or_install_in_range(index >> GRANULE_BITS, is_in_range, make);
         // SAFETY: as in `existing_loaded`.
-        let entry = unsafe {
-            &*self
-                .directory
-                .slot_or_install(index >> GRANULE_BITS, AtomicU32::zeroed_slice_in)
-        };
+        let entry = unsafe { &*entry };
         let mut number = entry.load(Ordering::Acquire);
         if number == 0 {
-            assert!(
-                index.checked_add(1 << FIRST_CELLS_BITS).is_some(),
-                "the index is out of range"
-            );
+            assert!(is_in_range(), "the index is out of range");
             number = self.granules.add(entry);
         }
         self.granules.cell(number, index)

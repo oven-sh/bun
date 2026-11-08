@@ -119,7 +119,8 @@ mod tests {
 
     #[test]
     fn stretches_say_what_a_flag_for_each_alias_says() {
-        assert_eq!(try_all(&mut Vec::new(), 0, 10), 318_672);
+        let (steps, sequences) = if cfg!(miri) { (6, 551) } else { (10, 318_672) };
+        assert_eq!(try_all(&mut Vec::new(), 0, steps), sequences);
     }
 
     #[test]

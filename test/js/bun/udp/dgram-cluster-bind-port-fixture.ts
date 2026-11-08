@@ -19,10 +19,18 @@ if (cluster.isPrimary) {
     process.exit(1);
   }, 15_000);
   watchdog.unref();
+  let reported = false;
   worker.on("message", report => {
+    reported = true;
     console.log(report);
     held.close();
     worker.process.kill();
+  });
+  // A worker that ends before its report fails the fixture at once, not at the watchdog.
+  worker.on("exit", (code, signal) => {
+    if (reported) return;
+    console.error(`the worker ended before its report: code ${code}, signal ${signal}`);
+    process.exit(1);
   });
 } else {
   // The port the socket listens on, or the code of its 'error'.

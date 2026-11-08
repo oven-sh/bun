@@ -2624,7 +2624,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 escaped: false,
                             });
                             if !peeked.escaped && peeked.char == u32::from(b'(') {
-                                self.break_word(AddDelimiter::No)?;
                                 self.eat_subshell(SubShellKind::Dollar)?;
                                 fell_through = true;
                                 break 'escaped;
@@ -2661,8 +2660,20 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word(AddDelimiter::AfterText)?;
+                            // A nested `( ... )` is eaten through its `)`, so only the `(` of `$(` can be `prev`.
+                            let after_dollar_paren = self.in_subshell == Some(SubShellKind::Dollar)
+                                && self
+                                    .chars
+                                    .prev
+                                    .is_some_and(|p| !p.escaped && p.char == u32::from(b'('));
                             self.eat_subshell(SubShellKind::Normal)?;
+                            if after_dollar_paren
+                                && self
+                                    .peek()
+                                    .is_some_and(|p| !p.escaped && p.char == u32::from(b')'))
+                            {
+                                self.add_error(b"Arithmetic expansion `$((...))` is not supported. For a subshell inside a command substitution, write `$( (...) )`.");
+                            }
                             fell_through = true;
                         }
                         c if c == u32::from(b')') => {
@@ -3081,6 +3092,11 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     fn eat_subshell(&mut self, kind: SubShellKind) -> Result<(), LexerError> {
+        // The sublexer inherits `word_start` and `j`, so pending text would start its first word.
+        self.break_word(match kind {
+            SubShellKind::Dollar | SubShellKind::Backtick => AddDelimiter::No,
+            SubShellKind::Normal => AddDelimiter::AfterText,
+        })?;
         if self.subshell_depth >= MAX_SUBSHELL_DEPTH {
             self.add_error(b"Subshell nesting depth exceeded");
             return Err(LexerError::SubshellDepthExceeded);

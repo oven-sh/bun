@@ -1679,8 +1679,8 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
 
   // A direct stream can end while the server still holds a part of the response that the kernel refused. Such a
   // response counts as in flight: the sweep leaves the connection, and stop() resolves when the response is sent.
-  // On Windows the kernel has taken all of the response by then in some runs. The connection is then idle and the
-  // sweep closes it, so the sweep count is open there. Every byte has to arrive in both cases.
+  // On Windows the server does not always hold a part of the response at that time. The connection is then idle
+  // and the sweep closes it, so the sweep count is open there. Every byte has to arrive in both cases.
   test("stop() and closeIdleConnections() send a finished response in full before the connection closes", async () => {
     const sent = { ended: true, swept: isWindows ? expect.any(Number) : 0, received: "all", stopped: true };
     expect(await runIdleFixture({ scenario: "unsentResponse" }, { scenario: "unsentResponse", tls: true })).toEqual({

@@ -81,13 +81,13 @@ async function run(options: Options) {
                 responseBytes += chunk.length;
                 return controller.write(chunk);
               };
-              // write() returns a promise once the kernel takes no more. One more chunk follows, so the stream
-              // ends with at least that much not sent.
+              // write() returns a promise once the kernel refuses a part of a chunk. One more chunk follows, so the
+              // server holds a megabyte or more of the response when the stream ends.
               while (typeof write() === "number" && responseBytes < 256 * chunk.length);
               write();
               controller.close();
-              // An immediate runs before the server polls its sockets again. Until then the kernel takes no more
-              // of the response, and the client reads nothing.
+              // An immediate runs before the server polls its sockets again. Until then the server sends no more of
+              // the response, and the client reads nothing.
               setImmediate(held.resolve);
             },
           }),
@@ -259,7 +259,12 @@ async function run(options: Options) {
       const ended = server.pendingRequests === 0;
       const swept = server.closeIdleConnections();
       const stopping = server.stop();
-      await until(() => conn.closed);
+      // The close comes after megabytes of response. Each wait is for the next part of them, or for the close.
+      let parts: number;
+      do {
+        parts = chunks.length;
+        await until(() => conn.closed || chunks.length > parts);
+      } while (!conn.closed && chunks.length > parts);
       const received = bodyBytes(Buffer.concat(chunks));
       return {
         ended,

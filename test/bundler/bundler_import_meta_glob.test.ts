@@ -107,7 +107,7 @@ describe("bundler", () => {
       globbed: ["modules/a", "modules/b", "more/c"],
     },
     duplicate: { code: `import "./first.ts"; import "./modules/b.ts"; ${eager}; import "./last.ts";` },
-    reexport: { code: `export * from "./first.ts"; ${eager}; export * from "./last.ts";` },
+    reexport: { code: `export * from "./first.ts"; ${eager}; export { name as last } from "./last.ts";` },
     named: {
       code: `
         import "./first.ts";

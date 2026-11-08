@@ -1,0 +1,12 @@
+function f() {
+  x = new /* c */ . target;
+  x = new . /* c */ target;
+  x = new // c
+  . target;
+  x = new .
+  /* c */
+  target;
+}
+x = import . /* c */ meta;
+x = import . // c
+meta;

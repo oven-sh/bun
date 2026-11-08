@@ -39,7 +39,7 @@ const head =
   "POST /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 10\r\nX-Pad: " +
   Buffer.alloc(300, 0x70).toString() +
   "\r\n\r\n";
-const socket = connect(server.port, "127.0.0.1");
+const socket = connect(server.port!, "127.0.0.1");
 socket.on("error", () => {});
 await new Promise(resolve => socket.once("connect", resolve));
 socket.setNoDelay(true);

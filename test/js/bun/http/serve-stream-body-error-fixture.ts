@@ -340,11 +340,11 @@ await using server = Bun.serve({
 function rawRequest(path: string, abort: boolean): Promise<string> {
   const chunks: Buffer[] = [];
   return new Promise(resolve => {
-    const sock = net.connect(server.port, "127.0.0.1", () => {
+    const sock = net.connect(server.port!, "127.0.0.1", () => {
       sock.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
     });
     sock.on("data", d => {
-      chunks.push(d);
+      chunks.push(d as Buffer);
       const received = Buffer.concat(chunks);
       if (received.includes("\r\n")) {
         statusLineReceivedResolve?.();

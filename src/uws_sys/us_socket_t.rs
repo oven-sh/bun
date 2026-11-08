@@ -97,6 +97,11 @@ impl us_socket_t {
         }
     }
 
+    pub(crate) fn close_now(&mut self) {
+        bun_core::scoped_log!(uws, "us_socket_close_now({:p})", self);
+        let _ = c::us_socket_close_now(self);
+    }
+
     pub fn shutdown(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_shutdown({:p})", self);
         c::us_socket_shutdown(self);
@@ -309,6 +314,11 @@ impl us_socket_t {
         c::us_socket_set_inline_reject(self);
     }
 
+    /// Drop the handshake flight that is held across the handshake callback.
+    pub fn release_held_flight(&mut self) {
+        c::us_socket_release_held_flight(self);
+    }
+
     /// A shutdown before the first handshake step sends its FIN after that step.
     pub fn set_first_flight_before_fin(&mut self) {
         c::us_socket_set_first_flight_before_fin(self);
@@ -439,6 +449,12 @@ impl us_socket_t {
         c::us_socket_sendfile_needs_more(self);
     }
 
+    /// SO_RCVBUF / SO_SNDBUF. `size == 0` reads the current value, non-zero sets it. Returns 0
+    /// and writes the resulting value to `out`, or the failing setsockopt/getsockopt result.
+    pub fn buffer_size(&mut self, is_recv: bool, size: i32, out: &mut c_int) -> c_int {
+        c::us_socket_buffer_size(self, is_recv as c_int, size, out)
+    }
+
     pub fn get_fd(&self) -> Fd {
         let raw = c::us_socket_get_fd(self);
         // LIBUS_SOCKET_DESCRIPTOR is `c_int` on POSIX, `SOCKET` (`usize`) on
@@ -464,6 +480,10 @@ impl us_socket_t {
 
     pub(crate) fn is_established(&self) -> bool {
         c::us_socket_is_established(self) > 0
+    }
+
+    pub(crate) fn ssl_send_rejected(&self) -> bool {
+        c::us_socket_ssl_send_rejected(self) > 0
     }
 
     pub(crate) fn queued_input(&self) -> QueuedInput {
@@ -558,6 +578,7 @@ mod c {
             code: CloseCode,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
+        pub(super) safe fn us_socket_close_now(s: &mut us_socket_t) -> *mut us_socket_t;
         pub(super) safe fn us_socket_shutdown(s: &mut us_socket_t);
         pub(super) safe fn us_socket_is_closed(s: &us_socket_t) -> i32;
         pub(super) fn us_socket_write_check_error(
@@ -570,9 +591,16 @@ mod c {
         pub(super) safe fn us_socket_is_shut_down(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_sendfile_needs_more(socket: &mut us_socket_t);
         pub(super) safe fn us_socket_get_fd(s: &us_socket_t) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub(super) safe fn us_socket_buffer_size(
+            s: &mut us_socket_t,
+            is_recv: c_int,
+            size: c_int,
+            out: &mut c_int,
+        ) -> c_int;
         pub(super) safe fn us_socket_verify_error(s: &us_socket_t) -> us_bun_verify_error_t;
         pub(super) safe fn us_socket_get_error(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_is_established(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_ssl_send_rejected(s: &us_socket_t) -> c_int;
         pub(super) safe fn us_socket_queued_input(s: &us_socket_t) -> c_int;
 
         /// ssl_ctx is required (the whole point); sni may be null.
@@ -596,6 +624,7 @@ mod c {
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
     }
 }

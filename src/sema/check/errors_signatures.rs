@@ -1,38 +1,20 @@
 //! Signatures.
 //!
-//! * Type parameters: 2368 2716 2706 2744 2636 2637, and 2344 (or a more specific error) for a
-//!   default that does not satisfy the constraint of the parameter.
-//! * Parameter lists: 1098, 1014 1013 1047 1048 1015 1016, 1346 1347, 7060 1200; parameters: 2398
-//!   2681 2784.
-//! * Accessors, methods, constructors, properties: 1005 1318, 1221 1222, 1092 1093, 1245 1267, 2676
-//!   2808.
+//! * Type parameters: 2716 2636 2637, and 2344 (or a more specific error) for a default that doesn't satisfy the
+//!   parameter's constraint.
 //! * Return types: 2505 1064 1058 1062, 1228 1229 2677 1230 1225.
-//! * `erasableSyntaxOnly`: 1294.
 //!
-//! Follows `checkTypeParameter`, `checkTypeParameterDeferred`, `checkTypeParameters`,
-//! `checkTypeParametersNotReferenced`, `checkParameter`, `checkPropertyDeclaration`,
-//! `checkSignatureDeclaration`, `checkAsyncFunctionReturnType`, `checkMethodDeclaration`,
-//! `checkAccessorDeclaration`, `checkTypePredicate`, `getAwaitedTypeNoAliasEx` and
-//! `checkAssertion` of TypeScript 7.0.2's checker.go,
-//! `checkGrammarTypeParameterList`, `checkGrammarParameterList`,
-//! `checkGrammarForUseStrictSimpleParameterList`, `checkGrammarArrowFunction`,
-//! `checkGrammarForGenerator`, `checkGrammarAccessor`, `checkGrammarMethod` and
-//! `checkGrammarConstructorTypeParameters` of its grammarchecks.go.
-//!
-//! The HIR of a file does not store everything these checks need: a body where none is allowed, a
-//! `this` parameter, `"use strict"`, the position of a `?` or a modifier. That is read from the
-//! source text, starting at a position the HIR does have.
+//! Mirrors `checkTypeParameter`, `checkTypeParameterDeferred`, `checkSignatureDeclaration`,
+//! `checkAsyncFunctionReturnType` and `checkTypePredicate` in TypeScript 7.0.2's checker.go.
 
 use super::*;
 use crate::bind::{FnOwner, MemberOwner};
 
-// ───────────────────────────── the grammar of signatures ─────────────────────────────
-
 impl Checker<'_, '_> {
     // ───────────────────────────── type parameters ─────────────────────────────
 
-    /// `checkTypeParameter`, from `getResolvedTypeParameterDefault` to the comparison of the
-    /// default with the constraint: 2716, 2344. `param`: the type parameter that `tp` declares.
+    /// `checkTypeParameter`, from `getResolvedTypeParameterDefault` to the comparison of the default with the
+    /// constraint: 2716, 2344. `param` is the type parameter that `tp` declares.
     pub(super) fn check_type_parameter_default(
         &mut self,
         file: FileId,
@@ -40,7 +22,7 @@ impl Checker<'_, '_> {
         param: TypeId,
     ) {
         let hir = self.hir(file);
-        // `tpNode.DefaultType`. `None`: only another declaration of the class or interface has it.
+        // `tpNode.DefaultType`. `None` if only another declaration of the class or interface has it.
         let error_node = hir[tp].default.some().map(|default_type| {
             let start = start_of_type(hir, default_type);
             let end = self.end_of_type_node_from(file, default_type, start);
@@ -52,7 +34,7 @@ impl Checker<'_, '_> {
                     Some(at) => {
                         self.error_at(at, 2716, &[Arg::Type(param)]);
                     }
-                    // An error at no node is in no file.
+                    // An error without a node isn't in any file.
                     None => {
                         let name = self.type_to_string(param);
                         self.report_global_error(2716, vec![name]);
@@ -70,8 +52,8 @@ impl Checker<'_, '_> {
         self.check_type_assignable_to(default, constraint, error_node, Some(2344));
     }
 
-    /// `checkTypeParameterDeferred` for the type parameters `params` of a declaration of the class,
-    /// interface or type alias `symbol`: 2637, 2636.
+    /// `checkTypeParameterDeferred` for the type parameters `params` of a declaration of the class, interface or type
+    /// alias `symbol`: 2637, 2636.
     pub(super) fn check_type_parameters_deferred(
         &mut self,
         file: FileId,
@@ -84,8 +66,8 @@ impl Checker<'_, '_> {
         // If the only declaration has no annotations, there are none.
         if symbol.is_none()
             || !params.iter().any(is_annotated)
-                && bound.symbols[symbol.idx()].decls.len() == 1
-                && !bound.symbols[symbol.idx()].flags.contains(SymFlags::MERGED)
+                && bound.symbol(symbol).decls.len() == 1
+                && !bound.symbol(symbol).flags.contains(SymFlags::MERGED)
         {
             return;
         }
@@ -143,10 +125,10 @@ impl Checker<'_, '_> {
             } else {
                 (sup, sub)
             };
-            // `reportUnreliableWorker` ignores these markers. `report_unreliable` fires on every marker, so its flags are dropped.
+            // `reportUnreliableWorker` ignores these markers. `report_unreliable` fires on every marker, so its flags
+            // are dropped.
             let reliability = self.reliability;
-            // `c.varianceTypeParameter`: the markers are printed with its name while this
-            // diagnostic is formatted.
+            // `c.varianceTypeParameter`: the markers are printed with its name while this diagnostic is formatted.
             self.set_variance_type_parameter(Some(own));
             let at = (file, start, self.end_of_type_param(file, tp));
             // `checkDeferredNode`: `c.currentNode = node`, `c.instantiationCount = 0`
@@ -163,7 +145,7 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── signatures ─────────────────────────────
 
-    /// Whether `f` is a member of a class or of an object literal, as opposed to one of an interface or a type literal.
+    /// True if `f` is a member of a class or an object literal, as opposed to an interface or a type literal.
     fn is_member_that_may_have_body(&self, file: FileId, f: FnId) -> bool {
         let bound = self.bound(file);
         match bound.fns[f.idx()].owner {
@@ -182,7 +164,7 @@ impl Checker<'_, '_> {
             return;
         };
         let text = &hir.text[..];
-        // `getTypePredicateParent`. A `ParenthesizedType`, which has no node, is no such parent.
+        // `getTypePredicateParent`. A `ParenthesizedType`, which has no node, isn't such a parent.
         let parent = hir
             .function_of(hir.parent(hir.node(node)))
             .some()
@@ -205,8 +187,7 @@ impl Checker<'_, '_> {
             self.error(file, node, 1228, &[]);
             return;
         };
-        // `getTypePredicateOfSignature` resolves the type before `checkSourceElement` visits its
-        // parts.
+        // `getTypePredicateOfSignature` resolves the type before `checkSourceElement` visits its parts.
         self.type_from_node(file, ty);
         self.check_type_node(file, ty);
         if param == known::this {
@@ -292,7 +273,7 @@ impl Checker<'_, '_> {
             return;
         }
         // `getGlobalPromiseTypeChecked`
-        if self.get_global_type(known::Promise, 1, true).is_some()
+        if self.get_global_type(known::Promise, 1).is_some()
             && self.is_global_ref(ret, known::Promise, 1).is_none()
         {
             let start = start_of_type(hir, func.ret);
@@ -304,7 +285,7 @@ impl Checker<'_, '_> {
         self.check_awaited_type(
             ret,
             false,
-            self.place_of_signature_declaration(file, f),
+            self.span_of_signature_declaration(file, f),
             1058,
         );
     }

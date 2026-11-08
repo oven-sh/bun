@@ -16,7 +16,7 @@ use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
 
 use crate::p::P;
 
-impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEMA> {
+impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Apply REPL-mode transforms to the AST.
     /// This transforms code for interactive evaluation:
     /// - Wraps the last expression in { value: expr } for result capture
@@ -270,7 +270,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                     //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
                     //   import * as X from 'mod'   -> var X = await import('mod')
                     //   import 'mod'              -> await import('mod')
-                    let path_str: &'static [u8] = self.import_records.items()
+                    let path_str: &'a [u8] = self.import_records.items()
                         [import_data.import_record_index as usize]
                         .path
                         .text;

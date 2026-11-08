@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser");
+const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser") as any;
 const { parsers } = require("node:_http_common");
 
 const kOnHeaders = HTTPParser.kOnHeaders;
@@ -55,7 +55,7 @@ describe("HTTPParser.prototype.close", () => {
 describe("HTTPParser before initialize()", () => {
   test("execute() and finish() throw instead of running over uninitialised state", () => {
     // Churn the parser heap first so a fresh cell is likely to land on reused memory.
-    let junk = [];
+    let junk: any[] | null = [];
     for (let i = 0; i < 500; i++) {
       const q = new HTTPParser();
       q.initialize(HTTPParser.REQUEST, {});
@@ -407,6 +407,17 @@ describe("ConnectionsList", () => {
     expect(list.idle()).toEqual([]);
     expect(list.active()).toEqual([]);
     expect(list.expired()).toEqual([]);
+  });
+
+  test("idle() and expired() skip a closed parser", () => {
+    const list = new ConnectionsList();
+    const closed = new HTTPParser();
+    closed.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+    closed.close();
+
+    expect(list.idle()).toEqual([]);
+    expect(list.expired(1, 1)).toEqual([]);
+    expect(list.all()).toEqual([closed]);
   });
 
   test("works with HTTPParser", () => {

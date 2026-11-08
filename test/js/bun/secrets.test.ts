@@ -1,4 +1,4 @@
-import { dlopen, read } from "bun:ffi";
+import { dlopen, read, type Pointer } from "bun:ffi";
 import { expect, test } from "bun:test";
 import { isCI, isMacOS, isWindows } from "harness";
 
@@ -157,7 +157,7 @@ test.skipIf(!isWindows)("Bun.secrets.set() persist option selects the Credential
   function readCredential() {
     const out = new BigUint64Array(1);
     expect(advapi32.symbols.CredReadW(targetName, CRED_TYPE_GENERIC, 0, out)).not.toBe(0);
-    const cred = Number(out[0]);
+    const cred = Number(out[0]) as Pointer;
     try {
       return {
         Type: read.u32(cred, offsetofType),
@@ -207,7 +207,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.get();
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("secrets.get requires an options object");
   }
 
@@ -216,7 +216,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.get("not an object");
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected options to be an object");
   }
 
@@ -225,7 +225,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.get({ name: "test" });
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected service and name to be strings");
   }
 
@@ -234,7 +234,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.get({ service: "test" });
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected service and name to be strings");
   }
 
@@ -244,7 +244,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     await Bun.secrets.set({ service: "test", name: "test" });
     // This should work without error - just needs a value
     // But if it does work, the value will be undefined which is an error
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected 'value' to be a string");
   }
 
@@ -253,7 +253,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.set({ service: "test", name: "test", value: 123 });
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("Expected 'value' to be a string");
   }
 
@@ -262,7 +262,7 @@ test.todoIf(isCI && !isWindows)("Bun.secrets error handling", async () => {
     // @ts-expect-error - testing invalid input
     await Bun.secrets.delete();
     expect.unreachable("Should have thrown");
-  } catch (error) {
+  } catch (error: any) {
     expect(error.message).toContain("requires an options object");
   }
 });

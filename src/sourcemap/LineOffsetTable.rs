@@ -21,9 +21,8 @@ use smallvec::SmallVec;
 /// Generic over `A` so the bundler can put both the SoA slab and every
 /// `columns_for_non_ascii` payload into the per-worker AST heap (`AstAlloc`)
 /// and bulk-free them on `mi_heap_destroy` instead of walking
-/// `LinkerGraph.files` in `deinit_without_freeing_arena`. Non-bundler callers
-/// (`CodeCoverage`, the runtime printer's lazy table) keep the `Global`
-/// default and free normally.
+/// `LinkerGraph.files` in `deinit_without_freeing_arena`. The runtime printer's
+/// lazy table keeps the `Global` default and frees normally.
 pub struct LineOffsetTable<A: Allocator = Global> {
     pub columns_for_non_ascii: Box<[i32], A>,
     /// Byte offset of the first non-ASCII byte on this line, or `i32::MAX as u32`
@@ -118,44 +117,12 @@ impl LineOffsetTable {
         Self::find_line(offsets, loc)
     }
 
-    pub fn find_index(byte_offsets_to_start_of_line: &[u32], loc: Loc) -> Option<usize> {
-        debug_assert!(loc.start > -1); // checked by caller
-        let mut original_line: usize = 0;
-        let loc_start = usize::try_from(loc.start).expect("int cast");
-
-        let mut count = byte_offsets_to_start_of_line.len();
-        while count > 0 {
-            let step = count / 2;
-            let i = original_line + step;
-            let byte_offset = byte_offsets_to_start_of_line[i] as usize;
-            if byte_offset == loc_start {
-                return Some(i);
-            }
-            if i + 1 < byte_offsets_to_start_of_line.len() {
-                let next_byte_offset = byte_offsets_to_start_of_line[i + 1] as usize;
-                if byte_offset < loc_start && loc_start < next_byte_offset {
-                    return Some(i);
-                }
-            }
-
-            if byte_offset < loc_start {
-                original_line = i + 1;
-                count = count - step - 1;
-            } else {
-                count = step;
-            }
-        }
-
-        None
-    }
-
     /// `Global`-allocator convenience wrapper around [`generate_in`].
     pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
         Self::generate_in::<Global>(contents, approximate_line_count)
     }
 
-    // Callers pass mixed allocators (printer/bundler arenas vs VM default
-    // allocator in code coverage): the bundler routes `A = AstAlloc` so the
+    // Callers pass mixed allocators: the bundler routes `A = AstAlloc` so the
     // table bulk-frees with the per-worker AST heap, everyone else uses
     // [`generate`] (`A = Global`).
     pub fn generate_in<A: Allocator + Copy + Default + 'static>(

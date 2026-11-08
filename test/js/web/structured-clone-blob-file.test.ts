@@ -1,6 +1,7 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, rss } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, rss, tempDir } from "harness";
+import { join } from "node:path";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
@@ -60,7 +61,7 @@ describe("structuredClone with Blob and File", () => {
       const cloned = structuredClone(blob);
       expect(cloned).toBeInstanceOf(Blob);
       expect(cloned.size).toBe(11);
-      expect(cloned.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.type).toBe("text/plain");
 
       const originalText = await blob.text();
       const clonedText = await cloned.text();
@@ -108,11 +109,11 @@ describe("structuredClone with Blob and File", () => {
 
       expect(cloned.first).toBeInstanceOf(Blob);
       expect(cloned.first.size).toBe(5);
-      expect(cloned.first.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.first.type).toBe("text/plain");
 
       expect(cloned.second).toBeInstanceOf(Blob);
       expect(cloned.second.size).toBe(5);
-      expect(cloned.second.type).toBe("text/html;charset=utf-8");
+      expect(cloned.second.type).toBe("text/html");
     });
 
     test("deeply nested Blob", () => {
@@ -159,7 +160,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned).toBeInstanceOf(File);
       expect(cloned.name).toBe("test.txt");
       expect(cloned.size).toBe(7);
-      expect(cloned.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.type).toBe("text/plain");
       expect(cloned.lastModified).toBe(1234567890000);
     });
 
@@ -170,7 +171,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned).toBeInstanceOf(File);
       expect(cloned.name).toBe("test.txt");
       expect(cloned.size).toBe(7);
-      expect(cloned.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.type).toBe("text/plain");
       expect(cloned.lastModified).toBeGreaterThan(0);
     });
 
@@ -192,7 +193,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned.file).toBeInstanceOf(File);
       expect(cloned.file.name).toBe("test.txt");
       expect(cloned.file.size).toBe(4);
-      expect(cloned.file.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.file.type).toBe("text/plain");
     });
 
     test("multiple Files in object", () => {
@@ -203,11 +204,11 @@ describe("structuredClone with Blob and File", () => {
 
       expect(cloned.txt).toBeInstanceOf(File);
       expect(cloned.txt.name).toBe("hello.txt");
-      expect(cloned.txt.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.txt.type).toBe("text/plain");
 
       expect(cloned.html).toBeInstanceOf(File);
       expect(cloned.html.name).toBe("world.html");
-      expect(cloned.html.type).toBe("text/html;charset=utf-8");
+      expect(cloned.html.type).toBe("text/html");
     });
   });
 
@@ -220,12 +221,12 @@ describe("structuredClone with Blob and File", () => {
 
       expect(cloned.blob).toBeInstanceOf(Blob);
       expect(cloned.blob.size).toBe(12);
-      expect(cloned.blob.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.blob.type).toBe("text/plain");
 
       expect(cloned.file).toBeInstanceOf(File);
       expect(cloned.file.name).toBe("test.txt");
       expect(cloned.file.size).toBe(12);
-      expect(cloned.file.type).toBe("text/plain;charset=utf-8");
+      expect(cloned.file.type).toBe("text/plain");
     });
 
     test("array with mixed Blob and File", () => {
@@ -241,7 +242,7 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned[0].size).toBe(4);
 
       expect(cloned[1]).toBeInstanceOf(File);
-      expect(cloned[1].name).toBe("test.txt");
+      expect((cloned[1] as File).name).toBe("test.txt");
       expect(cloned[1].size).toBe(4);
     });
 
@@ -520,6 +521,74 @@ describe("structuredClone with Blob and File", () => {
         exitCode: 0,
         signalCode: null,
       });
+    });
+
+    test("a file-backed Blob sized past MAX_SIZE deserializes with unknown size and can be sliced", async () => {
+      using dir = tempDir("blob-deser-size", { "probe.txt": "0123456789abcdefghij" });
+      const path = join(String(dir), "probe.txt");
+      // Plant a distinctive slice end so the u64 size field can be located
+      // in whatever framing the current build emits, then overwrite it.
+      const sentinel = 0x0badf00d1234;
+      const good = Buffer.from(serialize(Bun.file(path).slice(0, sentinel)));
+      const needle = Buffer.alloc(8);
+      needle.writeBigUInt64LE(BigInt(sentinel));
+      const at = good.indexOf(needle);
+      expect(at).toBeGreaterThan(0);
+      const bad = Buffer.from(good);
+      bad.writeBigUInt64LE(1n << 63n, at);
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { deserialize } = require("bun:jsc");
+            const v8 = require("node:v8");
+            const bad = Buffer.from(process.argv[1], "base64");
+            for (const de of [deserialize, b => v8.deserialize(b)]) {
+              const blob = de(bad);
+              const head = await blob.slice(0, 10).text();
+              process.stdout.write(JSON.stringify({ head, size: blob.size }) + "\\n");
+            }
+          `,
+          bad.toString("base64"),
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const lines = stdout
+        .split("\n")
+        .filter(Boolean)
+        .map(l => JSON.parse(l));
+      expect({ lines, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        lines: [
+          { head: "0123456789", size: 20 },
+          { head: "0123456789", size: 20 },
+        ],
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    test("file-backed Blob path longer than PATH_MAX is rejected at deserialize", () => {
+      const probe = Buffer.alloc(16, 0x5a);
+      const good = Buffer.from(serialize(Bun.file(probe.toString("latin1"))));
+      const at = good.indexOf(probe);
+      expect(at).toBeGreaterThan(4);
+      expect(good.readUInt32LE(at - 4)).toBe(probe.length);
+
+      // Longer than MAX_PATH_BYTES on every platform (Windows is ~96 KiB).
+      const long = Buffer.concat([Buffer.from("/"), Buffer.alloc(100_000, "a")]);
+      const len = Buffer.alloc(4);
+      len.writeUInt32LE(long.length);
+      const bad = Buffer.concat([good.subarray(0, at - 4), len, long, good.subarray(at + probe.length)]);
+
+      expect(() => deserialize(bad)).toThrow("Unable to deserialize data.");
+      expect(() => v8.deserialize(bad)).toThrow("Unable to deserialize data.");
     });
 
     test("in-process: offset at store boundary yields empty view", async () => {

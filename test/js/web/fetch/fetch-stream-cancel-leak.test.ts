@@ -249,7 +249,7 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
         // The client stopped taking bytes: the server is no longer pulled.
         async function parked() {
           let last = -1;
-          for (let stable = 0; stable < 5; ) {
+          for (let stable = 0; stable < 5;) {
             await Bun.sleep(10);
             stable = pulls === last ? stable + 1 : 0;
             last = pulls;
@@ -364,7 +364,7 @@ describe("a proxied fetch body is aborted once the response's client is gone", (
       // Nothing reads: wait for the upstream to stop being pulled, which is the chain
       // backpressured end to end (or, on a build that drains, out of data).
       let last = -1;
-      for (let stable = 0; stable < 5; ) {
+      for (let stable = 0; stable < 5;) {
         await Bun.sleep(20);
         if (state.pulls === last) {
           stable++;

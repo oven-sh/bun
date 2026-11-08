@@ -1,3 +1,4 @@
+import { describe, expect, jest, setSystemTime, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { once } from "node:events";
 import http from "node:http";
@@ -80,6 +81,43 @@ test("setSystemTime accepts pre-epoch and epoch times and resets with no argumen
   }
 });
 
+test("chainable timer functions return their receiver only when called as a method", () => {
+  // When a closed-over or module binding is called bare, JSC passes the scope object as `this`.
+  const {
+    useFakeTimers,
+    advanceTimersByTime,
+    advanceTimersToNextTimer,
+    runOnlyPendingTimers,
+    runAllTimers,
+    clearAllTimers,
+    useRealTimers,
+  } = jest;
+  const bare = () => [
+    useFakeTimers(),
+    advanceTimersByTime(0),
+    advanceTimersToNextTimer(),
+    runOnlyPendingTimers(),
+    runAllTimers(),
+    clearAllTimers(),
+    setSystemTime(),
+    useRealTimers(),
+  ];
+  try {
+    expect([
+      jest.useFakeTimers(),
+      jest.advanceTimersByTime(0),
+      jest.advanceTimersToNextTimer(),
+      jest.runOnlyPendingTimers(),
+      jest.runAllTimers(),
+      jest.clearAllTimers(),
+      jest.setSystemTime(),
+    ]).toEqual(new Array(7).fill(jest));
+    expect(bare()).toEqual(new Array(8).fill(undefined));
+  } finally {
+    expect(jest.useRealTimers()).toBe(jest);
+  }
+});
+
 test.each(["'x'", "Symbol()", "1n"])("useFakeTimers does not crash when globalThis.setTimeout is %s", async value => {
   await using proc = Bun.spawn({
     cmd: [
@@ -98,6 +136,27 @@ test.each(["'x'", "Symbol()", "1n"])("useFakeTimers does not crash when globalTh
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
   expect(proc.signalCode).toBeNull();
+});
+
+test("useFakeTimers() skips the clock marker when setTimeout is frozen or a WebAssembly GC object", () => {
+  // (module (type $s (struct (field (mut i32)))) (func (export "mk") (result (ref null $s)) struct.new_default $s))
+  // prettier-ignore
+  const bytes = new Uint8Array([0,0x61,0x73,0x6d,1,0,0,0, 1,10,2, 0x5f,1,0x7f,1, 0x60,0,1,0x63,0, 3,2,1,1, 7,6,1,2,0x6d,0x6b,0,0, 10,7,1,5,0,0xfb,1,0,0x0b]);
+  const struct = (new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports.mk as Function)();
+  const original = globalThis.setTimeout;
+  try {
+    for (const value of [Object.freeze(() => {}), struct]) {
+      globalThis.setTimeout = value;
+      jest.useFakeTimers();
+      expect(jest.isFakeTimers()).toBe(true);
+      expect(Reflect.ownKeys(value)).not.toContain("clock");
+      globalThis.setTimeout = original;
+      jest.useRealTimers();
+    }
+  } finally {
+    globalThis.setTimeout = original;
+    jest.useRealTimers();
+  }
 });
 
 test("real timer heap is ticked against the real clock under useFakeTimers", async () => {

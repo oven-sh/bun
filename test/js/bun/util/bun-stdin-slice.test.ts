@@ -81,14 +81,14 @@ describe("Bun.stdin.slice(0, N).stream() over a pipe that stays open", () => {
       proc.stdin.write("01");
       await proc.stdin.flush();
       // Wait for the first chunk to come back out so the second write is a separate read in the child.
-      for (let r; !stdout.includes("01") && !(r = await reader.read()).done; ) {
+      for (let r; !stdout.includes("01") && !(r = await reader.read()).done;) {
         stdout += decoder.decode(r.value, { stream: true });
       }
       expect(stdout).toBe("01");
 
       proc.stdin.write("23456");
       await proc.stdin.flush();
-      for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
+      for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
 
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0123", stderr: "", exitCode: 0 });
@@ -143,14 +143,14 @@ describe("Bun.stdin.slice(0, N) over a pipe that stays open leaves the bytes aft
     return {
       proc,
       async stdoutUntil(marker: string) {
-        for (let r; !stdout.includes(marker) && !(r = await reader.read()).done; ) {
+        for (let r; !stdout.includes(marker) && !(r = await reader.read()).done;) {
           stdout += decoder.decode(r.value, { stream: true });
         }
         return stdout;
       },
       async finish() {
         await proc.stdin.end();
-        for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
+        for (let r; !(r = await reader.read()).done;) stdout += decoder.decode(r.value, { stream: true });
         return { stdout, stderr: await stderr, exitCode: await proc.exited };
       },
     };

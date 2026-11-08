@@ -1,0 +1,4 @@
+<template>
+  <a onclick="a('b'); c()" onfocus='d("e")' onblur="return false" onload="if (x) { y() }"></a>
+  <b #default="{a,b}" v-slot:c="d" v-for="(a,b) of c" v-for="a in b"></b>
+</template>

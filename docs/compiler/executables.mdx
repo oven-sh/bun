@@ -395,6 +395,10 @@ await Bun.build({
 ```ts app.ts icon="/icons/typescript.svg"
 await renderFirstScreen();
 Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
+
+async function renderFirstScreen() {
+  // your startup code
+}
 ```
 
 ### Ahead-of-time compilation

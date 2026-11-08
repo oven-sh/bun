@@ -1,0 +1,9 @@
+status: 0
+oracle: none
+---
+top n1(gone) n2(gone) n3(gone) n4(gone)
+the child asks again: gone | the grandchild: gone
+the reference that the child holds: ReferenceType None | __weakref__: None 0
+a new one: ALIVE True True True True 1
+behind another collection: gone ALIVE nothing more
+top n1 n2 n3 n4 | ['the reference of n1', 'the reference of n2', 'the reference of n3', 'the reference of n4'] | None None 0

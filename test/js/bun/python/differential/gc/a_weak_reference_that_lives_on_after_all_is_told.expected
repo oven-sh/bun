@@ -1,0 +1,12 @@
+status: 0
+script: 4380f7e842a51a66
+---
+the_child_saves_the_reference_that_it_holds: h c(gone) . . . . | ['callback, and the reference says gone'] | saved: ['ReferenceType']
+the_finalizer_of_the_parent_saves_the_references_to_it: h c(gone) . . . . | ['callback, and the reference says gone'] | saved: ['ReferenceType']
+all_garbage_is_saved: h c(gone) . . . . | ['callback, and the reference says gone'] | saved: [True]
+the_child_saves_a_dictionary: h c(gone) . . . . | [] | saved: ['WeakValueDictionary of length 0']
+the_child_saves_a_set: h c(gone) . . . . | [] | saved: ['WeakSet of length 0']
+the_child_saves_a_dictionary_with_weak_keys: h c(gone) . . . . | [] | saved: ['WeakKeyDictionary of length 0']
+a_thread_that_waits: (True, True): h c(gone) . . . last | ['callback, and the reference says gone']
+at exit, cyclic garbage with a finalizer holds the reference: status 0: . . . c(gone) callback cycle h
+at exit, a plain object that hangs off such garbage holds it: status 0: . . . c(gone) callback cycle h

@@ -1,0 +1,29 @@
+status: 0
+script: 2f31eae16be9bac3
+---
+a_chain_of_five: n0 n1(gone) n2(gone) n3(gone) n4(gone)
+a_pair_beside_a_chain_of_five: h c(gone) z . . . .
+the_grandchild_asks_for_the_top: a b c(gone) . . . .
+a_sibling_asks_for_its_elder_sibling: a x y(gone) . . . .
+one_asks_for_another_that_has_nothing_to_do_with_it: x y(gone) . . . .
+a_reference_of_a_class_of_the_programs: h c(gone) . . . .
+a_proxy: h c(gone) . . . .
+what_a_reference_says_of_itself: h c(dead) . . . .
+a_weak_method: h c(gone) . . . .
+a_weak_value_dictionary_that_the_child_holds: h c(gone) . . . .
+a_weak_set_that_the_child_holds: h c(gone) . . . .
+a_finalizer_that_collects: h(has collected 0) c(gone) . . . .
+a_finalizer_asks_for_its_own_object_and_for_what_goes_later: h(ALIVE ALIVE) c . . . .
+a_generator_with_a_finally: generator c(gone) . . . .
+the_top_comes_back: ALIVE ALIVE top 1 1 1 True []
+the_top_comes_back, let go of for good: gone gone gone 0 0 0 False ['finalize', 'callback of the proxy', 'callback']
+one_in_the_middle_comes_back: ALIVE ALIVE middle 1 1 1 True []
+one_in_the_middle_comes_back, let go of for good: gone gone gone 0 0 0 False ['finalize', 'callback of the proxy', 'callback']
+what_the_one_that_comes_back_holds: ALIVE ALIVE held 1 1 1 True []
+what_the_one_that_comes_back_holds, let go of for good: gone gone gone 0 0 0 False ['finalize', 'callback of the proxy', 'callback']
+what_it_holds_three_levels_down: ALIVE ALIVE . 1 1 1 True []
+what_it_holds_three_levels_down, let go of for good: gone gone gone 0 0 0 False ['finalize', 'callback of the proxy', 'callback']
+at exit, a child asks for its parent: status 0: h c(gone)
+at exit, three levels, each asks for the one above: status 0: a b(gone) c(gone)
+at exit, the grandchild asks for the top: status 0: a b c(gone)
+at exit, a name asks for an earlier name: status 0: h z(gone)

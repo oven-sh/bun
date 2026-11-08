@@ -3,17 +3,61 @@ use bun_sema::bind::Decl;
 use bun_sema::erasure::{TypeRanges, find_type_ranges};
 use bun_sema::fold::{Constant, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
-    BinOp, Branches, Chain, ExprId, ExprKind, FnBody, FnId, IdList, PatId, PatKind, PropKey,
+    BinOp, Branches, Chain, ExprId, ExprKind, Flags, FnBody, FnId, IdList, PatId, PatKind, PropKey,
     StmtId, StmtKind, VarKind,
 };
 use bun_sema::import_sites::{
     WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY as WORDS, may_spell_word_that_mock_looks_for,
     names_word_that_mock_looks_for as names_word,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ir::StringId;
 use crate::ir::generated::SourceRange;
 use crate::lower::FileLowering;
+
+#[derive(Default)]
+pub(in crate::lower) struct ValuesThatConstsWereFollowedTo {
+    number_of_consts: usize,
+    values: FxHashMap<ExprId, Option<Constant>>,
+}
+
+pub(in crate::lower) struct StatementsThatNest {
+    ranges: Vec<(u32, u32)>,
+    parents: Vec<Option<u32>>,
+}
+
+impl StatementsThatNest {
+    fn new(mut ranges: Vec<(u32, u32)>) -> StatementsThatNest {
+        ranges.sort_unstable_by_key(|it| (it.0, std::cmp::Reverse(it.1)));
+        let mut parents = Vec::with_capacity(ranges.len());
+        let mut open: Vec<u32> = Vec::new();
+        for (index, range) in ranges.iter().enumerate() {
+            while open
+                .last()
+                .is_some_and(|&it| ranges[it as usize].1 <= range.0)
+            {
+                open.pop();
+            }
+            parents.push(open.last().copied());
+            open.push(index as u32);
+        }
+        StatementsThatNest { ranges, parents }
+    }
+
+    fn find_smallest_around(&self, place: u32) -> Option<(u32, u32)> {
+        let behind = self.ranges.partition_point(|it| it.0 <= place);
+        let mut at = Some(behind.checked_sub(1)? as u32);
+        while let Some(index) = at {
+            let range = self.ranges[index as usize];
+            if place < range.1 {
+                return Some(range);
+            }
+            at = self.parents[index as usize];
+        }
+        None
+    }
+}
 
 fn find_whether_true(decided: Constant) -> Option<bool> {
     match decided {
@@ -24,23 +68,44 @@ fn find_whether_true(decided: Constant) -> Option<bool> {
     }
 }
 
+fn merge_ranges(lists: &[&[(u32, u32)]]) -> Vec<(u32, u32)> {
+    let all = lists.iter().flat_map(|it| it.iter());
+    let mut sorted: Vec<(u32, u32)> = all.filter(|it| it.0 < it.1).copied().collect();
+    sorted.sort_unstable();
+    let mut merged: Vec<(u32, u32)> = Vec::with_capacity(sorted.len());
+    for range in sorted {
+        match merged.last_mut() {
+            Some(last) if range.0 <= last.1 => last.1 = last.1.max(range.1),
+            _ => merged.push(range),
+        }
+    }
+    merged
+}
+
 fn stands_outside(
     written: &[u8],
     start: u32,
     sought: &[u8],
-    ranges: &[&[(u32, u32)]],
+    merged_ranges: &[(u32, u32)],
     types: &TypeRanges,
 ) -> bool {
     let mut from = 0;
     while let Some(found) = bun_core::strings::index_of(&written[from..], sought) {
         let place = start + (from + found) as u32;
-        let mut all = ranges.iter().flat_map(|it| it.iter());
-        if !all.any(|it| it.0 <= place && place < it.1) && !types.removes(place) {
+        let behind = merged_ranges.partition_point(|it| it.0 <= place);
+        let is_inside = behind > 0 && place < merged_ranges[behind - 1].1;
+        if !is_inside && !types.removes(place) {
             return true;
         }
         from += found + 1;
     }
     false
+}
+
+#[derive(Default)]
+struct ConstsOfPrefixes {
+    written_out: FxHashMap<PatId, ExprId>,
+    dropped: FxHashSet<PatId>,
 }
 
 #[derive(Default)]
@@ -93,16 +158,72 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         }
         let (start, end) = (hir[dead].loc.pos, hir[dead].loc.end);
-        let mut comments = hir.comments.iter();
-        !comments.any(|it| start <= it.pos && it.pos < end && self.has_mark(it.pos))
+        let first = hir.comments.partition_point(|it| it.pos < start);
+        let inside = hir.comments[first..].iter().take_while(|it| it.pos < end);
+        !{ inside }.any(|it| self.has_mark(it.pos))
     }
 
     fn has_mark(&self, comment: u32) -> bool {
         self.hir.text.get(comment as usize + 2) == Some(&b'!')
     }
 
-    fn note_consts_in_front_of_all_else(&self, list: IdList<StmtId>, names: &mut Vec<PatId>) {
+    fn is_sum_behind_what_is_decided(&self, value: ExprId) -> bool {
         let hir = self.hir;
+        let find_constant = |it: ExprId| match self.decisions().constant(hir, it) {
+            FoldedValue::Constant(known) | FoldedValue::ConstantOutsideDeadZone(known) => {
+                Some(known)
+            }
+            FoldedValue::Unknown => None,
+        };
+        let find_truth = |it: ExprId| match find_constant(it)? {
+            Constant::String(text) => Some(!self.queries.atom_bytes(text).is_empty()),
+            other => find_whether_true(other),
+        };
+        let mut left_over = hir.skip_type_assertions(value);
+        loop {
+            let next = match hir[left_over].kind {
+                ExprKind::Binary { op: BinOp::Add, .. } => return true,
+                ExprKind::Cond { test, branches } => {
+                    let Branches { yes, no } = hir.branches(branches);
+                    match find_truth(test) {
+                        Some(true) => yes,
+                        Some(false) => no,
+                        None => return true,
+                    }
+                }
+                ExprKind::Binary {
+                    op: op @ (BinOp::And | BinOp::Or),
+                    left,
+                    right,
+                } => match (find_truth(left), op) {
+                    (Some(true), BinOp::Or) | (Some(false), BinOp::And) => left,
+                    (Some(_), _) => right,
+                    (None, _) => return true,
+                },
+                ExprKind::Binary {
+                    op: BinOp::Nullish,
+                    left,
+                    right,
+                } => match find_constant(left) {
+                    Some(Constant::Undefined | Constant::Null) => right,
+                    Some(_) => left,
+                    None => return true,
+                },
+                _ => return false,
+            };
+            left_over = hir.skip_type_assertions(next);
+        }
+    }
+
+    fn note_consts_in_front_of_all_else(
+        &self,
+        list: IdList<StmtId>,
+        is_block: bool,
+        consts: &mut ConstsOfPrefixes,
+    ) {
+        let hir = self.hir;
+        let is_plain_function = |statement: StmtId| matches!(hir[statement].kind, StmtKind::Fn(it) if matches!(hir[it].body, FnBody::Block(_)) && !hir[it].flags.intersects(Flags::ASYNC | Flags::GENERATOR | Flags::AMBIENT));
+        let mut are_declarations_dropped = !is_block || !hir.ids(list).any(is_plain_function);
         for statement in hir.ids(list) {
             let declarations = match hir[statement].kind {
                 StmtKind::Var(declarations) => declarations,
@@ -110,36 +231,50 @@ impl FileLowering<'_, '_, '_, '_> {
                 | StmtKind::Empty
                 | StmtKind::Debugger
                 | StmtKind::Interface(_)
-                | StmtKind::TypeAlias(_)
-                | StmtKind::Enum(_) => continue,
+                | StmtKind::TypeAlias(_) => continue,
+                StmtKind::Enum(it) => {
+                    are_declarations_dropped &= hir[it].flags.contains(Flags::AMBIENT);
+                    continue;
+                }
                 _ => break,
             };
             if declarations.iter().any(|it| hir[it].kind != VarKind::Const) {
                 break;
             }
-            let may_be_written_out = |value: ExprId| {
-                value.is_some()
-                    && !matches!(
-                        hir[hir.skip_type_assertions(value)].kind,
-                        ExprKind::Binary { op: BinOp::Add, .. }
-                    )
+            let is_sum_of_texts = |value: ExprId| {
+                let (FoldedValue::Constant(folded) | FoldedValue::ConstantOutsideDeadZone(folded)) =
+                    self.decisions().constant(hir, value)
+                else {
+                    return false;
+                };
+                matches!(folded, Constant::String(_)) && self.is_sum_behind_what_is_decided(value)
             };
-            let written_out = (declarations.iter()).filter(|&it| may_be_written_out(hir[it].init));
-            names.extend(written_out.map(|it| hir[it].pat));
+            for declaration in declarations.iter().map(|it| hir[it]) {
+                if declaration.init.is_none() || is_sum_of_texts(declaration.init) {
+                    continue;
+                }
+                consts
+                    .written_out
+                    .entry(declaration.pat)
+                    .or_insert(declaration.init);
+                if are_declarations_dropped {
+                    consts.dropped.insert(declaration.pat);
+                }
+            }
         }
     }
 
-    fn find_consts_that_printer_writes_out(&self, function: FnId) -> Vec<PatId> {
+    fn find_consts_that_printer_writes_out(&self, function: FnId) -> ConstsOfPrefixes {
         let (hir, bound) = (self.hir, self.bound);
-        let mut names = Vec::new();
+        let mut names = ConstsOfPrefixes::default();
         let mut around = function;
         while around.is_some() {
             if let FnBody::Block(list) = hir[around].body {
-                self.note_consts_in_front_of_all_else(list, &mut names);
+                self.note_consts_in_front_of_all_else(list, false, &mut names);
             }
             around = bound.fns[around.idx()].enclosing;
         }
-        self.note_consts_in_front_of_all_else(hir.body, &mut names);
+        self.note_consts_in_front_of_all_else(hir.body, false, &mut names);
         names
     }
 
@@ -157,7 +292,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_value_that_printer_prints(
         &mut self,
         written: ExprId,
-        consts_that_printer_writes_out: &[PatId],
+        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
     ) -> Option<Constant> {
         let hir = self.hir;
         let decisions = self.decisions();
@@ -178,7 +313,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         let symbol = self.symbol_named_by(part)?;
                         let mut declarations = self.bound.symbol(symbol).decls.iter();
                         let is_written_out = declarations.all(|it| {
-                            matches!(*it, Decl::Var(name) if consts_that_printer_writes_out.contains(&name))
+                            matches!(*it, Decl::Var(name) if consts_that_printer_writes_out.get(&name).is_some_and(|&value| hir[value].end <= hir[part].pos))
                         });
                         if !is_written_out {
                             return None;
@@ -190,17 +325,75 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             FoldedValue::Unknown => match hir[written].kind {
                 ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                    self.find_enum_member_read(written)
+                    self.find_read_of_enum_member_of_this_file(written)
                 }
-                _ => None,
+                _ => {
+                    let followed = &mut self.values_that_consts_were_followed_to;
+                    if followed.number_of_consts != consts_that_printer_writes_out.len() {
+                        followed.number_of_consts = consts_that_printer_writes_out.len();
+                        followed.values.clear();
+                    }
+                    if let Some(&known) = followed.values.get(&written) {
+                        return known;
+                    }
+                    let left_over =
+                        self.find_what_is_left_over(written, consts_that_printer_writes_out);
+                    let found = left_over.and_then(|it| {
+                        self.find_value_that_printer_prints(it, consts_that_printer_writes_out)
+                    });
+                    let followed = &mut self.values_that_consts_were_followed_to;
+                    followed.values.insert(written, found);
+                    found
+                }
             },
+        }
+    }
+
+    fn find_what_is_left_over(
+        &mut self,
+        written: ExprId,
+        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
+    ) -> Option<ExprId> {
+        let hir = self.hir;
+        match hir[written].kind {
+            ExprKind::Ident(_) => {
+                let symbol = self.symbol_named_by(written)?;
+                let [Decl::Var(read)] = *self.bound.symbol(symbol).decls else {
+                    return None;
+                };
+                let &value = consts_that_printer_writes_out.get(&read)?;
+                (hir[value].end <= hir[written].pos).then(|| hir.skip_type_assertions(value))
+            }
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = hir.branches(branches);
+                let is_true =
+                    self.find_side_that_printer_keeps(test, consts_that_printer_writes_out)?;
+                Some(hir.skip_type_assertions(if is_true { yes } else { no }))
+            }
+            _ => None,
+        }
+    }
+
+    fn find_member_that_printer_names(
+        &mut self,
+        printed: ExprId,
+        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
+    ) -> Option<Atom> {
+        let mut left_over = printed;
+        loop {
+            if let ExprKind::Dot { name, .. } = self.hir[left_over].kind {
+                return self
+                    .find_read_of_enum_member_of_this_file(left_over)
+                    .map(|_| name);
+            }
+            left_over = self.find_what_is_left_over(left_over, consts_that_printer_writes_out)?;
         }
     }
 
     fn find_side_that_printer_keeps(
         &mut self,
         test: ExprId,
-        consts_that_printer_writes_out: &[PatId],
+        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
     ) -> Option<bool> {
         let hir = self.hir;
         if let ExprKind::Dot {
@@ -223,7 +416,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_name_that_search_reads(
         &mut self,
         argument: ExprId,
-        consts_that_printer_writes_out: &[PatId],
+        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
     ) -> Option<Atom> {
         let hir = self.hir;
         let mut first = hir.skip_type_assertions(argument);
@@ -245,12 +438,16 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn note_statements_behind_a_jump(&self, list: IdList<StmtId>, in_dead_flow: &mut Vec<StmtId>) {
+    fn note_statements_behind_a_jump(
+        &self,
+        list: IdList<StmtId>,
+        in_dead_flow: &mut FxHashSet<StmtId>,
+    ) {
         let hir = self.hir;
         let mut is_behind = false;
         for statement in hir.ids(list) {
             if is_behind {
-                in_dead_flow.push(statement);
+                in_dead_flow.insert(statement);
             }
             is_behind |= matches!(
                 hir[statement].kind,
@@ -275,6 +472,7 @@ impl FileLowering<'_, '_, '_, '_> {
         if !self.inputs.modules.is_any_module_named_by_mock() {
             return asked;
         }
+        self.values_that_consts_were_followed_to.values.clear();
         let hir = self.hir;
         let Some(written) = hir.text.get(text.start as usize..text.end as usize) else {
             return own;
@@ -284,18 +482,22 @@ impl FileLowering<'_, '_, '_, '_> {
         {
             return asked;
         }
-        let comments = hir.comments.iter().filter(|it| !self.has_mark(it.pos));
+        let first = hir.comments.partition_point(|it| it.end <= text.start);
+        let inside = hir.comments[first..]
+            .iter()
+            .take_while(|it| it.pos < text.end);
+        let comments = inside.filter(|it| !self.has_mark(it.pos));
         let mut not_printed: Vec<(u32, u32)> = comments.map(|it| (it.pos, it.end)).collect();
         let mut lists_of_statements: Vec<(u32, u32)> = Vec::new();
         let mut statements: Vec<(u32, u32)> = Vec::new();
         let mut imports: Vec<u32> = Vec::new();
-        let mut dropped: Vec<StmtId> = Vec::new();
+        let mut dropped: FxHashSet<StmtId> = FxHashSet::default();
         let mut read_by_their_values: Vec<(u32, u32)> = Vec::new();
         let mut consts = self.find_consts_that_printer_writes_out(function);
         let mut declarations_written_out: Vec<(u32, u32)> = Vec::new();
         let mut has_direct_eval = false;
-        let mut printed_as_written: Vec<ExprId> = Vec::new();
-        let mut in_dead_flow: Vec<StmtId> = Vec::new();
+        let mut printed_as_written: FxHashSet<ExprId> = FxHashSet::default();
+        let mut in_dead_flow: FxHashSet<StmtId> = FxHashSet::default();
         not_printed.push((text.start, self.parameters_position(function)));
         let mut stack = vec![TreeNode::Function(function)];
         while let Some(node) = stack.pop() {
@@ -325,27 +527,29 @@ impl FileLowering<'_, '_, '_, '_> {
                         push_children(hir, node, &mut stack);
                         for child in &stack[below..] {
                             if let TreeNode::Stmt(child) = *child {
-                                in_dead_flow.push(child);
+                                in_dead_flow.insert(child);
                             }
                         }
                         continue;
                     }
                     if let StmtKind::Block(list) = hir[statement].kind {
                         self.note_statements_behind_a_jump(list, &mut in_dead_flow);
-                        self.note_consts_in_front_of_all_else(list, &mut consts);
+                        self.note_consts_in_front_of_all_else(list, true, &mut consts);
                     }
                     if let StmtKind::Expr(alone) = hir[statement].kind
-                        && (self.find_value_that_printer_prints(alone, &consts)).is_some()
+                        && (self.find_value_that_printer_prints(alone, &consts.written_out))
+                            .is_some()
                     {
-                        dropped.push(statement);
+                        dropped.insert(statement);
                     }
                     if let StmtKind::Var(declarations) = hir[statement].kind
                         && !dropped.contains(&statement)
                     {
                         for declaration in declarations.iter().map(|it| hir[it]) {
                             let value = declaration.init;
-                            if consts.contains(&declaration.pat)
-                                && (self.find_value_that_printer_prints(value, &consts)).is_some()
+                            if consts.dropped.contains(&declaration.pat)
+                                && (self.find_value_that_printer_prints(value, &consts.written_out))
+                                    .is_some()
                             {
                                 let whole = declaration.loc;
                                 declarations_written_out.push((whole.pos, whole.end));
@@ -363,12 +567,13 @@ impl FileLowering<'_, '_, '_, '_> {
                         continue;
                     }
                     if let StmtKind::If { test, yes, no } = hir[statement].kind
-                        && let Some(is_true) = self.find_side_that_printer_keeps(test, &consts)
+                        && let Some(is_true) =
+                            self.find_side_that_printer_keeps(test, &consts.written_out)
                     {
                         let (live, dead) = if is_true { (yes, no) } else { (no, yes) };
                         not_printed.push((hir[test].pos, hir[test].end));
                         if dead.is_some() {
-                            in_dead_flow.push(dead);
+                            in_dead_flow.insert(dead);
                             stack.push(TreeNode::Stmt(dead));
                         }
                         if live.is_some() {
@@ -381,13 +586,29 @@ impl FileLowering<'_, '_, '_, '_> {
                     let is_read_by_its_value = !printed_as_written.contains(&expr);
                     if !matches!(hir[expr].kind, ExprKind::String(_))
                         && is_read_by_its_value
-                        && let Some(printed) = self.find_value_that_printer_prints(expr, &consts)
+                        && let Some(printed) =
+                            self.find_value_that_printer_prints(expr, &consts.written_out)
                     {
                         if matches!(printed, Constant::String(text) if names_word(self.queries.atom_bytes(text)))
                         {
                             return own;
                         }
-                        not_printed.push((hir[expr].pos, hir[expr].end));
+                        let is_member_of_enum =
+                            self.decisions().constant(hir, expr) == FoldedValue::Unknown;
+                        match hir[expr].kind {
+                            ExprKind::Dot { .. } if is_member_of_enum => {
+                                not_printed.push((hir[expr].pos, hir.name_pos(expr)));
+                            }
+                            ExprKind::Index { .. } if is_member_of_enum => {}
+                            _ => {
+                                let named =
+                                    self.find_member_that_printer_names(expr, &consts.written_out);
+                                if named.is_some_and(|it| names_word(self.queries.atom_bytes(it))) {
+                                    return own;
+                                }
+                                not_printed.push((hir[expr].pos, hir[expr].end));
+                            }
+                        }
                         continue;
                     }
                     match hir[expr].kind {
@@ -434,7 +655,7 @@ impl FileLowering<'_, '_, '_, '_> {
                             }
                         }
                         ExprKind::TaggedTemplate(call) => {
-                            printed_as_written.push(hir.template_of(call));
+                            printed_as_written.insert(hir.template_of(call));
                         }
                         ExprKind::Regex { .. } => {
                             read_by_their_values.push((hir[expr].pos, hir[expr].end));
@@ -454,7 +675,8 @@ impl FileLowering<'_, '_, '_, '_> {
                             }
                         }
                         ExprKind::Cond { test, branches } => {
-                            if let Some(is_true) = self.find_side_that_printer_keeps(test, &consts)
+                            if let Some(is_true) =
+                                self.find_side_that_printer_keeps(test, &consts.written_out)
                             {
                                 let Branches { yes, no } = hir.branches(branches);
                                 let (live, dead) = if is_true { (yes, no) } else { (no, yes) };
@@ -475,7 +697,8 @@ impl FileLowering<'_, '_, '_, '_> {
                             && WORDS[1..].iter().any(|word| called.ends_with(word))
                             && hir[id].chain == Chain::No
                             && let Some(first) = first
-                            && let Some(module) = self.find_name_that_search_reads(first, &consts)
+                            && let Some(module) =
+                                self.find_name_that_search_reads(first, &consts.written_out)
                         {
                             let whole = hir
                                 .text
@@ -486,9 +709,14 @@ impl FileLowering<'_, '_, '_, '_> {
                                 return own;
                             };
                             let place = hir[callee].pos + place as u32;
-                            let is_printed_as_written = |&byte: &u8| {
-                                (b' '..=b'~').contains(&byte) && byte != b'"' && byte != b'\\'
-                            };
+                            if bun_core::strings::contains_char(
+                                self.queries.atom_bytes(module),
+                                b'"',
+                            ) {
+                                return own;
+                            }
+                            let is_printed_as_written =
+                                |&byte: &u8| (b' '..=b'~').contains(&byte) && byte != b'\\';
                             if self
                                 .queries
                                 .atom_bytes(module)
@@ -508,7 +736,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         lists_of_statements.push((whole.start, whole.end));
                         self.note_statements_behind_a_jump(list, &mut in_dead_flow);
                         if inner != function {
-                            self.note_consts_in_front_of_all_else(list, &mut consts);
+                            self.note_consts_in_front_of_all_else(list, false, &mut consts);
                         }
                     }
                 }
@@ -552,19 +780,23 @@ impl FileLowering<'_, '_, '_, '_> {
             let around = ranges.iter().filter(|it| it.0 <= place && place < it.1);
             around.min_by_key(|it| it.1 - it.0).copied()
         };
-        let statement_of_function = || {
+        let statements_of_file = self.statements_that_nest.get_or_init(|| {
             let statements = hir
                 .stmts
                 .iter()
                 .filter(|it| !matches!(it.kind, StmtKind::Block(_)));
-            let ranges: Vec<_> = statements.map(|it| (it.start, it.loc.end)).collect();
-            smallest_around(&ranges, text.start)
-        };
+            StatementsThatNest::new(statements.map(|it| (it.start, it.loc.end)).collect())
+        });
+        let statement_of_function = statements_of_file.find_smallest_around(text.start);
         let has_mark = |at: u32| hir.text.get(at as usize + 2) == Some(&b'!');
-        for comment in hir.comments.iter().filter(|it| has_mark(it.pos)) {
-            if comment.pos >= text.end {
-                break;
-            }
+        let first = match statement_of_function {
+            Some(statement) => hir.comments.partition_point(|it| it.pos <= statement.0),
+            None => hir.comments.partition_point(|it| it.pos < text.start),
+        };
+        let up_to_end = hir.comments[first..]
+            .iter()
+            .take_while(|it| it.pos < text.end);
+        for comment in up_to_end.filter(|it| has_mark(it.pos)) {
             let whole = (comment.pos, comment.end);
             if text.start <= comment.pos {
                 not_printed.push(whole);
@@ -573,11 +805,6 @@ impl FileLowering<'_, '_, '_, '_> {
                 return own;
             };
             if !names_word(said) || !lists_of_statements.iter().any(|it| comment.pos < it.1) {
-                continue;
-            }
-            if comment.pos < text.start
-                && !statement_of_function().is_some_and(|it| it.0 < comment.pos)
-            {
                 continue;
             }
             let list = smallest_around(&lists_of_statements, comment.pos);
@@ -622,8 +849,9 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         let types = self.ranges_of_types.get_or_init(|| find_type_ranges(hir));
         let mut words = WORDS.iter();
-        let texts = [&not_printed[..], &read_by_their_values[..]];
-        if words.any(|word| stands_outside(written, text.start, word, &texts[..1], types))
+        let not_printed_alone = merge_ranges(&[&not_printed]);
+        let texts = merge_ranges(&[&not_printed_alone, &read_by_their_values]);
+        if words.any(|word| stands_outside(written, text.start, word, &not_printed_alone, types))
             || stands_outside(written, text.start, b"\\", &texts, types)
         {
             return own;

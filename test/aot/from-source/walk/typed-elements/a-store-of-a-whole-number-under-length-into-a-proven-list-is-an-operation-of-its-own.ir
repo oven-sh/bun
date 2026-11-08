@@ -1,0 +1,35 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const kept: string[] = [];
+# function restore(adds: boolean): number { const saved = kept.length; if (adds) kept.push("x"); kept.length = saved; return kept.length; }
+# function storeAnyNumber(to: number): number { kept.length = to; return kept.length; }
+# function emptyInTurns(turns: number): number { let total = 0; for (let i = 0; i < turns; i++) { kept.push("y"); total += kept.length; kept.length = 0; } return total; }
+# const numbers: number[] = JSON.parse("[2, 3]");
+# print(restore(false), restore(true), storeAnyNumber(numbers[0]!), emptyInTurns(numbers[1]!));
+# -- end of source
+# A list has its length as a property of its own that no accessor can be laid over: the store of a whole number from nought up runs no code of the program. It is an operation of its own and has no site.
+# A program restores or trims a list to a length that it mostly has already: then nothing is stored.
+# f1 = restore, f2 = storeAnyNumber, f3 = emptyInTurns
+# RUN(STORE): walk f1 mechanisms=all
+# REQUIRES(STORE): entries-of-bun
+# STORE-LABEL: code f1:Body
+# STORE: = SetArrayLength
+# STORE-NOT: PropSet
+# A number of which nothing more is known may be a fraction or lie below nought, which throws: that store stays as written.
+# RUN(NUMBER): walk f2 mechanisms=all
+# REQUIRES(NUMBER): entries-of-bun
+# NUMBER-LABEL: code f2:Body
+# NUMBER-NOT: SetArrayLength
+# NUMBER: PropSet {{*}} key="length"
+# Outside of loops the code is a call with the list and the length; in a loop what the stub asks first is asked in line: the kind of the storage and the length.
+# RUN(OUTSIDE): emit f1 mechanisms=all
+# REQUIRES(OUTSIDE): entries-of-bun
+# OUTSIDE-NOT: PutByIdAtSite
+# RUN(INSIDE): walk f3 mechanisms=all
+# REQUIRES(INSIDE): entries-of-bun
+# INSIDE-LABEL: code f3:Body
+# INSIDE: isInLoop=true
+# INSIDE: = SetArrayLength
+# RUN: run-in-shell mechanisms=all
+# CHECK: 0 0 2 5
+# CHECK-NEXT: exited with 0

@@ -194,7 +194,7 @@ error: Cannot load '/home/me/late.ts': it isn't in this executable ...
 bun compile ./app.ts './extra/*.ts' ./node_modules/pg/lib/index.js
 ```
 
-A dynamic name finds the file that `bun run` would have found when you built. If that file isn't in the executable, the name finds nothing, even if the executable holds another file the name could mean. So if your tree has two copies of a package, pass the copy that the file which asks for it would get: for `node_modules/orm`, that's `node_modules/orm/node_modules/pg` if it exists, not `node_modules/pg`. And if `lib.js` lies beside `lib/index.js`, `"./lib"` means `lib.js`. A relative path is never looked up on disk, unless you build with `--aot-allow-code-from-disk`: `bun run` looks beside the file that asks, and that folder exists only in the executable.
+A dynamic name finds the file that `bun run` would have found when you built. If that file isn't in the executable, the name can find another file that the executable holds. So if your tree has two copies of a package, pass the copy that the file which asks for it would get: for `node_modules/orm`, that's `node_modules/orm/node_modules/pg` if it exists, not `node_modules/pg`. And if `lib.js` lies beside `lib/index.js`, `"./lib"` means `lib.js`. A relative path is never looked up on disk, unless you build with `--aot-allow-code-from-disk`: `bun run` looks beside the file that asks, and that folder exists only in the executable.
 
 An absolute path finds a compiled file only if it's the path the file had when you built it, which is what you get from `import.meta.dir` and `__dirname`. A path made from the working directory, like `path.resolve("lib/a.js")` or `process.cwd() + "/lib/a.js"`, names the file on disk, as in `bun build --compile`: it may belong to the project your program was started in. Data there is read from disk. Code there is loaded with `--aot-allow-code-from-disk` and refused without it, also if you passed your own `lib/a.js` as an entry point. What's loaded that way is a second module with its own state, even if the file is the very source that was compiled.
 
@@ -231,7 +231,7 @@ If you build with `--aot-allow-code-from-disk`, test with it: `bun test --aot --
 
 `import()` calls in a test run and settle in the order they do in your executable, which is Node's order. `bun test` reads a file on another thread when a call asks for it, so the two can differ where nothing waits for a call. If `a.ts` calls `import("./b.ts")` in its body, `import("./a.ts").then(done)` runs `b.ts` before `done` with `--aot` and after it without.
 
-`vi.resetModules()`, `jest.resetModules()` and `delete require.cache[path]` work as in `bun test`: the next `import()` or `require()` runs the file again. That second copy runs from source, not compiled, and it stays: whatever imports the file from then on, in that test file or in a later one, gets the copy and doesn't test the code your executable runs. What a preload had loaded is the exception, as in `bun test`: after a `resetModules()` in a test file, the next test file gets the preload's own instances back, compiled. With `--isolate` each test file starts from the compiled code again. The build points at each `resetModules` with `TS100078`, and the run ends with a list of the files that ran from source.
+`vi.resetModules()`, `jest.resetModules()` and `delete require.cache[path]` work as in `bun test`: the next `import()` or `require()` runs the file again. That second copy runs from source, not compiled, and it stays: whatever imports the file from then on, in that test file or in a later one, gets the copy and doesn't test the code your executable runs. What a preload had loaded is the exception, as in `bun test`: after a `resetModules()` in a test file, the next test file gets the preload's own instances back, compiled. `--isolate` starts each test file from compiled code, except what a test wrote over. The build points at each `resetModules` with `TS100078`, and the run ends with a list of the files that ran from source.
 
 `require.cache[path]` and `Module._cache[path]` give you the entry of a compiled file, as in `bun test`, if a file that was compiled names the cache, or if the build saw an `import()` or `require()` of a computed path that can reach the file. Code from a string doesn't count: the build can't read what goes to `eval()` or `new Function()`, or the text of a `data:` URL. What a file exports is compiled for the code that imports it, as in your executable, so such code gets an error where `bun test` hands it the entry:
 
@@ -499,7 +499,7 @@ A member has such a value if its initializer is made of numbers, strings, other 
 
 ## Where `--no-aot` goes another way
 
-An executable behaves like one built with `--no-aot` wherever that differs from `bun run`. In these places it follows the language instead.
+An executable usually behaves like one built with `--no-aot` where that differs from `bun run`. In these places it follows the language instead.
 
 | In your program                                                                            | `bun compile`                      | With `--no-aot`                                                                            |
 | ------------------------------------------------------------------------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -553,7 +553,7 @@ The call sites that `Error.prepareStackTrace` gets are the same: `getFunction()`
 
 ## Error messages
 
-The class of an error, its line and its stack trace are the same, except for the frames of some built-ins and for what [Smaller differences](#smaller-differences) lists. The functions of `Math`, `regexp.exec()`, `regexp.test()` and `array.pop()`, among others, are compiled into the function that calls them and have no frame of their own. When `Math.max(value)` calls `value.valueOf()`, a trace taken there has your function right below `valueOf`, where `bun run` has a frame for `max`.
+The class of an error, its line and its stack trace are the same, except for some errors of a load or a mock, for the frames of some built-ins and for what [Smaller differences](#smaller-differences) lists. The functions of `Math`, `regexp.exec()`, `regexp.test()` and `array.pop()`, among others, are compiled into the function that calls them and have no frame of their own. When `Math.max(value)` calls `value.valueOf()`, a trace taken there has your function right below `valueOf`, where `bun run` has a frame for `max`.
 
 Where `bun run` quotes your source in the message, an executable quotes it from the text of your functions, which it also keeps for `fn.toString()`, and of the statements at the top level of your files. With [`--no-compile-function-source`](/compiler/size) it has no text and quotes less. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) has your files beside it and reads the line from there.
 
@@ -583,7 +583,7 @@ Check `error.name` or use `instanceof`, not `error.message`. A service that grou
 
 ## Garbage collection
 
-While a function waits at an `await`, a local variable that it won't read again doesn't keep its value alive. Under `bun run`, a variable that a closure captures lives as long as the function's other variables. Between awaits, a value may stay alive until its function returns, as under `bun run`. A variable declared in a block can keep its value until then too, where `bun run` may let it go when the block ends.
+While a function waits at an `await`, a local variable that it won't read again doesn't keep its value alive. Under `bun run`, a variable that a closure captures lives as long as the function's other variables. Between awaits, a value may stay alive until its function returns, as under `bun run`. A variable declared in a block can keep its value until then too, where `bun run` may let it go when the block ends. A CommonJS file keeps its first `exports` object until the program ends.
 
 An executable may also collect a value earlier than `bun run` does, for example one that only a branch that can never run still reads. Only the size of the heap, a `WeakRef` or a `FinalizationRegistry` can tell.
 

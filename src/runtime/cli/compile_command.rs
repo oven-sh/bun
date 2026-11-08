@@ -119,6 +119,8 @@ pub(crate) struct CompileOutcome {
     pub(crate) unnamed_file: Option<super::run_compiled::WrittenProgram>,
     pub(crate) metafile: Option<Vec<u8>>,
     pub(crate) summary: Vec<u8>,
+    /// The line of `summary` that names them, or nothing.
+    pub(crate) developer_options: Vec<u8>,
     pub(crate) report_messages: Vec<ReportMessage>,
     pub(crate) trim_log_lines: Vec<Vec<u8>>,
     pub(crate) executable: Option<ExecutableDetails>,

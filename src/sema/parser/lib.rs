@@ -25,8 +25,8 @@ use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
 pub use summarize::{
     COUNTS, CompileParseOptions, Counts, PartError, Parts, Summary, ThreadCaches,
-    parse_for_compile, summarize, summarize_as, summarize_in, summarize_top_level, with_summary,
-    with_summary_in_place,
+    parse_for_compile, parse_for_compile_in, summarize, summarize_as, summarize_in,
+    summarize_top_level, with_summary, with_summary_in_place,
 };
 
 /// Why the parser rejected a text.

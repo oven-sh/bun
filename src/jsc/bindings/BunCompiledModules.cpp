@@ -51,6 +51,7 @@ JSC::JSPromise* evaluateOriginalOfCompiledMock(Zig::GlobalObject*, JSC::AOT::Mod
 bool layMocksOfBodiesAgain(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached);
 JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isAskedAbout, JSC::AOT::FactoryAskedForBy, JSC::JSValue& state);
 uint64_t callOfFactoryOfCompiledMockThatHasNotSettled(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& refusesEveryRequire);
+bool isCompiledModulePatchedOnceFactorySettles(Zig::GlobalObject*, const WTF::String& path);
 JSC::JSPromise* turnOfCompiledMockThatLoaderFetches(Zig::GlobalObject*, uint32_t module, const String& key);
 void giveBackTurnOfCompiledMockUnlessItRuns(Zig::GlobalObject*, JSC::JSValue holder);
 bool isCalledFromFactoryOfCompiledMockThatWaits(Zig::GlobalObject*, JSC::AOT::ModuleID);
@@ -1010,19 +1011,26 @@ static bool ranBesideMockThatWaits(Zig::GlobalObject* globalObject, AOT::ModuleI
 
 void didDeleteRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto module = reloadsFilesFromDisk() ? compiledModuleForPath(key) : std::nullopt;
     if (module && ranBesideMockThatWaits(globalObject, *module))
-        return AOT::didDeleteEntryUnderMockThatWaits(globalObject, *module);
+        RELEASE_AND_RETURN(scope, AOT::didDeleteEntryUnderMockThatWaits(globalObject, *module));
     // Under a mock the original lies under a key of its own and outlives the entry; so it does behind an end that brought nothing back. Where the end of the mock has moved it back under this key, it goes with the entry.
     auto* mocks = globalObject->onLoadPlugins.virtualModules;
     if (module && AOT::isEvictedFile(globalObject, *module) && AOT::didOriginalComeBackUnderOwnKey(globalObject, *module) && !(mocks && mocks->contains(key)))
         AOT::forgetOriginalOfFileThatLeftProgram(globalObject, *module);
     takeOutOfProgram(globalObject, key, [](JSGlobalObject* realm, AOT::ModuleID module) {
+        if (AOT::isLoadInFlight(realm, module))
+            return;
         if (AOT::isSetAsideByMock(realm, module))
             AOT::didDeleteEntryOfMockOverFileSetAside(realm, module);
         else
             AOT::didDeleteRequireCacheEntry(realm, module);
     });
+    RETURN_IF_EXCEPTION(scope, );
+    if (module && AOT::isLoadInFlight(globalObject, *module))
+        return;
+    RELEASE_AND_RETURN(scope, didDeleteKeyOfModuleMock(globalObject, key));
 }
 
 bool didSetCompiledFileAside(Zig::GlobalObject* globalObject, const String& key)
@@ -1815,6 +1823,13 @@ static uint64_t callOfFactoryThatHasNotSettled(JSGlobalObject* globalObject, AOT
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static bool isPatchedOnceFactorySettles(JSGlobalObject* globalObject, const String& path)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return Zig::isCompiledModulePatchedOnceFactorySettles(defaultGlobalObject(globalObject), path);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, const String& path)
 {
     if (isBunTest)
@@ -1998,9 +2013,10 @@ const AOT::ModuleHost compiledModuleHost = {
     &dropKeptText,
     &printsDataFileAsJavaScript,
     &didForgetRunOfModuleObject,
+    &isPatchedOnceFactorySettles,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 47 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 48 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

@@ -9,8 +9,6 @@ use crate::builtins::RuntimeModule;
 use crate::load::{SourceKind, is_in_node_modules};
 use crate::test_run_report::say_es_packages_that_mocks_name;
 use bun_core::strings::{contains, last_index_of_char};
-use bun_sema::bind::{Bound, FnOwner, Parent};
-use bun_sema::hir::{ExprId, ExprKind, File, StmtId, StmtKind};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
@@ -50,62 +48,9 @@ fn find_forms<'a>(input: &BindInput<'a, '_>, scans: &Scans) -> Vec<(&'a [u8], Fi
     forms
 }
 
-fn stands_where_a_throw_is_caught(hir: &File<'_>, bound: &Bound<'_>, mut call: ExprId) -> bool {
-    let statement_around = |parent: Parent| -> Option<StmtId> {
-        match parent {
-            Parent::Stmt(statement) => statement.some(),
-            Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()].some(),
-            Parent::Case(case) => bound.case_stmt[case.idx()].some(),
-            _ => None,
-        }
-    };
-    loop {
-        let mut parent = bound.parent_of_expr(call);
-        while let Parent::Expr(outer) = parent {
-            parent = bound.parent_of_expr(outer);
-        }
-        while let Some(inner) = statement_around(parent) {
-            parent = bound.parent_of_stmt(inner);
-            let is_guarded = statement_around(parent).is_some_and(
-                |outer| matches!(hir[outer].kind, StmtKind::Try { block, .. } if block == inner),
-            );
-            if is_guarded {
-                return true;
-            }
-        }
-        let Parent::FnBody(function) = parent else {
-            return false;
-        };
-        let FnOwner::Expr(function) = bound.fns[function.idx()].owner else {
-            return false;
-        };
-        let Parent::Expr(user) = bound.parent_of_expr(function) else {
-            return false;
-        };
-        let (ExprKind::Call(site) | ExprKind::New(site)) = hir[user].kind else {
-            return false;
-        };
-        if hir[site].callee != function {
-            return true;
-        }
-        call = user;
-    }
-}
-
-#[derive(Default)]
-struct FoundAtSites {
-    importers: Vec<(FileId, FileId)>,
-    throwers: Vec<FileId>,
-}
-
-fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
+fn find_importers_by_statements(input: &BindInput<'_, '_>, scans: &Scans) -> Vec<(FileId, FileId)> {
     let files = input.files;
-    let is_thrower = |required: FileId| {
-        let scan = scans.find(required);
-        scan.is_some_and(|scan| scan.interop.kind == ModuleKind::CommonJs)
-            && !contains(files.module(required).file_name(), b"/node_modules/")
-    };
-    let mut found = FoundAtSites::default();
+    let mut importers = Vec::new();
     for &file in files.compiled_files() {
         let analysis = files.analysis(file);
         for (site, answer) in analysis.import_sites.iter().zip(&scans.of(file).sites) {
@@ -118,16 +63,9 @@ fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
                 | ImportSiteKind::Import(_)
                 | ImportSiteKind::ExportFrom(_)
                 | ImportSiteKind::ExportStar(_)
-                | ImportSiteKind::ImportEquals(_) => found.importers.push((named, file)),
-                ImportSiteKind::Require(call) => {
-                    if is_thrower(named)
-                        && !analysis.decisions.is_dead_expr(call)
-                        && stands_where_a_throw_is_caught(files.hir(file), files.bound(file), call)
-                    {
-                        found.throwers.push(named);
-                    }
-                }
-                ImportSiteKind::ImportMetaRequire(_)
+                | ImportSiteKind::ImportEquals(_) => importers.push((named, file)),
+                ImportSiteKind::Require(_)
+                | ImportSiteKind::ImportMetaRequire(_)
                 | ImportSiteKind::RequireByTestRunner(_)
                 | ImportSiteKind::ImportCall(_)
                 | ImportSiteKind::ImportByTestRunner(_)
@@ -138,8 +76,7 @@ fn look_at_sites(input: &BindInput<'_, '_>, scans: &Scans) -> FoundAtSites {
             }
         }
     }
-    found.throwers.clear();
-    found
+    importers
 }
 
 pub(super) fn find_es_packages_that_mocks_name(
@@ -180,16 +117,8 @@ pub(super) fn find_files_that_leave(input: &BindInput<'_, '_>, scans: &Scans) ->
     {
         return Vec::new();
     }
-    let FoundAtSites {
-        mut importers,
-        throwers,
-    } = look_at_sites(input, scans);
-    let mut to_follow = [
-        &loads.files_taken_out[..],
-        &loads.files_changed_on_disk[..],
-        &throwers[..],
-    ]
-    .concat();
+    let mut importers = find_importers_by_statements(input, scans);
+    let mut to_follow = [&loads.files_taken_out[..], &loads.files_changed_on_disk[..]].concat();
     if to_follow.is_empty() {
         return Vec::new();
     }

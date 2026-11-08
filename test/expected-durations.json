@@ -816,6 +816,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-written-import-of-a-file-that-was-only-required-while-a-factory-has-yet-to-settle.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-written-path-that-is-missing-at-the-build-is-looked-up-when-the-program-runs.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1912,6 +1916,38 @@
     "default": 300,
     "asan": 1200
   },
+  "aot/parallel-test-runs/the-modules-are-reset-under-a-mock-of-a-commonjs-file-that-had-run/a-require-behind-the-reset-and-the-end-runs-the-file-anew/a.test.mjs": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/the-modules-are-reset-under-a-mock-of-a-commonjs-file-that-had-run/a-second-mock-laid-behind-the-reset-brings-nothing-back-either/a.test.mjs": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/the-modules-are-reset-under-a-mock-of-a-commonjs-file-that-had-run/the-key-was-deleted-and-a-require-laid-the-mock-under-it-again/a.test.mjs": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/the-modules-are-reset-under-a-mock-of-a-commonjs-file-that-had-run/the-key-was-deleted-before-the-reset-and-the-file-comes-back/a.test.mjs": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/the-modules-are-reset-under-a-mock-of-a-commonjs-file-that-had-run/the-reset-of-jest-puts-another-mock-in-its-place/a.test.mjs": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/the-walk-is-not-held-up-by-a-mock-that-needs-its-original/a-root-above-the-importer-is-imported-while-the-factory-waits/a.test.mjs": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/the-walk-is-not-held-up-by-a-mock-that-needs-its-original/the-importer-is-imported-twice-while-the-factory-waits/a.test.mjs": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/parallel-test-runs/the-walk-is-not-held-up-by-a-mock-that-needs-its-original/the-original-itself-imports-the-importer-by-a-call/a.test.mjs": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/part-warnings.test.ts": {
     "default": 900,
     "asan": 3600
@@ -2608,6 +2644,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-text-of-a-function-of-a-file-that-bears-buns-mark-in-a-test-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-text-of-a-function-that-reads-an-enum-in-a-test-run.test.ts": {
     "default": 700,
     "asan": 2800
@@ -2729,6 +2769,10 @@
     "asan": 143600
   },
   "aot/what-a-data-file-holds-and-what-a-script-declares-is-checked-as-tsc-checks-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/what-a-factory-that-ended-its-own-mock-over-a-preloads-returned-stays-out-of-the-next-test-file.test.ts": {
     "default": 60000,
     "asan": 240000
   },

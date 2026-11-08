@@ -1056,12 +1056,19 @@ pub(super) fn finish_requests(
     sites: &PlannedSites,
     mocked_modules: &FxHashSet<ModuleRef>,
 ) -> FinishedRequests {
-    let has_names_of_mock = find_modules_with_names_of_mocks(scans, modules, mocked_modules);
+    let modules_with_names_of_mock =
+        find_modules_with_names_of_mocks(scans, modules, mocked_modules);
     let finish_file = |&file: &FileId| {
-        let is_any_mock_named = !has_names_of_mock.is_empty();
-        let has_names_of_mock = has_names_of_mock.contains(&ModuleRef::File(file));
+        let is_any_mock_named = !modules_with_names_of_mock.is_empty();
+        let has_names_of_mock = modules_with_names_of_mock.contains(&ModuleRef::File(file));
+        let reaches_another_mock = || {
+            let stars = scans.find(file).into_iter().flat_map(|scan| &scan.requests);
+            let mut stars = stars.filter(|draft| draft.is_star_export);
+            stars.any(|draft| modules_with_names_of_mock.contains(&draft.target))
+        };
         let follows_every_star = tables.follows_every_star(file)
-            || (has_names_of_mock && !mocked_modules.contains(&ModuleRef::File(file)));
+            || (has_names_of_mock
+                && (!mocked_modules.contains(&ModuleRef::File(file)) || reaches_another_mock()));
         let finish_request = |draft: &RequestDraft| ModuleRequest {
             phase: draft.phase,
             is_star_export: draft.is_star_export,
@@ -1086,7 +1093,7 @@ pub(super) fn finish_requests(
             .collect(),
         files_with_late_stars: Vec::new(),
     };
-    if !has_names_of_mock.is_empty() {
+    if !modules_with_names_of_mock.is_empty() {
         let has_late_star = |requests: &[ModuleRequest]| {
             let places = requests.iter().map(|it| it.star_place);
             !places.filter(|&place| place != NO_STAR_PLACE).is_sorted()

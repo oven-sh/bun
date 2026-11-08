@@ -318,6 +318,54 @@ exports.Farther = Farther;
         expect({ threads, ...(await build(String(dir), "main.ts", threads)) }).toEqual({ threads, ...first });
     });
 
+  // The type written over `JSON.parse` reaches more object types than are followed for one call, so the walk over them gives up half way,
+  // and what it has met until then is declared in parse.ts. From a union it once went on by the numbers that the thread had given to the
+  // union's members. One thread has met `Star0` in early.ts; with more threads another one lowers parse.ts, and meets `Port0` first.
+  if (part === 2)
+    test("a walk over object types that gives up has met the same ones whichever file was lowered before", async () => {
+      const links = Array.from({ length: 300 }, (_, index) => index);
+      const fillers = Array.from({ length: 200 }, (_, index) => index);
+      const chains = ["Port", "Star"].flatMap(side => links.map(link => ({ side, link, name: `${side}${link}` })));
+      using dir = tempDir("aot-threads-fall-walk-gives-up", {
+        "links.ts":
+          chains
+            .map(
+              ({ side, link, name }) =>
+                `export type ${name} = { next${name}: ${link + 1 < links.length ? `${side}${link + 1}` : "number"} | undefined; mark${name}: number };\n`,
+            )
+            .join("") + `export const made = 1;\n`,
+        "early.ts": `import type { Star0 } from "./links";\nexport function early(link: Star0): number { return link.markStar0; }\n`,
+        ...Object.fromEntries(
+          fillers.map(filler => [
+            `between${filler}.ts`,
+            Array.from(
+              { length: 30 },
+              (_, index) =>
+                `export function between${filler}_${index}(a: number): number { let sum = a + ${index}; for (let k = 0; k < 4; k++) sum += k * ${filler + 1}; return sum; }\n`,
+            ).join(""),
+          ]),
+        ),
+        "parse.ts":
+          `import type { Port0, Star0 } from "./links";\n` +
+          `export function parse(text: string): { pick: Port0 | Star0 } { return JSON.parse(text) as { pick: Port0 | Star0 }; }\n`,
+        "late.ts":
+          `import type { ${chains.map(({ name }) => name).join(", ")} } from "./links";\n` +
+          chains.map(({ name }) => `function late${name}(link: ${name}): number { return link.mark${name}; }\n`).join("") +
+          `export const late = [${chains.map(({ name }) => `late${name}`).join(", ")}];\n`,
+        "main.ts":
+          `import { early } from "./early";\n` +
+          fillers.map(filler => `import { between${filler}_0 } from "./between${filler}";\n`).join("") +
+          `import { parse } from "./parse";\nimport { late } from "./late";\nimport { made } from "./links";\n` +
+          `const parsed = parse('{"pick":{"markStar0":7}}') as any;\nlet sum = early(parsed.pick);\n` +
+          `for (let i = 0; i < late.length; i++) sum += (late[i] as any)({ ["markPort" + i]: 1, ["markStar" + (i - ${links.length})]: 2 }) | 0;\n` +
+          `console.log(sum, made, ${fillers.map(filler => `between${filler}_0(${filler})`).join(" + ")});\n`,
+      });
+      const first = await build(String(dir), "main.ts", 1);
+      expect(first).toEqual({ ...first, ...whole });
+      for (const threads of [4, 16, 16])
+        expect({ threads, ...(await build(String(dir), "main.ts", threads)) }).toEqual({ threads, ...first });
+    });
+
   // The typescript package is large enough for every stage to split its work among threads, which the small programs above never are.
   // One thread takes serial code paths that two or more threads skip. A debug or ASAN build of Bun takes an hour here.
   if (part === 2)

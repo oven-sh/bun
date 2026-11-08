@@ -4,7 +4,7 @@
 
 mod compile;
 
-pub use compile::{CompileParseOptions, parse_for_compile};
+pub use compile::{CompileParseOptions, parse_for_compile, parse_for_compile_in};
 
 use crate::{Options, Part, Rejection, Scratch};
 use bun_alloc::Arena;

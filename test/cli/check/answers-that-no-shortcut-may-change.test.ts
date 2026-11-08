@@ -62,3 +62,72 @@ test(
   },
   longLimit,
 );
+
+const stores = (count: number, target: string) =>
+  Array.from({ length: count }, (_, index) => `  ${target} = ${index};\n`).join("");
+const typesHeldAgainstNever = async (source: string) =>
+  Array.from(
+    (
+      await check(
+        'export {};\nconst K = "a";\ndeclare const p: string;\ndeclare function any(): boolean;\n' +
+          "type T = { a: number; [k: string]: number };\ndeclare const o: T;\n" +
+          source,
+      )
+    ).matchAll(/Type '(.*)' is not assignable to type 'never'/g),
+    match => match[1],
+  );
+
+test.each<[string, (count: number) => string, string[]]>([
+  [
+    "it was given a value",
+    count => `let u: T | undefined;\nu = { a: 1 };\n${stores(count, "u[K]")}const r: never = u;\n`,
+    ["T"],
+  ],
+  [
+    "it was tested",
+    count =>
+      `function f(v: T | undefined) {\n  if (!v) return;\n${stores(count, "v[p]")}${stores(count, "v[K]")}  const r: never = v;\n}\n`,
+    ["T"],
+  ],
+  [
+    "it is stored to in between",
+    count =>
+      `let u: T | undefined = any() ? { a: 1 } : undefined;\nif (u) {\n${stores(count, "u[K]")}  const r1: never = u;\n  u = undefined;\n` +
+      `${stores(count, "o[K]")}  const r2: never = u;\n  u = { a: 2 };\n${stores(count, "u[p]")}  const r3: never = u;\n}\n`,
+    ["T", "undefined", "T"],
+  ],
+  [
+    "a for-in runs over a member of it that may be missing",
+    count =>
+      `function f(v: { a?: object; [k: string]: unknown } | null) {\n  for (const k in v?.a) {\n${stores(count, "v[K]")}${stores(count, "v[p]")}    const r1: never = v;\n  }\n  const r2: never = v;\n}\n`,
+    [
+      "{ [k: string]: unknown; a?: object | undefined; }",
+      "{ [k: string]: unknown; a?: object | undefined; } | null",
+      "null",
+    ],
+  ],
+  [
+    "it is added to in between",
+    count =>
+      `function f() {\n  let c: number | string = 0;\n  c += 1;\n${stores(count, "o[K]")}  c += 1;\n${stores(count, "o[p]")}  c++;\n  const r: never = c;\n}\n`,
+    ["number"],
+  ],
+  [
+    "a member of it is read behind them",
+    count =>
+      `function f(v: { a: number | string; [k: string]: number | string }) {\n  v.a = 1;\n${stores(count, "v[p]")}  const r1: never = v.a;\n  v[K] = "s";\n` +
+      `${stores(count, "o[p]")}  const r2: never = v.a;\n  const r3: never = v;\n}\n`,
+    ["number", "string", "{ [k: string]: string | number; a: string | number; }"],
+  ],
+])(
+  "behind many stores under keys a name has the type that it has behind one, where %s",
+  async (_, source, expected) => {
+    expect({
+      behindOne: await typesHeldAgainstNever(source(1)),
+      behindMany: await typesHeldAgainstNever(source(100)),
+    }).toEqual({
+      behindOne: expected,
+      behindMany: expected,
+    });
+  },
+);

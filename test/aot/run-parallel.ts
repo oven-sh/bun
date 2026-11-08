@@ -37,6 +37,8 @@
 // And every program is built once more with --aot-testing=FailGuesses:<n>: one guess in n fails on purpose though its value would have passed. So each program with a loop or a guess walks the ways
 // from its typed copies into the closed ones, which its own values seldom or never take, and must still print what plain Bun prints. n is 3, 2 and 7 in turns, by the number of CI's build, and 3
 // anywhere else; the way in the line of a program names it. With 1 no typed copy is entered at all, and nothing is seen.
+// And once more with --aot-harden=proof-checks: what the compiler has proven is asked again at run time, and a proof that does not hold stops the program by name. A stored program is right, so a stop
+// there is a proof that is false or a question that is. The last line on stderr counts the builds of each way: a way that a flag leaves out is missing there, and --no-erased is named.
 //
 // Every program is built by itself, as anybody builds it: in its folder, with nothing but --compile --aot, a number of threads and its flags. What a build makes of a program
 // goes by all that the build holds, and beside others a fault may not show: so nothing here is ever joined into one program, also not to compile Bun's library once for many.
@@ -263,6 +265,7 @@ const isCheck = (flag: string) => flag.startsWith("--aot-check=");
 const oneGuessIn = option("one-guess-in") ?? String([3, 2, 7][Number(process.env.BUILDKITE_BUILD_NUMBER ?? 0) % 3]);
 if (!/^(?:[2-9]|[1-9]\d+)(?::\d+)?$/.test(oneGuessIn)) throw new Error(`--one-guess-in=${oneGuessIn}: <n> or <n>:<seed>, and n over 1`);
 const whereGuessesFail = [`--aot-testing=FailGuesses:${oneGuessIn}`];
+const whereProofsAreChecked = ["--aot-harden=proof-checks"];
 const waysBehindTheFirst = ways.map(({ flags }) => flags).filter(flags => flags.length > 0);
 const isOneOfTheWays = (flags: readonly string[]) => waysBehindTheFirst.some(way => way.join(" ") === flags.join(" "));
 /** The flags of each build of a program behind the first. */
@@ -270,7 +273,7 @@ function furtherBuilds({ under, flags: own, buildErrors }: Program) {
   if (takesTheFirstBuildAlone || moreFlags.length || buildErrors !== undefined) return [];
   const asked: (readonly string[])[] = askedOfAll
     ? [askedOfAll]
-    : [...waysBehindTheFirst, whereGuessesFail, ...under.filter(flags => !isOneOfTheWays(flags))];
+    : [...waysBehindTheFirst, whereGuessesFail, whereProofsAreChecked, ...under.filter(flags => !isOneOfTheWays(flags))];
   const seen = new Set<string>();
   return asked.filter(flags => {
     const key = flags.join(" ");
@@ -300,6 +303,8 @@ const environment = {
   NO_COLOR: "1",
   TZ: "Etc/UTC",
   BUN_AOT_VERBOSE: "1",
+  // See asksNoRegistry(). `// Env: BUN_OPTIONS=..` of a program goes over it.
+  BUN_OPTIONS: inherited.BUN_OPTIONS ?? "--no-install",
   // For the builds. No user sets it, so what is RUN runs without it, the executable and plain Bun alike (`envOfRuns`): the reference is `bun <file>` as users run it.
   // On one thread plain Bun reads the texts in the order in which they are asked for, which hid what a ring of modules does at default flags.
   BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
@@ -1515,6 +1520,12 @@ const runs = all.map(program => run(program));
 void Promise.all(runs.filter((_, index) => !all[index].runsByItself)).then(() => othersAreThrough.resolve());
 await Promise.all(runs);
 console.error(describeTime());
+const buildsOfWays = new Map<string, number>();
+for (const { way } of all) buildsOfWays.set(way, (buildsOfWays.get(way) ?? 0) + 1);
+console.error(
+  `builds by way: ${Array.from(buildsOfWays, ([way, builds]) => `${way} ${builds}`).join(" | ")}` +
+    (takesTheFirstBuildAlone ? " | --no-erased leaves out every build behind the first" : ""),
+);
 if (programsWhoseFramesDiffer || programsMarkedForFramesAlone)
   console.error(
     `${programsWhoseFramesDiffer} builds differ from their reference in the frames of stack traces alone, and pass | ` +

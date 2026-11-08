@@ -5623,6 +5623,17 @@ impl<'p, 's> Checker<'p, 's> {
                 ty
             })
         };
+        let copies_right_alone = left == TypeId::EMPTY_OBJECT
+            && *rank == 0
+            && symbol.is_none()
+            && self.can_keep_copies_of_types_by_spread();
+        if copies_right_alone
+            && let Some(&kept) = self.copies_of_types_by_spread.get(&(right, readonly))
+        {
+            *rank += 1;
+            return kept;
+        }
+        let mark = self.mark_of_what_a_copy_by_spread_read();
         let (Some(l), Some(r)) = (members_of(self, left), members_of(self, right)) else {
             return TypeId::UNRESOLVED;
         };
@@ -5794,7 +5805,43 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(symbol) = symbol {
             symbol.put_on(&mut b.shape);
         }
-        self.synth(b.shape)
+        let made = self.synth(b.shape);
+        if copies_right_alone
+            && mark == self.mark_of_what_a_copy_by_spread_read()
+            && self.can_keep_copies_of_types_by_spread()
+        {
+            self.copies_of_types_by_spread
+                .insert((right, readonly), made);
+        }
+        made
+    }
+
+    /// False while `members` may answer with less than a type's whole members: an instantiation or a composition of
+    /// members is under way, or the members of some type are being resolved (see `shape_memo_bound`: one of its ways,
+    /// declared index signatures in progress, raises no count). `copies_of_types_by_spread` is neither read nor
+    /// written then.
+    fn can_keep_copies_of_types_by_spread(&self) -> bool {
+        self.instantiation_depth == 0
+            && self.index_infos_in_instantiation.is_empty()
+            && self.unresolved_members.is_empty()
+            && self.declared_index_infos_in_progress.is_empty()
+            && self.anonymous_members_in_place.is_empty()
+            && self.members_resolved_before_base_types.is_empty()
+            && self.base_types_so_far.is_empty()
+            && self.inheriting.is_empty()
+            && self.late_binding.is_empty()
+            && self.provisional.is_empty()
+            && !self.stack.iter().any(|q| matches!(q, Query::Shape(_)))
+    }
+
+    /// Unchanged over a computation that made no query and read nothing provisional: members of a type in progress
+    /// are handed out in front of any query, and raise `cycles` and `members_in_place_hits`, not `work`.
+    fn mark_of_what_a_copy_by_spread_read(&self) -> (u64, (u64, u64), u64) {
+        (
+            self.work,
+            self.non_cacheable_mark(),
+            self.members_in_place_hits,
+        )
     }
 
     // ───────────────────────────── reading ─────────────────────────────

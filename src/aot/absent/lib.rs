@@ -37,6 +37,7 @@ bun_aot_interface::define_linked_functions! {
     fn bun_aot_log_part_outside_stages(_name: &str) { absent() }
     fn bun_aot_new_report_line(_kind: ExplainSet, _text: Vec<u8>) -> ReportEntry { absent() }
     fn bun_aot_write_summary(_input: &ReportInput<'_>, _out: &mut Vec<u8>) { absent() }
+    fn bun_aot_write_developer_options(_option_words: &[Box<[u8]>], _out: &mut Vec<u8>) { absent() }
     fn bun_aot_write_untyped_note(_statistics: &Statistics, _out: &mut Vec<u8>) { absent() }
     fn bun_aot_collect_report_entries(_input: &ReportInput<'_>, _kinds: ExplainSet) -> Vec<ReportEntry> { absent() }
     fn bun_aot_report_entries_to_messages(_texts: &SourceTexts, _entries: &[ReportEntry]) -> Vec<ReportMessage> { absent() }

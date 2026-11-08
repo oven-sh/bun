@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_js_parser::Jest;
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{basename, dirname};
-use bun_sema::atom::Interner;
+use bun_sema::atom::{Interner, InternerPerThread};
 use bun_sema::bind::{BindOptions, Binding, RuntimeBindOptions};
 use bun_sema::file_analysis::analyze_file;
 use bun_sema::fold::{FoldInputs, FoldOptions};
@@ -18,7 +18,7 @@ use bun_sema::resolve::{ancestors, inside};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::{from_argument, from_native, to_native};
-use bun_sema_parser::{CompileParseOptions, parse_for_compile};
+use bun_sema_parser::{CompileParseOptions, parse_for_compile, parse_for_compile_in};
 use bun_sys::Fd;
 
 use super::texts::{inputs_of_file_that_nobody_describes, without_extension};
@@ -224,6 +224,7 @@ struct CodeOnDisk<'a> {
     is_compiled: &'a (dyn Fn(&[u8]) -> bool + Sync),
     ways_into_project: &'a FxHashSet<Vec<u8>>,
     in_parallel: InParallel<'a>,
+    thread_count: usize,
 }
 
 fn list_code_that_run_does_not_reach(disk: &CodeOnDisk<'_>) -> Vec<Vec<u8>> {
@@ -268,9 +269,8 @@ struct Written {
     paths: Vec<(Vec<u8>, bool)>,
 }
 
-fn read_what_file_writes(path: &[u8], text: &[u8]) -> Written {
+fn read_what_file_writes(path: &[u8], text: &[u8], atoms: &Interner<'_>) -> Written {
     let session = Session::new();
-    let atoms = Interner::new_in(&session);
     let arena = session.arena();
     let parse_options = CompileParseOptions {
         path,
@@ -281,7 +281,7 @@ fn read_what_file_writes(path: &[u8], text: &[u8]) -> Written {
         ignores_pure_comments: false,
     };
     let text: &[u8] = arena.alloc_slice_copy(text);
-    let mut hir = parse_for_compile(arena, &parse_options, text, &atoms);
+    let mut hir = parse_for_compile_in((arena, &session), &parse_options, text, atoms);
     if matches!(hir.kind, FileKind::Json | FileKind::Declaration) {
         return Written::default();
     }
@@ -292,7 +292,7 @@ fn read_what_file_writes(path: &[u8], text: &[u8]) -> Written {
         ..BindOptions::default()
     };
     let file = inputs_of_file_that_nobody_describes();
-    let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
+    let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, atoms, arena);
     let mut written = Written::default();
     let folder = dirname::<Posix>(path);
     let is_relative = |text: &[u8]| {
@@ -474,8 +474,12 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
         ..CodeOutsideRun::default()
     };
     texts_to_parse.shared_sort_unstable_by_key(|(file, text)| (Reverse(text.len()), *file));
-    let parse_text =
-        |(file, text): (u32, Vec<u8>)| (file, read_what_file_writes(&unread[file as usize], &text));
+    let sessions_of_atoms: Vec<Session> = (0..disk.thread_count).map(|_| Session::new()).collect();
+    let atoms = InternerPerThread::new_in(&sessions_of_atoms);
+    let parse_text = |(file, text): (u32, Vec<u8>)| {
+        let written = read_what_file_writes(&unread[file as usize], &text, atoms.own());
+        (file, written)
+    };
     let mut parsed_at_first = map_each(texts_to_parse, disk.in_parallel, &parse_text);
     parsed_at_first.shared_sort_unstable_by_key(|(file, _)| *file);
     for (file, written) in parsed_at_first {
@@ -502,7 +506,7 @@ fn find_importers_outside_run(disk: &CodeOnDisk<'_>, asked: &[Vec<u8>]) -> Vec<O
         let parse = |file: u32| -> Option<Written> {
             let path = &unread[file as usize];
             let text = read_file(in_memory_files, path)?;
-            Some(read_what_file_writes(path, &text))
+            Some(read_what_file_writes(path, &text, atoms.own()))
         };
         let parsed = map_each(to_parse.clone(), disk.in_parallel, &parse);
         for (file, written) in to_parse.into_iter().zip(parsed) {
@@ -575,6 +579,7 @@ pub(crate) fn find_importers_on_disk(
         in_memory_files: &[],
         is_compiled: &|path| is_compiled(to_native(path)),
         in_parallel: &crate::ir::parallel::run_serially,
+        thread_count: 1,
     };
     let asked: Vec<Vec<u8>> = files.iter().map(|file| from_native(file)).collect();
     let importers = find_importers_outside_run(&disk, &asked).into_iter();
@@ -787,6 +792,7 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
             },
             ways_into_project: &by_imports.manifests.ways_into_project,
             in_parallel: input.in_parallel,
+            thread_count: options.thread_count().get(),
         };
         let importers = find_importers_outside_run(&disk, &asked);
         let is_imported_outside_run = |file: &FileId| {
@@ -876,9 +882,11 @@ pub(crate) fn find_whose_files(input: &RunInput<'_, '_>) -> (Vec<WhoseFile>, Vec
 mod tests {
     use super::{
         CodeOnDisk, LastWords, find_importers_outside_run, find_last_words_written, list_spellings,
-        without_extension,
+        read_what_file_writes, without_extension,
     };
     use crate::ir::parallel::run_serially;
+    use bun_sema::atom::Interner;
+    use bun_sema::session::Session;
     use bun_sema::util::{FxHashMap, FxHashSet};
 
     #[test]
@@ -915,6 +923,7 @@ mod tests {
             is_compiled: &|_| false,
             ways_into_project: &no_ways,
             in_parallel: &run_serially,
+            thread_count: 1,
         };
         let asked: Vec<Vec<u8>> = ["clock", "fixtures", "shapes", "taken", "utils"]
             .iter()
@@ -935,6 +944,49 @@ mod tests {
                 None,
             ]
         );
+    }
+
+    #[test]
+    fn what_a_file_writes_does_not_hang_on_the_files_read_before_it() {
+        let texts = [
+            "import { test } from \"bun:test\";\nimport \"./first\";\ntest(\"one\", () => {});\n",
+            "import \"./second\";\nexport function outer(test: (name: string) => void) { test(\"two\"); }\n",
+            "test(\"three\", () => {});\nrequire(\"./third\");\n",
+            "const test = 1;\nexport { test };\nexport * from \"./fourth\";\n",
+            "const start = \"./fi\";\nexport const fifth = require(start + \"fth\");\n",
+            "export const name = \"../up/sixth\";\n",
+            "describe.each([1])(\"seven\", () => {});\n",
+            "import { vi } from \"vitest\";\nexport const eighth = vi;\n",
+            "let expect;\nexpect = 1;\nexport const ninth = () => import(\"./ninth\");\n",
+            "export const of = 4, await_ = 2, describe = of / await_;\n",
+            "export const bun = \"bun:test\", first = \"./first\";\n",
+            "export function it() { return expect; }\n",
+        ];
+        let read = |text: &str, atoms: &Interner<'_>| {
+            let written = read_what_file_writes(b"/made-up/other/file.ts", text.as_bytes(), atoms);
+            (written.takes_from_test_runner, written.paths)
+        };
+        let alone = texts.map(|text| {
+            let session = Session::new();
+            read(text, &Interner::new_in(&session))
+        });
+        assert_eq!(
+            alone.each_ref().map(|it| it.0),
+            [
+                true, false, true, false, false, false, true, true, false, false, false, true
+            ]
+        );
+        for is_backward in [false, true] {
+            let session = Session::new();
+            let atoms = Interner::new_in(&session);
+            let mut order: Vec<usize> = (0..texts.len()).collect();
+            if is_backward {
+                order.reverse();
+            }
+            for at in order.iter().chain(&order) {
+                assert_eq!(read(texts[*at], &atoms), alone[*at], "{}", texts[*at]);
+            }
+        }
     }
 
     fn spells(written: &[u8], file: &[u8]) -> bool {

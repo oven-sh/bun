@@ -727,6 +727,7 @@ pub(crate) fn asks_for_original_beside_mock<'s>(
         };
         hir[function].kind == FnKind::Arrow
             && hir[function].params.is_empty()
+            && !hir[function].flags.contains(Flags::ASYNC)
             && !text_names_original(factory)
     };
     for site in analysis.import_sites {

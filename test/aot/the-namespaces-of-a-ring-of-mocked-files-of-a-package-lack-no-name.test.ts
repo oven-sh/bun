@@ -80,3 +80,27 @@ test("a ring of three", async () => {
     twice("one=1,other=5,three=3,two=2"),
   );
 });
+
+test("a file that copies the names of one that came round to the ring lacks none either", async () => {
+  const kit = {
+    ...ringOfTwo,
+    "first.mjs": `export * from "./second.mjs";\nexport * from "./zed.mjs";\nexport * from "./more.cjs";\nexport const one = 1;\n`,
+    "zed.mjs": `export * from "./second.mjs";\nexport const zed = 26;\n`,
+    "tail.mjs": `export * from "./zed.mjs";\n`,
+  };
+  expect(await bothRuns(kit, ["first.mjs", "second.mjs", "zed.mjs"], ["hub.mjs", "tail.mjs"])).toEqual(
+    twice("one=1,other=5,two=2,zed=26"),
+  );
+});
+
+test("a second star of the door reads the ring when the first star is done", async () => {
+  const kit = {
+    ...ringOfTwo,
+    "hub.mjs": `export * from "./first.mjs";\nexport * from "./third.mjs";\n`,
+    "third.mjs": `export * from "./second.mjs";\nexport const three = 3;\n`,
+    "tail.mjs": `export * from "./third.mjs";\n`,
+  };
+  expect(await bothRuns(kit, ["first.mjs", "second.mjs", "third.mjs"], ["hub.mjs", "tail.mjs"])).toEqual(
+    twice("one=1,other=5,three=3,two=2"),
+  );
+});

@@ -1,5 +1,6 @@
 import { bunEnv, bunExe, tempDir } from "harness";
 import { runsWholeGrids } from "./ways";
+import { asksNoRegistry } from "./without-core-dump";
 
 /**
  * The projects of a test file as the folders of one project. A run in layers compiles all of Bun's own library, whatever stands over it, so a way of building is paid once
@@ -21,7 +22,7 @@ export function foldersOfOneRun(name: string, projects: Record<string, Record<st
     await using run = Bun.spawn({
       cmd: [bunExe(), "test", ...flags, "--isolate"],
       cwd: String(dir),
-      env: words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv,
+      env: asksNoRegistry(words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv),
       stdio: ["ignore", "pipe", "pipe"],
     });
     const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);

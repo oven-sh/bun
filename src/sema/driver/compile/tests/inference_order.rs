@@ -340,6 +340,22 @@ fn what_is_inferred_of_a_parameter_does_not_depend_on_how_often_it_is_mentioned(
     }
 }
 
+#[test]
+fn a_method_of_lists_that_is_only_read_takes_no_list_away_where_elements_are_read() {
+    let ask = |answer: &str| {
+        let text = format!(
+            "declare global {{\n  interface Array<T> {{\n    concat(other: T[]): T[];\n  }}\n}}\nexport function horner(c, x) {{\n  let s = 0;\n  for (let i = c.length - 1; i >= 0; i--) s = s * x + c[i];\n  return {answer};\n}}\n"
+        );
+        ask_for_parameters(&text, Order::AsWritten)
+    };
+    let without_the_name = ask("s");
+    assert_ne!(without_the_name[0], "any");
+    assert_eq!(without_the_name, ask("c.concat ? s : 0"));
+    let text = "export function pick(options) {\n  return options.filter ? options.sort : 0;\n}\n";
+    let of_record = ask_for_parameters(text, Order::AsWritten);
+    assert!(of_record[0].contains("filter"), "{of_record:?}");
+}
+
 fn write_row_of_functions_that_each_lay_a_name_of_their_own(length: usize) -> String {
     let mut text = String::new();
     for index in 0..length {

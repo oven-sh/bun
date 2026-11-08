@@ -27,9 +27,12 @@ impl FileLowering<'_, '_, '_, '_> {
     pub(in crate::lower) fn finish_function_texts(&mut self) -> PackedTypeRanges {
         let hir = self.hir;
         let atoms = &self.queries.files().atoms;
+        let is_of_program = self.inputs.sources.kind(self.file) == SourceKind::Program;
+        let stands_as_written = is_of_program && find_transpiled_mark(&hir.text).is_some();
         let written = self.values_written_in_place.take();
+        let written = written.into_iter().filter(|_| !stands_as_written);
         let mut values_first_in_text = Vec::new();
-        let replaced = written.into_iter().filter_map(|(expression, value)| {
+        let replaced = written.filter_map(|(expression, value)| {
             let (start, end) = (hir[expression].pos, hir[expression].end);
             if start >= end || end as usize > hir.text.len() {
                 return None;
@@ -79,7 +82,8 @@ impl FileLowering<'_, '_, '_, '_> {
             end,
             text: Box::default(),
         }));
-        for (index, statement) in hir.stmts.iter().enumerate() {
+        let statements = hir.stmts.iter().enumerate();
+        for (index, statement) in statements.filter(|_| !stands_as_written) {
             let StmtKind::Expr(expression) = statement.kind else {
                 continue;
             };
@@ -117,6 +121,7 @@ impl FileLowering<'_, '_, '_, '_> {
             _ => b"undefined",
         };
         let written_as_this = list_this_of_file(hir).into_iter();
+        let written_as_this = written_as_this.filter(|_| !stands_as_written);
         replaced.extend(written_as_this.map(|this| ReplacedText {
             start: hir[this].pos,
             end: hir[this].end,
@@ -125,18 +130,19 @@ impl FileLowering<'_, '_, '_, '_> {
         let decisions = self.decisions();
         values_first_in_text.sort_unstable();
         values_first_in_text.dedup();
-        replaced.append(&mut find_text_replaced_by_bundling(
-            hir,
-            self.bound,
-            decisions,
-            atoms,
-            values_first_in_text,
-            self.counts_executions(),
-        ));
+        if !stands_as_written {
+            replaced.append(&mut find_text_replaced_by_bundling(
+                hir,
+                self.bound,
+                decisions,
+                atoms,
+                values_first_in_text,
+                self.counts_executions(),
+            ));
+        }
         let reads_back = self.inputs.options.reads_function_texts_back;
         let folded = decisions.as_folded_by_bun_run();
-        let is_of_program = self.inputs.sources.kind(self.file) == SourceKind::Program;
-        let is_printed_by_bun = is_of_program && find_transpiled_mark(&hir.text).is_none();
+        let is_printed_by_bun = is_of_program && !stands_as_written;
         let lays_heads = self.inputs.options.embeds_function_text && is_printed_by_bun;
         let mut changes = None;
         let ranges = find_type_ranges_beside_what_is_laid(hir, replaced, |types, replaced| {

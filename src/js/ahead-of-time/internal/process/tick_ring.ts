@@ -76,32 +76,55 @@ function growRing(after: Tick): Tick {
   return tick;
 }
 
-// Runs as a tick of the ring's own, again behind the ticks that wait until none does. What still refers to a dropped node holds no node that is dropped later.
+// Runs as a tick of the ring's own. It drops the free nodes over kFreeTicksKept. Where kFreeTicksKept ticks or more wait it comes again behind the first kFreeTicksKept of them:
+// the ticks of a burst are let go as they run, and each walk over nodes is paid for by as many ticks. Where fewer wait it is the last: their nodes stay until the ring next grows.
+// What still refers to a dropped node holds no node that is dropped later.
 function dropFreeTicks(): void {
   const read = ring.read!;
   const write = ring.write!;
-  if (read !== write) {
-    takeTick(dropFreeTicks, undefined).count = 0;
+  let before = read;
+  let manyWait = read !== write;
+  for (let passed = 1; manyWait && passed < kFreeTicksKept; passed++) {
+    before = before.next;
+    manyWait = before !== write;
+  }
+  let ahead = write.next;
+  let kept = 0;
+  while (kept < kFreeTicksKept && ahead !== read) {
+    ahead = ahead.next;
+    kept++;
+  }
+  if (ahead !== read) {
+    let last = write;
+    let dropped = 0;
+    while (ahead !== read) {
+      ahead = ahead.next;
+      last = last.next;
+      dropped++;
+    }
+    const firstKept = last.next;
+    last.next = last;
+    write.next = firstKept;
+    ring.spare = (ring.spare - dropped) | 0;
+    ring.beforeRead = write;
+  }
+  if (!manyWait) {
+    ring.willDropFreeTicks = false;
     return;
   }
-  ring.willDropFreeTicks = false;
-  let ahead = write.next;
-  for (let kept = 0; kept < kFreeTicksKept; kept++) {
-    if (ahead === read) return;
-    ahead = ahead.next;
+  let free = write.next;
+  if (free === read) {
+    free = new Tick();
+    ring.spare = (ring.spare + 1) | 0;
+  } else {
+    write.next = free.next;
+    ring.beforeRead = write;
   }
-  let last = write;
-  let dropped = 0;
-  while (ahead !== read) {
-    ahead = ahead.next;
-    last = last.next;
-    dropped++;
-  }
-  const firstKept = last.next;
-  last.next = last;
-  write.next = firstKept;
-  ring.spare = (ring.spare - dropped) | 0;
-  ring.beforeRead = write;
+  free.next = before.next;
+  before.next = free;
+  free.callback = dropFreeTicks;
+  free.frame = undefined;
+  free.count = 0;
 }
 
 // Queues a tick with one or two arguments ahead of the ticks that wait, in the async context that is current.

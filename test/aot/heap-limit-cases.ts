@@ -268,8 +268,9 @@ export function addressSpaceForObjects(part: number, parts: number) {
   let cases = 0;
   const isInPart = () => cases++ % parts === part - 1;
   const dealt = <Row>(rows: Row[]) => rows.filter(isInPart);
+  // The cases run at once, so one of them may take about as long as the file, and with a sanitizer the file takes over two minutes.
   const inPart = (define: typeof test) => (name: string, body: () => Promise<void>, timeout?: number) => {
-    if (isInPart()) define(name, body, timeout);
+    if (isInPart()) define(name, body, timeout && isASAN ? timeout * 2 : timeout);
   };
 
   describe("the address space for objects of a compiled program", () => {

@@ -1,0 +1,18 @@
+# `{ ...state, extra: v }` makes another layout than its source has. Behind the tests of the source's shape, order of keys and want of other properties the fields were read one by one and a
+# NewObject took them all: a record of K fields cost K reads and K stores of code at each place. Where each field lies in line in both cells in one representation the copy is one operation: the emitter
+# lays the two plans of slots side by side and copies each run of words that follow one another in both cells, in a loop where the run is long, into a cell that is born with those fields.
+# RUN: walk f1 mechanisms=all
+# CHECK: = HasKeyOrder
+# CHECK: = HasNoExtraProperties
+# CHECK: = NewObject layout=
+# CHECK-NEXT: = TryCopyFields {{*}} sourceLayout=
+# CHECK-NOT: = GetSlot
+# -- source: main.ts
+# export {};
+# interface State { f0: number; f1: number; f2: number; }
+# interface Wide extends State { extra: number; }
+# function add(state: State, v: number): Wide { return { ...state, extra: v }; }
+# const table: Record<string, (state: State, v: number) => Wide> = { add, other(state: State, v: number): Wide { return { ...state, extra: v + 1 }; } }, key: string = JSON.parse('"add"');
+# const state: State = { f0: 0, f1: 1, f2: 2 };
+# console.log(JSON.stringify(table[key](state, 7)));
+# -- end of source

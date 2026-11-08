@@ -610,6 +610,7 @@ pub struct Files<'s> {
     /// The modules with one of `ModuleSymbolLinks::export_collisions` in another file. Filled by
     /// `link`.
     pub modules_with_nested_export_collisions: &'s [Sym],
+    aliases_from_nested_export_collisions: &'s [(Sym, FileId)],
     /// Sorted by file and identifier. The runs for one identifier are in the order they began. Filled by `link`.
     failed_lookups: &'s [FailedLookup<'s>],
     /// The file order in which declarations of one symbol in several files are considered: it
@@ -7054,6 +7055,7 @@ impl<'s> Files<'s> {
             modules_resolved_at_merge: &[],
             records_module_links: false,
             modules_with_nested_export_collisions: &[],
+            aliases_from_nested_export_collisions: &[],
             failed_lookups: &[],
             parents_in_other_files: map_in(arena),
 
@@ -10430,6 +10432,52 @@ impl<'s> Files<'s> {
         self.files_with_rejected_merges
             .extend(parts.map(|part| part.file));
         self.is_linked = true;
+        let aliases = self.find_aliases_from_nested_export_collisions();
+        self.aliases_from_nested_export_collisions = slice_in(&aliases, self.arena);
+    }
+
+    fn find_aliases_from_nested_export_collisions(&self) -> Vec<(Sym, FileId)> {
+        let nested = self.modules_with_nested_export_collisions;
+        let mut found = Vec::new();
+        if nested.is_empty() {
+            return found;
+        }
+        for &file in self.order.iter() {
+            let (hir, bound) = (&self.module(file).hir, &self.module(file).bound);
+            let aliases = bound.symbols.with_flags(SymFlags::ALIAS);
+            for &decl in aliases.flat_map(|symbol| symbol.decls.iter()) {
+                let specifier = match decl {
+                    Decl::ImportNamespace(import) => {
+                        let import = &hir[import];
+                        Some((import.spec, self.mode_of_import(file, import.mode)))
+                    }
+                    // `{ default as d }` is another syntax for the default import, except in a binding pattern.
+                    _ => (self.external_module_member_of(file, decl))
+                        .filter(|it| it.2 != known::default || matches!(decl, Decl::Require(_)))
+                        .map(|it| (it.0, it.1)),
+                };
+                let module = specifier
+                    .and_then(|(spec, mode)| self.module_of_specifier_as(file, spec, mode));
+                if let Some(module) = module
+                    && nested.binary_search(&module).is_ok()
+                {
+                    found.push((module, file));
+                }
+            }
+        }
+        found.shared_sort_unstable();
+        found.dedup();
+        found
+    }
+
+    /// The files in which the target of an alias is looked up in `getExportsOfModule(module)`, either by
+    /// `getExternalModuleMember` or by `resolveESModuleSymbol` for `import * as ns`. `module` is one of
+    /// `modules_with_nested_export_collisions`.
+    pub fn files_with_alias_from_exports_of(&self, module: Sym) -> impl Iterator<Item = FileId> {
+        let aliases = self.aliases_from_nested_export_collisions;
+        let first = aliases.partition_point(|it| it.0 < module);
+        let of_module = aliases[first..].iter().take_while(move |it| it.0 == module);
+        of_module.map(|it| it.1)
     }
 
     /// Links each component as soon as the components it imports are published. Each component gets its own resolver

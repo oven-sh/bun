@@ -56,6 +56,7 @@ linked_functions! {
     pub fn bun_aot_log_part_outside_stages(name: &str);
     pub(crate) fn bun_aot_new_report_line(kind: ExplainSet, text: Vec<u8>) -> ReportEntry;
     pub fn bun_aot_write_summary(input: &ReportInput<'_>, out: &mut Vec<u8>);
+    pub fn bun_aot_write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>);
     pub fn bun_aot_write_untyped_note(statistics: &Statistics, out: &mut Vec<u8>);
     pub fn bun_aot_collect_report_entries(input: &ReportInput<'_>, kinds: ExplainSet) -> Vec<ReportEntry>;
     pub fn bun_aot_report_entries_to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMessage>;

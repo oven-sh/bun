@@ -2311,6 +2311,18 @@ impl Bound<'_> {
             .collect()
     }
 
+    pub fn first_declaration_of_literal_member(&self, p: PropId) -> PropId {
+        let Some(symbol) = self.property_symbol.get(&Decl::Property(p)) else {
+            return p;
+        };
+        let mut declarations = self.symbol(*symbol).decls.iter();
+        let first = declarations.find_map(|declaration| match *declaration {
+            Decl::Property(first) => Some(first),
+            _ => None,
+        });
+        first.unwrap_or(p)
+    }
+
     /// True if `m`, which has a name, has a symbol other than the one its container has under that
     /// name.
     pub fn is_member_not_in_table(&self, m: MemberId) -> bool {

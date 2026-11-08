@@ -30,7 +30,7 @@ function judge(way: string, ids: string[], differing: string[]) {
   expect(found.sort()).toEqual(known.filter(mine).map(withoutName).sort());
 }
 
-const env = { ...bunEnv, NO_COLOR: "1", BUN_DEBUG_TEST_AOT_WORDS: "TestRunSaysItsForm" };
+const env = { ...bunEnv, NO_COLOR: "1", BUN_OPTIONS: "--no-install", BUN_DEBUG_TEST_AOT_WORDS: "TestRunSaysItsForm" };
 
 async function runOf(cwd: string, ids: string[], ...flags: string[]) {
   const isOneRealm = flags.includes("--no-isolate");

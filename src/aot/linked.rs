@@ -130,6 +130,10 @@ interface::define_linked_functions! {
         report::write_summary(&unwrap_input(input), out);
     }
 
+    fn bun_aot_write_developer_options(option_words: &[Box<[u8]>], out: &mut Vec<u8>) {
+        report::write_developer_options(option_words, out);
+    }
+
     fn bun_aot_write_untyped_note(statistics: &interface::statistics::Statistics, out: &mut Vec<u8>) {
         report::write_untyped_note(statistics.0.get(), out);
     }

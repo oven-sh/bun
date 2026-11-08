@@ -48,3 +48,9 @@ export const reportsToTheRunnerAlone = (env: Record<string, string | undefined>)
   env.BUN_CRASH_REPORT_URL || env.BUN_ENABLE_CRASH_REPORTING !== undefined
     ? env
     : { ...env, BUN_ENABLE_CRASH_REPORTING: "0" };
+/**
+ * Where no node_modules stands above a file, a Bun asks the registry for a package that it does not find, and runs what comes: a made-up name may be somebody's package there.
+ * The variable reaches a Bun that a program starts itself, which a flag does not. It shows in process.execArgv, of plain Bun and of an executable alike. Whoever sets it keeps what he set.
+ */
+export const asksNoRegistry = (env: Record<string, string | undefined>) =>
+  env.BUN_OPTIONS === undefined ? { ...env, BUN_OPTIONS: "--no-install" } : env;

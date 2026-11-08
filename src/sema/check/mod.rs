@@ -1194,6 +1194,7 @@ impl<'s> Program<'s> {
             stack_limit: 6 << 20,
             has_stack_for_questions: false,
             work: 0,
+            copies_of_types_by_spread: Default::default(),
             scopes_begun: 0,
             work_trap: WORK_TRAP_DISARMED,
             rejected_expressions: Vec::new(),
@@ -2064,6 +2065,9 @@ pub struct Checker<'p, 's> {
     has_stack_for_questions: bool,
     /// Number of queries made so far.
     pub work: u64,
+    /// `get_spread_type(EMPTY_OBJECT, right, readonly)` at rank 0 without a symbol, by `(right, readonly)`. See
+    /// `can_keep_copies_of_types_by_spread` and `mark_of_what_a_copy_by_spread_read`.
+    copies_of_types_by_spread: FxHashMap<(TypeId, bool), TypeId>,
     /// Number of `begin_scope` calls so far for a result that's permanent once stored. It excludes
     /// the calls for a memo that evicts entries, like `FlowMemo::types_with_facts`, which begins
     /// another scope for the same question without computing anything new.

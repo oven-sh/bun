@@ -1,7 +1,7 @@
-use super::SourceDialect;
 use super::mention_use::{MentionUse, lookup_passes_holder_linked_anew};
 use super::module_values::reads_what_wrapper_hands_in;
 use super::resolver::{ExprState, Resolver};
+use super::{SourceDialect, passes_every_assertion};
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::runtime_uses::{
     SyntaxWithHelpers, is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,
@@ -590,14 +590,22 @@ impl Resolver<'_, '_> {
     }
 
     fn note_key_read_by_pattern(&mut self, key: ExprId) {
-        let key_without_assertions = self.input.hir.skip_type_assertions(key);
-        let folded = self
-            .input
-            .decisions
-            .constant(self.input.hir, key_without_assertions);
+        let folded = self.find_constant_that_key_is(key);
         let is_name = self.symbol_that_key_is(key).is_some() || folded != FoldedValue::Unknown;
         self.output.reads_by_unknown_key |= !is_name;
         self.note_key_read(key, false);
+    }
+
+    pub(super) fn find_constant_that_key_is(&self, key: ExprId) -> FoldedValue {
+        let hir = self.input.hir;
+        match (self.input.decisions).constant(hir, hir.skip_type_assertions(key)) {
+            FoldedValue::Constant(value) | FoldedValue::ConstantOutsideDeadZone(value)
+                if !passes_every_assertion(hir, key, Some(value)) =>
+            {
+                FoldedValue::Unknown
+            }
+            folded => folded,
+        }
     }
 
     fn note_key_read(&mut self, key: ExprId, is_only_looked_at: bool) {
@@ -605,8 +613,9 @@ impl Resolver<'_, '_> {
         if let Some((_, symbol)) = self.symbol_that_key_is(key) {
             return self.note_name_read(table::name_of_symbol(symbol));
         }
+        let folded = self.find_constant_that_key_is(key);
         let key = input.hir.skip_type_assertions(key);
-        match input.decisions.constant(input.hir, key) {
+        match folded {
             FoldedValue::Constant(Constant::String(name))
             | FoldedValue::ConstantOutsideDeadZone(Constant::String(name)) => {
                 self.output.may_call_evaluator |= name == known::constructor && !is_only_looked_at;

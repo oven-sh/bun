@@ -30,6 +30,7 @@ struct LateBoundSymbol {
     value_declaration: Option<(FileId, Decl)>,
     /// `getMergedSymbol(symbol).CheckFlags&CheckFlagsLate != 0`. `cloneSymbol` doesn't copy the flag.
     is_late: bool,
+    flags_of_declarations: std::cell::Cell<Option<SymFlags>>,
 }
 
 /// The symbols that `getResolvedMembersOrExportsOfSymbol` adds to the binder's table for one side
@@ -213,6 +214,54 @@ impl<'p, 's> Checker<'p, 's> {
             // "A symbol already exists, so don't add this as a declaration."
             Decl::ThisProperty(_) => List::default(),
             _ => List::One((file, declaration)),
+        }
+    }
+
+    pub(super) fn flags_of_declarations_of_member(
+        &mut self,
+        file: FileId,
+        declaration: Decl,
+        flags_of: impl Fn(Decl) -> SymFlags,
+    ) -> SymFlags {
+        let unite = |declarations: &mut dyn Iterator<Item = &(FileId, Decl)>| {
+            declarations.fold(SymFlags::empty(), |flags, it| flags | flags_of(it.1))
+        };
+        let bound = self.bound(file);
+        let early = bound.symbol_of_declaration(declaration);
+        match self.late_bound_symbol_among(file, declaration, bound, early) {
+            Some((late, symbol)) => {
+                let symbol = &late.symbols[symbol];
+                symbol.flags_of_declarations.get().unwrap_or_else(|| {
+                    let flags = unite(&mut symbol.declarations.iter());
+                    symbol.flags_of_declarations.set(Some(flags));
+                    flags
+                })
+            }
+            None if early.is_some() && !bound.symbol(early).flags.contains(SymFlags::MERGED) => {
+                bound.symbol(early).flags
+            }
+            None => {
+                let declarations =
+                    self.declarations_of_early_bound_symbol(file, declaration, early);
+                unite(&mut declarations.iter())
+            }
+        }
+    }
+
+    pub(super) fn first_declaration_of_member(
+        &mut self,
+        file: FileId,
+        declaration: Decl,
+    ) -> Option<(FileId, Decl)> {
+        let bound = self.bound(file);
+        let early = bound.symbol_of_declaration(declaration);
+        match self.late_bound_symbol_among(file, declaration, bound, early) {
+            Some((late, symbol)) => late.symbols[symbol].declarations.first().copied(),
+            None => {
+                let declarations =
+                    self.declarations_of_early_bound_symbol(file, declaration, early);
+                declarations.first().copied()
+            }
         }
     }
 
@@ -445,6 +494,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `lateBindMember`. `late_symbols` is its `lateSymbols` table: name to index in `late`.
         let mut late: Vec<LateBoundSymbol> = Vec::new();
         let mut late_symbols: Vec<(Atom, usize)> = Vec::new();
+        let mut places_of_late_names: FxHashMap<Atom, usize> = FxHashMap::default();
         // `links.lateSymbol` of the declarations that aren't in `symbol.Declarations`.
         let mut unlisted: Vec<((FileId, Decl), u32)> = Vec::new();
         let mut bound_by_another_call = Vec::new();
@@ -465,13 +515,10 @@ impl<'p, 's> Checker<'p, 's> {
                 bound_by_another_call.push((file, declaration));
                 continue;
             }
-            let mut index = match late_symbols.iter().find(|it| it.0 == name) {
-                Some(it) => it.1,
-                None => {
-                    late_symbols.push((name, late.len()));
-                    late.len()
-                }
-            };
+            let mut index = *places_of_late_names.entry(name).or_insert_with(|| {
+                late_symbols.push((name, late.len()));
+                late.len()
+            });
             if let Some(there) = late.get_mut(index)
                 && there.flags.intersects(get_excluded_symbol_flags(flags))
             {
@@ -497,6 +544,7 @@ impl<'p, 's> Checker<'p, 's> {
                     declarations: Vec::new(),
                     value_declaration: None,
                     is_late: true,
+                    flags_of_declarations: Default::default(),
                 });
             }
             // `addDeclarationToLateBoundSymbol`

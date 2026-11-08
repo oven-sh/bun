@@ -26,6 +26,7 @@ use self::shown_names::ShownNames;
 use super::class::{ClassState, find_fields_under_signed_members};
 use super::counted_places::CountedPlaces;
 use super::fragment::{FragmentBuilder, ModuleFragment};
+use super::function::{StatementsThatNest, ValuesThatConstsWereFollowedTo};
 use super::layouts::{LayoutState, NamesCreatedOnExports};
 use super::module::{LibraryFunctions, ModuleState};
 use super::object::EnumsThatStayAsBorn;
@@ -212,6 +213,8 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
     pub(in crate::lower) names_word_that_mock_looks_for: Option<bool>,
     pub(in crate::lower) ranges_of_types: OnceCell<TypeRanges>,
+    pub(in crate::lower) statements_that_nest: OnceCell<StatementsThatNest>,
+    pub(in crate::lower) values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo,
     pub(in crate::lower) enums_that_stay_as_born: Option<EnumsThatStayAsBorn>,
     pub(in crate::lower) counted_places: Option<CountedPlaces>,
     pub(in crate::lower) quoted_texts: QuotedTexts,
@@ -321,6 +324,8 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             enum_member_reads: FxHashMap::default(),
             names_word_that_mock_looks_for: None,
             ranges_of_types: OnceCell::new(),
+            statements_that_nest: OnceCell::new(),
+            values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo::default(),
             enums_that_stay_as_born: None,
             counted_places,
             quoted_texts: QuotedTexts::default(),

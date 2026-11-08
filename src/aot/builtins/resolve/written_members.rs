@@ -3,7 +3,7 @@ use super::mention_use::MentionUse;
 use super::mentions::mentioned_id;
 use super::module_cache::is_function_that_loader_calls;
 use super::resolver::{AliasSource, ExprState, ResolvedValue, Resolver};
-use super::{SourceDialect, SpyCall};
+use super::{SourceDialect, SpyCall, passes_every_assertion};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, MemberLookup, Mutability, Platforms,
     RuntimeModule, Scope,
@@ -535,6 +535,7 @@ impl Resolver<'_, '_> {
         if let Some((_, symbol)) = self.symbol_that_key_is(key) {
             return Some(smallvec![WrittenKey::Symbol(table::name_of_symbol(symbol))]);
         }
+        let written = key;
         let key = input.hir.skip_type_assertions(key);
         let constant;
         let known;
@@ -548,6 +549,12 @@ impl Resolver<'_, '_> {
                 &known[..]
             }
         };
+        let mut passing = values.iter().map(|&value| Some(value));
+        if !passes_every_assertion(input.hir, written, None)
+            || !passing.all(|value| passes_every_assertion(input.hir, written, value))
+        {
+            return None;
+        }
         if values.is_empty() {
             let mut keys = WrittenKeys::new();
             if asked.contains(&key) {

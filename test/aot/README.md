@@ -27,6 +27,10 @@ last section.
 - **This folder has no steps of its own.** The `test-bun` shards of every platform run all of it on every pull request, under the
   rules of every other test: the same retries, the same time limits, and a red holds up the merge. What a pull request touches
   decides nothing.
+- **A program brings every package that it loads**, in a `node_modules` beside or above it, a project of `parallel-test-runs/` in a
+  folder `installed`: where no `node_modules` stands above a file, plain Bun asks the registry for a package that it does not find
+  and runs what comes, and a made-up name may be somebody's package there. A package that is meant not to be there has a name under
+  `@made-up/`, never a plain word. `test/internal/source-lints/packages-of-stored-programs.test.ts` holds both.
 - **A program that compiles all of Bun's library, or much of it, lies under `library-sweeps/`**, not under `parallel/`:
   thousands of functions each, in seconds. `scripts/rust-test.ts` hands them to `run-parallel.ts` in the step `cargo-test`, which has sixteen
   processors and which no shard of the tests waits for: `bun test/aot/run-parallel.ts --root=test/aot/library-sweeps test/aot/library-sweeps/*.*[jt]s`.

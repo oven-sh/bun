@@ -325,6 +325,7 @@ struct FlowRuns {
     first_compound_assignment: Vec<u32>,
     /// The assignments at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<u32>,
+    computed_key_nodes_about_names: Vec<u32>,
     /// The array mutations, sorted: the `root_key` of the array, or 0 if that doesn't tell whose it
     /// is, and the node. A walk for a reference of an automatic type may have something to do at
     /// each with its root, and at each with 0.
@@ -384,6 +385,9 @@ impl FlowRuns {
         };
         look_at(TestSubjects::NO_PROPERTY);
         look_at(0);
+        if !reference.path.is_empty() {
+            look_at(TestSubjects::UNWRITTEN_KEY);
+        }
         if let Some(AccessedName::Some(name)) = reference.path.first().map(|step| step.name.get()) {
             look_at(name.0.wrapping_add(1));
         }
@@ -414,7 +418,10 @@ impl FlowRuns {
                 next = next.min(node);
             }
         }
-        let keys = &self.computed_key_nodes;
+        let keys = match reference.path.is_empty() {
+            true => &self.computed_key_nodes_about_names,
+            false => &self.computed_key_nodes,
+        };
         let after = keys.partition_point(|&node| node <= flow.0);
         if let Some(&node) = keys[..after].last() {
             last = last.max(node);
@@ -1069,18 +1076,24 @@ struct AssignmentSubjects<'a> {
     /// The node concerns the root whatever the reference's first property is.
     ignores_property: bool,
     resolves_key: bool,
+    resolves_key_for_names: bool,
 }
 
 impl NarrowingSubjects for AssignmentSubjects<'_> {
     fn add(&mut self, root: u32, first: u32) {
         if root != 0 {
-            let first = if self.ignores_property { 0 } else { first };
+            let first = match first {
+                _ if self.ignores_property => 0,
+                0 => TestSubjects::UNWRITTEN_KEY,
+                first => first,
+            };
             self.assignments.push((root, first, self.node));
         }
     }
 
-    fn bails_on_computed_key(&mut self, _: ResolvesKey) -> bool {
+    fn bails_on_computed_key(&mut self, resolves: ResolvesKey) -> bool {
         self.resolves_key = true;
+        self.resolves_key_for_names |= resolves == ResolvesKey::Always;
         false
     }
 
@@ -1111,6 +1124,7 @@ impl NarrowingSubjects for MutationSubjects<'_> {
 
 impl TestSubjects {
     const NO_PROPERTY: u32 = u32::MAX;
+    const UNWRITTEN_KEY: u32 = u32::MAX - 1;
     const KNOWN: u32 = 1;
     /// There are more subjects than `chains` can hold, a key whose name can only be resolved by a
     /// query, or a union (`add_union`).
@@ -6967,6 +6981,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         file: FileId,
         e: ExprId,
+        mut index_in_list: Option<usize>,
         declared: TypeId,
     ) -> TypeId {
         let (hir, bound) = (self.hir(file), self.bound(file));
@@ -6986,7 +7001,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Parent::Expr(x) => match hir[x].kind {
                     ExprKind::Array(items) => {
-                        let Some(index) = hir.ids(items).position(|item| item == at) else {
+                        let known = index_in_list.take();
+                        let Some(index) =
+                            known.or_else(|| hir.ids(items).position(|item| item == at))
+                        else {
                             return declared;
                         };
                         at = x;
@@ -9776,6 +9794,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut assignments = Vec::new();
         let mut deep_assignments = Vec::new();
         let mut computed_key_nodes = Vec::new();
+        let mut computed_key_nodes_about_names = Vec::new();
         let mut array_mutations = Vec::new();
         for (i, &node) in bound.flow.iter().enumerate() {
             let (Flow::Assign { before, .. }
@@ -9829,6 +9848,7 @@ impl<'p, 's> Checker<'p, 's> {
                 assignments: &mut assignments,
                 ignores_property: false,
                 resolves_key: false,
+                resolves_key_for_names: false,
             };
             let declared = match target {
                 FlowTarget::Expr(e) => {
@@ -9856,6 +9876,9 @@ impl<'p, 's> Checker<'p, 's> {
             }
             if about.resolves_key {
                 computed_key_nodes.push(i as u32);
+            }
+            if about.resolves_key_for_names {
+                computed_key_nodes_about_names.push(i as u32);
             }
         }
         assignments.sort_by_u64(|&(root, first, _)| number_of_pair(root, first));
@@ -9944,6 +9967,7 @@ impl<'p, 's> Checker<'p, 's> {
             deep_assignments,
             first_compound_assignment,
             computed_key_nodes,
+            computed_key_nodes_about_names,
             array_mutations,
         };
     }

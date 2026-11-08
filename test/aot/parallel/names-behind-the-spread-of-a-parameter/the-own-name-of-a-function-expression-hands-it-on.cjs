@@ -1,3 +1,4 @@
+// STATISTIC: CopiesThatAreDefinitionsOneByOne = 0
 const turns = +process.argv[2] || 30;
 const show = o => JSON.stringify(o) + "|" + Object.keys(o).join() + "|" + Reflect.ownKeys(o).map(String).join();
 const out = [];

@@ -703,11 +703,10 @@ impl<'p> Checker<'p, '_> {
         if !matches!(self.hir(file)[literal_member].key, PropKey::Computed(_)) {
             return self
                 .bound(file)
-                .declarations_of_literal_member(literal_member)[0];
+                .first_declaration_of_literal_member(literal_member);
         }
-        let declarations = self.declarations_of_member(file, Decl::Property(literal_member));
-        match declarations.first() {
-            Some(&(_, Decl::Property(first))) => first,
+        match self.first_declaration_of_member(file, Decl::Property(literal_member)) {
+            Some((_, Decl::Property(first))) => first,
             _ => literal_member,
         }
     }

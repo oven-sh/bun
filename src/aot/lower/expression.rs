@@ -9,10 +9,7 @@ mod tests;
 mod unused;
 
 use bun_sema::fold::{Constant, Decision, FoldedValue, TreeNode, push_children};
-use bun_sema::hir::{
-    BinOp, Call, Chain, ExprId, ExprKind, Keyword, PropKey, PropKind, TypeNodeId, TypeNodeKind,
-    UnOp,
-};
+use bun_sema::hir::{BinOp, Call, Chain, ExprId, ExprKind, PropKey, PropKind, TypeNodeId, UnOp};
 use smallvec::SmallVec;
 
 use super::member::{self, GivenName};
@@ -20,6 +17,7 @@ use super::{
     FileLowering, FunctionLowering, async_function, call, control, generator, module, object,
     operator, scope, template,
 };
+use crate::builtins::resolve::passes_every_assertion;
 use crate::builtins::{BuiltinId, Mutability, Resolved, table};
 use crate::compile::removable::{is_name_left_out_by_bun_run, is_read_left_out_by_bun_run};
 use crate::ir::generated::MAX_TRACKED_INTEGER;
@@ -820,23 +818,7 @@ impl FileLowering<'_, '_, '_, '_> {
         expression: ExprId,
         constant: Constant,
     ) -> bool {
-        if !self.is_checked() {
-            return true;
-        }
-        let hir = self.hir;
-        let mut current = expression;
-        while let Some(operand) = hir.type_assertion_operand(current) {
-            if let ExprKind::As { ty, .. } = hir[current].kind {
-                let TypeNodeKind::Keyword(keyword) = hir[ty].kind else {
-                    return false;
-                };
-                if !keyword_accepts(keyword, constant) {
-                    return false;
-                }
-            }
-            current = operand;
-        }
-        true
+        !self.is_checked() || passes_every_assertion(self.hir, expression, Some(constant))
     }
 }
 
@@ -931,31 +913,5 @@ fn holds_written_numbers_alone(file: &FileLowering<'_, '_, '_, '_>, expression: 
                 && holds_written_numbers_alone(file, right)
         }
         _ => false,
-    }
-}
-
-fn keyword_accepts(keyword: Keyword, constant: Constant) -> bool {
-    match (keyword, constant) {
-        (Keyword::Any | Keyword::Unknown, _)
-        | (_, Constant::Undefined | Constant::Null)
-        | (Keyword::String, Constant::String(_))
-        | (Keyword::Number, Constant::Number(_))
-        | (Keyword::Boolean, Constant::Boolean(_))
-        | (Keyword::BigInt, Constant::BigInt(_)) => true,
-        (
-            Keyword::Never
-            | Keyword::Void
-            | Keyword::Undefined
-            | Keyword::Null
-            | Keyword::String
-            | Keyword::Number
-            | Keyword::Boolean
-            | Keyword::BigInt
-            | Keyword::Symbol
-            | Keyword::Object
-            | Keyword::This
-            | Keyword::Intrinsic,
-            _,
-        ) => false,
     }
 }

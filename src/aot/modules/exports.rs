@@ -201,6 +201,7 @@ struct Summary {
     binding: Resolution,
     provider: Resolution,
     has_unresolved_identity: bool,
+    ends_in_file_that_may_be_mocked: bool,
 }
 
 impl Summary {
@@ -208,6 +209,7 @@ impl Summary {
         binding: Resolution::NotFound,
         provider: Resolution::NotFound,
         has_unresolved_identity: false,
+        ends_in_file_that_may_be_mocked: false,
     };
 
     fn join(self, other: Summary, (module, name): NodeKey) -> Summary {
@@ -215,6 +217,18 @@ impl Summary {
         let identity = match self.binding == not_found || other.binding == not_found {
             true => Identity::Same,
             false => compare_bindings(self.binding, other.binding),
+        };
+        let ends_in_file_that_may_be_mocked =
+            self.ends_in_file_that_may_be_mocked || other.ends_in_file_that_may_be_mocked;
+        let identity = match identity {
+            Identity::Different
+                if ends_in_file_that_may_be_mocked
+                    && self.binding.is_binding()
+                    && other.binding.is_binding() =>
+            {
+                Identity::Unknown
+            }
+            _ => identity,
         };
         let binding = match identity {
             Identity::Different => Resolution::Ambiguous,
@@ -235,6 +249,7 @@ impl Summary {
             has_unresolved_identity: self.has_unresolved_identity
                 || other.has_unresolved_identity
                 || identity == Identity::Unknown,
+            ends_in_file_that_may_be_mocked,
         };
         let adds_no_end = identity != Identity::Unknown && (joined == self || joined == other);
         if adds_no_end || !joined.is_compared_at_run_time() {
@@ -615,6 +630,8 @@ impl ResolutionGraph<'_> {
                 let file = self.files[table];
                 if let Some(&target_node) = nodes.index.get(&(file, name)) {
                     self.edges[node as usize].push(target_node);
+                    end.ends_in_file_that_may_be_mocked =
+                        matches!(kind, NodeKind::Indirect) && nodes.tables[table].may_be_mocked;
                 } else if name != known::default {
                     let targets = nodes.tables[table].dynamic_targets;
                     match kind {

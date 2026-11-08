@@ -1115,6 +1115,11 @@ mod tests {
                 PLAIN,
                 true,
             ),
+            (
+                r#"vi.mock("./helper.cjs", async () => ({ mark: 2 }));"#,
+                PLAIN,
+                false,
+            ),
             (r#"vi.mock("./helper.cjs");"#, PLAIN, false),
             (r#"await vi.importActual("./helper.cjs");"#, PLAIN, false),
             (r#"vi.resetModules();"#, PLAIN, false),

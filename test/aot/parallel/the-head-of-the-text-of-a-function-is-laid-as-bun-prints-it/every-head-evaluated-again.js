@@ -41,6 +41,8 @@ const functions = [
   ) => [a, b], (a = (3, 5), b = c => c) => [a, b(6)], (a = "//", b = "/*") => [a, b], (a = /\//, b = /[/*]/) => [String(a), String(b)], (a = `)`, b = ")") => [a, b],
   ({ a /* a */ = /* b */ 3 /* c */ , /* d */ b /* e */ : /* f */ c /* g */ } /* h */ = /* i */ {}) => [a, c], ([ /* a */ a /* b */ , /* c */ , /* d */ b /* e */ ] = [1, 2, 3]) => [a, b],
   ( /* a */ ... /* b */ rest /* c */ ) => rest, (a, ... [ b , c ]) => [a, b, c], ({ a , ... rest }) => [a, rest],
+  function one(\u{61}, b) { return [a, b]; }, function (\u0061,b){ return [a, b]; }, function \u{6f}ne ( a ){ return [a, typeof one]; },
+  \u{61} => [a], (\u{61},b)=>[a, b], async \u0061 => [a], ({ \u{61} , b })=>[a, b], ({ k : \u{61} }={ k: 3 })=>[a], (\u{1d4d0})=>[\u{1d4d0}],
   async => [async], (async) => [async], of => [of], get => [get], (set, get) => [set, get], yield_ => [yield_],
 ];
 const holder = {
@@ -56,6 +58,7 @@ const holder = {
   { return [2]; },
   get(a) { return ["get", a]; }, set(a) { return ["set", a]; }, async(a) { return ["async", a]; }, static(a) { return ["static", a]; },
   "a name" /* a */ (a) { return [a]; }, 12 /* a */ (a) { return [a]; },
+  esc\u{61}ped ( a ){ return [a]; }, "quoted\u{61}" ( a ){ return [a]; }, get  r\u0065ad2 (){ return [3]; },
 };
 const said = async call => {
   try {

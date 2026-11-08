@@ -5169,18 +5169,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getSymbolOfDeclaration(memberDecl).Flags` for the member `p` of an object literal.
     pub(super) fn flags_of_literal_member(&mut self, file: FileId, p: PropId) -> SymFlags {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut flags = SymFlags::empty();
-        for &(_, declaration) in self.declarations_of_member(file, Decl::Property(p)).iter() {
+        self.flags_of_declarations_of_member(file, Decl::Property(p), |declaration| {
             let symbol = bound.symbol_of_declaration(declaration);
             if symbol.is_some() {
-                flags |= bound.symbol(symbol).flags;
+                bound.symbol(symbol).flags
             } else if let Decl::Property(q) = declaration
                 && let Some((includes, _)) = crate::bind::flags_of_property(hir[q].kind)
             {
-                flags |= includes;
+                includes
+            } else {
+                SymFlags::empty()
             }
-        }
-        flags
+        })
     }
 
     /// Describes what `checkObjectLiteral` adds to `propertiesTable` for the member `p`. For an

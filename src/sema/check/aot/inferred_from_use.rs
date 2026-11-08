@@ -4296,11 +4296,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             None => TypeId::ANY,
         };
         let array = self.c.array_of(element_type);
-        let can_be_array = !stores_object && self.has_every_member(array, &usage.members);
+        let can_be_array = !stores_object && self.has_every_member_beside_elements(array, usage);
         let can_be_string = !stores_object
             && !usage.has_stored_part()
             && (element_type == TypeId::ANY || element_type == TypeId::STRING)
-            && self.has_every_member(TypeId::STRING, &usage.members);
+            && self.has_every_member_beside_elements(TypeId::STRING, usage);
         let any_array = self.c.array_of(TypeId::ANY);
         if can_be_array && let Some(at) = parts.iter().position(|&part| part == any_array) {
             parts[at] = array;
@@ -4342,9 +4342,20 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         match members {
             Members::Few(members) => {
                 let mut members = members.iter();
-                members.all(|member| self.has_member(receiver, holder, member))
+                members.all(|member| self.has_member(receiver, holder, member, false))
             }
             Members::Many(members) => self.has_all_of_many(receiver, holder, &members.by_name),
+        }
+    }
+
+    fn has_every_member_beside_elements(&mut self, receiver: TypeId, usage: &Usage) -> bool {
+        match &usage.members {
+            Members::Few(members) if usage.elements.is_some() => {
+                let holder = self.c.property_holder_for_every_name(receiver);
+                let mut members = members.iter();
+                members.all(|member| self.has_member(receiver, holder, member, true))
+            }
+            members => self.has_every_member(receiver, members),
         }
     }
 
@@ -4353,6 +4364,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         receiver: TypeId,
         holder: Option<PropertyHolder<'p>>,
         member: &Member,
+        methods_may_be_read: bool,
     ) -> bool {
         let found = match holder {
             Some(holder) => self.c.property_of_holder(holder, member.name, false),
@@ -4363,7 +4375,8 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 .property_that_some_literals_have(receiver, member.name)
         });
         found.is_some_and(|(property, _)| {
-            property.flags.contains(PropFlags::METHOD) == member.is_called()
+            let is_method = property.flags.contains(PropFlags::METHOD);
+            is_method == member.is_called() || (is_method && methods_may_be_read)
         })
     }
 
@@ -4374,7 +4387,9 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         members: &Rc<MembersByName>,
     ) -> bool {
         let (without_bit, with_bit) = match &**members {
-            MembersByName::One { member, .. } => return self.has_member(receiver, holder, member),
+            MembersByName::One { member, .. } => {
+                return self.has_member(receiver, holder, member, false);
+            }
             MembersByName::Both {
                 without_bit,
                 with_bit,

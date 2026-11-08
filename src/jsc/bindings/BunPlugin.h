@@ -311,6 +311,8 @@ bool hasModuleMockUnsettledAsyncFactory(JSC::JSObject* moduleMock);
 bool canRequireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);
 #if ENABLE(AOT)
 bool canRequireOriginalOfModuleMockAt(Zig::GlobalObject*, const String& path);
+// A preload's mock that came back at the end of a test file's mock is what the require map holds under `bun test`: it goes with the key.
+void didDeleteKeyOfModuleMock(Zig::GlobalObject*, const String& key);
 #endif
 // What jest.requireActual() returns for the mocked module.
 JSC::JSValue requireOriginalOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock);

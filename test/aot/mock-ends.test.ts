@@ -27,7 +27,12 @@ const known = readFileSync(list, "utf8").split("\n");
 const ways: Record<string, string> = { "one-program": "TestRunLayers:0" };
 
 async function seenByNextFiles(dir: string, words?: string) {
-  const env = { ...bunEnv, NO_COLOR: "1", ...(words && { BUN_DEBUG_TEST_AOT_WORDS: words }) };
+  const env = {
+    ...bunEnv,
+    NO_COLOR: "1",
+    BUN_OPTIONS: "--no-install",
+    ...(words && { BUN_DEBUG_TEST_AOT_WORDS: words }),
+  };
   const { stdout, stderr } = await run(
     [bunExe(), "test", "--no-isolate", ...(words ? ["--aot"] : []), ...inOrder],
     dir,

@@ -267,6 +267,7 @@ pub(super) struct WrittenNames(
     OnceCell<Vec<(Atom, ExprId)>>,
     MembersBehindNames,
     OnceCell<Vec<u32>>,
+    RefCell<FxHashMap<Atom, Vec<(SymbolId, ExprId)>>>,
 );
 
 impl WrittenNames {
@@ -1109,15 +1110,26 @@ impl Follower<'_, '_, '_> {
 
     fn mentions_of(&self, symbol: SymbolId) -> Vec<ExprId> {
         let &ScanInputs { hir, bound, .. } = self.inputs;
-        let written = self.written_names.find(hir, bound.symbol(symbol).name);
-        let written = written.iter().map(|it| it.1);
-        written
-            .filter(|&e| {
-                bound.is_evaluated_ident(e)
-                    && bound.binding(e) == Binding::Symbol(symbol)
-                    && !self.is_dead(e)
-            })
-            .collect()
+        let name = bound.symbol(symbol).name;
+        let mut mentions_by_name = self.written_names.3.borrow_mut();
+        let mentions = mentions_by_name.entry(name).or_insert_with(|| {
+            let written = self.written_names.find(hir, name).iter().map(|it| it.1);
+            let mut mentions: Vec<(SymbolId, ExprId)> = written
+                .filter_map(|e| match bound.binding(e) {
+                    Binding::Symbol(mentioned)
+                        if bound.is_evaluated_ident(e) && !self.is_dead(e) =>
+                    {
+                        Some((mentioned, e))
+                    }
+                    _ => None,
+                })
+                .collect();
+            mentions.sort_unstable();
+            mentions
+        });
+        let first = mentions.partition_point(|it| it.0 < symbol);
+        let of_symbol = mentions[first..].iter().take_while(|it| it.0 == symbol);
+        of_symbol.map(|it| it.1).collect()
     }
 
     fn outermost_cast(&self, mut e: ExprId) -> ExprId {

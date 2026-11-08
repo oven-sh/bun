@@ -1,5 +1,6 @@
 // run-parallel.ts builds every stored program once more with --aot-testing=FailGuesses:<n>: one guess in n fails on purpose, so that the program walks the ways from its typed copies into the
 // closed ones, and it must print what plain Bun prints there too. No flag asks for that build: it is made wherever the builds behind the first are made.
+// And once more with --aot-harden=proof-checks, where a proof that does not hold stops the program by name. The builds of each way are counted on stderr, so that no flag drops a way without a word.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
@@ -33,13 +34,27 @@ const waysOf = async (words: string[], environment?: Record<string, string>) => 
   const { lines, exitCode } = await driven(words, environment);
   return { ways: lines.find(({ state }) => state !== "compiling")?.ways, exitCode };
 };
-const inThreeWays = (n: string) => ({
-  ways: { compiled: "pass", "under --aot-erase-types": "pass", [`under --aot-testing=FailGuesses:${n}`]: "pass" },
+const inFourWays = (n: string) => ({
+  ways: {
+    compiled: "pass",
+    "under --aot-erase-types": "pass",
+    [`under --aot-testing=FailGuesses:${n}`]: "pass",
+    "under --aot-harden=proof-checks": "pass",
+  },
   exitCode: 0,
 });
 
-test("a program is built as written, with its types erased, and where one guess in three fails", async () => {
-  expect(await waysOf([])).toEqual(inThreeWays("3"));
+test("a program is built as written, with its types erased, where one guess in three fails, and where proofs are checked", async () => {
+  expect(await waysOf([])).toEqual(inFourWays("3"));
+}, 120_000);
+
+test("the builds of each way are counted, and --no-erased is named where it leaves them out", async () => {
+  expect((await driven([])).stderr).toContain(
+    "builds by way: compiled 1 | under --aot-erase-types 1 | under --aot-testing=FailGuesses:3 1 | under --aot-harden=proof-checks 1\n",
+  );
+  expect((await driven(["--no-erased"])).stderr).toContain(
+    "builds by way: compiled 1 | --no-erased leaves out every build behind the first\n",
+  );
 }, 120_000);
 
 test.each([
@@ -49,13 +64,13 @@ test.each([
 ])(
   "in build %s of CI it is one guess in %s",
   async (number, n) => {
-    expect(await waysOf([], { BUILDKITE_BUILD_NUMBER: number })).toEqual(inThreeWays(n));
+    expect(await waysOf([], { BUILDKITE_BUILD_NUMBER: number })).toEqual(inFourWays(n));
   },
   120_000,
 );
 
 test("--one-guess-in says which, with a seed or without", async () => {
-  expect(await waysOf(["--one-guess-in=5:8"], { BUILDKITE_BUILD_NUMBER: "137941" })).toEqual(inThreeWays("5:8"));
+  expect(await waysOf(["--one-guess-in=5:8"], { BUILDKITE_BUILD_NUMBER: "137941" })).toEqual(inFourWays("5:8"));
 }, 120_000);
 
 test.each(["1", "1:8", "0", "three"])(
@@ -78,6 +93,7 @@ test("a program that prints what goes by the copy that runs is built and run the
       compiled: "pass",
       "under --aot-erase-types": "built and run, not compared",
       "under --aot-testing=FailGuesses:3": "built and run, not compared",
+      "under --aot-harden=proof-checks": "built and run, not compared",
     },
     exitCode: 0,
   });
@@ -86,5 +102,5 @@ test("a program that prints what goes by the copy that runs is built and run the
 test("--no-erased leaves it out with the other builds behind the first, and --deal prices it", async () => {
   expect(await waysOf(["--no-erased"])).toEqual({ ways: { compiled: "pass" }, exitCode: 0 });
   const priceOf = async (words: string[]) => (await driven(["--deal", ...words])).lines[0].ms as number;
-  expect(await priceOf([])).toBe(3 * (await priceOf(["--no-erased"])));
+  expect(await priceOf([])).toBe(4 * (await priceOf(["--no-erased"])));
 }, 120_000);

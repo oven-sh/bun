@@ -3706,7 +3706,7 @@ impl<'p, 's> Checker<'p, 's> {
                             && let Some(owner) = self.bound(file).prop_owner[p.idx()].some()
                             && matches!(self.hir(file)[owner].kind, ExprKind::Jsx(_))
                         {
-                            let p = self.bound(file).declarations_of_literal_member(p)[0];
+                            let p = self.bound(file).first_declaration_of_literal_member(p);
                             let end = self.end_of_jsx_attr_name(file, p);
                             r.error_node = (file, self.hir(file)[p].pos, end);
                         }
@@ -3718,7 +3718,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // `prop.ValueDeclaration`
                     let is_identifier = match Self::value_declaration(prop) {
                         Some(&PropSource::Literal(file, p)) if r.error_node.0 == file => {
-                            let p = self.bound(file).declarations_of_literal_member(p)[0];
+                            let p = self.bound(file).first_declaration_of_literal_member(p);
                             let (hir, prop_node) = (self.hir(file), &self.hir(file)[p]);
                             r.error_node = (file, prop_node.pos, self.end_of_prop_name(file, p));
                             matches!(prop_node.key, PropKey::Name(_))

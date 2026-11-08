@@ -314,7 +314,11 @@ impl Head<'_, '_> {
             byte if is_part_of_word(byte) => {
                 let rest = &text[at..];
                 let length = rest.iter().position(|&byte| !is_part_of_word(byte));
-                (Kind::Word, length.unwrap_or(rest.len()))
+                let length = length.unwrap_or(rest.len());
+                if bun_core::strings::contains_char(&rest[..length], b'\\') {
+                    return None;
+                }
+                (Kind::Word, length)
             }
             _ => return None,
         };

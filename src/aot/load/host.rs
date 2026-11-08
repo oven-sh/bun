@@ -767,6 +767,13 @@ impl<'a> LoadHost<'a> {
         Cow::default()
     }
 
+    fn file_with_query(&self, path: &[u8]) -> Option<FileWithQuery> {
+        (self.modules_with_queries.find(path)).map(|it| FileWithQuery {
+            file: it.file.as_slice().into(),
+            query: it.query.as_slice().into(),
+        })
+    }
+
     fn requested_loader(&self, loader: HostLoader, path: &[u8]) -> Loader {
         match host_loader_kind(loader) {
             Some(HostLoaderKind::Loader(loader)) => return loader,
@@ -1496,6 +1503,7 @@ impl CodeHost for LoadHost<'_> {
                 host_values: parsed.host_values,
                 payload: Some(Box::new(ParsedSource {
                     plugin_module,
+                    file_with_query: self.file_with_query(path),
                     web_assembly: parsed.web_assembly,
                     said_where_type_is_written: (is_refused_under_type && !is_named_as_code)
                         .then_some(said_of_text),
@@ -1628,10 +1636,7 @@ impl CodeHost for LoadHost<'_> {
             host_values: &[],
             payload: Some(Box::new(ParsedSource {
                 plugin_module,
-                file_with_query: (self.modules_with_queries.find(path)).map(|it| FileWithQuery {
-                    file: it.file.as_slice().into(),
-                    query: it.query.as_slice().into(),
-                }),
+                file_with_query: self.file_with_query(path),
                 parse_failure,
                 is_language_assumed,
                 byte_count: text.len(),

@@ -30,8 +30,8 @@ use super::table::{
 };
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::bind::{Binding, Bound, CommonJsVariable, SymbolId};
-use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, Chain, ExprId, ExprKind, MemberKey, NodeData};
+use bun_sema::fold::{Constant, Decisions};
+use bun_sema::hir::{self, Chain, ExprId, ExprKind, Keyword, MemberKey, NodeData, TypeNodeKind};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::ModuleFormat;
 use core::ops::Range;
@@ -164,6 +164,52 @@ pub const LOADED_BELOW_VITEST: &[u8] = b"%loaded-below-vitest";
 pub const LOADED_BY_WORKER: &[u8] = b"%loaded-by-worker";
 pub const GLOBALS_LEFT_ALONE: &[u8] = b"%globals-left-alone";
 pub const BUN_OF_TEST_FILE: &[u8] = b"%bun";
+
+fn keyword_accepts(keyword: Keyword, constant: Constant) -> bool {
+    match (keyword, constant) {
+        (Keyword::Any | Keyword::Unknown, _)
+        | (_, Constant::Undefined | Constant::Null)
+        | (Keyword::String, Constant::String(_))
+        | (Keyword::Number, Constant::Number(_))
+        | (Keyword::Boolean, Constant::Boolean(_))
+        | (Keyword::BigInt, Constant::BigInt(_)) => true,
+        (
+            Keyword::Never
+            | Keyword::Void
+            | Keyword::Undefined
+            | Keyword::Null
+            | Keyword::String
+            | Keyword::Number
+            | Keyword::Boolean
+            | Keyword::BigInt
+            | Keyword::Symbol
+            | Keyword::Object
+            | Keyword::This
+            | Keyword::Intrinsic,
+            _,
+        ) => false,
+    }
+}
+
+pub fn passes_every_assertion(
+    hir: &hir::File<'_>,
+    expression: ExprId,
+    constant: Option<Constant>,
+) -> bool {
+    let mut current = expression;
+    while let Some(operand) = hir.type_assertion_operand(current) {
+        if let ExprKind::As { ty, .. } = hir[current].kind {
+            let TypeNodeKind::Keyword(keyword) = hir[ty].kind else {
+                return false;
+            };
+            if constant.is_some_and(|constant| !keyword_accepts(keyword, constant)) {
+                return false;
+            }
+        }
+        current = operand;
+    }
+    true
+}
 
 pub struct ResolveInput<'a, 's> {
     pub hir: &'a hir::File<'s>,

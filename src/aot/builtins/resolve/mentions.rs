@@ -415,18 +415,15 @@ impl Resolver<'_, '_> {
             let hir = self.input.hir;
             let name = match hir.member_key(member) {
                 Some((_, MemberKey::Name(name))) => name,
-                Some((_, MemberKey::Computed(key))) => {
-                    let key = hir.skip_type_assertions(key);
-                    match self.input.decisions.constant(hir, key) {
-                        FoldedValue::Constant(Constant::String(name))
-                        | FoldedValue::ConstantOutsideDeadZone(Constant::String(name))
-                            if !self.lists_member(id, name) =>
-                        {
-                            name
-                        }
-                        _ => continue,
+                Some((_, MemberKey::Computed(key))) => match self.find_constant_that_key_is(key) {
+                    FoldedValue::Constant(Constant::String(name))
+                    | FoldedValue::ConstantOutsideDeadZone(Constant::String(name))
+                        if !self.lists_member(id, name) =>
+                    {
+                        name
                     }
-                }
+                    _ => continue,
+                },
                 _ => continue,
             };
             if mentioned_id(self.state(member)).is_none() {

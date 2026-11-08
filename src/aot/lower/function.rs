@@ -12,6 +12,9 @@ mod this;
 pub(crate) use self::header::{
     create_header, declare_source_function, declare_source_function_with,
 };
+pub(in crate::lower) use self::original_asked_for::{
+    StatementsThatNest, ValuesThatConstsWereFollowedTo,
+};
 pub(in crate::lower) use self::text::{print_number, print_string};
 use crate::ir::ValueId;
 

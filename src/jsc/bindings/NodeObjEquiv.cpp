@@ -447,8 +447,7 @@ static ALWAYS_INLINE JSC::JSValue nextMember(JSC::JSGlobalObject* globalObject, 
     return member;
 }
 
-// compareSmallSets (#L739-L755): two Sets of one or two members, from the first member of the second Set that the first one does not hold.
-// Not as node in one case, marked twice below. After a member that both Sets hold, `member2` is the last member of the second Set, and node compares a member of the first Set with the undefined that it reads past the end of `iteratorB` (since nodejs/node#57648). So node calls { o, a copy of o } not equal to another such Set, and { undefined, o } equal to it. Here the member that both Sets hold is its own partner, as it is in larger Sets on node (#L764, #L712).
+// compareSmallSets (#L739-L755): two Sets of one or two members, from the first member of the second Set that the first one does not hold. Not as node at two reads, marked below: after a member that both Sets hold, node reads past the end of `iteratorB` and compares a member of the first Set with undefined (since nodejs/node#57648). Here the member that both Sets hold is its own partner, as it is in larger Sets on node (#L764, #L712).
 static NEVER_INLINE bool smallSetsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSSet* set1, JSC::JSSet* set2, JSC::JSValue member2, JSC::JSSetIterator* iterator2, const CompareValues& compareValues)
 {
     auto* iterator1 = JSC::JSSetIterator::create(globalObject->vm(), globalObject->setIteratorStructure(), set1, JSC::IterationKind::Keys);
@@ -589,7 +588,7 @@ bool mapsEqual(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::J
     JSC::JSValue key2;
     JSC::JSValue value2;
     while (iterator2->nextKeyValue(globalObject, key2, value2)) {
-        // Not as node, which looks up only a key that `typeof` does not call an object (#L910-L917). A key that is an object is a candidate there also where both Maps hold it (#L900-L909): the walk compares it with the candidates before it, and with itself as any two objects (since nodejs/node#57648). So n such keys in another order take n * n / 4 comparisons, and a Promise that is a key of both Maps is not equal to itself. Here a key that both Maps hold with equal values is its own partner and no candidate, as a member that both Sets hold is on node (#L764, #L712). The other keys then meet the candidates in another order than on node: that changes the answer only where a key is equal to another in one argument order.
+        // Not as node, which looks up only a key that `typeof` does not call an object (#L910-L917): a key that is an object is a candidate there also where both Maps hold it (#L900-L909), compared with the candidates before it and with itself as two objects (since nodejs/node#57648). Here a key that both Maps hold with equal values is its own partner and no candidate, as a member that both Sets hold is on node (#L764, #L712). So the other keys meet the candidates in another order: the answer differs where a key is equal to another in one argument order only.
         JSC::JSValue value1 = map1->get(globalObject, key2);
         RETURN_IF_EXCEPTION(scope, false);
         bool held = !value1.isUndefined();

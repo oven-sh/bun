@@ -375,14 +375,14 @@ beforeAll(done => {
 
 What the test runner does next depends on the hook that failed:
 
-| Hook         | What the test runner does when the hook fails                                                                                                                                                                 |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `beforeAll`  | Reports the hook as failed. Runs no other `beforeAll` hook and no test in the hook's scope, and doesn't list those tests in the output. Still runs the `afterAll` hooks of the hook's describe block or file. |
-| `beforeEach` | Skips the later `beforeEach` hooks and the test, and reports the test as failed. Still runs the test's `afterEach` hooks.                                                                                     |
-| `afterEach`  | Reports the test as failed. Skips the later `afterEach` hooks and the `onTestFinished` callbacks of that test.                                                                                                |
-| `afterAll`   | Reports the hook as a separate failure and keeps the results of the tests. Skips the later `afterAll` hooks of the same describe block or file.                                                               |
+| Hook         | What the test runner does when the hook fails                                                                                                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `beforeAll`  | Reports the hook as failed. In the hook's scope, runs no other `beforeAll` hook and no test, and doesn't list those tests in the output. Still runs the `afterAll` hooks of the hook's describe block or file. |
+| `beforeEach` | Skips the later `beforeEach` hooks and the test, and reports the test as failed. Still runs the test's `afterEach` hooks.                                                                                      |
+| `afterEach`  | Reports the test as failed. Skips the later `afterEach` hooks and the `onTestFinished` callbacks of that test.                                                                                                 |
+| `afterAll`   | Reports the hook as a separate failure and keeps the results of the tests. Skips the later `afterAll` hooks of the same describe block or file.                                                                |
 
-One case is different. When the callback of a [`test.failing`](/test/writing-tests#test-failing) test, or of a [`test.todo`](/test/writing-tests#test-todo) test that runs with `--todo`, throws, a failed `afterEach` hook does not change the result of that test. Bun prints the error of the hook.
+One case is different. When the callback of a [`test.failing`](/test/writing-tests#test-failing) test, or of a [`test.todo`](/test/writing-tests#test-todo) test that runs with `--todo`, throws, a failed `afterEach` hook does not change the result of that test. Bun prints the error of the hook. When the hook passed the error to `done`, Bun reports it as an unhandled error, and the run fails.
 
 A `beforeAll` hook in a [preload script](#global-setup-and-teardown) runs before the first test file. If it fails, the test runner doesn't run the tests of that file, and the later files still run. With `--isolate` or `--parallel`, the hook runs for each file.
 

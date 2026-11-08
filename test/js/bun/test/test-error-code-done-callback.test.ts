@@ -653,8 +653,8 @@ describe("an error passed to a hook's done() fails that hook, like a throw from 
   });
 
   test.concurrent("--reporter=junit records a failure of the hook's test, not an unhandled error", async () => {
-    // One line for each <testcase>: its suite, its name, and the message of its <failure>.
-    async function testcases(hook: Hook) {
+    // `testcases` has one line for each <testcase>: its suite, its name, and the message of its <failure>.
+    async function junit(hook: Hook) {
       using dir = tempDir("done-err-junit", { "done-err.test.ts": eachKindOfHook(hook, "", true) });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", "--reporter=junit", "--reporter-outfile=./junit.xml"],
@@ -663,27 +663,33 @@ describe("an error passed to a hook's done() fails that hook, like a throw from 
         stdout: "ignore",
         stderr: "ignore",
       });
-      await proc.exited;
+      const exitCode = await proc.exited;
       const xml = await Bun.file(path.join(String(dir), "junit.xml")).text();
       const testcase =
         /<testcase name="([^"]*)" classname="([^"]*)"[^>]*>(?:\s*<failure type="[^"]*" message="([^"]*)")?/g;
-      return [...xml.matchAll(testcase)].map(
-        ([, name, suite, failure]) => `${suite} > ${name}: ${failure ?? "no failure"}`,
-      );
+      return {
+        testcases: [...xml.matchAll(testcase)].map(
+          ([, name, suite, failure]) => `${suite} > ${name}: ${failure ?? "no failure"}`,
+        ),
+        exitCode,
+      };
     }
     const [done, control] = await Promise.all([
-      testcases(hooks["done(err) before the hook returns"]),
-      testcases(hooks["a throw"]),
+      junit(hooks["done(err) before the hook returns"]),
+      junit(hooks["a throw"]),
     ]);
     expect(done).toEqual(control);
-    expect(done).toEqual([
-      "beforeEach > does not run: beforeEach failed",
-      "afterEach > runs and fails: afterEach failed",
-      "onTestFinished > runs and fails: onTestFinished failed",
-      "afterAll > runs and passes: no failure",
-      "afterAll > (unnamed): afterAll failed",
-      "beforeAll > (unnamed): beforeAll failed",
-    ]);
+    expect(done).toEqual({
+      testcases: [
+        "beforeEach > does not run: beforeEach failed",
+        "afterEach > runs and fails: afterEach failed",
+        "onTestFinished > runs and fails: onTestFinished failed",
+        "afterAll > runs and passes: no failure",
+        "afterAll > (unnamed): afterAll failed",
+        "beforeAll > (unnamed): beforeAll failed",
+      ],
+      exitCode: 1,
+    });
   });
 
   // done(err) ends the hook. The runner does not wait for the promise that the hook returned, and a throw

@@ -1,6 +1,6 @@
 # A tp_dealloc gives back the last references to instances that another thread has made, and so do theirs: a tree of 15. The tp_dealloc of the last that has children runs code of the program's, which lets
 # the other thread collect, three times. By then more wait for their turn than the list of a turn holds in itself. They are still there when their turns come, and each comes once, in the thread that has begun.
-import ctypes, gc, os, sys, threading
+import ctypes, gc, os, sys, threading, time
 from ctypes import c_long, c_void_p, py_object
 
 lib = ctypes.PyDLL(sys.argv[1])
@@ -74,8 +74,7 @@ thread.start()
 wait_for(has_made, "the other thread has made its share")
 make_member(0)
 make_family()
-# A collection of the young takes whatever C owns a reference to for held: it would find the first dead alone. Now they are old, and a full one finds them dead together.
-gc.collect()
+# (No gc.collect() makes them old first. A collection of the young takes whatever C owns a reference to for held, and may find the first dead alone: what it gives back is main's all the same.)
 call_at_dealloc(ctypes.cast(at_dealloc, c_void_p))
 # No gc.collect() is under way when they go: the other thread's would do nothing.
 drop_family()
@@ -88,6 +87,59 @@ order = [id for id, _ in ended_by]
 print("each after its parent:", all(order.index((id - 1) // 2) < order.index(id) for id in range(1, 15)))
 print(sorted(event for event in take_events() if event % 1000000 < 15))
 
+# Whoever gives back the last reference that C owns to an instance owes its end. The other thread makes two instances of a class of Python's, and waits. Main makes a third that holds them, and drops it.
+make_member_of = declare("make_member_of", None, py_object, c_long, c_long)
+make_family_of_three = declare("make_family_of_three", None)
+ended_by = []
+has_made, have_ended = threading.Event(), threading.Event()
+# In CPython what nobody holds ends at once, and a full collection comes by itself as containers are made. Here both are up to the heap, which takes its time while the program waits, and may content itself with
+# the young for a long time. JavaScript asks for a full collection: to Python that is a collection like any that nobody has asked for.
+try:
+    from js import Bun
+except ImportError:
+    Bun = None
+
+
+def collect_unasked():
+    if Bun:
+        Bun.gc(True)
+
+
+class Sub(Node):
+    pass
+
+
+def other():
+    make_member_of(Sub, 1, 16)
+    make_member_of(Sub, 2, 17)
+    has_made.set()
+    wait_for(have_ended, "the three have ended")
+
+
+@ctypes.CFUNCTYPE(None, c_long)
+def at_dealloc(id):
+    # (It takes no lock: here it may be called in the middle of whatever its thread is doing, with a lock of that held.)
+    ended_by.append((id, threading.current_thread().name))
+
+
+thread = threading.Thread(target=other, name="the other")
+thread.start()
+wait_for(has_made, "the other thread has made its share")
+make_member_of(Node, 0, 15)
+make_family_of_three()
+call_at_dealloc(ctypes.cast(at_dealloc, c_void_p))
+drop_family()
+deadline = time.monotonic() + 300
+while len(ended_by) < 3:
+    if time.monotonic() > deadline:
+        give_up("the three have ended")
+    collect_unasked()
+have_ended.set()
+wait_for_end_of(thread)
+call_at_dealloc(None)
+print(ended_by)
+take_events()
+
 # A collection that nobody has asked for finds a ring that C has made and dropped. The thread that made it begins the tp_clear of one node, which runs code of the program's; that lets the other thread call
 # gc.collect(), three times, which collects, and makes the calls that any thread owes.
 #  - A ring of two: the tp_clear of the second, which gives back a reference to the first. The first is not destroyed under its own tp_clear.
@@ -95,12 +147,6 @@ print(sorted(event for event in take_events() if event % 1000000 < 15))
 count_events = declare("count_events", ctypes.c_int)
 drop_ring = declare("drop_ring", c_long, c_long, c_long)
 call_at_clear = declare("call_at_clear", None, c_void_p)
-# In CPython a full collection comes by itself as containers are made. Here that is up to the heap, which may content itself with the young for a long time. JavaScript asks for one: to Python that is a
-# collection like any that nobody has asked for.
-try:
-    from js import Bun
-except ImportError:
-    Bun = None
 
 
 @ctypes.CFUNCTYPE(None, c_long)
@@ -135,8 +181,7 @@ for first_id, length in (11, 2), (21, 1):
     kept = []
     while not count_events() and len(kept) < 2000:
         kept.append([[] for _ in range(5000)])
-        if Bun:
-            Bun.gc(True)
+        collect_unasked()
     del kept
     wait_for_end_of(thread)
     gc.collect()

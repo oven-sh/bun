@@ -13,3 +13,15 @@ void make_family(void)
     }
 }
 void drop_family(void) { Py_CLEAR(family[0]); }
+
+/* The same, of whatever type that derives from Node. */
+void make_member_of(PyObject *type, long index, long id)
+{
+    family[index] = ((allocfunc)PyType_GetSlot((PyTypeObject *)type, Py_tp_alloc))((PyTypeObject *)type, 0);
+    node_of(family[index])->id = id;
+}
+void make_family_of_three(void)
+{
+    node_of(family[0])->first = family[1];
+    node_of(family[0])->second = family[2];
+}

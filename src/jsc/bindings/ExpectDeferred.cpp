@@ -8,11 +8,47 @@
 #include <JavaScriptCore/AOTCompiledCaller.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
+#include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/VMEntryRecord.h>
 
 using namespace JSC;
+
+// The `expect` of "vitest": a native function with the `Expect` constructor as its prototype. Its structure has that
+// prototype from the start, because a compiled program refuses to change the prototype of a native function.
+class JSExpectOfVitest final : public InternalFunction {
+public:
+    using Base = InternalFunction;
+    DECLARE_INFO;
+
+    template<typename CellType, SubspaceAccess>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.internalFunctionSpace();
+    }
+
+    static JSExpectOfVitest* create(VM& vm, JSGlobalObject* globalObject, JSValue prototype, NativeFunction call)
+    {
+        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
+        auto* function = new (NotNull, allocateCell<JSExpectOfVitest>(vm)) JSExpectOfVitest(vm, structure, call);
+        function->finishCreation(vm, 2, "expect"_s);
+        return function;
+    }
+
+private:
+    JSExpectOfVitest(VM& vm, Structure* structure, NativeFunction call)
+        : Base(vm, structure, call, callHostFunctionAsConstructor)
+    {
+    }
+};
+
+const ClassInfo JSExpectOfVitest::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectOfVitest) };
+
+extern "C" EncodedJSValue Expect__createOfVitest(JSGlobalObject* globalObject, EncodedJSValue prototype, NativeFunction call)
+{
+    return JSValue::encode(JSExpectOfVitest::create(getVM(globalObject), globalObject, JSValue::decode(prototype), call));
+}
 
 static Bun::Bindgen::Generated::JSExpect* expectOfFrame(VM& vm, CallFrame* frame)
 {

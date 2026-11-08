@@ -692,12 +692,12 @@ impl Expect {
 
     /// The `expect` of `"vitest"`. The constructor is its prototype, so both modules share `extend()`, the state and the asymmetric matchers.
     #[optimize(size)]
-    pub(crate) fn create_of_vitest(global: &JSGlobalObject) -> JsResult<JSValue> {
-        let expect = JSFunction::create(global, "expect", generated::Bun__Expect__callOfVitest, 2, Default::default());
-        bun_jsc::cpp::Bun__JSValue__setPrototypeDirect(expect, super::expect::js::get_constructor(global), global)?;
+    pub(crate) fn create_of_vitest(global: &JSGlobalObject) -> JSValue {
+        let constructor = super::expect::js::get_constructor(global);
+        let expect = Expect__createOfVitest(global, constructor, generated::Bun__Expect__callOfVitest);
         expect.put(global, b"soft", JSFunction::create(global, "soft", generated::Bun__Expect__softOfVitest, 1, Default::default()));
         expect.put(global, b"poll", JSFunction::create(global, "poll", generated::Bun__Expect__pollOfVitest, 1, Default::default()));
-        Ok(expect)
+        expect
     }
 
     /// `state` is the test this `expect()` belongs to (a test context's bound `expect`). `None` means the running test.
@@ -3449,6 +3449,7 @@ unsafe extern "C" {
     safe fn ExpectStringMatching__compile(global: &JSGlobalObject, source: JSValue) -> JSValue;
 
     safe fn Expect__getPrototype(global_this: &JSGlobalObject) -> JSValue;
+    safe fn Expect__createOfVitest(global: &JSGlobalObject, prototype: JSValue, call: bun_jsc::JSHostFn) -> JSValue;
     safe fn ExpectStatic__getPrototype(global_this: &JSGlobalObject) -> JSValue;
 }
 

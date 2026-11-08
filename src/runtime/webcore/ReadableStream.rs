@@ -35,6 +35,20 @@ pub enum NativeWireResult {
     EndedInline(Option<streams::StreamError>),
 }
 
+/// What the caller of [`ReadableStream::to_any_blob`] does with the Blob it gets in place of an
+/// unread stream. It decides for a stream over a file: a Blob over a file holds no bytes, and
+/// each read of it reads the file again.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum Lift {
+    /// Reads the Blob once, or hands the file to a child process. Any file.
+    Read,
+    /// Gives the Blob to JS, or to two bodies. A file by path that each read opens again: not a
+    /// descriptor, a FIFO or a socket.
+    Keep,
+    /// Uses the bytes where they are. No file.
+    InMemory,
+}
+
 // ─── ReadableStream::Strong ──────────────────────────────────────────────────
 
 /// A `ReadableStream` handle for [`crate::webcore::body::PendingValue`] and the
@@ -197,8 +211,13 @@ impl ReadableStream {
         });
     }
 
-    /// Lift the whole payload out of an unread stream. On success the stream is spent (closed, disturbed, locked).
-    pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
+    /// Lift the whole payload out of an unread stream, for what `lift` says the caller does with it.
+    /// On success the stream is spent (closed, disturbed, locked). On `None` it is untouched.
+    pub fn to_any_blob(
+        &mut self,
+        global_this: &JSGlobalObject,
+        lift: Lift,
+    ) -> Option<webcore::blob::Any> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
         }
@@ -218,6 +237,9 @@ impl ReadableStream {
                 let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() else {
                     return None;
                 };
+                if !webcore::blob::file_store_lifts(store, lift) {
+                    return None;
+                }
                 let blob = Blob::init_with_store(store.clone(), global_this);
                 // The window `from_blob_copy_ref` moved onto the reader.
                 if let Some(offset) = blobby.start_offset {

@@ -204,19 +204,17 @@ extern "C" void WebWorker__postFailedToStartError(WorkerMessagingProxy* proxy)
 }
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
-// it to the Worker object. Script reaches no global scope in a node worker, so nothing listens there.
+// it to the Worker object.
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)
 {
     JSC::JSValue error = JSC::JSValue::decode(errorValue);
     String messageStr = message.transferToWTFString();
-    if (globalObject->exposesGlobalEventScope()) {
-        ErrorEvent::Init init;
-        init.message = messageStr;
-        init.error = error;
-        init.cancelable = false;
-        init.bubbles = false;
-        globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
-    }
+    ErrorEvent::Init init;
+    init.message = messageStr;
+    init.error = error;
+    init.cancelable = false;
+    init.bubbles = false;
+    globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     proxy->postErrorToWorkerObject(*globalObject, messageStr, error);
 }
 

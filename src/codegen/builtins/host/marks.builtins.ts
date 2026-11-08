@@ -25,7 +25,7 @@ export default b.declarations(
     "process.traceDeprecation",
     "process.traceProcessWarnings",
   ]),
-  // The global of a node:worker_threads worker has none of them: GlobalObject::exposesGlobalEventScope() in ZigGlobalObject.h.
+  // The global of a node:worker_threads worker has none of them: GlobalObject::addBuiltinGlobals() in ZigGlobalObject.cpp.
   marked("MayBeAbsent", [
     "addEventListener",
     "dispatchEvent",
@@ -33,7 +33,6 @@ export default b.declarations(
     "onmessage",
     "postMessage",
     "removeEventListener",
-    "self",
   ]),
   marked("EvaluatesTextInGlobalScope", [
     "%NodeVMBinding%.Script",

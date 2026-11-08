@@ -45,31 +45,14 @@ JSValue toJSNewlyCreated(JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<E
     return createWrapper<EventTarget>(globalObject, WTF::move(value));
 }
 
-// A global that does not expose its event scope is no EventTarget of its own, as in Node. Node's EventTarget keeps its
-// state in properties, so there the methods work on a global that inherits from an EventTarget
-// (`Object.setPrototypeOf(globalThis, new EventTarget())`, what the `web-worker` package does). The nearest one answers.
-static JSEventTarget* eventTargetInheritedBy(JSObject* global)
-{
-    for (JSValue prototype = global->getPrototypeDirect(); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
-        if (auto* target = dynamicDowncast<JSEventTarget>(prototype))
-            return target;
-    }
-    return nullptr;
-}
-
 EventTarget* JSEventTarget::toWrapped(VM& vm, JSValue value)
 {
     // if (value.inherits<JSWindowProxy>())
     //     return &uncheckedDowncast<JSWindowProxy>(asObject(value))->wrapped();
     // if (value.inherits<JSDOMWindow>())
     //     return &uncheckedDowncast<JSDOMWindow>(asObject(value))->wrapped();
-    if (value.inherits<JSDOMGlobalObject>()) {
-        auto* global = uncheckedDowncast<JSDOMGlobalObject>(asObject(value));
-        if (global->exposesGlobalEventScope()) [[likely]]
-            return global->globalEventScope.ptr();
-        auto* inherited = eventTargetInheritedBy(global);
-        return inherited ? &inherited->wrapped() : nullptr;
-    }
+    if (value.inherits<JSDOMGlobalObject>())
+        return uncheckedDowncast<JSDOMGlobalObject>(asObject(value))->globalEventScope.ptr();
     if (value.inherits<JSEventTarget>())
         return &uncheckedDowncast<JSEventTarget>(asObject(value))->wrapped();
     return nullptr;
@@ -88,12 +71,8 @@ JSEventTargetWrapper jsEventTargetCast(VM& vm, JSValue thisValue)
         if (!object)
             return {};
     }
-    if (auto* global = dynamicDowncast<Zig::GlobalObject>(object)) {
-        if (global->exposesGlobalEventScope()) [[likely]]
-            return { global->eventTarget(), *global };
-        if (auto* inherited = eventTargetInheritedBy(global))
-            return { inherited->wrapped(), *inherited };
-    }
+    if (auto* global = dynamicDowncast<Zig::GlobalObject>(object))
+        return { global->eventTarget(), *global };
 
     return {};
 }

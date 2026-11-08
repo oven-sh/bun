@@ -337,11 +337,6 @@ public:
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
     WebCore::EventTarget& eventTarget();
-    // Whether script reaches globalEventScope through this global: `self`, `onmessage`, `onerror`, `postMessage`,
-    // `addEventListener`, `removeEventListener` and `dispatchEvent` as own properties, and the global as the receiver
-    // of EventTarget.prototype's methods. False in a node:worker_threads worker, whose only channel to its parent is
-    // parentPort: Node defines none of the seven names there.
-    bool exposesGlobalEventScope() const;
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
     Ref<Bun::GlobalEventScope> globalEventScope;

@@ -131,7 +131,7 @@ A top-level `await` in a statically imported module counts too. Static imports a
 
 To send messages, use [`worker.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/Worker/postMessage) and [`self.postMessage`](https://developer.mozilla.org/en-US/docs/Web/API/DedicatedWorkerGlobalScope/postMessage). Bun serializes messages with the [HTML Structured Clone Algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm).
 
-A worker created with `node:worker_threads` has no `self`, `postMessage`, `onmessage` or `addEventListener` globals, as in Node.js. Use `parentPort` there.
+A worker created with `node:worker_threads` has no `postMessage`, `onmessage`, `onerror`, `addEventListener`, `removeEventListener` or `dispatchEvent` globals, as in Node.js. Use `parentPort` there. A function stored in `onmessage` or `onerror` in such a worker is an ordinary property, and nothing calls it.
 
 ### Performance optimizations
 

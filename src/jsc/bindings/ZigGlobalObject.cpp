@@ -1720,11 +1720,6 @@ WebCore::EventTarget& GlobalObject::eventTarget()
     return globalEventScope;
 }
 
-bool GlobalObject::exposesGlobalEventScope() const
-{
-    return !WebCore::clientData(vm())->isNodeWorkerVM();
-}
-
 JSC_DEFINE_CUSTOM_GETTER(JSBuffer_getter,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
         JSC::PropertyName))
@@ -2228,8 +2223,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDispatchEvent, (JSGlobalObject * lexicalGloba
     return jsFunctionDispatchEventBody(lexicalGlobalObject, callFrame, dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject));
 }
 
-// One CustomGetterSetter answers for addEventListener, removeEventListener, dispatchEvent and postMessage of a global.
-// The first read of a name makes its function and stores it over the getter, as the static table did for its rows.
+// Makes addEventListener, removeEventListener, dispatchEvent or postMessage of a global at the first read of the name.
 JSC_DEFINE_CUSTOM_GETTER(globalEventScopeFunction, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -3707,17 +3701,19 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    if (exposesGlobalEventScope()) {
-        putDirectAccessor(
+    // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
+    putDirectAccessor(
+        this,
+        builtinNames.selfPublicName(),
+        JSC::GetterSetter::create(
+            vm,
             this,
-            builtinNames.selfPublicName(),
-            JSC::GetterSetter::create(
-                vm,
-                this,
-                JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
-                JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
-            PropertyAttribute::Accessor | 0);
+            JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
+            JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
+        PropertyAttribute::Accessor | 0);
 
+    // A node:worker_threads worker posts and listens on parentPort only, and Node gives its global none of these names (#43459).
+    if (!clientData->isNodeWorkerVM()) {
         putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
         putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
 

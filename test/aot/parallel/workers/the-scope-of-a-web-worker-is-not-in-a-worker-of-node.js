@@ -1,4 +1,4 @@
-// One compiled file runs as a Worker of node:worker_threads and as a Web Worker. The first has none of self, onmessage, onerror, postMessage, addEventListener, removeEventListener and dispatchEvent, as in Node, and the second has them all: so the build decides nothing from their being there. Each name is asked for by typeof, by `in`, as a member, by a bare read, by a call behind a test, and is stored to.
+// One compiled file runs as a Worker of node:worker_threads and as a Web Worker. The first has none of onmessage, onerror, postMessage, addEventListener, removeEventListener and dispatchEvent, as in Node, and the second has them all: so the build decides nothing from their being there. `self` is in both. Each name is asked for by typeof, by `in`, as a member, by a bare read, by a call behind a test, and is stored to. A member of `self` is also read for nothing.
 import { Worker as NodeWorker, isMainThread, parentPort } from "node:worker_threads";
 
 if (isMainThread) {
@@ -80,6 +80,11 @@ if (isMainThread) {
       ? "a Web Worker"
       : "a Worker of node",
   );
+  attempt("members of self that nothing uses", () => {
+    self.Array.isArray;
+    if (self.Object.keys) void self.Math.PI;
+    return "read";
+  });
   const port = parentPort;
   attempt(
     "a store to a member",

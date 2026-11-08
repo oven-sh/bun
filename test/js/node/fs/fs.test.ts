@@ -3143,7 +3143,9 @@ describe("writeFileSync", () => {
     const path = `${tmpdirSync()}/writeFileSyncWithMode.txt`;
     writeFileSync(path, "bun", { mode: 33188 });
     const stat = fs.statSync(path);
-    expect(stat.mode).toBe(isWindows ? 33206 : 33188);
+    // open(2) masks the requested mode with the process umask (0o077 on
+    // Android/Termux), so the expected value has to account for it.
+    expect(stat.mode).toBe(isWindows ? 33206 : 33188 & ~process.umask());
   });
   it("returning Buffer works", () => {
     const buffer = new Buffer([

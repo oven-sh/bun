@@ -1680,6 +1680,24 @@ export const shapes: Shape[] = [
     }),
   },
   {
+    name: "closures in a list that read one list of rows",
+    counted: "closures",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `const table = [\n  { id: -1, name: "first" },\n${lines(size, index => `  { id: ${index}, name: "n${index}" },`)}];\nconst readers = [\n  () => table[0].name,\n${lines(size, index => `  () => table[${index + 1}].name,`)}];\nlet read = 0;\nfor (const reader of readers) read += reader().length;\nconsole.log(read);\n`,
+    }),
+  },
+  {
+    name: "getters by descriptor that read one list of rows",
+    counted: "getters",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `const table = [\n  { id: -1, name: "first" },\n${lines(size, index => `  { id: ${index}, name: "n${index}" },`)}];\nconst views = {};\nObject.defineProperty(views, "first", { enumerable: true, get: function () { return table[0].name; } });\n${lines(size, index => `Object.defineProperty(views, "x${index}", { enumerable: true, get: function () { return table[${index + 1}].name; } });`)}console.log(Object.keys(views).length, views.first);\n`,
+    }),
+  },
+  {
     name: "methods of one class under one name",
     counted: "methods",
     size: 16000,
@@ -4585,6 +4603,16 @@ console.log(typeof outmost.inner);
     entry: "main.js",
     write: size => ({
       "main.js": `const { ${upTo(size, index => `a${index}, `).join("")}...rest } = { ${upTo(2 * size + 2, index => `a${index}: ${index}`).join(", ")} };\nconsole.log(Object.keys(rest).length);\n`,
+    }),
+  },
+  {
+    name: "equalities of one whole number with written numbers that are joined by ||",
+    counted: "equalities",
+    size: 8000,
+    entry: "main.ts",
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts": `${declaredConsole}function pick(c: any): number {\n  const x = c | 0;\n  if (${upTo(Math.max(size, 1), index => `x === ${3 * index}`).join(" || ")}) return 1;\n  return 0;\n}\nconsole.log(pick(JSON.parse("7")));\n`,
     }),
   },
   {
@@ -7663,6 +7691,22 @@ export {};
         `function count() {\n  let sum = 0;\n  for (let i = 0; i < things.length; i++) {\n    const thing = things[i];\n` +
         lines(6, question => `    if (thing instanceof ${size ? `C${(question * 37) % size}` : "Base"}) sum += ${question + 1};`) +
         `  }\n  return sum;\n}\nlet all = 0;\nfor (let turn = 0; turn < 30; turn++) all += count();\nconsole.log(all);\n`,
+    }),
+  },
+  // Each function hands the literal it was called with on to one function, so that function's parameter is one of as many layouts as there are calls, and every caller tests for all of them.
+  // Each unit went through all the layouts of that test twice: functions x layouts. 8,000 functions took 8.2 G instructions and 16,000 took 17.6 G; from emitting to encoding 2.4 G, then 6.5 G.
+  {
+    name: "functions that each hand a literal of their caller's on to one function",
+    counted: "functions",
+    size: 8000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `let used = 0;\nfunction use(value) { if (value !== undefined) used++; }\n` +
+        `function h(type, props, ...children) { return { type, props, children }; }\nfunction First(props) { return h("span", props); }\n` +
+        lines(size, index => `function C${index}(props) { return h("div", { id: ${index}, className: "c" }, h(${index ? `C${(index - 1) >> 1}` : "First"}, props), "text"); }`) +
+        lines(size, index => `use(C${index}({}).children.length);`) +
+        `console.log(used);\n`,
     }),
   },
 ];

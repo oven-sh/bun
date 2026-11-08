@@ -16,10 +16,6 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
-  "aot/a-type-error-in-a-text-that-the-build-was-given-stops-the-build.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -808,6 +804,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-type-error-in-a-text-that-the-build-was-given-stops-the-build.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-value-that-the-host-computes-is-held-against-its-row.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -999,6 +999,10 @@
   "aot/built-ins-from-packages.test.ts": {
     "default": 11100,
     "asan": 44400
+  },
+  "aot/builtins/a-quiet-row-leaves-the-bytes-of-a-view-where-they-are.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/builtins/exports.test.ts": {
     "default": 25100,
@@ -1464,6 +1468,22 @@
     "default": 5700,
     "asan": 22800
   },
+  "aot/everyday-failing-tests-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-failing-tests-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-failing-tests-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-failing-tests-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/everyday-mocks-1.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -1485,6 +1505,22 @@
     "asan": 240000
   },
   "aot/everyday-mocks-6.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-programs-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-programs-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-programs-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/everyday-programs-4.test.ts": {
     "default": 60000,
     "asan": 240000
   },

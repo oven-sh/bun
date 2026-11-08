@@ -1141,6 +1141,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return false;
         };
         let mut names_list = false;
+        let mut rows_may_be_texts = false;
         for &part in self.c.parts(said) {
             if self.c.flags(part) & tf::NULLABLE != 0 {
                 continue;
@@ -1150,15 +1151,24 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             };
             let holds_lists_alone = self.c.some_type(element, |c, held| c.is_array(held))
                 && self.c.every_type(element, |c, held| {
-                    c.is_array(held) || c.flags(held) & tf::NULLABLE != 0
+                    c.is_array(held) || c.flags(held) & (tf::NULLABLE | tf::STRING_LIKE) != 0
                 });
             if !holds_lists_alone {
                 return false;
             }
+            rows_may_be_texts |= self
+                .c
+                .some_type(element, |c, held| c.flags(held) & tf::STRING_LIKE != 0);
             names_list = true;
         }
         if !names_list {
             return false;
+        }
+        if rows_may_be_texts {
+            let Ok(true) = self.ask(|queries| Ok(queries.is_read_under_numbers_alone(pattern)))
+            else {
+                return false;
+            };
         }
         let checked = self.ask(|queries| {
             let ty = queries.c.type_of_pat(queries.file, pattern);

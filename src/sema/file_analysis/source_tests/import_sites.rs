@@ -1935,8 +1935,6 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "const table = { a: { b: './a' } }; for (const inner of Object.values(table)) change(inner); require(table.a.b);",
     "for (const name in table) require(name);",
     "for await (const name of ['./a']) require(name);",
-    "let name = './a'; while (c) name += 'b'; require(name);",
-    "let name = './a'; const grow = () => { name += 'b'; }; require(name);",
     "let name = './a'; name += name; require(name);",
     "let name = './a'; [name] = x; require(name);",
     "const load = id => require(id); load('./a'); hand(load);",
@@ -1945,6 +1943,26 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
 ];
 
 const NAMES_WITH_A_PART_OUT_OF_WHAT_MAY_CHANGE: &[(&str, &[&str])] = &[
+    (
+        "let name = './a'; while (c) name += 'b'; require(name);",
+        &["./a*"],
+    ),
+    (
+        "let name = './a'; const grow = () => { name += 'b'; }; require(name);",
+        &["./a*"],
+    ),
+    (
+        "for (let name = './a', i = 0; i < 3; i++) { name += 'b'; require(name + '.js'); }",
+        &["./a*.js"],
+    ),
+    (
+        "for (let name = './a', i = 0; i < 3; i++, name += 'b') require(name + '.js');",
+        &["./a*.js"],
+    ),
+    (
+        "for (let name of ['./a', './c']) { name += 'b'; require(name + '.js'); }",
+        &["./a.js", "./ab.js", "./c.js", "./cb.js"],
+    ),
     (
         "const names = ['A']; names.forEach((name, index, all) => { all[index] = x; }); require(['./lib', names[0] + '.js'].join('/'));",
         &["./lib/*.js"],

@@ -2019,6 +2019,38 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         }
     }
 
+    pub(super) fn is_read_under_numbers_alone(&mut self, pattern: PatId) -> bool {
+        let (hir, bound) = (self.hir(), self.bound());
+        let Some(symbol) = find_initialized_symbol(bound, pattern) else {
+            return false;
+        };
+        let mut keys: SmallVec<[ExprId; 4]> = SmallVec::new();
+        for &(_, reference) in references_to(self.references_to_bindings(), symbol) {
+            let mut value = reference;
+            let found = loop {
+                match find_use(hir, bound, value) {
+                    Use::PassedOn(whole) => value = whole,
+                    found => break found,
+                }
+            };
+            if let Use::Keyed { key, .. } = found {
+                keys.push(key);
+            }
+        }
+        if keys.is_empty() {
+            return false;
+        }
+        for key in keys {
+            let Some(key_type) = self.type_for_evidence(key) else {
+                return false;
+            };
+            if !self.is_number_type(key_type) {
+                return false;
+            }
+        }
+        true
+    }
+
     pub(super) fn infer_binding_type(&mut self, pattern: PatId, checked: TypeId) -> TypeId {
         let (hir, bound) = (self.hir(), self.bound());
         let is_untyped_name = matches!(hir[pattern].kind, PatKind::Ident(_))

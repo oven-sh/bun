@@ -49,6 +49,7 @@
 namespace Zig {
 bool runCompiledMock(Zig::GlobalObject*, JSC::AOT::ModuleID);
 JSC::JSPromise* evaluateOriginalOfCompiledMock(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& hasFactory);
+void didStartImportOfCompiledFile(Zig::GlobalObject*, const String& path);
 bool layMocksOfBodiesAgain(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached);
 JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isAskedAbout, JSC::AOT::FactoryAskedForBy, JSC::JSValue& state);
 uint64_t callOfFactoryOfCompiledMockThatHasNotSettled(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& refusesEveryRequire);
@@ -1186,6 +1187,7 @@ void willResetModules(Zig::GlobalObject* globalObject, ASCIILiteral call, bool k
         return;
     }
     AOT::dropErrorsOfLoadsEndedByMocks(globalObject);
+    AOT::letLoadsThatRequiresLeftKeepNoError(globalObject);
     // What a preload resets, or a hook of a preload, is gone for good.
     auto takeOut = JSMock__isInPreload(globalObject) ? AOT::didDeleteRequireCacheEntry : AOT::didResetModule;
     for (auto& file : files) {
@@ -1277,26 +1279,32 @@ static void willSetRequireCacheEntryUnderNameOfNodeModule(Zig::GlobalObject* glo
 
 void willSetRequireCacheEntry(Zig::GlobalObject* globalObject, const String& key, JSValue entry)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     auto module = compiledModuleForPath(key);
     if (!module) {
         if (!entry.toBoolean(globalObject))
             return;
         // overridableRequire() looks for a module of native code that is Bun's own under its one name: "bun:jsc".
         if (auto nativeModule = moduleThatAnswersToPath(key))
-            return AOT::willSetRequireCacheEntry(globalObject, *nativeModule, entry);
-        willSetRequireCacheEntryUnderNameOfNodeModule(globalObject, key);
-        return;
+            RELEASE_AND_RETURN(scope, AOT::willSetRequireCacheEntry(globalObject, *nativeModule, entry));
+        RELEASE_AND_RETURN(scope, willSetRequireCacheEntryUnderNameOfNodeModule(globalObject, key));
     }
     // `require.cache[path] = undefined`: overridableRequire() goes by an entry that is truthy.
     if (!entry.toBoolean(globalObject)) {
         if (reloadsFilesFromDisk() && !AOT::isSetAsideByMock(globalObject, *module) && !ranBesideMockThatWaits(globalObject, *module))
             AOT::willClearRequireCacheEntry(globalObject, *module);
+        RETURN_IF_EXCEPTION(scope, );
+        if (reloadsFilesFromDisk() && !ranBesideMockThatWaits(globalObject, *module) && !AOT::isLoadInFlight(globalObject, *module) && !AOT::wasLoadedByImport(globalObject, *module))
+            RELEASE_AND_RETURN(scope, didDeleteKeyOfModuleMock(globalObject, key));
         return;
     }
+    if (reloadsFilesFromDisk() && !ranBesideMockThatWaits(globalObject, *module) && !AOT::isLoadInFlight(globalObject, *module) && !AOT::wasLoadedByImport(globalObject, *module))
+        didDeleteKeyOfModuleMock(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, );
     // `require.cache[path] = { exports: fake }`: how a test puts something of its own in place of a CommonJS file.
     if (reloadsFilesFromDisk())
-        return AOT::willReplaceRequireCacheEntry(globalObject, *module);
-    AOT::willSetRequireCacheEntry(globalObject, *module, entry);
+        RELEASE_AND_RETURN(scope, AOT::willReplaceRequireCacheEntry(globalObject, *module));
+    RELEASE_AND_RETURN(scope, AOT::willSetRequireCacheEntry(globalObject, *module, entry));
 }
 
 void willStoreLoaderOfExtension(Zig::GlobalObject* globalObject, StringView extension)
@@ -1873,8 +1881,10 @@ static uint32_t willLoad(JSGlobalObject* globalObject, AOT::ModuleID fileThatWro
 
 static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, const String& path)
 {
-    if (isBunTest)
-        didStartDynamicImport(defaultGlobalObject(globalObject), import, path);
+    if (!isBunTest)
+        return;
+    Zig::didStartImportOfCompiledFile(defaultGlobalObject(globalObject), path);
+    didStartDynamicImport(defaultGlobalObject(globalObject), import, path);
 }
 
 // What holds for the statements of the importer, which are linked, does not hold for a call of import() in it, which asks anew.

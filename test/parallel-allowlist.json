@@ -1729,12 +1729,21 @@
     "aot/a-file-that-the-test-runner-is-asked-for-finds-the-names-it-imports.test.ts",
     "aot/the-tests-that-run-as-users-build-are-listed.test.ts",
     "aot/a-name-that-only-a-package-json-explains-is-found-beside-a-plugin-that-touches-nothing.test.ts",
+    "aot/everyday-failing-tests-1.test.ts",
+    "aot/everyday-failing-tests-2.test.ts",
+    "aot/everyday-failing-tests-3.test.ts",
+    "aot/everyday-failing-tests-4.test.ts",
+    "aot/everyday-programs-1.test.ts",
+    "aot/everyday-programs-2.test.ts",
+    "aot/everyday-programs-3.test.ts",
+    "aot/everyday-programs-4.test.ts",
+    "aot/a-type-error-in-a-text-that-the-build-was-given-stops-the-build.test.ts",
+    "aot/builtins/a-quiet-row-leaves-the-bytes-of-a-view-where-they-are.test.ts",
     "aot/a-class-of-buns-modules-over-a-constructor-function-names-it-as-its-base.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",
     "aot/asking-the-global-object-for-a-written-name-hands-it-to-nobody.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
-    "aot/typescript-that-tsc-rejects.test.ts",
-    "aot/a-type-error-in-a-text-that-the-build-was-given-stops-the-build.test.ts"
+    "aot/typescript-that-tsc-rejects.test.ts"
   ]
 }

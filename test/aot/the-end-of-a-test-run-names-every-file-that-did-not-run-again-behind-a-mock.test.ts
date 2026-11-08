@@ -40,6 +40,12 @@ const layOverLoaded =
   `  doMock("./floor.cjs", () => ({ level: "deep" }));\n` +
   call("under") +
   `  doUnmock("./floor.cjs");\n`;
+// The kiln throws with no importer above it. `bun test` takes its failed entry out where a mock of vitest is made over it, so whoever asks next runs it again.
+const kiln = { "kiln.mjs": `export const heat = "hot";\nthrow new Error("the kiln throws");\n` };
+const potter = { "potter.mjs": `import { heat } from "./kiln.mjs";\nexport const pot = "fired " + heat;\n` };
+const fire = (at: string, how = `import("./kiln.mjs")`) =>
+  `  console.log("SAID", "${at}", await ${how}.then(() => "came", error => error.message));\n`;
+const requireKiln = `  try {\n    createRequire(import.meta.url)("./kiln.mjs");\n  } catch (error) {\n    console.log("SAID", "second", error.message);\n  }\n`;
 const runs = {
   "the next test file asks for a module above the mock": {
     files: {
@@ -164,6 +170,42 @@ const runs = {
     },
     flags: ["--parallel"],
     named: ["meter.mjs", "panel.mjs"],
+  },
+  "a file threw, a mock without a factory is made over it, and import() asks again": {
+    files: { ...kiln, "b.test.mjs": inTest(fire("first") + `  vi.doMock("./kiln.mjs");\n` + fire("second")) },
+    named: ["kiln.mjs, while b.test.mjs ran"],
+  },
+  "a file threw, a mock without a factory is made over it, and require() asks again": {
+    files: {
+      ...kiln,
+      "b.test.mjs":
+        `import { createRequire } from "node:module";\n` +
+        inTest(fire("first") + `  vi.doMock("./kiln.mjs");\n` + requireKiln),
+    },
+    named: ["kiln.mjs, while b.test.mjs ran"],
+  },
+  "a file threw, a mock is made over it, and importActual() asks for the file": {
+    files: {
+      ...kiln,
+      "b.test.mjs": inTest(
+        fire("first") +
+          `  vi.doMock("./kiln.mjs", () => ({ heat: "mild" }));\n` +
+          fire("second", `vi.importActual("./kiln.mjs")`),
+      ),
+    },
+    named: ["kiln.mjs, while b.test.mjs ran"],
+  },
+  "a file threw below its importer, where `bun test` keeps the failure too": {
+    files: {
+      ...kiln,
+      ...potter,
+      "b.test.mjs": inTest(fire("first", `import("./potter.mjs")`) + `  vi.doMock("./kiln.mjs");\n` + fire("second")),
+    },
+    named: [],
+  },
+  "a file threw, a mock without a factory is made over it, and nobody asks again": {
+    files: { ...kiln, "b.test.mjs": inTest(fire("first") + `  vi.doMock("./kiln.mjs");\n`) },
+    named: [],
   },
   "nobody asks again": {
     files: { ...esModules, "b.test.mjs": inTest(lay("floor.mjs") + ask("first", "panel.mjs")) },

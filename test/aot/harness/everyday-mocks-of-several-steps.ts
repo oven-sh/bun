@@ -87,11 +87,7 @@ export function mocksFromOneTestFileToTheNextIn(part: number, parts: number) {
 // Where the two runs part today. Such a case fails once they agree: its line goes out.
 const partsInAChain: [cases: RegExp, what: string][] = [
   [
-    /^(bare|a-spy|a-factory-over-the-original)--(imported|the-original-asked-for)--(two|three)--modules-reset-meanwhile$/,
-    "the body of the spring runs once more",
-  ],
-  [
-    /^(?!a-file-among-the-mocks--imported-at-run-time--)[a-z-]+--(imported-at-run-time|imported|the-original-asked-for)--one--modules-reset-meanwhile$/,
+    /^([a-z-]+--imported|(a-spy|a-file-among-the-mocks|a-factory-that-waits)--the-original-asked-for|a-factory-that-waits--imported-at-run-time)--one--modules-reset-meanwhile$/,
     "the modules are reset while the brook itself waits for the spring",
   ],
   [

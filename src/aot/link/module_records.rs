@@ -777,7 +777,9 @@ fn mock_may_answer_ahead_of_declaration(
             {
                 let comes_from =
                     find_file_that_entry_comes_from(graph, atoms, source, name_in_source);
-                return comes_from != Some(declaring_file);
+                let is_settled_by_own_mock =
+                    comes_from.is_none() && graph.is_named_by_mock(ModuleRef::File(source));
+                return !is_settled_by_own_mock && comes_from != Some(declaring_file);
             }
             taken = (source, name_in_source);
             if !met.insert(taken) {

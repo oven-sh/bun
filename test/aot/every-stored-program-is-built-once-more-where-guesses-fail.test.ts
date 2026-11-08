@@ -212,6 +212,8 @@ test("the lines by which something of a stored program is not compared or not bu
     "gc/argument-that-waited-in-the-caller-is-let-go-by-a-callee-out-of-a-list.ts: Skip on win32 x64",
     "gc/argument-that-waited-in-the-caller-is-let-go-by-the-callee.ts: Prints what the compiler saves",
     "gc/argument-that-waited-in-the-caller-is-let-go-by-the-callee.ts: Skip on win32 x64",
+    "gc/argument-that-waited-in-the-caller-is-let-go-in-a-loop-whose-bound-nobody-knows.ts: Prints what the compiler saves",
+    "gc/argument-that-waited-in-the-caller-is-let-go-in-a-loop-whose-bound-nobody-knows.ts: Skip on win32 x64",
     "gc/generators-stepped-by-a-loop-let-go-beside-another-program/main.ts: Prints what the compiler saves",
     "gc/object-made-by-a-copied-callee-is-let-go-by-the-callee.ts: Prints what the compiler saves",
     "gc/object-made-by-a-copied-callee-is-let-go-by-the-callee.ts: Skip on win32 x64",

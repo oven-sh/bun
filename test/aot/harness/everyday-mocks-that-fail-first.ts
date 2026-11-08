@@ -47,8 +47,12 @@ const partsWhereFileFailsFirst: [cases: RegExp, what: string][] = [
 
 export function mocksOverFileThatFailsFirstIn(part: number, parts: number) {
   each(filesThatFailFirst(), part, parts, (name, plain, compiled) => {
-    if (partsWhereFileFailsFirst.some(([names]) => names.test(name)))
-      expect({ ...compiled, didNotRunAgain: 0 }).not.toEqual(plain);
+    const [, what] = partsWhereFileFailsFirst.find(([names]) => names.test(name)) ?? [];
+    if (what !== undefined)
+      expect(
+        { ...compiled, didNotRunAgain: 0 },
+        `GOOD NEWS: the two runs agree now. Take this case out of partsWhereFileFailsFirst in test/aot/harness/everyday-mocks-that-fail-first.ts, with the change that mended it. Its line: "${what}"`,
+      ).not.toEqual(plain);
     else expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
   });
 }

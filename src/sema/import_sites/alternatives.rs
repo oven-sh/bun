@@ -1313,7 +1313,16 @@ impl Follower<'_, '_, '_> {
         appended.shared_sort_unstable_by_key(|it| hir[it.0].pos);
         for (assignment, value) in appended {
             if !self.runs_once_for_each_binding(assignment, symbol, pattern) {
-                return None;
+                let mut open_at_end = Distinct::new();
+                for held in values.all {
+                    let Held::Text(mut text) = held else {
+                        return None;
+                    };
+                    text.push(&Text::unknown());
+                    add(&mut open_at_end, Held::Text(text));
+                }
+                values = open_at_end;
+                continue;
             }
             let value = self.values_of(value)?;
             let before = values.len();
@@ -1589,6 +1598,10 @@ impl Follower<'_, '_, '_> {
             BindingKind::Var => None,
             _ => Some(bound.parent_of_stmt(bound.var_stmt[declaration.idx()])),
         };
+        if matches!(holder, Some(Parent::Stmt(head)) if matches!(hir[head].kind, StmtKind::For { .. }))
+        {
+            return false;
+        }
         let mut e = code;
         let mut statement = loop {
             match bound.parent_of_expr(e) {

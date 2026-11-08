@@ -1,0 +1,20 @@
+# `for (let place = 0; place < text.length; place++) total = total + weights[place]`, both constants of the file of which nothing is known: the loop only measures `text`.
+# A holder that a loop only measures is asked for a list in front of it. A text failed there, and the whole loop went to its closed copy, where `weights` is nobody's list any more:
+# 1,523 instructions a call of 16 turns, where the loop took 1,409 before the question was asked.
+# A length is measured off a list or off a text. Behind the test of the list that is read there are two starts now: in the first the bound is asked for a list; who fails there goes on to the second, where it is asked for a text.
+# What is neither goes to the closed copy as before. In `own` the bound is the list that is read: nothing is asked for a text.
+# -- source: main.cjs
+# const weights = JSON.parse("[0.5, 53.5, 106.5]"), text = JSON.parse('"abc"'), bag = JSON.parse('{"length": 3}');
+# function overText(start) { let total = start; for (let place = 0; place < text.length; place++) total = total + weights[place]; return total; }
+# function overBag(start) { let total = start; for (let place = 0; place < bag.length; place++) total = total + weights[place]; return total; }
+# function own(start) { let total = start; for (let place = 0; place < weights.length; place++) total = total + weights[place]; return total; }
+# print(overText([].length + 1), overBag([].length + 1), own([].length + 1));
+# -- end of source
+# f1 = overText
+# f3 = own
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: = TypeTest {{*}}testedType=string
+# RUN(OWN): walk f3 mechanisms=all
+# OWN-NOT: testedType=string
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 161.5 161.5 161.5

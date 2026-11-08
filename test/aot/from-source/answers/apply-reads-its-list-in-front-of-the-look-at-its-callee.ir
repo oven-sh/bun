@@ -1,0 +1,18 @@
+# -- source: main.js
+# let reads = 0;
+# const fake = Object.create(Function.prototype);
+# function like() { return { get length() { reads++; return 0; } }; }
+# function list() { const made = [1, 2, 3]; Object.defineProperty(made, 1, { get() { reads++; return 2; } }); return made; }
+# function inside(callee, given) { const answer = callee.apply(null, given); return answer; }
+# function tail(callee, given) { "use strict"; return callee.apply(null, given); }
+# function attempt(call, make) { try { return String(call(fake, make())); } catch (error) { return error instanceof TypeError ? "TypeError" : "another error"; } }
+# const calls = [inside, tail], makers = [like, list];
+# for (let c = 0; c < calls.length; c++) { for (let m = 0; m < makers.length; m++) { reads = 0; print(attempt(calls[c], makers[m]), reads); } }
+# -- end of source
+# `f.apply(t, list)` is call_varargs in the engine: the frame is sized by the list's length and filled from its elements, and the callee is looked at afterwards. So a callee that cannot be called
+# does not keep the list's length and getters from running: inside a function and in tail position, for what is like a list and for an array.
+# RUN: run-in-shell mechanisms=all
+# CHECK: TypeError 1
+# CHECK-NEXT: TypeError 1
+# CHECK-NEXT: TypeError 1
+# CHECK-NEXT: TypeError 1

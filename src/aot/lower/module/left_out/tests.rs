@@ -72,13 +72,16 @@ fn names_of_lowered_functions(choose: fn(&Files<'_>) -> LeftOutDeclarations) -> 
     let lowered = lower_program_without(&[("a.ts", PROGRAM)], choose);
     assert_eq!(lowered.len(), 1);
     let fragment = &lowered[0].1.fragment;
+    let tables = fragment.tables.take();
     let names = fragment
         .functions
         .iter()
         .filter_map(|(_, function)| function.name);
+    let names = names
+        .map(|name| String::from_utf8_lossy(tables.strings.get(name)).into_owned())
+        .collect();
+    fragment.tables.put_back(tables);
     names
-        .map(|name| String::from_utf8_lossy(fragment.strings.get(name)).into_owned())
-        .collect()
 }
 
 #[test]

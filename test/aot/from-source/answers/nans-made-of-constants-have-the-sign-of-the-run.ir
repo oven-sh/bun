@@ -1,0 +1,30 @@
+# The walk knows both operands of each operation here. The bytes of the NaN are those that the same text gives where nothing is folded: the shell runs the names as they are written.
+# The first seven lines differ from one processor to the next: x86-64 sets the sign of a NaN that it makes, ARM64 does not. The source is what they are held to.
+# -- source: main.js
+# const zero = 0, endless = Infinity, less = -1, half = 0.5, eight = -8, third = 0.3333333333333333, most = 1.5, nothing = undefined, none = NaN, one = 1, two = 2;
+# report("quotient", zero / zero);
+# report("negated quotient", -(zero / zero));
+# report("difference", endless - endless);
+# report("product", endless * zero);
+# report("root", less ** half);
+# report("cube root", eight ** third);
+# report("less to most", less ** most);
+# report("negated undefined", -nothing);
+# report("negated NaN", -none);
+# report("NaN and one", none + one);
+# report("NaN times less", none * less);
+# report("two to NaN", two ** none);
+# report("less to endless", less ** endless);
+# -- end of source
+# RUN: run-in-shell (function () { const bits = new BigUint64Array(1), number = new Float64Array(bits.buffer); globalThis.report = (name, value) => { number[0] = value; print(name, bits[0].toString(16)); }; })();
+# CHECK-NOT: AOT validation
+# CHECK: quotient
+# CHECK: less to most
+# CHECK-NEXT: negated undefined fff8000000000000
+# CHECK-NEXT: negated NaN fff8000000000000
+# CHECK-NEXT: NaN and one 7ff8000000000000
+# CHECK-NEXT: NaN times less 7ff8000000000000
+# CHECK-NEXT: two to NaN 7ff8000000000000
+# CHECK-NEXT: less to endless 7ff8000000000000
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same

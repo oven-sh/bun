@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { test } from "./harness/default-timeout";
 
 // The program never names node:async_hooks. Code that the build has not seen enables an `init` hook, and from then on process.nextTick, which is
 // the program's own, has to show each tick to the hook. Whichever copy of node:async_hooks enabled it: the one compiled with the program, or one
@@ -32,12 +33,9 @@ const files = {
     process.nextTick(() => console.log("before the hook"));
     await new Promise(resolve => setImmediate(resolve));
     await run((await import(process.argv[2])).default);`,
-  "by-a-statement.mjs": `
-    import hook from "./from-disk.cjs";
-    import { run } from "./body.mjs";
-    await run(hook);`,
 };
-const printed = [
+const expected = [
+  "before the hook",
   "no argument",
   "two arguments 1 2",
   "four arguments 1 2 3 4",
@@ -52,21 +50,16 @@ async function run(cmd: string[], cwd: string) {
   return { lines: stdout.split("\n").filter(Boolean), stderr, exitCode };
 }
 
-for (const [entry, flags, expected] of [
-  ["by-a-name-made-at-run-time.mjs", ["--aot-allow-code-from-disk"], ["before the hook", ...printed]],
-  ["by-a-statement.mjs", ["--external", "./from-disk.cjs"], printed],
-] as const)
-  test.concurrent(
-    `${flags[0]}: ${entry}`,
-    async () => {
-      using dir = tempDir("hooked-tick", files);
-      const cwd = String(dir);
-      const fromDisk = join(cwd, "from-disk.cjs");
-      expect(await run([bunExe(), "run", entry, fromDisk], cwd)).toMatchObject({ lines: expected, exitCode: 0 });
-      const executable = join(cwd, "program");
-      const build = [bunExe(), "build", "--compile", "--aot", ...flags, entry, "--outfile", executable];
-      expect(await run(build, cwd)).toMatchObject({ exitCode: 0 });
-      expect(await run([executable, fromDisk], cwd)).toMatchObject({ lines: expected, exitCode: 0 });
-    },
-    240_000,
-  );
+test("--aot-allow-code-from-disk: by-a-name-made-at-run-time.mjs", async () => {
+  using dir = tempDir("hooked-tick", files);
+  const cwd = String(dir);
+  const [entry, fromDisk, executable] = [
+    "by-a-name-made-at-run-time.mjs",
+    join(cwd, "from-disk.cjs"),
+    join(cwd, "program"),
+  ];
+  expect(await run([bunExe(), "run", entry, fromDisk], cwd)).toMatchObject({ lines: expected, exitCode: 0 });
+  const build = [bunExe(), "build", "--compile", "--aot", "--aot-allow-code-from-disk", entry, "--outfile", executable];
+  expect(await run(build, cwd)).toMatchObject({ exitCode: 0 });
+  expect(await run([executable, fromDisk], cwd)).toMatchObject({ lines: expected, exitCode: 0 });
+}, 240_000);

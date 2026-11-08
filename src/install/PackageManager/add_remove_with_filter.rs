@@ -217,7 +217,7 @@ pub(crate) fn select_targets(
         if manager.options.log_level == LogLevel::Silent {
             Global::crash();
         }
-        workspace_selection::error_unmatched(patterns);
+        workspace_selection::error_unmatched(patterns, &unmatched_patterns);
     }
     workspace_selection::warn_unmatched(patterns, &unmatched_patterns);
 

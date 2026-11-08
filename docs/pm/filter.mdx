@@ -27,6 +27,8 @@ A directory in braces selects every workspace in that directory or anywhere belo
 
 Braces around a comma-separated list are a name pattern, not a directory: `--filter '{pkg-a,pkg-b}'` selects the packages named `pkg-a` and `pkg-b`. Braces around anything else are a directory, also around one name or one glob: write `pkg-a`, `pkg-*` and `pkg-{a,b}`, not `{pkg-a}`, `{pkg-*}` and `{pkg-{a,b}}`. To select several directories, put the list inside the directory: `--filter '{packages/{apps,libs}}'` or `--filter '{./{apps,libs}}'`. Braces whose content starts with `.` or `/`, or contains a `\`, are always a directory.
 
+When a directory in braces matches no workspace and its text is the name of a package, a `note:` line after the message gives the spelling that selects the package.
+
 ### Dependency relations `--filter 'foo...'`
 
 Adding `...` to a pattern also selects workspaces related through workspace dependencies:

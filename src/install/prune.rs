@@ -696,10 +696,7 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
     );
     if workspaces.ids.is_empty() {
         if !quiet {
-            Output::err_generic(
-                "{}",
-                (BStr::new(&workspace_selection::unmatched_message(patterns)),),
-            );
+            workspace_selection::error_unmatched(patterns, &workspaces.unmatched_patterns);
         }
         Global::exit(1);
     }

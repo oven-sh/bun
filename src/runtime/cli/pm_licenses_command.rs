@@ -138,11 +138,9 @@ impl PmLicensesCommand {
             );
             if selection.ids.is_empty() {
                 if not_silent {
-                    Output::err_generic(
-                        "{}",
-                        (BStr::new(&workspace_selection::unmatched_message(
-                            filter_patterns,
-                        )),),
+                    workspace_selection::error_unmatched(
+                        filter_patterns,
+                        &selection.unmatched_patterns,
                     );
                 }
                 Global::exit(1);

@@ -381,7 +381,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             if silent {
                 Global::exit(1);
             }
-            workspace_selection::error_unmatched(filter_patterns);
+            workspace_selection::error_unmatched(filter_patterns, &selected.unmatched_patterns);
         }
         selected
             .ids

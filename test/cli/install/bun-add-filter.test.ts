@@ -397,6 +397,87 @@ test.concurrent("a '{dir}' matching nothing is the usual no-match error", async 
   expect(await exists(join(dir, "bun.lock"))).toBeFalse();
 });
 
+// The monorepo has a package `pkg-a` and no directory `pkg-a` beside `packages`.
+const PKG_A_UNMATCHED = 'No workspace packages matched the filter "{pkg-a}"\n';
+const PKG_A_NOTE = 'note: "{pkg-a}" is the directory pkg-a. For the package, write "pkg-a"\n';
+
+async function missesOf(commands: string[][], dir: string) {
+  const runs = await Promise.all(commands.map(command => run([...command, "--filter", "{pkg-a}"], dir)));
+  return runs.map(({ stderr, exitCode }) => ({ stderr, exitCode }));
+}
+
+test.concurrent("braces around a package name get a note from add, remove and publish", async () => {
+  const dir = await makeMonorepo();
+  const before = await allPackageJsonTexts(dir);
+
+  expect(
+    await missesOf(
+      [
+        ["add", "no-deps"],
+        ["remove", "a-dep"],
+        ["publish", "--dry-run"],
+        ["add", "no-deps", "--silent"],
+      ],
+      dir,
+    ),
+  ).toEqual([
+    ...Array(3).fill({ stderr: "error: " + PKG_A_UNMATCHED + PKG_A_NOTE, exitCode: 1 }),
+    { stderr: "", exitCode: 1 },
+  ]);
+  expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+
+  // The spelling of the note selects the package.
+  const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "pkg-a"], dir);
+  expect(stderr).toBe("Saved lockfile\n");
+  expect(exitCode).toBe(0);
+  await expectAddedOnlyTo(dir, before, ["pkg-a"]);
+});
+
+// `update` reads the filter on bun.lock. With a name it reads the root's `workspaces`, and with a glob both.
+test.concurrent("braces around a package name get a note from update", async () => {
+  const dir = await makeMonorepo();
+  await installOk(dir);
+  const lockBefore = await file(join(dir, "bun.lock")).text();
+
+  expect(await missesOf([["update"], ["update", "a-dep"], ["update", "a-*"]], dir)).toEqual(
+    Array(3).fill({ stderr: "error: " + PKG_A_UNMATCHED + PKG_A_NOTE, exitCode: 1 }),
+  );
+  expect(await file(join(dir, "bun.lock")).text()).toBe(lockBefore);
+});
+
+test.concurrent("braces around a package name get a note from prune and pm licenses", async () => {
+  const dir = await makeMonorepo();
+  await installOk(dir);
+
+  expect(
+    await missesOf([["prune"], ["pm", "licenses"], ["prune", "--silent"], ["pm", "licenses", "--silent"]], dir),
+  ).toEqual([
+    ...Array(2).fill({ stderr: "error: " + PKG_A_UNMATCHED + PKG_A_NOTE, exitCode: 1 }),
+    ...Array(2).fill({ stderr: "", exitCode: 1 }),
+  ]);
+});
+
+test.concurrent("the note follows the warning of install, outdated and update", async () => {
+  const dir = await makeMonorepo();
+  const warned = "warn: " + PKG_A_UNMATCHED + PKG_A_NOTE;
+
+  {
+    const { stderr, exitCode } = await run(["install", "--filter", "{pkg-a}", "--filter", "web"], dir);
+    expect(stderr).toBe(warned + "Saved lockfile\n");
+    expect(exitCode).toBe(0);
+  }
+
+  // An update of a glob reads the filter twice and reports it once.
+  const [outdated, update] = await Promise.all([
+    run(["outdated", "--filter", "{pkg-a}", "--filter", "web"], dir),
+    run(["update", "a-*", "--filter", "{pkg-a}", "--filter", "web", "--dry-run"], dir),
+  ]);
+  expect([outdated, update].map(({ stderr, exitCode }) => ({ stderr, exitCode }))).toEqual([
+    { stderr: warned, exitCode: 0 },
+    { stderr: warned, exitCode: 0 },
+  ]);
+});
+
 test.concurrent("braces around a list of names select by name", async () => {
   const dir = await makeMonorepo();
   const before = await allPackageJsonTexts(dir);

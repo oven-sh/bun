@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::ops::Range;
 
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
@@ -28,12 +29,27 @@ pub enum RootSelection {
 
 pub struct Selection {
     pub selected: DynamicBitSet,
-    pub unmatched_patterns: Vec<usize>,
+    pub unmatched_patterns: Vec<Unmatched>,
 }
 
 pub struct LockfileSelection {
     pub ids: Vec<PackageID>,
-    pub unmatched_patterns: Vec<usize>,
+    pub unmatched_patterns: Vec<Unmatched>,
+}
+
+/// A positive filter that selected nothing.
+pub struct Unmatched {
+    /// Index into the patterns.
+    pattern: usize,
+    /// Set when the filter is in braces and their other reading selects a workspace. The range is the `{...}` in the
+    /// filter.
+    hint: Option<(BraceHint, Range<usize>)>,
+}
+
+#[derive(Clone, Copy)]
+enum BraceHint {
+    /// The braces were read as a directory. Their text also matches a package name.
+    Package,
 }
 
 /// Importers a filtered add/remove/update selected; None is the root. Only their dependencies get linked.
@@ -69,6 +85,52 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
         remain = rest;
     }
     (remain, negated)
+}
+
+/// The `...` and `^` marks of a filter, and the text between them.
+struct Relation<'a> {
+    dependencies: bool,
+    dependents: bool,
+    exclude_self: bool,
+    text: &'a [u8],
+}
+
+/// Takes the `...`/`...^` prefix and the `...`/`^...` suffix off a filter that has no `!` in front.
+#[inline(always)]
+fn cut_relation(mut remain: &[u8]) -> Relation<'_> {
+    let mut dependencies = false;
+    let mut dependents = false;
+    let mut exclude_self = false;
+
+    if let Some(rest) = remain.strip_prefix(b"...") {
+        dependents = true;
+        remain = rest;
+        if let Some(rest) = remain.strip_prefix(b"^") {
+            exclude_self = true;
+            remain = rest;
+        }
+    }
+    if let Some(rest) = remain.strip_suffix(b"...") {
+        dependencies = true;
+        remain = rest;
+        if let Some(rest) = remain.strip_suffix(b"^") {
+            exclude_self = true;
+            remain = rest;
+        }
+    }
+    Relation {
+        dependencies,
+        dependents,
+        exclude_self,
+        text: remain,
+    }
+}
+
+/// The text inside the braces of a filter that is in braces as a whole.
+#[inline(always)]
+fn brace_body(text: &[u8]) -> Option<&[u8]> {
+    (text.len() >= 2 && text[0] == b'{' && text[text.len() - 1] == b'}')
+        .then(|| &text[1..text.len() - 1])
 }
 
 /// The `!` entries of a `workspaces` array. `bun install` and `bun run --filter` apply the same
@@ -110,26 +172,13 @@ impl NegatedWorkspaces {
 /// Braces around a list, `{a,b}`, are a name glob. A body that starts with `.` or `/`, or has a `\`, is always a `{dir}`.
 fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
     let (mut remain, negated) = strip_negations(raw);
-    let mut dependencies = false;
-    let mut dependents = false;
-    let mut exclude_self = false;
-
-    if let Some(rest) = remain.strip_prefix(b"...") {
-        dependents = true;
-        remain = rest;
-        if let Some(rest) = remain.strip_prefix(b"^") {
-            exclude_self = true;
-            remain = rest;
-        }
-    }
-    if let Some(rest) = remain.strip_suffix(b"...") {
-        dependencies = true;
-        remain = rest;
-        if let Some(rest) = remain.strip_suffix(b"^") {
-            exclude_self = true;
-            remain = rest;
-        }
-    }
+    let Relation {
+        dependencies,
+        dependents,
+        exclude_self,
+        text,
+    } = cut_relation(remain);
+    remain = text;
 
     if (dependencies || dependents) && remain.is_empty() {
         Output::err_generic(
@@ -151,8 +200,7 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
 
     let base = if remain == b"*" || remain == b"**" {
         Base::All
-    } else if remain.len() >= 2 && remain[0] == b'{' && remain[remain.len() - 1] == b'}' {
-        let dir = &remain[1..remain.len() - 1];
+    } else if let Some(dir) = brace_body(remain) {
         let may_list = !matches!(dir.first(), Some(b'.' | b'/'))
             && strings::contains_char(dir, b',')
             && !strings::contains_char(dir, b'\\');
@@ -264,6 +312,83 @@ pub fn first_relational<'a>(patterns: &[&'a [u8]]) -> Option<&'a [u8]> {
     })
 }
 
+/// `raw` with its braces spelled for the other reading.
+fn respell(raw: &[u8], hint: BraceHint, braces: &Range<usize>) -> Vec<u8> {
+    let text = &raw[braces.clone()];
+    let mut out = raw[..braces.start].to_vec();
+    match hint {
+        BraceHint::Package => out.extend_from_slice(&text[1..text.len() - 1]),
+    }
+    out.extend_from_slice(&raw[braces.end..]);
+    out
+}
+
+/// The reading of the braces in `raw` that `parse` did not take, if a workspace outside `exclude` matches it.
+/// `sel` is what `parse` made of `raw`: a positive filter that selected nothing.
+fn other_reading(
+    sel: &Selector,
+    raw: &[u8],
+    candidates: &[Candidate<'_>],
+    exclude: &DynamicBitSet,
+    explicit_root_only: bool,
+) -> Option<(BraceHint, Range<usize>)> {
+    // A `^` takes what the braces matched out of the set, so an empty set says nothing about them.
+    if sel.exclude_self {
+        return None;
+    }
+    // Only braces make a `Base::Subtree`.
+    let Base::Subtree(_) = &sel.base else {
+        return None;
+    };
+    let text = cut_relation(strip_negations(raw).0).text;
+    let start = text.as_ptr().addr() - raw.as_ptr().addr();
+    let braces = start..start + text.len();
+    let name = brace_body(text)?;
+    // `parse` reads none of these as a name glob, and a glob that starts with `!` matches every other name.
+    if matches!(name, b"*" | b"**")
+        || matches!(name.first(), Some(b'.' | b'!'))
+        || brace_body(name).is_some()
+    {
+        return None;
+    }
+    let hint = BraceHint::Package;
+    // The note prints this spelling. Without the braces, the marks of `raw` must not take a part of `name` with them.
+    let respelled = respell(raw, hint, &braces);
+    if cut_relation(strip_negations(&respelled).0).text != name {
+        return None;
+    }
+    let other = Base::Name(Prepared::new(name.into()));
+
+    candidates
+        .iter()
+        .enumerate()
+        .any(|(i, c)| !exclude.is_set(i) && base_matches(&other, c, explicit_root_only))
+        .then_some((hint, braces))
+}
+
+#[cold]
+fn with_hints(
+    missed: Vec<(usize, Selector)>,
+    patterns: &[&[u8]],
+    candidates: &[Candidate<'_>],
+    exclude: &DynamicBitSet,
+    explicit_root_only: bool,
+) -> Vec<Unmatched> {
+    missed
+        .into_iter()
+        .map(|(pattern, sel)| Unmatched {
+            pattern,
+            hint: other_reading(
+                &sel,
+                patterns[pattern],
+                candidates,
+                exclude,
+                explicit_root_only,
+            ),
+        })
+        .collect()
+}
+
 pub fn select(
     patterns: &[&[u8]],
     original_cwd: &[u8],
@@ -279,7 +404,7 @@ pub fn select(
     let mut include = bitset(n);
     let mut exclude = bitset(n);
     let mut any_positive = false;
-    let mut unmatched_patterns: Vec<usize> = Vec::new();
+    let mut missed: Vec<(usize, Selector)> = Vec::new();
     let mut path_buf = path_buffer_pool::get();
 
     for (index, raw) in patterns.iter().enumerate() {
@@ -301,7 +426,7 @@ pub fn select(
         } else {
             any_positive = true;
             if set.count() == 0 {
-                unmatched_patterns.push(index);
+                missed.push((index, sel));
             }
             include.unmanaged.set_union(&set.unmanaged);
         }
@@ -315,6 +440,12 @@ pub fn select(
         }
     }
 
+    // After the loop: a hint is for a workspace that no `!` filter of this command takes away again.
+    let unmatched_patterns = if missed.is_empty() {
+        Vec::new()
+    } else {
+        with_hints(missed, patterns, candidates, &exclude, explicit_root_only)
+    };
     include.unmanaged.set_exclude(&exclude.unmanaged);
     Selection {
         selected: include,
@@ -579,8 +710,9 @@ pub fn quote_patterns(patterns: &[&[u8]]) -> Vec<u8> {
     out
 }
 
-/// `No workspace packages matched the filter "a"` / `... the filters "a", "b"`; the one sentence every --filter command prints.
-pub fn unmatched_message(patterns: &[&[u8]]) -> Vec<u8> {
+/// `No workspace packages matched the filter "a"` / `... the filters "a", "b"`; the one sentence every --filter command
+/// prints, through `warn_unmatched` or `error_unmatched`.
+fn unmatched_message(patterns: &[&[u8]]) -> Vec<u8> {
     let mut out: Vec<u8> = if patterns.len() == 1 {
         b"No workspace packages matched the filter ".to_vec()
     } else {
@@ -590,18 +722,55 @@ pub fn unmatched_message(patterns: &[&[u8]]) -> Vec<u8> {
     out
 }
 
-pub fn warn_unmatched(patterns: &[&[u8]], unmatched_patterns: &[usize]) {
+/// A `note:` for each unmatched filter with a hint. A filter that is given twice gets one.
+fn note_other_readings(patterns: &[&[u8]], unmatched_patterns: &[Unmatched]) {
+    let mut noted = false;
+    for (i, unmatched) in unmatched_patterns.iter().enumerate() {
+        let Some((hint, braces)) = &unmatched.hint else {
+            continue;
+        };
+        let raw = patterns[unmatched.pattern];
+        if unmatched_patterns[..i]
+            .iter()
+            .any(|earlier| patterns[earlier.pattern] == raw)
+        {
+            continue;
+        }
+        let text = &raw[braces.clone()];
+        let respelled = respell(raw, *hint, braces);
+        match hint {
+            BraceHint::Package => bun_core::note!(
+                "\"{}\" is the directory {}. For the package, write \"{}\"",
+                BStr::new(raw),
+                BStr::new(&text[1..text.len() - 1]),
+                BStr::new(&respelled),
+            ),
+        }
+        noted = true;
+    }
+    // `note!` does not flush, and after a warning the command prints more.
+    if noted {
+        Output::flush();
+    }
+}
+
+pub fn warn_unmatched(patterns: &[&[u8]], unmatched_patterns: &[Unmatched]) {
     if unmatched_patterns.is_empty() {
         return;
     }
-    let unmatched: Vec<&[u8]> = unmatched_patterns.iter().map(|&i| patterns[i]).collect();
+    let unmatched: Vec<&[u8]> = unmatched_patterns
+        .iter()
+        .map(|it| patterns[it.pattern])
+        .collect();
     bun_core::warn!("{}", BStr::new(&unmatched_message(&unmatched)));
+    note_other_readings(patterns, unmatched_patterns);
 }
 
-/// The nothing-selected case: `error: No workspace packages matched the filter(s) ...`, exit 1.
-pub fn error_unmatched(patterns: &[&[u8]]) -> ! {
+/// The nothing-selected case: `error: No workspace packages matched the filter(s) ...`, then the notes, exit 1.
+pub fn error_unmatched(patterns: &[&[u8]], unmatched_patterns: &[Unmatched]) -> ! {
     Output::flush();
     Output::err_generic("{}", (BStr::new(&unmatched_message(patterns)),));
+    note_other_readings(patterns, unmatched_patterns);
     Global::crash();
 }
 

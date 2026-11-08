@@ -183,7 +183,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             if log_level == LogLevel::Silent {
                 Global::crash();
             }
-            workspace_selection::error_unmatched(filter_patterns);
+            workspace_selection::error_unmatched(filter_patterns, &unmatched_patterns);
         }
         workspace_selection::warn_unmatched(filter_patterns, &unmatched_patterns);
         let name_hashes = manager.lockfile.packages.items_name_hash();

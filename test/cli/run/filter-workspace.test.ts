@@ -12,7 +12,7 @@ import {
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
 import { join } from "path";
@@ -972,7 +972,7 @@ describe("selectors", () => {
 
   // What the `present` scripts that ran printed, sorted and without the `out-` of graph_root's scripts.
   // That is the name of each member of graph_root that ran. `shared` has no such script.
-  async function ranIn(args: string[], cwd = graph_root) {
+  async function runPresent(args: string[], cwd = graph_root) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", ...args, "present"],
       cwd,
@@ -982,6 +982,10 @@ describe("selectors", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const ran = [...stdout.matchAll(/(?:: | \| )(?:out-)?(\S+)\r?$/gm)].map(m => m[1]).sort();
+    return { ran, stderr, exitCode };
+  }
+  async function ranIn(args: string[], cwd = graph_root) {
+    const { ran, stderr, exitCode } = await runPresent(args, cwd);
     return { ran, error: stderr.match(/^error: .*/m)?.[0], exitCode };
   }
   const noMatch = (pattern: string) => ({
@@ -1086,6 +1090,143 @@ describe("selectors", () => {
       ran: ["malformed1"],
       error: undefined,
       exitCode: 0,
+    });
+  });
+
+  const filterArgs = (filters: string[]) => filters.flatMap(filter => ["--filter", filter]);
+  const unmatched = (level: "error" | "warn", ...filters: string[]) =>
+    `${level}: No workspace packages matched the filter${filters.length > 1 ? "s" : ""} ` +
+    `${filters.map(filter => `"${filter}"`).join(", ")}\n`;
+  const packageNote = (filter: string, dir: string, write: string) =>
+    `note: "${filter}" is the directory ${dir}. For the package, write "${write}"\n`;
+  const pkgANote = packageNote("{pkg-a}", "pkg-a", "pkg-a");
+  const pkgBNote = packageNote("{pkg-b}", "pkg-b", "pkg-b");
+
+  // graph_root has no directory `pkg-a`. The last column is what the spelling of the note runs.
+  test.concurrent.each<[string, string, string, string[]]>([
+    ["{pkg-a}", "pkg-a", "pkg-a", ["pkg-a"]],
+    ["{pkg-*}", "pkg-*", "pkg-*", ["pkg-a", "pkg-b"]],
+    ["{pkg-{a,b}}", "pkg-{a,b}", "pkg-{a,b}", ["pkg-a", "pkg-b"]],
+    ["...{pkg-a}", "pkg-a", "...pkg-a", ["api", "pkg-a", "web"]],
+    ["{pkg-a}...", "pkg-a", "pkg-a...", ["pkg-a"]],
+    ["!!{pkg-a}", "pkg-a", "!!pkg-a", ["pkg-a"]],
+  ])("braces around a package name that is no directory get a note: '%s'", async (filter, dir, write, ran) => {
+    expect(await Promise.all([runPresent(["--filter", filter]), runPresent(["--filter", write])])).toEqual([
+      { ran: [], stderr: unmatched("error", filter) + packageNote(filter, dir, write), exitCode: 1 },
+      { ran, stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  // `{pkg-b}` is there to get its note. The filters after it match nothing and get none.
+  test.concurrent.each([
+    // No package has the name, or the text is a path.
+    [["{nosuch}"]],
+    [["{./tools}"]],
+    [["{pkg}-{a}"]],
+    // The text is in braces again.
+    [["{{pkg-a,pkg-b}}"]],
+    // As a filter `!pkg-a` is every package but pkg-a.
+    [["{!pkg-a}"]],
+    [["...{!pkg-a}"]],
+    // A `^` takes what the braces matched out of the set. `...^pkg-a` runs api and web.
+    [["...^{pkg-a}"]],
+    [["{pkg-a}^..."]],
+    [["...^{./packages/web}"]],
+    // `!pkg-a` takes the package of the note away again. `{packages/web}` matched before `!web`.
+    [["{pkg-a}", "!pkg-a"]],
+    [["{packages/web}", "!web"]],
+  ])("no note when the other reading of the braces selects nothing: %j", async silent => {
+    expect(await runPresent(filterArgs(["{pkg-b}", ...silent]))).toEqual({
+      ran: [],
+      stderr: unmatched("error", "{pkg-b}", ...silent) + pkgBNote,
+      exitCode: 1,
+    });
+  });
+
+  test.concurrent("the note follows a warning, and a filter that is given twice gets one", async () => {
+    expect(
+      await Promise.all([
+        runPresent(filterArgs(["{pkg-a}", "web"])),
+        runPresent(filterArgs(["{pkg-a}", "{pkg-a}", "web"])),
+        runPresent(filterArgs(["{pkg-a}", "{pkg-*}"])),
+      ]),
+    ).toEqual([
+      { ran: ["web"], stderr: unmatched("warn", "{pkg-a}") + pkgANote, exitCode: 0 },
+      { ran: ["web"], stderr: unmatched("warn", "{pkg-a}", "{pkg-a}") + pkgANote, exitCode: 0 },
+      {
+        ran: [],
+        stderr: unmatched("error", "{pkg-a}", "{pkg-*}") + pkgANote + packageNote("{pkg-*}", "pkg-*", "pkg-*"),
+        exitCode: 1,
+      },
+    ]);
+  });
+
+  // stdout and stderr share one file, so the test sees the order that a terminal shows.
+  test.concurrent("the note is printed before the scripts run", async () => {
+    using dir = tempDir("filter-brace-note-order", {});
+    const log = join(String(dir), "log");
+    const fd = openSync(log, "w");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...filterArgs(["{pkg-a}", "web"]), "present"],
+        cwd: graph_root,
+        env: bunEnv,
+        stdout: fd,
+        stderr: fd,
+      });
+      expect(await proc.exited).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(log, "utf8").split(/\r?\n/)).toEqual([
+      ...(unmatched("warn", "{pkg-a}") + pkgANote).trimEnd().split("\n"),
+      "web present: out-web",
+      "web present: Exited with code 0",
+      "",
+    ]);
+  });
+
+  test.concurrent("the note comes with --parallel, and --if-present stays silent", async () => {
+    expect(
+      await Promise.all([
+        runPresent(["--parallel", "--filter", "{pkg-a}"]),
+        runPresent(["--filter", "{pkg-a}", "--if-present"]),
+      ]),
+    ).toEqual([
+      { ran: [], stderr: unmatched("error", "{pkg-a}") + pkgANote, exitCode: 1 },
+      { ran: [], stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  test.concurrent("the directory of the note is looked up from the current directory", async () => {
+    const packages = join(graph_root, "packages");
+    expect(
+      await Promise.all([
+        runPresent(["--filter", "{pkg-a}"], packages),
+        // From a package with no directory below it, `{*}` is a miss. As a filter `*` is not a name.
+        runPresent(filterArgs(["{pkg-b}", "{*}"]), join(packages, "pkg-a")),
+      ]),
+    ).toEqual([
+      { ran: ["pkg-a"], stderr: "", exitCode: 0 },
+      { ran: [], stderr: unmatched("error", "{pkg-b}", "{*}") + pkgBNote, exitCode: 1 },
+    ]);
+  });
+
+  // A package.json can have any name. As a filter `.dot` is a path, `tail...` is `tail` with what it depends on,
+  // and `...head` is `head` with what depends on it.
+  test.concurrent("no note when the text in the braces is not a name as a filter of its own", async () => {
+    const pkg = (name: string) => ({
+      "package.json": JSON.stringify({ name, scripts: { present: "echo out" } }),
+    });
+    using dir = tempDir("filter-brace-note-names", {
+      packages: { a: pkg("plain"), b: pkg(".dot"), c: pkg("tail..."), d: pkg("...head") },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+    const filters = ["{plain}", "{.dot}", "{tail...}", "{...head}"];
+    expect(await runPresent(filterArgs(filters), String(dir))).toEqual({
+      ran: [],
+      stderr: unmatched("error", ...filters) + packageNote("{plain}", "plain", "plain"),
+      exitCode: 1,
     });
   });
 

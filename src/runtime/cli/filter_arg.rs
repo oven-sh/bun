@@ -268,7 +268,7 @@ pub(crate) fn select_packages(
             Output::err_generic("No workspace packages found", ());
             Global::exit(1);
         }
-        workspace_selection::error_unmatched(&patterns);
+        workspace_selection::error_unmatched(&patterns, &selection.unmatched_patterns);
     }
     workspace_selection::warn_unmatched(&patterns, &selection.unmatched_patterns);
     Ok(SelectedPackages { root_dir, packages })

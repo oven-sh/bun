@@ -221,8 +221,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let reverse_name = match value {
                 EnumMemberValue::String(_) | EnumMemberValue::ComputedString(_) => continue,
                 EnumMemberValue::ComputedUnknown(_) => {
-                    // A string member has no reverse mapping. The type is only
-                    // known at run time, so store the reverse key behind a check.
+                    // A string member has no reverse mapping: check the type at run time.
                     let is_string = self.builder.type_test(lowered, TypeTable::STRING);
                     let done = self.create_block();
                     self.go_on_if(is_string, false, done);

@@ -2462,10 +2462,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if has_string_value {
                 value_exprs.push(assign_target);
             } else if value_may_be_string {
-                // The value's type is not statically known (e.g. a member of an
-                // enum defined in another module). String members must not get
-                // a reverse mapping, so guard it at runtime:
-                // "typeof (Enum.Name = value) !== 'string' && (Enum[Enum.Name] = 'Name')"
+                // typeof (Enum.Name = value) !== "string" && (Enum[Enum.Name] = "Name")
                 let typeof_value = p.new_expr(
                     E::Unary {
                         op: js_ast::OpCode::UnTypeof,

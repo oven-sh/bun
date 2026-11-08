@@ -1207,6 +1207,20 @@ export const shapes: Shape[] = [
     }),
   },
   {
+    name: "functions that each spread a parameter of one written type and add a name, fed out of one variable that holds what they make",
+    counted: "functions",
+    size: 1200,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        "type Start = { first: number; second: number };\nlet sum = 0;\n" +
+        lines(size, index => `function widen${index}(given: Start) { return { ...given, more${index}: ${index} }; }`) +
+        "let held: Start = { first: 1, second: 2 };\nfunction current(): Start { return held; }\nfunction keep(made: Start) { held = made; sum += made.first; }\n" +
+        lines(size, index => `keep(widen${index}(current()));`) +
+        "console.log(sum, Object.keys(held).length);\n",
+    }),
+  },
+  {
     name: "functions without types that each spread a parameter and add a name",
     counted: "functions",
     size: 1200,
@@ -1252,6 +1266,19 @@ export const shapes: Shape[] = [
       "main.js":
         `function step(state, i) {\n  return {\n    ...state,\n${lines(size, index => `    name${index}: i,`)}${lines(size, index => `    name${index}: i + ${index % 7},`)}    added: i,\n  };\n}\n` +
         `const made = step({ first: 1 }, 7);\nconsole.log(made.name0 + made.name5 + made.added, Object.keys(made).length);\n`,
+    }),
+  },
+  {
+    name: "attributes of one element, in a check",
+    counted: "attributes",
+    size: 6000,
+    entry: "main.tsx",
+    isCheckedAlone: true,
+    write: size => ({
+      "tsconfig.json": `{ "compilerOptions": { "jsx": "preserve", "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] } }\n`,
+      "main.tsx":
+        "declare global { namespace JSX { interface Element {} interface IntrinsicElements { box: { [name: string]: number } } } }\n" +
+        `declare const given: { first: number };\nexport const made = <box {...given}\n${lines(size, index => `  name${index}={${index}}`)}/>;\n`,
     }),
   },
   {
@@ -4440,8 +4467,9 @@ console.log(typeof outmost.inner);
   {
     name: "sums of unknown kind that one loop carries, each behind a branch that is never taken",
     counted: "sums",
-    // On x64 a sum takes 241 machine operations and 1,036 bytes of code at every size from 1,000 to 32,000. For arm64 an operation takes more bytes the larger the function: a word of the frame takes one
-    // instruction up to 32,760 bytes above the stack pointer, two up to 65,535 and three from there on, and a sum spills 20 values; a conditional branch takes two past 1 MB. Which it is has not been measured.
+    // No square. On arm64 a sum takes 137 machine operations and 40 spills at every size from 500 to 32,000, and one more sum takes 1,205 bytes of code up to 1,000 sums, 1,340 at 4,000, 1,710 up to 8,000 and 2,040
+    // from 12,000 on, level to 32,000 (1.98 times). The two steps of 380 fit a word of the frame, which takes two instructions past 32,760 bytes above the stack pointer and three past 65,535: read, not seen in the code.
+    // On x64 it takes 1,036 bytes throughout.
     growsSoFarOnLinuxArm64: "2.30 times in FunctionBytesEmitted",
     size: 4000,
     entry: "main.cjs",
@@ -6530,6 +6558,22 @@ export {};
         `console.log(sum);\n`,
     }),
   },
+  // What lies above the receivers of a store was asked of every layout that the receiver may have, and the guard on the parameter held every one of those layouts against every name that the function uses:
+  // functions x layouts, twice. 4,000 of each took 8.3 G instructions.
+  {
+    name: "functions that each store a name of their own on their parameter, beside as many literals of different layouts",
+    counted: "functions, and layouts",
+    size: 1500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `const things = [\n${lines(size, index => `  { shared: ${index}, own${index}: ${index} },`)}];\n` +
+        lines(size, index => `function mark${index}(thing) { thing.extra${index} = ${index}; return thing.shared; }`) +
+        `let sum = 0;\n` +
+        lines(size, index => `sum += mark${index}(things[${index}]);`) +
+        `console.log(sum);\n`,
+    }),
+  },
   // A parameter `options = {}` of a file without types is asked for its use, as one without a default is.
   {
     name: "functions with an empty default that each read two names off it and hand it on to the next",
@@ -6640,6 +6684,18 @@ export {};
         lines(size, index => `    if (flags[${index + 1}]) x = other[${index + 1}];`) +
         lines(size, index => `    if (flags[${index + 1}]) y = other[${index + 1}];\n    sum += y.n${index + 1} | 0;`) +
         `  }\n  return x.width + x.height + sum;\n}\nconsole.log(new Shape(1, 2).width + pick(JSON.parse("[]"), JSON.parse('[{"width":1,"height":2}]'), 2));\n`,
+    }),
+  },
+  {
+    name: "loops in a row that each store a captured place and read a captured text through two helpers",
+    counted: "loops",
+    size: 60,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `function pointOf(text: string, at: number): number { return text.codePointAt(at) as number; }\nfunction makeReader() {\n  var letters: string;\n  var place: number;\n  var limit: number;\n  function codeAt(at: number) { return letters.charCodeAt(at); }\n  function pointAt(at: number) { return pointOf(letters, at); }\n  function skim(): number {\n    let sum = 0;\n` +
+        lines(size, index => `    for (let code = codeAt(place); place < limit && code !== ${index + 200}; code = pointAt(++place)) {\n      if (code === 123) break;\n    }\n    sum += place;\n    place = 0;`) +
+        `    return sum;\n  }\n  function reset(next: string) { letters = next; place = 0; limit = next.length; }\n  return { skim, reset };\n}\n(globalThis as any).kept = makeReader();\n(globalThis as any).kept.reset("abc");\nconsole.log((globalThis as any).kept.skim());\n`,
     }),
   },
 ];

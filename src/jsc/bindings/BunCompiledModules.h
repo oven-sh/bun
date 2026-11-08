@@ -116,7 +116,7 @@ JSC::JSValue requireCompiledModuleForTestRunner(Zig::GlobalObject*, const WTF::S
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key);
 // Round every end of a mock. Under `bun test` the original of a mock has a key of its own, so the end of the mock decides what the file's own key holds. `bringsBack`: what unmockModule() asks for packagesToBringBack. True: nothing lies under the file's own key, and the file leaves the program.
 bool willUnmockCompiledFile(Zig::GlobalObject*, const WTF::String& key, bool bringsBack, bool isReplacedByLaterMock);
-void didUnmockCompiledFile(Zig::GlobalObject*, const WTF::String& key, bool leavesProgram, bool bringsBack);
+void didUnmockCompiledFile(Zig::GlobalObject*, const WTF::String& key, bool runsAtNextLoad, bool bringsBack, bool factoryIsPending);
 // As setLoadedModuleAside(). False: the file lies under the key of the original already, so nothing was loaded under its own.
 bool didSetCompiledFileAside(Zig::GlobalObject*, const WTF::String& key);
 // The file has left the program, and the run time keeps the original of its mock.

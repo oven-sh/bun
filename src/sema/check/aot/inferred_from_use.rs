@@ -2827,6 +2827,11 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         })
     }
 
+    pub fn is_given_by_written_calls_alone(&mut self, name: PatId) -> bool {
+        self.find_arguments_given(name)
+            .is_some_and(|given| !given.others_may_call)
+    }
+
     fn compute_type_from_arguments(&mut self, name: PatId) -> (TypeId, bool) {
         let Some(given) = self.find_arguments_given(name) else {
             return (TypeId::ANY, true);

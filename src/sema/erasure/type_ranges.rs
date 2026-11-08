@@ -211,11 +211,21 @@ pub fn keep_only_comments_beside_types_and<'s>(
     file.comments = Fixed::copied_in(arena, &kept);
 }
 
-pub fn find_type_ranges_beside(file: &File<'_>, mut replaced: Vec<ReplacedText>) -> TypeRanges {
+pub fn find_type_ranges_beside(file: &File<'_>, replaced: Vec<ReplacedText>) -> TypeRanges {
+    find_type_ranges_beside_what_is_laid(file, replaced, |_, _| {})
+}
+
+pub fn find_type_ranges_beside_what_is_laid(
+    file: &File<'_>,
+    mut replaced: Vec<ReplacedText>,
+    lay: impl FnOnce(&[(u32, u32)], &mut Vec<ReplacedText>),
+) -> TypeRanges {
     let mut finder = Finder::new(file);
     if !file.is_js {
         finder.run();
     }
+    finder.found.sort_unstable();
+    lay(&finder.found, &mut replaced);
     finder.leave_what_stands_in(&mut replaced);
     replaced.append(&mut finder.replaced);
     for part in &replaced {

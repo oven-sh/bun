@@ -1689,6 +1689,7 @@
     "aot/a-name-that-a-made-require-only-resolves-leads-where-the-package-says.test.ts",
     "aot/what-the-build-wrote-down-for-a-name-answers-the-question-that-the-build-asked.test.ts",
     "aot/the-ticks-of-a-burst-are-let-go-as-they-run.test.ts",
+    "aot/a-nearer-copy-of-a-package-ends-the-search-in-a-program-with-one-entry-point.test.ts",
     "aot/a-class-of-buns-modules-over-a-constructor-function-names-it-as-its-base.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",

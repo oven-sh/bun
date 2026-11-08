@@ -66,7 +66,7 @@ pub(crate) enum CompileProduct<'r> {
     Executable {
         outfile: &'r [u8],
     },
-    #[cfg_attr(all(unix, not(bun_fuzzilli)), expect(dead_code))]
+    #[cfg_attr(all(unix, not(bun_fuzzilli), not(test)), expect(dead_code))]
     GraphBytes,
     /// The same bytes in a file without a name, written while the image lies where the engine left it.
     #[cfg(unix)]

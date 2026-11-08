@@ -11,7 +11,10 @@ function make(i) {
   return made;
 }
 
+// No clock decides what is printed: a turn in which the script was cut short in front of the generator's first step is passed over.
+let entered = false;
 function* spin() {
+  entered = true;
   for (let n = 0; n < 1e9; n++) if (n === -1) yield n;
 }
 
@@ -42,6 +45,7 @@ let timeouts = 0;
 let wrong = 0;
 let sum = 0;
 for (let turn = 0; turn < turns; turn++) {
+  entered = false;
   const list = [];
   for (let i = 0; i < 4000; i++) list.push(make(i));
   for (const each of list) sum += read(each);
@@ -58,6 +62,7 @@ for (let turn = 0; turn < turns; turn++) {
     const truth = descriptor.get ? got : descriptor.value;
     if (read(each) !== truth) wrong++;
     const added = Reflect.getOwnPropertyDescriptor(each, "c");
+    if (added !== undefined && !entered) continue;
     if (readAdded(each) !== (added === undefined ? undefined : 0)) wrong++;
   }
 }

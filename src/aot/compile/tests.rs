@@ -1561,6 +1561,30 @@ fn function_text_holds_what_an_enum_and_a_name_of_a_namespace_are_in_code() {
 }
 
 #[test]
+fn declared_record_stands_where_the_kept_text_of_its_function_starts() {
+    let library = "export const first = value => value;\n\
+        export function aborted(payload) { return payload.issues.length > 0; }\n";
+    let declarations = "export interface Payload { value: unknown; issues: unknown[] }\n\
+        export declare const first: <T>(value: T) => T;\n\
+        export declare function aborted(payload: Payload): boolean;\n";
+    let main = "import { aborted, first } from \"./library.js\";\n\
+        console.log(aborted(first({ value: 1, issues: [] })));";
+    let files = [
+        ("main.ts", main),
+        ("library.js", library),
+        ("library.d.ts", declarations),
+        GLOBALS,
+    ];
+    let program = &link_successfully(&files).program;
+    assert!(!program.declared_records.is_empty());
+    for declared in &program.declared_records {
+        let place = (declared.module, declared.start);
+        let mut functions = program.functions.iter();
+        assert!(functions.any(|function| (function.module, function.text.start) == place));
+    }
+}
+
+#[test]
 fn function_text_lacks_what_a_bundle_lacks() {
     let text = "declare const unbound: unknown;\n\
         export function shown(o: any): unknown {\n  \
@@ -1649,7 +1673,7 @@ fn function_text_runs_as_the_function_does() {
         assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
     }
     let text = "exports.shown = function () {\n  if (false) { function g() {} }\n  return g;\n};";
-    let expected = "function () {\n  if (false) { var g; }\n  return g;\n}";
+    let expected = "function() {\n  if (false) { var g; }\n  return g;\n}";
     let shown = texts_of("a.cjs", text);
     assert!(shown.iter().any(|it| it == expected), "{shown:#?}");
 }

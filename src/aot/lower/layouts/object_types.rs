@@ -1278,6 +1278,9 @@ impl FileLowering<'_, '_, '_, '_> {
         let [Decl::Param(pattern)] = *self.bound.symbol(named).decls else {
             return None;
         };
+        if !self.queries.is_given_by_written_calls_alone(pattern) {
+            return None;
+        }
         let expected = self.queries.binding_type(pattern).ok()?;
         let expected = self.queries.without_nullish(expected).ok()?;
         let is_written_literal = matches!(

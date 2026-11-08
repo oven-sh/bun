@@ -2,12 +2,15 @@ use bun_core::strings;
 use bun_sema::atom::number_to_string;
 use bun_sema::bind::Parent;
 use bun_sema::check::spans::skip_trivia_back;
-use bun_sema::erasure::{PackedTypeRanges, ReplacedText, TypeRanges, find_type_ranges_beside};
+use bun_sema::erasure::{
+    PackedTypeRanges, ReplacedText, TypeRanges, find_type_ranges_beside_what_is_laid,
+};
 use bun_sema::fold::Constant;
 use bun_sema::hir::{ExprId, ExprKind, FnId, PropKind, StmtId, StmtKind, end_of_expr, start_of};
 use bun_sema::module_format::list_this_of_file;
 use rustc_hash::FxHashMap;
 
+use super::text_of_heads::{find_parentheses_left_by_types, find_text_of_heads};
 use super::text_of_jsx::find_text_written_for_jsx;
 use super::text_read_back::{ChangesOfText, find_difference_in_kept_texts};
 use super::text_replaced_by_bundling::find_text_replaced_by_bundling;
@@ -129,11 +132,22 @@ impl FileLowering<'_, '_, '_, '_> {
         ));
         let reads_back = self.inputs.options.reads_function_texts_back;
         let folded = decisions.as_folded_by_bun_run();
-        let changes = reads_back
-            .then(|| ChangesOfText::new(hir, &folded, &replaced))
-            .map(|changes| changes.written_anew_at(stretches_of_jsx))
-            .map(|changes| changes.not_evaluated_by_text_at(not_evaluated));
-        let ranges = find_type_ranges_beside(hir, replaced);
+        let lays_heads = self.inputs.options.embeds_function_text;
+        let mut changes = None;
+        let ranges = find_type_ranges_beside_what_is_laid(hir, replaced, |types, replaced| {
+            if lays_heads {
+                if !hir.is_js {
+                    let mut parentheses = find_parentheses_left_by_types(hir, replaced);
+                    replaced.append(&mut parentheses);
+                }
+                let mut heads = find_text_of_heads(hir, types, replaced);
+                replaced.append(&mut heads);
+            }
+            changes = reads_back
+                .then(|| ChangesOfText::new(hir, &folded, replaced))
+                .map(|changes| changes.written_anew_at(stretches_of_jsx))
+                .map(|changes| changes.not_evaluated_by_text_at(not_evaluated));
+        });
         if !ranges.is_empty() || reads_back {
             let mut texts = Vec::new();
             let embeds_texts = self.inputs.options.embeds_function_text;
@@ -165,6 +179,8 @@ impl FileLowering<'_, '_, '_, '_> {
                     end: ranges.map_end(text.end),
                 }
             });
+            self.fragment
+                .map_starts_of_declared_records(|start| ranges.map_start(start));
             if let Some(changes) = changes {
                 self.read_function_texts_back(&ranges, texts, changes);
             }

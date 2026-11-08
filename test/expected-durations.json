@@ -484,6 +484,10 @@
     "default": 11400,
     "asan": 45600
   },
+  "aot/a-nearer-copy-of-a-package-ends-the-search-in-a-program-with-one-entry-point.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-neighbor-that-stores-under-the-same-name-changes-nothing-of-what-is-expected-of-an-appended-field.test.ts": {
     "default": 60000,
     "asan": 240000

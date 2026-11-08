@@ -1,0 +1,15 @@
+# The descriptor names a flag in front of its value: the front end fills a literal at its birth up to the first member that is converted and stores the rest, so the value is stored. It lies under the name as where the allocation
+# lays it, and does not go to unseen code. L0 = what is laid, L2 = the object that it is laid on.
+# RUN: link fields mechanisms=all
+# CHECK: field L0.2 "run" appended proven=f2 writers-known
+# CHECK: field L2.0 "inner" proven=L0 writers-known
+# -- source: the-value-of-a-descriptor-that-names-a-flag-first-lies-under-its-name-on-an-object-in-sight.js
+# function make(kind) {
+#   const made = {};
+#   Object.defineProperty(made, "inner", { enumerable: false, value: { kind, seen: 0 } });
+#   made.inner.run = payload => { made.inner.seen++; return payload.value + 1; };
+#   return made;
+# }
+# const one = make("first");
+# console.log(one.inner.run({ value: 1 }), one.inner.seen);
+# -- end of source

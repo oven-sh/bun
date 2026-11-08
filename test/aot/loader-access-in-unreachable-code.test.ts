@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { sayGoal } from "./harness/goals";
@@ -60,9 +60,9 @@ async function expectNoGrowth(forms: Record<string, string>, atMost: number, goa
 
 test(
   "a door in a function that nothing reaches brings no built-in module along",
-  // With a door anywhere in the text the stubs keep fast paths that a program without one leaves out, and an image is one step larger: 16 KB on x64, 64 KB on arm64 under Linux.
-  // A built-in module brings hundreds of KB.
-  () => expectNoGrowth(notReached, 64 * 1024),
+  // With a door anywhere in the text the executable keeps what compiled code calls for errors that it throws and for modules that are loaded again. That is cut out of Bun's own code by pages,
+  // 64 KB each on arm64 under Linux, where one page more stays or two, each with a header of 64 bytes. A built-in module brings hundreds of KB.
+  () => expectNoGrowth(notReached, (isLinux && isArm64 ? 2 : 1) * 64 * 1024 + 1024),
   240_000,
 );
 

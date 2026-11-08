@@ -37,7 +37,9 @@ pub fn names_word_that_mock_looks_for(text: &[u8]) -> bool {
 }
 
 pub fn may_spell_word_that_mock_looks_for(text: &[u8]) -> bool {
-    names_word_that_mock_looks_for(text) || bun_core::strings::contains_char(text, b'\\')
+    names_word_that_mock_looks_for(text)
+        || bun_core::strings::contains_char(text, b'\\')
+        || bun_core::strings::contains(text, b"&#")
 }
 
 pub(crate) fn call_site_kind(

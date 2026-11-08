@@ -3,6 +3,7 @@ mod closures;
 mod header;
 mod original_asked_for;
 mod text;
+mod text_of_heads;
 mod text_of_jsx;
 mod text_read_back;
 mod text_replaced_by_bundling;

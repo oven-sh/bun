@@ -272,8 +272,7 @@ fn create_source_header(
     if asked.may_be_own {
         header.syntax |= FunctionSyntax::MAY_ASK_FOR_OWN_ORIGINAL;
     }
-    let names = asked.names.into_iter();
-    header.originals_asked_for = names.map(|name| file.intern_atom(name)).collect();
+    header.originals_asked_for = asked.names;
     header.length = func
         .params
         .iter()

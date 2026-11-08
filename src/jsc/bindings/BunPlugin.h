@@ -225,11 +225,10 @@ public:
         // The fetches of compiled files that go on only once a factory below them has settled, by the key of the record. See rankWaitingModuleMocks().
         WTF::Vector<String, 1> compiledFetchesHeldBehindFactories;
         // The mocked module, and a compiled importer that had yet to run when the mock was laid and whose record the loader held, linked to the record of the module, which had run. It stays linked to that one
-        // for as long as the loader holds that entry of it: behind a reset or an eviction it is loaded anew, and gets the mock.
+        // up to a reset: behind it the importer is loaded anew, and gets the mock.
         struct CompiledImporterLinkedAheadOfMock {
             WTF::String mocked;
             WTF::String importer;
-            JSC::Strong<JSC::JSCell> entryOfImporter;
         };
         WTF::Vector<CompiledImporterLinkedAheadOfMock> compiledImportersLinkedAheadOfMocks;
         uint64_t callsOfFactoriesOfCompiledMocks { 0 };

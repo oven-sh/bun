@@ -66,7 +66,6 @@ let abortController: ((this: AbortController) => void) | undefined;
 function isAbortOfControllersAsBuilt(): boolean {
   return IS_COMPILED_AHEAD_OF_TIME &&
     !CAN_REPLACE_BUILT_IN_FUNCTIONS &&
-    $findsDeclaredMember(globalThis, "AbortController") &&
     $findsDeclaredMember(AbortController.prototype, "abort")
     ? true
     : false;
@@ -75,7 +74,6 @@ function isAbortOfControllersAsBuilt(): boolean {
 function isAbortedOfSignalsAsBuilt(): boolean {
   return IS_COMPILED_AHEAD_OF_TIME &&
     !CAN_REPLACE_BUILT_IN_FUNCTIONS &&
-    $findsDeclaredMember(globalThis, "AbortSignal") &&
     $findsDeclaredMember(AbortSignal.prototype, "aborted")
     ? true
     : false;

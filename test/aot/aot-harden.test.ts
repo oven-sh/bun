@@ -92,6 +92,36 @@ console.log(few.join(), fewFractions.join(), integers[0], integers[299], fractio
 console.log(withGaps.length, 4 in withGaps, withGaps.join(), integers.toSorted((a, b) => b - a)[0], [].sort().length, [1].sort()[0]);
 `;
 
+// Accesses wider than a byte, and the three positions of a copy, at offsets of which the compiler knows that they are no less than nought.
+const offsetsIntoViews = `function sumOf(view: DataView): number {
+  let total = 0;
+  for (let i = 0; i < 15; i++) total += view.getInt32(i * 4, true);
+  return total;
+}
+function fill(view: DataView): void {
+  for (let i = 0; i < 15; i++) view.setInt32(i * 4, i * 3, true);
+}
+function sumOfBytes(bytes: Buffer): number {
+  let total = 0;
+  for (let i = 0; i < 15; i++) total += bytes.readUInt16LE(i * 2) + bytes.writeInt32BE(i, i * 4);
+  return total;
+}
+function copied(from: Buffer, to: Buffer): number {
+  let total = 0;
+  for (let i = 0; i < 8; i++) total += from.copy(to, i * 2, i, i + 4);
+  return total;
+}
+const view = new DataView(new ArrayBuffer(64));
+const bytes = Buffer.alloc(64, 3);
+const other = Buffer.alloc(32);
+let total = 0;
+for (let turn = 0; turn < 50; turn++) {
+  fill(view);
+  total += sumOf(view) + sumOfBytes(bytes) + copied(bytes, other);
+}
+console.log(total, other.toString("hex"));
+`;
+
 // The name of the executable that --outfile built writes.
 const built = isWindows ? "built.exe" : "built";
 
@@ -248,6 +278,20 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
     expect(expected.exitCode).toBe(0);
     expect(await runBuilt(String(hardened))).toEqual(expected);
   }, 120_000);
+
+  test.each([["ignore-told-ranges"], ["proof-checks"], ["proof-checks,ignore-told-ranges"]])(
+    "tests an offset into a DataView or a Buffer from below too: %s",
+    async names => {
+      expect((await countsOf(offsetsIntoViews, [])).RangeChecksRemoved).toBeGreaterThan(0);
+      expect((await countsOf(offsetsIntoViews, [`--aot-harden=${names}`])).RangeChecksRemoved).toBe(0);
+      using hardened = tempDir("aot-harden", { "program.ts": offsetsIntoViews });
+      await build(String(hardened), [`--aot-harden=${names}`]);
+      const expected = await runPlain(String(hardened));
+      expect(expected.exitCode).toBe(0);
+      expect(await runBuilt(String(hardened))).toEqual(expected);
+    },
+    120_000,
+  );
 
   test("stops at no position that the library's sort hands over", async () => {
     using hardened = tempDir("aot-harden", { "program.ts": sorts });

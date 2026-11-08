@@ -979,7 +979,10 @@ pub enum FnOwner {
 }
 
 impl FnOwner {
-    pub fn text_of_expression_or_declaration(self, hir: &File<'_>) -> Option<std::ops::Range<u32>> {
+    pub(crate) fn text_of_expression_or_declaration(
+        self,
+        hir: &File<'_>,
+    ) -> Option<std::ops::Range<u32>> {
         match self {
             FnOwner::Expr(written) => Some(hir[written].pos..hir[written].end),
             FnOwner::Stmt(declared) => Some(hir[declared].loc.pos..hir[declared].loc.end),

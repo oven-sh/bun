@@ -78,6 +78,10 @@ const loops: [name: string, body: string][] = [
     "two-neighbors-in-the-row-that-a-turn-finds-are-stored-around-a-read",
     "for (let j = 8; j >= 0; j -= 2) for (let k = 0; k < rows.length; k++) { const held = rows[k][j + 1]; rows[k][j + 1] = 0.5 * rows[k][j] + 0.25 * held; sum += rows[k][j + 1]; rows[k][j] = 0.25 * rows[k][j] - 0.5 * held; }",
   ],
+  [
+    "a-row-under-a-key-raised-by-what-is-read-of-it",
+    "for (let j = 0; j < shelf[name].length; j++) { sum += shelf[name][j]; shelf[name][j] = shelf[name][j] + 2; }",
+  ],
 ];
 
 const kinds: [name: string, made: string][] = [
@@ -134,6 +138,7 @@ const happenings: [name: string, done: string][] = [
   ["its-buffer-is-handed-away", "try { target.buffer.transfer(); } catch {}"],
   ["what-holds-it-is-given-another", "try { GIVEN } catch {}"],
   ["what-holds-it-lets-go-of-it", "try { LET_GO } catch {}"],
+  ["a-getter-hands-it-out-and-soon-another", ""],
 ];
 
 const reaches = ["under-a-key-out-of-data", "in-sight"] as const;
@@ -166,7 +171,11 @@ function write(at: number) {
         : overRows
           ? "holder.length = 1;"
           : "Object.preventExtensions(target);";
-  // What happens, happens once, in the second turn, through a getter that the turn reads: no call stands in the loop.
+  // The getter is laid in front of the walk and nothing stands in the loop: over what holds the list, where it hands out another from the third asking on, or over an element where nothing holds the
+  // list, from the second on: what is printed behind the walk then shows how often the walk has asked.
+  const handsOut = (where: string, key: string, askings: number, later: string) => `{ const held = ${where}[${key}]; let asked = 0; Object.defineProperty(${where}, ${key}, { get() { return ++asked <= ${askings} ? held : ${later}; }, set(value) {}, enumerable: true, configurable: true }); }`; // prettier-ignore
+  const laid = !happening.startsWith("a-getter-hands-it-out") ? "" : ` try ${underAKey ? handsOut("handed", '"row"', 2, "[7, 7, 7]") : overRows ? handsOut("handed", "1", 2, "[7, 7, 7]") : handsOut("target", "1", 1, "70")} catch {}`; // prettier-ignore
+  // What else happens, happens once, in the second turn, through a getter that the turn reads: no call stands in the loop.
   const turn = done ? body.replace(/sum \+= /, "sum += trip.wire + ") : body;
   const handed = (made: string) =>
     underAKey ? `{ row: ${made}, other: [2] }` : overRows ? `[${made}, ${made}, ${made}]` : made;
@@ -185,7 +194,7 @@ ${
 const go = ${reached === "in-sight" ? "walk" : `{ walk, idle() { return 0; } }[JSON.parse('"walk"')]`};
 function tell(value) { return typeof value + ":" + (Object.is(value, -0) ? "-0" : String(value)); }
 function ask(handed) {
-  holder = handed; target = ${underAKey ? "handed.row" : overRows ? "handed === null ? null : handed[1]" : hasABase && !walksTheBase ? "base" : "handed"}; turns = 0;${isCaught ? " made.give(handed);" : inAVariable ? " kept = handed;" : ""}
+  holder = handed; target = ${underAKey ? "handed.row" : overRows ? "handed === null ? null : handed[1]" : hasABase && !walksTheBase ? "base" : "handed"}; turns = 0;${isCaught ? " made.give(handed);" : inAVariable ? " kept = handed;" : ""}${laid}
   let said;
   try { said = tell(go(handed, under)); } catch (error) { said = "threw " + error.name; }
   let left;

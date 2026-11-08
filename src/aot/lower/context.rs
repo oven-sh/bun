@@ -13,7 +13,7 @@ use bun_core::strings::{CodepointIterator, Cursor};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Bound, SymbolId};
 use bun_sema::check::aot::{BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
-use bun_sema::erasure::ReplacedText;
+use bun_sema::erasure::{ReplacedText, TypeRanges};
 use bun_sema::fold::{Constant, Decisions};
 use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
 use bun_sema::hir_from_data::DataValue;
@@ -210,6 +210,8 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(in crate::lower) stores_by_name_in_lists: RefCell<FxHashMap<u32, StoresByNameInList>>,
     shown_names: ShownNames,
     pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
+    pub(in crate::lower) names_word_that_mock_looks_for: Option<bool>,
+    pub(in crate::lower) ranges_of_types: OnceCell<TypeRanges>,
     pub(in crate::lower) enums_that_stay_as_born: Option<EnumsThatStayAsBorn>,
     pub(in crate::lower) counted_places: Option<CountedPlaces>,
     pub(in crate::lower) quoted_texts: QuotedTexts,
@@ -317,6 +319,8 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             stores_by_name_in_lists: RefCell::default(),
             shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
             enum_member_reads: FxHashMap::default(),
+            names_word_that_mock_looks_for: None,
+            ranges_of_types: OnceCell::new(),
             enums_that_stay_as_born: None,
             counted_places,
             quoted_texts: QuotedTexts::default(),

@@ -36,7 +36,6 @@
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/ScriptFetchParameters.h>
@@ -1048,17 +1047,24 @@ bool willUnmockCompiledFile(Zig::GlobalObject* globalObject, const String& key, 
         return false;
     AOT::setOriginalCameBackUnderOwnKey(globalObject, *module, bringsBack);
     bool liesUnderKeyOfOriginal = AOT::liesUnderKeyOfOriginal(globalObject, *module) || ranBesideMockThatWaits(globalObject, *module);
-    bool leavesProgram = liesUnderKeyOfOriginal && !bringsBack && !isReplacedByLaterMock && AOT::isEvaluatedFile(globalObject, *module) && !AOT::refusesToLoadAgain(globalObject, *module);
-    AOT::setLiesUnderKeyOfOriginal(globalObject, *module, liesUnderKeyOfOriginal && !bringsBack && !leavesProgram);
-    if (leavesProgram)
+    bool mayLeaveProgram = !AOT::refusesToLoadAgain(globalObject, *module);
+    bool runsAtNextLoad = liesUnderKeyOfOriginal && !bringsBack && !isReplacedByLaterMock && AOT::isEvaluatedFile(globalObject, *module) && (mayLeaveProgram || !AOT::isESModule(*module));
+    AOT::setLiesUnderKeyOfOriginal(globalObject, *module, liesUnderKeyOfOriginal && !bringsBack && !(runsAtNextLoad && mayLeaveProgram));
+    if (runsAtNextLoad && mayLeaveProgram)
         AOT::keepOriginalOfFileThatLeavesProgram(globalObject, *module);
-    return leavesProgram;
+    return runsAtNextLoad;
 }
 
-void didUnmockCompiledFile(Zig::GlobalObject* globalObject, const String& key, bool leavesProgram, bool bringsBack)
+void didUnmockCompiledFile(Zig::GlobalObject* globalObject, const String& key, bool runsAtNextLoad, bool bringsBack, bool factoryIsPending)
 {
-    // Nothing lies under the file's own key: the next load runs the file.
-    if (leavesProgram)
+    // Nothing lies under the file's own key: the next load runs the file. Where the build has not seen that the file may leave the program, its compiled body runs once more,
+    // and the run that lies under the key of the original is kept for the next mock. Not where this end has brought a preload's mock back, nor while the factory of the mock that ended has yet to settle.
+    if (auto file = runsAtNextLoad ? compiledModuleForPath(key) : std::nullopt; file && AOT::refusesToLoadAgain(globalObject, *file)) {
+        if (!factoryIsPending && !AOT::hasMockInPlace(globalObject, *file) && !AOT::hasMockThatWaitsOrRuns(globalObject, *file))
+            AOT::parkRunUnderKeyOfOriginal(globalObject, *file);
+        return;
+    }
+    if (runsAtNextLoad)
         return didDeleteRequireCacheEntry(globalObject, key);
     auto module = bringsBack && reloadsFilesFromDisk() ? compiledModuleForPath(key) : std::nullopt;
     if (!module || !AOT::isEvictedFile(globalObject, *module) || AOT::isESModule(*module))
@@ -1818,16 +1824,7 @@ static void didStartImport(JSGlobalObject* globalObject, JSPromise* import, cons
 // What holds for the statements of the importer, which are linked, does not hold for a call of import() in it, which asks anew.
 static bool staysLinkedToFileAheadOfMock(JSGlobalObject* globalObject, const String& path, const String& importer)
 {
-    Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
-    for (const auto& linked : zigGlobalObject->onLoadPlugins.compiledImportersLinkedAheadOfMocks) {
-        if (linked.mocked != path || linked.importer != importer)
-            continue;
-        for (auto& [mapKey, entry] : testFileModuleLoader(zigGlobalObject)->moduleMap()) {
-            if (entry.get() == linked.entryOfImporter.get())
-                return true;
-        }
-    }
-    return false;
+    return defaultGlobalObject(globalObject)->onLoadPlugins.compiledImportersLinkedAheadOfMocks.containsIf([&](const auto& linked) { return linked.mocked == path && linked.importer == importer; });
 }
 
 static bool givesOriginalBesideMock(JSGlobalObject* globalObject, const String& path, const String& importer, bool isImport)
@@ -2373,7 +2370,7 @@ void willResolveImport(Zig::GlobalObject*, const String&, JSValue) {}
 void throwIfHeldUnderTypesAlone(Zig::GlobalObject*, const String&, const String&, const String&, bool) {}
 void didDeleteRequireCacheEntry(Zig::GlobalObject*, const String&) {}
 bool willUnmockCompiledFile(Zig::GlobalObject*, const String&, bool, bool) { return false; }
-void didUnmockCompiledFile(Zig::GlobalObject*, const String&, bool, bool) {}
+void didUnmockCompiledFile(Zig::GlobalObject*, const String&, bool, bool, bool) {}
 bool didSetCompiledFileAside(Zig::GlobalObject*, const String&) { return false; }
 bool isOriginalKeptOfCompiledFile(Zig::GlobalObject*, const String&) { return false; }
 void willMockFileLoadedAnew(Zig::GlobalObject*, const String&, JSValue) {}

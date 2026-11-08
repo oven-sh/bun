@@ -1,7 +1,7 @@
 // process.stdout is a WriteStream: the Writable class and finished() load here, not node:stream, Readable or node:fs.
 const { Stream } = require("internal/streams/legacy");
 // node:stream is `Stream` with its members: what a program has stored there, where node:stream is loaded. Else each loads alone.
-const ReadableOfProgram = $getByIdDirect(Stream, "Readable") as $Node.ReadableConstructor | undefined;
+let ReadableOfProgram = $getByIdDirect(Stream, "Readable") as $Node.ReadableConstructor | undefined;
 const Writable: $Node.WritableConstructor = $getByIdDirect(Stream, "Writable") ?? require("internal/streams/writable");
 const finished: typeof Stream.finished =
   $getByIdDirect(Stream, "finished") ?? require("internal/streams/end-of-stream");
@@ -357,13 +357,16 @@ $toClass(ReadStream, "ReadStream", ReadableOfProgram);
 const readStreamPrototype = ReadStream.prototype;
 
 // Else the class goes below Readable at its first use (`new`, `instanceof`, a read of `prototype`), so a WriteStream loads no Readable.
+// As in Node, that use takes what the program has stored under stream.Readable by then. A stub there throws, and the next use tries again.
 if (ReadableOfProgram === undefined)
   Object.defineProperty(ReadStream, "prototype", {
     get() {
-      const Readable = require("internal/streams/readable");
+      const Readable: $Node.ReadableConstructor =
+        $getByIdDirect(Stream, "Readable") ?? require("internal/streams/readable");
       Object.setPrototypeOf(readStreamPrototype, Readable.prototype);
       Object.setPrototypeOf(ReadStream, Readable);
       Object.defineProperty(ReadStream, "prototype", { value: readStreamPrototype, writable: true });
+      ReadableOfProgram = Readable;
       return readStreamPrototype;
     },
     set(value) {

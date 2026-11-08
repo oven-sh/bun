@@ -2541,6 +2541,62 @@ describe.concurrent("a built-in module uses what a program stored on node:stream
     expect(exitCode).toBe(0);
   });
 
+  // A read of process.stdout loads the fs streams, but it is not a use of fs.ReadStream. As in Node, the first use of
+  // fs.ReadStream takes the Readable stored by then. A stub stored by then throws at that use, and the next use tries again.
+  it.concurrent(
+    "fs.ReadStream stands below what stream.Readable holds at its first use, after a read of process.stdout",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{
+            void process.stdout;
+            const nodeStream = require("node:stream");
+            const nodeFs = require("node:fs");
+            const Was = nodeStream.Readable;
+            nodeStream.Readable = {};
+            let whileStubbed;
+            try {
+              nodeFs.createReadStream(process.execPath).destroy();
+              whileStubbed = "a stream";
+            } catch (error) {
+              whileStubbed = error.name;
+            }
+            function Mine(...given) {
+              return Was.apply(this, given);
+            }
+            Object.setPrototypeOf(Mine.prototype, Was.prototype);
+            Object.setPrototypeOf(Mine, Was);
+            nodeStream.Readable = Mine;
+            const readStream = nodeFs.createReadStream(process.execPath);
+            nodeStream.Readable = Was;
+            const later = nodeFs.createReadStream(process.execPath);
+            console.log(
+              JSON.stringify({
+                whileStubbed,
+                used: readStream instanceof Mine,
+                above: Object.getPrototypeOf(nodeFs.ReadStream) === Mine,
+                later: later instanceof Mine,
+              }),
+            );
+            readStream.destroy();
+            later.destroy();
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({
+        stdout: JSON.stringify({ whileStubbed: "TypeError", used: true, above: true, later: true }) + "\n",
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   // node:stream sets its members on `Stream`, the function that every stream class stands on. node:http has loaded all
   // of node:stream, so a program that freezes the chain of its classes can still load node:stream.
   it("node:stream loads behind a frozen class chain of node:http", async () => {

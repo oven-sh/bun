@@ -4339,6 +4339,83 @@ describe("bundler", () => {
     });
   }
 
+  // The call with the receiver given is `Reflect.apply(method, receiver, [...])`.
+  // A function that can see another `Reflect` is left as it is written.
+  itBundled("react-compiler/MethodReadAheadOfAStatementNeedsTheGlobalReflect", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { ShadowedInTheFile } from "./shadowed";
+
+        function who() {
+          return this.name + ":old";
+        }
+        function other() {
+          return this.name + ":new";
+        }
+        function ShadowedInTheBody(p) {
+          const Reflect = { apply: () => "the Reflect of the body" };
+          const o = { name: p.name, who };
+          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Reflect}</div>;
+        }
+        function ShadowedInABlock(p) {
+          const o = { name: p.name, who };
+          let out = "";
+          if (p.name) {
+            const Reflect = { apply: () => "the Reflect of the block" };
+            out = o.who((() => { o.who = other; return ""; })()) + " " + typeof Reflect;
+          }
+          return <div>{out}</div>;
+        }
+        function UsesTheGlobal(p) {
+          const o = { name: p.name, who };
+          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + Reflect.ownKeys(o)}</div>;
+        }
+        for (const Form of [ShadowedInTheFile, ShadowedInTheBody, ShadowedInABlock, UsesTheGlobal]) {
+          console.log(Form.name + "=" + Form({ name: "A" }).props.children);
+        }
+      `,
+      "/shadowed.jsx": /* jsx */ `
+        const Reflect = { apply: () => "the Reflect of the file" };
+        function who() {
+          return this.name + ":old";
+        }
+        function other() {
+          return this.name + ":new";
+        }
+        export function ShadowedInTheFile(p) {
+          const o = { name: p.name, who };
+          return <div>{o.who((() => { o.who = other; return ""; })()) + " " + typeof Reflect.apply}</div>;
+        }
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": ``,
+      "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+        export const jsxDEV = (type, props) => ({ type, props });
+      `,
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        export function c(size) {
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    target: "browser",
+    onAfterBundle(api) {
+      // A compiled function starts with its memo cache.
+      const compiled = api.readFile("/out.js").matchAll(/function (\w+)\(p\) \{\s*let \$ = c\(\d+\);/g);
+      expect(Array.from(compiled, match => match[1])).toEqual(["UsesTheGlobal"]);
+    },
+    run: {
+      stdout: `
+        ShadowedInTheFile=A:old function
+        ShadowedInTheBody=A:old object
+        ShadowedInABlock=A:old object
+        UsesTheGlobal=A:old name,who
+      `,
+    },
+  });
+
   itBundled("react-compiler/SourceMapOfCatch", {
     files: {
       "/entry.jsx": /* jsx */ `

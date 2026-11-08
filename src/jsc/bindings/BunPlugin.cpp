@@ -2267,20 +2267,8 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
     bool isBuiltin = isBuiltinModuleKey(specifier);
     bool loaderHoldsMock = isBuiltin && loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->hasLiveExports();
     if (loaded.compiledModule && (!loaded.esmNamespace || loaderHoldsMock) && JSC::AOT::hasWordOfMock(globalObject, *loaded.compiledModule) && (mock->compiledModuleThatNeverRan || isBuiltin || JSC::AOT::hasMockInPlace(globalObject, *loaded.compiledModule))) {
-        JSValue answer = exports;
-        if (commonJSExports) {
-            answer = commonJSExports->exportsObject();
-            RETURN_IF_EXCEPTION(scope, );
-        } else {
-            JSValue isESModule = exports->getIfPropertyExists(globalObject, vm.propertyNames->__esModule);
-            RETURN_IF_EXCEPTION(scope, );
-            if (isESModule && isESModule.toBoolean(globalObject) && mock->compiledModuleThatNeverRan && !(isBuiltin && loaded.commonJSModule) && !JSC::AOT::wasRequiredUnderMockInPlace(globalObject, *loaded.compiledModule)) {
-                JSValue defaultValue = exports->getIfPropertyExists(globalObject, vm.propertyNames->defaultKeyword);
-                RETURN_IF_EXCEPTION(scope, );
-                if (defaultValue && !defaultValue.isUndefined())
-                    answer = defaultValue;
-            }
-        }
+        JSValue answer = Bun::commonJSExportsOfModuleMockResult(exports);
+        RETURN_IF_EXCEPTION(scope, );
         bool isInPlace = JSC::AOT::setMock(globalObject, *loaded.compiledModule, mock, answer, mock->leavesStandingMockToItsImporters.value_or(mock->isOfVitest()));
         RETURN_IF_EXCEPTION(scope, );
         if (isInPlace) {
@@ -2361,11 +2349,8 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             // Two mocks may patch one variable, which two modules export. The last patch is undone first, as above.
             if (!mock->patchOrder)
                 mock->patchOrder = ++patches;
-            JSValue whatRequireAnswers = exports;
-            if (commonJSExports) {
-                whatRequireAnswers = commonJSExports->exportsObject();
-                RETURN_IF_EXCEPTION(scope, );
-            }
+            JSValue whatRequireAnswers = Bun::commonJSExportsOfModuleMockResult(exports);
+            RETURN_IF_EXCEPTION(scope, );
             JSC::AOT::willMockModule(globalObject, *loaded.compiledModule, whatRequireAnswers, !!commonJSExports);
             RETURN_IF_EXCEPTION(scope, );
         }

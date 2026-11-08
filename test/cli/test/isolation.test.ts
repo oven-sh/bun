@@ -2381,6 +2381,25 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 
+  test("a mock left on a module that a plugin gave to build.module()", async () => {
+    using dir = tempDir(
+      "isolate-leak-mocked-virtual-module",
+      makeLeakFixture(`
+        import { mock, vi } from "bun:test";
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module("virtual:left-mocked", () => ({ exports: { from: "the plugin" }, loader: "object" }));
+          },
+        });
+        mock.module("virtual:left-mocked", () => ({ from: "the mock" }));
+        const seen = [(await import("virtual:left-mocked")).from, (await vi.importActual("virtual:left-mocked")).from];
+        if (seen.join() !== "the mock,the plugin") throw new Error("saw " + seen);
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
   test("Bun.serve left running", async () => {
     using dir = tempDir(
       "isolate-leak-serve",

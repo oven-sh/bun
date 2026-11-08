@@ -261,7 +261,11 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             RETURN_IF_EXCEPTION(scope, {});
             auto fromString = from.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
+            auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString);
+            // A mock of a build.module() module requires its original. No name resolves to that key for anyone else.
+            if (!resolvedString && globalObject->onLoadPlugins.hasProviders && Bun::isOriginalRequiredByModuleMock(globalObject, parentModule, moduleString)) [[unlikely]]
+                resolvedString = moduleString;
+            if (resolvedString) {
                 if (!isRequireDotResolve)
                     resolvedString = Bun::keyOfImportByPackage(globalObject, resolvedString.value(), fromString, false);
                 if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]

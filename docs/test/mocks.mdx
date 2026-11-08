@@ -469,6 +469,37 @@ The exception is a `vi.mock()` call in a module that is imported with a static i
 
 A mocked builtin such as `node:fs` is mocked for every importer with all of them.
 
+### Mocking a Module From a Plugin
+
+A [plugin](/runtime/plugins) can give a module for a name with `build.module()`. You can mock that name like a file or a package. The plugin's module is the original of the mock. `importOriginal`, `vi.importActual()` and `jest.requireActual()` return it, and a mock without a factory mocks its exports.
+
+```ts title="preload.ts" icon="/icons/typescript.svg"
+Bun.plugin({
+  name: "virtual modules",
+  setup(build) {
+    build.module("$app/environment", () => ({ exports: { dev: true }, loader: "object" }));
+  },
+});
+```
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, vi } from "bun:test";
+import { dev } from "$app/environment";
+
+vi.mock("$app/environment", () => ({ dev: false }));
+
+test("the plugin's module is mocked", async () => {
+  expect(dev).toBe(false);
+  expect((await vi.importActual("$app/environment")).dev).toBe(true);
+});
+```
+
+When the mock is removed, the next import of the name gets the plugin's module again.
+
+If a file or a package has the same name, the mock is a mock of the plugin's module, because that is what an import of the name loads.
+
+If `build.module()` is called for a name that is mocked, the mock stays. The module that the plugin gave becomes the original of the mock.
+
 ### Mocking Without a Factory
 
 You can call `vi.mock(path)` and `jest.mock(path)` without a factory. `mock.module()` always needs one.
@@ -825,6 +856,7 @@ Bun resolves the module specifier the same way it resolves an `import`, supporti
 - Relative paths (`'./module'`)
 - Absolute paths (`'/path/to/module'`)
 - Package names (`'lodash'`)
+- Names that a plugin gave a module for with `build.module()` (`'$app/environment'`)
 
 ### Import Timing Effects
 

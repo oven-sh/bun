@@ -81,6 +81,8 @@ public:
     bool isMadeByCodeOfImage { false };
     // What else an ahead-of-time executable keeps of a few of these objects lies in a record beside the cell.
     bool hasRecordBesideCell { false };
+    // Of the object that a module mock requires its original through. The key it asks for is of the mock's making, and the resolver lets it through for this object alone.
+    bool requiresOriginalOfModuleMock { false };
     // require() makes an object for a file of the executable at every call: the number of the file that was loaded into this one, where a requirer that is no file of the executable asked.
     uint32_t compiledModuleLoadedInto { noCompiledModule };
     // If compile is overridden, it is assigned to this field. The default

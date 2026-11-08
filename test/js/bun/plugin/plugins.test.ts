@@ -1,6 +1,6 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest, mock, vi } from "bun:test";
 import { bunEnv, bunExe, Heap, isWindows } from "harness";
 import { resolve } from "path";
 
@@ -336,6 +336,32 @@ describe("module", () => {
     // @ts-expect-error
     expect((await import("bun:my-resolved-module")).hello).toBe("my-resolved-module");
     expect(require("bun:my-resolved-module").hello).toBe("my-resolved-module");
+  });
+
+  it("is the original of a mock of its name, and is there again after the mock", async () => {
+    const name = "my-mocked-virtual-module";
+    const give = (hello: string) =>
+      Bun.plugin({
+        name: "a module that is mocked",
+        setup(builder) {
+          builder.module(name, () => ({ exports: { hello }, loader: "object" }));
+        },
+      });
+    const imported = async () => (await import(name)).hello;
+    const actual = async () => [(await vi.importActual<{ hello: string }>(name)).hello, jest.requireActual(name).hello];
+
+    give("world");
+    mock.module(name, () => ({ hello: "mock" }));
+    expect([await imported(), require(name).hello]).toEqual(["mock", "mock"]);
+    expect(await actual()).toEqual(["world", "world"]);
+
+    // Given again, it replaces the module and leaves the mock.
+    give("again");
+    expect([await imported(), require(name).hello]).toEqual(["mock", "mock"]);
+    expect(await actual()).toEqual(["again", "again"]);
+
+    vi.doUnmock(name);
+    expect([await imported(), require(name).hello, require.resolve(name)]).toEqual(["again", "again", name]);
   });
 });
 

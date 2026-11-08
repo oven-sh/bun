@@ -1088,6 +1088,358 @@ describe.concurrent("the original of a mocked module", () => {
   });
 });
 
+// One run of `bun test` for each isolation mode, and not at the same time as other runs: --isolate=modules takes seconds to start in a debug build.
+describe("a module that a plugin gave to build.module()", () => {
+  const nextFile = `
+    import { expect, test } from "bun:test";
+    test("the next file gets the plugin's module", async () => {
+      const environment = await import("$app/environment");
+      expect([environment.dev, environment.f(), require("$app/environment").dev]).toEqual([true, "real", true]);
+    });
+  `;
+  const seesMockOfPreload = `
+    import { expect, jest, test, vi } from "bun:test";
+    test("a file gets the preload's mock, and the plugin's module as its original", async () => {
+      expect((await import("$app/mocked-by-preload")).from).toBe("the preload's mock");
+      expect((await vi.importActual("$app/mocked-by-preload")).from).toBe("the plugin");
+      expect(jest.requireActual("$app/mocked-by-preload").from).toBe("the plugin");
+    });
+  `;
+  // Test files run in the order of their names.
+  const files = {
+    "preload.ts": `
+      import { mock } from "bun:test";
+      globalThis.calls = {};
+      Bun.plugin({
+        name: "virtual",
+        setup(build) {
+          build.module("$app/environment", () => ({ exports: { dev: true, f() { return "real"; } }, loader: "object" }));
+          // The key that an import of "./file.ts" has.
+          for (const name of ["$app/mocked-by-preload", "pkg", Bun.resolveSync("./file.ts", import.meta.dir)])
+            build.module(name, () => ({ exports: { from: "the plugin" }, loader: "object" }));
+          for (const name of ["mocked", "lazy", "actual", "spied", "removed"])
+            build.module("counted:" + name, () => {
+              calls[name] = (calls[name] ?? 0) + 1;
+              return { exports: { f() { return name; } }, loader: "object" };
+            });
+          build.module("virtual:later", async () => (await 0, { exports: { from: "the plugin" }, loader: "object" }));
+          build.module("virtual/code.ts", () => ({ contents: 'export const from: string = "the plugin";' }));
+          build.module("virtual/data.json", () => ({ contents: '{ "from": "the plugin" }' }));
+        },
+      });
+      mock.module("$app/mocked-by-preload", () => ({ from: "the preload's mock" }));
+    `,
+
+    "a01-importActual.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      vi.mock("$app/environment", () => ({ dev: false }));
+      test("vi.importActual() returns the plugin's module", async () => {
+        expect((await import("$app/environment")).dev).toBe(false);
+        const actual = await vi.importActual("$app/environment");
+        expect([actual.dev, actual.f()]).toEqual([true, "real"]);
+        expect(await vi.importActual("$app/environment")).toBe(actual);
+      });
+    `,
+    "a02-importOriginal.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      import * as environment from "$app/environment";
+      vi.mock("$app/environment", async importOriginal => ({ ...(await importOriginal()), dev: false }));
+      test("importOriginal() returns the plugin's module", () => {
+        expect([environment.dev, environment.f()]).toEqual([false, "real"]);
+      });
+    `,
+    "a03-spy.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      import * as environment from "$app/environment";
+      vi.mock("$app/environment", { spy: true });
+      test("{ spy: true } spies on the plugin's module", () => {
+        expect([environment.dev, environment.f(), vi.isMockFunction(environment.f)]).toEqual([true, "real", true]);
+        expect(environment.f).toHaveBeenCalledTimes(1);
+      });
+    `,
+    "a04-no-factory.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      import * as environment from "$app/environment";
+      vi.mock("$app/environment");
+      test("a mock without a factory has mocks of the plugin's exports", () => {
+        expect([environment.dev, environment.f(), vi.isMockFunction(environment.f)]).toEqual([true, undefined, true]);
+      });
+    `,
+    "a05-requireActual-in-factory.test.ts": `
+      import { expect, jest, test } from "bun:test";
+      jest.mock("$app/environment", () => ({ ...jest.requireActual("$app/environment"), dev: false }));
+      test("jest.requireActual() in a factory returns the plugin's module", () => {
+        const environment = require("$app/environment");
+        expect([environment.dev, environment.f()]).toEqual([false, "real"]);
+      });
+    `,
+    "a06-requireActual.test.ts": `
+      import { expect, jest, test } from "bun:test";
+      import Module from "node:module";
+      jest.mock("$app/environment", () => ({ dev: false }));
+      test("jest.requireActual() and jest.createMockFromModule() get the plugin's module", () => {
+        expect(require("$app/environment").dev).toBe(false);
+        const actual = jest.requireActual("$app/environment");
+        expect([actual.dev, actual.f()]).toEqual([true, "real"]);
+        const made = jest.createMockFromModule("$app/environment");
+        expect([made.dev, made.f(), jest.isMockFunction(made.f)]).toEqual([true, undefined, true]);
+
+        // The mock asks through whatever Module.prototype.require is.
+        const original = Module.prototype.require;
+        Module.prototype.require = function (id) {
+          return original.call(this, id);
+        };
+        try {
+          expect(jest.requireActual("$app/environment")).toBe(actual);
+        } finally {
+          Module.prototype.require = original;
+        }
+      });
+    `,
+    "a07-mock-module.test.ts": `
+      import { expect, mock, test } from "bun:test";
+      mock.module("$app/environment", () => ({ dev: false }));
+      test("mock.module() mocks it", async () => {
+        expect((await import("$app/environment")).dev).toBe(false);
+      });
+    `,
+    "node_modules/consumer/package.json": JSON.stringify({ name: "consumer", main: "./index.js", type: "module" }),
+    "node_modules/consumer/index.js": `import { dev } from "$app/environment"; export const seenByPackage = dev;`,
+    "a08-package.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      import * as environment from "$app/environment";
+      import { seenByPackage } from "consumer";
+      vi.mock("$app/environment", () => ({ dev: false }));
+      test("vi.mock() leaves the plugin's module to a package that imports it", () => {
+        expect([environment.dev, seenByPackage]).toEqual([false, true]);
+      });
+    `,
+    "a09-next-file.test.ts": nextFile,
+    "a10-removed.test.ts": `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      const seen = async () => (await import("$app/environment")).dev;
+
+      test("the plugin's module is back when the mock is removed", async () => {
+        vi.doMock("$app/environment", () => ({ dev: false }));
+        expect(await seen()).toBe(false);
+        vi.doUnmock("$app/environment");
+        expect(await seen()).toBe(true);
+
+        {
+          using _ = vi.doMock("$app/environment", () => ({ dev: false }));
+          expect(await seen()).toBe(false);
+        }
+        expect(await seen()).toBe(true);
+
+        vi.doMock("$app/environment", () => ({ dev: false }));
+        vi.doMock("$app/environment", () => ({ dev: "mocked again" }));
+        expect(await seen()).toBe("mocked again");
+        vi.doUnmock("$app/environment");
+        expect(await seen()).toBe(true);
+
+        jest.doMock("$app/environment", () => ({ dev: false }));
+        expect(await seen()).toBe(false);
+        jest.resetModules();
+        expect(await seen()).toBe(false);
+        jest.dontMock("$app/environment");
+        expect(await seen()).toBe(true);
+
+        const failed = new Error("the factory failed");
+        vi.doMock("$app/environment", async () => {
+          await 0;
+          throw failed;
+        });
+        await expect(import("$app/environment")).rejects.toBe(failed);
+        vi.doUnmock("$app/environment");
+        expect(await seen()).toBe(true);
+      });
+
+      test("require() returns the plugin's module until an async factory settles", async () => {
+        vi.doMock("$app/environment", async () => (await 0, { dev: false }));
+        expect(require("$app/environment").dev).toBe(true);
+        expect(await seen()).toBe(false);
+        expect(require("$app/environment").dev).toBe(false);
+        vi.doUnmock("$app/environment");
+      });
+
+      test("nothing but the mock can name the original", async () => {
+        const imports = () => import("$app/environment?actual").then(() => "loaded", error => error.message);
+        const requires = () => {
+          try {
+            return require("$app/environment?actual"), "loaded";
+          } catch (error) {
+            return error.message;
+          }
+        };
+        const before = [await imports(), requires()];
+        expect(before).toEqual([
+          expect.stringContaining("Cannot find package '$app'"),
+          expect.stringContaining("Cannot find module '$app/environment?actual'"),
+        ]);
+        vi.doMock("$app/environment", () => ({ dev: false }));
+        expect((await vi.importActual("$app/environment")).dev).toBe(true);
+        expect(jest.requireActual("$app/environment").dev).toBe(true);
+        expect([await imports(), requires()]).toEqual(before);
+        vi.doUnmock("$app/environment");
+      });
+
+      // Last: the end of the file removes this mock.
+      test("mock.module() updates the loaded module in place", async () => {
+        const loaded = await import("$app/environment");
+        expect(loaded.dev).toBe(true);
+        mock.module("$app/environment", () => ({ dev: false }));
+        expect([loaded.dev, loaded.f()]).toEqual([false, "real"]);
+      });
+    `,
+    "a11-next-file.test.ts": nextFile,
+
+    "b1-mocked-by-preload.test.ts": seesMockOfPreload,
+    "b2-mocked-by-preload.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      test("a file mocks it again and removes its mock", async () => {
+        vi.doMock("$app/mocked-by-preload", () => ({ from: "the file's mock" }));
+        expect((await import("$app/mocked-by-preload")).from).toBe("the file's mock");
+        expect((await vi.importActual("$app/mocked-by-preload")).from).toBe("the plugin");
+        vi.doUnmock("$app/mocked-by-preload");
+        expect((await import("$app/mocked-by-preload")).from).toBe("the plugin");
+      });
+    `,
+    "b3-mocked-by-preload.test.ts": seesMockOfPreload,
+
+    "registers-hoisted.ts": `
+      Bun.plugin({
+        name: "virtual",
+        setup(build) {
+          build.module("virtual:hoisted", () => ({ exports: { from: "the plugin" }, loader: "object" }));
+        },
+      });
+    `,
+    // vi.mock() is hoisted above the import that registers the module.
+    "c1-given-while-mocked.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      import "./registers-hoisted";
+      vi.mock("virtual:hoisted", () => ({ from: "the mock" }));
+      test("the mock stays when the module is given after it", async () => {
+        expect((await import("virtual:hoisted")).from).toBe("the mock");
+        expect((await vi.importActual("virtual:hoisted")).from).toBe("the plugin");
+      });
+    `,
+    "c2-given-while-mocked.test.ts": `
+      import { expect, test } from "bun:test";
+      import "./registers-hoisted";
+      test("the next file gets the module that was given", async () => {
+        expect((await import("virtual:hoisted")).from).toBe("the plugin");
+      });
+    `,
+    "c3-given-while-mocked.test.ts": `
+      import { expect, jest, mock, test, vi } from "bun:test";
+      const give = from =>
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module("virtual:late", () => ({ exports: { from }, loader: "object" }));
+          },
+        });
+      test("the mock stays, and its original is what the plugin gave last", async () => {
+        mock.module("virtual:late", () => ({ from: "the mock" }));
+        give("the plugin");
+        const mocked = await import("virtual:late");
+        expect(mocked.from).toBe("the mock");
+        expect((await vi.importActual("virtual:late")).from).toBe("the plugin");
+        expect(jest.requireActual("virtual:late").from).toBe("the plugin");
+
+        give("the plugin, again");
+        expect([mocked.from, (await import("virtual:late")).from]).toEqual(["the mock", "the mock"]);
+        expect((await vi.importActual("virtual:late")).from).toBe("the plugin, again");
+        expect(jest.requireActual("virtual:late").from).toBe("the plugin, again");
+
+        vi.doUnmock("virtual:late");
+        expect((await import("virtual:late")).from).toBe("the plugin, again");
+      });
+    `,
+
+    "file.ts": `export const from = "the file";`,
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "./index.js", type: "module" }),
+    "node_modules/pkg/index.js": `export const from = "the package";`,
+    "d1-name-on-disk.test.ts": `
+      import { expect, jest, test, vi } from "bun:test";
+      const from = async path => (await import(path)).from;
+      test.each(["pkg", "./file.ts"])("a mock of %s is a mock of the plugin's module", async name => {
+        vi.doMock(name, () => ({ from: "the mock" }));
+        expect(await from(name)).toBe("the mock");
+        expect(await from("./node_modules/pkg/index.js")).toBe("the package");
+        expect((await vi.importActual(name)).from).toBe("the plugin");
+        expect(jest.requireActual(name).from).toBe("the plugin");
+        vi.doUnmock(name);
+        expect(await from(name)).toBe("the plugin");
+      });
+    `,
+    "d2-name-on-disk.test.ts": `
+      import { expect, test } from "bun:test";
+      const from = async path => (await import(path)).from;
+      test("the next file gets the plugin's modules", async () => {
+        expect([await from("pkg"), await from("./file.ts"), await from("./node_modules/pkg/index.js")]).toEqual(["the plugin", "the plugin", "the package"]);
+      });
+    `,
+
+    "e1-calls.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      vi.mock("counted:mocked", () => ({ f: "mocked" }));
+      test("the plugin's function is called once for each instance of the original, and never for the mock", async () => {
+        expect((await import("counted:mocked")).f).toBe("mocked");
+
+        // The factory declares the parameter and never calls it.
+        vi.doMock("counted:lazy", async importOriginal => ({ f: "mocked" }));
+        expect((await import("counted:lazy")).f).toBe("mocked");
+
+        vi.doMock("counted:actual", () => ({ f: "mocked" }));
+        const actual = await vi.importActual("counted:actual");
+        expect(await vi.importActual("counted:actual")).toBe(actual);
+
+        // A spy gets an instance of its own, because it replaces what the exports hold.
+        vi.doMock("counted:spied", { spy: true });
+        const spied = await import("counted:spied");
+        expect([spied.f(), vi.isMockFunction(spied.f)]).toEqual(["spied", true]);
+        expect(vi.isMockFunction((await vi.importActual("counted:spied")).f)).toBe(false);
+
+        vi.doMock("counted:removed", () => ({ f: "mocked" }));
+        expect((await import("counted:removed")).f).toBe("mocked");
+        vi.doUnmock("counted:removed");
+        expect((await import("counted:removed")).f()).toBe("removed");
+        expect((await import("counted:removed")).f()).toBe("removed");
+
+        expect(calls).toEqual({ actual: 1, spied: 2, removed: 1 });
+      });
+    `,
+
+    "f1-answers.test.ts": `
+      import { expect, jest, test, vi } from "bun:test";
+      test("a plugin that answers with a promise", async () => {
+        vi.doMock("virtual:later", () => ({ from: "the mock" }));
+        expect((await import("virtual:later")).from).toBe("the mock");
+        expect((await vi.importActual("virtual:later")).from).toBe("the plugin");
+        // As for the module itself: require() does not wait.
+        expect(() => jest.requireActual("virtual:later")).toThrow("require() async module");
+        vi.doUnmock("virtual:later");
+        expect((await import("virtual:later")).from).toBe("the plugin");
+      });
+      test.each(["virtual/code.ts", "virtual/data.json"])("contents that the name says how to read: %s", async name => {
+        vi.doMock(name, () => ({ from: "the mock" }));
+        expect((await import(name)).from).toBe("the mock");
+        expect((await vi.importActual(name)).from).toBe("the plugin");
+        expect(jest.requireActual(name).from).toBe("the plugin");
+        vi.doUnmock(name);
+        expect((await import(name)).from).toBe("the plugin");
+      });
+    `,
+  };
+  const tests = 8 + 1 + 4 + 1 + 3 + 3 + 3 + 1 + 3;
+
+  test.each(isolationFlags)("is the original of its mock, and is there again after the mock %j", async args => {
+    await expectFixturesToPass(files, tests, ["--preload", "./preload.ts", ...args]);
+  });
+});
+
 describe.concurrent("a module mocked without a factory", () => {
   test("has mocks of the original's exports", async () => {
     await expectFixturesToPass(

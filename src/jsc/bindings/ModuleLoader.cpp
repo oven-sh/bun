@@ -270,7 +270,12 @@ static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject
     auto& vm = JSC::getVM(globalObject);
     result.value.error = JSC::jsUndefined();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    BunLoaderType loader = Bun__getDefaultLoader(globalObject, specifier, typeAttribute);
+    // The original of a mocked build.module() module has a key of the mock's making. The name that the module was given says how to read its contents.
+    WTF::String givenName;
+    if (globalObject->onLoadPlugins.hasProviders) [[unlikely]]
+        givenName = Bun::nameOfProvidedOriginal(globalObject, specifier->toWTFString(BunString::ZeroCopy));
+    BunString nameOfContents = givenName.isNull() ? *specifier : Bun::toString(givenName);
+    BunLoaderType loader = Bun__getDefaultLoader(globalObject, &nameOfContents, typeAttribute);
 
     if (JSC::Exception* exception = dynamicDowncast<JSC::Exception>(objectValue)) {
         result.value.error = exception->value();

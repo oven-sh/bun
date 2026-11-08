@@ -885,6 +885,7 @@ describe("bundler", () => {
       ["Computed", ...compiled("A A B")],
       ["LongerChain", ...compiled("A.a A.a B.a")],
       ["TwoLinks", ...compiled("A.a A.a B.a")],
+      ["CallInTheChain", ...compiled("A A B")],
       ["ChainOfAMember", ...compiled("A A B")],
       ["Argument", ...compiled("A1 A1 B1")],
       ["TwoParentheses", ...compiled("A A B")],
@@ -912,8 +913,9 @@ describe("bundler", () => {
       ["CallbackInAnArgument", "A1 A1 B1, calls 1 1 1, as written", "A1 A1 B1, calls 1 1 1"],
       // `counter.n++` in the arguments is a statement that the value of the call cannot hold, with or without memo blocks.
       ["UpdateInAnArgument", "A0 A0 B0, calls 1 1 1, as written", "A0 A0 B0, calls 1 1 1, as written"],
-      // A method of the props object is taken for a function that does not read `this`, so its memo block is keyed on
-      // the method. `(props?.who)()` does what `props.who()` does.
+      // The props object is new in each render. So the compiler keys the memo block of a call on it on the method
+      // (OptimizePropsMethodCalls, as upstream), and B gets the result of A here: they have the same `who`.
+      // `(props?.who)()` does what `props.who()` does.
       ["PropsMember", "props A props A props A, calls 1 0 0, memoized", "props A props A props B, calls 1 1 1"],
       ["PropsAsReceiver", "props A props A props A, calls 1 0 0, memoized", "props A props A props B, calls 1 1 1"],
       // These three read the method into a value, so they call it with no `this`.
@@ -941,6 +943,14 @@ describe("bundler", () => {
               calls++;
               return (this === undefined ? "no this" : this.name) + suffix;
             }
+            self() {
+              return this;
+            }
+          }
+          let notes = 0;
+          function note() {
+            notes++;
+            return "";
           }
           function who() {
             calls++;
@@ -953,8 +963,9 @@ describe("bundler", () => {
           function Child({ api }) { return <b>{(api?.who)()}</b>; }
           function Declared({ api }) { const value = (api?.who)(); return <b>{value}</b>; }
           function Computed({ api, method }) { return <b>{(api?.[method])()}</b>; }
-          function LongerChain({ api }) { return <b>{(api?.a.who)()}</b>; }
-          function TwoLinks({ api }) { return <b>{(api?.a?.who)()}</b>; }
+          function LongerChain({ api }) { return <b>{(api?.a.who)(note())}</b>; }
+          function TwoLinks({ api }) { return <b>{(api?.a?.who)(note())}</b>; }
+          function CallInTheChain({ api }) { return <b>{(api?.self().who)()}</b>; }
           function ChainOfAMember({ box }) { return <b>{(box.api?.who)()}</b>; }
           function Argument({ api, n }) { return <b>{(api?.who)(n)}</b>; }
           function TwoParentheses({ api }) { return <b>{((api?.who))()}</b>; }
@@ -1055,14 +1066,24 @@ describe("bundler", () => {
             console.log(Component.name + ": " + rendered.join(" ") + ", calls " + counts.join(" ") + state);
           }
 
-          globalThis.component = "null";
-          let forNull;
-          try {
-            forNull = Child({ api: null });
-          } catch (error) {
-            forNull = "threw " + error.constructor.name;
+          // Without an object, or without a link of the chain, the call throws: before or after its argument runs.
+          for (const [Component, what, api] of [
+            [Child, "no object", null],
+            [LongerChain, "no object", null],
+            [LongerChain, "no link", { a: null }],
+            [TwoLinks, "no object", null],
+            [TwoLinks, "no link", { a: null }],
+          ]) {
+            globalThis.component = Component.name + " with " + what;
+            notes = 0;
+            let outcome;
+            try {
+              outcome = Component({ api });
+            } catch (error) {
+              outcome = "threw " + error.constructor.name + ", notes " + notes;
+            }
+            console.log(globalThis.component + ": " + outcome);
           }
-          console.log("a receiver that is null: " + forNull);
         `,
         "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
         "/node_modules/react/index.js": /* js */ `
@@ -1088,8 +1109,13 @@ describe("bundler", () => {
           ...rows.map(
             ([component, withMemoBlocks, without]) => `${component}: ${hasMemoBlocks ? withMemoBlocks : without}`,
           ),
-          // The chain is printed inside the call, so the engine decides what a call of `undefined` does.
-          "a receiver that is null: threw TypeError",
+          // The chain is printed inside the call, so the engine decides what the call does: `undefined` is called after
+          // the argument runs, and a property of `null` is read before.
+          "Child with no object: threw TypeError, notes 0",
+          "LongerChain with no object: threw TypeError, notes 1",
+          "LongerChain with no link: threw TypeError, notes 0",
+          "TwoLinks with no object: threw TypeError, notes 1",
+          "TwoLinks with no link: threw TypeError, notes 1",
         ].join("\n"),
       },
     });

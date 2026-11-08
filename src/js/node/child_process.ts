@@ -933,9 +933,7 @@ function getSignalsToNamesMapping() {
 }
 
 function normalizeExecFileArgs(file, args, options, callback?) {
-  if ($isJSArray(args)) {
-    // No copy here: spawn() and spawnSync() make theirs. execFile() makes one more, for the message of a later failure.
-  } else if (args != null && typeof args === "object") {
+  if (!$isJSArray(args) && args != null && typeof args === "object") {
     callback = options;
     options = args;
     args = null;
@@ -1000,7 +998,7 @@ function normalizeSpawnArguments(file, args, options?) {
 
   if (file.length === 0) throw $ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
-  // `args` becomes the child's argv, `[argv0, ...args]`. One loop copies and checks. Slot 0 is set at the end.
+  // `args` becomes the child's argv, `[argv0, ...args]`. Slot 0 is set at the end.
   if ($isJSArray(args)) {
     const list = args;
     const length = list.length;
@@ -1405,7 +1403,7 @@ class ChildProcess extends EventEmitter {
   #createStdioObject() {
     const opts = this.#stdioOptions;
     const length = opts.length;
-    // Direct writes: a setter on an index of Array.prototype would take an ordinary store into an empty slot.
+    // A setter on an index of Array.prototype would take an ordinary store into an empty slot.
     let result = $newArrayWithSize<any>(length);
     for (let i = 0; i < length; i++) {
       const element = opts[i];
@@ -1924,7 +1922,6 @@ function fdToStdioName(fd: number) {
 }
 
 function getBunStdioFromOptions(stdio) {
-  // May be the caller's array: read it by index, because script can replace filter() and map().
   const normalizedStdio = normalizeStdio(stdio);
   const length = normalizedStdio.length;
   let ipcCount = 0;

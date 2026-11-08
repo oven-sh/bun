@@ -15,7 +15,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
 use bun_ptr::RefPtr;
 
-use super::bun_test::{self};
+use super::bun_test::{self, Flavor};
 use super::diff_format::DiffFormatter;
 use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question};
 use super::execution::ExpectAssertions;
@@ -45,15 +45,19 @@ pub(crate) mod expect_deferred;
 // To support async tests, we need to track the test ID
 // Every JS-exposed method takes `&self`; the only
 // fields mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
-// chaining getters, and `matcher_ran`) are `Cell`-wrapped. `parent` and `custom_label` are
+// chaining getters, and `matcher_ran`) are `Cell`-wrapped. `flavor`, `parent` and `custom_label` are
 // read-only after `call()` constructs the wrapper.
 pub(crate) struct Expect {
     pub(crate) flags: Cell<Flags>,
     /// A matcher has run since `.not` was last read, so the next `.not` is a new chain on a kept `expect()`, not `.not.not`.
     pub(crate) matcher_ran: Cell<bool>,
+    /// Answers `is_vitest` for an `expect.poll()` attempt, which has no `parent`: what its `expect.poll()` answered.
+    pub(crate) flavor: Flavor,
     pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
     pub(crate) custom_label: bun_core::String,
 }
+
+const _: () = assert!(core::mem::size_of::<Expect>() == 40);
 
 
 // Stored packed inside `Flags(u8)` bits 0..2, so `repr(u8)` here only
@@ -682,7 +686,10 @@ impl Expect {
 
     /// Whether to side with Vitest where it and Jest disagree: the running test was registered through `"vitest"`.
     pub(crate) fn is_vitest(&self) -> bool {
-        self.bun_test().is_some_and(|buntest| self.is_in_vitest_test(buntest.get()))
+        match self.bun_test() {
+            Some(buntest) => self.is_in_vitest_test(buntest.get()),
+            None => self.flavor == Flavor::Vitest,
+        }
     }
 
     pub(crate) fn call(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
@@ -716,6 +723,7 @@ impl Expect {
         let expect = Expect {
             flags: Cell::new(Flags::default()),
             matcher_ran: Cell::new(false),
+            flavor: Flavor::Jest,
             custom_label,
             parent: active_execution_entry_ref,
         };

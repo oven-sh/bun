@@ -138,6 +138,12 @@ fn num_to_u32(n: f64) -> u32 {
     n as u32
 }
 
+/// The table that `key` made, if `key` is a part of a dotted key or of a table header. The TOML
+/// parser gives such a table the position of its key.
+fn dotted_table(key: &Expr, value: &Expr) -> Option<bun_ast::StoreRef<E::Object>> {
+    value.data.e_object().filter(|_| value.loc == key.loc)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
@@ -376,52 +382,77 @@ impl<'a> Parser<'a, '_> {
     /// Says that `key` of the `define` table is skipped, because `value` is not a string.
     #[cold]
     fn warn_ignored_define(&mut self, table: &Expr, key: &Expr, value: &Expr) {
-        let name = bun_core::fmt::escape_control_chars(key.as_string(self.bump).unwrap_or(b""));
+        use bun_core::fmt::escape_control_chars;
+        let name = key.as_string(self.bump).unwrap_or(b"");
+        // No warning has an excerpt: the line can hold a secret that the redactor does not
+        // recognize.
+        let source = self.source;
 
-        // The TOML parser gives a table that a dotted key or a header made the position of its
-        // key: `process.env.NODE_ENV = "..."` makes a table with the name `process`.
-        let mut dotted: Vec<u8> = Vec::new();
-        let mut nested = (value.loc == key.loc)
-            .then(|| value.data.e_object())
-            .flatten();
-        while let Some(object) = nested {
-            let Some(first) = object.properties.slice().first() else {
-                break;
+        // `process.env.NODE_ENV = "..."` without quotes is the table `process`, and each key
+        // below that table is a define that the file asks for.
+        let mut path = name.to_vec();
+        let mut tables = Vec::from_iter(dotted_table(key, value).map(|it| (it, 0, path.len())));
+        let mut has_dotted = false;
+        while let Some(top) = tables.last_mut() {
+            let (object, index, prefix) = *top;
+            top.1 += 1;
+            let Some(property) = object.properties.slice().get(index) else {
+                tables.pop();
+                continue;
             };
-            let Some(segment) = first.key.as_ref().and_then(|it| it.as_string(self.bump)) else {
-                break;
+            let (Some(segment), Some(below)) = (property.key.as_ref(), property.value.as_ref())
+            else {
+                continue;
             };
-            dotted.push(b'.');
-            dotted.extend_from_slice(segment);
-            nested = first.value.as_ref().and_then(|it| it.data.e_object());
+            path.truncate(prefix);
+            path.push(b'.');
+            path.extend_from_slice(segment.as_string(self.bump).unwrap_or(b""));
+            if let Some(inner) = dotted_table(segment, below) {
+                tables.push((inner, 0, path.len()));
+                continue;
+            }
+            has_dotted = true;
+            self.log.add_warning_fmt_no_excerpt(
+                source,
+                segment.loc,
+                format_args!(
+                    "ignoring define \"{}\": TOML reads a dotted key as nested tables, quote the whole key",
+                    escape_control_chars(&path)
+                ),
+            );
+        }
+        if has_dotted {
+            return;
         }
 
-        // An inline table and the object of a JSON file start at their brace. A table that a
-        // `[define]` header made does not, and it takes every key up to the next header.
+        // A `[define]` header takes every key up to the next header. Of the lines that can name
+        // the table, only a header starts with `[`.
         let below_header = usize::try_from(table.loc.start)
             .ok()
-            .and_then(|at| self.source.contents.get(at))
-            .is_some_and(|byte| *byte != b'{');
-
-        // No excerpt: the line can hold a secret that the redactor does not recognize.
-        let (source, loc) = (self.source, value.loc);
-        let mut warn =
-            |args: core::fmt::Arguments<'_>| self.log.add_warning_fmt_no_excerpt(source, loc, args);
-        if !dotted.is_empty() {
-            warn(format_args!(
-                "ignoring define \"{name}\": TOML reads a dotted key as nested tables, quote the key like \"{name}{}\"",
-                bun_core::fmt::escape_control_chars(&dotted)
-            ));
-        } else if below_header {
-            warn(format_args!(
-                "ignoring define \"{name}\": expected string but received {}. Keys below [define] are defines: write it as a string, or move it above the first [header]",
-                value.data.tag_name()
-            ));
+            .and_then(|at| source.contents.get(..at))
+            .is_some_and(|before| {
+                let line = bun_core::strings::last_index_of_char(before, b'\n')
+                    .map_or(before, |newline| &before[newline + 1..]);
+                bun_core::trim_left(line, b" \t").first() == Some(&b'[')
+            });
+        let name = escape_control_chars(name);
+        let received = value.data.tag_name();
+        if below_header {
+            self.log.add_warning_fmt_no_excerpt(
+                source,
+                value.loc,
+                format_args!(
+                    "ignoring define \"{name}\": expected string but received {received}. Keys below [define] are defines: write it as a string, or move it above the first [header]"
+                ),
+            );
         } else {
-            warn(format_args!(
-                "ignoring define \"{name}\": expected string but received {}, write it as a string like \"true\" or \"'text'\"",
-                value.data.tag_name()
-            ));
+            self.log.add_warning_fmt_no_excerpt(
+                source,
+                value.loc,
+                format_args!(
+                    "ignoring define \"{name}\": expected string but received {received}, write it as a string like \"true\" or \"'text'\""
+                ),
+            );
         }
     }
 

@@ -172,5 +172,7 @@ export const cases: Case[] = [
   ['import.meta.glob(["./bang/!k.ts", "./dir/a.ts"])', [["./bang/!k.ts", "lazy", {"default":"!k"}], ["./dir/a.ts", "lazy", A]]],
   ['import.meta.glob("./bang/{!,!}k.ts")', [["./bang/!k.ts", "lazy", {"default":"!k"}]]],
   ['import.meta.glob("./dir/**/!(skip).ts")', []],
+  // Parentheses are characters in an excluding pattern that starts with `**` too.
+  ['import.meta.glob(["./bang/*.ts", "!**/@(k|l).ts"], { import: "default", eager: true })', [["./bang/!(k).ts", "eager", "!(k)"], ["./bang/!k.ts", "eager", "!k"], ["./bang/(k).ts", "eager", "(k)"], ["./bang/k.ts", "eager", "k"], ["./bang/l.ts", "eager", "l"], ["./bang/x!k.ts", "eager", "x!k"]]],
   ...fromViteBuild,
 ];

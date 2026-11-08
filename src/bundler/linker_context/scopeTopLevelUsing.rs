@@ -1,12 +1,4 @@
-//! The parser keeps a top-level `using` as it is written when the target runs it natively. Its
-//! binding then exists only in the scope that the linker prints the declaration in. For a file
-//! with an `__esm` wrapper that scope is the closure, and function declarations, values that run
-//! no code, and the namespace object of the file print outside it.
-//!
-//! A binding that such a statement reads gets a second symbol here. Its declaration prints as
-//! `using inner = binding = value`, and `binding` is declared outside the scope.
-//!
-//! Runs before the renamers: it makes symbols.
+//! Keeps a top-level `using` binding readable outside its `__esm` closure. See README.md.
 
 use crate::mal_prelude::*;
 use bun_alloc::Arena as Bump;
@@ -20,12 +12,10 @@ use crate::linker_context_mod::debug;
 use crate::options::Format;
 use crate::{Chunk, IndexInt, LinkerContext, Part, WrapKind};
 
-/// A top-level `using` binding that a statement outside its scope reads, to the symbol that its
-/// declaration binds inside the scope.
+/// A top-level `using` binding read outside its scope, to the symbol its declaration binds.
 pub(crate) type ScopedUsingBindings = HashMap<Ref, Ref>;
 
-/// Does the hoist loop of `generate_code_for_file_in_chunk_js` print `stmt`, or a value in it,
-/// outside the `__esm` closure?
+/// Does the `__esm` hoist loop print `stmt`, or a value in it, outside the closure?
 fn leaves_esm_closure(stmt: &Stmt) -> bool {
     match &stmt.data {
         StmtData::SFunction(_) => true,
@@ -107,8 +97,7 @@ pub(crate) fn scope_top_level_using(
     Ok(())
 }
 
-/// The top-level `using` bindings of `file` that a statement printed outside its `__esm` closure
-/// reads.
+/// The top-level `using` bindings of `file` that a statement outside its `__esm` closure reads.
 fn using_bindings_read_outside_closure(
     c: &LinkerContext,
     file: IndexInt,
@@ -138,8 +127,7 @@ fn using_bindings_read_outside_closure(
             }
         }
     }
-    // A direct `eval` can name any binding. The functions that the React Compiler outlines are
-    // in a part of their own, and the part of the component records what they read.
+    // A direct `eval` can name any binding, and a React Compiler part records no reads.
     if c.graph.ast.items_module_scope()[file as usize].contains_direct_eval
         || live_parts().any(|part| part.tag == PartTag::ReactCompiler)
     {
@@ -168,8 +156,7 @@ fn using_bindings_read_outside_closure(
 }
 
 impl LinkerContext<'_> {
-    /// `using res = v` as `using inner = res = v`, for each binding that a statement outside the
-    /// scope reads. `declare_outside` declares `res` there and gives the reference to assign.
+    /// Prints `using res = v` as `using inner = res = v`. `declare_outside` declares `res` there.
     #[cold]
     pub(crate) fn bind_using_inside_scope(
         &self,

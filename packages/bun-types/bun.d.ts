@@ -3864,9 +3864,7 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
-  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "missed-optimizations" | "allocations";
-
-  type AotHeat = "everything-is-hot" | "everything-is-cold" | "only-loops-are-hot" | "nothing-is-hottest" | "shuffled";
+  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "allocations" | "forms" | "statistics";
 
   interface TrimOptions {
     /**
@@ -3960,7 +3958,7 @@ declare module "bun" {
      *
      * With `false`, `fn.toString()` returns `function name() { [native code] }` and the executable
      * is smaller. `--preload` in `BUN_OPTIONS` is an error at startup, with `inspector` too.
-     * `obfuscate` implies `false`.
+     * `obfuscate` and `sourcemap: "external"` imply `false`.
      *
      * Equivalent CLI flag: `--no-compile-function-source`
      *
@@ -4034,7 +4032,8 @@ declare module "bun" {
     aot?: boolean;
     /**
      * With `aot`: strip function names and file names from the executable and write a source map
-     * next to it. `sourcemap: "external"` does the same.
+     * next to it. `sourcemap: "external"` does the same for stack traces and leaves the `name` of
+     * functions and classes alone. With `obfuscate` it is `""`.
      *
      * Equivalent CLI flag: `--obfuscate`
      *
@@ -4054,19 +4053,6 @@ declare module "bun" {
      */
     inspector?: boolean;
     /**
-     * With `aot`: log every value that doesn't match its declared type.
-     *
-     * A mismatch never changes what the program does: the function falls back to its slow path and
-     * behaves as it does under `bun run`. Each log line has the location, the expected type and the
-     * kind of value it got, never the value itself. Lines go to stderr, or to the file in the
-     * `BUN_AOT_TYPE_MISMATCH_LOG` environment variable.
-     *
-     * Equivalent CLI flag: `--aot-log-type-mismatches`
-     *
-     * @default false
-     */
-    aotLogTypeMismatches?: boolean;
-    /**
      * With `aot`: reports to add to `BuildOutput.logs`, at level `"verbose"`.
      *
      * - `"text"`: the code that compiled to a slow path, one entry per cause with a fix, worst first
@@ -4075,44 +4061,34 @@ declare module "bun" {
      *   and how to fix it
      * - `"guards-json"`: the same, one JSON object per line
      * - `"trim"`: which Bun and Node.js APIs the program uses, and why `trim` kept or removed each feature
-     * - `"missed-optimizations"`: calls that weren't inlined, loops that weren't optimized, and why
      * - `"allocations"`: where each object is allocated (stack, heap or removed), and why
+     * - `"forms"`: how many operations of each kind compiled to inline code, to a call of shared code, or to a call into the runtime
+     * - `"statistics"`: what the build counted, one name and number per line
      *
      * Equivalent CLI flag: `--explain`
      */
     aotExplain?: AotReport | AotReport[];
     /**
-     * With `aot`: build without some steps of the compiler. The program behaves the same. The
-     * executable can be larger and slower.
+     * With `aot`: make a bug in the compiler harder to turn into a memory bug. Each name costs speed,
+     * and none is on unless it is listed here.
      *
-     * When the compiler can't finish a build, the error names the step to list here, such as
-     * `"pass:PlaceTypeTests"`. Apart from that, the option is for working on the compiler.
+     * - `"proof-checks"`: test at run time what the compiler has proven about the type of a value,
+     *   where the value arrives: at parameters, results of calls, fields, variables, captured
+     *   variables and elements. A test that fails stops the process. Objects and closures that the
+     *   compiler would have kept on the stack, or reused once it found them dead, stay on the heap.
+     *   Every read or write of an element looks up, at that moment, where the array or typed array
+     *   keeps its elements, how many there are and how they are stored. An index that the compiler
+     *   took to be in range and that is not stops the process.
+     * - `"ignore-told-ranges"`: tell no read or write that its index is in range. Each one tests
+     *   its index where it is used, against the length that the array, typed array or string has at
+     *   that moment, whatever an earlier test or the head of a loop has shown.
      *
-     * - `"pass:<name>"`: one optimization pass
-     * - `"flow:<name>"`: one kind of result of the whole-program analysis
-     * - `"flow-results"`: the whole-program analysis and all its results
+     * Takes a list of names, or one string with commas between the names. `Bun.build` throws on a
+     * name that it doesn't know.
      *
-     * Takes a list of names, or one string with commas between the names. `Bun.build` throws if
-     * the compiler doesn't know a name.
-     *
-     * Equivalent CLI flag: `--aot-disable`
+     * Equivalent CLI flag: `--aot-harden`
      */
-    aotDisable?: string | string[];
-    /**
-     * With `aot`: replace the compiler's estimate of how often each part of the program runs. The
-     * program behaves the same. The option is for working on the compiler.
-     *
-     * The compiler makes code that it expects to run often fast, and the rest small.
-     *
-     * - `"everything-is-hot"`: all code runs often
-     * - `"everything-is-cold"`: all code runs rarely
-     * - `"only-loops-are-hot"`: every function is entered equally often, so only loops run often
-     * - `"nothing-is-hottest"`: the estimate, without its list of the hottest functions
-     * - `"shuffled"`: each function gets an estimate at random, the same one in every build
-     *
-     * Equivalent CLI flag: `--aot-heat`
-     */
-    aotHeat?: AotHeat;
+    aotHarden?: string | string[];
     /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *

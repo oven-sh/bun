@@ -1,7 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="Base" {{*}}kind=BaseConstructor
 // CHECK: [[allocated]] = NewObject {{*}}layout=[[layout]] @
-// CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]] flags=[IsFromCompiler]}
+// CHECK-NEXT: [[this]] = Convert [[allocated]] declared={type=[[layout]]}
 // CHECK: = CallDirect
 // CHECK-NOT: PropSet
 // CHECK: = Call {{*}}calleeName="initial"
@@ -11,7 +11,7 @@
 // CHECK-LABEL: function {{*}}name="Derived" {{*}}kind=DerivedConstructor
 // CHECK-NOT: PropSet
 // CHECK: [[derived]] = SuperConstruct
-// CHECK: [[convertedDerived]] = Convert [[derived]] declared={type=L{{*}} flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK: [[convertedDerived]] = Convert [[derived]] declared={type=L{{*}}} @
 // CHECK: PropSet [[convertedDerived]], {{*}}key="d"
 
 // RUN(FIELDS): lower

@@ -54,14 +54,11 @@ export async function withEverySlot<T>(held: 0 | 1, work: () => Promise<T>): Pro
   }
 }
 
-// AOT_BUILD_FLAGS="--aot-validate": every build with --aot or by `bun compile` that a test file starts through spawned(), and every build of frameworks/, takes these flags too: a whole file, such as servers/servers.test.ts, in a checking build.
+// AOT_BUILD_FLAGS="--aot-check=Validate": every build with --aot or by `bun compile` that a test file starts through spawned(), and every build of frameworks/, takes these flags too: a whole file, such as servers/servers.test.ts, in a checking build.
 export const moreBuildFlags = (process.env.AOT_BUILD_FLAGS ?? "").split(" ").filter(Boolean);
 
 export const limitOfARun = 90_000;
 export const limitWithASAN = 240_000;
-
-export const verifiesEachPass = (flags: string[]) =>
-  flags.includes("--aot-check=verify-each-pass") || flags.includes("--aot-verify-each-pass");
 
 export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>, limit?: number) {
   const behindTheFlag = cmd.indexOf("--aot") + 1 || (cmd[1] === "compile" && !cmd.includes("--library") ? 2 : 0);
@@ -70,11 +67,9 @@ export async function spawned(cmd: string[], cwd: string, env: Record<string, st
   if (env.BUN_JSC_slowPathAllocsBetweenGCs || collectsEveryMillisecond(env))
     env = { BUN_JSC_useZombieMode: "1", ...env };
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
-  // A build that verifies the IR after every pass takes sixteen times as long as one that does not. --aot-validate checks each built-in module that a program holds: one that starts a Worker holds most of them, one that may load code from disk all.
-  const isLong = verifiesEachPass(cmd) || cmd.includes("--aot-validate");
   const timeout =
     limit ??
-    (isLong || moreBuildFlags.length || isASAN
+    (moreBuildFlags.length || isASAN
       ? limitWithASAN
       : collectsAtEveryAllocation(env)
         ? 120_000

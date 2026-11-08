@@ -6,7 +6,6 @@ use crate::messages::Category;
 pub enum FileOrigin {
     NoFile,
     ProgramSource,
-    /// Of a program that is compiled to run its tests: `bun test` checks no types, so a type error stops nothing.
     TestedSource,
     ProgramJavaScript,
     DependencySource,
@@ -31,12 +30,6 @@ impl FileOrigin {
         FileOrigin::Runtime,
         FileOrigin::EvaluatedText,
     ];
-
-    pub fn can_lose_trust(self) -> bool {
-        DiagnosticClass::ALL
-            .into_iter()
-            .any(|class| effect_of_error(self, class) == Effect::WithdrawsTrust)
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -58,10 +51,10 @@ fn effect_of_error(origin: FileOrigin, class: DiagnosticClass) -> Effect {
         (
             DiagnosticClass::Style
             | DiagnosticClass::TypeScriptGrammar
+            | DiagnosticClass::Semantic
             | DiagnosticClass::MissingDeclaration,
             FileOrigin::TestedSource,
         ) => Effect::Warns,
-        (DiagnosticClass::Semantic, FileOrigin::TestedSource) => Effect::WithdrawsTrust,
         (
             DiagnosticClass::Style,
             FileOrigin::ProgramJavaScript
@@ -135,7 +128,7 @@ mod tests {
             DiagnosticClass::TypeScriptGrammar,
             [S, S, W, D, D, D, D, D, D],
         ),
-        (DiagnosticClass::Semantic, [S, S, T, D, T, D, D, T, D]),
+        (DiagnosticClass::Semantic, [S, S, W, D, T, D, D, T, D]),
         (
             DiagnosticClass::MissingDeclaration,
             [S, S, W, D, D, D, D, D, D],
@@ -184,20 +177,6 @@ mod tests {
                     "{cell}"
                 );
             }
-        }
-    }
-
-    #[test]
-    fn typed_code_of_tests_and_of_others_and_evaluated_text_can_lose_trust() {
-        for origin in FileOrigin::ALL {
-            let is_expected = matches!(
-                origin,
-                FileOrigin::TestedSource
-                    | FileOrigin::DependencySource
-                    | FileOrigin::Runtime
-                    | FileOrigin::EvaluatedText
-            );
-            assert_eq!(origin.can_lose_trust(), is_expected, "{origin:?}");
         }
     }
 

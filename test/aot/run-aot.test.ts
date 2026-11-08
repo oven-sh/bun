@@ -3,10 +3,11 @@ import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness
 import { join } from "path";
 import { raiseDefaultTimeout } from "./harness/default-timeout";
 import { run as runCommand } from "./harness/run";
-import { describe, test } from "./supported";
+// One by one: the runner gives this file a process of its own and eight cases at once, beside two more like it: too many builds for four cores.
+import { describe, testOneByOne as test } from "./supported";
 
 // `bun run --debug-aot` and `bun test --debug-aot` compile the program as `bun compile` does and then run it. They write no executable.
-// `--aot` on the two commands only checks the program and then runs it from its source: aot-flag-runs-from-source.test.ts.
+// `bun run --aot` only checks the program and then runs it from its source, and `bun test --aot` compiles it too: aot-flag-runs-from-source.test.ts.
 const flags = ["--debug-aot"];
 raiseDefaultTimeout(120_000);
 
@@ -288,19 +289,6 @@ describe("at run time", () => {
     expect(stdout.split("\n")).toEqual(["6", "number", "string", "8", ""]);
     expect(exitCode).toBe(0);
   });
-  test("--aot-log-type-mismatches logs the argument that doesn't match, and the program continues", async () => {
-    const files = {
-      "main.ts": `declare const console: { log(...values: unknown[]): void };\nfunction double(n: number) { return n * 2; }\nconst body: any = JSON.parse('{"visits":"3"}');\nconsole.log(double(body.visits));`,
-    };
-    const logged = await ran(files, ["run", "--aot-log-type-mismatches", "main.ts"]);
-    expect(logged.stderr).toMatch(
-      /^\[aot\] type-mismatch [0-9a-f]{12} argument \S*main\.ts:\d+:\d+ \([^)]*\): expected number, got string; continued; count 1\b/m,
-    );
-    expect({ stdout: logged.stdout, exitCode: logged.exitCode }).toEqual({ stdout: "6\n", exitCode: 0 });
-    const silent = await ran(files, ["run", ...flags, "main.ts"]);
-    expect(silent.stderr).not.toContain("type-mismatch");
-    expect({ stdout: silent.stdout, exitCode: silent.exitCode }).toEqual({ stdout: "6\n", exitCode: 0 });
-  });
   test("`as` neither tests nor converts a primitive", async () => {
     const { stdout } = await run(`
       const query: any = JSON.parse('{"page":"2","size":3}');
@@ -524,10 +512,10 @@ describe("bun test", () => {
     expect(stderr).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
-  test("spyOn throws for a method of a built-in prototype where the file tells neither the object nor the name", async () => {
+  test("spyOn replaces a method of a built-in prototype that the flow alone leads to, under a name that nobody can read", async () => {
     const { stderr, exitCode } = await ranWithBunTypes(
       {
-        "main.test.ts": `import { expect, spyOn, test } from "bun:test";\nconst name: any = process.argv.length > 1000 ? "at" : ["norm", "alize"].join("");\nconst holder: any = Object.getPrototypeOf(process.argv.length > 1000 ? 1 : "");\ntest("not replaced", () => { expect(() => spyOn(holder, name)).toThrow("Cannot spy on String.prototype.normalize because built-in objects are read-only in compiled code"); expect("e".normalize()).toBe("e"); });`,
+        "main.test.ts": `import { expect, spyOn, test } from "bun:test";\nconst name: any = process.argv.length > 1000 ? "at" : ["norm", "alize"].join("");\nconst holder: any = Object.getPrototypeOf(process.argv.length > 1000 ? 1 : "");\ntest("replaced", () => { const spy = spyOn(holder, name).mockReturnValue("spied"); expect("e".normalize()).toBe("spied"); expect(spy).toHaveBeenCalled(); spy.mockRestore(); expect("e".normalize()).toBe("e"); });`,
       },
       ["test", ...flags, "./main.test.ts"],
     );

@@ -3709,6 +3709,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn height_of_nearest_resolution(&self, below: usize) -> usize {
+        debug_assert_eq!(self.stack.len(), self.frames.len());
         let mut known = self.nearest_resolutions.borrow_mut();
         if known.len() < below {
             known.resize(below, (0, 0));

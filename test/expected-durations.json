@@ -192,6 +192,22 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-few-of-every-sweep-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-few-of-every-sweep-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-few-of-every-sweep-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-few-of-every-sweep-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-field-that-leaves-its-slot-and-comes-back-each-turn-costs-little.test.ts": {
     "default": 60000,
     "asan": 240000

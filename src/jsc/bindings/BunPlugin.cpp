@@ -5229,7 +5229,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     bool hasStaleEntryUnderPlain = failedEntryStaysUnderKey || (loaded.compiledModule && JSC::AOT::wasPulledInByLoadThatFailed(globalObject, *loaded.compiledModule));
     bool isLinkedBelowMocksAlone = false;
     if (loaded.compiledModule && !placeOfMockThatEnds && !loaded.esmNamespace && !loaded.commonJSModule) {
-        isLinkedBelowMocksAlone = JSC::AOT::runBodyOfLinkedModuleAheadOfMock(globalObject, *loaded.compiledModule, wasMocked, mock->isOfVitest());
+        isLinkedBelowMocksAlone = JSC::AOT::runBodyOfLinkedModuleAheadOfMock(globalObject, *loaded.compiledModule, wasMocked, mock->isOfVitest(), leavesLoadedModuleAlone);
         RETURN_IF_EXCEPTION(scope, {});
     }
     // As under `bun run`, the factory waits for the first import of a module that has not loaded. require() leaves a module under "node:" neither with the loader
@@ -7056,7 +7056,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject, (JSC::JSGlobalObject
     bool cameToFetchInFlight = started != notFound && factories[started].isWaitedForByLoadThatRequireLeft && factories[started].cameToFetchInFlight;
     if (isWaitedForByNobody && started != notFound)
         factories.removeAt(started);
-    if (!isCurrent && (isWaitedForByNobody || (cameToFetchInFlight && !Zig::registeredModuleMock(globalObject, mock->specifier->tryGetValue().data)))) {
+    if (!isCurrent && (isWaitedForByNobody || (cameToFetchInFlight && !Zig::registeredModuleMock(globalObject, mock->specifier->tryGetValue().data) && !JSC::AOT::isEvaluatedFile(globalObject, JSC::AOT::ModuleID(factories[started].module))))) {
         scope.throwException(globalObject, callFrame->argument(0));
         return {};
     }

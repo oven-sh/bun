@@ -413,20 +413,30 @@ impl<'a> WayToDeclaration<'a> {
                         name,
                         ..
                     } if next != file => self.ask(next, name, AskedBy::Name),
-                    _ => self.end_at_declaration(),
+                    _ => self.end_at_declaration(file, name),
                 }
             }
-            Some(_) => self.end_at_declaration(),
+            Some(_) => self.end_at_declaration(file, name),
             None if is_named && modules.kind(file) == ModuleKind::CommonJs => {
-                self.end_at_declaration()
+                self.end_at_declaration(file, name)
             }
             None if modules.is_brought_by_star(file, name) => self.ask_stars_as_written(file, name),
             None => self.ask_stars(file, name),
         }
     }
 
-    fn end_at_declaration(&mut self) -> bool {
-        self.steps.push(Step::Declaration);
+    /// The read without mocks reads what the import is bound to. A way that has left the files behind that binding, past a mock that lacks the name, ends at another declaration: the run is asked for it.
+    fn end_at_declaration(&mut self, file: FileId, name: Atom) -> bool {
+        let is_of_binding = (self.declared_in).is_none_or(|end| self.path.contains(&end));
+        self.steps.push(match is_of_binding {
+            true => Step::Declaration,
+            false => Step::ModuleWithoutTable {
+                module: ModuleRef::File(file),
+                name,
+                is_behind_its_mock: false,
+                holder_of_star_to_built_in: None,
+            },
+        });
         true
     }
 
@@ -784,7 +794,8 @@ pub(super) fn emit_behind_stations(
         )
     });
     let is_asked_only_of_built_in = !has_station(&steps);
-    if !has_declaration(&steps) {
+    let place_without_declaration = (!has_declaration(&steps)).then_some(steps.len());
+    if place_without_declaration.is_some() {
         steps.push(Step::Declaration);
     }
     let result = lowering.builder.create_variable(None);
@@ -965,6 +976,7 @@ pub(super) fn emit_behind_stations(
             let has = lowering.split_on_truthiness(has);
             lowering.builder.switch_to(has.not_taken);
             let lacking = match asked_by {
+                AskedBy::Star if Some(behind) == place_without_declaration => nothing,
                 AskedBy::Star => behind,
                 AskedBy::Name | AskedBy::Statement => nothing,
             };

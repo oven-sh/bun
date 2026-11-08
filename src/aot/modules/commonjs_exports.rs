@@ -3173,20 +3173,25 @@ impl CommonJsExports {
             let aliases = text.aliases.iter();
             aliases.map(|alias| (text.module(), alias.name))
         });
-        names.filter_map(|(module, name)| {
-            let target = match self.copied_names.get(&(module, name)) {
+        names.flat_map(move |(module, name)| {
+            let imported = match self.copied_names.get(&(module, name)) {
                 Some(true) => self.targets[&(module, name)],
                 _ => self.imported_target(module, name),
             };
-            let member = match target {
-                Target::Name(owner, _) if owner == module => return None,
-                Target::Name(owner, owner_name) => {
-                    Member::Variable(*self.ids.get(&(owner, owner_name))?)
-                }
-                Target::Binding(symbol) => Member::Binding(symbol),
-                Target::Nothing => return None,
-            };
-            Some((module, member))
+            let read_off_object = self.targets.get(&(module, name)).copied();
+            let read_off_object = read_off_object.filter(|&target| target != imported);
+            let targets = [Some(imported), read_off_object].into_iter().flatten();
+            targets.filter_map(move |target| {
+                let member = match target {
+                    Target::Name(owner, _) if owner == module => return None,
+                    Target::Name(owner, owner_name) => {
+                        Member::Variable(*self.ids.get(&(owner, owner_name))?)
+                    }
+                    Target::Binding(symbol) => Member::Binding(symbol),
+                    Target::Nothing => return None,
+                };
+                Some((module, member))
+            })
         })
     }
 

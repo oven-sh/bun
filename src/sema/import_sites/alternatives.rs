@@ -1,5 +1,8 @@
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
-use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
+use super::file_calls::{FileCall, HolderOfFileCalls, find_file_call_named};
+use super::made_requires::{
+    find_imported_export, find_member_of_global, may_be_modified, names_own_file,
+};
 use super::parameters::{find_values_passed_for_pattern, is_exported};
 use super::{
     ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
@@ -213,6 +216,12 @@ const STAND_IN: &[u8] = b"\0";
 pub(super) enum Folder {
     OfFile,
     WorkingDirectory,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AskedFrom {
+    OwnFile,
+    OwnFolder,
 }
 
 pub(super) struct Found {
@@ -649,6 +658,7 @@ impl Follower<'_, '_, '_> {
             ExprKind::Array(items) => self.values_of_list(items),
             ExprKind::Object(_) => Some(vec![Held::Object(e)]),
             ExprKind::Fn(function) => Some(vec![Held::Function(function)]),
+            ExprKind::Await(promise) => self.values_of_promised_path(promise),
             ExprKind::Regex { pattern, flags } if atoms.bytes(flags).is_empty() => {
                 Some(vec![find_plain_pattern(atoms.bytes(pattern))?])
             }
@@ -1912,6 +1922,14 @@ impl Follower<'_, '_, '_> {
         }
     }
 
+    fn sees_backslashes(&self) -> Option<bool> {
+        let &ScanInputs { fold, atoms, .. } = self.inputs;
+        match fold.constant_of_member(known::process, atoms.intern(b"platform"))? {
+            Constant::String(platform) => Some(atoms.bytes(platform) == b"win32"),
+            _ => None,
+        }
+    }
+
     fn read_member_of_process(&self, keys: &[Vec<u8>]) -> Option<Values> {
         let &ScanInputs { fold, atoms, .. } = self.inputs;
         let mut values = Values::new();
@@ -2015,8 +2033,8 @@ impl Follower<'_, '_, '_> {
                 },
             }]);
         }
-        if let Some((name, form)) = self.find_name_asked_of_resolver(e) {
-            return self.values_answered_by_resolver(e, name, form);
+        if let Some((name, form, from)) = self.find_name_asked_of_resolver(e) {
+            return self.values_answered_by_resolver(e, name, form, from);
         }
         if let Some((table, lists_keys)) = self.find_listing_of_object(call) {
             return self.values_of_listing(table, lists_keys);
@@ -2025,7 +2043,11 @@ impl Follower<'_, '_, '_> {
             return Some(values);
         }
         let callee = hir.skip_type_assertions(call.callee);
-        if let Some(values) = self.values_of_conversion(callee, call.args) {
+        let member = match call.args.len() {
+            0 => None,
+            _ => self.find_member_of_library(callee),
+        };
+        if let Some(values) = self.values_of_conversion(callee, call.args, member) {
             return Some(values);
         }
         if let Some(values) = self.values_of_method_of_text(callee, call.args) {
@@ -2052,6 +2074,9 @@ impl Follower<'_, '_, '_> {
         {
             return self.values_of_joined_lists(&lists, call.args);
         }
+        if let Some(values) = self.values_of_file_call(callee, call, member) {
+            return Some(values);
+        }
         let mut values = Values::new();
         for callee in self.values_of(callee)? {
             let returned = match callee {
@@ -2066,25 +2091,136 @@ impl Follower<'_, '_, '_> {
         Some(values)
     }
 
-    fn find_name_asked_of_resolver(&self, call: ExprId) -> Option<(ExprId, ResolvedForm)> {
-        let &ScanInputs {
-            hir, bound, atoms, ..
-        } = self.inputs;
+    fn find_name_asked_of_resolver(
+        &self,
+        call: ExprId,
+    ) -> Option<(ExprId, ResolvedForm, AskedFrom)> {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
         let form = match call_site_kind(hir, bound, call)? {
             ImportSiteKind::RequireResolve(_) => ResolvedForm::Path,
             ImportSiteKind::ImportMetaResolve(_) => ResolvedForm::Url,
             _ => return None,
         };
         let arguments = call_site_arguments(hir, bound, call)?;
-        let names_paths = |options: ExprId| {
-            let paths = PropKey::Name(atoms.intern(b"paths"));
-            matches!(expr_kind(hir, hir.skip_type_assertions(options)), Some(ExprKind::Object(properties))
-                if properties.iter().any(|id| hir[id].key == paths))
+        let from = match arguments.len() {
+            1 => Some(AskedFrom::OwnFile),
+            _ if form == ResolvedForm::Path => self.find_where_paths_lead(hir.id_at(arguments, 1)),
+            _ => None,
         };
-        let may_ask_from_own_file = arguments.len() == 1
-            || form == ResolvedForm::Path && !names_paths(hir.id_at(arguments, 1));
-        (may_ask_from_own_file && self.folder == Folder::OfFile)
-            .then(|| (hir.id_at(arguments, 0), form))
+        let from = from.filter(|_| self.folder == Folder::OfFile)?;
+        Some((hir.id_at(arguments, 0), form, from))
+    }
+
+    fn find_where_paths_lead(&self, options: ExprId) -> Option<AskedFrom> {
+        let hir = self.inputs.hir;
+        let options = hir.skip_type_assertions(options);
+        let Some(ExprKind::Object(properties)) = expr_kind(hir, options) else {
+            return Some(AskedFrom::OwnFile);
+        };
+        let mut written = properties.iter();
+        let Some(paths) = written.find(|&id| hir[id].key == PropKey::Name(known::paths)) else {
+            return Some(AskedFrom::OwnFile);
+        };
+        let paths = hir[paths];
+        let folders = match expr_kind(hir, hir.skip_type_assertions(paths.value)) {
+            Some(ExprKind::Array(folders)) if paths.kind == PropKind::Init => folders,
+            _ => return None,
+        };
+        let lists_own_folder_alone = properties.len() == 1
+            && folders.len() == 1
+            && self.names_own_directory(hir.skip_type_assertions(hir.id_at(folders, 0)));
+        lists_own_folder_alone.then_some(AskedFrom::OwnFolder)
+    }
+
+    fn find_member_of_library(&self, e: ExprId) -> Option<(HolderOfFileCalls, Atom)> {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        if let Some(member) = find_member_of_global(hir, bound, e) {
+            return Some(member);
+        }
+        let holder = Cell::new(None);
+        let is_module = |specifier: Atom| {
+            let named = HolderOfFileCalls::of_specifier_atom(specifier);
+            holder.set(named.filter(|&it| it != HolderOfFileCalls::PathModule));
+            holder.get().is_some()
+        };
+        let export = self.find_export_of_some_module(e, &is_module, None)?;
+        Some((holder.get()?, export))
+    }
+
+    fn find_file_call(&self, callee: ExprId) -> Option<FileCall> {
+        let (holder, name) = self.find_member_of_library(callee)?;
+        find_file_call_named(holder, name)
+    }
+
+    fn values_of_file_call(
+        &mut self,
+        callee: ExprId,
+        call: Call,
+        member: Option<(HolderOfFileCalls, Atom)>,
+    ) -> Option<Values> {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let is_of_import_meta = matches!(hir.member_key(callee), Some((object, MemberKey::Name(known::resolveSync)))
+            if matches!(expr_kind(hir, hir.skip_type_assertions(object)), Some(ExprKind::ImportMeta)));
+        if is_of_import_meta {
+            let asks_from_own_file = call.args.len() == 1
+                && self.folder == Folder::OfFile
+                && !bound.import_meta_may_be_modified();
+            return match asks_from_own_file {
+                true => self.values_of_file_found_from_own_folder(hir.id_at(call.args, 0)),
+                false => None,
+            };
+        }
+        let (holder, name) = member?;
+        match find_file_call_named(holder, name)? {
+            FileCall::Url => self.values_of_url_made_of(call.args),
+            FileCall::PathFoundFromFolder => self.values_of_file_found_from_folder(call.args),
+            FileCall::PathOfUrl
+            | FileCall::UrlOfPath
+            | FileCall::SamePath
+            | FileCall::SamePathWithoutBackslashes
+            | FileCall::PromiseOfPathFoundFromFolder => None,
+        }
+    }
+
+    fn values_of_promised_path(&mut self, promise: ExprId) -> Option<Values> {
+        let hir = self.inputs.hir;
+        let Some(ExprKind::Call(call)) = expr_kind(hir, hir.skip_type_assertions(promise)) else {
+            return None;
+        };
+        let call = hir[call];
+        let callee = hir.skip_type_assertions(call.callee);
+        let is_promise_of_path = call.chain == Chain::No
+            && self.find_file_call(callee) == Some(FileCall::PromiseOfPathFoundFromFolder);
+        match is_promise_of_path {
+            true => self.values_of_file_found_from_folder(call.args),
+            false => None,
+        }
+    }
+
+    fn values_of_file_found_from_folder(&mut self, args: IdList<ExprId>) -> Option<Values> {
+        let hir = self.inputs.hir;
+        let mut arguments = hir.ids(args);
+        let (name, folder) = (arguments.next()?, arguments.next()?);
+        let looks_from_own_folder = arguments.next().is_none()
+            && self.folder == Folder::OfFile
+            && self.names_own_directory(hir.skip_type_assertions(folder));
+        match looks_from_own_folder {
+            true => self.values_of_file_found_from_own_folder(name),
+            false => None,
+        }
+    }
+
+    fn values_of_file_found_from_own_folder(&mut self, name: ExprId) -> Option<Values> {
+        let mut values = Values::new();
+        for name in self.values_of(name)? {
+            match name {
+                Held::Text(name) if is_relative_path(&name) => {
+                    add(&mut values, Held::Resolved(name, ResolvedForm::Path));
+                }
+                _ => return None,
+            }
+        }
+        Some(values)
     }
 
     fn values_answered_by_resolver(
@@ -2092,10 +2228,15 @@ impl Follower<'_, '_, '_> {
         call: ExprId,
         name: ExprId,
         form: ResolvedForm,
+        from: AskedFrom,
     ) -> Option<Values> {
         let mut values = Values::new();
         let joins_urls = form == ResolvedForm::Url && !self.inputs.hir.runs_beside_loader;
         for name in self.values_of(name)? {
+            let is_relative = matches!(&name, Held::Text(name) if is_relative_path(name));
+            if from == AskedFrom::OwnFolder && !is_relative {
+                return None;
+            }
             let joined = match &name {
                 Held::Text(name)
                     if joins_urls
@@ -2170,11 +2311,21 @@ impl Follower<'_, '_, '_> {
         names: &[&[u8]],
         known: Option<&MembersBehindNames>,
     ) -> Option<Atom> {
+        let atoms = self.inputs.atoms;
+        let is_module = |specifier: Atom| names.contains(&atoms.bytes(specifier));
+        self.find_export_of_some_module(callee, &is_module, known)
+    }
+
+    fn find_export_of_some_module(
+        &self,
+        callee: ExprId,
+        is_module: &dyn Fn(Atom) -> bool,
+        known: Option<&MembersBehindNames>,
+    ) -> Option<Atom> {
         let &ScanInputs {
             hir,
             bound,
             decisions,
-            atoms,
             ..
         } = self.inputs;
         let find_constant = |e| match decisions.constant(hir, e) {
@@ -2183,19 +2334,21 @@ impl Follower<'_, '_, '_> {
             }
             FoldedValue::Unknown => None,
         };
-        let is_module = |specifier: Atom| names.contains(&atoms.bytes(specifier));
-        find_export_of_module_with(hir, bound, callee, &find_constant, &is_module, known)
+        find_export_of_module_with(hir, bound, callee, &find_constant, is_module, known)
     }
 
     fn values_of_new_url(&mut self, call: Call) -> Option<Values> {
-        let &ScanInputs {
-            hir, bound, atoms, ..
-        } = self.inputs;
+        let &ScanInputs { hir, bound, .. } = self.inputs;
         let callee = hir.skip_type_assertions(call.callee);
-        if !is_free_name(hir, bound, callee, &[atoms.intern(b"URL")]) {
-            return None;
+        match is_free_name(hir, bound, callee, &[known::URL]) {
+            true => self.values_of_url_made_of(call.args),
+            false => None,
         }
-        let mut arguments = hir.ids(call.args);
+    }
+
+    fn values_of_url_made_of(&mut self, args: IdList<ExprId>) -> Option<Values> {
+        let hir = self.inputs.hir;
+        let mut arguments = hir.ids(args);
         let (written, base) = (arguments.next()?, arguments.next());
         let is_spread = |e| matches!(expr_kind(hir, e), Some(ExprKind::Spread(_)) | None);
         if is_spread(written) || base.is_some_and(is_spread) {
@@ -2336,10 +2489,16 @@ impl Follower<'_, '_, '_> {
         Some(values)
     }
 
-    fn values_of_conversion(&mut self, callee: ExprId, args: IdList<ExprId>) -> Option<Values> {
+    fn values_of_conversion(
+        &mut self,
+        callee: ExprId,
+        args: IdList<ExprId>,
+        member: Option<(HolderOfFileCalls, Atom)>,
+    ) -> Option<Values> {
         let &ScanInputs {
             hir, bound, atoms, ..
         } = self.inputs;
+        use HolderOfFileCalls::PathModule;
         use ResolvedForm::{Path, Url, UrlObject};
         if let Some((object, MemberKey::Name(method))) = hir.member_key(callee)
             && args.len() == 0
@@ -2371,30 +2530,40 @@ impl Follower<'_, '_, '_> {
                 false => texts_of_answers(&values),
             };
         }
-        let of_url = self.find_export_of(callee, &[b"url", b"node:url"]);
-        let of_path = || self.find_export_of_path(callee);
-        let export = of_url.or_else(of_path)?;
-        let is_dirname = of_url.is_none() && export == known::meta_dirname;
+        let (holder, export) = match member {
+            Some(member) => member,
+            None => (PathModule, self.find_export_of_path(callee)?),
+        };
+        let is_dirname = holder == PathModule && export == known::meta_dirname;
         let function = atoms.bytes(export);
-        let convert: fn(Held) -> Option<Held> = match (of_url.is_some(), function) {
-            (true, b"fileURLToPath") => |value| match value {
+        let file_call = find_file_call_named(holder, export);
+        let convert: fn(Held) -> Option<Held> = match (file_call, function) {
+            (Some(FileCall::PathOfUrl), _) => |value| match value {
                 Held::Resolved(name, Url | UrlObject) => Some(Held::Resolved(name, Path)),
                 Held::Url(name) => Some(Held::Text(name)),
                 Held::Text(text) => path_in_own_url(&text).map(Held::Text),
                 _ => None,
             },
-            (true, b"pathToFileURL") => |value| match value {
+            (Some(FileCall::UrlOfPath), _) => |value| match value {
                 Held::Resolved(name, Path) => Some(Held::Resolved(name, UrlObject)),
                 Held::Text(name) if name.starts_at_own_directory && !name.is_file_url => {
                     Some(Held::Url(name))
                 }
                 _ => None,
             },
-            (false, b"normalize" | b"resolve") => |value| match value {
-                Held::Resolved(_, Path) => Some(value),
-                _ => None,
-            },
-            (false, _) if is_dirname && !hir.runs_beside_loader => |value| match value {
+            (Some(FileCall::SamePathWithoutBackslashes), _) => {
+                return match self.sees_backslashes() {
+                    Some(false) => self.values_of(argument),
+                    Some(true) | None => None,
+                };
+            }
+            (Some(FileCall::SamePath), _) | (None, b"resolve") if holder == PathModule => {
+                |value| match value {
+                    Held::Resolved(_, Path) => Some(value),
+                    _ => None,
+                }
+            }
+            (None, _) if is_dirname && !hir.runs_beside_loader => |value| match value {
                 Held::Text(path) => folder_of_path(&path).map(Held::Text),
                 _ => None,
             },
@@ -2621,6 +2790,12 @@ impl Follower<'_, '_, '_> {
         self.functions_in_progress.pop();
         values
     }
+}
+
+fn is_relative_path(name: &Text) -> bool {
+    (name.start.starts_with(b"./") || name.start.starts_with(b"../"))
+        && !name.starts_at_own_directory
+        && !name.is_file_url
 }
 
 fn texts_of_answers(values: &Values) -> Option<Values> {

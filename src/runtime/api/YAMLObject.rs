@@ -12,7 +12,7 @@ use bun_jsc::{
 };
 use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
-use super::stringify_options::{Space, StringifyOptions};
+use super::stringify_options::StringifyOptions;
 
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
@@ -79,6 +79,38 @@ struct Stringifier<'a> {
     /// With `aliases: false` a repeated object is written in full, and `known_collections` holds
     /// only the path from the root to the object being walked, so a hit there is a cycle.
     aliases: bool,
+}
+
+enum Space {
+    Minified,
+    Number(u32),
+    Str(bun_core::String),
+}
+
+impl Space {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+        let space = space_value.unwrap_boxed_primitive(global)?;
+        if space.is_number() {
+            // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
+            // toInt32() wraps large values and Infinity to 0, which is wrong.
+            let num_f = space.as_number();
+            if num_f.is_nan() || num_f < 1.0 {
+                // handles NaN, -Infinity, 0, negatives
+                return Ok(Space::Minified);
+            }
+            return Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }));
+        }
+
+        if space.is_string() {
+            let str = space.to_bun_string(global)?;
+            if str.length() == 0 {
+                return Ok(Space::Minified);
+            }
+            return Ok(Space::Str(str));
+        }
+
+        Ok(Space::Minified)
+    }
 }
 
 pub(crate) struct AnchorAlias {
@@ -193,7 +225,7 @@ impl<'a> Stringifier<'a> {
             known_collection_roots,
             array_item_counter: 0,
             prop_names,
-            space: options.space,
+            space: Space::init(global, options.space)?,
             aliases,
         })
     }

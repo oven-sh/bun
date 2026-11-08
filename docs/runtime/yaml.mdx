@@ -5,7 +5,7 @@ description: Use Bun's built-in support for YAML files through both runtime APIs
 
 In Bun, YAML is a first-class citizen alongside JSON and TOML. You can:
 
-- Parse YAML strings with `Bun.YAML.parse`
+- Parse YAML strings with `Bun.YAML.parse` and write them with `Bun.YAML.stringify`
 - `import` & `require` YAML files as modules at runtime (including hot reloading & watch mode support)
 - `import` & `require` YAML files in frontend apps with Bun's bundler
 
@@ -142,7 +142,7 @@ YAML.stringify({ name: "app", ports: [80, 443] }, null, 2);
 
 The third argument can also be an object. `indent` takes the same values as the number or string form.
 
-An object that appears more than once in the input is written once with an `&anchor`, and every later occurrence is an `*alias`. This keeps object identity and lets a cyclic value round-trip. Some YAML consumers, such as OpenAPI tools, do not accept aliases. Pass `aliases: false` to write every occurrence in full. With `aliases: false`, a cyclic value throws a `TypeError`.
+An object that appears more than once in the input is written once with an `&anchor`, and every later occurrence is an `*alias`. This keeps object identity and lets a cyclic value round-trip. Some YAML consumers, such as OpenAPI tools, do not accept aliases. Pass `aliases: false` (the `aliasDuplicateObjects` option of the `yaml` package) to write every occurrence in full. With `aliases: false`, a cyclic value throws a `TypeError`.
 
 ```ts
 const schema = { type: "string" };

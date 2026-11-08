@@ -1139,8 +1139,17 @@ declare module "bun" {
     export function stringify<T>(
       input: T,
       replacer?: undefined | null,
-      space?: string | number,
+      space?: string | number | StringifyOptions,
     ): T extends Function | symbol | undefined ? undefined : T extends object ? string : string | undefined;
+
+    /**
+     * Options for {@link stringify}, passed as its third argument in place of `space`.
+     * Accepted for signature parity with `YAML.stringify` and `JSON5.stringify`, but ignored.
+     */
+    export interface StringifyOptions {
+      /** Ignored: TOML output is line-oriented. */
+      indent?: number | string;
+    }
   }
 
   /**
@@ -1565,7 +1574,7 @@ declare module "bun" {
       /**
        * Whether an object that appears more than once in the input is written once with an
        * `&anchor` and then as `*alias`. With `false`, every occurrence is written in full, and a
-       * cyclic input throws a `TypeError`.
+       * cyclic input throws a `TypeError`. Same as `aliasDuplicateObjects` in the `yaml` package.
        *
        * @default true
        */
@@ -1581,8 +1590,8 @@ declare module "bun" {
      * @param input The JavaScript value to stringify.
      * @param replacer Not supported.
      * @param space A number for how many spaces each level of indentation gets, or a string used as indentation.
-     *              Without this parameter, outputs flow-style (single-line) YAML.
-     *              With this parameter, outputs block-style (multi-line) YAML.
+     *              Without indentation, outputs flow-style (single-line) YAML.
+     *              With indentation, outputs block-style (multi-line) YAML.
      *              The number is clamped between 0 and 10, and the first 10 characters of the string are used.
      *              An object here is a {@link StringifyOptions}: `{ indent: 2, aliases: false }`.
      * @returns A string containing the YAML document.
@@ -1609,7 +1618,8 @@ declare module "bun" {
      * cycle.obj = cycle;
      * console.log(YAML.stringify(cycle, null, 2));
      * // &root
-     * // obj: *root
+     * // obj:
+     * //   *root
      *
      * // A shared object is written in full instead of as an alias
      * const shared = { type: "string" };

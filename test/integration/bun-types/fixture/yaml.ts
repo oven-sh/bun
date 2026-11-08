@@ -16,6 +16,7 @@ Bun.YAML.stringify({ a: 1 }, null, { aliases: "false" });
 // @ts-expect-error
 Bun.YAML.stringify({ a: 1 }, null, { indent: 2, alias: false });
 expectType(Bun.JSON5.stringify({ a: 1 }, null, { indent: 2 })).is<string | undefined>();
+expectType(Bun.TOML.stringify({ a: 1 }, null, { indent: 2 })).is<string>();
 // @ts-expect-error
 Bun.JSON5.stringify({ a: 1 }, null, { aliases: false });
 

@@ -3945,6 +3945,13 @@ config:
         expect(YAML.stringify(self, null, 2)).toBe("&root\nx: 1\nself:\n  *root");
       });
 
+      test("an options object in the second argument is not a replacer", () => {
+        // The second argument is reserved for a JSON.stringify-style replacer.
+        expect(() => YAML.stringify({ a: shared, b: shared }, { aliases: false } as any)).toThrow(
+          "YAML.stringify does not support the replacer argument",
+        );
+      });
+
       test("aliases must be a boolean", () => {
         expect(() => YAML.stringify({ a: 1 }, null, { aliases: "false" } as any)).toThrow(TypeError);
         expect(() => YAML.stringify({ a: 1 }, null, { aliases: 0 } as any)).toThrow(TypeError);

@@ -6,7 +6,7 @@ use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::json5;
 
-use super::stringify_options::{Space, StringifyOptions};
+use super::stringify_options::StringifyOptions;
 
 pub(crate) fn stringify<'a>(
     cx: &mut JsScope<'a>,
@@ -96,13 +96,44 @@ impl From<JsError> for StringifyError {
 
 type StringifyResult<T> = Result<T, StringifyError>;
 
+enum Space {
+    Minified,
+    Number(u32),
+    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
+    Str(bun_core::String),
+}
+
+impl Space {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+        let space = space_value.unwrap_boxed_primitive(global)?;
+        if space.is_number() {
+            // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
+            // toInt32() wraps large values and Infinity to 0, which is wrong.
+            let num_f = space.as_number();
+            if num_f.is_nan() || num_f < 1.0 {
+                // handles NaN, -Infinity, 0, negatives
+                return Ok(Space::Minified);
+            }
+            return Ok(Space::Number(if num_f > 10.0 { 10 } else { num_f as u32 }));
+        }
+        if space.is_string() {
+            let str = space.to_bun_string(global)?;
+            if str.length() == 0 {
+                return Ok(Space::Minified);
+            }
+            return Ok(Space::Str(str));
+        }
+        Ok(Space::Minified)
+    }
+}
+
 impl Stringifier {
     fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         Ok(Stringifier {
             stack_check: StackCheck::init(),
             builder: wtf::StringBuilder::init(),
             indent: 0,
-            space: StringifyOptions::init(global, space_value)?.space,
+            space: Space::init(global, StringifyOptions::init(global, space_value)?.space)?,
             visiting: HashMap::default(),
         })
     }

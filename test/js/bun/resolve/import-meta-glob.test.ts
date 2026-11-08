@@ -529,6 +529,8 @@ describe.concurrent("import.meta.glob", () => {
       ["Object[`keys`](" + call + ");", true],
       [`const keys = "keys"; Object[keys](${call});`, true],
       [`Object["ke" + "ys"](${call});`, true],
+      [`Object?.keys(${call});`, true],
+      [`Object.keys?.(${call});`, true],
       [`DEFINED_AS_OBJECT.keys(${call});`, true],
     ];
     const flags = ["--define", "DEFINED_AS_OBJECT=Object"];
@@ -548,21 +550,23 @@ describe.concurrent("import.meta.glob", () => {
       const args = ["build", ...flags, ...minify, "--target=bun", "--outdir=out", "./print.test.ts"];
       const built = await run(cwd, args);
       if (built.exitCode !== 0) return built;
+      expect(built.stderr.split("\n").filter(line => line.startsWith("warn"))).toEqual([]);
       return await run(cwd, ["out/print.test.js"]);
     };
 
+    // `bun test` and the inspector write to stderr, the others don't.
     test.each([
-      ["bun run", (cwd: string) => run(cwd, [...flags, "print.test.ts"])],
-      ["bun --inspect", (cwd: string) => run(cwd, ["--inspect=127.0.0.1:0", ...flags, "print.test.ts"])],
-      ["bun test", (cwd: string) => run(cwd, ["test", ...flags, "./print.test.ts"])],
-      ["bun test --coverage", (cwd: string) => run(cwd, ["test", "--coverage", ...flags, "./print.test.ts"])],
-      ["bun build", build([])],
-      ["bun build --minify", build(["--minify"])],
-    ])("%s", async (_, mode) => {
+      ["bun run", true, (cwd: string) => run(cwd, [...flags, "print.test.ts"])],
+      ["bun --inspect", false, (cwd: string) => run(cwd, ["--inspect=127.0.0.1:0", ...flags, "print.test.ts"])],
+      ["bun test", false, (cwd: string) => run(cwd, ["test", ...flags, "./print.test.ts"])],
+      ["bun test --coverage", false, (cwd: string) => run(cwd, ["test", "--coverage", ...flags, "./print.test.ts"])],
+      ["bun build", true, build([])],
+      ["bun build --minify", true, build(["--minify"])],
+    ])("%s", async (_, isQuiet, mode) => {
       using dir = tempDir("import-meta-glob", files);
       const { stdout, stderr, exitCode } = await mode(String(dir));
       const line = stdout.split("\n").find(line => line.startsWith("IMPORTED"));
-      expect({ stderr: line ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect({ stderr: line && !isQuiet ? "" : stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       const imported: number[] = JSON.parse(line!.slice("IMPORTED".length));
       expect(shapes.map(([code], i) => [code, imported.includes(i)])).toEqual(shapes);
     });

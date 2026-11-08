@@ -1054,7 +1054,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
         match dot.target.data {
             ExprData::EIdentifier(object)
-                if dot.name == b"keys" && self.load_name_from_ref(object.ref_) == b"Object" =>
+                if dot.name == b"keys"
+                    && dot.optional_chain.is_none()
+                    && call.optional_chain.is_none()
+                    && self.load_name_from_ref(object.ref_) == b"Object" =>
             {
                 CallAsWritten::ObjectKeys
             }

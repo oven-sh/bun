@@ -1,0 +1,14 @@
+status: 0
+oracle: none
+---
+a c_char_p field, _objects emptied                         500 of b'A'
+a c_wchar_p field, _objects emptied                        500 of 'A'
+d.inner = x; x.a = other                                   500 of b'A'
+x.a                                                        500 of b'B'
+stored through a pointer to the structure                  500 of b'A'
+100 items, _objects emptied: True
+the value read and stored elsewhere (a new bytes object)   500 of b'A'
+the same int stored again: 0x1111111111111111
+moved on by eight: 0x1111111111111111
+and the bounds are those of what it points into: ValueError
+None stored: None False

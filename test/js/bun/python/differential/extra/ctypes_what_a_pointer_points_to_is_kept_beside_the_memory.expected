@@ -1,0 +1,26 @@
+status: 0
+oracle: none
+---
+a pointer whose _objects have been emptied                     0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+contents set, _objects emptied                                 0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+a field, _objects emptied                                      0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+a field, its key popped                                        0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+the field beside it                                            0x2222222222222222, 0x2222222222222222; the one behind it: ValueError
+a field copied from a field that is then stored to again       0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+the field that was stored to again                             0x3333333333333333, 0x3333333333333333; the one behind it: ValueError
+stored through a pointer to the structure                      0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+stored by another instance over the same memory                0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+read by another instance over the same memory                  0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+stored and read by two instances over one bytearray            0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+a structure stored into a field                                0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+its other pointer                                              0x2222222222222222, 0x2222222222222222; the one behind it: ValueError
+a structure stored into an item                                0x2222222222222222, 0x2222222222222222; the one behind it: ValueError
+an array of structures stored into a field                     0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+300 items, _objects emptied: True
+one item far out in a large array                              0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+and one near the beginning                                     0x2222222222222222, 0x2222222222222222; the one behind it: ValueError
+None stored: NULL pointer access
+an array stored where a pointer is                             0x1111111111111111, 0x1111111111111111; the one behind it: ValueError
+an int stored over the pointer: 0x4444444444444444
+memmove() over the pointer: 0x4444444444444444
+a list that nothing but the memory of its nodes holds: 3000 3000

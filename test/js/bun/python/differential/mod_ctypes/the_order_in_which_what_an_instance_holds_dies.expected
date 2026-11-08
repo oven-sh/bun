@@ -1,0 +1,18 @@
+status: 0
+script: a4e510268dda4257
+---
+in_order                                   [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+stored_from_the_end                        [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+stored_here_and_there                      [5, 3, 9, 0, 11, 7, 1]
+many                                       [2999, 5, 1500, 0, 2000]
+a_structure                                [0, 1, 2, 3]
+fields_from_the_end                        [3, 2, 1, 0]
+pointers                                   [('Int', 0), ('Int', 1), ('Int', 2), ('Int', 3), ('Int', 4), ('Int', 5)]
+pointers_from_the_end                      [('Int', 5), ('Int', 4), ('Int', 3), ('Int', 2), ('Int', 1), ('Int', 0)]
+pointers_to_instances_over_bytearrays      [('Long', 4), ('Long', 0), ('Long', 5), ('Long', 2)]
+an_array_stored_into_an_item               [0, 1, 2, 3, 4, 5]
+over_a_bytearray                           [0, 1, 3, 5]
+a_holder_with_a_finalizer                  ['holder', 1, 2]
+one                                        [1]
+stored_to_again                            [1, 0, 10, 2, 3]
+a_packed_structure                         [3, 1, 2]

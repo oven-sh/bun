@@ -1,0 +1,26 @@
+status: 0
+oracle: none
+---
+an array                                             0x1111111111111111; beyond it: ValueError
+an array, _objects emptied                           0x1111111111111111; beyond it: ValueError
+byref() of an array                                  0x1111111111111111; beyond it: ValueError
+byref() with an offset                               0x1111111111111111; beyond it: ValueError
+a pointer                                            0x1111111111111111; beyond it: ValueError
+a pointer that is then made to point elsewhere       0x1111111111111111; beyond it: ValueError
+the result of a cast                                 0x1111111111111111; beyond it: ValueError
+by way of a c_void_p                                 0x1111111111111111; beyond it: ValueError
+what an _as_parameter_ made on the spot              0x1111111111111111; beyond it: ValueError
+bytes, to c_char_p                                   (500, b'A')
+bytes, to a pointer                                  True; beyond it: ValueError
+bytes: the NUL behind them                           b'\x00'
+a c_char_p                                           b'A'; beyond it: ValueError
+a str, to c_wchar_p                                  (500, 'A')
+an instance in a bytes object: True True
+with the NUL behind the bytes: b'abc\x00' b'abc\x00' b'abc\x00' bytearray(b'abc\x00') b'abc\x00'
+stored by from_buffer() of an instance in a bytes object, read by the instance: 0x1111111111111111
+an instance in an array that is gone: 0x1111111111111111
+an array that is resized behind the cast             0x1111111111111111; beyond it: ValueError
+an array over a bytearray                            0x1111111111111111; beyond it: ValueError
+the view released, the bytearray emptied: ValueError: the memory that the pointer was made to point into is no longer there
+None: False ; 0: False
+an int: 0x4444444444444444

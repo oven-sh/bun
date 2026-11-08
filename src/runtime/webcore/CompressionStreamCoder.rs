@@ -930,8 +930,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
         }
         Err(e) => {
             *more = false;
-            // The sink gets what the step produced before it failed.
-            write_step_to_sink(global, controller, &out);
+            // The sink gets what the step produced before it failed. The chunk fails whatever the sink answers.
+            if let Some(answer) = write_step_to_sink(global, controller, &out).as_any_promise() {
+                answer.set_handled(global.vm());
+            }
             throw_codec_error(global, e);
             JSValue::ZERO
         }

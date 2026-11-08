@@ -1279,22 +1279,19 @@ describe("bounded output per input chunk", () => {
 
     test.each(
       junkFormats.flatMap(format => [[format, "the same chunk"] as const, [format, "the next chunk"] as const]),
-    )(
-      "DecompressionStream(%s): junk in %s",
-      async (format, where) => {
-        const plain = Buffer.from("hello hello hello hello");
-        const compressed = bombs[format](plain);
-        const ds = new DecompressionStream(format);
-        const writer = ds.writable.getWriter();
-        const writes = where === "the same chunk" ? [Buffer.concat([compressed, junk])] : [compressed, junk];
-        for (const chunk of writes) writer.write(chunk).catch(() => {});
-        writer.close().catch(() => {});
+    )("DecompressionStream(%s): junk in %s", async (format, where) => {
+      const plain = Buffer.from("hello hello hello hello");
+      const compressed = bombs[format](plain);
+      const ds = new DecompressionStream(format);
+      const writer = ds.writable.getWriter();
+      const writes = where === "the same chunk" ? [Buffer.concat([compressed, junk])] : [compressed, junk];
+      for (const chunk of writes) writer.write(chunk).catch(() => {});
+      writer.close().catch(() => {});
 
-        const { output, error } = await readUntilError(ds.readable);
-        expect(output.toString()).toBe(plain.toString());
-        expect(error).toMatchObject(trailingJunk);
-      },
-    );
+      const { output, error } = await readUntilError(ds.readable);
+      expect(output.toString()).toBe(plain.toString());
+      expect(error).toMatchObject(trailingJunk);
+    });
 
     // The WPT test: one pad byte, and the writer never closes.
     test.each(junkFormats)("DecompressionStream(%s): extra pad byte, no close()", async format => {
@@ -1556,10 +1553,7 @@ describe("bounded output per input chunk", () => {
         "deflate-raw",
         "a block of a reserved type behind the data",
         () =>
-          Buffer.concat([
-            zlib.deflateRawSync(text, { finishFlush: zlib.constants.Z_SYNC_FLUSH }),
-            Buffer.from([0x07]),
-          ]),
+          Buffer.concat([zlib.deflateRawSync(text, { finishFlush: zlib.constants.Z_SYNC_FLUSH }), Buffer.from([0x07])]),
         text,
         fullBuffers(text),
       ],

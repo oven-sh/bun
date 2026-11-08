@@ -42,7 +42,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--outfile" type="string">
-  Write output to a specific file
+  Write output to a specific file. Cannot be combined with <code>--outdir</code>: to name the entry file inside{" "}
+  <code>--outdir</code>, use <code>--entry-naming</code>
 </ParamField>
 
 <ParamField path="--metafile" type="string">

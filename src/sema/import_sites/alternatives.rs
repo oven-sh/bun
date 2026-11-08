@@ -1,8 +1,6 @@
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
-use super::file_calls::{FileCall, HolderOfFileCalls, find_file_call_named};
-use super::made_requires::{
-    find_imported_export, find_member_of_global, may_be_modified, names_own_file,
-};
+use super::file_calls::{FileCall, HolderOfFileCalls, find_listed_call, find_member_of_global};
+use super::made_requires::{find_imported_export, may_be_modified, names_own_file};
 use super::parameters::{find_values_passed_for_pattern, is_exported};
 use super::{
     ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
@@ -2139,7 +2137,7 @@ impl Follower<'_, '_, '_> {
         }
         let holder = Cell::new(None);
         let is_module = |specifier: Atom| {
-            let named = HolderOfFileCalls::of_specifier_atom(specifier);
+            let named = HolderOfFileCalls::of_specifier(specifier);
             holder.set(named.filter(|&it| it != HolderOfFileCalls::PathModule));
             holder.get().is_some()
         };
@@ -2149,7 +2147,7 @@ impl Follower<'_, '_, '_> {
 
     fn find_file_call(&self, callee: ExprId) -> Option<FileCall> {
         let (holder, name) = self.find_member_of_library(callee)?;
-        find_file_call_named(holder, name)
+        find_listed_call(holder, name)
     }
 
     fn values_of_file_call(
@@ -2171,7 +2169,7 @@ impl Follower<'_, '_, '_> {
             };
         }
         let (holder, name) = member?;
-        match find_file_call_named(holder, name)? {
+        match find_listed_call(holder, name)? {
             FileCall::Url => self.values_of_url_made_of(call.args),
             FileCall::PathFoundFromFolder => self.values_of_file_found_from_folder(call.args),
             FileCall::PathOfUrl
@@ -2536,7 +2534,7 @@ impl Follower<'_, '_, '_> {
         };
         let is_dirname = holder == PathModule && export == known::meta_dirname;
         let function = atoms.bytes(export);
-        let file_call = find_file_call_named(holder, export);
+        let file_call = find_listed_call(holder, export);
         let convert: fn(Held) -> Option<Held> = match (file_call, function) {
             (Some(FileCall::PathOfUrl), _) => |value| match value {
                 Held::Resolved(name, Url | UrlObject) => Some(Held::Resolved(name, Path)),

@@ -2,7 +2,7 @@ use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
     is_free_name,
 };
-use super::file_calls::{FileCall, HolderOfFileCalls, find_file_call_named};
+use super::file_calls::{FileCall, HolderOfFileCalls, find_listed_call, find_member_of_global};
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
@@ -229,10 +229,10 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
 
     fn find_file_call(self, callee: ExprId, left: StepsLeft) -> Option<FileCall> {
         if let Some((holder, name)) = find_member_of_global(self.hir, self.bound, callee) {
-            return find_file_call_named(holder, name);
+            return find_listed_call(holder, name);
         }
         let (specifier, export) = self.find_export_read_off_some_module(callee, left)?;
-        find_file_call_named(HolderOfFileCalls::of_specifier_atom(specifier)?, export)
+        find_listed_call(HolderOfFileCalls::of_specifier(specifier)?, export)
     }
 
     fn is_create_require(self, e: ExprId, left: StepsLeft) -> bool {
@@ -1187,23 +1187,6 @@ fn settled_chain(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> impl Iterator<
 
 pub(super) fn follow_settled_bindings(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> ExprId {
     settled_chain(hir, bound, e).last().unwrap_or(e)
-}
-
-pub(super) fn find_member_of_global(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    e: ExprId,
-) -> Option<(HolderOfFileCalls, Atom)> {
-    let member = follow_settled_bindings(hir, bound, e);
-    let (object, MemberKey::Name(name)) = hir.member_key(member)? else {
-        return None;
-    };
-    let object = follow_settled_bindings(hir, bound, object);
-    let Some(ExprKind::Ident(global)) = expr_kind(hir, object) else {
-        return None;
-    };
-    let holder = HolderOfFileCalls::of_global_atom(global)?;
-    is_free_name(hir, bound, object, &[global]).then_some((holder, name))
 }
 
 pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {

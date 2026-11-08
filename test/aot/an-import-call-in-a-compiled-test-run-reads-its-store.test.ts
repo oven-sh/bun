@@ -32,9 +32,14 @@ export {};
 `,
 };
 
-test.each(["test", "test --aot"])("bun %s", async command => {
+async function passes(command: string) {
   using dir = tempDir("aot-store-of-an-import-call-in-a-test-run", files);
   const tested = await run([bunExe(), ...command.split(" "), "./stores.test.js"], String(dir), bunEnv);
   expect(tested.stderr).toContain("1 pass");
   expect(tested.exitCode).toBe(0);
-});
+}
+
+test.each(["test", "test --isolate", "test --aot"])("bun %s", passes);
+
+// There a test file is a module of a Bun.ModuleGraph, and a load that begins in the context of a graph keeps no store.
+test.todo("bun test --isolate=modules", () => passes("test --isolate=modules"));

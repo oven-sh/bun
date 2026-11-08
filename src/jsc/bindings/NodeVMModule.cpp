@@ -5,6 +5,7 @@
 
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "JavaScriptCore/AsyncContextSwapScope.h"
 #include "JavaScriptCore/CyclicModuleRecord.h"
 #include "JavaScriptCore/Exception.h"
 #include "JavaScriptCore/JSModuleRecord.h"
@@ -148,6 +149,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     if (nodeVmGlobalObject) globalObject = nodeVmGlobalObject;
 
     auto run = [&] {
+        // Modules that wait here for a top-level await continue the caller, not the loader job on the stack.
+        JSC::ModuleEvaluationAsyncContextScope evaluationOfCaller(vm, JSC::ModuleEvaluationAsyncContextScope::CalledByScript);
         if (sourceTextThis) {
             status(Status::Evaluating);
             evaluateDependencies(globalObject, record, timeout, breakOnSigint);

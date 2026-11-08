@@ -35,6 +35,7 @@ extern "C" JSPromise* Bun__loadBuiltinEntryPoint(Zig::GlobalObject* globalObject
     }
 
     MarkedArgumentBuffer args;
+    globalObject->resetAsyncContextAtEventLoop(vm);
     JSValue result = JSC::call(globalObject, moduleObject, args, "Failed to load the built-in entry point"_s);
     if (scope.exception()) [[unlikely]] {
         return JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);

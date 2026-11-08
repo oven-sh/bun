@@ -3746,6 +3746,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
+void GlobalObject::resetAsyncContextAtEventLoop(JSC::VM& vm)
+{
+    if (!vm.entryScope)
+        m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
+}
+
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
@@ -3782,8 +3788,7 @@ uint8_t GlobalObject::drainMicrotasks()
     // A checkpoint with no script on the stack ends an event loop callback: an
     // AsyncLocalStorage frame it installed with enterWith() must not leak into
     // the next one (everything queued runs under the frame it captured).
-    if (!vm.entryScope)
-        m_asyncContextData.get()->putInternalField(vm, 0, m_moduleGraphs ? Bun::moduleGraphAsyncContextAtEventLoop(this) : jsUndefined());
+    resetAsyncContextAtEventLoop(vm);
 
     // The result of the checkpoint when an exception ends it.
     auto endedByException = [&]() -> std::optional<uint8_t> {

@@ -1,4 +1,4 @@
-// Six calls of import(), one behind the other, each under a store of AsyncLocalStorage of its own. Each module imports a CommonJS file that queues a job, so the loader takes the graph over behind the file. When the calls are through nothing holds their stores: a collection takes them.
+// Six calls of import(), one behind the other, each under a store of AsyncLocalStorage of its own. Each module imports a CommonJS file that queues a job, so the loader takes the graph over behind the file. Every second file throws behind its job, so its call is rejected. When the calls are through nothing holds their stores: a collection takes them.
 import { AsyncLocalStorage } from "node:async_hooks";
 const storage = new AsyncLocalStorage();
 const stores = [];
@@ -14,7 +14,7 @@ const calls = [
 async function callUnderStore(number) {
   const store = { number };
   stores.push(new WeakRef(store));
-  await storage.run(store, calls[number]);
+  await storage.run(store, calls[number]).catch(error => console.log("rejected", number, error.message));
 }
 for (let number = 0; number < calls.length; number++) await callUnderStore(number);
 await new Promise(resolve => setImmediate(resolve));

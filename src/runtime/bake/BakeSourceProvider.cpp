@@ -75,6 +75,7 @@ extern "C" JSC::EncodedJSValue BakeLoadModuleByKey(JSC::JSGlobalObject* global, 
   String keyString = key->getString(global);
   RETURN_IF_EXCEPTION(scope, {});
 
+  defaultGlobalObject(global)->resetAsyncContextAtEventLoop(vm);
   JSC::JSPromise* promise = JSC::loadAndEvaluateModule(global, keyString, nullptr, nullptr);
   RETURN_IF_EXCEPTION(scope, {});
   ASSERT(promise);

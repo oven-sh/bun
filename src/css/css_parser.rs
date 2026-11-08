@@ -2574,7 +2574,7 @@ mod stylesheet_impl {
             &'a self,
             arena: &'a Bump,
             options: &PrinterOptions<'a>,
-            import_info: Option<ImportInfo<'a>>,
+            import_info: ImportInfo<'a>,
             local_names: Option<&'a LocalsResultsMap>,
             symbols: &'a bun_ast::symbol::Map,
         ) -> PrintResult<ToCssResult> {
@@ -2582,7 +2582,14 @@ mod stylesheet_impl {
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             // PERF: this always heap-allocates — profile if hot.
             let mut dest: Vec<u8> = Vec::with_capacity(1);
-            self.to_css_with_writer(arena, &mut dest, options, import_info, local_names, symbols)?;
+            self.to_css_with_writer(
+                arena,
+                &mut dest,
+                options,
+                Some(import_info),
+                local_names,
+                symbols,
+            )?;
             return Ok(ToCssResult { code: dest });
         }
 
@@ -2590,7 +2597,7 @@ mod stylesheet_impl {
             arena: &'static Bump,
             code: &[u8],
             options: ParserOptions<'_>,
-            import_records: Option<&mut Vec<ImportRecord<'static>>>,
+            import_records: &mut Vec<ImportRecord<'static>>,
             source_index: SrcIndex,
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
             // Returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
@@ -2609,7 +2616,7 @@ mod stylesheet_impl {
                 code,
                 options,
                 &mut at_rule_parser,
-                import_records.map(core::ptr::NonNull::from),
+                core::ptr::NonNull::from(import_records),
                 source_index,
             )
         }
@@ -2620,7 +2627,7 @@ mod stylesheet_impl {
             code: &[u8],
             options: ParserOptions<'_>,
             at_rule_parser: &mut P,
-            import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
+            import_records: core::ptr::NonNull<Vec<ImportRecord<'static>>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // TODO: 'bump lifetime threading — every arena-backed slice the
@@ -2642,7 +2649,7 @@ mod stylesheet_impl {
             let mut input = ParserInput::new(code, arena);
             let mut parser = Parser::new(
                 &mut input,
-                import_records,
+                Some(import_records),
                 if options.css_modules.is_some() {
                     ParserOpts::CSS_MODULES
                 } else {
@@ -2769,7 +2776,7 @@ mod stylesheet_impl {
             &'a self,
             arena: &'a Bump,
             options: &PrinterOptions<'a>,
-            import_info: Option<ImportInfo<'a>>,
+            import_info: ImportInfo<'a>,
         ) -> Result<ToCssResult, PrintErr> {
             // #[cfg(feature = "sourcemap")]
             // assert!(
@@ -2784,7 +2791,7 @@ mod stylesheet_impl {
                 bun_alloc::ArenaVec::new_in(arena),
                 &mut dest,
                 options,
-                import_info,
+                Some(import_info),
                 None,
                 &symbols,
             );
@@ -2827,7 +2834,7 @@ mod stylesheet_impl {
                 code,
                 options,
                 &mut at_rule_parser,
-                Some(import_records_ptr),
+                import_records_ptr,
                 source_index,
             )
         }
@@ -3209,7 +3216,7 @@ impl<'a> Parser<'a> {
     ///
     /// Pass in `import_records` to track imports (`@import` rules, `url()`
     /// tokens). If this is `None`, calling `Parser::add_import_record` will
-    /// error.
+    /// error, so pass `None` only for a grammar with no `url()` (An+B, a color).
     pub fn new(
         input: &'a mut ParserInput<'a>,
         import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,

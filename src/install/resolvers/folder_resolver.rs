@@ -63,7 +63,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
                 dot_slash_rel.as_slice()
             }
             Some(paths) => paths.rel,
-            // Too long to be a path; show it as written.
+            // It's too long to be a path, so show it as written.
             None => search_path,
         };
 
@@ -84,7 +84,7 @@ pub(crate) enum Kind {
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Key {
     kind: Kind,
-    /// Of the normalized absolute `package.json` path kept in `Entry::abs_path`.
+    /// The hash of the normalized absolute `package.json` path that's kept in `Entry::abs_path`.
     abs_hash: u64,
 }
 
@@ -178,7 +178,7 @@ fn normalize_package_json_path<'a>(
 
     let abs_len = if strings::starts_with_char(normalized, b'.') {
         let parts: [&[u8]; 2] = [normalized, b"package.json"];
-        FileSystem::instance()
+        FileSystem::get()
             .abs_buf_checked(&parts, &mut joined[..capacity])?
             .len()
     } else {
@@ -211,8 +211,8 @@ fn normalize_package_json_path<'a>(
     };
 
     // We store the folder name without package.json
-    let rel = FileSystem::instance().relative(
-        FileSystem::instance().top_level_dir(),
+    let rel = FileSystem::get().relative(
+        FileSystem::get().top_level_dir(),
         &joined[..abs_len - PACKAGE_JSON_LEN],
     );
     joined[abs_len] = 0;
@@ -238,8 +238,9 @@ fn read_package_json_from_disk(
     // needed simultaneously; borrowck rejects the overlap on `&mut self`,
     // so split via raw pointer once here. `lockfile` and `log` are disjoint
     // fields of `PackageManager`, and `parse{,_with_json}` only reaches
-    // `manager` through the `pm` argument (no re-entrant access to
-    // `lockfile`/`log` via `pm`).
+    // `manager` through the `pm` argument. Through `pm` it never derefs `log`,
+    // and it derefs `lockfile` only under `Features::workspaces`, which none
+    // of the `features` that `get_or_put` passes has.
     //
     // `log_mut()` reads the BACKREF `self.log: *mut Log` and returns the
     // disjoint CLI `Log` allocation (lifetime decoupled from `&self`); call it
@@ -297,7 +298,7 @@ fn read_package_json_from_disk(
                     let _ = file.close();
                     read_result?;
                 }
-                // As in yarn, the directory of a `link:<path>` needs no package.json.
+                // Like in Yarn, the directory of a `link:<path>` doesn't need a package.json.
                 Err(err)
                     if resolver.tag == ResolutionTag::Symlink
                         && dependency::is_link_path(resolver.folder_path)
@@ -349,8 +350,8 @@ pub enum GlobalOrRelative<'a> {
     Relative(dependency::version::Tag),
 }
 
-/// Reads what the package.json of a `file:` or `workspace:` folder depends on. The folder is not
-/// resolved by this, and what is wrong with the file is reported when it is.
+/// Reads the dependencies in the package.json of a `file:` or `workspace:` folder. This doesn't
+/// resolve the folder. Errors in the file are reported when the folder is resolved.
 pub(crate) fn listed_dependencies(
     tag: dependency::version::Tag,
     non_normalized_path: &[u8],

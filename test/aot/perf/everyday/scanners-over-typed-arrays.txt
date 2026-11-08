@@ -1,0 +1,116 @@
+//// letters-skipped-by-a-table
+const LETTER = 1;
+const kinds = new Uint8Array(256);
+for (let c = 97; c < 123; c++) kinds[c] = LETTER;
+const text = new Uint8Array(4096);
+for (let k = 0; k < text.length; k++) text[k] = (k & 31) === 31 ? 32 : 97 + (k % 26);
+function turn(i: number): number {
+  let p = (i & 63) << 5;
+  const end = p + 256;
+  let words = 0;
+  while (p < end) {
+    while (kinds[text[p]!]! & LETTER) p++;
+    words++;
+    p++;
+  }
+  return words;
+}
+//// spaces-skipped
+const text = new Uint8Array(4096);
+for (let k = 0; k < text.length; k++) text[k] = (k & 31) === 31 ? 97 : 32;
+function turn(i: number): number {
+  let p = (i & 63) << 5;
+  const end = p + 256;
+  let words = 0;
+  while (p < end) {
+    while (text[p] === 32) p++;
+    words++;
+    p++;
+  }
+  return words;
+}
+//// a-parameter-scanned-up-to-a-byte
+const text = new Uint8Array(4096);
+for (let k = 0; k < text.length; k++) text[k] = (k & 255) === 255 ? 10 : 97 + (k % 26);
+function endOfLine(t: Uint8Array, from: number): number {
+  let p = from;
+  while (t[p] !== 10) p++;
+  return p;
+}
+function turn(i: number): number {
+  return endOfLine(text, (i & 15) << 8);
+}
+//// a-position-kept-in-a-module-variable
+const text = new Uint8Array(4096);
+for (let k = 0; k < text.length; k++) text[k] = (k & 31) === 31 ? 32 : 97 + (k % 26);
+let pos = 0;
+function skipWord(): void {
+  while (text[pos] !== 32) pos++;
+}
+function turn(i: number): number {
+  pos = (i & 63) << 5;
+  const end = pos + 256;
+  let words = 0;
+  while (pos < end) {
+    skipWord();
+    pos++;
+    words++;
+  }
+  return words;
+}
+//// a-count-kept-in-a-module-variable
+const text = new Uint8Array(4096);
+for (let k = 0; k < text.length; k++) text[k] = k & 127;
+let n = 0;
+function turn(i: number): number {
+  n = 0;
+  const from = (i & 15) << 8;
+  for (let k = 0; k < 256; k++) if (text[from + k]! > 64) n++;
+  return n;
+}
+//// commands-laid-out-through-tables-of-integers
+const count = 512;
+const kind = new Uint8Array(count);
+const width = new Int32Array(count);
+const next = new Int32Array(count);
+for (let k = 0; k < count; k++) {
+  kind[k] = k % 5;
+  width[k] = (k * 7) & 31;
+  next[k] = (k & 63) === 63 ? -1 : k + 1;
+}
+function turn(i: number): number {
+  let at = (i & 7) << 6;
+  let column = 0, lines = 0;
+  while (at >= 0) {
+    const w = width[at]!;
+    if (kind[at] === 4 || column + w > 80) {
+      lines++;
+      column = w;
+    } else column += w;
+    at = next[at]!;
+  }
+  return lines + column;
+}
+//// floats-copied-from-a-data-view-to-another
+const from = new DataView(new ArrayBuffer(2048));
+const to = new DataView(new ArrayBuffer(2048));
+for (let k = 0; k < 256; k++) from.setFloat64(k * 8, k * 0.5, true);
+function turn(i: number): number {
+  for (let k = 0; k < 256; k++) to.setFloat64(k * 8, from.getFloat64(k * 8, true), true);
+  return i & 1;
+}
+//// records-read-through-a-data-view-until-an-end-mark
+const view = new DataView(new ArrayBuffer(4096));
+for (let k = 0; k < 256; k++) {
+  view.setInt32(k * 16, (k & 63) === 63 ? -1 : k, true);
+  view.setFloat64(k * 16 + 8, k * 0.25, true);
+}
+function turn(i: number): number {
+  let offset = (i & 3) << 10;
+  let sum = 0;
+  while (view.getInt32(offset, true) >= 0) {
+    sum += view.getFloat64(offset + 8, true);
+    offset += 16;
+  }
+  return sum | 0;
+}

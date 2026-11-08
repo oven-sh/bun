@@ -10,15 +10,20 @@ import path from "node:path";
 // to keep protectedObjectTypeCounts/protectedObjectCount user-visible.
 
 describe.concurrent("Strong handles are backed by StrongRootBlock", () => {
-  // SQL statements drop their cached-Structure Strongs from JSCell destructors, i.e. mid-sweep;
-  // emptying and unlinking a block from there must not touch sibling cells (debug builds assert).
+  // A SQL connection drops its cached statements, each with a Strong on its row Structure, from its JSCell
+  // destructor, i.e. mid-sweep; emptying and unlinking a block from there must not touch sibling cells
+  // (debug builds assert).
   test("blocks emptied from sweep-time finalizers are released", async () => {
     const fixture = path.join(import.meta.dir, "../../sql/postgres-statement-structure-gc.fixture.ts");
     await using proc = Bun.spawn({ cmd: [bunExe(), fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const { count, protectedWhileHeld, protectedAfter } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+    const { count, protectedWhileHeld, protectedAfterClose, protectedAfter } = JSON.parse(
+      stdout.trim().split("\n").at(-1)!,
+    );
     expect(protectedWhileHeld).toBeGreaterThanOrEqual(count);
+    // close() released none, so it is the collection that does.
+    expect(protectedAfterClose).toBeGreaterThanOrEqual(count);
     expect(protectedAfter).toBeLessThan(10);
     expect(exitCode).toBe(0);
   });
@@ -106,7 +111,8 @@ describe.concurrent("AbortSignal.timeout is released when its wrapper is collect
       console.log(JSON.stringify({ deltaMB: (after - before) / (1024 * 1024) }));
       process.exit(0);
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const env = { ...bunEnv, WebKitMallocForceEnabled: "1" };
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env, stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { deltaMB } = JSON.parse(stdout);

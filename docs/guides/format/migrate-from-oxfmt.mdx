@@ -107,6 +107,7 @@ If `bun fmt` and oxfmt 0.72 print different code, that's a bug. [Open an issue](
 - **Errors and warnings are worded differently.**
 - **`sortTailwindcss` uses your project's `tailwindcss`.** If it isn't installed, Bun leaves the classes as they are. oxfmt sorts them with a Tailwind CSS of its own.
 - **A `stylesheet` or `config` that doesn't exist is an error**, and the files with classes aren't formatted. oxfmt leaves the classes unsorted and exits with code `0`.
+- **`sortPackageJson` only moves keys.** oxfmt parses `package.json` and writes it back, which turns `1e3` into `1000.0` and `"\u00e9"` into `"é"`, drops all but the last of two members with the same key, and drops whatever isn't a string from lists like `keywords`. Bun leaves every value as you wrote it. It also sorts a file with a trailing comma, which oxfmt leaves unsorted.
 - **An invalid TOML file is left alone**, with a warning. oxfmt rewrites the parts it can read.
 - **A file that isn't valid UTF-8 is still formatted**, and the invalid bytes are kept. oxfmt exits with code `2`.
 - **A function's only parameter doesn't move on the second run.** When an object type in the return type doesn't fit on the line, oxfmt gives the parameter its own line, then joins `m(a: string): {` again the next time it runs. Bun prints the joined form the first time.

@@ -1,151 +1,161 @@
-//! Where the JavaScript runs.
+//! The realms that run the JavaScript.
 
 use bun_threading::Guarded;
 
-/// Answers what the program asks for while it is called: given what that is, one of [`wire::ask`](super::wire::ask), and
-/// the details, appends the answer.
+/// Answers the program's requests during a call. It gets the request kind (one of [`wire::ask`](super::wire::ask)) and
+/// the details, and appends the answer.
 pub type Serve<'s> = dyn FnMut(u32, &[u8], &mut Vec<u8>) + 's;
 
-/// A JavaScript realm in which the [`PROGRAM`](super::PROGRAM) runs. It belongs to one thread.
+/// A JavaScript realm that runs the [`PROGRAM`](super::PROGRAM). It belongs to one thread.
 pub trait Vm {
-    /// Calls the program with a message: what it is, one of [`wire::call`](super::wire::call), and its content. Returns what
-    /// the program returns, if that is a promise what it resolves to. `Err`: the realm is of no more use.
+    /// Calls the program with a message: its kind (one of [`wire::call`](super::wire::call)) and its content. Returns
+    /// the program's result, or what it resolves to if it's a promise. After an `Err` the realm can't be used anymore.
     fn call(&mut self, kind: u32, content: &[u8], serve: &mut Serve) -> Result<Vec<u8>, Vec<u8>>;
 }
 
-/// What [`Engine::work_off`] gives the threads that have a realm. Each call does one file, so a thread can serve
-/// [`Engine::with_vm`] calls from other threads in between.
+/// The work that [`Engine::work_off`] hands to the threads that have a realm. Each call handles one file, so a thread
+/// can serve [`Engine::with_vm`] calls from other threads in between.
 pub trait Work: Sync {
-    /// Whether a [`HEAVY`] file hasn't been taken yet.
+    /// True if a [`HEAVY`] file hasn't been taken yet.
     fn has_heavy(&self) -> bool;
 
-    /// Lints one of the [`HEAVY`] files. Only the thread with the first realm calls it. Returns `false` once none is left.
+    /// Lints one of the [`HEAVY`] files. Only the thread with the first realm calls it. Returns `false` once none are
+    /// left.
     fn heavy(&self) -> bool;
 
-    /// Lints one of the other files. `realm` is the number of the calling thread's realm. Returns `false` once none is left.
+    /// Lints one of the other files. `realm` is the number of the calling thread's realm. Returns `false` once none are
+    /// left.
     fn light(&self, realm: usize) -> bool;
 
-    /// Whether one of the other files that needs a realm hasn't been taken yet.
+    /// True if one of the other files that needs a realm hasn't been taken yet.
     fn needs_realms(&self) -> bool;
 
-    /// Does all that is left on the calling thread.
+    /// Does all the remaining work on the calling thread.
     fn finish_here(&self) {
         while self.heavy() {}
         while self.light(0) {}
     }
 }
 
-/// Has the realms.
+/// Owns the realms.
 pub trait Engine: Sync {
-    /// Whether the calling thread has a realm.
-    fn is_here(&self) -> bool;
+    /// True if the calling thread has a realm.
+    fn thread_has_realm(&self) -> bool;
 
-    /// Calls `then` on the calling thread with a realm, which nothing else uses meanwhile. `then` can ask for one itself, and
-    /// isn't kept waiting. `size`: that of the file which the realm is for, 0 if it is for none. `Err`: there is none, and
-    /// `then` was not called.
+    /// Calls `then` on the calling thread with a realm that nothing else uses in the meantime. `then` can request a
+    /// realm itself without blocking. `size` is the size of the file the realm is for, or 0 if it isn't for a file.
+    /// `Err` means there's no realm and `then` wasn't called.
     fn with_vm_here(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>>;
 
-    /// The same, on whichever thread has a realm. The calling thread waits if that's another one.
+    /// Like [`Engine::with_vm_here`], but on whichever thread has a realm. The calling thread waits if that's a
+    /// different thread.
     fn with_vm(
         &self,
         size: usize,
         then: &mut (dyn FnMut(&mut dyn Vm) + Send),
     ) -> Result<(), Vec<u8>>;
 
-    /// Has every thread with a realm work on `work` until nothing is left, and starts as many of them as the files are worth.
-    /// Calls `meanwhile` on the calling thread, and returns when both are done. `Err`: no such thread could be started, so
-    /// only `meanwhile` has run.
+    /// Makes every thread with a realm process `work` until nothing is left, starting as many such threads as the files
+    /// justify. Calls `meanwhile` on the calling thread and returns when both are done. `Err` means no such thread
+    /// could be started, so only `meanwhile` ran.
     fn work_off(&self, work: &dyn Work, meanwhile: &mut dyn FnMut()) -> Result<(), Vec<u8>>;
 
     /// How many threads are busy with [`Engine::work_off`].
     fn busy(&self) -> usize;
 
-    /// Says how many files are going to need a realm, how large they are together, and how many realms there can be at most.
-    /// Nobody says so if a realm is needed to find out.
+    /// Announces how many files will need a realm, their total size, and the maximum number of realms. It isn't called
+    /// if finding that out takes a realm.
     fn expect(&self, _files: usize, _size: u64, _most: usize) {}
 
-    /// Besides, files of `size` bytes together may need a realm or not: it shows when each is linted. To be said after
-    /// [`Engine::expect`].
-    fn may_come(&self, _size: u64) {}
+    /// Announces that further files, `size` bytes in total, might need a realm. Whether each one does is only known
+    /// when it's linted. Call it after [`Engine::expect`].
+    fn may_need_realm(&self, _size: u64) {}
 
-    /// One of these, of `size` bytes, is going to ask for a realm. With `--fix` it can do so several times.
-    fn comes(&self, _size: u64) {}
+    /// One of the [`Engine::may_need_realm`] files, of `size` bytes, is about to request a realm. With `--fix` that can
+    /// happen several times.
+    fn needs_realm(&self, _size: u64) {}
 
-    /// One of these, of `size` bytes, is done: it `has_come`, or not. Once for each.
-    fn has_shown(&self, _size: u64, _has_come: bool) {}
+    /// One of the [`Engine::may_need_realm`] files, of `size` bytes, is done. `needed_realm` tells whether it needed a
+    /// realm. Called once per file.
+    fn report_realm_need(&self, _size: u64, _needed_realm: bool) {}
 
-    /// For `--timing`: the most that all realms together have taken, in bytes, and how many were freed because that was too much.
+    /// For `--timing`: the peak memory of all realms together, in bytes, and how many realms were freed because that
+    /// was too much.
     fn sizes(&self) -> (usize, usize) {
         (0, 0)
     }
 }
 
-/// A file of this size is heavy: its tree, tokens and lines take about 150 bytes in a realm for each of its own, and a realm keeps
-/// what it has grown to. So all heavy files go to one realm, one at a time. 0.24 % of the files of 391 repositories are.
+/// A file of at least this size is heavy. Its tree, tokens and lines take about 150 bytes in a realm per byte of
+/// source, and a realm never shrinks. So all heavy files go to one realm, one at a time. 0.24 % of the files in 391
+/// repositories are heavy.
 pub const HEAVY: usize = 256 << 10;
 
-/// How much of what a realm costs it has to save: time against memory and work. With 0.5 openlayers (8 MB) and mermaid (7 MB)
-/// have 3 realms and vscode (180 MB) 16. With 1 they have 3, 2 and 13, with 0.25 4, 4 and 16.
-const SHARE_TO_SAVE: f64 = 0.5;
+/// The fraction of its own cost that another realm has to save. This trades time against memory and work. With 0.5,
+/// openlayers (8 MB) and mermaid (7 MB) get 3 realms and vscode (180 MB) gets 16. With 1 they get 3, 2 and 13, and with
+/// 0.25 they get 4, 4 and 16.
+const MIN_SAVED_FRACTION: f64 = 0.5;
 
-/// How many bytes a realm lints in the time that another one costs: it has to load the plugins, and it is slow until its code
-/// is compiled. From under 0.1 to 6 MB with the configurations of eight projects, five of them from 0.4 to 2.
+/// How many bytes a realm lints in the time it takes to start another one, which has to load the plugins and is slow
+/// until its code is compiled. Measured with eight projects' configs, it ranges from under 0.1 to 6 MB, and from 0.4 to
+/// 2 MB for five of them.
 ///
-/// A number, and no measure of the run itself, so that the same files have the same realms every time. A clock says less: the
-/// first files, by which it would judge, are the slow ones, so that another realm looks cheap: the same 300 files had from 1 to
-/// 16 realms. Nor does what a realm has loaded say what it costs: from 0.06 to 2.7 seconds for a MB of source.
-const BYTES_IN_THE_COST: f64 = 1e6;
+/// It's a constant instead of a measurement of the run, so the same files get the same number of realms every time.
+/// Timing the run works worse: it would be based on the first files, which are the slow ones, so another realm looks
+/// cheap. The same 300 files got anywhere from 1 to 16 realms that way. The amount of code a realm has loaded doesn't
+/// predict its cost either: it ranges from 0.06 to 2.7 seconds per MB of source.
+const REALM_COST_IN_BYTES: f64 = 1e6;
 
 #[derive(Default)]
-struct Left {
-    /// How large the files are that are still to come.
+struct Remaining {
+    /// The total size of the files still to come.
     bytes: u64,
-    /// How large those were of which it was known at first.
-    at_first: u64,
-    /// How large those are that may come, and of which it has not shown.
+    /// The total size of the files announced up front.
+    announced: u64,
+    /// The total size of the files that might need a realm and aren't done yet.
     possible: u64,
-    /// How large those are that have come, and those that have not.
-    shown: (u64, u64),
-    /// How many realms there can be. 0: nobody has said, and there is one.
+    /// The total size of such files that did need a realm, and of those that didn't.
+    settled: (u64, u64),
+    /// The maximum number of realms. 0 means it wasn't announced, and there's one realm.
     most: usize,
 }
 
 /// Decides how many realms a run has.
 #[derive(Default)]
-pub struct Demand(Guarded<Left>);
+pub struct Demand(Guarded<Remaining>);
 
 impl Demand {
     /// [`Engine::expect`]
     pub fn expect(&self, size: u64, most: usize) {
-        *self.0.lock() = Left {
+        *self.0.lock() = Remaining {
             bytes: size,
-            at_first: size,
+            announced: size,
             most,
-            ..Left::default()
+            ..Remaining::default()
         };
     }
 
-    /// [`Engine::may_come`]
-    pub fn may_come(&self, size: u64) {
+    /// [`Engine::may_need_realm`]
+    pub fn may_need_realm(&self, size: u64) {
         self.0.lock().possible = size;
     }
 
-    /// [`Engine::comes`]
-    pub fn comes(&self, size: u64) {
+    /// [`Engine::needs_realm`]
+    pub fn needs_realm(&self, size: u64) {
         self.0.lock().bytes += size;
     }
 
-    /// [`Engine::has_shown`]
-    pub fn has_shown(&self, size: u64, has_come: bool) {
+    /// [`Engine::report_realm_need`]
+    pub fn report_realm_need(&self, size: u64, needed_realm: bool) {
         let mut left = self.0.lock();
         left.possible = left.possible.saturating_sub(size);
-        match has_come {
-            true => left.shown.0 += size,
-            false => left.shown.1 += size,
+        match needed_realm {
+            true => left.settled.0 += size,
+            false => left.settled.1 += size,
         }
     }
 
-    /// How large the files are that are still to come, as far as can be told.
+    /// The estimated total size of the files still to come.
     pub fn left(&self) -> u64 {
         self.0.lock().expected() as u64
     }
@@ -156,41 +166,43 @@ impl Demand {
         left.bytes = left.bytes.saturating_sub(size as u64);
     }
 
-    /// Whether to start another realm beside the `realms` that there are, all of which are in use: by how much sooner a run with
-    /// these files ends with it, against what it costs. By all the files of the run, not by those that are left: how many are
-    /// left when a thread happens to ask is up to the clock.
+    /// True if it's worth starting another realm in addition to the existing `realms`, all of which are in use.
+    /// Compares how much sooner the run would end with what the realm costs. It's based on all the files of the run,
+    /// not on the remaining ones, because how many remain when a thread happens to ask depends on timing.
     ///
-    /// `kept`: how many of the `realms` are busy with [`HEAVY`] files, which aren't among these files.
-    pub fn is_worth_another(&self, realms: usize, kept: usize) -> bool {
+    /// `busy_with_heavy` is how many of the `realms` are busy with [`HEAVY`] files, which aren't counted among these
+    /// files.
+    pub fn is_worth_another(&self, realms: usize, busy_with_heavy: usize) -> bool {
         let left = self.0.lock();
         if realms == 0 || realms >= left.most {
             return realms == 0;
         }
-        let realms = realms.saturating_sub(kept);
+        let realms = realms.saturating_sub(busy_with_heavy);
         if realms == 0 {
             return true;
         }
-        // Until it is of use the others go on. Then they are one more.
-        let (all, realms) = (left.all() / BYTES_IN_THE_COST, realms as f64);
-        (all / realms - 1.0) / (realms + 1.0) >= SHARE_TO_SAVE
+        // The existing realms keep working until the new one is ready. After that there's one more.
+        let (all, realms) = (left.all() / REALM_COST_IN_BYTES, realms as f64);
+        (all / realms - 1.0) / (realms + 1.0) >= MIN_SAVED_FRACTION
     }
 }
 
-impl Left {
-    /// Of those that may come, as large a part as has come of those of which it has shown. The first that comes says little: as
-    /// if what a realm costs had shown before, and not come.
-    fn still_to_show(&self) -> f64 {
-        let (come, not) = (self.shown.0 as f64, self.shown.1 as f64);
-        self.possible as f64 * come / (come + not + BYTES_IN_THE_COST)
+impl Remaining {
+    /// Estimates how much of `possible` will need a realm, using the fraction of the finished files that did. The first
+    /// such file is weak evidence, so the estimate starts as if `REALM_COST_IN_BYTES` bytes had already finished
+    /// without needing one.
+    fn expected_from_possible(&self) -> f64 {
+        let (needed, not_needed) = (self.settled.0 as f64, self.settled.1 as f64);
+        self.possible as f64 * needed / (needed + not_needed + REALM_COST_IN_BYTES)
     }
 
-    /// How large the files are that are still to come, as far as can be told.
+    /// The estimated total size of the files still to come.
     fn expected(&self) -> f64 {
-        self.bytes as f64 + self.still_to_show()
+        self.bytes as f64 + self.expected_from_possible()
     }
 
-    /// How large the files of the whole run are, as far as can be told.
+    /// The estimated total size of all the files in the run.
     fn all(&self) -> f64 {
-        (self.at_first + self.shown.0) as f64 + self.still_to_show()
+        (self.announced + self.settled.0) as f64 + self.expected_from_possible()
     }
 }

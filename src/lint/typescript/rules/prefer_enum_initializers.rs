@@ -3,11 +3,11 @@ use bun_lint::prelude::*;
 /// Require each enum member value to be explicitly initialized.
 pub struct PreferEnumInitializers;
 
-const DEFINE_INITIALIZER: Message = Message::new(
+const DEFINE_INITIALIZER: &Message = &Message::new(
     "defineInitializer",
     "The value of the member '{{ name }}' should be explicitly defined.",
 );
-const DEFINE_INITIALIZER_SUGGESTION: Message = Message::new(
+const DEFINE_INITIALIZER_SUGGESTION: &Message = &Message::new(
     "defineInitializerSuggestion",
     "Can be fixed to {{ name }} = {{ suggested }}",
 );
@@ -27,7 +27,7 @@ impl Rule for PreferEnumInitializers {
         };
         let is_oxlint = cx.language().is_oxlint;
         for (index, member) in declaration.members().iter().enumerate() {
-            // oxlint passes over a name that is a string.
+            // oxlint skips members whose name is a string.
             if member.init().is_some()
                 || is_oxlint && !matches!(member.key().map(Key::kind), Some(KeyKind::Ident(_)))
             {

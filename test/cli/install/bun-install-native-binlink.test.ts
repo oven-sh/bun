@@ -118,6 +118,88 @@ describe.concurrent("native binlink optimization", () => {
       await expectPlatformBin();
     });
 
+    // bunx takes the bin of a package from that package's own package.json. Here the entry in `.bin` leads into
+    // the platform package, and the file of the main package keeps the mode of its tarball.
+    test.skipIf(isWindows).each(["a folder", "a link to another folder"])(
+      `bunx runs the platform-specific bin with linker ${linker} and node_modules %s`,
+      async nodeModules => {
+        let env = { ...bunEnv };
+        const { packageDir, packageJson } = await verdaccio.createTestDir();
+        env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
+        env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
+        if (nodeModules !== "a folder") {
+          await mkdir(join(packageDir, "volume"));
+          symlinkSync("volume", join(packageDir, "node_modules"));
+        }
+
+        await writeFile(
+          join(packageDir, "bunfig.toml"),
+          Bun.TOML.stringify({
+            install: {
+              cache: join(packageDir, ".bun-cache"),
+              registry: verdaccio.registryUrl(),
+              linker,
+            },
+          }),
+        );
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "test-app",
+            version: "1.0.0",
+            dependencies: {
+              "test-native-binlink": "1.0.0",
+            },
+            nativeDependencies: ["test-native-binlink"],
+            trustedDependencies: ["test-native-binlink"],
+            scripts: {
+              postinstall: `"${bunExe()}" x --no-install test-native-binlink > postinstall.txt`,
+            },
+          }),
+        );
+
+        await using install = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stdin: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        const [installErr, installExitCode] = await Promise.all([install.stderr.text(), install.exited]);
+        const ranPlatformBin = "SUCCESS: Using platform-specific bin (test-native-binlink-target)\n";
+        expect({
+          postinstall: existsSync(join(packageDir, "postinstall.txt"))
+            ? readFileSync(join(packageDir, "postinstall.txt"), "utf8")
+            : installErr,
+          exitCode: installExitCode,
+        }).toEqual({ postinstall: ranPlatformBin, exitCode: 0 });
+
+        const stub = join(packageDir, "node_modules", "test-native-binlink", "bin", "main.js");
+        // The file has the first mode in the tarball of this package, and the second in the tarball of esbuild.
+        for (const mode of [0o644, 0o755]) {
+          chmodSync(stub, mode);
+          for (const args of [["test-native-binlink"], ["-p", "test-native-binlink", "test-binlink-cmd"]]) {
+            await using proc = spawn({
+              cmd: [bunExe(), "x", "--no-install", ...args],
+              cwd: packageDir,
+              stdout: "pipe",
+              stdin: "ignore",
+              stderr: "pipe",
+              env,
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            expect({ mode, stdout, stderr, exitCode }).toEqual({
+              mode,
+              stdout: ranPlatformBin,
+              stderr: "",
+              exitCode: 0,
+            });
+          }
+        }
+      },
+    );
+
     // Regression: a package on the nativeDependencies list whose platform-specific
     // optionalDependency does NOT contain the bin file at the expected path must
     // fall back to linking the original package's bin. Previously the `seen` map

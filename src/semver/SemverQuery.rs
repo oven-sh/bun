@@ -198,13 +198,11 @@ impl Clone for List {
             tail: None,
             next: None,
         };
-        if out.head.next.is_some() {
-            let mut tail = NonNull::from(&mut out.head);
-            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
-            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
-                tail = NonNull::from(next);
+        if let Some(mut tail) = out.head.next.as_deref_mut() {
+            while let Some(ref mut next) = tail.next {
+                tail = next;
             }
-            out.tail = Some(tail);
+            out.tail = Some(NonNull::from(tail));
         }
 
         let mut src = &self.next;
@@ -215,13 +213,11 @@ impl Clone for List {
                 tail: None,
                 next: None,
             }));
-            if slot.head.next.is_some() {
-                let mut tail = NonNull::from(&mut slot.head);
-                // SAFETY: `tail` walks `slot.head`'s exclusively-owned Box chain.
-                while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
-                    tail = NonNull::from(next);
+            if let Some(mut tail) = slot.head.next.as_deref_mut() {
+                while let Some(ref mut next) = tail.next {
+                    tail = next;
                 }
-                slot.tail = Some(tail);
+                slot.tail = Some(NonNull::from(tail));
             }
             src = &node.next;
             dst = &mut slot.next;
@@ -327,20 +323,18 @@ impl List {
             return Ok(());
         }
 
-        let mut tail = Box::new(Query {
+        let tail = Box::new(Query {
             range: *range,
             next: None,
         });
-
-        let tail_ptr = NonNull::from(&mut *tail);
 
         let last_tail: &mut Query = match self.tail {
             // SAFETY: self.tail aliases a Query owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
-        last_tail.next = Some(tail);
-        self.tail = Some(tail_ptr);
+        // Taken after the `Box` has moved: the move would invalidate an earlier pointer.
+        self.tail = Some(NonNull::from(&mut **last_tail.next.insert(tail)));
         Ok(())
     }
 }
@@ -358,26 +352,18 @@ pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
     pub(crate) tail: Option<NonNull<List>>,
-    /// Borrowed view into the caller's source buffer.
-    /// Stored as a raw fat pointer
-    /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
-    /// can be embedded in lockfile types (`NpmInfo`). Only dereferenced in
-    /// `json_stringify`; caller must keep the source buffer alive for that call.
-    pub input: *const [u8],
 
     pub flags: FlagsBitSet,
 }
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
-// by this `Group` (see `or_version`); `input` is a lifetime-erased borrow into
-// the caller's source buffer and is
-// only dereferenced under the same single-thread parse/stringify call. Neither
-// pointer aliases data owned by another thread, so the whole structure moves
-// between threads as a unit (the lockfile/resolver thread pool relies on this);
-// auto-`!Send` from `NonNull`/`*const` is overly conservative here.
+// by this `Group` (see `or_range`); it never aliases data owned by another
+// thread, so the whole structure moves between threads as a unit (the
+// lockfile/resolver thread pool relies on this). Auto-`!Send` from `NonNull` is
+// overly conservative here.
 unsafe impl Send for Group {}
-// SAFETY: `tail` is only dereferenced through `&mut self` and `input` points
-// to immutable bytes; `&Group` exposes no unsynchronized interior mutability.
+// SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range` and
+// `or_range`); `&Group` exposes no unsynchronized interior mutability.
 unsafe impl Sync for Group {}
 
 impl Clone for Group {
@@ -385,16 +371,13 @@ impl Clone for Group {
         let mut out = Group {
             head: self.head.clone(),
             tail: None,
-            input: self.input,
             flags: self.flags,
         };
-        if out.head.next.is_some() {
-            let mut tail = NonNull::from(&mut out.head);
-            // SAFETY: `tail` walks `out.head`'s exclusively-owned Box chain.
-            while let Some(next) = unsafe { tail.as_mut() }.next.as_deref_mut() {
-                tail = NonNull::from(next);
+        if let Some(mut tail) = out.head.next.as_deref_mut() {
+            while let Some(ref mut next) = tail.next {
+                tail = next;
             }
-            out.tail = Some(tail);
+            out.tail = Some(NonNull::from(tail));
         }
         out
     }
@@ -405,7 +388,6 @@ impl Default for Group {
         Self {
             head: List::default(),
             tail: None,
-            input: std::ptr::from_ref::<[u8]>(b""),
             flags: FlagsBitSet::init_empty(),
         }
     }
@@ -478,11 +460,8 @@ impl Group {
     }
 
     /// A group that no version satisfies.
-    fn null_set(input: &[u8]) -> Group {
-        Group {
-            input: std::ptr::from_ref::<[u8]>(input),
-            ..Self::from_comparator(Comparator::null_set())
-        }
+    fn null_set() -> Group {
+        Self::from_comparator(Comparator::null_set())
     }
 
     pub fn is_exact(&self) -> bool {
@@ -525,15 +504,13 @@ impl Group {
         let mut new_tail = Box::new(List::default());
         new_tail.head.range = *range;
 
-        let new_tail_ptr = NonNull::from(&mut *new_tail);
-
         let prev_tail: &mut List = match self.tail {
             // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
             None => &mut self.head,
         };
-        prev_tail.next = Some(new_tail);
-        self.tail = Some(new_tail_ptr);
+        // Taken after the `Box` has moved: the move would invalidate an earlier pointer.
+        self.tail = Some(NonNull::from(&mut **prev_tail.next.insert(new_tail)));
         Ok(())
     }
 
@@ -600,7 +577,8 @@ pub enum Wildcard {
 }
 
 impl Token {
-    /// `floor` is the tag of a lower bound that is derived, not written: empty, or `-0` under `includePrerelease`.
+    /// `floor` is the tag of a lower bound that's derived instead of written. It's empty, or `-0`
+    /// with `includePrerelease`.
     pub(crate) fn to_range(self, parsed: &version::ParseResult<u64>, floor: Tag) -> Range {
         let version = &parsed.version;
         // Only read for `Wildcard::Major`, which is valid only when it is a written `x`, `X` or `*`.
@@ -767,7 +745,8 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     parse_with(input, sliced, Tag::default())
 }
 
-/// `parse` with node-semver's `includePrerelease`, for `satisfies_including_prerelease`: `1.x` starts at `1.0.0-0` and `>1` at `2.0.0-0`.
+/// Like `parse`, but with node-semver's `includePrerelease`, for `satisfies_including_prerelease`.
+/// `1.x` starts at `1.0.0-0`, and `>1` at `2.0.0-0`.
 pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     parse_with(input, sliced, Tag::ZERO_PRE)
 }
@@ -775,7 +754,6 @@ pub fn parse_including_prerelease(input: &[u8], sliced: SlicedString) -> Result<
 fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, AllocError> {
     let mut i: usize = 0;
     let mut list = Group {
-        input: std::ptr::from_ref::<[u8]>(input),
         head: List::default(),
         tail: None,
         flags: FlagsBitSet::init_empty(),
@@ -889,7 +867,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
             let parse_result = Version::parse(sliced.sub(&input[i..]));
             // node-semver rejects the whole range for a number it cannot hold.
             if parse_result.overflow {
-                return Ok(Group::null_set(input));
+                return Ok(Group::null_set());
             }
             if !parse_result.valid {
                 list.flags.set(Flags::SKIPPED);
@@ -953,7 +931,7 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
             let range: Range = if hyphenate {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
                 if second_parsed.overflow {
-                    return Ok(Group::null_set(input));
+                    return Ok(Group::null_set());
                 }
                 if !second_parsed.valid {
                     list.flags.set(Flags::SKIPPED);
@@ -1069,5 +1047,30 @@ mod tests {
             let group = parse(bytes, SlicedString::init(bytes, bytes)).unwrap();
             assert_eq!(group.has_skipped(), expected, "{text:?}");
         }
+    }
+
+    #[test]
+    fn clone_caches_its_own_last_nodes() {
+        let bytes = b">=1.0.0 <2.0.0 || 3.0.0 || >=4.0.0 <5.0.0 <4.5.0";
+        let group = parse(bytes, SlicedString::init(bytes, bytes))
+            .unwrap()
+            .clone();
+        let mut list = &group.head;
+        loop {
+            let mut query = &list.head;
+            while let Some(next) = &query.next {
+                query = next;
+            }
+            assert_eq!(
+                list.tail.map(|tail| tail.as_ptr().cast_const()),
+                list.head.next.is_some().then_some(&raw const *query),
+            );
+            let Some(next) = &list.next else { break };
+            list = next;
+        }
+        assert_eq!(
+            group.tail.map(|tail| tail.as_ptr().cast_const()),
+            Some(&raw const *list),
+        );
     }
 }

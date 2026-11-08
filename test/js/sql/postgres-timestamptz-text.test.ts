@@ -140,15 +140,53 @@ test("timestamptz text: years 0001..0099 decode literally (text path == binary p
   ]);
 });
 
-test("timestamptz text outside the fixed-width shape still falls back to Date.parse", async () => {
+test("timestamptz text: a year of more than four digits, and a year BC", async () => {
   const cells = await decode(OID.timestamptz, [
-    // Five-digit years are the one such shape Date.parse handles; it must keep doing so.
     "10000-01-01 00:00:00+00",
+    "0044-03-15 07:03:58-04:56:02 BC",
+    "0001-12-31 23:59:59.5+00 BC",
+  ]);
+  expect(cells.map(iso)).toEqual([
+    "+010000-01-01T00:00:00.000Z",
+    "-000043-03-15T12:00:00.000Z",
+    "0000-12-31T23:59:59.500Z",
+  ]);
+});
+
+test("text that is not what DateStyle = ISO prints is an Invalid Date", async () => {
+  const timestamptz = await decode(OID.timestamptz, [
     // Out-of-range offset fields are not treated as 99 minutes / 99 seconds.
     "2024-06-01 12:00:00+01:99",
     "2024-06-01 12:00:00+00:00:99",
+    "Sat Jun 01 12:00:00 2024 UTC",
   ]);
-  expect(cells.map(iso)).toEqual(["+010000-01-01T00:00:00.000Z", "Invalid Date", "Invalid Date"]);
+  const timestamps = await decode(OID.timestamp, [
+    "2024-06-01T12:00:00",
+    "01/06/2024 12:00:00",
+    "2024-06-01 12:00:00 AD",
+    // The server's largest year has seven digits.
+    "2147483647-99-01 00:00:00",
+  ]);
+  const dates = await decode(OID.date, ["01/06/2024", "06-01-2024", "024-06-01", "2024-06-01 BCE"]);
+  expect([...timestamptz, ...timestamps, ...dates].map(iso)).toEqual(Array(11).fill("Invalid Date"));
+});
+
+// The server prints an offset for `timestamptz` and for nothing else. The text says what it means either way.
+test("an offset is applied when there is one, and no offset is UTC, whatever the type", async () => {
+  const texts = [
+    "2024-06-01 12:00:00",
+    "2024-06-01 12:00:00+00",
+    "2024-06-01 08:00:00.5-04",
+    "0044-03-15 12:00:00+00 BC",
+  ];
+  const instants = [
+    "2024-06-01T12:00:00.000Z",
+    "2024-06-01T12:00:00.000Z",
+    "2024-06-01T12:00:00.500Z",
+    "-000043-03-15T12:00:00.000Z",
+  ];
+  expect((await decode(OID.timestamp, texts)).map(iso)).toEqual(instants);
+  expect((await decode(OID.timestamptz, texts)).map(iso)).toEqual(instants);
 });
 
 // --- array text path (arrays are text even on the extended protocol) --------

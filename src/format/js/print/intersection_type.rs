@@ -15,7 +15,7 @@ pub(crate) fn write_ts_intersection_type<'a>(
         return super::flow::write_interface_type(types, f);
     }
     match types.len() {
-        1 if lone_type_of_intersection_is_a_group(f) => write!(f, group(&types.first())),
+        1 if groups_single_type_intersection(f) => write!(f, group(&types.first())),
         1 => write!(f, types.first()),
         _ => write!(
             f,
@@ -24,14 +24,14 @@ pub(crate) fn write_ts_intersection_type<'a>(
     }
 }
 
-/// `& A` is an intersection for oxfmt, so a group: a block comment behind the `&` that ends its line is on the line of
-/// `A` if that fits. For Prettier it is `A`.
-pub(crate) fn lone_type_of_intersection_is_a_group(f: &Formatter<'_>) -> bool {
+/// oxfmt treats `& A` as an intersection, so it's a group: a block comment after the `&` that ends its line moves onto
+/// `A`'s line if that fits. Prettier treats it as plain `A`.
+pub(crate) fn groups_single_type_intersection(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// With the `&` at the start of the line, oxfmt leaves a comment that is on a line of its own there, above the `&`.
-/// Prettier writes it behind the `&`.
+/// With the `&` at the start of the line, oxfmt keeps an own-line comment where it is, above the `&`. Prettier prints
+/// it after the `&`.
 fn own_line_comments_stay_above_operator(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -42,13 +42,14 @@ fn own_line_comments_stay_above_operator(f: &Formatter<'_>) -> bool {
 ///                       {
 /// ```
 ///
-/// Prettier on the left: two object types are on the line of the `&` whatever is between them. oxfmt on the right.
+/// Prettier is on the left: two object types stay on the `&`'s line no matter what's between them. oxfmt is on the
+/// right.
 fn comment_above_an_object_type_moves_it_off_the_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `printIntersectionType`: object types stay on the line of the `&`, other types go
-/// on a line of their own if it does not all fit.
+/// Prettier's `printIntersectionType`: object types stay on the `&`'s line, and other types go on their own line if it
+/// doesn't all fit.
 fn format_intersection_types<'a>(types: List<'a, TypeNode<'a>>, f: &mut Formatter<'a>) {
     let is_operator_at_start =
         f.options().experimental_operator_position == OperatorPosition::Start;

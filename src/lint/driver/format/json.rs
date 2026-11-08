@@ -70,7 +70,7 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
             );
             if result.is_fixed {
                 out.extend_from_slice(b",\"output\":");
-                json_stringify(result.written().unwrap_or_default(), out);
+                json_stringify(result.text_to_write().unwrap_or_default(), out);
             } else if linted.has_source {
                 out.extend_from_slice(b",\"source\":");
                 json_stringify(text, out);
@@ -86,7 +86,7 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
 }
 
 pub(super) fn write_results(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    // The text of every file with a problem is in it: on all threads.
+    // The output includes the text of every file with a problem, so it's built on all threads.
     let mut pieces: Guarded<Vec<Vec<u8>>> =
         Guarded::new(results.iter().map(|_| Vec::new()).collect());
     meta.pool.for_each(results.len(), 8, &|index| {
@@ -106,7 +106,7 @@ pub(super) fn write_results(out: &mut Vec<u8>, results: &[FileResult], meta: &Me
     out.push(b']');
 }
 
-/// `rulesMeta` has what is known here of the `meta` of each rule that is reported.
+/// `rulesMeta` holds what's known here about the `meta` of each reported rule.
 pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
     out.extend_from_slice(b"{\"results\":");
     write_results(out, results, meta);
@@ -161,7 +161,7 @@ pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], met
         if rule.is_deprecated {
             out.extend_from_slice(b",\"deprecated\":true");
         }
-        // The comma before the first.
+        // Remove the comma before the first entry.
         if out.len() > start {
             out.remove(start);
         }

@@ -51,7 +51,8 @@ impl Resolution {
         false
     }
 
-    /// Which of a dependency's two names `trustedDependencies` entries match.
+    /// Returns which of a dependency's two names the entries of `trustedDependencies` are matched
+    /// against.
     #[inline]
     pub fn trusted_name<T>(&self, by_alias: T, by_pkg_name: T) -> T {
         if self.tag == Tag::Npm {
@@ -599,9 +600,11 @@ pub(crate) fn fmt_store_url(url: &[u8]) -> StoreURLFormatter<'_> {
     StoreURLFormatter { url }
 }
 
-/// `(authority_start, host_start, query_start)`: the userinfo is `authority_start..host_start`.
+/// Returns `(authority_start, host_start, query_start)`. The userinfo is
+/// `authority_start..host_start`.
 fn url_credential_offsets(url: &[u8]) -> (usize, usize, usize) {
-    // RFC 3986: the authority ends at the first `/`, `?` or `#`; the userinfo at its last `@`.
+    // RFC 3986: the authority ends at the first `/`, `?` or `#`, and the userinfo ends at the
+    // authority's last `@`.
     let authority_start = match strings::index_of_char_usize(url, b':') {
         Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
         _ => 0,
@@ -615,7 +618,7 @@ fn url_credential_offsets(url: &[u8]) -> (usize, usize, usize) {
     (authority_start, host_start, query_start)
 }
 
-/// Without the userinfo and the query string of a `scheme://` URL (the `#fragment` stays).
+/// Appends a `scheme://` URL without its userinfo and query string. The `#fragment` is kept.
 pub(crate) fn append_without_url_credentials(out: &mut Vec<u8>, specifier: &[u8]) {
     let (authority_start, host_start, query_start) = url_credential_offsets(specifier);
     if authority_start == 0 {
@@ -630,7 +633,7 @@ pub(crate) fn append_without_url_credentials(out: &mut Vec<u8>, specifier: &[u8]
     }
 }
 
-/// Keeps the query string: a registry may sign its tarball URLs.
+/// Keeps the query string, because a registry may sign its tarball URLs.
 pub(crate) fn append_without_url_userinfo(out: &mut Vec<u8>, url: &[u8]) {
     let (authority_start, host_start, _) = url_credential_offsets(url);
     out.extend_from_slice(&url[..authority_start]);
@@ -1045,12 +1048,14 @@ impl Tag {
         self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
     }
 
-    /// The path or URL can name other bytes tomorrow: cached under the integrity bun.lock records.
+    /// The path or URL can serve different bytes tomorrow, so it's cached under the integrity that
+    /// bun.lock records.
     pub(crate) fn is_tarball(self) -> bool {
         self == Tag::LocalTarball || self == Tag::RemoteTarball
     }
 
-    /// `Uninitialized` precedes a package's append; `SingleFileModule` has no producer.
+    /// `Uninitialized` only exists before a package is appended, and nothing produces
+    /// `SingleFileModule`.
     pub(crate) fn belongs_in_lockfile(self) -> bool {
         matches!(
             self,

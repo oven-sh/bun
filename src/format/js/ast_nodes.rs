@@ -1,24 +1,23 @@
-//! The syntax tree as oxc and Prettier see it, for questions about what is around a node.
+//! The syntax tree as oxc and Prettier see it, for questions about a node's surroundings.
 //!
-//! Much of what decides how a node is printed is a question about its parent: does it need
-//! parentheses there, does it start a statement, is it the callee of a call. The code that this
-//! crate is a port of asks those questions in terms of ESTree, which has nodes that the syntax
-//! tree of `bun_lint::ast` does not have (`ChainExpression`, `FunctionBody`, `FormalParameters`,
-//! `TSTypeAnnotation`, `JSXExpressionContainer`, `ExportNamedDeclaration`, ..) and tells apart
-//! what is one kind there (`LogicalExpression` and `BinaryExpression`).
+//! Much of what decides how a node is printed depends on its parent: does it need parentheses there, does it start a
+//! statement, is it the callee of a call? The code this crate is ported from asks those questions in terms of ESTree,
+//! which has nodes that `bun_lint::ast` doesn't have (`ChainExpression`, `FunctionBody`, `FormalParameters`,
+//! `TSTypeAnnotation`, `JSXExpressionContainer`, `ExportNamedDeclaration`, ..) and splits kinds that are a single kind
+//! there (`LogicalExpression` and `BinaryExpression`).
 //!
-//! [`AstNodes`] is that tree. Nothing is converted or stored: a value is a name for the kind and
-//! a handle, and [`AstNodes::parent`] computes the next one from the parent of the handle. Every
-//! variant has exactly one field, so `AstNodes::X(_)` is always a valid pattern.
+//! [`AstNodes`] is that tree. Nothing is converted or stored. A value is just a kind plus a handle, and
+//! [`AstNodes::parent`] computes the next one from the handle's parent. Every variant has exactly one field, so
+//! `AstNodes::X(_)` is always a valid pattern.
 //!
-//! - `expr.as_ast_nodes()`, `stmt.as_ast_nodes()`, ..: what a handle is.
-//! - `expr.ast_parent()`, ..: what it is in. The same as `expr.as_ast_nodes().parent()`.
-//! - `expr.as_chain_element()`: `a?.b` is two nodes in ESTree, a `ChainExpression` and the
-//!   `MemberExpression` in it, and one `Expr`. `as_ast_nodes()` is the outer and this the inner.
-//! - `nodes.span()`: the range that the node has in oxc.
-//! - `nodes.ancestors()`: itself, its parent, and so on up to `Program`.
+//! - `expr.as_ast_nodes()`, `stmt.as_ast_nodes()`, ..: the node for a handle.
+//! - `expr.ast_parent()`, ..: its parent. Same as `expr.as_ast_nodes().parent()`.
+//! - `expr.as_chain_element()`: `a?.b` is two nodes in ESTree, a `ChainExpression` and the `MemberExpression` inside
+//!   it, but one `Expr`. `as_ast_nodes()` returns the outer node and this returns the inner one.
+//! - `nodes.span()`: the node's range in oxc.
+//! - `nodes.ancestors()`: the node itself, its parent, and so on up to `Program`.
 
-use super::print::flow::{arrow_behind_parameters, is_declared_class, is_flow_declare_export};
+use super::print::flow::{arrow_after_parameters, is_declared_class, is_flow_declare_export};
 use bun_lint::ast::{
     BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprKind, File, Flags, FnBody, FnKind, Func,
     ImportSpec, Keyword, Member, MemberKind, ModuleName, Node, Param, Pat, PatKind, PatProp, Prop,
@@ -27,8 +26,8 @@ use bun_lint::ast::{
 use bun_lint::span::{Span, Spanned};
 use bun_sema::hir::ExprTag;
 
-/// An expression statement, or the body of an arrow function that is an expression, which oxc has
-/// as an `ExpressionStatement` in a `FunctionBody`.
+/// An expression statement, or an arrow function's expression body, which oxc represents as an `ExpressionStatement` in
+/// a `FunctionBody`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum ExpressionStatement<'a> {
     Stmt(Stmt<'a>),
@@ -81,7 +80,7 @@ macro_rules! ast_nodes {
             $($($variant($payload),)*)*
         }
 
-        /// Which variant of [`AstNodes`].
+        /// The variant of an [`AstNodes`].
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
         #[repr(u8)]
         pub(crate) enum AstKind {
@@ -89,7 +88,7 @@ macro_rules! ast_nodes {
             $($($variant,)*)*
         }
 
-        /// The names of the variants of [`AstKind`], by their number.
+        /// The [`AstKind`] variant names, indexed by discriminant.
         pub(crate) const AST_KIND_NAMES: &[&str] = &["Program", $($(stringify!($variant),)*)*];
 
         impl<'a> AstNodes<'a> {
@@ -101,7 +100,7 @@ macro_rules! ast_nodes {
                 }
             }
 
-            /// The node of `bun_lint::ast` that it is made of.
+            /// Returns the underlying `bun_lint::ast` node.
             #[inline]
             pub(crate) fn raw(self) -> Node<'a> {
                 match self {
@@ -113,7 +112,6 @@ macro_rules! ast_nodes {
     };
 }
 
-/// The file.
 #[derive(Copy, Clone)]
 pub(crate) struct Program<'a>(pub(crate) &'a File<'a>);
 
@@ -143,18 +141,17 @@ ast_nodes! {
         JSXElement JSXFragment JSXText JSXEmptyExpression Elision PrivateIdentifier
         // All of `a, b, c`.
         SequenceExpression
-        // All of `a?.b.c`. The field is also the node that is in it.
+        // All of `a?.b.c`. The field is also the node inside it.
         ChainExpression
         // The `{e}` around `e`.
         JSXExpressionContainer
-        // `{...e}` among the children of an element. The field is the `Spread`.
+        // `{...e}` as a child of an element. The field is the `Spread`.
         JSXSpreadChild
         // `<a b>`. The field is the element.
         JSXOpeningElement
         // The `@e` around `e`.
         Decorator
-        // What an array literal, an object literal, `a = 1` and `...a` are in the target of an
-        // assignment.
+        // An array literal, an object literal, `a = 1` and `...a` inside an assignment target.
         ArrayAssignmentTarget ObjectAssignmentTarget AssignmentTargetWithDefault
         AssignmentTargetRest
     }
@@ -219,11 +216,11 @@ ast_nodes! {
     }
     TupleElem<'a> { TSNamedTupleMember TSOptionalType TSRestType }
     TypeParam<'a> { TSTypeParameter }
-    // The `<..>`. The field is what has the type arguments or parameters.
+    // The `<..>`. The field is the node that has the type arguments or parameters.
     Node<'a> { TSTypeParameterInstantiation TSTypeParameterDeclaration }
 }
 
-/// How far up the nodes that oxc has around an expression and `bun_lint::ast` does not.
+/// How far up we are among the wrapper nodes that oxc has around an expression and `bun_lint::ast` doesn't.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Level {
     Itself,
@@ -236,14 +233,14 @@ fn is_comma(e: Expr<'_>) -> bool {
     e.binary_op() == Some(BinOp::Comma)
 }
 
-/// Whether `e` is the `a, b` of `a, b, c`, which is not a node of its own in ESTree.
+/// True if `e` is the `a, b` of `a, b, c`, which isn't a separate node in ESTree.
 pub(crate) fn is_inner_comma(e: Expr<'_>) -> bool {
     is_comma(e)
         && !e.is_parenthesized()
         && matches!(e.parent(), Node::Expr(parent) if is_comma(parent) && parent.left() == Some(e))
 }
 
-/// What a handle is, and what it is in.
+/// Converts a handle to its [`AstNodes`], and finds its parent.
 pub(crate) trait AsAstNodes<'a>: Copy {
     fn as_ast_nodes(self) -> AstNodes<'a>;
 
@@ -260,7 +257,7 @@ pub(crate) trait AsAstNodes<'a>: Copy {
 }
 
 impl<'a> AsAstNodes<'a> for Expr<'a> {
-    /// ESTree's `Expression`: for the whole of an optional chain, the `ChainExpression`. See
+    /// ESTree's `Expression`. For a whole optional chain that's the `ChainExpression`. See
     /// [`ChainElement::as_chain_element`].
     #[inline]
     fn as_ast_nodes(self) -> AstNodes<'a> {
@@ -270,7 +267,7 @@ impl<'a> AsAstNodes<'a> for Expr<'a> {
         }
     }
 
-    /// What is around the `ChainExpression`, if there is one.
+    /// Skips the `ChainExpression`, if there is one.
     #[inline]
     fn ast_parent(self) -> AstNodes<'a> {
         parent_of_expr(self, Level::Chain)
@@ -278,9 +275,8 @@ impl<'a> AsAstNodes<'a> for Expr<'a> {
 }
 
 pub(crate) trait ChainElement<'a> {
-    /// The member access, the call or the `!` itself, even if it is the whole of an optional
-    /// chain. Its parent is the `ChainExpression` then. For any other expression this is the same
-    /// as [`AsAstNodes::as_ast_nodes`].
+    /// Returns the member access, call or `!` itself, even if it's a whole optional chain. In that case its parent is
+    /// the `ChainExpression`. For any other expression this is the same as [`AsAstNodes::as_ast_nodes`].
     fn as_chain_element(self) -> AstNodes<'a>;
 }
 
@@ -294,13 +290,13 @@ impl<'a> ChainElement<'a> for Expr<'a> {
             ExprTag::Call => N::CallExpression(self),
             ExprTag::Dot if !self.is_private_member() => N::StaticMemberExpression(self),
             ExprTag::Number => N::NumericLiteral(self),
-            _ => chain_element_in_general(self),
+            _ => chain_element_slow_path(self),
         }
     }
 }
 
-/// For the kinds of expressions that are not the most frequent.
-fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
+/// Handles the less common expression kinds.
+fn chain_element_slow_path<'a>(e: Expr<'a>) -> AstNodes<'a> {
     use AstNodes as N;
     match e.tag() {
         ExprTag::Missing if e.jsx_container_span().is_some() => N::JSXEmptyExpression(e),
@@ -375,8 +371,8 @@ fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
     }
 }
 
-/// Whether `e`, an `=` assignment, is the `a = 1` of `[a = 1] = b` or `({ a = 1 } = b)`. Also of
-/// `b = { a = 1 }`, which is an error.
+/// True if `e`, an `=` assignment, is the `a = 1` of `[a = 1] = b` or `({ a = 1 } = b)`. Also true for `b = { a = 1 }`,
+/// which is an error.
 fn is_default_in_assignment_target(e: Expr<'_>) -> bool {
     let is_element = match e.parent() {
         // `[...a = 1] = b` is an error.
@@ -388,8 +384,8 @@ fn is_default_in_assignment_target(e: Expr<'_>) -> bool {
     is_element && e.is_assignment_target()
 }
 
-/// Whether `statement` is in the place of Prettier's `JsExpressionRoot`: the text of the file is `(`, an expression that is in
-/// HTML, and `)`. The name of such a file starts with a NUL. The parent of the expression is the file then.
+/// True if `statement` takes the place of Prettier's `JsExpressionRoot`. That's a file whose text is `(`, an expression
+/// from HTML, and `)`, and whose name starts with a NUL. The expression's parent is then the file.
 #[inline]
 fn is_expression_root(statement: Stmt<'_>) -> bool {
     statement.file().path().first() == Some(&0) && matches!(statement.parent(), Node::File(_))
@@ -401,8 +397,8 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
         return N::ChainExpression(e);
     }
     let parent = e.parent();
-    // Braces are around a child of an element or the value of an attribute. `{...e}` and `{}` are
-    // the container themselves.
+    // A child of an element or an attribute value can have braces around it. `{...e}` and `{}` are themselves the
+    // container.
     if above < Level::JsxContainer
         && match parent {
             Node::Expr(parent) => parent.tag() == ExprTag::Jsx,
@@ -460,8 +456,7 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
 }
 
 impl<'a> AsAstNodes<'a> for Func<'a> {
-    /// For a signature or a function type, which oxc has no `Function` in, the member or the
-    /// type.
+    /// For a signature or a function type, where oxc has no `Function`, this returns the member or the type.
     fn as_ast_nodes(self) -> AstNodes<'a> {
         use AstNodes as N;
         match (self.kind(), self.owner()) {
@@ -551,7 +546,7 @@ impl<'a> AsAstNodes<'a> for VarDecl<'a> {
     }
 }
 
-/// The statement without the `export` around it.
+/// Returns the statement without its `export` wrapper.
 pub(crate) fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
     use AstNodes as N;
     match statement.tag() {
@@ -608,8 +603,8 @@ pub(crate) fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
     }
 }
 
-/// `export` or `export default` is written before `statement`, which is a declaration.
-fn export_around<'a>(statement: Stmt<'a>) -> Option<AstNodes<'a>> {
+/// Returns the `export` or `export default` wrapper of `statement`, if it's an exported declaration.
+fn export_wrapper<'a>(statement: Stmt<'a>) -> Option<AstNodes<'a>> {
     if matches!(
         statement.tag(),
         StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar
@@ -627,13 +622,13 @@ fn export_around<'a>(statement: Stmt<'a>) -> Option<AstNodes<'a>> {
 }
 
 impl<'a> AsAstNodes<'a> for Stmt<'a> {
-    /// With the `export` around a declaration.
+    /// Includes the `export` wrapper of a declaration.
     fn as_ast_nodes(self) -> AstNodes<'a> {
-        export_around(self).unwrap_or_else(|| inner_of_stmt(self))
+        export_wrapper(self).unwrap_or_else(|| inner_of_stmt(self))
     }
 }
 
-/// What `statement`, with its `export`, is in.
+/// Returns the parent of `statement`, counting its `export` as part of it.
 fn parent_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
     use AstNodes as N;
     match statement.parent() {
@@ -645,7 +640,7 @@ fn parent_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
             StmtTag::Try if matches!(parent.kind(), StmtKind::Try { handler, .. } if handler == Some(statement)) => {
                 N::CatchClause(parent)
             }
-            // `namespace A.B { .. }` is one node, and what is between the braces is in it.
+            // `namespace A.B { .. }` is one node, and it directly contains what's between the braces.
             StmtTag::Module => N::TSModuleBlock(parent),
             _ => inner_of_stmt(parent),
         },
@@ -735,7 +730,7 @@ impl<'a> AsAstNodes<'a> for TypeNode<'a> {
 }
 
 impl<'a> AsAstNodes<'a> for TupleElem<'a> {
-    /// For an element that is only a type, the tuple type.
+    /// For an element that's only a type, this returns the tuple type.
     fn as_ast_nodes(self) -> AstNodes<'a> {
         match () {
             () if self.name().is_some() => AstNodes::TSNamedTupleMember(self),
@@ -776,8 +771,9 @@ impl<'a> AsAstNodes<'a> for Pat<'a> {
     }
 }
 
-/// What the pattern, the type annotation and the default value of `param` are in. `constructor(private a = 1) {}` is two nodes
-/// in ESTree: a `TSParameterProperty`, which is the `FormalParameter` here, and the `AssignmentPattern` `a = 1` in it.
+/// Returns the parent of `param`'s pattern, type annotation and default value. `constructor(private a = 1) {}` is two
+/// nodes in ESTree: a `TSParameterProperty`, which is the `FormalParameter` here, and the `AssignmentPattern` `a = 1`
+/// inside it.
 fn parent_in_parameter(param: Param<'_>) -> AstNodes<'_> {
     match param.is_parameter_property() && param.default().is_some() {
         true => AstNodes::AssignmentPattern(Node::Param(param)),
@@ -785,7 +781,7 @@ fn parent_in_parameter(param: Param<'_>) -> AstNodes<'_> {
     }
 }
 
-/// What a node of `bun_lint::ast` is. A statement is with its `export`.
+/// Converts a `bun_lint::ast` node. A statement includes its `export`.
 pub(crate) fn node_as_ast_nodes<'a>(node: Node<'a>) -> AstNodes<'a> {
     use AstNodes as N;
     match node {
@@ -814,12 +810,12 @@ pub(crate) fn node_as_ast_nodes<'a>(node: Node<'a>) -> AstNodes<'a> {
     }
 }
 
-/// What the function or the class that `owner` is, is in.
+/// Returns the parent of the function or class that `owner` is.
 fn parent_of_owner<'a>(owner: Node<'a>) -> AstNodes<'a> {
     match owner {
         Node::Expr(e) => parent_of_expr(e, Level::Itself),
         Node::Stmt(statement) => {
-            export_around(statement).unwrap_or_else(|| parent_of_stmt(statement))
+            export_wrapper(statement).unwrap_or_else(|| parent_of_stmt(statement))
         }
         Node::Member(member) => member.as_ast_nodes(),
         Node::Type(ty) => ty.ast_parent(),
@@ -828,7 +824,7 @@ fn parent_of_owner<'a>(owner: Node<'a>) -> AstNodes<'a> {
 }
 
 impl<'a> AstNodes<'a> {
-    /// The expression that it is, if it is one: what parentheses can be written around.
+    /// Returns the expression if this is one, meaning something that can have parentheses around it.
     pub(crate) fn as_expression(self) -> Option<Expr<'a>> {
         use AstNodes as N;
         match self {
@@ -848,7 +844,7 @@ impl<'a> AstNodes<'a> {
         }
     }
 
-    /// What it is directly in. `Program` is in itself.
+    /// Returns the direct parent. `Program` is its own parent.
     pub(crate) fn parent(self) -> AstNodes<'a> {
         use AstNodes as N;
         match self {
@@ -863,7 +859,7 @@ impl<'a> AstNodes<'a> {
             },
             N::AssignmentTargetRest(e) => match e.kind() {
                 ExprKind::Spread(_) => parent_of_expr(e, Level::Itself),
-                // What `...` is written before in an object.
+                // The operand of `...` in an object.
                 _ => match e.parent() {
                     Node::Prop(prop) => node_as_ast_nodes(prop.parent()),
                     other => node_as_ast_nodes(other),
@@ -1005,7 +1001,7 @@ impl<'a> AstNodes<'a> {
             | N::TSImportEqualsDeclaration(statement)
             | N::TSExportAssignment(statement)
             | N::TSNamespaceExportDeclaration(statement) => {
-                export_around(statement).unwrap_or_else(|| parent_of_stmt(statement))
+                export_wrapper(statement).unwrap_or_else(|| parent_of_stmt(statement))
             }
 
             N::SwitchCase(case) => match case.parent() {
@@ -1075,7 +1071,7 @@ impl<'a> AstNodes<'a> {
         }
     }
 
-    /// Itself, its parent, and so on up to `Program`.
+    /// The node itself, its parent, and so on up to `Program`.
     pub(crate) fn ancestors(self) -> impl Iterator<Item = AstNodes<'a>> {
         std::iter::successors(Some(self), |node| match node {
             AstNodes::Program(_) => None,
@@ -1083,7 +1079,7 @@ impl<'a> AstNodes<'a> {
         })
     }
 
-    /// The parent of a `ChainExpression`, anything else itself.
+    /// Returns the parent of a `ChainExpression`, and any other node unchanged.
     pub(crate) fn without_chain_expression(self) -> AstNodes<'a> {
         match self {
             AstNodes::ChainExpression(_) => self.parent().without_chain_expression(),
@@ -1091,7 +1087,7 @@ impl<'a> AstNodes<'a> {
         }
     }
 
-    /// Whether it is a call or a `new` expression whose callee is `e`.
+    /// True if this is a call or `new` expression whose callee is `e`.
     pub(crate) fn is_call_like_callee(self, e: Expr<'a>) -> bool {
         match self {
             AstNodes::CallExpression(call) | AstNodes::NewExpression(call) => {
@@ -1101,8 +1097,8 @@ impl<'a> AstNodes<'a> {
         }
     }
 
-    /// [`AstNodes::span`], starting at Prettier's `locStart`. The decorators of a class can come before its `export`, and
-    /// belong to the class and to the export: `@decorator export class A {}`.
+    /// [`AstNodes::span`], but starting at Prettier's `locStart`. A class's decorators can come before its `export`,
+    /// and then belong to both the class and the export: `@decorator export class A {}`.
     pub(crate) fn span_with_decorators(self) -> Span {
         use AstNodes as N;
         let span = self.span();
@@ -1123,7 +1119,7 @@ impl<'a> AstNodes<'a> {
         }
     }
 
-    /// The range that the node has in oxc.
+    /// Returns the node's range in oxc.
     pub(crate) fn span(self) -> Span {
         use AstNodes as N;
         match self {
@@ -1217,11 +1213,11 @@ impl<'a> AstNodes<'a> {
             },
             N::FormalParameters(func) => {
                 let span = func.params_span().unwrap_or_else(|| func.span());
-                let end = arrow_behind_parameters(func).unwrap_or(span.end);
+                let end = arrow_after_parameters(func).unwrap_or(span.end);
                 Span::new(span.start, end)
             }
             N::Class(class) => match class.owner() {
-                // `estree_span` looks at every decorator for an `export`.
+                // `estree_span` checks every decorator for an `export`.
                 Node::Stmt(statement) if !class.flags().contains(Flags::EXPORT) => statement.span(),
                 _ => class.estree_span(),
             },
@@ -1355,7 +1351,6 @@ impl Spanned for AstNodes<'_> {
     }
 }
 
-/// The type arguments that `owner` has.
 pub(crate) fn type_arguments_of<'a>(
     owner: Node<'a>,
 ) -> Option<bun_lint::ast::List<'a, TypeNode<'a>>> {
@@ -1380,7 +1375,6 @@ pub(crate) fn type_arguments_of<'a>(
     }
 }
 
-/// The type parameters that `owner` declares.
 pub(crate) fn type_parameters_of<'a>(
     owner: Node<'a>,
 ) -> Option<bun_lint::ast::List<'a, TypeParam<'a>>> {

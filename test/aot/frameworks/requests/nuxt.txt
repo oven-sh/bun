@@ -1,0 +1,26 @@
+GET /
+GET /data x-asked-by:smoke
+GET /person/21?greeting=hi
+GET /person/abc
+GET /api/hello?name=ada
+POST /api/hello {"numbers":[1,2,3]}
+GET /old
+GET /hello.txt
+GET /nowhere
+GET /api/cookie cookie:gone=1;%20kept=2
+GET /api/stream
+FORM /api/form
+GET /api/fails
+GET /api/validated?n=7
+GET /api/validated?n=seven
+GET /plain
+GET /fetched
+GET /state cookie:who=grace
+GET /guarded
+GET /guarded?pass=yes
+GET /throws
+GET /laid-out
+HEAD /data
+OPTIONS /api/hello
+GET /hello.txt range:bytes=2-5
+GET /hello.txt if-none-match:"nothing"

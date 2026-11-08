@@ -1,7 +1,7 @@
-//! The orders that module specifiers and names are sorted by.
+//! The orderings used to sort module specifiers and names.
 //!
-//! JavaScript compares strings by UTF-16 code units. Nearly all text here is ASCII and is compared
-//! as bytes: everything is generic over [`Unit`], and other text is converted first.
+//! JavaScript compares strings by UTF-16 code units. Nearly all text here is ASCII and is compared as bytes, so
+//! everything is generic over [`Unit`], and non-ASCII text is converted first.
 
 use bstr::ByteSlice;
 use smallvec::SmallVec;
@@ -26,8 +26,8 @@ impl Unit for u16 {
     }
 }
 
-/// Each character in lower case by itself, which is how the crate `natord` ignores case. Not `text.toLowerCase()`, in which a
-/// sigma at the end of a word is another letter.
+/// Lowercases each character on its own, which is how the `natord` crate ignores case. Not `text.toLowerCase()`, which
+/// maps a sigma at the end of a word to a different letter.
 pub(super) fn lowercase(text: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     for lower in text.chars().flat_map(char::to_lowercase) {
@@ -74,7 +74,7 @@ fn starts_with<T: Unit>(text: &[T], prefix: &[u8]) -> bool {
             .all(|(unit, byte)| unit.code() == u32::from(*byte))
 }
 
-/// How many units at the start of `text` are a `StrUnsignedDecimalLiteral` other than `Infinity`.
+/// How many units at the start of `text` form a `StrUnsignedDecimalLiteral` other than `Infinity`.
 fn decimal_literal_len<T: Unit>(text: &[T]) -> usize {
     let whole = digits_at(text, 0);
     let mut len = whole;
@@ -104,13 +104,13 @@ fn decimal_literal_len<T: Unit>(text: &[T]) -> usize {
     len
 }
 
-/// `parseFloat(text)`. `None`: `NaN`.
+/// `parseFloat(text)`. `None` is `NaN`.
 fn parse_float<T: Unit>(text: &[T]) -> Option<f64> {
-    let blank = text
+    let leading_whitespace = text
         .iter()
         .take_while(|unit| bun_core::strings::is_js_whitespace(unit.code()))
         .count();
-    let text = &text[blank..];
+    let text = &text[leading_whitespace..];
     let sign = usize::from(
         text.first()
             .is_some_and(|unit| matches!(unit.code(), 0x2B | 0x2D)),
@@ -121,7 +121,7 @@ fn parse_float<T: Unit>(text: &[T]) -> Option<f64> {
         true => f64::INFINITY,
         false => match decimal_literal_len(unsigned) {
             0 => return None,
-            // Nearly always a few digits.
+            // Nearly always just a few digits.
             len @ ..=15 if digits_at(unsigned, 0) == len => {
                 unsigned[..len].iter().fold(0u64, |value, unit| {
                     value * 10 + u64::from(unit.code() - 0x30)
@@ -135,7 +135,7 @@ fn parse_float<T: Unit>(text: &[T]) -> Option<f64> {
 
 /// `isNaN(text)`
 fn is_nan_as_number<T: Unit>(text: &[T]) -> bool {
-    // What nearly all text starts with.
+    // Fast path: nearly all text starts with one of these.
     if text.first().is_some_and(
         |unit| matches!(unit.code(), 0x21..=0x2A | 0x2C | 0x2E | 0x2F | 0x3A..=0x48 | 0x4A..=0x7E),
     ) {
@@ -176,7 +176,7 @@ fn is_nan_as_number<T: Unit>(text: &[T]) -> bool {
 
 // ───────────────────────────── javascript-natural-sort ─────────────────────────────
 
-/// Whether all of `text` is `[+-]?(0|[1-9]\d*)(\.\d*)?([eE][+-]?\d+)?`.
+/// True if all of `text` matches `[+-]?(0|[1-9]\d*)(\.\d*)?([eE][+-]?\d+)?`.
 fn is_number<T: Unit>(text: &[T]) -> bool {
     let mut at = usize::from(
         text.first()
@@ -206,7 +206,7 @@ fn is_number<T: Unit>(text: &[T]) -> bool {
     at == text.len()
 }
 
-/// The value of `text` if all of it is `0x[0-9a-f]+`, in either case.
+/// `text`'s value if all of it matches `0x[0-9a-f]+`, case-insensitively.
 fn hexadecimal<T: Unit>(text: &[T]) -> Option<f64> {
     let digits = text.get(2..).filter(|digits| !digits.is_empty())?;
     if text[0].code() != 0x30 || text[1].code() | 0x20 != 0x78 {
@@ -217,7 +217,7 @@ fn hexadecimal<T: Unit>(text: &[T]) -> Option<f64> {
     })
 }
 
-/// The chunks of `text`: runs of digits and what is between them. A number is one chunk.
+/// `text`'s chunks: runs of digits and the text between them. A number is one chunk.
 struct Chunks<'t, T> {
     text: &'t [T],
     at: usize,
@@ -291,9 +291,11 @@ fn natural_sort_units<T: Unit>(x: &[T], y: &[T]) -> Ordering {
     let ((x_start, x_end), (y_start, y_end)) = (trim(x), trim(y));
     let (x, y) = (&x[x_start..x_end], &y[y_start..y_end]);
 
-    // Dates, which `Date.parse` is asked about, are not recognized.
-    if let Some(y_value) = hexadecimal(y).filter(|value| *value != 0.0) {
-        match hexadecimal(x).unwrap_or(0.0).total_cmp(&y_value) {
+    // Dates, which the package checks with `Date.parse`, aren't recognized. The package compares `x` and `y` as numbers
+    // if `y` is hexadecimal, whatever `x` is. So it reports both that `12a` is less than `0x10B` and that `0x10B` is
+    // less than `12a`, and they swap places on every sort. Here both must be hexadecimal.
+    if let (Some(x_value), Some(y_value)) = (hexadecimal(x), hexadecimal(y)) {
+        match x_value.total_cmp(&y_value) {
             Ordering::Equal => {}
             order => return order,
         }
@@ -326,7 +328,7 @@ fn compare_chunks<T: Unit>(mut x_chunks: Chunks<T>, mut y_chunks: Chunks<T>) -> 
     }
 }
 
-/// `naturalSort(x, y)` of the package `javascript-natural-sort`, 0.7.1. `is_insensitive`:
+/// `naturalSort(x, y)` from the `javascript-natural-sort` package, 0.7.1. `is_insensitive` is
 /// `naturalSort.insensitive`.
 pub(super) fn natural_sort(x: &[u8], y: &[u8], is_insensitive: bool) -> Ordering {
     if !x.is_ascii() || !y.is_ascii() {
@@ -344,7 +346,7 @@ pub(super) fn natural_sort(x: &[u8], y: &[u8], is_insensitive: bool) -> Ordering
 }
 
 fn natural_sort_ascii(x: &[u8], y: &[u8]) -> Ordering {
-    // Neither a number nor anything to trim: only the chunks from where the two differ count.
+    // If neither is a number or needs trimming, only the chunks from where the two differ matter.
     let is_plain = |text: &[u8]| {
         text.first()
             .is_some_and(|first| !first.is_ascii_digit() && !matches!(first, b'+' | b'-' | b' '))
@@ -354,7 +356,7 @@ fn natural_sort_ascii(x: &[u8], y: &[u8]) -> Ordering {
         return natural_sort_units(x, y);
     }
     let common = x.iter().zip(y).take_while(|(x, y)| x == y).count();
-    // Nearly always they differ in the middle of text that is no number.
+    // They nearly always differ in the middle of non-numeric text.
     let is_text =
         |byte: u8| matches!(byte, 0x21..=0x2A | 0x2C | 0x2E | 0x2F | 0x3A..=0x48 | 0x4A..=0x7E);
     if let (Some(&x_byte), Some(&y_byte)) = (x.get(common), y.get(common))
@@ -456,8 +458,8 @@ fn natord_chars(left: impl Iterator<Item = char>, right: impl Iterator<Item = ch
                     (l, r) = (left.next(), right.next());
                     continue;
                 };
-                // With a zero at the start, digits are compared from the left: `015` < `12`.
-                // Otherwise the longer number is the greater one: `15` < `123`.
+                // With a leading zero, digits are compared from the left: `015` < `12`. Otherwise the longer number is
+                // greater: `15` < `123`.
                 let is_left_aligned = l_digit == 0 || r_digit == 0;
                 let mut order = l_digit.cmp(&r_digit);
                 loop {
@@ -480,7 +482,7 @@ fn natord_chars(left: impl Iterator<Item = char>, right: impl Iterator<Item = ch
     }
 }
 
-/// `natord::compare` of the crate `natord`, 1.0.9. `ignores_case`: of the two in lower case.
+/// `natord::compare` from the `natord` crate, 1.0.9. `ignores_case` compares the two in lowercase.
 pub(super) fn natord(left: &[u8], right: &[u8], ignores_case: bool) -> Ordering {
     if left.is_ascii() && right.is_ascii() {
         let char_of = |byte: &u8| {

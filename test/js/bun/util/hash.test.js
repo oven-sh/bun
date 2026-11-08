@@ -1,6 +1,7 @@
 import { xxHash3ForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { gcTick, tempDir } from "harness";
+import { join } from "node:path";
 
 it(`Bun.hash()`, () => {
   gcTick();
@@ -289,6 +290,19 @@ describe("what Bun.hash and its algorithms take", () => {
     for (const hash of functions) {
       expect(() => hash(Bun.file(import.meta.path))).toThrow("File blob cannot be used here");
       expect(() => hash(s3.file("key"))).toThrow("File blob cannot be used here");
+    }
+  });
+
+  it("an output of Bun.build() hashes as its bytes, and one written to outdir is refused", async () => {
+    using dir = tempDir("hash-build-output", { "entry.js": `console.log("hello world!");` });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const inMemory = (await Bun.build({ entrypoints })).outputs[0];
+    const written = (await Bun.build({ entrypoints, outdir: join(String(dir), "out") })).outputs[0];
+    const code = new Uint8Array(await inMemory.arrayBuffer());
+    expect(code.length).toBeGreaterThan(0);
+    for (const hash of functions) {
+      expect(hash(inMemory)).toBe(hash(code));
+      expect(() => hash(written)).toThrow("File blob cannot be used here");
     }
   });
 

@@ -4,8 +4,8 @@ use bun_lint::rule::Plugin;
 /// Prefer `.addEventListener()` and `.removeEventListener()` over `on`-functions.
 pub struct PreferAddEventListener;
 
-const PREFER_ADD_EVENT_LISTENER: Message =
-    Message::new("", "Prefer `addEventListener()` over their `on`-function counterparts.");
+const PREFER_ADD_EVENT_LISTENER: &Message =
+    &Message::new("", "Prefer `addEventListener()` over their `on`-function counterparts.");
 
 /// Sorted.
 const DOM_EVENT_TYPE_NAMES: [&str; 198] = [
@@ -58,7 +58,7 @@ impl Rule for PreferAddEventListener {
             event = rest;
         }
         let is_event = DOM_EVENT_TYPE_NAMES.binary_search_by(|it| it.as_bytes().cmp(event)).is_ok();
-        // Not the default value in a pattern.
+        // A default value in a pattern isn't an assignment.
         if is_event && !e.is_assignment_target() {
             cx.report(name, PREFER_ADD_EVENT_LISTENER);
         }

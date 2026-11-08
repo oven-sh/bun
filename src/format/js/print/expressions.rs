@@ -1,11 +1,13 @@
-//! The expressions that take only a few lines each.
+//! Expressions that only take a few lines each.
 
 use super::binary_like_expression::is_argument_of_angular_pipe;
 use super::class::format_grouped_parameters_with_return_type_for_method;
 use super::function::FormatFunctionBody;
 use super::object_like::ObjectLike;
 use super::object_pattern_like::ObjectPatternLike;
-use super::return_or_throw_statement::has_argument_leading_comments;
+use super::return_or_throw_statement::{
+    has_argument_leading_comments, has_comment_right_after_keyword,
+};
 use crate::js::format::{FormatExpr, format_name, format_node};
 use crate::js::parentheses::expression::left_edge_end;
 use crate::js::utils::array::write_array_node;
@@ -21,8 +23,8 @@ pub(crate) fn write_chain_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     FormatExpr::in_chain_expression(e).fmt(f);
 }
 
-/// Prettier's `isFollowedByRightBracket`, for an object between `{{` and `}}` in HTML that is written without spaces in its
-/// braces: the `}` of another object follows its own, and `}}` would be the end.
+/// Prettier's `isFollowedByRightBracket`, for an object between `{{` and `}}` in HTML that's printed without spaces
+/// inside its braces. True if another object's `}` follows its own, because `}}` would end the interpolation.
 fn is_followed_by_right_bracket_in_html<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     if !f.options().in_html.is_in_interpolation || f.options().bracket_spacing.value() {
         return false;
@@ -43,7 +45,7 @@ fn is_followed_by_right_bracket_in_html<'a>(e: Expr<'a>, f: &Formatter<'a>) -> b
             }
             AstNodes::ConditionalExpression(it) if it.alternate() == Some(current) => it,
             AstNodes::UnaryExpression(it) => it,
-            // The last argument of a pipe of Angular.
+            // The last argument of an Angular pipe.
             AstNodes::CallExpression(it)
                 if f.options().in_html.root.is_angular()
                     && is_argument_of_angular_pipe(current)
@@ -96,8 +98,7 @@ fn write_object_expression_without_parentheses<'a>(
     }
 }
 
-/// A property of an object literal, of the target of a destructuring assignment, or an attribute of
-/// a JSX element.
+/// A property of an object literal or of a destructuring assignment target, or a JSX attribute.
 pub(crate) fn write_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
     let node = property.as_ast_nodes();
     match node {
@@ -116,7 +117,7 @@ pub(crate) fn write_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// A property of an object literal that is not the target of a destructuring assignment.
+/// A property of an object literal that isn't a destructuring assignment target.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatObjectMember<'a>(pub(crate) Prop<'a>);
 
@@ -195,7 +196,8 @@ pub(crate) fn write_meta_property<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     });
 }
 
-/// Where the second word of `import.meta` or `new.target` starts. It can have escapes: `new.t\u0061rget`, `new.t\u{61}rget`.
+/// Returns where the second word of `import.meta` or `new.target` starts. It can have escapes: `new.t\u0061rget`,
+/// `new.t\u{61}rget`.
 pub(crate) fn start_of_meta_property_name(e: Expr<'_>) -> u32 {
     let is_in_name = |byte: &u8| {
         byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'\\' | b'{' | b'}' | 0x80..)
@@ -304,7 +306,7 @@ pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mu
         return write!(f, format_inner);
     }
 
-    // `await (await a).b`: the parentheses break along with what the outer `await` is in.
+    // `await (await a).b`: the parentheses break together with the group that contains the outer `await`.
     let indented = soft_block_indent(&format_inner);
     match left_edge_end(e, AstNodes::AwaitExpression(e)).1 {
         AstNodes::AwaitExpression(_) => write!(f, indented),
@@ -324,15 +326,19 @@ pub(crate) fn write_yield_expression<'a>(
         return;
     };
     write!(f, space());
+    // A line break after `yield` ends the expression, so without the parentheses `yield ( // a\n b )` would yield
+    // nothing. Prettier drops them. A line break after `yield*` is fine.
     if !f.is_quiet()
-        && yield_writes_its_argument_as_return_does(f)
         && !matches!(argument.kind(), ExprKind::Jsx(_))
-        && has_argument_leading_comments(argument, f)
+        && match yield_prints_argument_like_return(f) {
+            true => has_argument_leading_comments(argument, f),
+            false => !delegate && has_comment_right_after_keyword(argument, f),
+        }
     {
         return write!(f, ["(", block_indent(&argument), ")"]);
     }
     let is_binaryish = matches!(argument.kind(), ExprKind::Binary { op, .. } if op != BinOp::Comma);
-    match is_binaryish && yield_writes_its_argument_as_return_does(f) {
+    match is_binaryish && yield_prints_argument_like_return(f) {
         true => write!(
             f,
             group(&format_args!(
@@ -345,8 +351,8 @@ pub(crate) fn write_yield_expression<'a>(
     }
 }
 
-/// oxfmt, like Prettier 3.8, writes the argument of `yield` as that of `return`.
-fn yield_writes_its_argument_as_return_does(f: &Formatter<'_>) -> bool {
+/// oxfmt, like Prettier 3.8, prints the argument of `yield` like the argument of `return`.
+fn yield_prints_argument_like_return(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

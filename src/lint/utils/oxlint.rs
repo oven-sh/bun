@@ -1,5 +1,4 @@
-//! Helpers of the rules of oxlint 1.87, under the names that they have there: for what a rule does
-//! with a configuration of oxlint.
+//! Helpers of oxlint 1.87's rules, under their oxlint names. Rules use them when they run with an oxlint configuration.
 
 use super::ancestor_memo::AncestorMemo;
 use super::ast_utils::is_global_reference;
@@ -13,8 +12,8 @@ use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
 use smallvec::SmallVec;
 
-/// An `await` that is in no function, in a file that can be a script or a module, makes it a module if what follows cannot be anything
-/// but its operand.
+/// In a file that can be a script or a module, an `await` outside any function makes the file a module if what follows
+/// can only be its operand.
 fn is_unambiguous_await<'a>(e: Expr<'a>, in_function: &mut AncestorMemo<'a, ()>) -> bool {
     let (file, after) = (e.file(), e.span().start + 5);
     let next = skip_trivia(file.text(), after);
@@ -34,9 +33,9 @@ fn is_unambiguous_await<'a>(e: Expr<'a>, in_function: &mut AncestorMemo<'a, ()>)
             .is_none()
 }
 
-/// tsgolint's `rule.ListenerOnAllowPattern`: whether the `patternVisitor` of `visitLintNodes` comes to this array or
-/// object: from the left of a `=`, through elements, values of properties and spreads. The left of a default in a
-/// pattern is not one, nor is the head of a `for`.
+/// tsgolint's `rule.ListenerOnAllowPattern`: true if the `patternVisitor` of `visitLintNodes` reaches this array or
+/// object. It starts at the left of a `=` and descends through elements, property values and spreads. It doesn't reach
+/// the left of a default in a pattern or the head of a `for`.
 pub fn is_visited_as_pattern(node: Expr) -> bool {
     let (mut at, mut allows_pattern) = (node, false);
     loop {
@@ -45,7 +44,7 @@ pub fn is_visited_as_pattern(node: Expr) -> bool {
         }
         at = match at.parent() {
             Node::Expr(parent) => match parent.as_assign() {
-                // The left of an assignment that is itself in a pattern is visited as an expression.
+                // The left side of an assignment that's itself in a pattern is visited as an expression.
                 Some((None, left, _)) if left == at => {
                     allows_pattern = !allows_pattern;
                     parent
@@ -68,8 +67,8 @@ pub fn is_visited_as_pattern(node: Expr) -> bool {
     }
 }
 
-/// By its name the file can be a script or a module. The scripts in `.vue` and `.svelte` files are modules.
-pub(crate) fn is_either(file: &File) -> bool {
+/// True if the file's name allows both a script and a module. The scripts in `.vue` and `.svelte` files are modules.
+pub(crate) fn can_be_script_or_module(file: &File) -> bool {
     !matches!(
         file.path(),
         [.., b'.', b'm' | b'c', b'j' | b't', b's']
@@ -78,9 +77,10 @@ pub(crate) fn is_either(file: &File) -> bool {
     )
 }
 
-/// oxc takes the file for a script, in which the `await` of `await (a)` that is in no function is the name of a function.
+/// True if oxc treats the file as a script, where the `await` in an `await (a)` outside any function is a function's
+/// name.
 pub fn is_script<'a>(file: &'a File<'a>) -> bool {
-    is_either(file) && !has_module_syntax(file)
+    can_be_script_or_module(file) && !has_module_syntax(file)
 }
 
 /// `ModuleRecord::has_module_syntax`
@@ -106,11 +106,11 @@ pub fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
     file.body().iter().any(is_module_declaration)
         || file.has_exprs([ExprTag::ImportMeta])
         || file.has_exprs([ExprTag::Await])
-            && is_either(file)
+            && can_be_script_or_module(file)
             && file
                 .exprs_of_kind(ExprTag::Await)
                 .any(|it| is_unambiguous_await(it, &mut in_function))
-        || is_either(file)
+        || can_be_script_or_module(file)
             && (file.stmts_of_kind(StmtTag::Var).filter(is_await_using)).any(|it| {
                 in_function
                     .find(Node::Stmt(it), |_, parent| parent.as_func().map(|_| ()))
@@ -118,9 +118,10 @@ pub fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
             })
 }
 
-/// `ctx.source_type()`: what oxc takes the file for. `.mjs` and `.mts` are modules, and so are the scripts in `.vue` and `.svelte`
-/// files, `.cjs` and `.cts` are CommonJS, and any other is a module if it has an `import` or an `export`, else a script. [`File::language`] does not say so: with a configuration
-/// of oxlint the scopes of every file are those of a module, which is what oxc's are like, whatever the file is. Few of its rules ask.
+/// `ctx.source_type()`: what oxc treats the file as. `.mjs` and `.mts` are modules, and so are the scripts in `.vue`
+/// and `.svelte` files. `.cjs` and `.cts` are CommonJS. Any other file is a module if it has an `import` or an
+/// `export`, otherwise a script. [`File::language`] doesn't tell: with an oxlint configuration every file gets a
+/// module's scopes, which is what oxc's scopes look like for any file. Few oxlint rules need this.
 pub fn source_type<'a>(file: &'a File<'a>) -> SourceType {
     *file.lazy.oxc_source_type.get_or_init(|| match file.path() {
         [.., b'.', b'm', b'j' | b't', b's'] | [.., b'.', b'v', b'u', b'e'] => SourceType::Module,
@@ -131,8 +132,8 @@ pub fn source_type<'a>(file: &'a File<'a>) -> SourceType {
     })
 }
 
-/// `ScopeFlags::is_strict_mode` of oxc's scope: in a module, in a class, or below a `"use strict"`. [`Scope::is_strict`] takes
-/// every file for a module.
+/// `ScopeFlags::is_strict_mode` of oxc's scope: in a module, in a class, or below a `"use strict"`.
+/// [`Scope::is_strict`] treats every file as a module.
 pub fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>) -> bool {
     let has_use_strict = |statements: List<'a, Stmt<'a>>| {
         let mut directives = statements.iter().map_while(Stmt::directive);
@@ -147,20 +148,22 @@ pub fn is_strict_mode<'a>(scope: Scope<'a>, file: &'a File<'a>) -> bool {
         })
 }
 
-/// Whether a rule that asks today what `Boolean`, `Promise` or `NaN` refers to goes by the name alone: its port in oxlint does, and
-/// so did the rule before ESLint 10. The configurations of ESLint 8 have `Promise` only if `env` says so.
-pub fn goes_by_the_name(language: &LanguageOptions) -> bool {
+/// True if a rule that now resolves what `Boolean`, `Promise` or `NaN` refers to should only check the name. Its oxlint
+/// port does that, and so did the rule before ESLint 10. ESLint 8 configurations only have `Promise` if `env` enables
+/// it.
+pub fn checks_name_only(language: &LanguageOptions) -> bool {
     language.is_oxlint || language.eslint_major < 10
 }
 
-/// [`is_global_reference`] for such a rule: where it [`goes_by_the_name`] it is enough that `e`, which the caller knows to have
-/// the name, is written.
+/// [`is_global_reference`] for such a rule. Where it [`checks_name_only`], any `e` counts, because the caller has
+/// already checked the name.
 pub fn is_global_by_name(e: Expr) -> bool {
-    goes_by_the_name(e.file().language()) || is_global_reference(e)
+    checks_name_only(e.file().language()) || is_global_reference(e)
 }
 
-/// `scope` is that of a class, or of a function or a file that begins with `"use strict"`: it and what is in it are strict for
-/// oxc, whatever the file is. For a rule that asks about many scopes of a file that it knows to be no module.
+/// True if `scope` belongs to a class, or to a function or file that begins with `"use strict"`. oxc then treats it and
+/// everything in it as strict, whatever the file is. It's for a rule that checks many scopes of a file that it knows
+/// isn't a module.
 pub fn makes_strict(scope: crate::semantic::Scope<'_>) -> bool {
     fn has_use_strict<'a>(statements: crate::ast::List<'a, crate::ast::Stmt<'a>>) -> bool {
         let mut directives = statements.iter().map_while(crate::ast::Stmt::directive);
@@ -174,9 +177,9 @@ pub fn makes_strict(scope: crate::semantic::Scope<'_>) -> bool {
     }
 }
 
-/// `GetFunctionHeadLoc` of tsgolint 7.0. Of an arrow function it is the `=>` and what is between it and the token before.
-/// Of another function it is from the first modifier that is no decorator, or else from the first token, to the `(`: the
-/// key of a property that the function is the value of is not part of it.
+/// tsgolint 7.0's `GetFunctionHeadLoc`. For an arrow function it's the `=>` plus whatever is between it and the
+/// previous token. For any other function it runs from the first modifier that isn't a decorator, or else from the
+/// first token, to the `(`. It doesn't include the key of a property whose value is the function.
 pub fn tsgolint_function_head_loc(func: Func) -> Span {
     if let Some(arrow) = func.arrow_span() {
         let start = func.file().end_of_token_before(arrow.start);
@@ -197,8 +200,7 @@ pub fn tsgolint_function_head_loc(func: Func) -> Span {
     }
 }
 
-/// Whether all that declares `symbol` is namespaces with nothing but types in them. For oxc it is no
-/// value then.
+/// True if every declaration of `symbol` is a namespace that contains only types. oxc then doesn't treat it as a value.
 pub fn is_namespace_of_types(symbol: Symbol) -> bool {
     let mut pending = Vec::new();
     for declaration in symbol.declarations() {
@@ -221,12 +223,12 @@ pub fn is_namespace_of_types(symbol: Symbol) -> bool {
     is_declared
 }
 
-/// `has_ambient_typescript_ancestor`, asked of many nodes of a file.
+/// `has_ambient_typescript_ancestor`, cached for many of a file's nodes.
 #[derive(Default)]
 pub struct AmbientAncestors<'a>(AncestorMemo<'a, ()>);
 
 impl<'a> AmbientAncestors<'a> {
-    /// Whether `node` is in a `declare namespace`, a `declare module` or a `global`.
+    /// True if `node` is in a `declare namespace`, a `declare module` or a `global`.
     pub fn has_ambient_typescript_ancestor(&mut self, node: Node<'a>) -> bool {
         let is_ambient = |_, parent: Node<'a>| match parent {
             Node::Stmt(statement) => match statement.as_module() {
@@ -243,7 +245,7 @@ impl<'a> AmbientAncestors<'a> {
     }
 }
 
-/// What oxlint has as the parent of a function. There what is in parentheses has these as its parent.
+/// A function's parent in oxlint, where a parenthesized function's parent is the parentheses.
 #[derive(Copy, Clone)]
 pub enum FunctionParent<'a> {
     MethodDefinition(Member<'a>),
@@ -281,7 +283,7 @@ impl<'a> FunctionParent<'a> {
     }
 }
 
-/// The name of a computed key that is a literal, but no string and no number: `[null]`, `[/a/]`, `[1n]`.
+/// The name of a computed key that's a literal other than a string or a number: `[null]`, `[/a/]`, `[1n]`.
 fn name_of_computed_literal(e: Expr<'_>) -> Option<&[u8]> {
     match e.kind() {
         _ if e.is_parenthesized() => None,
@@ -292,7 +294,7 @@ fn name_of_computed_literal(e: Expr<'_>) -> Option<&[u8]> {
     }
 }
 
-/// `PropertyKey::name`: of a key that is a name or a literal. That of `#a` is `a`.
+/// `PropertyKey::name`, for a key that's a name or a literal. For `#a` it's `a`.
 pub fn property_key_name(key: Key<'_>) -> Option<&[u8]> {
     match key.kind() {
         KeyKind::Private(name) => {
@@ -308,7 +310,7 @@ pub fn property_key_name(key: Key<'_>) -> Option<&[u8]> {
     }
 }
 
-/// The span of a `PropertyKey`: without the brackets, with the parentheses in them.
+/// A `PropertyKey`'s span, which excludes the brackets but includes the parentheses inside them.
 pub fn property_key_span<'a>(key: Key<'a>, file: &File<'a>) -> Span {
     match key.kind() {
         KeyKind::Computed(e) => e.outer_span(),
@@ -316,7 +318,7 @@ pub fn property_key_span<'a>(key: Key<'a>, file: &File<'a>) -> Span {
     }
 }
 
-/// [`property_key_name`] of the key of a member of a class, which a constructor has for oxlint.
+/// [`property_key_name`] of a class member's key. In oxlint a constructor has one too.
 pub fn member_key_name(member: Member<'_>) -> Option<&[u8]> {
     match member.key() {
         Some(key) => property_key_name(key),
@@ -324,13 +326,13 @@ pub fn member_key_name(member: Member<'_>) -> Option<&[u8]> {
     }
 }
 
-/// `get_static_property_name`, of the key. A string and a number have none.
+/// `get_static_property_name` of the key. A string or a number has none.
 fn get_static_property_name<'a>(key: Key<'a>, file: &File<'a>) -> Option<&'a [u8]> {
-    let written = || file.slice(key.inner_span(file));
+    let key_text = || file.slice(key.inner_span(file));
     match key.kind() {
         KeyKind::Ident(_) | KeyKind::Private(_) => property_key_name(key),
-        KeyKind::Number(name) if written().ends_with(b"n") => Some(name.bytes()),
-        KeyKind::ComputedString(name) if written().starts_with(b"`") => Some(name.bytes()),
+        KeyKind::Number(name) if key_text().ends_with(b"n") => Some(name.bytes()),
+        KeyKind::ComputedString(name) if key_text().starts_with(b"`") => Some(name.bytes()),
         KeyKind::Computed(e) => name_of_computed_literal(e),
         _ => None,
     }
@@ -392,8 +394,8 @@ pub fn get_function_name_with_kind(func: Func) -> Vec<u8> {
     out
 }
 
-/// Where oxlint looks for `@ts-ignore` and the like in a line of a comment: after any number of `/`, and of `*` in a block,
-/// with blanks between them.
+/// The position where oxlint looks for `@ts-ignore` and the like in a line of a comment: after any number of `/`, and
+/// of `*` in a block comment, with whitespace between them.
 pub fn after_comment_decoration(mut line: &[u8], is_block: bool) -> &[u8] {
     loop {
         line = match bun_core::strings::trim_unicode_whitespace_start(line) {

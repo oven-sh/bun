@@ -5,15 +5,15 @@ pub struct NoUnsafeNegation {
     enforce_for_ordering_relations: bool,
 }
 
-const UNEXPECTED: Message = Message::new(
+const UNEXPECTED: &Message = &Message::new(
     "unexpected",
     "Unexpected negating the left operand of '{{operator}}' operator.",
 );
-const SUGGEST_NEGATED_EXPRESSION: Message = Message::new(
+const SUGGEST_NEGATED_EXPRESSION: &Message = &Message::new(
     "suggestNegatedExpression",
     "Negate '{{operator}}' expression instead of its left operand. This changes the current behavior.",
 );
-const SUGGEST_PARENTHESISED_NEGATION: Message = Message::new(
+const SUGGEST_PARENTHESISED_NEGATION: &Message = &Message::new(
     "suggestParenthesisedNegation",
     "Wrap negation in '()' to make the intention explicit. This preserves the current behavior.",
 );
@@ -30,7 +30,7 @@ impl NoUnsafeNegation {
         let report = cx.report(left, UNEXPECTED).data("operator", operator).hint_with(|| {
             Some(format!("!a {operator} b means (!a) {operator} b. Did you mean !(a {operator} b)?"))
         });
-        // oxlint has a fix, and writes the comparison anew.
+        // oxlint has a fix, which reprints the whole comparison.
         if cx.language().is_oxlint {
             report.fix(|fixer| {
                 let file = fixer.file();

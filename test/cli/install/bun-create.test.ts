@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, githubTarball, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, githubTarball, isASAN, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { delimiter, join } from "path";
@@ -341,8 +341,6 @@ const gitIdentity = {
 /** `bun create ...args` in `cwd`; local templates are looked up in `<cwd>/bun-create`. */
 async function create(cwd: string, args: string[], extraEnv: Record<string, string | undefined> = {}) {
   const merged = { ...env, BUN_CREATE_DIR: join(cwd, "bun-create"), ...extraEnv };
-  // Windows spells the inherited variable `Path`.
-  if (extraEnv.PATH !== undefined && "Path" in merged) delete merged.Path;
   await using proc = spawn({
     cmd: [bunExe(), "create", ...args],
     cwd,
@@ -941,6 +939,23 @@ describe.concurrent("GitHub template", () => {
     expect(err).not.toContain("error:");
     expect(out).toContain("\n# To get started, run:\n\n  bun dev\n\n");
     expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isASAN)("doesn't leak memory at exit", async () => {
+    using github = await serveGithub(createTest);
+    using dir = tempDir("create-github-leak", {});
+    const { out, err, exitCode } = await create(
+      String(dir),
+      ["dylan-conway/create-test", "dest", "--no-install", "--no-git"],
+      {
+        ...github.env,
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+      },
+    );
+
+    expect(out).toContain("Success! dylan-conway/create-test loaded into dest");
+    expect(exitCode, err).toBe(0);
   });
 
   it.each(["https://github.com/dylan-conway/create-test", "github.com/dylan-conway/create-test"])(

@@ -159,6 +159,7 @@ pub mod external_string {
         pub value: String,
         pub hash: u64,
     }
+    bun_core::impl_pod!(ExternalString);
 
     impl ExternalString {
         #[inline]
@@ -229,6 +230,7 @@ pub mod semver_string {
         /// 3. If the final bit is set, then it's a string that is stored in an external buffer.
         pub bytes: [u8; String::MAX_INLINE_LEN],
     }
+    bun_core::impl_pod!(String);
 
     impl fmt::Debug for String {
         // Buffer-relative `String` cannot be sliced without its arena, so debug
@@ -578,7 +580,8 @@ pub mod semver_string {
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                // An equal hash is not an equal string: the second one stays out of the pool.
+                // Equal hashes don't mean equal strings, so the second string isn't added to the
+                // pool.
                 if strings::eql(entry.value_ptr.slice(self.bytes), str) {
                     return Ok(*entry.value_ptr);
                 }
@@ -667,7 +670,8 @@ pub mod semver_string {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             use core::fmt::Write;
             for chunk in self.bytes.utf8_chunks() {
-                // `?`: a query-string delimiter in module resolution, invalid in Windows filenames.
+                // `?` is the query-string delimiter in module resolution, and it's invalid in
+                // Windows filenames.
                 let mut rest = chunk.valid();
                 while let Some(i) = strings::index_of_any(rest.as_bytes(), b"/\\:#?") {
                     f.write_str(&rest[..i])?;
@@ -830,7 +834,8 @@ pub mod semver_string {
     }
 
     impl Builder {
-        // `Wyhash11::hash` is `#[inline(always)]`: about 700 bytes at each of 130 call sites.
+        // `Wyhash11::hash` is `#[inline(always)]`, which would add about 700 bytes at each of 130
+        // call sites.
         #[inline(never)]
         pub fn string_hash(buf: &[u8]) -> u64 {
             bun_wyhash::Wyhash11::hash(0, buf)

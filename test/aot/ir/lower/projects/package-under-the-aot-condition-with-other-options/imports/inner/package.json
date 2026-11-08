@@ -1,0 +1,1 @@
+{"name":"inner","version":"1.0.0","exports":{".":{"aot":"./lib.ts","default":"./lib.js"}},"compilerOptions":{"strict":false,"exactOptionalPropertyTypes":true,"lib":["es2020"]}}

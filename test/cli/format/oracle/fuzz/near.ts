@@ -1,22 +1,23 @@
-// Texts that are nearly normal: Prettier's fixtures, or real files, each a little changed: a token deleted, two neighbours deleted, a token
-// doubled, swapped with the next, or the text cut off after it. That is what a file looks like while it is typed. `bun fmt --write` runs on
-// them, with the checks that it makes before it writes, and the npm package of Prettier, or oxfmt, is asked about each.
+// Generates nearly valid inputs: Prettier's fixtures, or real files, each with one small mutation. A token is deleted,
+// two neighbors are deleted, a token is duplicated or swapped with the next one, or the text is cut off after it.
+// That's what a file looks like while it's being typed. `bun fmt --write` runs on them, including the checks that it
+// makes before it writes, and each result is compared with Prettier's npm package, or with oxfmt.
 //
 //   bun near.ts --command="bun fmt" --prettier=<directory with node_modules/prettier> --language=css
-//     [--oxfmt=<directory with node_modules/oxfmt>]  the flavor of oxfmt, against oxfmt
-//     [--options]            each text with one of SETS in the place of the defaults
-//     [--files=<directory>]  real files in the place of the fixtures, one change each. More than once: more directories
-//     [--most=50000]         at most so many texts
-//     [--per-file=40]        about twice so many texts from a fixture
-//     [--seed=1] [--jobs=4] [--out=<file>]  what differs, one JSON object on a line, the shortest text of each kind first
-//     [--texts=<directory>]  the texts that both accept are kept there, for who wants to try a check on them
+//     [--oxfmt=<directory with node_modules/oxfmt>]  use the oxfmt flavor and compare with oxfmt
+//     [--options]            format each text with one of SETS instead of the defaults
+//     [--files=<directory>]  use real files instead of the fixtures, with one mutation each. Can be repeated
+//     [--most=50000]         maximum number of texts
+//     [--per-file=40]        each fixture yields about twice this many texts
+//     [--seed=1] [--jobs=4] [--out=<file>]  the differences, one JSON object per line, with the shortest text of each kind
+//     [--texts=<directory>]  saves the texts that both tools accept there, for trying out a check on them
 //
 // Languages: js (with jsx, ts, tsx), css (with less, scss), yaml, graphql, json, handlebars, markdown (with mdx), html (with vue, angular, mjml).
-// Nothing is stored: what is expected is asked when it is run. The same seed makes the same texts.
+// No expected output is stored. The other tool computes it on each run. The same seed generates the same texts.
 //
-// It prints two tables. The second is about refusals: `bun fmt` leaves a file alone if what it has printed does not say what the file says.
-// Where the other tool prints something, that is a true alarm if the other tool has lost or added a letter or a digit (in HTML and Handlebars also
-// a `<` or a `{`), and a false one if not.
+// It prints two tables. The second one covers files that `bun fmt` won't write because its output doesn't mean the same
+// as the input. If the other tool does format such a file, that's a true alarm if the other tool lost or added a letter
+// or a digit (in HTML and Handlebars also a `<` or a `{`), and a false alarm otherwise.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -30,7 +31,8 @@ async function load(directory: string, specifier: string) {
   return module.format ? module : module.default;
 }
 
-// The other tool runs in processes of its own: it can hang, and oxfmt, which is native code, can end the process.
+// The other tool runs in separate processes, because it can hang, and oxfmt, which is native code, can crash the
+// process.
 if (process.argv[2] == "--child") {
   let tool: any;
   process.on("message", async ({ directory, isOxfmt, name, text, options }: any) => {
@@ -57,7 +59,7 @@ if (process.argv[2] == "--child") {
   const isOxfmt = flags.has("oxfmt");
   const language = flag("language");
 
-  /** The endings of the names of each language. The longest that fits counts. */
+  /** Each language's file extensions. The longest match wins. */
   const ENDINGS: Record<string, string[]> = {
     js: [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"],
     css: [".css", ".less", ".scss"],
@@ -68,7 +70,7 @@ if (process.argv[2] == "--child") {
     markdown: [".md", ".mdx"],
     html: [".component.html", ".html", ".vue", ".mjml"],
   };
-  /** The directories of Prettier's tests/format. */
+  /** The directories in Prettier's tests/format. */
   const FIXTURES: Record<string, string[]> = {
     js: ["js", "jsx", "typescript"],
     css: ["css", "less", "scss"],
@@ -86,7 +88,7 @@ if (process.argv[2] == "--child") {
     );
   }
 
-  /** With `--options`. Both tools have all of these. */
+  /** Used with `--options`. Both tools support all of these. */
   const SETS: Record<string, unknown>[] = [
     { semi: false, singleQuote: true },
     { useTabs: true, printWidth: 120 },
@@ -101,12 +103,12 @@ if (process.argv[2] == "--child") {
     { printWidth: 120, useTabs: true, htmlWhitespaceSensitivity: "ignore", vueIndentScriptAndStyle: true },
     { printWidth: 40, htmlWhitespaceSensitivity: "strict", singleQuote: true, semi: false },
   ];
-  /** Only Prettier has these. */
-  const SETS_OF_PRETTIER: Record<string, unknown>[] = [
+  /** Only Prettier supports these. */
+  const PRETTIER_ONLY_SETS: Record<string, unknown>[] = [
     { experimentalTernaries: true, tabWidth: 4 },
     { experimentalOperatorPosition: "start" },
   ];
-  const sets = !flags.has("options") ? [{}] : isOxfmt ? SETS : [...SETS, ...SETS_OF_PRETTIER];
+  const sets = !flags.has("options") ? [{}] : isOxfmt ? SETS : [...SETS, ...PRETTIER_ONLY_SETS];
 
   let state = Number(flag("seed", "1")) >>> 0;
   const random = () => {
@@ -115,7 +117,7 @@ if (process.argv[2] == "--child") {
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  /** `count` of the numbers below `below`, each once. */
+  /** Returns `count` distinct random numbers below `below`. */
   function some(below: number, count: number) {
     const all = Array.from({ length: below }, (_, index) => index);
     for (let i = 0; i < Math.min(count, below); i++) {
@@ -132,16 +134,16 @@ if (process.argv[2] == "--child") {
       : /\n|[ \t]+|[A-Za-z_$][\w$-]*|\d[\w.]*|[^]/gu;
   function changed(text: string, perFile: number) {
     const tokens = text.match(TOKEN) ?? [];
-    // White space means nothing in JavaScript.
-    const places = tokens.flatMap((token, index) => (language == "js" && /^(\s|\/\/|\/\*)/.test(token) ? [] : [index]));
+    // Whitespace is insignificant in JavaScript.
+    const sites = tokens.flatMap((token, index) => (language == "js" && /^(\s|\/\/|\/\*)/.test(token) ? [] : [index]));
     const texts = new Set<string>();
     const without = (...dropped: number[]) => tokens.filter((_, index) => !dropped.includes(index)).join("");
-    const pick = (count: number) => some(places.length, count).map(index => places[index]);
+    const pick = (count: number) => some(sites.length, count).map(index => sites[index]);
     for (const at of pick(perFile)) texts.add(without(at));
-    for (const index of some(places.length - 1, perFile >> 2)) texts.add(without(places[index], places[index + 1]));
+    for (const index of some(sites.length - 1, perFile >> 2)) texts.add(without(sites[index], sites[index + 1]));
     for (const at of pick(perFile >> 2)) texts.add([...tokens.slice(0, at + 1), ...tokens.slice(at)].join(""));
-    for (const index of some(places.length - 1, perFile >> 2)) {
-      const [a, b] = [places[index], places[index + 1]];
+    for (const index of some(sites.length - 1, perFile >> 2)) {
+      const [a, b] = [sites[index], sites[index + 1]];
       texts.add(tokens.map((token, at) => (at == a ? tokens[b] : at == b ? tokens[a] : token)).join(""));
     }
     for (const at of pick(perFile >> 2)) texts.add(tokens.slice(0, at + 1).join("") + "\n");
@@ -161,7 +163,7 @@ if (process.argv[2] == "--child") {
         if (entry.name == "node_modules" || entry.name.startsWith(".")) continue;
         const path = join(directory, entry.name);
         if (entry.isDirectory()) walk(path);
-        // Not a link, which can lead nowhere.
+        // Skip links, which can be broken.
         else if (entry.isFile() && endingOf(entry.name) && statSync(path).size < 200_000) files.push(path);
       }
     };
@@ -192,13 +194,13 @@ if (process.argv[2] == "--child") {
     if (texts.length > most) texts.splice(0, texts.length, ...some(texts.length, most).map(index => texts[index]));
   }
 
-  // Ours: all of them at once, each set of options in a directory of its own.
+  // Our output: one run for all texts, with a separate directory for each set of options.
   const root = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "near-"));
-  // Whose flavor a run has is up to the configuration that is nearest to where it is started.
+  // A run's flavor comes from the configuration nearest to the directory where it starts.
   if (isOxfmt) writeFileSync(join(root, ".oxfmtrc.json"), "{}");
   sets.forEach((set, index) => {
     mkdirSync(join(root, String(index)));
-    // oxfmt's own width is 100.
+    // oxfmt's default width is 100.
     const config = isOxfmt ? { printWidth: 80, ...set } : set;
     writeFileSync(join(root, String(index), isOxfmt ? ".oxfmtrc.json" : ".prettierrc.json"), JSON.stringify(config));
   });
@@ -215,7 +217,7 @@ if (process.argv[2] == "--child") {
     if (path && !refusals.has(path)) refusals.set(path, message);
   }
 
-  // Theirs.
+  // Their output.
   const directory = isOxfmt ? flag("oxfmt") : flag("prettier");
   type Answer = { expected?: string; error?: string; hangs?: boolean; dies?: boolean };
   let next = 0;
@@ -253,7 +255,7 @@ if (process.argv[2] == "--child") {
     }),
   );
 
-  // A formatter adds and drops brackets, commas, semicolons and quotes. Not where a tag or a mustache starts.
+  // A formatter adds and drops brackets, commas, semicolons and quotes, but never the start of a tag or a mustache.
   const COUNTED = language == "handlebars" || language == "html" ? /[a-z0-9<{]/g : /[a-z0-9]/g;
   const lettersOf = (text: string) => (text.toLowerCase().match(COUNTED) ?? []).sort().join("");
   const shape = (line = "") =>

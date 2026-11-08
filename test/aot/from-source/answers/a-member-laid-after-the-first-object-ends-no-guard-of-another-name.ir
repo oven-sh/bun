@@ -1,0 +1,23 @@
+# -- source: main.js
+# function Point(x, y) { this.x = x; this.y = y; }
+# function one(x) { var made = new Point(x, 1); last = made; return made.x + made.y; }
+# var last;
+# publish(Point);
+# print(one(1));
+# change(Point);
+# print(one(2));
+# print(report());
+# -- end of source
+# The look ahead of the allocation in one() asks the guard of the whole prototype side beside those of `x` and `y`. That guard answers for the links and for the one evaluation of the class, not for its members:
+# a member that a later file lays on the prototype ends the guards of its own name alone, so the look goes on passing. What ends the whole side ends every name with it.
+# RUN: run-in-shell --aotCountsPath=/dev/null const ended = () => { const lines = aotRuntimeCounters().split("\n"); for (let i = 0; i < lines.length; i++) { if (lines[i].includes("ClassGuardBitsEnded")) return parseInt(lines[i]); } return 0; }; globalThis.publish = () => { }; globalThis.change = (constructor) => { constructor.prototype.extra = function () { return 0; }; Object.defineProperty(constructor.prototype, "other", { get() { return 1; }, configurable: true }); }; globalThis.report = () => ended() < 1 ? "no guard has ended" : "a guard has ended";
+# CHECK: 2
+# CHECK-NEXT: 3
+# CHECK-NEXT: no guard has ended
+# CHECK-NEXT: exited with 0
+# In the run NAMED the member that is laid late is a setter under `x`, which is asked about.
+# RUN(NAMED): run-in-shell globalThis.publish = () => { }; globalThis.change = (constructor) => { Object.defineProperty(constructor.prototype, "x", { get() { return 7; }, set(value) { }, configurable: true }); }; globalThis.report = () => "the setter took the store";
+# NAMED: 2
+# NAMED-NEXT: 8
+# NAMED-NEXT: the setter took the store
+# NAMED-NEXT: exited with 0

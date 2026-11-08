@@ -9,7 +9,7 @@ use std::borrow::Cow;
 
 // ───────────────────────────── `htmlWhitespace` ─────────────────────────────
 
-/// `htmlWhitespace.split(text)`: with an empty string where the text starts or ends with white space.
+/// `htmlWhitespace.split(text)`. Yields an empty string where the text starts or ends with whitespace.
 pub(crate) fn html_split(text: &[u8]) -> impl Iterator<Item = &[u8]> {
     let mut rest = Some(text);
     std::iter::from_fn(move || {
@@ -24,7 +24,8 @@ pub(crate) fn html_split(text: &[u8]) -> impl Iterator<Item = &[u8]> {
     })
 }
 
-/// `htmlWhitespace.dedentString(text)`: by how much every line is to be shortened at its start.
+/// The first half of `htmlWhitespace.dedentString(text)`: returns how many bytes to remove from the start of every
+/// line.
 pub(crate) fn min_indentation(text: &[u8]) -> usize {
     let mut min_indentation = usize::MAX;
     for line in strings::split(text, b"\n") {
@@ -64,14 +65,14 @@ pub(crate) fn dedent_string(text: &[u8]) -> Cow<'_, [u8]> {
 
 /// `htmlTrimPreserveIndentation`
 pub(crate) fn html_trim_preserve_indentation(text: &[u8]) -> &[u8] {
-    // `.replaceAll(/^[\t\f\r ]*\n/g, "")`: without the `m` flag, it is one line at most.
+    // `.replaceAll(/^[\t\f\r ]*\n/g, "")`: without the `m` flag, it removes one line at most.
     let text = text.trim_ascii_end();
-    let blanks = text
+    let whitespace_len = text
         .iter()
         .take_while(|byte| matches!(byte, b'\t' | 0x0C | b'\r' | b' '))
         .count();
-    match text.get(blanks) {
-        Some(b'\n') => &text[blanks + 1..],
+    match text.get(whitespace_len) {
+        Some(b'\n') => &text[whitespace_len + 1..],
         _ => text,
     }
 }
@@ -182,7 +183,7 @@ fn is_text_or_interpolation(node: &Node<'_>) -> bool {
     matches!(node.kind, Kind::Text | Kind::Interpolation)
 }
 
-/// By how many lines the start of `second` is below the end of `first`, up to two.
+/// Returns how many lines the start of `second` is below the end of `first`, capped at two.
 fn lines_between(options: &Options<'_>, first: Span, second: Span) -> usize {
     let Some(between) = options
         .original_text
@@ -249,11 +250,11 @@ impl<'a> Tree<'a> {
         self.is_vue_sfc_block(id, options) && &self[id].name[..] == b"script"
     }
 
-    /// `shouldPreserveContent`, once nothing in `id` changes any more. It looks at all children.
+    /// `shouldPreserveContent`. Call it once nothing in `id` changes anymore. It looks at all children.
     pub(crate) fn should_preserve_content(&self, id: Id, options: &Options<'_>) -> bool {
         let node = &self[id];
         if node.kind == Kind::IeConditionalComment {
-            // An element that is not closed in the comment, or something that cannot be parsed.
+            // An element that isn't closed inside the comment, or contents that couldn't be parsed.
             if self.node_at(self.last_child(id)).is_some_and(|last| {
                 !last.has(Flags::IS_SELF_CLOSING) && !last.has(Flags::HAS_END_SPAN)
             }) {
@@ -270,6 +271,11 @@ impl<'a> Tree<'a> {
         {
             return true;
         }
+        // Whitespace-only content of a `<pre>` is rendered, and in a `<textarea>` it's the value. Prettier collapses it
+        // to one space or removes it.
+        if is_pre_like(node) && node.has(Flags::HAS_DANGLING_SPACES | Flags::HAS_END_SPAN) {
+            return true;
+        }
         self.is_vue_non_html_block(id, options) && !is_script_like_tag(node, options)
     }
 
@@ -279,8 +285,8 @@ impl<'a> Tree<'a> {
         is_script_like_tag(node, options) || node.kind == Kind::Interpolation || is_pre_like(node)
     }
 
-    /// What `isLeadingSpaceSensitiveNode` and `isTrailingSpaceSensitiveNode` have in common. `neighbor`: the
-    /// sibling on the side in question.
+    /// The shared part of `isLeadingSpaceSensitiveNode` and `isTrailingSpaceSensitiveNode`. `neighbor` is the sibling
+    /// on the side in question.
     fn is_space_sensitive(
         &self,
         id: Id,
@@ -452,7 +458,7 @@ impl<'a> Tree<'a> {
         id
     }
 
-    /// `getNodeCssStyleDisplay`. `is_in_svg_foreign_object`: the node or something around it is one.
+    /// `getNodeCssStyleDisplay`. `is_in_svg_foreign_object` is true if the node or one of its ancestors is one.
     pub(crate) fn css_display(
         &self,
         id: Id,

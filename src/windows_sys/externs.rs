@@ -1465,8 +1465,7 @@ unsafe extern "C" {
 
 // ── Job Object structures (`winnt.h`) ─────────────────────────────────────
 // NOTE: These are the SINGLE canonical definitions. bun_sys::windows and
-// bun_core re-export / impl-Zeroable against these types directly; do NOT
-// re-declare them downstream.
+// bun_core re-export these types directly; do NOT re-declare them downstream.
 
 /// `JOBOBJECTINFOCLASS::JobObjectAssociateCompletionPortInformation` (`winnt.h`).
 pub const JobObjectAssociateCompletionPortInformation: DWORD = 7;
@@ -1521,7 +1520,6 @@ pub struct JOBOBJECT_BASIC_LIMIT_INFORMATION {
 // JOBOBJECT_EXTENDED_LIMIT_INFORMATION. All-zero is the valid initial state
 // (Win32 zero-inits before fill), so `Default` is sound and lets callers write
 // `IO_COUNTERS::default()` instead of `unsafe { zeroed_unchecked() }`.
-// Zeroable impl lives in bun_core/lib.rs (orphan-rule home).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct IO_COUNTERS {

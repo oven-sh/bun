@@ -1,5 +1,5 @@
-//! ESLint's bulk suppressions: `eslint-suppressions.json` says how many errors of which rules are
-//! tolerated in which files. `SuppressionsService`.
+//! ESLint's bulk suppressions: `eslint-suppressions.json` lists how many errors of which rules are tolerated in which
+//! files. `SuppressionsService`.
 
 use crate::results::{Counts, FileResult};
 use crate::run::Fatal;
@@ -11,18 +11,19 @@ use bun_lint::options::Json;
 use std::io::Write;
 
 pub(crate) const DEFAULT_FILE_NAME: &[u8] = b"eslint-suppressions.json";
-/// The same file, where the configuration is oxlint's.
-pub(crate) const FILE_NAME_OF_OXLINT: &[u8] = b"oxlint-suppressions.json";
+/// The same file's name with an oxlint config.
+pub(crate) const OXLINT_FILE_NAME: &[u8] = b"oxlint-suppressions.json";
 
-/// By rule: how many errors.
+/// The error count per rule.
 type ByRule = Vec<(Vec<u8>, u64)>;
 
-/// The content of the file: by path from the working directory.
+/// The file's contents, keyed by path relative to the working directory.
 #[derive(Default)]
 pub(crate) struct Suppressions(Vec<(Vec<u8>, ByRule)>);
 
-/// What the file calls the rule of `message`. `None`: it cannot be suppressed. `is_oxlint`: the file is oxlint's, which has the
-/// names of its diagnostics, `typescript/array-type` for `typescript(array-type)`, and nothing about what the type checker reports.
+/// Returns the file's name for `message`'s rule. `None` if it can't be suppressed. With `is_oxlint`, the file is
+/// oxlint's. It uses oxlint's diagnostic names, `typescript/array-type` for `typescript(array-type)`, and has no
+/// entries for type checker errors.
 pub(crate) fn rule_of(message: &LintMessage, is_oxlint: bool) -> Option<Vec<u8>> {
     let id = message.rule_id.as_ref()?;
     if !is_oxlint {
@@ -67,7 +68,9 @@ fn entry<'e, T: Default>(entries: &'e mut Vec<(Vec<u8>, T)>, key: &[u8]) -> &'e 
 }
 
 impl Suppressions {
-    /// `load`. A file that does not exist has nothing in it. One that cannot be read is as one that cannot be parsed.
+    /// `load`. A missing file is treated as empty, and an unreadable one like one that doesn't parse. ESLint accepts
+    /// any object, and its `save` then drops whatever it didn't understand. Here, a file that isn't shaped like
+    /// `{ file: { rule: { count } } }` is assumed to be something else, like a `package.json`, and is rejected.
     pub(crate) fn load(path: &[u8]) -> Result<Suppressions, Fatal> {
         let text = match fs::read(path) {
             Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
@@ -82,28 +85,25 @@ impl Suppressions {
             ));
         };
         let count = |value: &Json| match value.get(b"count") {
-            Some(Json::Number(count)) => *count as u64,
-            _ => 0,
+            Some(Json::Number(count)) => Some(*count as u64),
+            _ => None,
         };
-        let by_rule = |rules: &Json| {
-            rules
-                .as_object()
-                .unwrap_or_default()
-                .iter()
-                .map(|(rule, value)| (rule.clone(), count(value)))
+        let by_rule = |rules: &Json| -> Option<ByRule> {
+            (rules.as_object()?.iter())
+                .map(|(rule, value)| Some((rule.clone(), count(value)?)))
                 .collect()
         };
-        Ok(Suppressions(
-            files
-                .iter()
-                .map(|(file, rules)| (file.clone(), by_rule(rules)))
-                .collect(),
-        ))
+        (files.iter())
+            .map(|(file, rules)| Some((file.clone(), by_rule(rules)?)))
+            .collect::<Option<_>>()
+            .map(Suppressions)
+            .ok_or_else(|| Fatal([b"Not a suppressions file: ", path].concat()))
     }
 
-    /// `save`: `stringify(suppressions, { space: 2 })` of `json-stable-stringify`.
+    /// `save`. The output matches `stringify(suppressions, { space: 2 })` from `json-stable-stringify`. See
+    /// [`fs::write_new`] for `cwd`.
     #[optimize(size)]
-    pub(crate) fn save(&mut self, path: &[u8]) -> Result<(), Fatal> {
+    pub(crate) fn save(&mut self, cwd: &[u8], path: &[u8]) -> Result<(), Fatal> {
         bun_lint::utils::sort::sort_by(&mut self.0, |a, b| a.0.cmp(&b.0));
         let mut out = b"{".to_vec();
         for (i, (file, rules)) in self.0.iter_mut().enumerate() {
@@ -119,11 +119,11 @@ impl Suppressions {
             out.extend_from_slice(if rules.is_empty() { b"}" } else { b"\n  }" });
         }
         out.extend_from_slice(if self.0.is_empty() { b"}" } else { b"\n}" });
-        fs::write_new(path, &out)
-            .map_err(|error| Fatal([b"Cannot write ", path, b": ", &fs::describe(&error)].concat()))
+        fs::write_new(cwd, path, &out)
+            .map_err(|why| Fatal([b"Cannot write ", path, b": ", &why].concat()))
     }
 
-    /// `suppress`. `rules`: only these. `None`: all.
+    /// `suppress`. `rules` limits it to these rules. `None` means all.
     pub(crate) fn suppress(
         &mut self,
         results: &[FileResult],
@@ -141,7 +141,7 @@ impl Suppressions {
         }
     }
 
-    /// `applySuppressions`. Returns what is suppressed and does not occur.
+    /// `applySuppressions`. Returns the unused suppressions.
     pub(crate) fn apply(
         &self,
         results: &mut [FileResult],
@@ -162,14 +162,14 @@ impl Suppressions {
                 };
                 if *count <= tolerated {
                     // `suppressMessagesByRule`
-                    let (mut hidden, shown): (Vec<_>, Vec<_>) =
+                    let (mut hidden, remaining): (Vec<_>, Vec<_>) =
                         std::mem::take(&mut result.messages)
                             .into_iter()
                             .partition(|it| rule_of(it, is_oxlint).as_ref() == Some(rule));
                     for message in &mut hidden {
                         message.suppressions = vec![Suppression::file()];
                     }
-                    result.messages = shown;
+                    result.messages = remaining;
                     result.suppressed.append(&mut hidden);
                     was_suppressed = true;
                 }

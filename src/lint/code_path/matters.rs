@@ -1,17 +1,17 @@
-//! Which parts of a file the walk for the code paths can leave out.
+//! Which parts of a file the code path walk can skip.
 //!
-//! Most expressions and all types are nothing to the analysis, and few rules that listen for code
-//! paths listen for many kinds of nodes. So the walk does not go into an expression or a type
-//! unless something in it matters: it forks, it has a code path of its own, or a rule listens for
-//! it. What matters is found in one pass over the vector of the expressions, and marked together
-//! with what contains it, which takes time in proportion to what is marked.
+//! Most expressions and all types are irrelevant to the analysis, and few rules that listen for
+//! code paths also listen for many kinds of nodes. So the walk only descends into an expression or
+//! a type if something in it matters: it forks, it has its own code path, or a rule listens for it.
+//! One pass over the expression vector finds those nodes and marks each one along with its
+//! ancestors, which takes time proportional to the number of marked nodes.
 
 use crate::ast::{BinOp, Chain, Expr, File, Handle, Node, TypeTag};
 use crate::rule::NodeTags;
 use bun_sema::bind::Parent;
 use bun_sema::hir::{self, ExprTag};
 
-/// A bit for each node of a vector of the HIR.
+/// One bit per node of a HIR vector.
 pub(super) struct Marks(Box<[u64]>);
 
 impl Marks {
@@ -39,7 +39,7 @@ impl Marks {
             .is_some_and(|word| word & (1 << (at % 64)) != 0)
     }
 
-    /// Returns whether it was not marked yet.
+    /// Returns true if it wasn't marked before.
     #[inline]
     pub(super) fn add(&mut self, at: usize) -> bool {
         let Some(word) = self.0.get_mut(at / 64) else {
@@ -57,12 +57,12 @@ pub(super) struct Matters {
     exprs: Marks,
     /// The types that contain something that matters.
     types: Marks,
-    /// Whether a rule listens for a kind of node that types consist of.
+    /// True if a rule listens for a kind of node that can appear inside a type.
     listens_in_types: bool,
 }
 
 impl Matters {
-    /// `listened`: the kinds of nodes that a rule listens for.
+    /// `listened` is the set of node kinds that rules listen for.
     pub(super) fn new<'a>(file: &'a File<'a>, listened: NodeTags) -> Matters {
         use hir::ExprKind as K;
         let listens_for = |kind: NodeTags| listened.union(kind) == listened;
@@ -96,7 +96,7 @@ impl Matters {
             listens_in_types,
         };
         for (i, raw) in hir.exprs.iter().enumerate() {
-            let is_it = listened.has_index(raw.kind.tag() as u32)
+            let is_relevant = listened.has_index(raw.kind.tag() as u32)
                 || match raw.kind {
                     K::Fn(_) | K::Class(_) | K::Cond { .. } | K::Yield { .. } => true,
                     K::Binary { op, .. } => is_logical(op),
@@ -106,11 +106,11 @@ impl Matters {
                         op: None, target, ..
                     } => {
                         matches!(kind_of(target), Some(K::Array(_) | K::Object(_)))
-                            || match bound.expr_parent.get(i) {
-                                Some(&Parent::Expr(parent)) => {
+                            || match bound.parent_of_expr(hir::ExprId(i as u32)) {
+                                Parent::Expr(parent) => {
                                     matches!(kind_of(parent), Some(K::Array(_)))
                                 }
-                                Some(Parent::Prop(_)) => true,
+                                Parent::Prop(_) => true,
                                 _ => false,
                             }
                     }
@@ -133,15 +133,15 @@ impl Matters {
                     K::String(_) => listens_for_templates,
                     _ => false,
                 };
-            if is_it {
+            if is_relevant {
                 matters.mark(Node::Expr(Expr::from_raw(file, i as u32)));
             }
         }
         matters
     }
 
-    /// Marks `node` and the expressions and types that contain it, up to the statement, the
-    /// declaration or the class that they are part of.
+    /// Marks `node` and the expressions and types that contain it, up to the enclosing statement,
+    /// declaration or class.
     fn mark(&mut self, node: Node) {
         let mut node = node;
         loop {
@@ -166,9 +166,9 @@ impl Matters {
         }
     }
 
-    /// Whether nothing in `node` matters, unless it is that it may throw.
+    /// True if nothing in `node` matters, except that it may throw.
     #[inline]
-    pub(super) fn is_nothing_in(&self, node: Node) -> bool {
+    pub(super) fn can_skip(&self, node: Node) -> bool {
         match node {
             Node::Expr(e) => !self.exprs.has(e.id().idx()),
             Node::Type(ty) => !self.listens_in_types && !self.types.has(ty.id().idx()),

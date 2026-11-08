@@ -11,7 +11,7 @@ use crate::Transpiler;
 use bun_js_parser as js_ast;
 
 // `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
-// (lifetime-erased `'static` slices) so `bun_ast::Source` field types line up;
+// so `bun_ast::Source` field types line up;
 // `FileSystem` is the real `bun_resolver::fs` singleton now that
 // `bun_resolver` is in this crate's dep set.
 pub mod Fs {
@@ -20,8 +20,8 @@ pub mod Fs {
 }
 
 #[derive(Default)]
-pub struct ClientEntryPoint {
-    pub(crate) source: bun_ast::Source,
+pub struct ClientEntryPoint<'a> {
+    pub(crate) source: bun_ast::Source<'a>,
 }
 
 #[derive(Default)]
@@ -128,20 +128,32 @@ impl ServerEntryPoint {
 // protected. This is mostly a workaround for being unable to call ESM exported
 // functions from C++. When that is resolved, we should remove this.
 pub struct MacroEntryPoint {
-    pub(crate) code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
-    pub source: bun_ast::Source,
+    /// The label, then the code.
+    code_buffer: [u8; MAX_PATH_BYTES * 2 + 500],
+    label_len: usize,
+    code_len: usize,
 }
 
 impl Default for MacroEntryPoint {
     fn default() -> Self {
         Self {
             code_buffer: [0u8; MAX_PATH_BYTES * 2 + 500],
-            source: bun_ast::Source::default(),
+            label_len: 0,
+            code_len: 0,
         }
     }
 }
 
 impl MacroEntryPoint {
+    /// The `macro:` specifier the generated module is loaded as.
+    pub fn label(&self) -> &[u8] {
+        &self.code_buffer[..self.label_len]
+    }
+
+    pub fn code(&self) -> &[u8] {
+        &self.code_buffer[self.label_len..][..self.code_len]
+    }
+
     pub fn generate_id(
         entry_path: &[u8],
         function_name: &[u8],
@@ -192,9 +204,6 @@ impl MacroEntryPoint {
         } else {
             import_path.dir_with_trailing_slash()
         };
-        // reshaped for borrowck — capture the label length, write the
-        // body via a scoped &mut borrow, then re-borrow `code_buffer` immutably
-        // for the (label, code) slices passed to `init_path_string`.
         let label_len = macro_label_.len();
         entry.code_buffer[..label_len].copy_from_slice(macro_label_);
 
@@ -278,15 +287,8 @@ impl MacroEntryPoint {
             cursor.position() as usize
         };
 
-        // INVARIANT: self-referential — `macro_label`/`code` borrow
-        // `entry.code_buffer` and are stored into `entry.source` (lifetime erased
-        // via `IntoStr`), so `entry` must not move or drop while `entry.source`
-        // is in use.
-        let macro_label: &[u8] = &entry.code_buffer[..label_len];
-        let code: &[u8] = &entry.code_buffer[label_len..label_len + code_len];
-        entry.source = bun_ast::Source::init_path_string(macro_label, code);
-        // `Path::init` already set `text = macro_label`; only override namespace.
-        entry.source.path.namespace = js_ast::Macro::NAMESPACE;
+        entry.label_len = label_len;
+        entry.code_len = code_len;
         Ok(())
     }
 }

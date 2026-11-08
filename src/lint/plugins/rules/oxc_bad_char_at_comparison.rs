@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Warns when a single-character string access is compared with a string of length greater than 1.
 pub struct BadCharAtComparison;
 
-const BAD_CHAR_AT_COMPARISON: Message = Message::new("", "Invalid character comparison");
+const BAD_CHAR_AT_COMPARISON: &Message = &Message::new("", "Invalid character comparison");
 
 impl Rule for BadCharAtComparison {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-char-at-comparison", Kind::Problem);
@@ -45,7 +45,7 @@ fn is_invalid_comparison_string(e: Expr) -> bool {
 }
 
 fn is_single_character_access(e: Expr) -> bool {
-    // An optional chain is neither a call nor a member expression for oxlint.
+    // In oxlint's AST an optional chain is neither a call nor a member expression.
     if e.chain() != Chain::No {
         return false;
     }

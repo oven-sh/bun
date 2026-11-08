@@ -245,7 +245,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(code).toBe(0);
     });
 
-    it("does not report what is below the optional dependency", async () => {
+    it("doesn't report the dependencies of the optional dependency", async () => {
       const { err, code, ...result } = await installOfflineAfterOnline(linker, {
         manifest: { dependencies: { host: "1.0.0" } },
         evict: cacheEntriesOf("native", "leaf"),
@@ -255,7 +255,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(code).toBe(0);
     });
 
-    it.skipIf(!hasGit)("does not report what is below an optional git dependency", async () => {
+    it.skipIf(!hasGit)("doesn't report the dependencies of an optional git dependency", async () => {
       const { err, code, ...result } = await installOfflineAfterOnline(linker, {
         manifest: { dependencies: { plain: "1.0.0" }, optionalDependencies: { "git-native": gitNative } },
         evict: entry => gitCacheEntries(entry) || cacheEntriesOf("leaf")(entry),
@@ -294,7 +294,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
         missing: "leaf",
       },
       {
-        // Nothing but native lists leaf, so the peer dependency of peer-leaf is what installs it.
+        // Only native lists leaf, so leaf is installed because of peer-leaf's peer dependency.
         title: "below it that an installed package has a peer dependency on",
         optionalDependencies: { native: "1.0.0" },
         dependencies: { "peer-leaf": "1.0.0" },
@@ -326,7 +326,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(r.code).toBe(1);
     });
 
-    it("names every required package that an empty cache lacks", async () => {
+    it("lists every required package that's missing from an empty cache", async () => {
       const r = await installOfflineAfterOnline(linker, {
         manifest: { dependencies: { host: "1.0.0", "uses-leaf": "1.0.0" } },
         evict: () => true,
@@ -341,7 +341,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       expect(r.code).toBe(1);
     });
 
-    it("does not require what is below a package that a peer resolves to but no linker places", async () => {
+    it("doesn't require the dependencies of a package that a peer resolves to but no linker places", async () => {
       // The lockfile resolves the peer of peer-mid to mid@1.0.0, which only native-mid-other-os lists.
       // The linkers bind it to mid@2.0.0 of the root, so nothing places mid@1.0.0 or requires leaf.
       const { err, code, ...result } = await installOfflineAfterOnline(linker, {
@@ -450,7 +450,7 @@ describe.concurrent("--offline with an optional dependency that is not in the ca
       });
     }
 
-    it("leaves an installed node_modules alone when the cache is gone", async () => {
+    it("doesn't touch an installed node_modules when the cache is gone", async () => {
       // The root's optional dependency is placed first, so leaf@1.0.0 below it takes the root
       // folder and leaf@2.0.0 nests. The layout must not depend on what is in the cache.
       const { err, code, ...result } = await installOfflineAfterOnline(linker, {

@@ -407,6 +407,58 @@ describe.concurrent("basic", () => {
     await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
   });
 
+  // The registry also has a `no-deps` package. `leaf` is a catalog entry that the workspace itself uses.
+  test.concurrent.each([
+    ["hoisted", "*", ["install"]],
+    ["isolated", "*", ["install"]],
+    ["hoisted", "*", ["update", "no-deps"]],
+    ["isolated", "^0.1.0", ["update", "no-deps"]],
+    ["hoisted", "^0.1.0", ["update", "--latest", "no-deps"]],
+  ])(
+    "a catalog: dependency still links to a workspace after another catalog entry changes (%s, %j, bun %j)",
+    async (linker, range, command) => {
+      const packageJson = (leaf: string) =>
+        JSON.stringify({ name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": range, leaf } } });
+      using dir = writeRegistryProject(
+        {
+          "package.json": packageJson("1.0.0"),
+          "packages/web/package.json": JSON.stringify({
+            name: "web",
+            dependencies: { "no-deps": "catalog:", leaf: "catalog:" },
+          }),
+          "packages/no-deps/package.json": JSON.stringify({
+            name: "no-deps",
+            version: "0.1.0",
+            dependencies: { leaf: "catalog:" },
+          }),
+        },
+        catalogRegistry.url.href,
+      );
+      const packageDir = String(dir);
+      const linked = () =>
+        realpath(join(packageDir, "packages", "web", "node_modules", "no-deps")).catch(() =>
+          realpath(join(packageDir, "node_modules", "no-deps")),
+        );
+      const run = async (command: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), ...command, "--linker", linker],
+          cwd: packageDir,
+          env: bunEnv,
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(await linked()).toBe(await realpath(join(packageDir, "packages", "no-deps")));
+        expect(exitCode).toBe(0);
+      };
+
+      await run(["install"]);
+      await write(join(packageDir, "package.json"), packageJson("2.0.0"));
+      await run(command);
+    },
+  );
+
   test.concurrent("catalog and catalogs.default may split different packages between them", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {
@@ -2320,7 +2372,7 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
   const commands = ["install", "install --frozen-lockfile", "update", "add ./vendor/x", "remove y"];
 
   describe("a root package.json without workspaces", () => {
-    test.concurrent.each(commands)("bun %s names the package.json it used as the root", async command => {
+    test.concurrent.each(commands)("bun %s prints the package.json it used as the root", async command => {
       using dir = soloRoot({ dependencies: { "no-deps": "catalog:", y: "file:./vendor/y" } });
       const packageJson = await file(join(String(dir), "package.json")).text();
 
@@ -2531,7 +2583,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
         const ifNoneMatch = request.headers.get("if-none-match");
         requests.push(ifNoneMatch);
         const etag = `"v${versions.length}"`;
-        // A registry edge that lags behind confirms what the client has.
+        // A registry edge server that lags behind confirms what the client already has.
         if (stale304 && ifNoneMatch !== null) return new Response(null, { status: 304, headers: { etag } });
         return Response.json(
           {
@@ -2665,7 +2717,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
     expect(registry.requests).toEqual([null]);
   });
 
-  test("one request serves the workspace that it helps and the one that it does not", async () => {
+  test("one request serves both the workspace that it helps and the one that it doesn't", async () => {
     const versions = ["1.0.0"];
     using registry = serveMutableRegistry(versions);
     using dir = writeRegistryProject(
@@ -2727,7 +2779,7 @@ describe.concurrent("a version published after the manifest was cached", () => {
     expect(registry.requests).toEqual([null]);
   });
 
-  test("a tag that only a workspace of the name stands in for", async () => {
+  test("a tag that only a workspace with that name can satisfy", async () => {
     using registry = serveMutableRegistry(["1.0.0"]);
     using dir = writeRegistryProject(
       {
@@ -2749,14 +2801,14 @@ describe.concurrent("a version published after the manifest was cached", () => {
     expect(registry.requests).toEqual([null]);
   });
 
-  test.each(["latest", ""])("%j names a version that the registry does not have", async spec => {
+  test.each(["latest", ""])("%j points to a version that the registry doesn't have", async spec => {
     using registry = serveMutableRegistry(["1.0.0", "1.0.1", "2.0.0-rc.1"], { latest: "1.0.2" });
     using dir = writeRegistryProject({ "package.json": depends("1.0.0") }, registry.server.url.href);
     await installUntilCached(String(dir));
 
     await write(join(String(dir), "package.json"), depends(spec));
     registry.requests.length = 0;
-    // The registry may have the version by now, so it is asked before another version stands in.
+    // The registry may have the version by now, so it's asked before another version is used.
     expect(await install(String(dir))).toEqual({
       messages: [],
       exitCode: 0,

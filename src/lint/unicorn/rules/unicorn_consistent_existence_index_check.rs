@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// `findLastIndex()`.
 pub struct ConsistentExistenceIndexCheck;
 
-const CONSISTENT_EXISTENCE_INDEX_CHECK: Message = Message::new(
+const CONSISTENT_EXISTENCE_INDEX_CHECK: &Message = &Message::new(
     "",
     "Prefer `{{replacement_operator}} -1` over `{{original_operator}} {{original_value}}` to check non-existence.",
 );
@@ -59,7 +59,7 @@ impl Rule for ConsistentExistenceIndexCheck {
     }
 }
 
-/// `-1`, written like this.
+/// `-1`, written exactly like this.
 fn is_negative_one(expression: Expr) -> bool {
     matches!(expression.kind(), ExprKind::Unary { op: UnOp::Minus, operand }
         if get_inner_expression(operand).tag() == ExprTag::Number && get_inner_expression(operand).text() == b"1")

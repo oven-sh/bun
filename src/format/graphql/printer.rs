@@ -1,4 +1,4 @@
-//! The document of a GraphQL text: Prettier's `src/language-graphql/printer-graphql.js`, and what
+//! Builds the document for a GraphQL text: Prettier's `src/language-graphql/printer-graphql.js`, plus what
 //! `src/main/comments/print.js` does with the comments.
 
 use super::comments::{Attached, Placement};
@@ -19,19 +19,18 @@ pub(crate) struct Builder<'t, 'f, 'a> {
     pub(crate) tree: &'t Tree,
     pub(crate) attached: &'t [Attached],
     pub(crate) f: &'f mut Formatter<'a>,
-    /// The document is for a template literal of JavaScript, in which `\`, `` ` `` and `${` have to
-    /// be escaped.
+    /// The document is for a JavaScript template literal, where `\`, `` ` `` and `${` have to be escaped.
     pub(crate) is_in_template: bool,
 }
 
-/// The children of a node that have not been written yet.
+/// The children of a node that haven't been written yet.
 struct Children<'t> {
     tree: &'t Tree,
     rest: &'t [NodeId],
 }
 
 impl<'t> Children<'t> {
-    /// The next one, if it is what `is_wanted` says.
+    /// Takes the next child if `is_wanted` accepts its kind.
     fn next_if(&mut self, is_wanted: impl Fn(Kind) -> bool) -> Option<NodeId> {
         let (&first, rest) = self.rest.split_first()?;
         if !is_wanted(self.tree.kind(first)) {
@@ -45,7 +44,7 @@ impl<'t> Children<'t> {
         self.next_if(|it| it == kind)
     }
 
-    /// The next ones of `kind`.
+    /// Takes the run of children of `kind` that comes next.
     fn all_of(&mut self, kind: Kind) -> &'t [NodeId] {
         let count = self
             .rest
@@ -94,7 +93,7 @@ impl<'t> Builder<'t, '_, '_> {
         self.tag(Tag::EndIndent);
     }
 
-    /// `text`, if the enclosing group is written in `mode`.
+    /// Writes `text` if the enclosing group is printed in `mode`.
     fn token_if(&mut self, mode: PrintMode, text: &'static str) {
         self.tag(Tag::StartConditionalContent(Condition::new(mode)));
         self.token(text);
@@ -118,7 +117,7 @@ impl<'t> Builder<'t, '_, '_> {
         }
     }
 
-    /// `text`, which is on one line. It is not copied if it is a part of the source text.
+    /// Writes `text`, which must be on one line. It isn't copied if it's a part of the source text.
     fn text(&mut self, text: &[u8]) {
         if self.needs_escapes(text) {
             let mut escaped = Vec::with_capacity(text.len() + 8);
@@ -136,7 +135,7 @@ impl<'t> Builder<'t, '_, '_> {
             .unwrap_or_default()
     }
 
-    /// The part of the text at `span`, which is on one line.
+    /// Writes the source text at `span`, which must be on one line.
     fn source(&mut self, span: Span) {
         self.text(self.slice(span));
     }
@@ -226,9 +225,8 @@ impl<'t> Builder<'t, '_, '_> {
         });
     }
 
-    /// What has a `prettier-ignore` comment, as it is in the text. For Prettier that is a string like
-    /// any other: its line breaks do not break the groups around it, and all of it counts as being
-    /// on the line.
+    /// Writes a node with a `prettier-ignore` comment verbatim. Prettier treats that text like any other string: its
+    /// line breaks don't break the groups around it, and its whole width counts toward the current line.
     fn ignored(&mut self, span: Span) {
         let text = self.slice(span);
         let width = Some(TextWidth::single(self.f.string_width(text)));
@@ -243,23 +241,23 @@ impl<'t> Builder<'t, '_, '_> {
         {
             return self.f.write_text(text, width);
         }
-        let mut written = Vec::with_capacity(text.len() + 16);
+        let mut normalized = Vec::with_capacity(text.len() + 16);
         for (index, line) in bun_core::strings::split(text, b"\n").enumerate() {
             if index > 0 {
-                written.extend_from_slice(line_ending);
+                normalized.extend_from_slice(line_ending);
             }
             let line = line.strip_suffix(b"\r").unwrap_or(line);
             match needs_escapes {
-                true => Self::escape_for_template(line, &mut written),
-                false => written.extend_from_slice(line),
+                true => Self::escape_for_template(line, &mut normalized),
+                false => normalized.extend_from_slice(line),
             }
         }
-        self.f.write_text(&written, width);
+        self.f.write_text(&normalized, width);
     }
 
     // ───────────────────────────── nodes ─────────────────────────────
 
-    /// A node with its comments.
+    /// Prints a node with its comments.
     pub(crate) fn print(&mut self, id: NodeId) {
         if !self.f.context_mut().has_stack_left() {
             return;
@@ -277,7 +275,8 @@ impl<'t> Builder<'t, '_, '_> {
         let flavor = self.f.options().flavor;
         let is_ignored = comments.iter().any(|it| {
             let comment = self.slice(self.comment_span(it));
-            flavor.is_ignore_comment(comment.get(1..).unwrap_or_default().trim_ascii())
+            let content = comment.get(1..).unwrap_or_default();
+            flavor.is_ignore_comment(bun_core::strings::trim_js_whitespace(content))
         });
         match is_ignored {
             true => self.ignored(self.tree.span(id)),
@@ -286,12 +285,12 @@ impl<'t> Builder<'t, '_, '_> {
         self.trailing_comments(comments);
     }
 
-    /// The document without the line break at its end: what Prettier's `textToDoc` returns.
+    /// Prints the document without the line break at its end, which is what Prettier's `textToDoc` returns.
     pub(crate) fn print_definitions(&mut self) {
         self.sequence(self.tree.children(self.tree.root()));
     }
 
-    /// Prettier's `printGraphqlComments`: the text is nothing but comments and white space.
+    /// Prettier's `printGraphqlComments`, for a text that's only comments and whitespace.
     pub(crate) fn print_comment_lines(&mut self) {
         let (mut has_comment, mut is_after_blank_line, mut start) = (false, false, 0);
         for line in bun_core::strings::split(self.text, b"\n") {
@@ -341,7 +340,7 @@ impl<'t> Builder<'t, '_, '_> {
         }
     }
 
-    /// ` {`, `nodes` on lines of their own, `}`
+    /// `{`, `nodes` on their own lines, `}`
     fn block(&mut self, nodes: &[NodeId]) {
         self.token("{");
         self.indent(|b| {
@@ -352,8 +351,7 @@ impl<'t> Builder<'t, '_, '_> {
         self.token("}");
     }
 
-    /// `(a, b)`, or each on its own line without the commas. `keeps_empty_lines`: Prettier's
-    /// `printSequence`.
+    /// `(a, b)`, or each on its own line without the commas. `keeps_empty_lines` selects Prettier's `printSequence`.
     fn parenthesized(&mut self, nodes: &[NodeId], keeps_empty_lines: bool) {
         if nodes.is_empty() {
             return;
@@ -376,7 +374,7 @@ impl<'t> Builder<'t, '_, '_> {
             if index + 1 == nodes.len() {
                 break;
             }
-            // That empty line is a forced line break.
+            // An empty line is also a forced line break.
             if keeps_empty_lines && is_next_line_empty(self.text, self.tree.span(id).end as usize) {
                 self.line(LineMode::Empty);
             } else {
@@ -444,11 +442,11 @@ impl<'t> Builder<'t, '_, '_> {
         if is_block {
             return self.block_string(raw.get(3..raw.len().saturating_sub(3)).unwrap_or_default());
         }
-        // Without escapes, it is written as it is.
+        // Without escapes, it's printed verbatim.
         if !bun_core::strings::contains_char(raw, b'\\') {
             return self.source(span);
         }
-        // Of the characters that the escapes stand for, only three are escaped again.
+        // Of the decoded characters, only three are escaped again.
         let mut value = Vec::with_capacity(raw.len());
         value.push(b'"');
         let mut rest = raw.get(1..raw.len().saturating_sub(1)).unwrap_or_default();
@@ -468,19 +466,19 @@ impl<'t> Builder<'t, '_, '_> {
         self.text(&value);
     }
 
-    /// `content`: what is between the `"""`.
+    /// `content` is the text between the `"""`.
     fn block_string(&mut self, content: &'t [u8]) {
-        fn leading_blanks(line: &[u8]) -> usize {
+        fn leading_space_or_tab_len(line: &[u8]) -> usize {
             line.iter()
                 .take_while(|byte| matches!(byte, b' ' | b'\t'))
                 .count()
         }
         // graphql-js's `dedentBlockStringLines`
-        let is_blank = |line: &[u8]| leading_blanks(line) == line.len();
+        let is_blank = |line: &[u8]| leading_space_or_tab_len(line) == line.len();
         let common_indent = bun_core::strings::split_crlf_lines(content)
             .skip(1)
             .filter(|line| !is_blank(line))
-            .map(leading_blanks)
+            .map(leading_space_or_tab_len)
             .min()
             .unwrap_or(usize::MAX);
         let first = bun_core::strings::split_crlf_lines(content)
@@ -502,45 +500,56 @@ impl<'t> Builder<'t, '_, '_> {
                     .unwrap_or_default(),
             });
 
+        // Flush pending line-suffix comments. Otherwise they'd be printed inside the string, as in Prettier.
+        self.push(FormatElement::LineSuffixBoundary);
         self.token("\"\"\"");
-        let mut empty_lines = 0;
+        // `""" a """` is printed as is. The padding is part of the value, and Prettier drops it. On its own line, the
+        // leading whitespace would turn into indentation and the trailing whitespace would be invisible.
+        let ends_with_space_or_tab = |line: &[u8]| matches!(line.last(), Some(b' ' | b'\t'));
+        let is_padded = leading_space_or_tab_len(content) > 0 || ends_with_space_or_tab(content);
+        if count == 1 && is_padded && bun_core::strings::index_of_any(content, b"\r\n").is_none() {
+            self.text(content);
+            return self.token("\"\"\"");
+        }
+        let mut is_at_quotes = count == 1 && first == 0 && leading_space_or_tab_len(content) > 0;
+        let (mut empty_lines, mut is_line_ended) = (0, false);
         for line in dedented {
-            // The printer of Prettier leaves out the blanks at the end of a line.
-            let mut line = &line[..line.len()
-                - line
-                    .iter()
-                    .rev()
-                    .take_while(|byte| matches!(byte, b' ' | b'\t'))
-                    .count()];
-            if count == 1 {
-                line = line.trim_ascii();
-            }
             if line.is_empty() {
                 empty_lines += 1;
                 continue;
             }
-            self.line_breaks(empty_lines);
+            if !std::mem::take(&mut is_at_quotes) {
+                self.line_breaks(empty_lines, is_line_ended);
+            }
             empty_lines = 0;
             self.text(line);
+            // Trailing spaces and tabs are part of the value too. A `hardline` trims them, as in Prettier. A line break
+            // printed as text doesn't, and the `hardline` after it then only indents.
+            is_line_ended = ends_with_space_or_tab(line);
+            if is_line_ended {
+                self.f.write_text(b"\n", Some(TextWidth::multiline(0)));
+            }
         }
         self.hardline();
         self.token("\"\"\"");
     }
 
-    /// A line break after so many empty lines.
-    fn line_breaks(&mut self, empty_lines: usize) {
+    /// Ends the current line and prints `empty_lines` empty lines. `is_line_ended` is true if the current line's line
+    /// break is already printed.
+    fn line_breaks(&mut self, empty_lines: usize, is_line_ended: bool) {
         match empty_lines {
             0 => {}
             1 => return self.line(LineMode::Empty),
-            // The printer writes no more than one empty line for line breaks.
-            _ => self
-                .f
-                .write_text(&vec![b'\n'; empty_lines + 1], Some(TextWidth::multiline(0))),
+            // For consecutive line breaks, the printer never writes more than one empty line.
+            _ => self.f.write_text(
+                &vec![b'\n'; empty_lines + usize::from(!is_line_ended)],
+                Some(TextWidth::multiline(0)),
+            ),
         }
         self.hardline();
     }
 
-    /// A node without its comments: Prettier's `genericPrint`.
+    /// Prints a node without its comments: Prettier's `genericPrint`.
     fn print_node(&mut self, id: NodeId) {
         let Some(&node) = self.tree.node(id) else {
             return;

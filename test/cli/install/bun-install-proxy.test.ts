@@ -224,7 +224,7 @@ describe("registry commands honor http_proxy", () => {
     expect(stdout).toContain(" + app@1.0.0");
   });
 
-  it.concurrent("bun publish to a registry listed in no_proxy goes direct", async () => {
+  it.concurrent("bun publish to a registry listed in no_proxy doesn't use the proxy", async () => {
     using setup = registryBehindProxy(() => Response.json({ ok: true }));
 
     const { stdout, stderr, exitCode } = await setup.run(["publish"], { env: { no_proxy: "127.0.0.1" } });

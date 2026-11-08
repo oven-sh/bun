@@ -1,4 +1,4 @@
-//! Which expressions need parentheses where they are. Prettier's `needsParentheses`.
+//! Decides which expressions need parentheses in their position. Prettier's `needsParentheses`.
 
 use crate::js::ast_nodes::ExpressionStatement;
 use crate::js::print::binary_like_expression::{is_angular_pipe, should_flatten};
@@ -7,8 +7,7 @@ use crate::js::utils::typecast::{has_comments, has_comments_that_count, is_cast_
 use crate::prelude::*;
 use AstNodes as N;
 
-/// Whether ESTree's `Expression` that `e` is needs parentheses. For the whole of an optional chain
-/// that is the `ChainExpression`.
+/// True if `e`, as ESTree's `Expression`, needs parentheses. For a whole optional chain that's the `ChainExpression`.
 pub(crate) fn expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     match e.is_chain_root() {
         true => chain_expression_needs_parentheses(e, f),
@@ -16,8 +15,7 @@ pub(crate) fn expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -
     }
 }
 
-/// Whether the `ChainExpression` around `e`, which is the whole of an optional chain, needs
-/// parentheses.
+/// True if the `ChainExpression` around `e`, which is a whole optional chain, needs parentheses.
 pub(crate) fn chain_expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     if is_cast_target(e, f) {
         return false;
@@ -26,8 +24,7 @@ pub(crate) fn chain_expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<
     if let Some(answer) = parent_needs_parentheses(e, parent, f) {
         return answer;
     }
-    // Prettier's `shouldAddParenthesesToChainExpression`: something goes on after it that is not
-    // part of the chain.
+    // Prettier's `shouldAddParenthesesToChainExpression`: something that isn't part of the chain continues after it.
     match parent {
         N::TSNonNullExpression(_) | N::TaggedTemplateExpression(_) => true,
         N::StaticMemberExpression(member) | N::PrivateFieldExpression(member) => {
@@ -40,15 +37,16 @@ pub(crate) fn chain_expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<
     }
 }
 
-/// Whether the source text of `e`, which is in parentheses there, means something else without them, where `e` itself
-/// needs none. What is formatted gets them further in, or is written otherwise: `({}.a) && b` is `({}).a && b`,
-/// `(new A).b` is `new A().b`. Prettier leaves them out of what it writes as it is.
+/// True if the source text of `e`, which is parenthesized in the source, would mean something else without the
+/// parentheses, even though `e` itself doesn't need them. Formatted code gets them further in, or is printed
+/// differently: `({}.a) && b` is `({}).a && b`, `(new A).b` is `new A().b`. Prettier drops them from text it copies
+/// verbatim.
 pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    // The parentheses of a type cast are written anyway.
+    // Type cast parentheses are printed anyway.
     if (e.parens()).all(|paren| f.comments().is_cast_parenthesis(paren.start)) {
         return false;
     }
-    // What follows would be taken for a part of it, or `<T>` for two comparisons.
+    // What follows would be parsed as part of it, or `<T>` would be parsed as two comparisons.
     let continues_with: &[u8] = match e.kind() {
         // `(a<T>) + b`, `(a<T>).b`, `(a<T>)()`, `(a<T>)<U>`, `(a<T>)!`
         ExprKind::Instantiation { .. } => b"+-<>.[(`!",
@@ -62,7 +60,7 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
     {
         return true;
     }
-    // What it starts with: `{`, `function`, `class` and `let[` start a statement.
+    // Check what it starts with, because `{`, `function`, `class` and `let[` start a statement.
     let mut first = e;
     while let Some(next) = match first.kind() {
         ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
@@ -98,10 +96,10 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
     is_in_for_statement_initializer(e, f) && has_bare_in(e)
 }
 
-/// The first byte of the token that is written after `e`, if it is a token of an expression that `e` is in. `None` for what ends
-/// an expression: `)`, `]`, `}`, `;`.
+/// Returns the first byte of the token printed after `e`, if that token belongs to an expression that contains `e`.
+/// Returns `None` for a token that ends an expression: `)`, `]`, `}`, `;`.
 ///
-/// `b + e + c`: `e` is the end of `b + e`, and the `+` of `(b + e) + c` is written after it.
+/// `b + e + c`: `e` is the end of `b + e`, and the `+` of `(b + e) + c` is printed after it.
 fn start_of_token_after<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<u8> {
     let mut current = e;
     loop {
@@ -133,7 +131,7 @@ fn start_of_token_after<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<u8> {
             {
                 return Some(b'a');
             }
-            // It writes parentheses around an operand with comments.
+            // A unary expression prints parentheses around an operand with comments.
             ExprKind::Unary { .. } if !f.is_quiet() && has_comments_that_count(current, f) => {
                 return None;
             }
@@ -157,8 +155,8 @@ fn start_of_token_after<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<u8> {
     }
 }
 
-/// Whether `first`, which the text of `e` starts with, would be taken for the start of a block, a function declaration or a
-/// class declaration if `e` had no parentheses.
+/// True if `first`, which the text of `e` starts with, would be parsed as the start of a block, a function declaration
+/// or a class declaration if `e` had no parentheses.
 fn would_start_statement<'a>(first: Expr<'a>, e: Expr<'a>) -> bool {
     let (is_object, is_declaration) = match first.kind() {
         ExprKind::Object(_) => (true, false),
@@ -172,9 +170,9 @@ fn would_start_statement<'a>(first: Expr<'a>, e: Expr<'a>) -> bool {
     let (outermost, container) = left_edge_end(e, e.as_ast_nodes());
     let is_sequence = outermost.binary_op() == Some(BinOp::Comma);
     match container {
-        // A sequence is in parentheses there.
+        // A sequence gets parentheses there anyway.
         N::ExpressionStatement(ExpressionStatement::Stmt(_)) => !is_sequence,
-        // So are a sequence and an assignment there.
+        // So do a sequence and an assignment here.
         N::ExpressionStatement(ExpressionStatement::ArrowBody(_)) => {
             is_object && !is_sequence && !matches!(outermost.kind(), ExprKind::Assign { .. })
         }
@@ -183,9 +181,9 @@ fn would_start_statement<'a>(first: Expr<'a>, e: Expr<'a>) -> bool {
     }
 }
 
-/// Whether there is an `a in b` in `e` that no parentheses, brackets or braces in `e` are around.
+/// True if `e` contains an `a in b` that isn't inside parentheses, brackets or braces within `e`.
 fn has_bare_in(e: Expr<'_>) -> bool {
-    // A loop: what is written as it is can be nested to any depth.
+    // Iterative, because verbatim text can be nested arbitrarily deep.
     let mut pending = vec![e];
     while let Some(next) = pending.pop() {
         if next.binary_op() == Some(BinOp::In) {
@@ -224,15 +222,14 @@ fn has_bare_in(e: Expr<'_>) -> bool {
     false
 }
 
-/// Whether `e` itself needs parentheses, not the `ChainExpression` around it.
+/// True if `e` itself needs parentheses, not the `ChainExpression` around it.
 #[inline]
 pub(crate) fn needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    may_need_parentheses(e) && needs_parentheses_where_it_is(e, f)
+    may_need_parentheses(e) && needs_parentheses_in_position(e, f)
 }
 
-/// A necessary condition that takes no more than the kind of `e`, what it is directly in, and the
-/// kind of that. It is false for nearly every expression. Each `false` here is what
-/// [`needs_parentheses_where_it_is`] comes to for that pair.
+/// A cheap necessary condition that only looks at the kind of `e`, its direct parent, and the parent's kind. It's false
+/// for nearly every expression. Each `false` here matches what [`needs_parentheses_in_position`] returns for that pair.
 fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
     use bun_sema::hir::ExprTag as T;
     let tag = e.tag();
@@ -245,7 +242,7 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
                 || (text.len() >= 8 && bun_core::strings::contains_char(text, b'\\'))
                 || (text.len() >= 35 && text.starts_with(b"PRETTIER_"));
         }
-        // `in` in the head of a `for` statement, and a sequence, depend on more.
+        // `in` in the head of a `for` statement, and a sequence, depend on more than the parent.
         T::Binary if matches!(e.binary_op(), None | Some(BinOp::In | BinOp::Comma)) => {
             return true;
         }
@@ -254,7 +251,7 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
     let is_argument =
         |call: Expr<'a>| matches!(call.tag(), T::Call | T::New) && call.callee() != Some(e);
     let parent = e.parent();
-    // For anything but an assignment, `for (var a = (e) in b);` is all there is to an initializer.
+    // For anything but an assignment, the only initializer that needs parentheses is `for (var a = (e) in b);`.
     if let (Node::VarDecl(_), false) = (parent, tag == T::Assign) {
         return is_for_in_statement_init(e);
     }
@@ -296,7 +293,7 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
         T::Assign => match parent {
             Node::Stmt(statement) if statement.tag() == StmtTag::Expr => {
                 e.left().is_none_or(|left| left.tag() == T::Object)
-                    // The file is one expression: it depends on whose.
+                    // The file is a single embedded expression, and the answer depends on what embeds it.
                     || statement.file().path().first() == Some(&0)
             }
             _ => true,
@@ -323,7 +320,7 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
     }
 }
 
-fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+fn needs_parentheses_in_position<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let kind = e.kind();
     match kind {
         ExprKind::Missing
@@ -342,13 +339,13 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         | ExprKind::NewTarget => {
             return is_for_in_statement_init(e)
                 && !is_cast_target(e, f)
-                && !few_initializers_of_for_in_get_parentheses(f);
+                && !only_some_for_in_initializers_get_parentheses(f);
         }
-        // A pattern is not an expression.
+        // A pattern isn't an expression.
         ExprKind::Array(_) | ExprKind::Object(_) if e.is_assignment_target() => return false,
-        // The function of a method is not an expression of its own.
+        // A method's function isn't a separate expression.
         ExprKind::Fn(func) if !func.is_arrow() && func.kind() != FnKind::Expr => return false,
-        // The `ChainExpression` has them.
+        // The `ChainExpression` gets the parentheses.
         ExprKind::Dot { .. }
         | ExprKind::Index { .. }
         | ExprKind::Call(_)
@@ -368,7 +365,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let starts_statement = match kind {
         ExprKind::Object(_) => match left_edge_end(e, e.as_chain_element()) {
             (_, N::ExpressionStatement(ExpressionStatement::Stmt(_))) => true,
-            // A sequence and an assignment are in parentheses there anyway.
+            // A sequence and an assignment get parentheses there anyway.
             (body, N::ExpressionStatement(ExpressionStatement::ArrowBody(_))) => !matches!(
                 body.kind(),
                 ExprKind::Assign { .. }
@@ -401,7 +398,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             true => matches!(parent, N::StaticMemberExpression(_)),
             false => is_member_object(e, parent),
         },
-        // So that it does not become a directive.
+        // So it doesn't become a directive.
         ExprKind::String(_) => {
             matches!(parent, N::ExpressionStatement(ExpressionStatement::Stmt(_)))
                 && matches!(
@@ -436,9 +433,9 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             op: BinOp::Comma, ..
         } => match parent {
             N::ForStatement(_) => false,
-            // The statement writes parentheses around a comment and what follows it.
+            // The statement prints parentheses around a comment and what follows it.
             N::ReturnStatement(_) | N::ThrowStatement(_) => !has_argument_leading_comments(e, f),
-            // Written by `print/arrow_function_expression.rs`.
+            // Printed by `print/arrow_function_expression.rs`.
             N::ExpressionStatement(statement) => !statement.is_arrow_function_body(),
             _ => true,
         },
@@ -532,7 +529,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     }
 }
 
-/// Prettier's `parentNeedsParentheses`: what depends on the parent more than on `e`.
+/// Prettier's `parentNeedsParentheses`: the cases that depend more on the parent than on `e`.
 fn parent_needs_parentheses<'a>(
     e: Expr<'a>,
     parent: AstNodes<'a>,
@@ -563,10 +560,10 @@ fn parent_needs_parentheses<'a>(
         N::ExportDefaultDeclaration(_) => {
             should_wrap_function_for_export_default(e, f).then_some(true)
         }
-        // Written by `print/decorators.rs`.
+        // Printed by `print/decorators.rs`.
         N::Decorator(_) => Some(false),
         N::VariableDeclarator(_) => (is_for_in_statement_init(e)
-            && (!few_initializers_of_for_in_get_parentheses(f)
+            && (!only_some_for_in_initializers_get_parentheses(f)
                 || matches!(
                     e.kind(),
                     ExprKind::Array(_)
@@ -629,15 +626,14 @@ fn should_wrap_function_for_export_default<'a>(declaration: Expr<'a>, f: &Format
     }
 }
 
-/// Prettier's `startsWithNoLookaheadToken`, from the bottom up: goes up from `e`, which is `node`,
-/// for as long as it is what its parent starts with. Returns the last expression on the way, and
-/// what that is in.
+/// Prettier's `startsWithNoLookaheadToken`, bottom-up. Walks up from `e`, which is `node`, for as long as each
+/// expression is what its parent starts with. Returns the last expression reached and its parent.
 pub(crate) fn left_edge_end<'a>(e: Expr<'a>, node: AstNodes<'a>) -> (Expr<'a>, AstNodes<'a>) {
     let (mut current, mut node) = (e, node);
     loop {
         let parent = node.parent();
         let is = |child: Option<Expr<'a>>| child == Some(current);
-        // An IIFE is in parentheses already.
+        // An IIFE already has parentheses.
         let is_function = matches!(current.kind(), ExprKind::Fn(func) if !func.is_arrow());
         current = match parent {
             N::BinaryExpression(it) | N::LogicalExpression(it) | N::AssignmentExpression(it)
@@ -690,9 +686,9 @@ fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
 
 /// Prettier's `shouldAddParenthesesToIdentifier`.
 fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    // Without escapes, as it is written: `(l\u0065t)[0]` is `(let)[0]`.
+    // The name without escapes, which is how it's printed: `(l\u0065t)[0]` is `(let)[0]`.
     let name = e.as_ident().map_or(&b""[..], |name| name.bytes());
-    // It stands for an expression in a template that this code is in the text of.
+    // It's a placeholder for an expression in the template literal that contains this code.
     if e.is_parenthesized() && crate::html::in_js::is_placeholder_in_js(name) {
         return true;
     }
@@ -732,7 +728,7 @@ fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
                 {
                     return true;
                 }
-                // Without a `;`, the next line would be what it declares. Prettier writes it bare.
+                // Without a `;`, the next line would be parsed as its declaration. Prettier prints it bare.
                 if matches!(parent, N::ExpressionStatement(_))
                     && f.options().semicolons.is_as_needed()
                 {
@@ -781,7 +777,7 @@ fn assignment_needs_parentheses<'a>(
         }
         // `interface A { [a = 1]; }`, `a = b = c`, Prettier's `JsExpressionRoot`
         N::TSPropertySignature(_) | N::AssignmentExpression(_) => false,
-        // Not the `File` that `prettier-plugin-svelte` has in that place.
+        // Not the `File` that `prettier-plugin-svelte` has there.
         N::Program(_) => f.options().in_html.root == HtmlRoot::SvelteExpression,
         // `({ a: (b = 1) } = c)`, which is an error. Not `({ [(a = 1)]: b } = c)`.
         N::AssignmentTargetPropertyProperty(property) => property.value() != Some(e),
@@ -789,20 +785,20 @@ fn assignment_needs_parentheses<'a>(
         N::SequenceExpression(sequence) => {
             !matches!(parent.parent(), N::ForStatement(statement) if is_init_or_update(statement, sequence))
         }
-        // The statement writes parentheses around a comment and what follows it.
+        // The statement prints parentheses around a comment and what follows it.
         N::ReturnStatement(_) | N::ThrowStatement(_) => !has_argument_leading_comments(e, f),
         _ => true,
     }
 }
 
-/// `<T>a | 0`: Prettier puts `<T>a` in parentheses next to `|`, `&`, `^` and the shifts. oxfmt only where it has to: before
-/// and after `<<`, and before `**`.
+/// `<T>a | 0`: Prettier puts `<T>a` in parentheses next to `|`, `&`, `^` and the shifts. oxfmt only does so where it
+/// has to: before and after `<<`, and before `**`.
 fn type_assertion_is_like_unary_expression(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// For a `BinaryExpression`, a `LogicalExpression`, `a as T`, `a satisfies T` and `<T>a`.
-/// `operator`: of the first two.
+/// For a `BinaryExpression`, a `LogicalExpression`, `a as T`, `a satisfies T` and `<T>a`. `operator` is set for the
+/// first two.
 fn binary_or_cast_needs_parentheses<'a>(
     e: Expr<'a>,
     operator: Option<BinOp>,
@@ -827,7 +823,8 @@ fn binary_or_cast_needs_parentheses<'a>(
         | N::AwaitExpression(_)
         | N::TSNonNullExpression(_)
         | N::UpdateExpression(_) => return true,
-        // It writes parentheses around an argument with comments. For oxfmt `a as T` has its own in them.
+        // A unary expression prints parentheses around an argument with comments. For oxfmt `a as T` gets its own
+        // inside them.
         N::UnaryExpression(_) => {
             return (is_binary_cast && f.options().flavor.is_oxfmt()) || !has_comments(e, f);
         }
@@ -872,24 +869,24 @@ fn binary_or_cast_needs_parentheses<'a>(
         || is_parent_bitwise
 }
 
-/// For Prettier's `NGPipeExpression`. One that is an argument of a pipe is written in parentheses by that pipe.
+/// For Prettier's `NGPipeExpression`. A pipe that's an argument of another pipe gets its parentheses from that pipe.
 fn angular_pipe_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
     match parent {
         N::Program(_) | N::ArrayExpression(_) | N::AssignmentExpression(_) => false,
-        // AngularJS needs those that are there.
+        // AngularJS needs the ones in the source.
         N::ObjectProperty(_) => e.is_parenthesized(),
         N::CallExpression(call) => call.callee() == Some(e),
         // Babel's `MemberExpression`, not its `OptionalMemberExpression`.
         N::ComputedMemberExpression(member) => {
-            member.object() == Some(e) || is_optional_member_expression_of_babel(member)
+            member.object() == Some(e) || is_babel_optional_member_expression(member)
         }
         _ => true,
     }
 }
 
-/// Whether `angular-estree-parser` makes an `OptionalMemberExpression` or an `OptionalCallExpression` of `e`. A tagged
-/// template ends an optional chain there.
-fn is_optional_member_expression_of_babel(mut e: Expr<'_>) -> bool {
+/// True if `angular-estree-parser` turns `e` into an `OptionalMemberExpression` or an `OptionalCallExpression`. A
+/// tagged template ends an optional chain there.
+fn is_babel_optional_member_expression(mut e: Expr<'_>) -> bool {
     loop {
         let head = match e.tag() {
             ExprTag::Dot | ExprTag::Index | ExprTag::Call if e.is_optional() => return true,
@@ -931,8 +928,8 @@ fn is_in_for_statement_initializer<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     false
 }
 
-/// oxc's `is_in_for_initializer` looks no further than the first `for` statement of any kind, or the first expression
-/// statement that is not right in the body of a function. Prettier looks at everything around the expression.
+/// oxc's `is_in_for_initializer` stops at the first `for` statement of any kind, or the first expression statement that
+/// isn't directly in a function body. Prettier checks every ancestor of the expression.
 ///
 /// ```js
 /// for (!(function () { if (a) b in c; })(); ; );      for (!(function () { if (a) (b in c); })(); ; );
@@ -941,9 +938,9 @@ fn search_for_initializer_ends_at_statements(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `for (var a = 1 in b);`: oxfmt writes the parentheses around an array, an object, a function, a class, and what has an
-/// operator. Prettier writes them around everything.
-fn few_initializers_of_for_in_get_parentheses(f: &Formatter<'_>) -> bool {
+/// `for (var a = 1 in b);`: oxfmt prints the parentheses around an array, an object, a function, a class, and anything
+/// with an operator. Prettier prints them around everything.
+fn only_some_for_in_initializers_get_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -974,11 +971,11 @@ fn is_member_object<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> bool {
     }
 }
 
-/// Whether there is a call down the left edge of `e`: `new (a().b)()`.
+/// True if there's a call down the left edge of `e`: `new (a().b)()`.
 fn has_call_on_left_edge(e: Expr<'_>) -> bool {
     let mut current = e;
     loop {
-        // What is in a `ChainExpression` is in parentheses.
+        // The content of a `ChainExpression` is parenthesized.
         if current != e && current.is_chain_root() {
             return false;
         }
@@ -992,9 +989,9 @@ fn has_call_on_left_edge(e: Expr<'_>) -> bool {
     }
 }
 
-/// Prettier has a list of what JSX needs no parentheses in, oxfmt has one of what it needs them in. In neither:
-/// `class A { b = (<c />); }`, `` `${(<a />)}` ``, `if ((<a />)) {}`.
-fn lists_what_jsx_needs_parentheses_in(f: &Formatter<'_>) -> bool {
+/// Prettier lists the parents where JSX needs no parentheses, and oxfmt lists the parents where it needs them. These
+/// are on neither list: `class A { b = (<c />); }`, `` `${(<a />)}` ``, `if ((<a />)) {}`.
+fn lists_parents_where_jsx_needs_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -1004,7 +1001,7 @@ fn jsx_needs_parentheses<'a>(e: Expr<'a>, parent: AstNodes<'a>, f: &Formatter<'a
             binary.binary_op() == Some(BinOp::Lt) && binary.left() == Some(e)
         }
         N::CallExpression(_) | N::NewExpression(_) => parent.is_call_like_callee(e),
-        _ if lists_what_jsx_needs_parentheses_in(f) => matches!(
+        _ if lists_parents_where_jsx_needs_parentheses(f) => matches!(
             parent,
             N::Class(_)
                 | N::TSAsExpression(_)

@@ -11,12 +11,12 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
-use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
+use crate::{self as jsc, JSGlobalObject, ZigException};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);
@@ -197,6 +197,16 @@ impl Debugger {
     /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
     /// across those calls is UB.
     pub fn wait_for_debugger_if_necessary(this: *mut VirtualMachine) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            Debugger::wait_for_debugger,
+            this
+        )
+    }
+
+    #[inline(never)]
+    fn wait_for_debugger(this: *mut VirtualMachine) {
         // `this` is the live per-thread VM; same allocation as
         // `VirtualMachine::get()` — route through the safe thread-local
         // accessor instead of open-coding the backref deref. All subsequent
@@ -334,11 +344,11 @@ impl Debugger {
                     {
                         let pending_unref = this.take_pending_unref();
                         if pending_unref > 0 {
-                            this.uws_loop_mut().unref_count(pending_unref);
+                            this.uws_loop_ref().unref_count(pending_unref);
                         }
                     }
 
-                    this.uws_loop_mut()
+                    this.uws_loop_ref()
                         .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
 
                     if bun_core::Environment::ENABLE_LOGS {
@@ -368,6 +378,20 @@ impl Debugger {
     /// JSC inspector context, spawn the debugger VM thread, and arm the
     /// keep-alive on the parent loop.
     pub fn create(
+        this: *mut VirtualMachine,
+        global_object: &JSGlobalObject,
+    ) -> crate::CrateResult<()> {
+        bun_removable_features::call_removable!(
+            Inspector,
+            Abort,
+            Debugger::create_debugger,
+            this,
+            global_object
+        )
+    }
+
+    #[inline(never)]
+    fn create_debugger(
         this: *mut VirtualMachine,
         global_object: &JSGlobalObject,
     ) -> crate::CrateResult<()> {
@@ -489,13 +513,13 @@ impl Debugger {
         } = init;
 
         if !from_env.is_empty() {
-            let url = BunString::borrow_utf8(from_env);
+            let url = StringView::borrow_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 1, is_connect, false);
         }
 
         if let Some(path_or_port) = path_or_port {
-            let url = BunString::borrow_utf8(path_or_port);
+            let url = StringView::borrow_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
             Bun__startJSDebuggerThread(global, ctx_id, &url, 0, is_connect, is_node_inspector);
         }
@@ -801,14 +825,13 @@ pub enum TestType {
 
 bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 
-// SAFETY (safe fn): `TestReporterHandle` and `CallFrame` are `opaque_ffi!`
-// ZST handles (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
+// SAFETY (safe fn): `TestReporterHandle` is an `opaque_ffi!`
+// ZST handle (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
 // in/out-param the C++ side reads/consumes in-place. Remaining args are
 // by-value scalars.
 unsafe extern "C" {
     safe fn Bun__TestReporterAgentReportTestFound(
         agent: &mut TestReporterHandle,
-        call_frame: &CallFrame,
         test_id: c_int,
         name: &BunString,
         item_type: TestType,
@@ -835,15 +858,12 @@ unsafe extern "C" {
 impl TestReporterHandle {
     pub(crate) fn report_test_found(
         &mut self,
-        call_frame: &CallFrame,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
         parent_id: i32,
     ) {
-        Bun__TestReporterAgentReportTestFound(
-            self, call_frame, test_id, name, item_type, parent_id,
-        );
+        Bun__TestReporterAgentReportTestFound(self, test_id, name, item_type, parent_id);
     }
 
     pub fn report_test_found_with_location(
@@ -889,13 +909,11 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `handle` is the live C++ agent just stored above.
-            dbg.test_reporter_agent.next_test_id = unsafe {
-                (hooks.retroactively_report_discovered_tests)(
-                    dbg.test_reporter_agent.handle,
-                    dbg.test_reporter_agent.next_test_id,
-                )
-            };
+            dbg.test_reporter_agent.next_test_id = (hooks.retroactively_report_discovered_tests)(
+                // SAFETY: `handle` is the live C++ agent just stored above.
+                unsafe { &mut *dbg.test_reporter_agent.handle },
+                dbg.test_reporter_agent.next_test_id,
+            );
         }
     }
 }
@@ -926,9 +944,10 @@ impl TestReporterAgent {
     /// Caller must ensure that it is enabled first.
     ///
     /// Since we may have to call .deinit on the name string.
+    ///
+    /// The test's location is that of the caller of the host function that is running.
     pub fn report_test_found(
         &self,
-        call_frame: &CallFrame,
         test_id: i32,
         name: &BunString,
         item_type: TestType,
@@ -936,7 +955,7 @@ impl TestReporterAgent {
     ) {
         bun_core::scoped_log!(TestReporterAgent, "reportTestFound");
         self.handle_mut()
-            .report_test_found(call_frame, test_id, name, item_type, parent_id);
+            .report_test_found(test_id, name, item_type, parent_id);
     }
 
     /// Caller must ensure that it is enabled first.
@@ -972,12 +991,23 @@ bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 unsafe extern "C" {
     safe fn Bun__LifecycleAgentReportError(
         agent: &mut LifecycleHandle,
-        exception: &mut ZigException,
+        exception: &mut ZigException<'_>,
     );
 }
 
 impl LifecycleHandle {
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
+        bun_removable_features::call_removable!(
+            Inspector,
+            ReturnDefault,
+            LifecycleHandle::report_error_to_agent,
+            self,
+            exception
+        )
+    }
+
+    #[inline(never)]
+    fn report_error_to_agent(&mut self, exception: &mut ZigException<'_>) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }
@@ -1013,7 +1043,7 @@ impl LifecycleAgent {
         core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
     }
 
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut ZigException<'_>) {
         if let Some(h) = self.handle_mut() {
             h.report_error(exception);
         }

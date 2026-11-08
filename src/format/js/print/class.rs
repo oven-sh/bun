@@ -7,8 +7,8 @@ use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::attach::Marker;
 use crate::js::format::{
-    FormatTypeAnnotation, format_name, format_node, identifier, name_without_comments,
-    terminator_of_what_is_ignored_follows_semi,
+    FormatTypeAnnotation, format_name, format_node, identifier,
+    ignored_node_terminator_follows_semi, name_without_comments,
 };
 use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::utils::assignment_like::AssignmentLike;
@@ -72,7 +72,7 @@ fn write_class_body<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// Whether there is an empty line between `element` and the member before it.
+/// True if there's an empty line between `element` and the member before it.
 fn has_empty_line_before<'a>(element: Member<'a>, f: &Formatter<'a>) -> bool {
     let span = element.span();
     // `a() {}⏎// comment⏎;⏎⏎b() {}`: the comment leads `b`, and the empty line is after the comment.
@@ -88,8 +88,7 @@ fn has_empty_line_before<'a>(element: Member<'a>, f: &Formatter<'a>) -> bool {
             comment.span().start as usize,
         );
     }
-    // `a = 1 ⏎ ⏎ ;[b] = 2`: the `;` is the end of the member before, which this one follows on
-    // the same line.
+    // `a = 1 ⏎ ⏎ ;[b] = 2`: the `;` ends the previous member, so this one follows it on the same line.
     let follows_semicolon =
         span.start != 0 && f.source_text().byte_at(span.start - 1) == Some(b';');
     !follows_semicolon && f.lines_before(span) > 1
@@ -107,12 +106,60 @@ pub(crate) fn write_member<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     }
 }
 
+/// True if the last modifier printed before `member`'s name must be on the same line as the name. With a line break
+/// after it, it would be parsed as a member name. A line break is fine after `static`, `get`, `set` and `*`.
+fn last_modifier_must_stay_on_name_line(member: Member<'_>) -> bool {
+    let function = member.func();
+    if matches!(member.kind(), MemberKind::Getter | MemberKind::Setter)
+        || function.is_some_and(Func::is_generator)
+    {
+        return false;
+    }
+    if function.is_some_and(Func::is_async) {
+        return true;
+    }
+    let modifier_flags =
+        (member.modifiers().iter()).fold(Flags::empty(), |all, it| all | it.flag());
+    // Checked from the last modifier printed to the first. `IN` and `OUT` are Flow's `+` and `-`.
+    if modifier_flags.intersects(Flags::IN | Flags::OUT) {
+        return false;
+    }
+    if modifier_flags
+        .intersects(Flags::ABSTRACT | Flags::OVERRIDE | Flags::READONLY | Flags::ACCESSOR)
+    {
+        return true;
+    }
+    !modifier_flags.contains(Flags::STATIC)
+        && modifier_flags
+            .intersects(Flags::AMBIENT | Flags::PUBLIC | Flags::PROTECTED | Flags::PRIVATE)
+}
+
+/// In `static // comment⏎async a() {}` the modifiers aren't nodes, so the comment is attached to the name as a leading
+/// comment. Prettier and oxfmt print `static async // comment⏎a() {}`, which declares a field `async` and a method that
+/// is neither static nor async. This prints those comments before the first modifier instead. The code that prints the
+/// name skips them because they're already marked as printed.
+pub(crate) fn write_comments_between_modifiers<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return;
+    }
+    let Some(key) = member.key().filter(|key| !key.is_computed()) else {
+        return;
+    };
+    let comments = f.comments().of_name(key.inner_span(f.file()).start).leading;
+    if (comments.iter()).any(|comment| comment.has_newline_after() || comment.is_multiline_block())
+        && last_modifier_must_stay_on_name_line(member)
+    {
+        write!(f, FormatLeadingComments::Comments(comments));
+    }
+}
+
 fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     let Some(value) = member.func() else {
         return;
     };
     if !member.modifiers().is_empty() {
-        write!(f, FormatDecorators::of_member(member));
+        write!(f, FormatDecorators::from_member(member));
+        write_comments_between_modifiers(member, f);
         for (flag, keyword) in [
             (Flags::PUBLIC, "public "),
             (Flags::PROTECTED, "protected "),
@@ -243,7 +290,7 @@ fn write_ts_index_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
             write!(f, [keyword, space()]);
         }
     }
-    // With one parameter it is more like a computed name than a list: no trailing comma.
+    // With one parameter it's more like a computed name than a list, so there's no trailing comma.
     let trailing_separator = match signature.params().len() > 1 {
         true => FormatTrailingCommas::ES5.trailing_separator(f.options()),
         false => TrailingSeparator::Disallowed,
@@ -299,8 +346,8 @@ impl<'a> Format<'a> for FormatIndexSignatureName<'a> {
     }
 }
 
-/// `a = class extends (⏎ b.C<D> ⏎) {}`. For Prettier the parentheses are around `b.C`, and `<D>` is behind them.
-fn type_arguments_of_super_class_are_in_its_parentheses(f: &Formatter<'_>) -> bool {
+/// `a = class extends (⏎ b.C<D> ⏎) {}`. For Prettier the parentheses are around `b.C`, and `<D>` comes after them.
+fn super_class_type_arguments_are_in_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -314,7 +361,8 @@ impl<'a> Format<'a> for FormatClassImplements<'a> {
     }
 }
 
-/// The dangling comments of `node` that have `marker`: Prettier's `printDanglingComments(path, options, { marker })`.
+/// Returns the dangling comments of `node` that have `marker`: Prettier's
+/// `printDanglingComments(path, options, { marker })`.
 pub(crate) fn dangling_comments_with_marker<'a>(
     node: AstNodes<'a>,
     marker: Marker,
@@ -351,8 +399,8 @@ pub(crate) fn write_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// Prettier's `printDecorators` starts with a line break in an `export`, also behind the line break
-/// after the parenthesis of `export default (@a class {})`.
+/// Prettier's `printDecorators` starts with a line break in an `export`, even right after the line break that follows
+/// the parenthesis of `export default (@a class {})`.
 fn decorators_in_export_start_a_line(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
@@ -371,7 +419,7 @@ impl<'a> Format<'a> for FormatClass<'a> {
         let super_class = class.extends();
         let implements = class.implements();
 
-        // Those of an exported class are written with the `export`, which they can be before.
+        // An exported class's decorators are written with the `export`, because they can come before it.
         if is_expression
             || !matches!(
                 parent,
@@ -493,7 +541,7 @@ impl<'a> Format<'a> for FormatClass<'a> {
                 group(&format_args!(head, indent(&format_heritage_clauses)))
                     .with_group_id(Some(heritage_id))
             );
-            // The `{` on a line of its own sets the members apart from a head that is broken.
+            // Putting the `{` on its own line separates the members from a broken head.
             if !class.members().is_empty() {
                 write!(
                     f,
@@ -512,11 +560,11 @@ impl<'a> Format<'a> for FormatClass<'a> {
 }
 
 /// `class A extends B /* comment */⏎<C> {}` is `B<C> /* comment */` for Prettier and `B /* comment */<C>` for oxfmt.
-fn comments_of_super_class_are_around_its_type_arguments(f: &Formatter<'_>) -> bool {
+fn super_class_comments_wrap_type_arguments(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// What follows `extends`: the super class with its type arguments. The comments of the super class are around both.
+/// The part after `extends`: the super class with its type arguments. The super class's comments go around both.
 struct FormatSuperClass<'a> {
     class: Class<'a>,
     extends: Expr<'a>,
@@ -525,15 +573,14 @@ struct FormatSuperClass<'a> {
 impl<'a> Format<'a> for FormatSuperClass<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let FormatSuperClass { class, extends } = *self;
-        // A JSX element writes its own comments, and so does what is in a `ChainExpression`.
+        // A JSX element writes its own comments, and so does the content of a `ChainExpression`.
         let comments = (!f.is_quiet()
-            && comments_of_super_class_are_around_its_type_arguments(f)
+            && super_class_comments_wrap_type_arguments(f)
             && extends.tag() != ExprTag::Jsx
             && !is_chain_expression_without_comments(extends, f))
         .then(|| comments_of_expression(extends, f));
         let type_arguments = type_arguments(class.extends_args(), Node::Class(class));
-        let are_type_arguments_in_parentheses =
-            type_arguments_of_super_class_are_in_its_parentheses(f);
+        let are_type_arguments_in_parentheses = super_class_type_arguments_are_in_parentheses(f);
         let content = format_with(|f| {
             match comments {
                 Some(_) => write!(f, FormatNodeWithoutTrailingComments(&extends)),
@@ -544,7 +591,7 @@ impl<'a> Format<'a> for FormatSuperClass<'a> {
             }
         });
 
-        // They are written here, so `extends` does not write them again.
+        // They're written here, so `extends` doesn't write them again.
         if let Some(comments) = comments {
             // `extends a⏎// prettier-ignore⏎.b`: the comment leads `a.b`, and is copied with it.
             let is_copied = |comment: &Comment<'a>| {
@@ -596,7 +643,7 @@ fn keeps_empty_lines_before_implements(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// Each of `comments` on its own line, and the empty lines after them.
+/// Writes each of `comments` on its own line, keeping the empty lines after them.
 fn write_comments_with_empty_lines<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
     for index in 0..comments.len() {
         let comments = comments.slice(index, index + 1);
@@ -611,8 +658,8 @@ fn write_comments_with_empty_lines<'a>(comments: CommentList<'a>, f: &mut Format
     }
 }
 
-/// Prettier's `shouldPrintClassInGroupMode`: whether the head of the class is a group that can break
-/// before `extends` and `implements`.
+/// Prettier's `shouldPrintClassInGroupMode`: true if the class head is a group that can break before `extends` and
+/// `implements`.
 fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     let (super_class, implements) = (class.extends(), class.implements());
     if has_multiple_heritage(class) {
@@ -658,8 +705,8 @@ struct FormatClassElementWithSemicolon<'a> {
 }
 
 impl FormatClassElementWithSemicolon<'_> {
-    /// Prettier's `shouldPrintSemicolonAfterClassProperty`: with `semi: false`, whether the property
-    /// `element` needs a `;` all the same.
+    /// Prettier's `shouldPrintSemicolonAfterClassProperty`: true if the property `element` still needs a `;` with
+    /// `semi: false`.
     fn needs_semicolon(&self) -> bool {
         let element = self.element;
         // `static;`, `get;`, `set;`
@@ -687,7 +734,7 @@ impl FormatClassElementWithSemicolon<'_> {
             return false;
         }
 
-        // What follows would be taken for the rest of this property: `in`, `[a]`, `*a() {}`.
+        // What follows would be parsed as the rest of this property: `in`, `[a]`, `*a() {}`.
         let is_computed = next.key().is_some_and(Key::is_computed);
         if next.key().is_some_and(|key| {
             matches!(key.kind(), KeyKind::Ident(name) if matches!(name.bytes(), b"in" | b"instanceof"))
@@ -715,7 +762,7 @@ impl FormatClassElementWithSemicolon<'_> {
 }
 
 impl<'a> FormatClassElementWithSemicolon<'a> {
-    /// See [`terminator_of_what_is_ignored_follows_semi`]. Returns whether the member is not formatted.
+    /// See [`ignored_node_terminator_follows_semi`].
     fn write_ignored_without_terminator(&self, f: &mut Formatter<'a>) {
         let span = self.element.span();
         let has_terminator = match self.element.kind() {
@@ -750,7 +797,7 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let node = self.element.as_ast_nodes();
         let is_ignored = !f.is_quiet() && f.comments().is_ignored(node);
-        if is_ignored && terminator_of_what_is_ignored_follows_semi(f) {
+        if is_ignored && ignored_node_terminator_follows_semi(f) {
             return self.write_ignored_without_terminator(f);
         }
         let needs_semi = self.element.kind() == MemberKind::Property
@@ -763,7 +810,7 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
         if !needs_semi || f.is_quiet() || is_added_after_comments {
             return write!(f, [self.element, needs_semi.then_some(";")]);
         }
-        // The `;` is part of the member, so the comments that trail the member are behind it.
+        // The `;` is part of the member, so the comments that trail the member come after it.
         write!(
             f,
             [
@@ -775,7 +822,7 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
     }
 }
 
-/// Without semicolons, Prettier's `printClassBody` adds the `;` that is needed after the member and its comments:
+/// Without semicolons, Prettier's `printClassBody` adds the `;` that's needed after the member and its comments:
 /// `static /* comment */;`. oxfmt prints `static; /* comment */`
 fn needed_semicolon_is_after_comments(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
@@ -813,8 +860,8 @@ pub(crate) fn format_grouped_parameters_with_return_type_for_method<'a>(
     .fmt(f);
 }
 
-/// `constructor(public x: number, y: number) {}`: more than one parameter, one of which has a
-/// modifier, are each on their own line.
+/// `constructor(public x: number, y: number) {}`: if there's more than one parameter and one has a modifier, each goes
+/// on its own line.
 fn should_break_function_parameters(func: Func<'_>) -> bool {
     func.params().len() > 1
         && func

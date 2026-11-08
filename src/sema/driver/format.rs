@@ -1,9 +1,7 @@
 //! Formats a [`Report`].
 //!
-//! For an interactive terminal: `bun_ast::Msg::write_format`, which is how Bun prints its own
-//! errors.
-//! For everything else: TypeScript's plain format, which editors, continuous integration and other
-//! tools already parse.
+//! - Interactive terminal: `bun_ast::Msg::write_format`, which is how Bun prints its own errors.
+//! - Everything else: TypeScript's plain format, which editors, continuous integration and other tools already parse.
 
 use crate::{Category, Diagnostic, Report, TaskOutput};
 use bstr::{BStr, BString, ByteSlice};
@@ -33,8 +31,7 @@ pub enum Layout {
     Pretty,
     /// `file(line,column): error TS1234: message`, as `tsc --pretty false` prints it.
     Plain,
-    /// One tag per error that contains the surrounding source, so that the reader does not have to
-    /// open the file.
+    /// One tag per error that contains the surrounding source, so the reader doesn't have to open the file.
     Agent,
 }
 
@@ -48,13 +45,13 @@ pub struct Style<'a> {
     pub is_case_sensitive: bool,
     /// Also print `::error` workflow commands, which GitHub Actions turns into annotations.
     pub github_annotations: bool,
-    /// The terminal width in columns. 0: unknown, or not a terminal.
+    /// The terminal width in columns. 0 if it's unknown or not a terminal.
     pub width: usize,
     /// `--all`: never group identical diagnostics.
     pub show_all: bool,
 }
 
-/// Relative to the working directory, or absolute when that would need two or more `../`.
+/// Returns the path relative to the working directory, or the absolute path if that would need two or more `../`.
 fn display_path(path: &[u8], style: &Style) -> BString {
     let relative = relative_path(path, style.cwd, style);
     if relative.starts_with(b"../../") {
@@ -69,7 +66,7 @@ fn relative_path(path: &[u8], from: &[u8], style: &Style) -> BString {
     get_relative_path_from_directory(from, path, style.is_case_sensitive).into()
 }
 
-/// `1234` as `1,234`.
+/// Formats `1234` as `1,234`.
 fn with_commas(n: usize) -> BString {
     let digits = alloc_print!("{n}");
     let mut out = BString::default();
@@ -94,28 +91,26 @@ fn columns(text: &[u8]) -> usize {
 }
 
 /// The longest prefix of `text` that fits in `width` columns.
-fn fitting(text: &[u8], width: usize) -> &[u8] {
+fn truncate_to_width(text: &[u8], width: usize) -> &[u8] {
     let end = strings::visible::width::exclude_ansi_colors::utf8_index_at_width(text, width);
     &text[..end]
 }
 
-/// `d` as input for `bun_ast::Msg::write_format`: the message, its location, and the last `shown`
-/// source lines up to the line it starts on.
-/// Only an error includes its code.
-fn to_data(d: &Diagnostic, style: &Style, says_code: bool, shown: usize) -> bun_ast::Data {
+/// Converts `d` to input for `bun_ast::Msg::write_format`: the message, its location, and the last `max_lines` source
+/// lines up to the line it starts on. Only an error includes its code.
+fn to_data(d: &Diagnostic, style: &Style, includes_code: bool, max_lines: usize) -> bun_ast::Data {
     // Bun's own diagnostics have no code.
     let text = match d.code {
-        code if code != 0 && says_code => alloc_print!("TS{code}: {}", d.text.as_bstr()).into(),
+        code if code != 0 && includes_code => alloc_print!("TS{code}: {}", d.text.as_bstr()).into(),
         _ => d.text.clone(),
     };
     // Leading blank lines carry no information.
     let lines = &d.source[..d.source.len().min((d.line - d.source_line) as usize + 1)];
-    let lines = &lines[lines.len().saturating_sub(shown)..];
+    let lines = &lines[lines.len().saturating_sub(max_lines)..];
     let blank = lines.iter().take_while(|line| line.trim_ascii().is_empty());
     let lines = &lines[blank.count()..];
-    // No source is shown either for an error on a blank line, for example at the end of the file:
-    // the preceding line would be mistaken for the error's line.
-    // Nor for lines that are not hand-written, which fill the screen.
+    // An error on a blank line, for example at the end of the file, gets no source either, because the preceding line
+    // would be mistaken for the error's line. Neither do lines that aren't hand-written, which would fill the screen.
     let is_blank = lines.last().is_none_or(|line| line.trim_ascii().is_empty());
     let is_hidden = is_blank || lines.iter().any(|line| line.len() > crate::MAX_SHOWN_LINE);
     let lines = if is_hidden { &[] } else { lines };
@@ -143,7 +138,7 @@ pub fn metadata_of(d: &Diagnostic) -> bun_ast::Metadata {
     }
 }
 
-/// `d` as a message of Bun's own log, with the related information as its notes.
+/// Converts `d` to a message of Bun's own log, with the related information as its notes.
 fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
     let related = d.related.iter().take(MAX_RELATED);
     bun_ast::Msg {
@@ -156,7 +151,7 @@ fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
         metadata: metadata_of(d),
         notes: related
             .map(|note| {
-                // A line that is already shown above is not repeated.
+                // A line that's already shown above isn't repeated.
                 let is_shown = note.path == d.path && (note.line..=note.line + 2).contains(&d.line);
                 to_data(note, style, false, usize::from(!is_shown))
             })
@@ -165,8 +160,7 @@ fn to_msg(d: &Diagnostic, style: &Style) -> bun_ast::Msg {
     }
 }
 
-/// Formatted like Bun's own errors. `duplicates`: other diagnostics with the same code and message,
-/// when grouping.
+/// Formats `d` like Bun's own errors. `duplicates`: other diagnostics with the same code and message, when grouping.
 fn write_pretty(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], style: &Style) {
     let message = to_msg(d, style);
     let to = &mut bun_core::fmt::VecWriter(out);
@@ -180,7 +174,7 @@ fn write_pretty(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], s
     }
 }
 
-/// `264 times in 6 files`, then the count for each file. The file list is never truncated.
+/// Writes `264 times in 6 files`, then the count for each file. The file list is never truncated.
 fn write_occurrences(
     out: &mut Vec<u8>,
     first: &Diagnostic,
@@ -191,7 +185,7 @@ fn write_occurrences(
     let mut by_file = count_by_file(all.filter(|d| !d.path.is_empty()));
     let times = with_commas(duplicates.len() + 1);
     pretty!(out, style.color, "    <b><yellow>{} times<r>", times);
-    // Every project of a build without the types that it names.
+    // Errors without a file, e.g. when every project of a build is missing the `types` it lists.
     if by_file.is_empty() {
         out.push(b'\n');
         return;
@@ -244,8 +238,8 @@ fn write_occurrences(
     }
 }
 
-/// `getErrorSummary`: the first diagnostic of each file and how many it has, by file name. A file
-/// that two projects of a build include is a file of each.
+/// `getErrorSummary`: returns each file's first diagnostic and its number of diagnostics, sorted by file name. A file
+/// that two projects of a build include counts once per project.
 fn count_by_file<'a>(
     diagnostics: impl Iterator<Item = &'a Diagnostic>,
 ) -> Vec<(&'a Diagnostic, usize)> {
@@ -258,7 +252,7 @@ fn count_by_file<'a>(
         });
         by_file[at].1 += 1;
     }
-    // The sort is stable: the projects stay in build order.
+    // The sort is stable, so the projects stay in build order.
     by_file.shared_sort_by(|a, b| a.0.path.cmp(&b.0.path));
     by_file
 }
@@ -275,16 +269,10 @@ const GROUP_THRESHOLD: usize = 50;
 /// Groups printed in full, with a source excerpt.
 const MAX_GROUPS: usize = 12;
 
-/// `WriteFormatDiagnostic`
-fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
+/// `WriteFormatDiagnostic`. `path` is the file's `relative_path`.
+fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, path: &BStr) {
     if !d.path.is_empty() {
-        let _ = write!(
-            out,
-            "{}({},{}): ",
-            relative_path(&d.path, style.cwd, style),
-            d.line,
-            d.column
-        );
+        let _ = write!(out, "{path}({},{}): ", d.line, d.column);
     }
     match d.code {
         0 => {
@@ -296,7 +284,7 @@ fn write_plain(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
     }
 }
 
-/// An attribute value, without the quotes.
+/// Escapes an attribute value. Doesn't add the quotes.
 fn attribute(text: &[u8]) -> BString {
     let mut out = BString::default();
     for c in text {
@@ -307,9 +295,9 @@ fn attribute(text: &[u8]) -> BString {
     out
 }
 
-/// The `<source>` of a problem, for an agent: `lines`, which are not none and of which the first has the number `first`, and
-/// carets below the line with the number `at`, from the column `from` up to the column `to`, both counted from 0. `None`: up to the
-/// end of the line.
+/// Writes the `<source>` element of a problem. `lines` isn't empty, and its first line has the number `first`. Carets
+/// go below line number `at`, from column `from` up to column `to`, both 0-based. `to` is `None` for the end of the
+/// line.
 pub fn write_agent_source(
     out: &mut Vec<u8>,
     first: u32,
@@ -359,8 +347,8 @@ fn write_agent(out: &mut Vec<u8>, d: &Diagnostic, duplicates: &[&Diagnostic], st
         .iter()
         .any(|line| line.len() > crate::MAX_SHOWN_LINE);
     if !d.source.is_empty() && !has_long_line {
-        // For an error that spans many lines, only its start. Leading and trailing blank lines
-        // carry no information.
+        // For an error that spans many lines, shows only its start. Leading and trailing blank lines carry no
+        // information.
         let at = (d.line - d.source_line) as usize;
         let blank = |lines: &mut dyn Iterator<Item = &Vec<u8>>| {
             lines
@@ -426,7 +414,7 @@ fn write_github_annotation(out: &mut Vec<u8>, d: &Diagnostic, style: &Style) {
     };
     let _ = write!(out, "::{level} ");
     if !d.path.is_empty() {
-        // GitHub takes the path from the root of the repository, wherever the step runs.
+        // GitHub expects the path relative to the repository root, wherever the step runs.
         let workspace = bun_core::env_var::GITHUB_WORKSPACE::get().map(crate::host::from_native);
         let from = workspace.as_deref().unwrap_or(style.cwd);
         let _ = write!(
@@ -456,7 +444,7 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
         *rest = after;
         taken
     }
-    // A group is of the whole report.
+    // Groups span the whole report, not one task.
     let is_grouped = !report.is_quiet && should_group(report, style);
     let tasks: &[TaskOutput] = if is_grouped { &[] } else { &report.tasks };
     let (mut trace, mut diagnostics, mut listed_files) = (
@@ -464,11 +452,12 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
         &report.diagnostics[..],
         &report.listed_files[..],
     );
-    let of_tasks = |count: fn(&TaskOutput) -> usize| tasks.iter().map(count).sum::<usize>();
+    let sum_over_tasks = |count: fn(&TaskOutput) -> usize| tasks.iter().map(count).sum::<usize>();
     let before_the_tasks = TaskOutput {
-        resolution_trace: trace.len() - of_tasks(|it| it.resolution_trace).min(trace.len()),
-        diagnostics: diagnostics.len() - of_tasks(|it| it.diagnostics).min(diagnostics.len()),
-        listed_files: listed_files.len() - of_tasks(|it| it.listed_files).min(listed_files.len()),
+        resolution_trace: trace.len() - sum_over_tasks(|it| it.resolution_trace).min(trace.len()),
+        diagnostics: diagnostics.len() - sum_over_tasks(|it| it.diagnostics).min(diagnostics.len()),
+        listed_files: listed_files.len()
+            - sum_over_tasks(|it| it.listed_files).min(listed_files.len()),
     };
     for task in std::iter::once(&before_the_tasks).chain(tasks) {
         for line in take(&mut trace, task.resolution_trace) {
@@ -478,6 +467,8 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
         let diagnostics = take(&mut diagnostics, task.diagnostics);
         // `QuietDiagnosticReporter`
         let diagnostics: &[Diagnostic] = if report.is_quiet { &[] } else { diagnostics };
+        // Caches the previous diagnostic's file and its `relative_path`.
+        let mut last: (&[u8], BString) = Default::default();
         if is_grouped {
             write_grouped(out, report, style);
         } else {
@@ -487,7 +478,12 @@ pub fn write_diagnostics(out: &mut Vec<u8>, report: &Report, style: &Style) {
                         write_pretty(out, d, &[], style);
                         out.push(b'\n');
                     }
-                    Layout::Plain => write_plain(out, d, style),
+                    Layout::Plain => {
+                        if last.0 != d.path {
+                            last = (&d.path, relative_path(&d.path, style.cwd, style));
+                        }
+                        write_plain(out, d, last.1.as_bstr());
+                    }
                     Layout::Agent => write_agent(out, d, &[], style),
                 }
             }
@@ -519,13 +515,13 @@ fn summary_line(text: &[u8]) -> &[u8] {
         .unwrap_or(first)
 }
 
-/// Plain output is never grouped: tools parse it.
+/// Plain output is never grouped, because tools parse it.
 fn should_group(report: &Report, style: &Style) -> bool {
     style.layout != Layout::Plain && !style.show_all && report.diagnostics.len() > GROUP_THRESHOLD
 }
 
-/// Groups diagnostics by (code, message) and prints the largest groups first, each once with its number of occurrences per file.
-/// A project with thousands of errors usually has a few root causes, and this puts them at the top.
+/// Groups diagnostics by (code, message) and prints the largest groups first, each once with its number of occurrences
+/// per file. A project with thousands of errors usually has a few root causes, and this puts them at the top.
 fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
     let mut index: FxHashMap<(u32, &[u8]), usize> = FxHashMap::default();
     let mut groups: Vec<Vec<&Diagnostic>> = Vec::new();
@@ -536,10 +532,10 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
         });
         groups[at].push(d);
     }
-    // The sort is stable: ties stay in source order.
+    // The sort is stable, so ties stay in source order.
     groups.shared_sort_by_key(|group| std::cmp::Reverse(group.len()));
-    let shown = groups.len().min(MAX_GROUPS);
-    for group in &groups[..shown] {
+    let groups_shown = groups.len().min(MAX_GROUPS);
+    for group in &groups[..groups_shown] {
         match style.layout {
             Layout::Agent => write_agent(out, group[0], &group[1..], style),
             _ => {
@@ -548,10 +544,10 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
             }
         }
     }
-    let compact_count = (groups.len() - shown).min(MAX_COMPACT_GROUPS);
+    let compact_count = (groups.len() - groups_shown).min(MAX_COMPACT_GROUPS);
     if style.layout == Layout::Pretty && compact_count > 0 {
-        let width = with_commas(groups[shown].len()).len();
-        for group in &groups[shown..shown + compact_count] {
+        let width = with_commas(groups[groups_shown].len()).len();
+        for group in &groups[groups_shown..groups_shown + compact_count] {
             let first = group[0];
             pretty!(
                 out,
@@ -562,35 +558,38 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
                 width
             );
             let reported = summary_line(&first.text);
-            let place = alloc_print!("{}:{}", display_path(&first.path, style), first.line);
+            let first_location =
+                alloc_print!("{}:{}", display_path(&first.path, style), first.line);
             // Truncate the message to the terminal width. Append the first location only if it fits.
             let room = match style.width {
                 0 => usize::MAX,
                 columns => columns.saturating_sub(width + 12),
             };
-            let cut = fitting(reported, room);
-            out.extend_from_slice(cut);
-            if cut.len() < reported.len() {
+            let clipped = truncate_to_width(reported, room);
+            out.extend_from_slice(clipped);
+            if clipped.len() < reported.len() {
                 pretty!(out, style.color, "<d>\u{2026}<r>");
-            } else if !first.path.is_empty() && columns(reported) + columns(&place) + 2 <= room {
-                pretty!(out, style.color, "  <d>{}<r>", place);
+            } else if !first.path.is_empty()
+                && columns(reported) + columns(&first_location) + 2 <= room
+            {
+                pretty!(out, style.color, "  <d>{}<r>", first_location);
             }
             out.push(b'\n');
         }
         out.push(b'\n');
     }
-    let shown = if style.layout == Layout::Pretty {
-        shown + compact_count
+    let groups_shown = if style.layout == Layout::Pretty {
+        groups_shown + compact_count
     } else {
-        shown
+        groups_shown
     };
-    let rest: usize = groups[shown..].iter().map(Vec::len).sum();
+    let rest: usize = groups[groups_shown..].iter().map(Vec::len).sum();
     if rest == 0 {
         return;
     }
     let (errors, more) = (
         plural(rest, b"more error", b"more errors"),
-        plural(groups.len() - shown, b"other kind", b"other kinds"),
+        plural(groups.len() - groups_shown, b"other kind", b"other kinds"),
     );
     if style.layout == Layout::Agent {
         let _ = writeln!(
@@ -608,8 +607,7 @@ fn write_grouped(out: &mut Vec<u8>, report: &Report, style: &Style) {
     );
 }
 
-/// The progress, as a line that overwrites the previous one. `tick`: the number of times it has
-/// been drawn.
+/// Writes the progress as a line that overwrites the previous one. `tick`: the number of times it has been drawn.
 pub fn write_progress(out: &mut Vec<u8>, progress: &crate::Progress, style: &Style, tick: usize) {
     use std::sync::atomic::Ordering::Relaxed;
     const SPINNER: [char; 10] = [
@@ -633,7 +631,7 @@ pub fn write_progress(out: &mut Vec<u8>, progress: &crate::Progress, style: &Sty
         return;
     }
     out.extend_from_slice(b" Checking ");
-    // Only if the terminal is wide enough.
+    // The bar is shown only if the terminal is wide enough.
     if style.width == 0 || style.width >= 72 {
         let bytes = progress.bytes_to_check.load(Relaxed).max(1);
         let filled = (progress.bytes_checked.load(Relaxed) * BAR / bytes).min(BAR);
@@ -668,16 +666,16 @@ pub fn write_progress(out: &mut Vec<u8>, progress: &crate::Progress, style: &Sty
 /// Moves the cursor to the start of the line and erases the line.
 pub const ERASE_LINE: &[u8] = "\r\u{1b}[2K".as_bytes();
 
-/// Whether any diagnostic is about a global or module that `@types/bun` declares.
+/// True if any diagnostic is about a global or module that `@types/bun` declares.
 fn is_missing_bun_types(report: &Report) -> bool {
     report.diagnostics.iter().any(is_about_bun_types)
 }
 
-/// Whether `d` is about a global or module that `@types/bun` declares.
+/// True if `d` is about a global or module that `@types/bun` declares.
 pub(crate) fn is_about_bun_types(d: &Diagnostic) -> bool {
     match d.code {
-        // `Cannot find name 'console'. Do you need to change your target library? ..` It is also
-        // what `document` gets, which is not Bun's.
+        // `Cannot find name 'console'. Do you need to change your target library? ..` `document` gets the same code,
+        // but it isn't Bun's.
         2584 => d.text.starts_with(b"Cannot find name 'console'."),
         // `Cannot find module 'bun:test' or its corresponding type declarations.`
         2307 => {
@@ -708,14 +706,14 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         );
     }
     // A repository can have a hundred fixtures that nobody installs.
-    const NAMED: usize = 3;
-    for it in report.not_installed.iter().take(NAMED) {
+    const MAX_MANIFESTS_LISTED: usize = 3;
+    for it in report.not_installed.iter().take(MAX_MANIFESTS_LISTED) {
         let (verb, count) = match it.names.len() {
             1 => ("is", BString::from("1 dependency")),
             n => ("are", alloc_print!("{n} dependencies")),
         };
         let manifest = relative_path(&it.manifest, style.cwd, style);
-        let elsewhere = match it.is_of_working_directory {
+        let cwd_flag = match it.is_cwd_manifest {
             true => BString::default(),
             false => alloc_print!(" --cwd={}", BStr::new(dirname::<Posix>(&manifest))),
         };
@@ -726,10 +724,13 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
             count,
             manifest,
             verb,
-            elsewhere
+            cwd_flag
         );
     }
-    let more = report.not_installed.len().saturating_sub(NAMED);
+    let more = report
+        .not_installed
+        .len()
+        .saturating_sub(MAX_MANIFESTS_LISTED);
     if more == 1 {
         pretty!(
             out,
@@ -828,7 +829,8 @@ pub fn write_summary(out: &mut Vec<u8>, report: &Report, style: &Style) {
         return;
     }
     out.push(b'\n');
-    // Never truncated. In a terminal the end of the output is what stays on screen, so the files with the most errors go last.
+    // Never truncated. In a terminal the end of the output is what stays on screen, so the files with the most errors
+    // go last.
     if style.layout == Layout::Pretty {
         by_file.shared_sort_by_key(|&(_, count)| count);
     }

@@ -1,35 +1,37 @@
-//! The strongly connected components of the import graph, and their levels. Computed once, at the
-//! end of loading.
+//! The strongly connected components of the import graph, and their levels. Computed once, at the end of loading.
 //!
-//! The link step resolves exports and aliases component by component, level by level. Everything
-//! here is a function of the graph and of program order alone.
+//! The link step resolves exports and aliases one component at a time, each after the components it imports. Everything
+//! here depends only on the graph and on program order.
 
 use crate::program::FileId;
 use crate::session::Arena;
+use bun_sort_by_number::SortByNumber;
 
 pub struct Component<'s> {
     /// In program order.
     pub files: &'s [FileId],
     /// 0 if it imports nothing outside itself. Otherwise one more than the highest level of a component it imports.
     pub level: u32,
+    /// Indices in `Components::all` of the other components that its files import, without duplicates.
+    pub imports: &'s [u32],
 }
 
 pub struct Components<'s> {
     /// In program order of their first files.
     pub all: &'s [Component<'s>],
-    /// For each `FileId` the index of its component in `all`. `u32::MAX`: the file is not in the program.
+    /// For each `FileId`, the index of its component in `all`, or `u32::MAX` if the file isn't in the program.
     pub of_file: &'s [u32],
 }
 
 impl<'s> Components<'s> {
-    /// Of a program without files.
+    /// The components of an empty program.
     pub const EMPTY: Components<'static> = Components {
         all: &[],
         of_file: &[],
     };
 
-    /// `order`: the files of the program, in program order. `imports(file)`: the files that `file` refers to, in any order, with
-    /// repetitions.
+    /// `order`: the program's files in program order. `imports(file)`: the files that `file` refers to, in any order,
+    /// possibly with duplicates.
     pub fn new(
         order: &[FileId],
         imports: &dyn Fn(FileId) -> Vec<FileId>,
@@ -50,19 +52,25 @@ impl<'s> Components<'s> {
             edges
         };
         let edges: Vec<Vec<u32>> = order.iter().map(edges_of).collect();
-        // Numbered by the traversal: a component has a higher number than every component it imports.
+        // Numbered by the traversal, so a component has a higher number than every component it imports.
         let (number_of, numbered) = strongly_connected_components(&edges);
         let mut levels = vec![0u32; numbered.len()];
+        let mut imports: Vec<Vec<usize>> = vec![Vec::new(); numbered.len()];
+        // For each component, the last component found to import it. Used to skip duplicates in `imports`.
+        let mut last_importer = vec![usize::MAX; numbered.len()];
         for (number, nodes) in numbered.iter().enumerate() {
             for &imported in nodes.iter().flat_map(|&node| &edges[node]) {
                 let imported = number_of[imported as usize] as usize;
                 if imported != number {
                     levels[number] = levels[number].max(levels[imported] + 1);
+                    if std::mem::replace(&mut last_importer[imported], number) != number {
+                        imports[number].push(imported);
+                    }
                 }
             }
         }
         let mut in_program_order: Vec<usize> = (0..numbered.len()).collect();
-        in_program_order.sort_unstable_by_key(|&number| numbered[number][0]);
+        in_program_order.sort_by_u64(|&number| numbered[number][0] as u64);
         let mut index_of = vec![0u32; numbered.len()];
         for (index, &number) in in_program_order.iter().enumerate() {
             index_of[number] = index as u32;
@@ -70,31 +78,31 @@ impl<'s> Components<'s> {
         let component = |&number: &usize| Component {
             files: arena.alloc_slice_fill_iter(numbered[number].iter().map(|&node| order[node])),
             level: levels[number],
+            imports: arena.alloc_slice_fill_iter(imports[number].iter().map(|&it| index_of[it])),
         };
-        let of_node = |&node: &u32| match number_of.get(node as usize) {
+        let index_of_node = |&node: &u32| match number_of.get(node as usize) {
             Some(&number) => index_of[number as usize],
             None => u32::MAX,
         };
         Components {
             all: arena.alloc_slice_fill_iter(in_program_order.iter().map(component)),
-            of_file: arena.alloc_slice_fill_iter(node_of.iter().map(of_node)),
+            of_file: arena.alloc_slice_fill_iter(node_of.iter().map(index_of_node)),
         }
-    }
-
-    /// The indices in `all` of the components of level 0, of level 1, .. Within a level in program order.
-    pub fn by_level(&self) -> Vec<Vec<u32>> {
-        let levels = self.all.iter().map(|it| it.level as usize + 1).max();
-        let mut by_level: Vec<Vec<u32>> = vec![Vec::new(); levels.unwrap_or(0)];
-        for (index, component) in self.all.iter().enumerate() {
-            by_level[component.level as usize].push(index as u32);
-        }
-        by_level
     }
 }
 
-/// Tarjan's algorithm, without recursion. For each node the number of its component, and the nodes of each component in ascending
+/// Tarjan's algorithm, without recursion. Returns each node's component number, and each component's nodes in ascending
 /// order. A component has a higher number than every component it has an edge to.
-fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize>>) {
+pub fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize>>) {
+    strongly_connected_components_of(edges.len(), |node| edges[node].as_slice(), None)
+}
+
+/// `strongly_connected_components` of `count` nodes whose edges lie where `edges_of` finds them. `no_edge`: an entry that stands for no edge.
+pub fn strongly_connected_components_of<'e>(
+    count: usize,
+    edges_of: impl Fn(usize) -> &'e [u32],
+    no_edge: Option<u32>,
+) -> (Vec<u32>, Vec<Vec<usize>>) {
     const NOT_VISITED: u32 = u32::MAX;
     #[derive(Clone)]
     struct Node {
@@ -107,13 +115,13 @@ fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize
         lowlink: 0,
         is_on_stack: false,
     };
-    let mut nodes = vec![not_visited; edges.len()];
-    let mut component_of = vec![0u32; edges.len()];
+    let mut nodes = vec![not_visited; count];
+    let mut component_of = vec![0u32; count];
     let mut components: Vec<Vec<usize>> = Vec::new();
     let (mut stack, mut visited) = (Vec::new(), 0u32);
     // A node in progress, and how many of its edges have been followed.
     let mut in_progress: Vec<(usize, usize)> = Vec::new();
-    for root in 0..edges.len() {
+    for root in 0..count {
         if nodes[root].index != NOT_VISITED {
             continue;
         }
@@ -125,8 +133,11 @@ fn strongly_connected_components(edges: &[Vec<u32>]) -> (Vec<u32>, Vec<Vec<usize
                 visited += 1;
                 stack.push(node);
             }
-            if let Some(&next) = edges[node].get(followed) {
+            if let Some(&next) = edges_of(node).get(followed) {
                 in_progress.last_mut().unwrap().1 += 1;
+                if Some(next) == no_edge {
+                    continue;
+                }
                 let next = next as usize;
                 if nodes[next].index == NOT_VISITED {
                     in_progress.push((next, 0));

@@ -441,9 +441,8 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
     ASSERT(!startArgs.hasOverflowed());
     JSValue startResult = invokeMethod(vm, globalObject, handle, builtinNames(vm).startPublicName(), startArgs);
     if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
-        // open() failed (ENOENT, EISDIR, ...): error the stream like a rejected pull, drop the dead handle.
+        // The source could not start (open() → ENOENT, EISDIR, ...): error the stream, as a rejected pull does.
         TRY_CLEAR_EXCEPTION(scope, );
-        stream->m_nativePtr.clear();
         auto* controller = WebCore::JSReadableStreamDefaultController::create(vm, WebCore::getDOMStructure<WebCore::JSReadableStreamDefaultController>(vm, *domGlobalObject));
         controller->m_algorithms.kind = SourceKind::Nothing;
         setUpReadableStreamDefaultController(globalObject, stream, controller, jsUndefined(), 1);

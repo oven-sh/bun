@@ -29,6 +29,11 @@ const noTitleReply = process.argv.includes("--no-title-reply");
 // navigating.
 const navigateError = process.argv.find(a => a.startsWith("--navigate-error="))?.slice("--navigate-error=".length);
 
+// `--detach-after-load`: after the first load, Chrome reports that page gone
+// (a renderer crash, a tab the user closed) with a browser-level
+// Target.detachedFromTarget that names the session. Later loads are normal.
+const detachAfterLoad = process.argv.includes("--detach-after-load");
+
 // `--cdp-error-on=<method>[:<times>]`: that method's reply is a CDP protocol
 // error ({"error":{"code":-32000,...}}), the way real Chrome rejects e.g.
 // Page.navigate for a URL it cannot parse. With `:<times>`, only the first
@@ -156,6 +161,9 @@ async function handle(command: { id: number; method: string; params?: any; sessi
       reply({ frameId: "F", loaderId });
       event("Page.frameNavigated", { frame: { id: "F", loaderId, url: params.url, mimeType: "text/html" } });
       event("Page.loadEventFired", { timestamp: loads });
+      if (detachAfterLoad && loads === 1) {
+        send({ method: "Target.detachedFromTarget", params: { sessionId, targetId: "T" + sessionId!.slice(1) } });
+      }
       // Send one stray event per load, with a missing or unusable sessionId.
       if (malformed === "detach-no-session-id") send({ method: "Target.detachedFromTarget", params: {} });
       if (malformed === "event-bad-utf8") {

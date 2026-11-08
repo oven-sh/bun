@@ -785,10 +785,9 @@ static Command createBrowserContextCommand(uint32_t id, JSWebView* view)
     return cmd;
 }
 
-// Fire-and-forget, like Target.closeTarget.
-static void disposeBrowserContext(Transport& t, const WTF::String& browserContextId)
+void Transport::disposeBrowserContext(const WTF::String& browserContextId)
 {
-    t.send(0, Command(t.nextId(), "Target.disposeBrowserContext"_s).str("browserContextId"_s, browserContextId));
+    send(0, Command(nextId(), "Target.disposeBrowserContext"_s).str("browserContextId"_s, browserContextId));
 }
 
 // Per-method result handlers. Each knows the schema of its result object
@@ -801,20 +800,19 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
     auto entry = WTF::move(it->value);
     m_pending.remove(it);
 
-    if (entry.method == Method::TargetCreateBrowserContextOrphaned) {
-        // The view is gone: dispose the context this reply names, if any.
-        auto cid = jsonString(jsonField(result, { "browserContextId", 16 }));
-        if (!cid.empty()) disposeBrowserContext(*this, WTF::String::fromUTF8(cid));
-        updateKeepAlive();
-        return;
-    }
-
     auto* g = m_global;
     auto& vm = g->vm();
     JSWebView* view = viewFor(entry.viewId);
     if (!view) {
+        // The view closed or was collected while this reply was on the
+        // wire. A context it asked for has no other owner: this reply is
+        // the only place its id ever appears.
+        if (entry.method == Method::TargetCreateBrowserContext) {
+            auto cid = jsonString(jsonField(result, { "browserContextId", 16 }));
+            if (!cid.empty()) disposeBrowserContext(WTF::String::fromUTF8(cid));
+        }
         updateKeepAlive(); // that entry may have been the last thing holding the loop
-        return; // user dropped both view and the awaited promise
+        return;
     }
 
     if (!error.empty()) {
@@ -824,14 +822,15 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         if (errStr.isEmpty()) errStr = "CDP error"_s;
         switch (entry.method) {
         case Method::TargetCreateBrowserContext:
-            errStr = makeString("Chrome refused a browser context for this view (incognito may be disabled by policy"_s,
-                view->m_proxyServer.isEmpty() ? "; pass dataStore: { directory } to share Chrome's default context): "_s : "): "_s,
-                errStr);
+            // Chrome's own reason, plus the way to the default context for
+            // a view that only needs storage, not a proxy.
+            errStr = makeString("Target.createBrowserContext: "_s, errStr,
+                view->m_proxyServer.isEmpty() ? " (pass dataStore: { directory } to use Chrome's default context)"_s : ""_s);
             break;
         case Method::TargetCreateTarget:
             // The context has no tab; a retry creates a fresh one.
             if (!view->m_browserContextId.isEmpty())
-                disposeBrowserContext(*this, std::exchange(view->m_browserContextId, WTF::String()));
+                disposeBrowserContext(std::exchange(view->m_browserContextId, WTF::String()));
             break;
         default:
             break;
@@ -917,10 +916,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
     }
-    case Method::TargetCreateBrowserContextOrphaned:
-        // Handled before the view lookup above; this arm only completes the switch.
-        return;
-
     case Method::PageNavigate: {
         // {"frameId":"...","loaderId":"..."} or {"frameId":"...","errorText":"..."}
         // errorText present → navigation failed synchronously (bad URL,
@@ -1212,7 +1207,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         view->m_closed = true;
         // The context outlives its one tab; nothing else will dispose it.
         if (!view->m_browserContextId.isEmpty())
-            disposeBrowserContext(*this, std::exchange(view->m_browserContextId, WTF::String()));
+            disposeBrowserContext(std::exchange(view->m_browserContextId, WTF::String()));
         updateKeepAlive();
         return;
     }
@@ -1850,14 +1845,12 @@ void close(JSWebView* view)
     // PageEnable sends Page.navigate, the tab navigates after dispose.
     // removeIf breaks the chain at the next reply — handleResponse's
     // find(id)==end() early-return drops it.
-    // A sent Target.createBrowserContext is retagged: its reply names the context to dispose.
+    // A sent Target.createBrowserContext stays: its reply is the only
+    // place the new context's id appears, and handleResponse disposes it
+    // once it finds no view.
     t.m_pending.removeIf([&t, vid = view->m_viewId](auto& pair) {
         if (pair.value.viewId != vid) return false;
-        if (pair.value.method == Method::TargetCreateBrowserContext && !t.isQueuedUnsent(pair.key)) {
-            pair.value.method = Method::TargetCreateBrowserContextOrphaned;
-            return false;
-        }
-        return true;
+        return pair.value.method != Method::TargetCreateBrowserContext || t.isQueuedUnsent(pair.key);
     });
     // Fire-and-forget teardown. Chrome tears down the tab; we ignore the
     // Target.targetDestroyed event. Erase sessionId so late events drop.
@@ -1867,7 +1860,7 @@ void close(JSWebView* view)
     // is stashed at TargetCreateTarget's reply (before sessionId) so it
     // is populated earlier in the chain.
     if (!view->m_browserContextId.isEmpty()) {
-        disposeBrowserContext(t, std::exchange(view->m_browserContextId, WTF::String()));
+        t.disposeBrowserContext(std::exchange(view->m_browserContextId, WTF::String()));
     } else if (!view->m_targetId.isEmpty()) {
         t.send(0, Command(t.nextId(), "Target.closeTarget"_s).str("targetId"_s, view->m_targetId));
     }

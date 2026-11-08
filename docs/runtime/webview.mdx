@@ -66,8 +66,8 @@ Views that share the same `directory` share cookies and storage. Pass `dataStore
   not per-view. Bun spawns Chrome once per Bun process, so the first view's directory wins for all subsequent views, and
   every view with a `directory` shares that process-wide default context, cookies included. An ephemeral view gets a
   browser context of its own (a CDP `Target.createBrowserContext`) inside that one Chrome. If Chrome refuses to create
-  one (an enterprise policy that disables incognito), the view's first `navigate()` rejects with an error that says so,
-  and `dataStore: {directory}` is the way to use the default context.
+  one (for example, `backend.url` names a page endpoint instead of the browser endpoint), the view's first `navigate()`
+  rejects with Chrome's reason, and `dataStore: {directory}` is the way to use the default context.
 </Note>
 
 ### Per-view proxy (Chrome)

@@ -231,8 +231,6 @@ private:
 enum class Method : uint8_t {
     // Internal attach chain — responses chain into the next command.
     TargetCreateBrowserContext,
-    // Retagged by Ops::close when the view closed before Chrome replied.
-    TargetCreateBrowserContextOrphaned,
     TargetCreateTarget,
     TargetAttachToTarget,
     PageEnable,
@@ -494,6 +492,11 @@ public:
     {
         return m_wsPending.containsIf([cdpId](auto& cmd) { return cmd.id == cdpId; });
     }
+
+    // Target.disposeBrowserContext, fire-and-forget like Target.closeTarget.
+    // Disposing a context closes its tab too. Touches no JS heap, so the
+    // JSWebView destructor can call it.
+    void disposeBrowserContext(const WTF::String& browserContextId);
 
     // Register a fresh view. Returns its viewId and stores one Weak.
     // Called from JSWebView::createChrome after the transport is up.

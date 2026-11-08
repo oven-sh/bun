@@ -260,8 +260,79 @@ test.concurrent("a failed createTarget disposes the view's context and the retry
   });
 });
 
-// A Target.createBrowserContext failure (a Chrome that refuses incognito under
-// policy) rejects navigate() with a message that names the option to drop.
+// The retry inside onNavigationFailed runs before handleResponse returns, so
+// the failed createTarget must have dropped the context id first: the retry
+// creates a fresh context, and the old one is disposed, not the new one.
+test.concurrent("a retry from onNavigationFailed after a failed createTarget gets a fresh context", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--cdp-error-on=Target.createTarget:1"] },
+      width: 100,
+      height: 100,
+    });
+    const retried = new Promise(resolve => {
+      view.onNavigationFailed = () => resolve(outcome(view.navigate("http://fake/retry")));
+    });
+    const first = await outcome(view.navigate("http://fake/first"));
+    const retry = await retried;
+    print({ first, retry, url: view.url, targets: await view.evaluate("__fake_targets()") });
+    view.close();
+  `);
+  const tab = { url: "about:blank", newWindow: true, width: 100, height: 100 };
+  expect(result).toEqual({
+    first: { rejected: "Cannot navigate to invalid URL" },
+    retry: { resolved: undefined },
+    url: "http://fake/retry",
+    targets: [
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      { method: "Target.createTarget", params: { ...tab, browserContextId: "C1" } },
+      { method: "Target.disposeBrowserContext", params: { browserContextId: "C1" } },
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      { method: "Target.createTarget", params: { ...tab, browserContextId: "C2" } },
+    ],
+  });
+});
+
+// Chrome reporting the page gone (Target.detachedFromTarget) closes the view.
+// The context outlives its one tab, so the view disposes it then; a later
+// close() has nothing left to send.
+test.concurrent("a page Chrome detaches takes its browser context with it", async () => {
+  const result = await runScenario(`
+    const view = new Bun.WebView({
+      backend: { ...backend, argv: [...backend.argv, "--detach-after-load"] },
+      width: 100,
+      height: 100,
+    });
+    const navigation = await outcome(view.navigate("http://fake/own"));
+    let evaluation;
+    try {
+      evaluation = await outcome(view.evaluate("1"));
+    } catch (err) {
+      evaluation = { threw: err.code };
+    }
+    view.close();
+    const shared = new Bun.WebView({ backend, width: 100, height: 100, dataStore: { directory: "/tmp/unused" } });
+    await shared.navigate("http://fake/shared");
+    print({ navigation, evaluation, targets: await shared.evaluate("__fake_targets()") });
+    shared.close();
+  `);
+  expect(result).toEqual({
+    navigation: { rejected: "page detached (crashed or closed)" },
+    evaluation: { threw: "ERR_INVALID_STATE" },
+    targets: [
+      { method: "Target.createBrowserContext", params: { disposeOnDetach: true } },
+      {
+        method: "Target.createTarget",
+        params: { url: "about:blank", newWindow: true, width: 100, height: 100, browserContextId: "C1" },
+      },
+      { method: "Target.disposeBrowserContext", params: { browserContextId: "C1" } },
+      { method: "Target.createTarget", params: { url: "about:blank", newWindow: true, width: 100, height: 100 } },
+    ],
+  });
+});
+
+// A Target.createBrowserContext failure rejects navigate() with Chrome's
+// reason and names the option that selects the default context instead.
 test.concurrent("a refused browser context rejects navigate() with the cause", async () => {
   const result = await runScenario(`
     const view = new Bun.WebView({
@@ -274,9 +345,8 @@ test.concurrent("a refused browser context rejects navigate() with the cause", a
     view.close();
   `);
   expect(result).toEqual({
-    rejected: expect.stringMatching(
-      /^Chrome refused a browser context for this view .*: Cannot navigate to invalid URL$/,
-    ),
+    rejected:
+      "Target.createBrowserContext: Cannot navigate to invalid URL (pass dataStore: { directory } to use Chrome's default context)",
   });
 });
 

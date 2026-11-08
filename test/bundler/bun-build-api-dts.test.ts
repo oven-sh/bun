@@ -316,6 +316,19 @@ export function useTyped(first = 1, second = 2 as typeof first): string {
   const [value] = useState(first);
   return value + second.toFixed(1);
 }
+function same<T>(value: T): T {
+  return value;
+}
+export function useQueried(first = 1, maybe: string | undefined = undefined, pick: typeof same = same): string {
+  const [value] = useState(maybe);
+  const kept: typeof maybe = value;
+  const picked: typeof pick<number> = pick;
+  return String(kept) + picked(first);
+}
+export function useSigned(first: number = 1, second: typeof first = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
 export function useCell(first = 1, unit = Unit.Px as Unit | null): string {
   const [value] = useState(first);
   if (unit === null) return value + "none";
@@ -358,6 +371,7 @@ export function plain(first: number = 1, second: number = 2): number {
 console.log(useName(), usePoint(), useUnit(), usePadded(undefined, undefined, undefined, "a"), useNested(1));
 console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain(), useCast(), useCast(1, null, "blue"));
 console.log(useCell(), useCell(1, null), useCell(1, Unit.Em), useParse(undefined, undefined, "1"), useTyped());
+console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2));
 `;
   // The parameters of each function, from the second one on where the first one is the compiler's. The first default
   // value of a list is where the `length` of the function ends, and how the compiler prints it is not the subject here.
@@ -396,12 +410,17 @@ console.log(useCell(), useCell(1, null), useCell(1, Unit.Em), useParse(undefined
     useUnit: expect.stringMatching(/^t1\?: Unit\d*$/),
     usePadded: expect.stringMatching(/^t1: Unit\d* \| undefined, t2: number \| undefined, text: string$/),
     // An `as` on the default value is the type of the parameter. Under `!` it has the enum, under `as const` the member.
+    // `(T) & {}` is `T` without `null` and `undefined`, as `(x as T)!` is.
     useCast: expect.stringMatching(
-      /^t1\?: Unit\d* \| null, t2\?: string, t3\?: Unit\d*, t4\?: Unit\d*\.Px, t5\?: NonNullable<Unit\d* \| null>, t6\?: Options$/,
+      /^t1\?: Unit\d* \| null, t2\?: string, t3\?: Unit\d*, t4\?: Unit\d*\.Px, t5\?: \(Unit\d* \| null\) & \{\}, t6\?: Options$/,
     ),
     useParse: "t1: ((text: string) => number) | undefined, text: string",
     // `typeof first` is not the type of `t0`, which takes `undefined`. The type checker says what `second` is.
     useTyped: "t1?: number",
+    useQueried: "t1?: string | undefined, t2?: typeof same",
+    // Where only the parameter is in scope, `T & ({} | null)` is its type without `undefined`.
+    useSigned: "t1?: (typeof t0 & ({} | null))",
+    same: "value: T",
     // Its `switch` has a `case` for each value only if `unit` has its type.
     useCell: expect.stringMatching(/^t1\?: Unit\d* \| null$/),
     useNested: "base: number",
@@ -431,7 +450,10 @@ console.log(useCell(), useCell(1, null), useCell(1, Unit.Em), useParse(undefined
     // Without an annotation, a callback takes the type of its parameter from where it is passed to. An `as` on the
     // default value does not change that.
     expect(typed).toMatch(/let step: Step = \(base, t0[^,]*, t1\?, t2\?\) => \{/);
-    expect(typed).toContain("2 as Exclude<typeof t0, undefined>");
+    // In the function body, the variable that holds the default value is what `typeof` names.
+    expect(typed).toContain("2 as typeof first");
+    expect(typed).toContain("kept: typeof maybe = value");
+    expect(typed).toContain("picked: typeof pick<number> = pick");
   });
 
   test("in a module that is not checked", async () => {

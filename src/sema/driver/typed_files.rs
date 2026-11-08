@@ -75,7 +75,7 @@ struct DefaultedParameter {
     annotation: TypeNodeId,
     /// `T` of a default value `x as T`, which is the type of a parameter without an annotation.
     asserted: TypeNodeId,
-    /// The default value is `(x as T)!`, a `NonNullable<T>`.
+    /// The default value is `(x as T)!`: `T` without `null` and `undefined`.
     is_non_null: bool,
     is_name: bool,
     /// A `?` on it is an error: a parameter behind it has to be passed.
@@ -238,6 +238,28 @@ fn asserted_type(file: &File<'_>, mut value: ExprId) -> Option<(TypeNodeId, bool
     }
 }
 
+/// The name of the variable that holds the default value of `parameter`: `a` of `let a = t0 === undefined ? 1 : t0`.
+fn variable_of_moved_default<'a>(
+    output: &Syntax<'a, '_>,
+    mappings: &Mappings,
+    parameter: (u32, u32),
+) -> Option<&'a [u8]> {
+    output.file.stmts.iter().find_map(|statement| {
+        let StmtKind::Var(declarations) = statement.kind else {
+            return None;
+        };
+        declarations.iter().enumerate().find_map(|(place, id)| {
+            let declaration: &VarDecl = &output.file[id];
+            let name = &output.file[declaration.pat];
+            // The source map has no place for the name of the first variable of a statement, and has one for the statement.
+            let of_statement = || mappings.original(statement.start).filter(|_| place == 0);
+            let mapped = mappings.original(name.pos).or_else(of_statement);
+            let is_it = mapped == Some(parameter) && matches!(name.kind, PatKind::Ident(_));
+            is_it.then(|| output.word(name.pos))
+        })
+    })
+}
+
 /// Each parameter of `file` that has a default value, by where it starts.
 fn defaulted_parameters(file: &File<'_>) -> FxHashMap<u32, DefaultedParameter> {
     let mut found = FxHashMap::default();
@@ -288,6 +310,35 @@ impl<'a, 's> Syntax<'a, 's> {
             members.extend_from_slice(&[b"[\"", self.word(name), b"\"]"].concat());
             end = self.token_end(name);
         }
+    }
+
+    /// The function that has a parameter with a default value whose name starts at `binding`.
+    fn function_with_default(&self, binding: u32) -> Option<FnId> {
+        let is_it = |parameter: ParamId| {
+            let parameter = &self.file[parameter];
+            parameter.default.is_some() && self.file[parameter.pat].pos == binding
+        };
+        let functions = (0..self.file.fns.len() as u32).map(FnId);
+        functions
+            .into_iter()
+            .find(|&id| self.file[id].params.iter().any(is_it))
+    }
+
+    /// Whether `at` is before the body of `function`, and in no default value: the output has those in the body.
+    fn is_in_signature(&self, id: FnId, at: u32) -> bool {
+        let function = &self.file[id];
+        let body = match function.kind {
+            FnKind::Arrow => Some(function.anchor),
+            _ => self.body_start(id),
+        };
+        let is_in_default = function.params.iter().any(|parameter| {
+            let default = self.file[parameter].default;
+            default.is_some() && {
+                let (start, end) = self.outer_span(default);
+                (start..end).contains(&at)
+            }
+        });
+        body.is_some_and(|body| at < body) && !is_in_default
     }
 
     /// Where the `typeof` before the name at `at` starts.
@@ -2791,20 +2842,35 @@ fn link(
                     continue;
                 }
                 // `typeof a` where the output has the default value of `a` in the function body: its parameter takes `undefined`.
-                let query = syntax.typeof_before(at).filter(|_| {
-                    let is_default = |parameter: &Param| {
-                        parameter.default.is_some() && syntax.file[parameter.pat].pos == binding
-                    };
-                    !may_have_default_without_slot(output.text, offset)
-                        && syntax.file.params.iter().any(is_default)
-                });
-                edits.push(match query {
-                    Some(start) => {
-                        let (end, members) = syntax.members_behind(end);
-                        let head = [&b"Exclude<typeof "[..], new, b", undefined>"].concat();
-                        (start, end, [head, members].concat())
+                let moved = (syntax.typeof_before(at))
+                    .filter(|_| !may_have_default_without_slot(output.text, offset))
+                    .zip(syntax.function_with_default(binding));
+                let (start, tail, members) = match moved {
+                    Some((_, function)) if !syntax.is_in_signature(function, at) => {
+                        // The variable that holds the default value has the type of `a`.
+                        let parameter = (index as u32, binding);
+                        match variable_of_moved_default(output, mappings, parameter) {
+                            Some(variable) if variable != syntax.word(at) => {
+                                edits.push((at, end, variable.to_vec()));
+                            }
+                            Some(_) => {}
+                            None => edits.push((at, end, new.to_vec())),
+                        }
+                        continue;
                     }
-                    None => (at, end, new.to_vec()),
+                    // Only the parameter is in scope. `T & ({} | null)` is `T` without `undefined`.
+                    Some((start, _)) => {
+                        let (tail, members) = syntax.members_behind(end);
+                        (start, tail, members)
+                    }
+                    None => (at, end, Vec::new()),
+                };
+                let is_instantiated = syntax.byte(syntax.after_trivia(tail)) == b'<';
+                edits.push(if start == at || is_instantiated {
+                    (at, end, new.to_vec())
+                } else {
+                    let text = [&b"(typeof "[..], new, b" & ({} | null))", &members].concat();
+                    (start, tail, text)
                 });
             }
             edits.extend(
@@ -3314,9 +3380,10 @@ impl<'a> Transfer<'_, 'a, '_> {
                                 let text = module.text(start, end);
                                 let is_function = is_before_required
                                     && module.syntax.is_parenthesized_in_a_union(asserted);
+                                // `(T) & {}` is `T` without `null` and `undefined`, as `(x as T)!` is.
                                 let (open, close): (&[u8], &[u8]) =
                                     match (default.is_non_null, is_function) {
-                                        (true, _) => (b"NonNullable<", b">"),
+                                        (true, _) => (b"(", b") & {}"),
                                         (false, true) => (b"(", b")"),
                                         (false, false) => (b"", b""),
                                     };

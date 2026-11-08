@@ -354,7 +354,7 @@ unless(isWindows)(
   async () => {
     using folder = tempDir("aot-fuzzer-judges", {
       "fuzzer.ts": `import { spawned } from ${JSON.stringify(join(import.meta.dir, "fuzz", "runners"))};
-await spawned([process.execPath, "-e", 'require("fs").writeFileSync("pid", String(process.pid)); setInterval(() => {}, 1000);'], import.meta.dir, 120);`,
+await spawned([process.execPath, "-e", 'require("fs").writeFileSync("pid", String(process.pid)); setInterval(() => {}, 1000);'], import.meta.dir, 290);`,
     });
     const written = join(String(folder), "pid");
     await using fuzzer = Bun.spawn({
@@ -363,6 +363,8 @@ await spawned([process.execPath, "-e", 'require("fs").writeFileSync("pid", Strin
       env: bunEnv,
       stdio: ["ignore", "inherit", "inherit"],
     });
+    // The cases of this file run beside one another on one thread, and one of them holds it without an await: 34 s under a sanitizer on one machine,
+    // over 120 s on another. This loop comes round behind that, so the process has nearly as long as the case: its limit is only there for a case that dies.
     while (!existsSync(written) || !readFileSync(written, "utf8")) await Bun.sleep(20);
     const pid = Number(readFileSync(written, "utf8"));
     const isAlive = () => {

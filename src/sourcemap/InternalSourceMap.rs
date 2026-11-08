@@ -63,7 +63,7 @@
 //! ```text
 //!     [ 0.. 8]  total_len:         u64   -- written by Chunk.Builder.generateChunk
 //!     [ 8..16]  mapping_count:     u64   -- written by Chunk.Builder.generateChunk
-//!     [16..20]  invented_function_count: u32
+//!     [16..20]  invented_function_count: u32 -- not 0 from Bun 1.4.0 to 1.4.3: the low half of their u64 line count
 //!     [20..24]  object_brace_count: u32  -- 0 from an older Bun: the high half of its u64 line count
 //!     [24..28]  sync_count:        u32
 //!     [28..32]  stream_offset:     u32   -- byte offset from blob start to stream

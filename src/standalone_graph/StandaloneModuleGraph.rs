@@ -3947,3 +3947,37 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     debug_assert!(header_list.len() == string_payload_start_location);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Bun 1.4.0 to 1.4.3 wrote a line count into the bytes in which a later Bun counts the functions that its printer marked.
+    #[test]
+    fn the_map_of_an_executable_has_no_marked_function() {
+        let mut blob = SourceMap::InternalSourceMap::from_vlq(b"AAAA;AACA")
+            .expect("two mappings")
+            .into_vec();
+        blob[16..20].copy_from_slice(&7u32.to_ne_bytes());
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u32.to_ne_bytes());
+        bytes.extend_from_slice(&(blob.len() as u32).to_ne_bytes());
+        bytes.extend_from_slice(&blob);
+        let bytes: &'static [u8] = bytes.leak();
+
+        let mut lazy = LazySourceMap::Serialized(SerializedSourceMap { bytes });
+        let of_executable = lazy.load().expect("the blob is valid");
+        assert_eq!(of_executable.invented_function_count(), 0);
+        let mut marked = 0;
+        of_executable.for_each_invented_function(|_| marked += 1);
+        assert_eq!(marked, 0);
+
+        let blob = &bytes[size_of::<SerializedSourceMapHeader>()..];
+        let internal = SourceMap::InternalSourceMap {
+            data: blob.as_ptr(),
+        };
+        let of_a_file =
+            core::mem::ManuallyDrop::new(SourceMap::ParsedSourceMap::from_internal(internal));
+        assert_eq!(of_a_file.invented_function_count(), 7);
+    }
+}

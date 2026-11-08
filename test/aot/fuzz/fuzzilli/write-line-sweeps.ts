@@ -199,7 +199,7 @@ for (const [name, instance] of Object.entries(instances)) {
     "(function () { return arguments; })(...L)",
     "((...all) => all)(...L)",
     "(texts => texts)`a${1}b${2}a`",
-    "process.execArgv.concat(L)",
+    "process.execArgv.slice(0, 0).concat(L)",
     "Object.values(L)",
     "Object.entries(L)",
     "(function* () { yield* L; })()",

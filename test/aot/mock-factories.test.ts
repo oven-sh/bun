@@ -6,9 +6,11 @@ import { test } from "./supported";
 
 // Every small case of one kind, none drawn. first.mjs and second.mjs are mocked. The factory of first.mjs waits at a gate; meanwhile the factory of second.mjs asks for
 // first.mjs. Whether it gets the original or waits for the mock hangs on who wrote what (src/jsc/bindings/BunPlugin.cpp: keyOfImportWhileModuleMocksRun()). A case is named
-// by: which of the two imports the test makes first, or whether it makes the second alone . where the first factory is written (the test, a helper, a function of the host) . where the second is . where the import() that asks is (the second factory, a file that
-// had run, a file that the first factory loaded) . whether the two imports are made in one turn . who imports second.mjs . what the first factory does before it waits . whether
-// first.mjs itself is asked for or a file that imports it by a statement, which may wait at an await . how the first factory ends.
+// by: whether first.mjs is a file of the project, one that had run before the mocks were laid, or a package . which of the two imports the test makes first, or whether it makes the second alone . where the first factory is written (the test, a helper, a function of the host) . where the second is . where the import() that asks is (the second factory, a file that
+// had run, a file that the first factory loaded, a package; or the second factory requires it) . whether the two imports are made in one turn . who imports second.mjs . what the first factory does before it waits . whether
+// first.mjs itself is asked for or a file that imports it by a statement, which may wait at an await . how the first factory ends, or that the second factory
+// opens the gate itself behind its call, so that the first has settled when a call that is held comes to its turn.
+// A case prints what the two imports give. A package gets the original with or without a wait: there the case also says whether the second import had settled before the gate was opened.
 // Nothing hangs on a clock but the bound on a wait that never ends: gates are opened behind fresh files that a file of nobody's has loaded, one behind the other.
 // All cases are laid as one project: one plain run and one compiled run. What `bun test` prints is the specification.
 const product = <Row extends readonly (readonly string[])[]>(...rows: Row): string[][] =>
@@ -18,18 +20,29 @@ const files: Record<string, string> = {
   "package.json": `{ "name": "a-factory-asks-while-another-waits", "type": "module" }`,
 };
 let numberOfCases = 0;
-for (const [order, first, second, asks, turn, begunBy, before, via, end] of product(
+for (const [mocked, order, first, second, asks, turn, begunBy, before, via, end] of product(
+  ["file", "file that had run", "package"].map(kind => kind.replaceAll(" ", "_")),
   ["first-ahead", "second-ahead", "second-alone"],
   ["test", "helper", "host"],
   ["test", "helper"],
-  ["factory", "asks", "dep"],
+  ["factory", "asks", "dep", "package", "require"],
   ["one-turn", "later"],
-  ["test", "begins"],
+  ["test", "begins", "root"],
   ["nothing", "imports-asks", "imports-dep", "requires-asks", "imports-over"],
   ["itself", "statement", "statement-that-waits"],
-  ["resolves", "fails"],
+  ["resolves", "fails", "resolves-early"],
 )) {
   if (asks === "dep" && (before !== "imports-dep" || turn === "one-turn")) continue;
+  const isOfNarrowKind =
+    end === "resolves-early" || mocked !== "file" || asks === "package" || asks === "require" || begunBy === "root";
+  if (isOfNarrowKind && (before !== "nothing" || via !== "itself" || end === "fails" || first === "host")) continue;
+  if (end === "resolves-early" && (mocked !== "file" || asks === "package" || asks === "require" || begunBy !== "test"))
+    continue;
+  if (mocked === "package" && (asks === "asks" || asks === "require" || begunBy !== "test")) continue;
+  // Under `bun test` a require() of the module of a running factory that is written in another file throws. Compiled code answers it with the original.
+  if (asks === "require" && first !== second) continue;
+  // Under `bun test` an import() written in a package, of a mocked module whose factory nobody has called yet, gets the module itself at once. Compiled code calls the factory and waits for it.
+  if (asks === "package" && order !== "first-ahead" && (order === "second-alone" || turn === "later")) continue;
   if (end === "fails" && before === "imports-over") continue;
   // A load that waits for the mock below a statement is known by nothing but the time it takes: fewer of those.
   if (
@@ -42,9 +55,19 @@ for (const [order, first, second, asks, turn, begunBy, before, via, end] of prod
   // Under `bun test` an import that the test makes while a factory written in the test runs gets the original, an instance of its own. Compiled code has one instance of a file.
   if (order !== "first-ahead" && first === "test" && (order === "second-alone" || turn === "later")) continue;
   numberOfCases++;
-  const name = [order, first, second, asks, turn, begunBy, before, via, end].join("-");
+  const name = [mocked, order, first, second, asks, turn, begunBy, before, via, end].join("-");
   const [at, state] = [`c/${name}`, `globalThis["${name}"]`];
   const target = via === "itself" ? "first.mjs" : "over.mjs";
+  const nameOfFirst = (dir: string) => (mocked === "package" ? `first-${numberOfCases}` : `${dir}/first.mjs`);
+  for (const [ofPackage, text] of [
+    [`first-${numberOfCases}`, `export const name = "real first";\n`],
+    [`asks-${numberOfCases}`, `export const ask = () => import("${nameOfFirst(`../../${at}`)}");\n`],
+  ]) {
+    files[`node_modules/${ofPackage}/package.json`] =
+      `{ "name": "${ofPackage}", "type": "module", "main": "index.js" }`;
+    files[`node_modules/${ofPackage}/index.js`] = text;
+  }
+  files[`${at}/root.mjs`] = `export { name } from "./second.mjs";\n`;
   files[`${at}/first.mjs`] = `export const name = "real first";\n`;
   files[`${at}/second.mjs`] = `export const name = "real second";\n`;
   files[`${at}/over.mjs`] =
@@ -66,23 +89,26 @@ for (const [order, first, second, asks, turn, begunBy, before, via, end] of prod
       "requires-asks": `require("${dir}/asks.cjs"); `,
       "imports-over": `await import("${dir}/over.mjs"); `,
     }[before];
-    return `async () => { ${does}await ${state}.gate; ${end === "resolves" ? `return { name: "first" };` : `throw new Error("the first factory fails");`} }`;
+    return `async () => { ${does}await ${state}.gate; ${end !== "fails" ? `return { name: "first" };` : `throw new Error("the first factory fails");`} }`;
   };
   const secondFactory = (dir: string) => {
     const ask = {
-      factory: `import("${dir}/${target}")`,
+      factory: via === "itself" ? `import("${nameOfFirst(dir)}")` : `import("${dir}/${target}")`,
+      package: `ofPackage.ask()`,
       asks: before === "requires-asks" ? `asksByRequire.ask()` : `asks.ask()`,
       dep: `${state}.ask()`,
     }[asks];
-    return `async () => { const found = ${ask}.then(it => it.name, error => "threw " + error.message); ${state}.asked(); return { name: "second with " + (await found) }; }`;
+    if (asks === "require")
+      return `() => { ${state}.asked(); try { return { name: "second with " + require("${dir}/first.mjs").name }; } catch (error) { return { name: "second threw " + error.name }; } }`;
+    return `async () => { const found = ${ask}.then(it => it.name, error => "threw " + error.message); ${end === "resolves-early" ? `${state}.open(); ` : ""}${state}.asked(); return { name: "second with " + (await found) }; }`;
   };
   const head = (dir: string) =>
-    `import { createRequire } from "node:module";\nimport * as asks from "${dir}/asks.mjs";\nimport asksByRequire from "${dir}/asks.cjs";\nconst require = createRequire(import.meta.url);\n`;
+    `import { createRequire } from "node:module";\nimport * as asks from "${dir}/asks.mjs";\nimport asksByRequire from "${dir}/asks.cjs";\nimport * as ofPackage from "asks-${numberOfCases}";\nconst require = createRequire(import.meta.url);\n`;
   files[`${at}/helper.mjs`] =
     `${head(".")}export const first = ${firstFactory(".")};\nexport const second = ${secondFactory(".")};\n`;
   const dir = `../${at}`;
   files[`t/${name}.test.js`] = `${head(dir)}import { test, vi } from "bun:test";
-import * as helper from "${dir}/helper.mjs";
+${mocked === "file_that_had_run" ? `import "${dir}/first.mjs";\nimport "${dir}/second.mjs";\n` : ""}import * as helper from "${dir}/helper.mjs";
 import { begin } from "${dir}/begins.mjs";
 import { settle } from "${dir}/settles.mjs";
 const turns = async () => { for (let turn = 0; turn < 6; turn++) await new Promise(done => setImmediate(done)); };
@@ -94,10 +120,10 @@ test("${name}", async () => {
   state.tick = new Promise(pass => (state.passTick = pass));
   const asked = new Promise(done => (state.asked = done));
   const overRuns = new Promise(done => (state.overRuns = done));
-  vi.doMock("${dir}/first.mjs", ${{ test: firstFactory(dir), helper: "helper.first", host: `vi.fn(${firstFactory(dir)})` }[first]});
+  vi.doMock("${nameOfFirst(dir)}", ${{ test: firstFactory(dir), helper: "helper.first", host: `vi.fn(${firstFactory(dir)})` }[first]});
   vi.doMock("${dir}/second.mjs", ${{ test: secondFactory(dir), helper: "helper.second" }[second]});
-  const importFirst = () => import("${dir}/first.mjs");
-  const importSecond = () => ${begunBy === "test" ? `import("${dir}/second.mjs")` : `begin()`};
+  const importFirst = () => import("${nameOfFirst(dir)}");
+  const importSecond = () => ${{ test: `import("${dir}/second.mjs")`, begins: `begin()`, root: `import("${dir}/root.mjs")` }[begunBy]};
   const ahead = ${order === "first-ahead" ? "importFirst" : "importSecond"}();
 ${turn === "later" ? `  await settle();\n  await turns();\n` : ""}${asks === "dep" ? `  while (!state.ask) await turns();\n` : ""}${before === "imports-over" ? `  await Promise.race([overRuns, bound(1500)]);\n` : ""}  const behind = ${{ "first-ahead": "importSecond()", "second-ahead": "importFirst()", "second-alone": "undefined" }[order]};
   const [first, second] = ${order === "first-ahead" ? "[ahead, behind]" : "[behind, ahead]"};
@@ -106,8 +132,8 @@ ${turn === "later" ? `  await settle();\n  await turns();\n` : ""}${asks === "de
 ${via === "itself" ? "" : `  await Promise.race([overRuns, bound(300)]);\n`}  await turns();
   state.passTick();
   await turns();
-  state.open();
-  console.log("| ${name}:", await within(first ?? importFirst()), "|", await within(second));
+${asks === "package" ? `  const settled = await Promise.race([second.then(() => "ahead of the gate", () => "ahead of the gate"), bound(300, "behind the gate")]);\n` : ""}  state.open();
+  console.log("| ${name}:", await within(first ?? importFirst()), "|", await within(second)${asks === "package" ? ", settled" : ""});
 });
 `;
 }

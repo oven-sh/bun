@@ -9,7 +9,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { test } from "../supported";
 import { run } from "./run";
 
@@ -39,6 +39,12 @@ const flagsOf = (folder: string) =>
 
 const literalPackagesIn = (folder: string) =>
   (readdirSync(folder, { recursive: true }) as string[]).filter(path => path.split(/[\\/]/).includes("node_modules"));
+
+// As isTestStrict() of scripts/runner.node.ts asks.
+const takenForTestsOfTheRepository = (folder: string) =>
+  (readdirSync(folder, { recursive: true }) as string[]).filter(
+    path => /\.(c|m)?(j|t)sx?$/.test(basename(path)) && /\.test|spec\./.test(basename(path)),
+  );
 
 function markOf(folder: string) {
   if (!existsSync(join(folder, "todo.txt"))) return undefined;
@@ -89,6 +95,8 @@ export function testRunsInFolders(part: number, parts: number) {
     test(`${area}/${project}`, async () => {
       // See the head of this file: such a folder stays behind where the tree is carried, and the project then runs without its packages.
       expect(literalPackagesIn(join(root, area, project)).slice(0, 3)).toEqual([]);
+      // See the head of this file: the runner would run such a file where it lies, by itself and without the packages of its project, and here it would be no test file that is named in its order.
+      expect(takenForTestsOfTheRepository(join(root, area, project)).slice(0, 3)).toEqual([]);
       // A folder for each run: a build leaves files beside what it reads.
       using plainDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       using compiledDir = tempDir("aot-test-run-in-folder", join(root, area, project));

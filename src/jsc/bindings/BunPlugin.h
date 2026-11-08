@@ -108,9 +108,6 @@ public:
             WTF::UncheckedKeyHashSet<String> waitingModules;
             // importChain for the imports that compiled code makes, which the loader does not see: the modules asked for and what their loads lead to.
             WTF::BitVector compiledImportChain = {};
-            // Moments, see momentOfModuleMocks: when the factory was called, and when the import() that led to it was.
-            uint32_t calledAt = 0;
-            uint32_t askedForAt = 0;
         };
         Vector<RunningModuleMock> runningModuleMocks = {};
         // Counts the calls of import() in compiled code and of factories, in one row.

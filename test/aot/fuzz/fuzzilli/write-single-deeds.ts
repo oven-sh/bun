@@ -27,7 +27,7 @@ function walkedSources(draw: Draw): string[] {
     const text = JSON.stringify(`[${items.replace(", ,", ", null,").replace("undefined", "null")}]`);
     const whole = items.replace(", ,", ", 0,");
     const list = pick([`[${items}]`, `[${items}]`, `JSON.parse(${text})`, `JSON.parse(${text})`, `JSON.parse(${text})`, `Object.freeze([${items}])`, `Object.seal([${items}])`, `[${items}].slice()`, `[${items}].map(each => each)`, `structuredClone([${items}])`, `Array.of(${whole})`, `[${items}].concat([])`, `Array.from([${items}])`, `new (class extends Array {})(${whole})`]); // prettier-ignore
-    const source = pick(["L", "L", "L", "L.values()", "L.values()", "L.values()", "L.keys()", "L.entries()", "L[Symbol.iterator]()", "new Set(L)", "new Set(L).values()", "given(...L)", "given(...L)", "rest(...L)", "parts`a${1}b${2}a`", "process.execArgv.concat(L)", "Object.values(L)", "Object.entries(L)", "(function* () { yield* L; })()", "L.values().map(each => each)", "Iterator.from(L)", "{ [Symbol.iterator]: () => L.values() }", "L.toReversed()", "L.flat()"]); // prettier-ignore
+    const source = pick(["L", "L", "L", "L.values()", "L.values()", "L.values()", "L.keys()", "L.entries()", "L[Symbol.iterator]()", "new Set(L)", "new Set(L).values()", "given(...L)", "given(...L)", "rest(...L)", "parts`a${1}b${2}a`", "process.execArgv.slice(0, 0).concat(L)", "Object.values(L)", "Object.entries(L)", "(function* () { yield* L; })()", "L.values().map(each => each)", "Iterator.from(L)", "{ [Symbol.iterator]: () => L.values() }", "L.toReversed()", "L.flat()"]); // prettier-ignore
     const sink = pick(
       needsPairs
         ? ["new Map(@@).size", "[...new Map(@@)].join()", 'new Map(@@).get("a")', "JSON.stringify(Object.fromEntries(@@))", "new Map(@@).has(1)"]

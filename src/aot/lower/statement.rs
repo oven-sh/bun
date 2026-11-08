@@ -232,7 +232,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         if holds_nothing(yes)
             && holds_nothing(no)
-            && self.file.reads_only_what_bun_run_leaves_out(test, true)
+            && self
+                .file
+                .reads_only_what_bun_run_leaves_out_of_empty_if(test)
         {
             return;
         }

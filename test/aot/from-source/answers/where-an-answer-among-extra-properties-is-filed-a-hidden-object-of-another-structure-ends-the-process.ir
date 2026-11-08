@@ -1,8 +1,10 @@
 # An answer for a value or a getter among the extra properties of a compiled object is filed under the structure of the OBJECT and loaded off the hidden object at an offset that the hidden object's structure gave.
-# The two go together because the structure of the object names that of its hidden object, and every road that changes the hidden object derives the structure of the object anew. Where the slot of such a read is made and where an answer is filed that is held.
+# The two go together because the structure of the object names that of its hidden object, and every road that changes the hidden object derives the structure of the object anew. That is held wherever an answer is taken off the structure that is named:
+# at the door of the function that answers a read and of the one that files an answer at a place: values, getters and absences alike.
 # The first run: properties come, go and come back by the roads of the language, a fresh place reads behind each: every answer is that of the language.
-# The last two runs are the red control: a door left open on purpose gives the hidden object another structure and tells nobody: the next filing, of a value or of a getter, ends the process.
-# f1 = make, f2 = depthFirst, f3 = depthNext, f4 = depthLast, f5 = girthFirst, f6 = girthNext
+# The other runs are the red controls: a door left open on purpose gives the hidden object another structure and tells nobody: the next answer ends the process and says where. VALUE and GETTER end where an answer is filed
+# (the tables hold the slot from the reads in front), MADE and ABSENT where a read is answered (a name that nobody has read yet; in ABSENT the name lies on the hidden object and the structure that is named says that it does not).
+# f1 = make, f2 = depthFirst, f3 = depthNext, f4 = depthLast, f5 = girthFirst, f6 = girthNext, f7 = byKey, f8 = setSpan, f9 = brimOf
 # -- source: where-an-answer-among-extra-properties-is-filed-a-hidden-object-of-another-structure-ends-the-process.ts
 # declare function register(...handed: unknown[]): void;
 # class Shelf { width: number; constructor(width: number) { this.width = width; } }
@@ -12,13 +14,17 @@
 # function depthLast(shelf: any): unknown { return shelf.depth; }
 # function girthFirst(shelf: any): unknown { return shelf.girth; }
 # function girthNext(shelf: any): unknown { return shelf.girth; }
-# register(make, depthFirst, depthNext, depthLast, girthFirst, girthNext);
+# function byKey(shelf: any, key: string): unknown { return shelf[key]; }
+# function setSpan(shelf: any, span: number): void { shelf.span = span; }
+# function brimOf(shelf: any): unknown { return shelf.brim; }
+# register(make, depthFirst, depthNext, depthLast, girthFirst, girthNext, byKey, setSpan, brimOf);
 # -- end of source
 # OPTIONS: mechanisms=all
-# RUN: run-in-shell globalThis.register = (make, depthFirst, depthNext, depthLast, girthFirst, girthNext) => { const shelves = [make(1), make(2), make(3)]; const sum = read => { let total = 0; for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) total += read(shelf) ?? 1000; return total; }; for (const shelf of shelves) { shelf.depth = shelf.width * 10; Object.defineProperty(shelf, "girth", { get() { return this.width * 100; }, configurable: true, enumerable: true }); } print(aotPlaceOfProperty(shelves[0], "depth"), sum(depthFirst), sum(girthFirst)); for (const shelf of shelves) shelf.height = 5; print(sum(depthNext), sum(girthNext)); for (const shelf of shelves) delete shelf.depth; print(sum(depthLast)); };
+# RUN: run-in-shell globalThis.register = (make, depthFirst, depthNext, depthLast, girthFirst, girthNext, byKey, setSpan, brimOf) => { const shelves = [make(1), make(2), make(3)]; const sum = read => { let total = 0; for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) total += read(shelf) ?? 1000; return total; }; for (const shelf of shelves) { shelf.depth = shelf.width * 10; shelf.span = 1; Object.defineProperty(shelf, "girth", { get() { return this.width * 100; }, configurable: true, enumerable: true }); } print(aotPlaceOfProperty(shelves[0], "depth"), sum(depthFirst), sum(girthFirst)); for (const shelf of shelves) shelf.height = 5; print(sum(depthNext), sum(girthNext), sum(shelf => byKey(shelf, "span")), sum(brimOf)); for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) setSpan(shelf, turn); print(sum(shelf => byKey(shelf, "span"))); for (const shelf of shelves) delete shelf.depth; print(sum(depthLast)); };
 # REQUIRES: entries-of-bun
 # CHECK: extra property 18000 180000
-# CHECK-NEXT: 18000 180000
+# CHECK-NEXT: 18000 180000 900 900000
+# CHECK-NEXT: 269100
 # CHECK-NEXT: 900000
 # CHECK-NEXT: exited with 0
 # RUN(VALUE): run-in-shell globalThis.register = (make, depthFirst, depthNext) => { const shelves = [make(1), make(2), make(3)]; const sum = read => { let total = 0; for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) total += read(shelf); return total; }; for (const shelf of shelves) shelf.depth = shelf.width * 10; print(sum(depthFirst)); for (const shelf of shelves) print(aotAddExtraPropertyUnseen(shelf, "height", 5)); print("read", sum(depthNext)); };
@@ -26,12 +32,26 @@
 # VALUE: 18000
 # VALUE-COUNT-3: true
 # VALUE-NOT: read
-# VALUE: AOT: the properties that an object holds beside its fields are not laid out as the structure of the object says. This is a bug in Bun.
+# VALUE: AOT: where an answer is filed at a place, the properties that an object holds beside its fields are not laid out as the structure of the object says: it names structure {{*}}, they have {{*}}. This is a bug in Bun.
 # VALUE: crashed with
 # RUN(GETTER): run-in-shell globalThis.register = (make, depthFirst, depthNext, depthLast, girthFirst, girthNext) => { const shelves = [make(1), make(2), make(3)]; const sum = read => { let total = 0; for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) total += read(shelf); return total; }; for (const shelf of shelves) Object.defineProperty(shelf, "girth", { get() { return this.width * 100; }, configurable: true, enumerable: true }); print(sum(girthFirst)); for (const shelf of shelves) print(aotAddExtraPropertyUnseen(shelf, "height", 5)); print("read", sum(girthNext)); };
 # REQUIRES(GETTER): entries-of-bun
 # GETTER: 180000
 # GETTER-COUNT-3: true
 # GETTER-NOT: read
-# GETTER: AOT: the properties that an object holds beside its fields are not laid out as the structure of the object says. This is a bug in Bun.
+# GETTER: AOT: where an answer is filed at a place, the properties that an object holds beside its fields
 # GETTER: crashed with
+# RUN(MADE): run-in-shell globalThis.register = (make, depthFirst, depthNext, depthLast, girthFirst, girthNext, byKey) => { const shelves = [make(1), make(2), make(3)]; const sum = read => { let total = 0; for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) total += read(shelf); return total; }; for (const shelf of shelves) { shelf.depth = shelf.width * 10; shelf.span = 1; } print(sum(depthFirst)); for (const shelf of shelves) print(aotAddExtraPropertyUnseen(shelf, "height", 5)); print("read", sum(shelf => byKey(shelf, "span"))); };
+# REQUIRES(MADE): entries-of-bun
+# MADE: 18000
+# MADE-COUNT-3: true
+# MADE-NOT: read
+# MADE: AOT: where a read is answered, the properties that an object holds beside its fields
+# MADE: crashed with
+# RUN(ABSENT): run-in-shell globalThis.register = (make, depthFirst, depthNext, depthLast, girthFirst, girthNext, byKey, setSpan, brimOf) => { const shelves = [make(1), make(2), make(3)]; const sum = read => { let total = 0; for (let turn = 0; turn < 300; turn++) for (const shelf of shelves) total += read(shelf) ?? 1000; return total; }; for (const shelf of shelves) shelf.depth = shelf.width * 10; print(sum(depthFirst)); for (const shelf of shelves) print(aotAddExtraPropertyUnseen(shelf, "brim", 5)); print("read", sum(brimOf)); };
+# REQUIRES(ABSENT): entries-of-bun
+# ABSENT: 18000
+# ABSENT-COUNT-3: true
+# ABSENT-NOT: read
+# ABSENT: AOT: where a read is answered, the properties that an object holds beside its fields
+# ABSENT: crashed with

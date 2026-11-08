@@ -1150,6 +1150,23 @@ export const shapes: Shape[] = [
         `}\nconsole.log(sum);\n`,
     }),
   },
+  // Each read asked each name used off the value of the class tested for, and counted all classes of the table that are in use: names x reads, classes x reads. 4,000 of each: 1.5 G instructions.
+  {
+    name: "twice as many classes in one table written through keys out of JSON.parse, a method of each called on what is read back",
+    counted: "classes, and names",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `const keys = JSON.parse('["k0","k1","k2","k3","k4","k5","k6","k7"]');\nclass Base { constructor() { this.kind = 0; } }\n` +
+        lines(size, index => `class C${index} extends Base { m${index}() { return ${index}; } }`) +
+        `const table = {};\n` +
+        lines(size, index => `table[keys[${index % 8}]] = new C${index}();`) +
+        `let sum = 0;\nfor (const k of keys) {\n  const x = table[k];\n` +
+        lines(size, index => `  sum += x.m${index} ? x.m${index}() : 0;`) +
+        `}\nconsole.log(sum);\n`,
+    }),
+  },
   // `module.exports = { .. }`: for each key that another file reads, all stores so far were gone through to drop an earlier one of the same name: 16,000 keys took 2.8 G instructions.
   {
     name: "keys of a literal that a CommonJS file exports, each read in another file",
@@ -7308,6 +7325,18 @@ export {};
         `const crates = JSON.parse('[{"wide":1.5,"tall":2.5,"drift":0.5,"sink":0.25},{"wide":2.5,"tall":3.5,"drift":0.75,"sink":0.5}]');\nfunction weighOne(i) { const crate = { wide: i + 0.5, tall: i * 0.5, drift: i * 0.25, sink: 0.5 }; return crate.wide + crate.tall + crate.drift + crate.sink; }\nlet sum = weighOne(3);\n` +
         lines(size, index => `function shift${index}(list, by) { for (let i = 0; i < list.length; i++) { const c = list[i]; c.sink += ${index + 1} * by; c.wide += c.drift * by; c.tall += c.sink * by; } }\nshift${index}(crates, 0.5);`) +
         `console.log(sum + crates[0].wide + crates[1].tall);\n`,
+    }),
+  },
+  {
+    name: "groups of four classes that each answer one name in their own way, called in a loop over a list of the group",
+    counted: "groups",
+    size: 150,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `const picks: number[] = JSON.parse("[0,1,2,3,2,1,0,3]");\nlet sum = 0;\n` +
+        lines(size, index => `interface Kind${index} { weigh${index}(): number }\nclass A${index} implements Kind${index} { constructor(private a: number) {} weigh${index}(): number { return this.a + ${index}; } }\nclass B${index} implements Kind${index} { constructor(private b: number) {} weigh${index}(): number { return this.b * 2; } }\nclass C${index} implements Kind${index} { constructor(private c: number) {} weigh${index}(): number { return this.c - 1; } }\nclass D${index} implements Kind${index} { constructor(private d: number) {} weigh${index}(): number { return 0 * this.d; } }\nfunction make${index}(pick: number): Kind${index} { return pick === 0 ? new A${index}(pick) : pick === 1 ? new B${index}(pick) : pick === 2 ? new C${index}(pick) : new D${index}(pick); }\nfunction all${index}(list: Kind${index}[]): number { let s = 0; for (const each of list) s += each.weigh${index}(); return s; }\nsum += all${index}(picks.map(make${index}));`) +
+        `console.log(sum);\n`,
     }),
   },
   // A walk of a loop that believes a variable as it stood in front folds away the test behind which a helper stores the next variable, so each walk learned one store more:

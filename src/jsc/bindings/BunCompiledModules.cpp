@@ -663,7 +663,7 @@ static std::optional<AOT::ModuleID> moduleThatRanBehindKeyOfOriginal(Zig::Global
     if (!isBunTest || !key.endsWith("?actual"_s))
         return std::nullopt;
     auto module = moduleThatAnswersToPath(key.left(key.length() - "?actual"_s.length()));
-    if (!module || !AOT::isESModule(*module) || !((AOT::liesUnderKeyOfOriginal(globalObject, *module) && AOT::whoLoaded(globalObject, *module) != AOT::LoadedBy::EarlierTestFile) || (ranBesideMockThatWaits(globalObject, *module) && !AOT::isKeptByLoadsInFlight(globalObject, *module))) || AOT::isEvictedFile(globalObject, *module) || AOT::wasLetGoByLoader(globalObject, *module) || AOT::errorThrownByBodyOfMockedModule(globalObject, *module))
+    if (!module || !((AOT::liesUnderKeyOfOriginal(globalObject, *module) && (AOT::whoLoaded(globalObject, *module) != AOT::LoadedBy::EarlierTestFile || key.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP)))) || (ranBesideMockThatWaits(globalObject, *module) && !AOT::isKeptByLoadsInFlight(globalObject, *module))) || AOT::isEvictedFile(globalObject, *module) || AOT::wasLetGoByLoader(globalObject, *module) || AOT::errorThrownByBodyOfMockedModule(globalObject, *module))
         return std::nullopt;
     return module;
 }
@@ -692,8 +692,12 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
         return rejected();
     if (!module)
         return nullptr;
-    if (isBunTest && !JSMock__isInPreload(globalObject))
-        globalObject->onLoadPlugins.testFileOfModule.set(key, globalObject->onLoadPlugins.testFile);
+    if (isBunTest && !JSMock__isInPreload(globalObject)) {
+        unsigned testFile = globalObject->onLoadPlugins.testFile;
+        auto loadedBy = AOT::whoLoaded(globalObject, *module);
+        if (loadedBy != AOT::LoadedBy::Preload)
+            globalObject->onLoadPlugins.testFileOfModule.set(key, testFile > 1 && loadedBy == AOT::LoadedBy::EarlierTestFile ? testFile - 1 : testFile);
+    }
     bool textComesInLaterTurn = AOT::textOfFetchedModuleComesInLaterTurn(globalObject, *module);
     AbstractModuleRecord* record = AOT::moduleRecord(globalObject, *module);
     if (scope.exception()) [[unlikely]]

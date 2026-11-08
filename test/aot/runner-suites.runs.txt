@@ -42,7 +42,6 @@ test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > a module that was mocked after it had imported a mock: vi.doMock
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: jest.doMock
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends, for modules that import one another > the next file gets the originals after a file mocks a loaded module and then one of its imports: mock.module
-test/js/bun/test/mock/mock-module.test.ts: an automock is built from the copy of its original module that a running factory was given
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > a factory that fails
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > files that share their modules
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > require() of a module that imports the mock
@@ -57,6 +56,9 @@ test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, wh
 test/js/bun/test/mock/mock-module.test.ts: two mocks that patch one variable, which two modules export, are both undone when the file ends > the second without a factory
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by a preload, as its mock: the imports of the file get the mock
 test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a module that is loaded already > by an earlier test file: the imports of the file get the mock
+# The next one: a require() gives up on a mock whose factory has not settled, an import() of the same file is in flight, and the modules are reset. Every test of the fixture passes. Compiled, one body runs
+# behind the last line of the test and races the end of the process: some lists hold it and some do not. With a wait as the last line of the test every list holds it. The list of plain is the same in every run.
+~ test/js/bun/test/mock/mock-module.test.ts: an automock is built from the copy of its original module that a running factory was given
 # These: an import cycle through a mocked module. Plain runs the original of the mocked module, then the factory, then the module of the cycle that imports the mock.
 # Compiled runs that importer first. The fixtures see another order, an export that should have no value yet, or "Cannot access 'Base' before initialization".
 # These: vi.importActual(X) in a factory that is running, where X imports the module that is being mocked. Plain links X to the original and runs it.

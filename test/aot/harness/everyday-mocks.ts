@@ -13,16 +13,6 @@ const stillWrong: [cases: RegExp, secondTest: string, what: string][] = [
     "2 the load threw EvalError",
     "a mock that needs the original, imported again behind resetModules()",
   ],
-  [
-    /^bare--in-the-test--(nothing|clear-all-mocks|restore-all-mocks|reset-all-mocks)--required--two-tests$/,
-    "2,undefined/real brand,undefined,real brand,1,1",
-    "a mock without a factory that is laid anew is another one for the test than for the file that required it first",
-  ],
-  [
-    /^the-original-awaited-in-the-factory--before-each-test--(nothing|clear-all-mocks|restore-all-mocks|reset-all-mocks)--required--two-tests$/,
-    "2,real/real brand,mock,real brand,1,1",
-    "require() does not wait for a factory that awaits, and hands out the mock in the second test",
-  ],
 ];
 
 // AOT_TEST_RUN_WORDS puts every compiled run under its words, as in test-runs-in-folders.ts.

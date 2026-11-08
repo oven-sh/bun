@@ -46,6 +46,15 @@ put(Number(process.argv.length > 99 ? 0 : 4), 9.5);
 console.log(list.length);
 `;
 const stopAtBound = /^AOT: f\d+ at \d+:\d+: .+ is not of the type that the compiler has proven of it\./m;
+// The compiler takes every position that the library vouches for one further, where the room of the list reaches that far. The list has room for eight and a length of five:
+// what the sort of numbers in place reads and stores behind its end lies inside that room.
+const oneFurther = "--aot-testing=VouchedPositionsAreTakenOneFurther";
+const sortedInPlace = `const list: number[] = [];
+for (let i = 0; i < 8; i++) list.push(((i * 7) % 5) + 1);
+list.length = 5;
+list.sort((a, b) => a - b);
+console.log(list.join(), list.length);
+`;
 // The compiler takes the turns of a loop to leave the storage of lists and of views, and so their lengths, as they were in front of it: what a turn reads of them is read once, in front.
 // Each program stays inside memory that is still there: it reads no element, or it reads one where it lay before, and it stores nothing.
 const asInFront = "--aot-testing=StorageAndLengthsAreTakenToBeAsInFront";
@@ -460,6 +469,15 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     120_000,
   );
 
+  test("stops the program at a position that the library vouches for and that is false", async () => {
+    using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });
+    await build(String(folder), ["--aot-harden=proof-checks", oneFurther]);
+    const { stdout, stderr, exitCode } = await runBuilt(String(folder));
+    expect(stderr).toMatch(stopAtBound);
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  }, 120_000);
+
   test("leaves no access without its test", async () => {
     expect((await countsOf(countedLoops, [])).RangeChecksRemoved).toBeGreaterThan(0);
     expect((await countsOf(countedLoops, ["--aot-harden=proof-checks"])).RangeChecksRemoved).toBe(0);
@@ -499,6 +517,31 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
     expect(stderr).toMatch(stopAtBound);
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
+  }, 120_000);
+
+  test("stops the program at a position that the library vouches for and that is false", async () => {
+    using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });
+    await build(String(folder), ["--aot-harden=ignore-told-ranges", oneFurther]);
+    const { stdout, stderr, exitCode } = await runBuilt(String(folder));
+    expect(stderr).toMatch(stopAtBound);
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  }, 120_000);
+
+  test("leaves alone a program whose vouched positions hold", async () => {
+    using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });
+    await build(String(folder), ["--aot-harden=ignore-told-ranges"]);
+    const { stdout, stderr, exitCode } = await runBuilt(String(folder));
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1,2,3,4,5 5\n", stderr: "", exitCode: 0 });
+  }, 120_000);
+
+  test("does not hold a vouched position without being asked for", async () => {
+    using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });
+    await build(String(folder), [oneFurther]);
+    const { stdout, stderr, exitCode } = await runBuilt(String(folder));
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(stdout).toEndWith(" 5\n");
+    expect(stdout).not.toBe("1,2,3,4,5 5\n");
   }, 120_000);
 
   test("leaves alone a program whose bounds hold", async () => {

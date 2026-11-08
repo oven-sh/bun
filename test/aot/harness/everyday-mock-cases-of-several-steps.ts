@@ -1,6 +1,7 @@
 // Two more crosses of the tests that people write with mocks every day, beside everyday-mock-cases.ts. Each case is a project of its own.
 //
-// What stays from one test file to the next: three test files in one run. The first mocks a `lamp`, the second mocks nothing, the third mocks it with another word. A `room` uses the lamp and is loaded at the
+// What stays from one test file to the next: three test files in one run. The first mocks a `lamp`, the second mocks nothing, the third mocks it with another word; or the first only loads, and the second is
+// the first to mock. A `room` uses the lamp and is loaded at the
 // top of each test file; a `hall` does the same and is loaded inside the test. Each test file prints what the two say, and how often the files that use the lamp have run so far.
 //
 // A mock that is laid twice: one test lays a mock over the lamp, loads the room, and then resets the modules or not, lays the mock again, ends it or does nothing, and loads the room again. The body of the
@@ -68,7 +69,7 @@ export function mocksFromOneTestFileToTheNext(): EverydayMockCase[] {
   for (const [lamp, { named, key, files }] of Object.entries(lamps))
     for (const [held, [kind, text, between]] of Object.entries(holds))
       for (const way of ["a-factory", "bare", "mock-module"])
-        for (const place of ["at-the-top", "in-the-test"]) {
+        for (const place of ["at-the-top", "in-the-test", "first-in-the-second-test-file"]) {
           const isValue = lamp === "a-json-file";
           const made = (word: string) => (isValue ? JSON.stringify(word) : `jest.fn(() => ${JSON.stringify(word)})`);
           const factory = (word: string) =>
@@ -115,7 +116,11 @@ export function mocksFromOneTestFileToTheNext(): EverydayMockCase[] {
                 place === "at-the-top" ? lays("mock") : "",
                 place === "in-the-test" ? lays("mock") : "",
               ),
-              "2-second.test.mjs": testFile("second", "", ""),
+              "2-second.test.mjs": testFile(
+                "second",
+                "",
+                place === "first-in-the-second-test-file" ? lays("mock") : "",
+              ),
               "3-third.test.mjs": testFile("third", lays("other"), ""),
             },
           });

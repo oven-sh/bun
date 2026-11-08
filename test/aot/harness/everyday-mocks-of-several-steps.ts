@@ -4,6 +4,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "../supported";
 import type { EverydayMockCase } from "./everyday-mock-cases";
+import { mocksInAChain } from "./everyday-mock-cases-in-a-chain";
 import { mocksFromOneTestFileToTheNext, mocksLaidTwice } from "./everyday-mock-cases-of-several-steps";
 import { run } from "./run";
 
@@ -40,23 +41,34 @@ function each(
   part: number,
   parts: number,
   judge: (name: string, plain: Outcome, compiled: Outcome) => void,
+  tries = 1,
 ) {
   const stretch = Math.ceil(cases.length / parts);
   for (const { name, files } of cases.slice((part - 1) * stretch, part * stretch)) {
     test(name, async () => {
-      const [plain, again, compiled] = await Promise.all([
-        outcomeOf(files, ""),
-        outcomeOf(files, ""),
-        outcomeOf(files, wordsOfAll, "--aot"),
-      ]);
-      // A case in which `bun test` does not say the same twice specifies nothing.
-      if (!Bun.deepEquals(plain, again)) {
-        console.error(
-          `THE REFERENCE WAVERED: ${name}: plain Bun said ${JSON.stringify(plain)}, then ${JSON.stringify(again)}`,
-        );
-        return;
+      for (let attempt = 1; ; attempt++) {
+        const [plain, again, compiled] = await Promise.all([
+          outcomeOf(files, ""),
+          outcomeOf(files, ""),
+          outcomeOf(files, wordsOfAll, "--aot"),
+        ]);
+        // A case in which `bun test` does not say the same twice specifies nothing.
+        if (!Bun.deepEquals(plain, again)) {
+          if (attempt < tries) continue;
+          console.error(
+            `THE REFERENCE WAVERED: ${name}: plain Bun said ${JSON.stringify(plain)}, then ${JSON.stringify(again)}`,
+          );
+          return;
+        }
+        // A run that printed nothing would be the same as any other that printed nothing.
+        expect(plain.printed).not.toBeEmpty();
+        try {
+          judge(name, plain, compiled);
+          return;
+        } catch (error) {
+          if (attempt === tries) throw error;
+        }
       }
-      judge(name, plain, compiled);
     });
   }
 }
@@ -69,6 +81,62 @@ export function mocksFromOneTestFileToTheNextIn(part: number, parts: number) {
     expect({ ...compiled, printed: [], didNotRunAgain: 0 }).toEqual({ ...plain, printed: [] });
     if (!Bun.deepEquals(compiled.printed, plain.printed)) expect(compiled.didNotRunAgain).toBeGreaterThan(0);
   });
+}
+
+// Where the two runs part today. Such a case fails once they agree: its line goes out.
+const partsInAChain: [cases: RegExp, what: string][] = [
+  [
+    /^(bare|a-spy|a-factory-over-the-original)--imported-at-run-time--(two|three)--unmocked-meanwhile$/,
+    "the load of the spring that was under way hands out the mock, though the mock was ended meanwhile",
+  ],
+  [
+    /^(bare|a-spy|a-factory-over-the-original)--(imported|the-original-asked-for)--(two|three)--modules-reset-meanwhile$/,
+    "the body of the spring runs once more",
+  ],
+  [
+    /^(?!a-file-among-the-mocks--imported-at-run-time--)[a-z-]+--(imported-at-run-time|imported|the-original-asked-for)--one--modules-reset-meanwhile$/,
+    "the modules are reset while the brook itself waits for the spring",
+  ],
+  [
+    /^[a-z-]+--imported--(one|two|three)--unmocked-meanwhile$/,
+    "the mock is ended while a file that imports the spring is loaded",
+  ],
+  [
+    /^(bare|a-spy|a-file-among-the-mocks)--required--one--unmocked-meanwhile$/,
+    "the mock is ended while a file that requires the spring is loaded",
+  ],
+  [/^a-factory-over-the-original--required--/, "require() meets a factory that waits for the original"],
+  [
+    /^a-factory-that-waits--(imported-at-run-time|required)--(one|two|three)--unmocked-meanwhile$/,
+    "the mock is ended while its factory waits",
+  ],
+  [
+    /^a-factory-that-waits--(imported-at-run-time|required)--one--laid-in-the-test$/,
+    "the brook itself asks for the spring while the factory waits",
+  ],
+  [
+    /^a-factory-that-waits--required--((one|two)--loads-begun-in-another-file|two--laid-in-a-preload|one--modules-reset-meanwhile)$/,
+    "require() meets a factory that waits",
+  ],
+  [
+    /^a-factory-that-waits--imported--((one|two|three)--laid-in-the-test|three--(loads-begun-in-another-file|laid-in-a-preload)|(two|three)--modules-reset-meanwhile)$/,
+    "a file that imports the spring is loaded while the factory waits",
+  ],
+];
+
+// These tests wait for loads and for a timer, and on a busy machine a run now and then comes too late for itself. So a case is asked up to three times, and fails if it fails each time.
+export function mocksInAChainIn(part: number, parts: number) {
+  each(
+    mocksInAChain(),
+    part,
+    parts,
+    (name, plain, compiled) => {
+      if (partsInAChain.some(([names]) => names.test(name)))
+        expect({ ...compiled, didNotRunAgain: 0 }).not.toEqual(plain);
+      else expect({ ...compiled, didNotRunAgain: 0 }).toEqual(plain);
+    },
+    3,
+  );
 }
 
 // Where the two runs part today, and all that the compiled run prints there. Such a case fails by any other difference, and once the two runs agree: its line goes out.

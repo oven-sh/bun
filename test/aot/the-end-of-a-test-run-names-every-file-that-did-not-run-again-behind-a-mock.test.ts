@@ -74,6 +74,14 @@ const runs = {
     },
     named: ["meter.cjs, while z.test.mjs ran", "panel.cjs, while z.test.mjs ran"],
   },
+  "an earlier test file loaded CommonJS files and the next one mocks the file that they require": {
+    files: {
+      ...commonJs,
+      "a.test.mjs": inTest(ask("earlier", "panel.cjs")),
+      "b.test.mjs": inTest(lay("floor.cjs") + ask("first", "panel.cjs")),
+    },
+    named: ["meter.cjs, while b.test.mjs ran", "panel.cjs, while b.test.mjs ran"],
+  },
   "CommonJS files that require a mocked ES module": {
     files: {
       "floor.mjs": esModules["floor.mjs"],
@@ -108,6 +116,20 @@ const runs = {
       "b.test.mjs": throughDoor(lay("floor.cjs") + call("first") + `  vi.doUnmock("./floor.cjs");\n` + call("second")),
     },
     named: ["meter.cjs, while b.test.mjs ran", "panel.cjs, while b.test.mjs ran"],
+  },
+  "this test file had loaded the files, only the test loads the mock, and it asks again behind its end": {
+    files: {
+      ...commonJs,
+      "b.test.mjs": inTest(
+        ask("first", "panel.cjs") +
+          lay("floor.cjs") +
+          `  console.log("SAID", "mock", (await import("./floor.cjs")).level);\n` +
+          ask("under", "panel.cjs") +
+          `  vi.doUnmock("./floor.cjs");\n` +
+          ask("second", "panel.cjs"),
+      ),
+    },
+    named: [],
   },
   "the mock is removed and nobody asks again by require()": {
     files: {

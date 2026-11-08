@@ -1,0 +1,103 @@
+# -- source: main.cjs
+# "use strict";
+# const list = JSON.parse("[0.5, 1.5, 2.5, 3.5]"), rows = JSON.parse("[null, 0, true, 1]");
+# function unlike(l, x) { let c = 0; for (let i = 0; i < l.length; i++) if (l[i] !== x) c++; return c; }
+# function f(t) { return unlike(list, t & 3) + unlike(rows, t & 1); }
+# console.log(f(1), f(2));
+# -- end of source
+# Every caller of the function that counts by !== is in sight, so its parameter is known to be a list and the loop tells nothing apart in front. Nothing is known of the contents; the needle is a number. A relation beside a number spoke for a list of numbers, an equality
+# did not: every element was read boxed out of whatever storage. An equality is weaker evidence: so the list is asked for storage of numbers, and a list that has none goes to a second quick copy that
+# reads whatever storage, the copy that stood there before: a guess that fails costs one test. Where no second copy can be bought the guess is not made. Not in a loop that stands in another.
+# f1 = unlike, f2 = f
+# RUN(ASKED): walk f1 mechanisms=all
+# REQUIRES(ASKED): entries-of-bun
+# ASKED: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
+# ASKED: GetArrayElement {{*}}arrayStorage=Double
+# RUN(BEHIND): compile LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage mechanisms=all
+# REQUIRES(BEHIND): entries-of-bun
+# BEHIND-NOT: statistic LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage 0
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0 place=0
+layout L1 module=m0 place=0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=5
+variable g1 name="unlike" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g2 name="list" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=3
+variable g3 name="rows" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=4
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f2 @0
+    v4 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} @0
+    v5 = Builtin builtin=JSON @27
+    v6 = PropGet v5 key="parse" @27
+    v7 = Convert v6 declared={type=builtin(JSONParse) flags=[IsExpected]} @27
+    v8 = String string="[0.5, 1.5, 2.5, 3.5]" @38
+    v9 = Call v7, v5, v8 calleeKey="parse" calleeName="JSON.parse" @32
+    PutModuleVariable v9 variable=g2 @20
+    v11 = Builtin builtin=JSON @70
+    v12 = PropGet v11 key="parse" @70
+    v13 = Convert v12 declared={type=builtin(JSONParse) flags=[IsExpected]} @70
+    v14 = String string="[null, 0, true, 1]" @81
+    v15 = Call v13, v11, v14 calleeKey="parse" calleeName="JSON.parse" @75
+    PutModuleVariable v15 variable=g3 @63
+    v17 = Builtin builtin=GlobalThis @275
+    v18 = PropGet v17 key="console" [isFreeName] @275
+    v19 = Convert v18 declared={type=builtin(Console) flags=[IsExpected]} @275
+    v20 = PropGet v19 key="log" @275
+    v21 = Convert v20 declared={type=builtin(ConsoleLog) flags=[IsExpected]} @275
+    v22 = Integer integer=1 @289
+    v23 = Call v4, -, v22 calleeName="f" @287
+    v24 = Integer integer=2 @295
+    v25 = Call v4, -, v24 calleeName="f" @293
+    v26 = Call v21, v19, v23, v25 calleeKey="log" calleeName="console.log" @283
+    v27 = Undefined @275
+    Return v27 @275
+}
+function f1 name="unlike" module=m0 position=104 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    v2 = Integer @136
+    v3 = Convert v2 declared={type=number flags=[IsExpected]} @136
+    v4 = Integer @152
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]} @152
+    Jump -> next b1(v3, v5) @148
+  b1(v6, v7):
+    LoopHint @148
+    v9 = PropGet v0 key="length" @159
+    v10 = Less v7, v9 @159
+    Branch v10 -> taken b2(), notTaken b5() @159
+  b2():
+    v11 = ElemGet v0, v7 @178
+    v12 = StrictEq v11, v1 @187
+    Branch v12 -> taken b4(v6), notTaken b3() @187
+  b3():
+    v13 = Increment v6 @190
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @190
+    Jump -> next b4(v14) @190
+  b4(v15):
+    v16 = Increment v7 @169
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]} @169
+    Jump -> next b1(v15, v17) @169
+  b5():
+    Return v6 @202
+}
+function f2 name="f" module=m0 position=207 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32):
+    v1 = GetModuleVariable variable=g1 @230
+    v2 = GetModuleVariable variable=g2 @237
+    v3 = CheckInitialized v2 name="list" @237
+    v4 = Integer integer=3 @247
+    v5 = BitAnd v0, v4 @247
+    v6 = Call v1, -, v3, v5 calleeName="unlike" @230
+    v7 = GetModuleVariable variable=g1 @252
+    v8 = GetModuleVariable variable=g3 @259
+    v9 = CheckInitialized v8 name="rows" @259
+    v10 = Integer integer=1 @269
+    v11 = BitAnd v0, v10 @269
+    v12 = Call v7, -, v9, v11 calleeName="unlike" @252
+    v13 = Add v6, v12 @252
+    Return v13 @252
+}

@@ -167,6 +167,7 @@ const getSockNameFn: (fd: number) => { address: string; port: number; family: st
   "udp_socket.bind.ts",
   "dgramGetSockNameFd",
 );
+const isAddressFn: (host: string, ipv6: boolean) => boolean = $bindgen("udp_socket.bind.ts", "dgramIsAddress");
 
 let BlockList: $Node.BlockListConstructor | undefined;
 function isBlockList(value: unknown): value is $Node.BlockList {
@@ -383,6 +384,30 @@ function blockListFamily(handle: UDPHandle, ip: string) {
   return `ipv${isIP(ip) || handle.family}`;
 }
 
+const sendFn = $bindgen("udp_socket.bind.ts", "send") as (
+  socket: $Node.UDPSocketHandle,
+  data: ArrayBufferLike | ArrayBufferView,
+  host: string,
+  port: number,
+  ipv6: boolean,
+  take: boolean,
+  send: boolean,
+) => number;
+
+// An address goes through `sendFn`, the handle's own reader: the public `socket.send()` also takes inet_aton shorthand and an address of the other family.
+function handleNativeSend(
+  handle: UDPHandle,
+  socket: $Node.UDPSocketHandle,
+  data: Uint8Array,
+  port: number | undefined,
+  address: string | null | undefined,
+  take: boolean,
+  send: boolean,
+) {
+  if (port) return sendFn(socket, data, address!, port, handle.family === 6, take, send);
+  return send && socket.send(data) ? 1 : 0;
+}
+
 // Mirrors the libuv UDP wrap's send(): sentBytes + 1 on synchronous success,
 // 0 when queued for the next writable event (callback fires on drain), or a
 // negative uv errno / native error. Connected form omits port/address.
@@ -405,6 +430,11 @@ function handleSend(
     return UV_EBADF;
   }
 
+  // The handle converts nothing to an address. Node's asserts a string here.
+  if (port && typeof address !== "string") {
+    return UV_EINVAL;
+  }
+
   let data;
   if (count === 1) {
     const { buffer, byteOffset, byteLength } = list[0];
@@ -415,20 +445,24 @@ function handleSend(
 
   // Don't jump the queue: if earlier requests are still waiting for the kernel
   // to accept them, this one goes behind them (libuv's uv_udp_send order).
-  if (this.sendQueue !== undefined) {
-    return handleQueueSend(this, data, port, address, req);
-  }
+  const queued = this.sendQueue !== undefined;
 
-  let accepted;
+  let code;
   try {
-    accepted = port ? socket.send(data, port, address!) : socket.send(data);
+    // libuv reads the address and checks the handle before it queues a request: one that it refuses never waits.
+    code = handleNativeSend(this, socket, data, port, address, true, !queued);
   } catch (err) {
     // Hand the original error back so the caller keeps the platform-correct
     // code; a numeric return is reserved for libuv-style errno values.
     return err;
   }
+  if (code < 0) return code;
 
-  if (!accepted) {
+  if (queued) {
+    return handleQueueSend(this, data, port, address, req);
+  }
+
+  if (code === 0) {
     // Kernel send buffer is full. The native send re-armed writable and
     // on_drain will fire when it clears — queue this request until then like
     // libuv's uv_udp_send() does when uv_udp_try_send() reports EAGAIN.
@@ -492,7 +526,10 @@ function handleDrain(this: UDPHandle) {
     let err;
     let accepted = false;
     try {
-      accepted = entry.port ? socket.send(entry.data, entry.port, entry.address!) : socket.send(entry.data);
+      // libuv checked this request when it took it: only the kernel refuses it now.
+      const code = handleNativeSend(this, socket, entry.data, entry.port, entry.address, false, true);
+      if (code < 0) err = code;
+      else accepted = code !== 0;
     } catch (e) {
       err = e;
     }
@@ -780,6 +817,13 @@ Socket.prototype.bind = function (this: $Node.DgramSocket, port_, address_ /* , 
       return;
     }
 
+    // Node's handle.bind() reads the address by the family of the handle and resolves nothing, as connect() and send() do. Bun.udpSocket() resolves it, and binds a socket of the family that it finds.
+    if (typeof ip !== "string" || !isAddressFn(ip, state.handle.family === 6)) {
+      state.bindState = BIND_STATE_UNBOUND;
+      this.emit("error", new ExceptionWithHostPort(UV_EINVAL, "bind", ip, port));
+      return;
+    }
+
     let flags = uSockets.LISTEN_DISALLOW_REUSE_PORT_FAILURE;
 
     if (state.reuseAddr) {
@@ -928,7 +972,7 @@ function startBunSocket(
     };
     // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
     if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
-    (Bun.udpSocket(udpOptions) as Promise<$Node.UDPSocketHandle>).$then(
+    (Bun.udpSocket(udpOptions) as unknown as Promise<$Node.UDPSocketHandle>).$then(
       (socket: $Node.UDPSocketHandle) => {
         if (!state.handle) {
           // Closed while the bind was in flight.

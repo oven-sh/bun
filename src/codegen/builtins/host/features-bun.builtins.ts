@@ -342,11 +342,13 @@ export default b.declarations(
       "dgramCloseFd",
       "dgramGetSockNameFd",
       "dgramGuessHandleType",
+      "dgramIsAddress",
       "dgramIsFdAdopted",
       "dgramListenFd",
       "dgramNewSocketFd",
       "disconnect",
       "getFd",
+      "send",
     ),
   ),
 

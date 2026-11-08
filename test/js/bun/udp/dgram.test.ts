@@ -4,7 +4,7 @@ import { BlockList } from "node:net";
 import { networkInterfaces } from "node:os";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, hasIPv6Loopback, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, hasIPv6Loopback, isLinux, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -532,8 +532,9 @@ test.skipIf(linkLocal === undefined)("connect() reads the zone of a link-local a
   }
 });
 
-// isIP() is 0 for "::1%", and the handle reads it as ::1. Node asks the list
-// about family "ipv0", which blocks nothing, and connects.
+// isIP() is 0 for "::1%", and the handle reads it as ::1. Node.js v26.3.0 asks
+// the list about family "ipv0", which blocks nothing there, and connects.
+// v26.12.1 reads "ipv0" as IPv6, and blocks it too.
 test.skipIf(!hasIPv6Loopback())("connect() asks sendBlockList about an address that isIP() does not know", async () => {
   const sendBlockList = new BlockList();
   sendBlockList.addAddress("::1", "ipv6");
@@ -617,6 +618,427 @@ test.skipIf(!isWindows)("connect() to 0.0.0.0 reports connect EADDRNOTAVAIL on W
   } finally {
     socket.close();
   }
+});
+
+// A socket on the loopback address of `type`, and every datagram that it got.
+// `received()` sends one more datagram there and waits for it. The loopback
+// interface keeps the order, so what an earlier send() gave to the kernel is
+// in front of it: no timer decides that nothing else is on its way.
+async function loopbackReceiver(type: "udp4" | "udp6" = "udp4") {
+  const address = type === "udp6" ? "::1" : "127.0.0.1";
+  const socket = createSocket(type);
+  const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+  socket.bind(0, address, onBound);
+  await bound;
+  const port = socket.address().port;
+  const messages: string[] = [];
+  socket.on("message", message => messages.push(String(message)));
+  return {
+    socket,
+    port,
+    async received() {
+      const last = createSocket(type);
+      try {
+        const { promise: arrived, resolve, reject } = Promise.withResolvers<void>();
+        const onMessage = (message: Buffer) => {
+          if (String(message) === "last") resolve();
+        };
+        socket.on("message", onMessage);
+        last.send("last", port, address, err => err && reject(err));
+        await arrived;
+        socket.removeListener("message", onMessage);
+        return messages.splice(0).filter(message => message !== "last");
+      } finally {
+        last.close();
+      }
+    },
+  };
+}
+
+// A lookup that answers "host.invalid" with `answer`, and every other name with itself.
+const lookupAnswers = (answer: unknown) => (address: string, family: number, callback: Function) =>
+  callback(null, address === "host.invalid" ? answer : address, family);
+
+function sendErrorShape(err: any) {
+  if (!err) return err;
+  const { name, code, syscall, address, port, message } = err;
+  return { name, code, syscall, address, port, message };
+}
+
+const sendError = (code: string, address: string, port: number) => ({
+  name: "Error",
+  code,
+  syscall: "send",
+  address,
+  port,
+  message: `send ${code} ${address}:${port}`,
+});
+
+const UV_EINVAL = isWindows ? -4071 : -22;
+
+// send() hands the answer of the lookup to the same reader as connect(): an
+// address of the socket's family and nothing else. Node's handle asserts that
+// the answer is a string, which ends the process. The public socket.send()
+// converts the answer to a string: the object got to 127.0.0.1 that way, and
+// off Windows the number too, which it reads as inet_aton() does.
+const answerToString = jest.fn(() => "127.0.0.1");
+test.each([
+  ["a number", 2130706433],
+  ["an object", { toString: answerToString }],
+])("send() with a custom lookup that yields %s reports send EINVAL", async (_name, answer) => {
+  const to = await loopbackReceiver();
+  const socket = createSocket({ type: "udp4", lookup: lookupAnswers(answer) as any });
+  try {
+    const err = await new Promise(resolve => socket.send("to no address", to.port, "host.invalid", resolve));
+    expect({
+      error: sendErrorShape(err),
+      received: await to.received(),
+      conversions: answerToString.mock.calls.length,
+    }).toEqual({ error: sendError("EINVAL", "host.invalid", to.port), received: [], conversions: 0 });
+  } finally {
+    socket.close();
+    to.socket.close();
+  }
+});
+
+// isIP() is 0 for these answers. The handle reads each one as the blocked
+// address, or refuses it for its NUL. The list is asked about every answer,
+// in the family of the socket when isIP() gives none. Node.js v26.3.0 asks
+// with the family "ipv0", which blocks nothing there, and sends. v26.12.1
+// reads "ipv0" as IPv6, and blocks them too.
+describe.each([
+  ["::1", ["::1%", "::1%a%b", "::1% ", "::1\0rebound.example"]],
+  ["127.0.0.1", ["::ffff:127.0.0.1%"]],
+] as const)("send() on a udp6 socket with %s in sendBlockList", (listed, answers) => {
+  const receiverType = listed === "::1" ? "udp6" : "udp4";
+  test.skipIf(!hasIPv6Loopback()).each(answers)("does not send to a lookup answer of %j", async answer => {
+    const to = await loopbackReceiver(receiverType);
+    const sendBlockList = new BlockList();
+    sendBlockList.addAddress(listed, receiverType === "udp6" ? "ipv6" : "ipv4");
+    const socket = createSocket({ type: "udp6", sendBlockList, lookup: lookupAnswers(answer) as any });
+    try {
+      const err: any = await new Promise(resolve => socket.send("blocked", to.port, "host.invalid", resolve));
+      expect({ code: err?.code, message: err?.message, received: await to.received() }).toEqual({
+        code: "ERR_IP_BLOCKED",
+        message: `IP(${answer}) is blocked by net.BlockList`,
+        received: [],
+      });
+    } finally {
+      socket.close();
+      to.socket.close();
+    }
+  });
+});
+
+// Every spelling of an IPv6 address: each way to pad a group, to leave a run
+// of zero groups out and to write the last two groups as a dotted quad, with
+// no zone and with an empty one. The unpadded ones also have a zone that names
+// no interface, which costs the handle three syscalls.
+function* spellingsOfIPv6(groups: number[]) {
+  const pads = [
+    (group: number) => group.toString(16),
+    (group: number) => group.toString(16).padStart(4, "0"),
+    (group: number) => group.toString(16).toUpperCase().padStart(3, "0"),
+  ];
+  for (const pad of pads) {
+    for (const quad of [false, true]) {
+      const head = quad ? groups.slice(0, 6) : groups;
+      const tail = quad ? [`${groups[6] >> 8}.${groups[6] & 255}.${groups[7] >> 8}.${groups[7] & 255}`] : [];
+      const texts = [[...head.map(pad), ...tail].join(":")];
+      for (let start = 0; start < head.length; start++) {
+        for (let end = start; end < head.length && head[end] === 0; end++) {
+          texts.push(
+            `${head.slice(0, start).map(pad).join(":")}::${[...head.slice(end + 1).map(pad), ...tail].join(":")}`,
+          );
+        }
+      }
+      for (const text of texts) yield* [text, `${text}%`, ...(pad === pads[0] ? [`${text}%nosuch0`] : [])];
+    }
+  }
+}
+
+// sendBlockList and the handle each read the answer of a lookup, with two
+// readers. A text that the handle takes and the list does not know as the
+// same address would get past the list. The handle is asked through a queue
+// that sends nothing: it answers 0 for an address that it takes, and the
+// request waits.
+test.skipIf(!hasIPv6Loopback())("sendBlockList blocks every spelling of an address that the handle takes", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const texts = [
+    ...spellingsOfIPv6([0, 0, 0, 0, 0, 0, 0, 1]),
+    ...spellingsOfIPv6([0, 0, 0, 0, 0, 0xffff, 0x7f00, 1]),
+    ...["::1 ", "::1/128", "[::1]", "::00001", "::ffff:127.1", "::ffff:0x7f.0.0.1", "1::1::1", "127.0.0.1", "127.1"],
+  ];
+  const sendBlockList = new BlockList();
+  sendBlockList.addAddress("::1", "ipv6");
+  sendBlockList.addAddress("127.0.0.1");
+  let answer = "";
+  const lookup = (address: string, family: number, callback: Function) =>
+    callback(null, address === "host.invalid" ? answer : address, family);
+  const unlisted = createSocket({ type: "udp6", lookup: lookup as any });
+  const listed = createSocket({ type: "udp6", lookup: lookup as any, sendBlockList });
+  try {
+    for (const socket of [unlisted, listed]) {
+      const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+      socket.bind(0, "::1", onBound);
+      await bound;
+      socket[kStateSymbol].handle.sendQueue = [];
+    }
+    const send = (socket: typeof listed) => {
+      const { promise, resolve } = Promise.withResolvers<string>();
+      const waiting = socket.getSendQueueCount();
+      // The lookup answers at once, so send() has reached the handle when it returns.
+      socket.send("to the loopback address", 1234, "host.invalid", err => resolve(err!.code!));
+      if (socket.getSendQueueCount() !== waiting) resolve("taken");
+      return promise;
+    };
+
+    const taken: string[] = [];
+    const takenAndNotBlocked: string[] = [];
+    for (answer of texts) {
+      const [byTheHandle, withTheList] = await Promise.all([send(unlisted), send(listed)]);
+      if (byTheHandle !== "taken") continue;
+      taken.push(answer);
+      if (withTheList !== "ERR_IP_BLOCKED") takenAndNotBlocked.push(`${answer}: ${withTheList}`);
+    }
+    expect({ takenAndNotBlocked, taken: taken.length, refused: texts.length - taken.length }).toEqual({
+      takenAndNotBlocked: [],
+      taken: 581,
+      refused: 9,
+    });
+  } finally {
+    unlisted.close();
+    listed.close();
+  }
+});
+
+// What Node's handle.send() returns for an address that it does not take. Off
+// Windows the public socket.send() sends to the first and to the fourth one.
+test("handle.send() returns UV_EINVAL for what is no address of its family", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const to = await loopbackReceiver();
+  const socket = createSocket("udp4");
+  try {
+    const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+    socket.bind(0, "127.0.0.1", onBound);
+    await bound;
+    const handle = socket[kStateSymbol].handle;
+    const payload = Buffer.from("to an address");
+    const send = (address: unknown) => handle.send({}, [payload], 1, to.port, address, true);
+
+    const refused = ["127.1", "::1", "localhost", 2130706433, undefined].map(send);
+    expect({ refused, received: await to.received() }).toEqual({
+      refused: [UV_EINVAL, UV_EINVAL, UV_EINVAL, UV_EINVAL, UV_EINVAL],
+      received: [],
+    });
+    expect({ taken: send("127.0.0.1"), received: await to.received() }).toEqual({
+      taken: payload.byteLength + 1,
+      received: ["to an address"],
+    });
+  } finally {
+    socket.close();
+    to.socket.close();
+  }
+});
+
+// libuv reads the address before it queues a request, so uv_udp_send() does
+// not keep one that it cannot send. With a request in the queue every send()
+// waits behind it: `sendQueue = []` is that state, as in the ECANCELED test.
+// The lookup answers at once, so send() has reached the handle when it returns.
+test("send() behind a queued request reads its address before it waits", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const to = await loopbackReceiver();
+  const socket = createSocket({ type: "udp4", lookup: lookupAnswers("127.1") as any });
+  try {
+    const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+    socket.bind(0, "127.0.0.1", onBound);
+    await bound;
+    const handle = socket[kStateSymbol].handle;
+    handle.sendQueue = [];
+
+    const send = (message: string | Buffer, address: string) => {
+      const { promise, resolve } = Promise.withResolvers<unknown>();
+      socket.send(message, to.port, address, (err, bytes) => resolve(err ? sendErrorShape(err) : bytes));
+      return promise;
+    };
+
+    const refused = send("refused", "host.invalid");
+    expect({ queued: handle.sendQueue.length, count: socket.getSendQueueCount() }).toEqual({ queued: 0, count: 0 });
+    expect(await refused).toEqual(sendError("EINVAL", "host.invalid", to.port));
+
+    // The kernel refuses the second request when the queue drains. The third one is still sent.
+    const results = [send("first", "127.0.0.1"), send(Buffer.alloc(70_000), "127.0.0.1"), send("third", "127.0.0.1")];
+    expect({
+      queued: handle.sendQueue.length,
+      count: socket.getSendQueueCount(),
+      size: socket.getSendQueueSize(),
+      received: await to.received(),
+    }).toEqual({ queued: 3, count: 3, size: 70_010, received: [] });
+
+    handle.drain();
+    expect({
+      results: await Promise.all(results),
+      received: await to.received(),
+      queue: handle.sendQueue,
+      count: socket.getSendQueueCount(),
+      size: socket.getSendQueueSize(),
+    }).toEqual({
+      results: [5, sendError("EMSGSIZE", "127.0.0.1", to.port), 5],
+      received: ["first", "third"],
+      queue: undefined,
+      count: 0,
+      size: 0,
+    });
+  } finally {
+    socket.close();
+    to.socket.close();
+  }
+});
+
+// libuv checks a request once, when uv_udp_send() takes it, and not when the
+// queue sends it (uv__udp_check_before_send). The first request reaches the
+// handle when the socket has a peer: it is refused, and it does not wait. The
+// second one waits from before connect(). Then the kernel has the last word,
+// and Linux sends a datagram with an address from a connected socket to that
+// address.
+test("send() checks for a peer when a request is taken, and not when the queue sends it", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const to = await loopbackReceiver();
+  const peer = await loopbackReceiver();
+  let answerLate: Function | undefined;
+  const lookup = (address: string, family: number, callback: Function) =>
+    address === "late.invalid" ? (answerLate = callback) : callback(null, address, family);
+  const socket = createSocket({ type: "udp4", lookup: lookup as any });
+  try {
+    const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+    socket.bind(0, "127.0.0.1", onBound);
+    await bound;
+    const handle = socket[kStateSymbol].handle;
+    handle.sendQueue = [];
+
+    const send = (message: string, address: string) => {
+      const { promise, resolve } = Promise.withResolvers<unknown>();
+      socket.send(message, to.port, address, (err, bytes) => resolve(err ? sendErrorShape(err) : bytes));
+      return promise;
+    };
+    const late = send("late", "late.invalid");
+    const waited = send("waited", "127.0.0.1");
+    expect(socket.getSendQueueCount()).toBe(1);
+
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers<void>();
+    socket.connect(peer.port, "127.0.0.1", onConnect);
+    await connected;
+    answerLate!(null, "127.0.0.1", 4);
+    expect({ queued: handle.sendQueue.length, count: socket.getSendQueueCount() }).toEqual({ queued: 1, count: 1 });
+    expect(await late).toEqual(sendError("EISCONN", "late.invalid", to.port));
+
+    handle.drain();
+    if (isLinux) {
+      expect({ waited: await waited, received: await to.received(), peer: await peer.received() }).toEqual({
+        waited: 6,
+        received: ["waited"],
+        peer: [],
+      });
+    } else {
+      // Another kernel can refuse the datagram. Its answer comes to the callback.
+      await waited;
+    }
+    expect(socket.getSendQueueCount()).toBe(0);
+  } finally {
+    socket.close();
+    to.socket.close();
+    peer.socket.close();
+  }
+});
+
+// As for connect(): Node's handle answers UV_EBADF when its socket is gone.
+// It reads the address before that, so what is no address is UV_EINVAL.
+test("send() reports send EBADF when the socket of the handle is closed", async () => {
+  const { kStateSymbol } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const socket = createSocket("udp4");
+  try {
+    const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+    socket.bind(0, "127.0.0.1", onBound);
+    await bound;
+    socket[kStateSymbol].handle.socket.close();
+    const send = (address: string) =>
+      new Promise(resolve => socket.send("to a closed socket", 1234, address, err => resolve(sendErrorShape(err))));
+    expect([await send("127.0.0.1"), await send("::1")]).toEqual([
+      sendError("EBADF", "127.0.0.1", 1234),
+      sendError("EINVAL", "::1", 1234),
+    ]);
+  } finally {
+    socket.close();
+  }
+});
+
+// The reader of connect(), with its zone: digits are the index of an
+// interface. Node's handle and the public socket.send() read the name of one
+// only, take digits for no zone, and send. The kernel has no route to a
+// link-local address through an interface that does not exist.
+test.skipIf(!isLinux || linkLocal === undefined)(
+  "send() reads the zone of a link-local address as a number too",
+  async () => {
+    const socket = createSocket("udp6");
+    const to = createSocket("udp6");
+    try {
+      const { promise: bound, resolve: onBound } = Promise.withResolvers<void>();
+      to.bind(0, "::", onBound);
+      await bound;
+      const port = to.address().port;
+      const { promise: received, resolve: onMessage } = Promise.withResolvers<string>();
+      to.on("message", message => onMessage(String(message)));
+      const send = (zone: number) => {
+        const address = `${linkLocal!.address}%${zone}`;
+        return new Promise(resolve => socket.send(`in zone ${zone}`, port, address, err => resolve(err?.code ?? null)));
+      };
+      expect({ thisInterface: await send(linkLocal!.scopeid!), noInterface: await send(2147483646) }).toEqual({
+        thisInterface: null,
+        noInterface: "ENETUNREACH",
+      });
+      expect(await received).toBe(`in zone ${linkLocal!.scopeid}`);
+    } finally {
+      socket.close();
+      to.close();
+    }
+  },
+);
+
+// Node's handle converts the answer of the lookup to a string, so it binds
+// 127.0.0.1 here. The handle of Bun converts nothing, as for send(), and
+// Bun.udpSocket() takes no hostname that is not a string.
+test("bind() with a custom lookup that yields an object reports bind EINVAL", async () => {
+  const answer = { toString: () => "127.0.0.1" };
+  const socket = createSocket({ type: "udp4", lookup: lookupAnswers(answer) as any });
+  try {
+    const { promise, resolve } = Promise.withResolvers<any>();
+    socket.once("error", resolve);
+    socket.once("listening", () => resolve(socket.address()));
+    socket.bind(0, "host.invalid");
+    const { name, code, syscall, address } = await promise;
+    expect({ name, code, syscall, address }).toEqual({
+      name: "Error",
+      code: "EINVAL",
+      syscall: "bind",
+      address: answer,
+    });
+  } finally {
+    socket.close();
+  }
+});
+
+// UDP#bind() is Node's handle.bind(), which the primary of a cluster binds a
+// shared socket with. The kernel refused the last two before, with EINVAL and
+// with EAFNOSUPPORT.
+test.skipIf(isWindows).each([
+  ["127.1", "udp4"],
+  ["127.0.0.1", "udp6"],
+  ["::1", "udp4"],
+])("_createSocketHandle(%j, 0, %j) returns UV_EINVAL", (address, type) => {
+  const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+  const handle = _createSocketHandle(address, 0, type);
+  if (typeof handle !== "number") handle.close();
+  expect(handle).toBe(-22);
 });
 
 // Every send callback must fire with (null, byteLength) — never (null, 0) or
@@ -723,6 +1145,31 @@ test.skipIf(isWindows || !hasIPv6Loopback())(
       expect(rinfo.address).toBe("::1");
     } finally {
       sender.close();
+      socket.close();
+      wrap.close();
+    }
+  },
+);
+
+// The handle of such a socket stays an IPv4 one, as in Node: it hears an IPv6
+// peer, and it takes no IPv6 address to answer it.
+test.skipIf(isWindows || !hasIPv6Loopback())(
+  "a udp4 socket over an IPv6 descriptor takes no IPv6 address",
+  async () => {
+    const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+    const wrap = new UDP();
+    expect(wrap.bind6("::1", 0, 0)).toBe(0);
+
+    const socket = createSocket("udp4");
+    try {
+      const { promise: listening, resolve: onListening, reject: onError } = Promise.withResolvers<void>();
+      socket.once("error", onError);
+      socket.once("listening", onListening);
+      socket.bind({ fd: wrap.fd });
+      await listening;
+      const err = await new Promise(resolve => socket.send("to an IPv6 peer", 1234, "::1", resolve));
+      expect(sendErrorShape(err)).toEqual(sendError("EINVAL", "::1", 1234));
+    } finally {
       socket.close();
       wrap.close();
     }

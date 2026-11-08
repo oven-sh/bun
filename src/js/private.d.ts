@@ -1353,8 +1353,8 @@ declare namespace $Node {
     /** `undefined` while it is not connected. */
     readonly remoteAddress?: { address: string; family: string; port: number };
     readonly closed: boolean;
-    /** `false`: the kernel's buffer is full, `drain` follows. Without `port` on a connected socket. */
-    send(data: string | ArrayBufferView | ArrayBufferLike, port?: number, address?: string): boolean;
+    /** To the peer of a connected socket. `false`: the kernel's buffer is full, `drain` follows. node:dgram sends to an address with the `send` of udp_socket.bind.ts, which reads it by the family of the handle. */
+    send(data: string | ArrayBufferView | ArrayBufferLike): boolean;
     close(): void;
     ref(): void;
     unref(): void;

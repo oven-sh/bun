@@ -4,7 +4,7 @@
 // tests reach through bun:internal-for-testing's exposedInternals.
 
 const newSocketFd: (isIPv6: boolean, isStream: boolean) => number = $bindgen("udp_socket.bind.ts", "dgramNewSocketFd");
-const bindFd: (fd: number, address: string, port: number, flags: number) => void = $bindgen(
+const bindFd: (fd: number, address: string, port: number, flags: number, ipv6: boolean) => void = $bindgen(
   "udp_socket.bind.ts",
   "dgramBindFd",
 );
@@ -61,7 +61,7 @@ class UDP {
       if (this.#fd < 0) {
         this.#fd = newSocketFd(ipv6, false);
       }
-      bindFd(this.#fd, address || (ipv6 ? "::" : "0.0.0.0"), port || 0, flags || 0);
+      bindFd(this.#fd, address || (ipv6 ? "::" : "0.0.0.0"), port || 0, flags || 0, ipv6);
       return 0;
     } catch (err) {
       return uvErrno(err, UV_EINVAL);

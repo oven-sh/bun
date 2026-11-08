@@ -7,9 +7,11 @@ export const dgramIsFdAdopted = b.fn({ args: { fd: b.i32 }, returns: b.bool });
 export const dgramNewSocketFd = b.fn({ args: { isIPv6: b.bool, isStream: b.bool }, returns: b.i32, throws: true });
 export const dgramAdoptFd = b.fn({ args: { fd: b.i32 }, throws: true });
 export const dgramBindFd = b.fn({
-  args: { fd: b.i32, address: b.string.loose.utf8, port: b.i32.wrap, flags: b.i32.wrap },
+  args: { fd: b.i32, address: b.string.loose.utf8, port: b.i32.wrap, flags: b.i32.wrap, ipv6: b.bool },
   throws: true,
 });
+/** Whether Node's UDP handle takes `host` for an address: libuv's `uv_ip4_addr()`, or `uv_ip6_addr()` with `ipv6`. */
+export const dgramIsAddress = b.fn({ args: { host: b.string.utf8, ipv6: b.bool }, returns: b.bool });
 export const dgramGetSockNameFd = b.fn({ args: { fd: b.i32 }, returns: b.any, capability: "js", throws: true });
 export const dgramGuessHandleType = b.fn({ args: { fd: b.i32 }, returns: b.string });
 export const dgramListenFd = b.fn({ args: { fd: b.i32 }, throws: true });
@@ -72,6 +74,19 @@ export const connect = b.fn({
 });
 /** Node's `handle.disconnect()`: 0 or a negative libuv error code. */
 export const disconnect = b.fn({ args: { socket: UDPSocket }, returns: b.i32 });
+/** Node's `handle.send()` of one buffer to `host`, an address of the socket type (`ipv6`): 1 when the kernel took it, 0 when it has to wait for the drain or `send` is false, or a negative libuv error code. `take` is false for a request that waited in a queue: it was checked when it was taken. */
+export const send = b.fn({
+  args: {
+    socket: UDPSocket,
+    data: b.bytes({ from: ["buffer"] }),
+    host: b.string.utf8,
+    port: b.i32,
+    ipv6: b.bool,
+    take: b.bool,
+    send: b.bool,
+  },
+  returns: b.i32,
+});
 export const bufferSize = b.fn({
   args: { socket: UDPSocket, size: b.i32.wrap, isRecv: b.bool },
   returns: b.i32,

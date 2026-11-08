@@ -1309,6 +1309,9 @@ pub struct JavaScriptChunk {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
+    /// The unwrapped files that this chunk prints, from their first top-level
+    /// `using` on, inside a block (`scope_top_level_using`). Sorted.
+    pub(crate) scoped_using_files: Vec<IndexInt>,
     /// The symbols that `scope_top_level_using` made for files of this chunk.
     pub(crate) scoped_using_symbols: Vec<Ref>,
 

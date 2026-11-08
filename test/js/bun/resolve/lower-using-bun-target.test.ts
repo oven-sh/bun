@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { type BundlerTestBundleAPI, type BundlerTestInput, itBundled } from "../../../bundler/expectBundled";
 
 const source = `{
@@ -465,4 +467,598 @@ describe("top-level using in a bundle for bun", () => {
       return printsUnbundled("/entry.jsx", "dep-end\nres-disposed\n<b>res1,res21</b>")(api);
     },
   });
+
+  // `--target=bun` keeps `using` as it is written. A module with a top-level
+  // `using` that is not the last one of its chunk gets a block of its own, so
+  // the resource is disposed when the module ends.
+  const usingTopLevel = {
+    "/entry.js": `
+      import { log, render } from "./dep.js";
+      log.push(render());
+      console.log(log.join(" "));
+    `,
+    "/dep.js": `
+      export const log = [];
+      using res = ${disposable("module", "log.push")};
+      export function render() { log.push("render"); return "module"; }
+      log.push("module-end");
+    `,
+  };
+  for (const [name, options] of Object.entries({
+    "": {},
+    "CLI": { backend: "cli" },
+    "Cjs": { format: "cjs" },
+    "Iife": { format: "iife" },
+    "Minify": { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true },
+    "Bytecode": { format: "cjs", bytecode: true, outdir: "/out" },
+    "NoTreeShaking": { treeShaking: false, backend: "api" },
+  } satisfies Record<string, Partial<BundlerTestInput>>)) {
+    itBundled(`using/TopLevelDisposedAtModuleEnd${name}`, {
+      files: usingTopLevel,
+      target: "bun",
+      ...options,
+      run: { stdout: "module-end module-disposed render module" },
+      onAfterBundle(api) {
+        const out = api.readFile("outdir" in options ? "/out/entry.js" : "/out.js");
+        expect(out).not.toContain("__using");
+        expect(out).not.toContain("__callDispose");
+        if (name === "") expect(out).toContain("var res;\n{\n  using res2 = res = {");
+        return printsUnbundled("/entry.js", "module-end module-disposed render module")(api);
+      },
+    });
+  }
+
+  // The entry point is the last module of its chunk: the scope of the chunk
+  // ends where the entry point ends, so it prints as it is written.
+  itBundled("using/TopLevelAwaitUsing", {
+    files: {
+      "/entry.js": `
+        import { log, render } from "./a.js";
+        import { K, counter, bump } from "./b.js";
+        bump();
+        log.push(render(), "counter=" + counter, typeof K);
+        using e = ${disposable("entry")};
+        console.log(log.join(" "));
+      `,
+      "/a.js": `
+        export const log = [];
+        await using res = { async [Symbol.asyncDispose]() { log.push("a-disposed"); } };
+        export function render() { log.push("render"); return "module"; }
+        log.push("a-end");
+      `,
+      "/b.js": `
+        import { log } from "./a.js";
+        using res = ${disposable("b", "log.push")};
+        export class K { static n = log.push("K-static"); }
+        export let counter = 0;
+        export function bump() { counter++; }
+        log.push("b-end");
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "a-end a-disposed K-static b-end b-disposed render module counter=1 function\nentry-disposed",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("  await using res3 = res = {");
+      expect(out).toContain("\nusing e = {");
+      return printsUnbundled(
+        "/entry.js",
+        "a-end a-disposed K-static b-end b-disposed render module counter=1 function\nentry-disposed",
+      )(api);
+    },
+  });
+
+  // Each reader of the `using` binding prints at another place: in front of
+  // the `using`, in front of the block, in the block, in another module.
+  const usingTopLevelReaders = {
+    "/entry.js": `
+      import def, * as ns from "./dep.js";
+      import { log, read, arrow, res, Reader } from "./dep.js";
+      log.push(read(), arrow(), res.name, def.name, ns.res.name, new Reader().read(), typeof ns.read);
+      console.log(log.join(" "));
+    `,
+    "/dep.js": `
+      export const log = [];
+      export const early = () => res.name;
+      using res = ${disposable("res", "log.push")};
+      export function read() { return res.name; }
+      export const arrow = () => res.name;
+      export class Reader { read() { return res.name; } }
+      export { res };
+      export default res;
+      log.push("dep-end", early());
+    `,
+  };
+  for (const [name, options] of Object.entries({
+    "": {},
+    "Minify": { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true },
+    "NoTreeShaking": { treeShaking: false, backend: "api" },
+  } satisfies Record<string, Partial<BundlerTestInput>>)) {
+    itBundled(`using/TopLevelBindingReadOutsideItsBlock${name}`, {
+      files: usingTopLevelReaders,
+      target: "bun",
+      ...options,
+      run: { stdout: "dep-end res res-disposed res res res res res res function" },
+      onAfterBundle: printsUnbundled("/entry.js", "dep-end res res-disposed res res res res res res function"),
+    });
+  }
+  itBundled("using/TopLevelDirectEval", {
+    files: {
+      "/entry.js": `
+        import { log, peek } from "./dep.js";
+        log.push(peek());
+        console.log(log.join(" "));
+      `,
+      "/dep.js": `
+        export const log = [];
+        using res = ${disposable("res", "log.push")};
+        export function peek() { return eval("res.name"); }
+        log.push("dep-end");
+      `,
+    },
+    target: "bun",
+    run: { stdout: "dep-end res-disposed res" },
+    onAfterBundle: printsUnbundled("/entry.js", "dep-end res-disposed res"),
+  });
+  // The function that the React Compiler makes of the callback prints in front
+  // of the block.
+  itBundled("using/TopLevelReactCompiler", {
+    files: {
+      "/entry.jsx": `
+        import { render } from "./react/render.js";
+        import { Comp, log } from "./dep.jsx";
+        log.push(render(Comp, { a: 1 }));
+        console.log(log.join(" "));
+      `,
+      "/dep.jsx": `
+        export const log = [];
+        using res = ${disposable("res", "log.push")};
+        export const Comp = ({ a }) => {
+          const names = [1, 2].map(x => res.name + x);
+          return <b>{names.join(",")}{a}</b>;
+        };
+        log.push("dep-end");
+      `,
+      ...reactStandIn,
+    },
+    target: "bun",
+    reactCompiler: true,
+    run: { stdout: "dep-end res-disposed <b>res1,res21</b>" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("function _temp(");
+      return printsUnbundled("/entry.jsx", "dep-end res-disposed <b>res1,res21</b>")(api);
+    },
+  });
+
+  // A class that runs no code where it is defined stays a declaration in
+  // front of the block, so it has its value where "early" reads it, as in the
+  // unbundled module. "Sub" runs code, and keeps its place in the block.
+  itBundled("using/TopLevelClasses", {
+    files: {
+      "/entry.js": `
+        import def, { log, make, Sub } from "./dep.js";
+        log.push(typeof make(), new Sub().read(), def());
+        console.log(log.join(" "));
+      `,
+      "/dep.js": `
+        export const log = [];
+        class Base {}
+        using res = ${disposable("res", "log.push")};
+        log.push("early:" + typeof make());
+        export class K { read() { return res.name; } }
+        export function make() { return K; }
+        export class Sub extends Base { read() { return new K().read(); } }
+        export default function () { return "default:" + res.name; }
+        log.push("dep-end");
+      `,
+    },
+    target: "bun",
+    run: { stdout: "early:function dep-end res-disposed function res default:res" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("\nclass K {");
+      expect(out).toContain("  var Sub = class Sub extends Base {");
+      return printsUnbundled("/entry.js", "early:function dep-end res-disposed function res default:res")(api);
+    },
+  });
+
+  // Functions of a module of an import cycle work before the module runs.
+  itBundled("using/TopLevelImportCycle", {
+    files: {
+      "/entry.js": `
+        import { log, K, counter, bump } from "./a.js";
+        bump();
+        log.push("counter=" + counter, K.tag);
+        console.log(log.join(" | "));
+      `,
+      "/a.js": `
+        import { fromB } from "./b.js";
+        export const log = (globalThis.log ??= []);
+        using res = ${disposable("res", "log.push")};
+        export class K { static tag = "K"; }
+        export let counter = 0;
+        export function bump() { return ++counter; }
+        log.push("a-end fromB=" + fromB() + " counter=" + counter);
+      `,
+      "/b.js": `
+        import { bump } from "./a.js";
+        (globalThis.log ??= []).push("b-start " + typeof bump);
+        export function fromB() { return "B"; }
+      `,
+    },
+    target: "bun",
+    run: { stdout: "b-start function | a-end fromB=B counter=0 | res-disposed | counter=1 | K" },
+    onAfterBundle: printsUnbundled(
+      "/entry.js",
+      "b-start function | a-end fromB=B counter=0 | res-disposed | counter=1 | K",
+    ),
+  });
+  // Known difference: in the unbundled module a read of the binding before its
+  // declaration throws a ReferenceError. In the block the binding is a `var` of
+  // the chunk, as it is in a bundle for node.
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`using/TopLevelReadBeforeItsModuleRuns-${target}`, {
+      files: {
+        "/entry.js": `
+          import { log, peek } from "./a.js";
+          log.push("entry:" + peek());
+          console.log(log.join(" "));
+        `,
+        "/a.js": `
+          import "./b.js";
+          export const log = (globalThis.log ??= []);
+          using res = ${disposable("res", "log.push")};
+          export function peek() { try { return typeof res; } catch (e) { return e.constructor.name; } }
+          log.push("a-end");
+        `,
+        "/b.js": `
+          import { peek } from "./a.js";
+          (globalThis.log ??= []).push("b:" + peek());
+        `,
+      },
+      target,
+      run: { stdout: "b:undefined a-end res-disposed entry:object" },
+      onAfterBundle: printsUnbundled("/entry.js", "b:ReferenceError a-end res-disposed entry:object"),
+    });
+  }
+
+  itBundled("using/TopLevelSeveralDeclarations", {
+    files: {
+      "/entry.js": `
+        import { log, names, Before, After, make, ok } from "./dep.js";
+        log.push(names(), new Before().tag, new After().tag, make().tag, typeof ok);
+        console.log(log.join(" "));
+      `,
+      "/dep.js": `
+        import { ok } from "node:assert";
+        export const log = [];
+        export class Before { tag = "before"; }
+        export const make = () => new After();
+        log.push("start");
+        using a = ${disposable("a", "log.push")}, b = ${disposable("b", "log.push")};
+        log.push("between");
+        using c = ${disposable("c", "log.push")};
+        export function names() { return a.name + c.name; }
+        export class After { tag = "after"; static made = log.push("After-defined"); }
+        export { ok } from "node:assert";
+        log.push("dep-end", b.name, typeof ok);
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout:
+        "start between After-defined dep-end b function c-disposed b-disposed a-disposed ac before after after function",
+    },
+    onAfterBundle: printsUnbundled(
+      "/entry.js",
+      "start between After-defined dep-end b function c-disposed b-disposed a-disposed ac before after after function",
+    ),
+  });
+  // Without tree shaking the statements of a module are one part, in the order
+  // of the source. An `import` and an `export * from` after the `using` are not
+  // statements of a block.
+  itBundled("using/TopLevelImportAfterUsingNoTreeShaking", {
+    files: {
+      "/a.js": `
+        export const log = [];
+        using res = ${disposable("res", "log.push")};
+        import { sep } from "node:path";
+        export * from "node:path";
+        export function render() { return "render:" + res.name + typeof sep; }
+        log.push("a-end");
+      `,
+      "/b.js": `
+        import { log, render } from "./a.js";
+        log.push(render());
+        console.log(log.join(" "));
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    target: "bun",
+    treeShaking: false,
+    backend: "api",
+    run: [{ file: "/out/b.js", stdout: "a-end res-disposed render:resstring" }],
+    onAfterBundle(api) {
+      const out = api.readFile("/out/b.js");
+      expect(out.indexOf('import { sep } from "path";')).toBeLessThan(out.indexOf("{\n  using res"));
+      expect(out.indexOf('export * from "path";')).toBeLessThan(out.indexOf("{\n  using res"));
+      return printsUnbundled("/b.js", "a-end res-disposed render:resstring")(api);
+    },
+  });
+
+  // The next module does not run after a disposer that throws.
+  itBundled("using/TopLevelDisposerThrows", {
+    files: {
+      "/entry.js": `
+        import "./a.js";
+        import "./b.js";
+        console.log("entry");
+      `,
+      "/a.js": `
+        using r = { [Symbol.dispose]() { console.log("a-disposed"); throw new Error("dispose failed"); } };
+        console.log("a-end");
+      `,
+      "/b.js": `console.log("b ran");`,
+    },
+    target: "bun",
+    run: {
+      error: "error: dispose failed",
+      stdout: "a-end\na-disposed",
+    },
+    onAfterBundle: printsUnbundled("/entry.js", "a-end\na-disposed"),
+  });
+
+  // A later module that ends the process does not skip the disposal.
+  itBundled("using/TopLevelLaterModuleExits", {
+    files: {
+      "/entry.js": `
+        import "./dep.js";
+        import "./later.js";
+        console.log("entry");
+      `,
+      "/dep.js": `
+        using r = ${disposable("dep")};
+        console.log("dep-end");
+      `,
+      "/later.js": `
+        console.log("later");
+        process.exit(0);
+      `,
+    },
+    target: "bun",
+    run: { stdout: "dep-end\ndep-disposed\nlater" },
+    onAfterBundle: printsUnbundled("/entry.js", "dep-end\ndep-disposed\nlater"),
+  });
+
+  // The binding is exported to the entry point chunks from a chunk that two
+  // entry points share.
+  itBundled("using/TopLevelSplitting", {
+    files: {
+      "/e1.js": `
+        import { log, res } from "./shared1.js";
+        import { two } from "./shared2.js";
+        log.push("e1:" + two, res.name);
+        console.log(log.join(" "));
+      `,
+      "/e2.js": `
+        import { log } from "./shared1.js";
+        import { two } from "./shared2.js";
+        log.push("e2:" + two);
+        console.log(log.join(" "));
+      `,
+      "/shared1.js": `
+        export const log = [];
+        using res = ${disposable("shared1", "log.push")};
+        export { res };
+        log.push("shared1-end");
+      `,
+      "/shared2.js": `
+        import { log } from "./shared1.js";
+        export const two = 2;
+        log.push("shared2-end");
+      `,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    outdir: "/out",
+    target: "bun",
+    splitting: true,
+    run: [
+      { file: "/out/e1.js", stdout: "shared1-end shared1-disposed shared2-end e1:2 shared1" },
+      { file: "/out/e2.js", stdout: "shared1-end shared1-disposed shared2-end e2:2" },
+    ],
+    onAfterBundle: printsUnbundled("/e1.js", "shared1-end shared1-disposed shared2-end e1:2 shared1"),
+  });
+
+  // Without splitting, an entry point that another entry point imports is in
+  // two chunks. It is the last module of its own chunk only.
+  itBundled("using/TopLevelEntryImportedByEntry", {
+    files: {
+      "/a.js": `
+        import { log } from "./b.js";
+        log.push("a-end");
+        console.log(log.join(" "));
+      `,
+      "/b.js": `
+        export const log = [];
+        using res = { [Symbol.dispose]() { log.push("b-disposed"); console.log(log.join(" ")); } };
+        log.push("b-end");
+      `,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    outdir: "/out",
+    target: "bun",
+    run: [
+      { file: "/out/a.js", stdout: "b-end b-disposed\nb-end b-disposed a-end" },
+      { file: "/out/b.js", stdout: "b-end b-disposed" },
+    ],
+    onAfterBundle(api) {
+      expect(api.readFile("/out/a.js")).toContain("{\n  using res2 = res = {");
+      expect(api.readFile("/out/b.js")).toContain("\nusing res = {");
+      return printsUnbundled("/a.js", "b-end b-disposed\nb-end b-disposed a-end")(api);
+    },
+  });
+
+  itBundled("using/TopLevelLiftedCommonJS", {
+    files: {
+      "/entry.js": `
+        import { render } from "./dep.cjs";
+        log.push("entry:" + render());
+        console.log(log.join(" "));
+      `,
+      "/dep.cjs": `
+        globalThis.log = [];
+        using res = ${disposable("cjs", "log.push")};
+        exports.render = function () { return "cjs"; };
+        log.push("cjs-end");
+      `,
+    },
+    target: "bun",
+    run: { stdout: "cjs-end cjs-disposed entry:cjs" },
+    onAfterBundle: printsUnbundled("/entry.js", "cjs-end cjs-disposed entry:cjs"),
+  });
+
+  // "dep.js" prints in two places, around "config.js". The unused "none" is
+  // dropped, so its first `using` is "res", in the second place.
+  itBundled("using/TopLevelNotInTheFirstRangeOfItsModule", {
+    files: {
+      "/entry.js": `
+        import { log, late, early } from "./dep.js";
+        log.push(late(), early());
+        console.log(log.join(" "));
+      `,
+      "/dep.js": `
+        import { sep } from "node:path";
+        import { config } from "./config.js";
+        export const log = [];
+        export const early = () => res.name;
+        export const unused = () => "tree-shaken";
+        using none = null;
+        using res = { name: config.name, [Symbol.dispose]() { log.push("dep-disposed"); } };
+        export function late() { return res.name + typeof sep; }
+        log.push("dep-end", early());
+      `,
+      "/config.js": `export const config = { name: "res" };`,
+    },
+    target: "bun",
+    run: { stdout: "dep-end res dep-disposed resstring res" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out.split("// dep.js").length).toBe(3);
+      expect(out.indexOf("// config.js")).toBeLessThan(out.indexOf("{\n  using res"));
+      return printsUnbundled("/entry.js", "dep-end res dep-disposed resstring res")(api);
+    },
+  });
+
+  // A module this large prints as several ranges of statements. The block
+  // holds all of them.
+  const usingTopLevelFiller = `n += "${Buffer.alloc(4096, "x").toString()}".length;\n`;
+  itBundled("using/TopLevelLargeModule", {
+    files: {
+      "/entry.js": `
+        import { log } from "./big.js";
+        log.push("entry");
+        console.log(log.join(" "));
+      `,
+      "/big.js":
+        `export const log = [];\nusing res = ${disposable("big", "log.push")};\nlet n = 0;\n` +
+        Buffer.alloc(40 * usingTopLevelFiller.length, usingTopLevelFiller).toString() +
+        `log.push("big-end", n);\n`,
+    },
+    target: "bun",
+    run: { stdout: `big-end ${40 * 4096} big-disposed entry` },
+  });
+
+  // Known limit: "b.js" prints inside "a.js", where `require.resolve()` names
+  // it, so no block can hold the statements of "a.js". "a.js" prints as it did,
+  // and its resource is disposed when the chunk ends. "c.js" has its block.
+  itBundled("using/TopLevelWithAnotherFileInside", {
+    files: {
+      "/entry.js": `
+        import { log } from "./c.js";
+        import { x } from "./a.js";
+        import { y } from "./b.js";
+        log.push("entry", x, y);
+        console.log(log.join(" "));
+      `,
+      "/c.js": `
+        export const log = (globalThis.log = []);
+        using rc = ${disposable("c", "log.push")};
+        log.push("c-end");
+      `,
+      "/a.js": `
+        log.push("a1");
+        using ra = ${disposable("a")};
+        const p = require.resolve("./b.js");
+        log.push("a2", typeof p);
+        export const x = 1;
+      `,
+      "/b.js": `
+        export const y = 2;
+        log.push("b");
+      `,
+    },
+    target: "bun",
+    run: { stdout: "c-end c-disposed a1 b a2 string entry 1 2\na-disposed" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("{\n  using rc2 = rc = {");
+      expect(out).toContain("\nusing ra = {");
+    },
+  });
+
+  // A library build writes the bundle once more with its types, from the
+  // declarations as they are written. It prints as it did. The type check is
+  // slow on a debug build with a cold page cache.
+  test("a library build prints a module with a top-level using as it did", async () => {
+    using dir = tempDir("using-top-level-dts", {
+      "package.json": JSON.stringify({
+        name: "lib",
+        compilerOptions: { strict: true, lib: ["esnext", "esnext.disposable"] },
+      }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "esnext",
+          moduleResolution: "bundler",
+          target: "esnext",
+          lib: ["esnext", "esnext.disposable"],
+          types: [],
+        },
+      }),
+      "entry.ts": `
+        import { log, render, Widget } from "./dep";
+        export function go(w: Widget): string { log.push(render(w)); return log.join(" "); }
+      `,
+      "dep.ts": `
+        export const log: string[] = [];
+        using res = { [Symbol.dispose]() { log.push("module-disposed"); } };
+        export class Widget { name: string = "w"; }
+        export function render(w: Widget): string { return w.name; }
+        log.push("module-end");
+      `,
+    });
+    const root = String(dir);
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.ts", "--target=bun", "--dts", "--outdir=out"],
+      cwd: root,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect({
+      stderr,
+      files: readdirSync(join(root, "out")).sort(),
+      using: (await Bun.file(join(root, "out", "entry.js")).text()).match(/^ *using .*$/m)?.[0],
+      exitCode,
+    }).toEqual({
+      stderr: "",
+      files: ["dep.d.ts", "entry.aot.ts", "entry.d.ts", "entry.js"],
+      using: "using res = { [Symbol.dispose]() {",
+      exitCode: 0,
+    });
+  }, 60_000);
 });

@@ -32,7 +32,7 @@ pub(crate) use self::build::compile_to_executable;
 pub(crate) use self::command::compile_from_context;
 pub(crate) use self::configuration::DEFAULT_LIBRARY_OUTDIR;
 pub(crate) use self::library::{
-    TypedOutputs, add_declaration_files, add_package_files, add_typed_files, configure_library,
+    Library, TypedOutputs, add_declaration_files, add_package_files, add_typed_files,
     is_declaration_file, is_typed_file,
 };
 pub(crate) use self::printing::{

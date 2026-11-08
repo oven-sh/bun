@@ -74,7 +74,8 @@ Builds [a package to publish](/compiler/libraries#publish-a-package-with-its-typ
 </ParamField>
 
 <ParamField path="--outdir" type="string" default="dist">
-  The folder to write the package to. It cannot be the project's own folder
+  The folder to write the package to. It cannot be the project's own folder, a folder that holds it, or a folder that
+  holds an entry point
 </ParamField>
 
 <ParamField path="--target" type="string" default="node">

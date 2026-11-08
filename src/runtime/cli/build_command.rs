@@ -77,6 +77,14 @@ impl BuildCommand {
             ctx.args.target = Some(api::Target::Bun);
         }
 
+        // `--app` ignores `--library`, except for the entry points that it finds.
+        let mut library = None;
+        if ctx.bundler_options.library
+            && (ctx.args.entry_points.is_empty() || !ctx.bundler_options.bake)
+        {
+            library = Some(super::compile_command::Library::find(ctx));
+        }
+
         if ctx.bundler_options.bake {
             return crate::bake::production::build_command(ctx);
         }
@@ -86,8 +94,8 @@ impl BuildCommand {
             ctx.bundler_options.compile = false;
         }
 
-        if ctx.bundler_options.library {
-            super::compile_command::configure_library(ctx);
+        if let Some(library) = &mut library {
+            library.configure(ctx);
         }
 
         if ctx.bundler_options.compile && ctx.bundler_options.aot.is_some() {
@@ -540,6 +548,10 @@ impl BuildCommand {
             break 'brk1 &*result;
         };
 
+        if let Some(library) = &library {
+            library.check_root_directory(src_root_dir, &this_transpiler.options.entry_points);
+        }
+
         this_transpiler.options.root_dir = src_root_dir.into();
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
@@ -841,8 +853,9 @@ impl BuildCommand {
                 super::compile_command::add_typed_files(&request, log_ref, &mut output_files);
         }
 
-        if ctx.bundler_options.library {
+        if let Some(library) = &library {
             super::compile_command::add_package_files(
+                library,
                 ctx,
                 src_root_dir,
                 &compiler_options,

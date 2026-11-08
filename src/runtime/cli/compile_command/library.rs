@@ -9,7 +9,8 @@ use bun_ast::Expr;
 use bun_core::{Global, Output};
 use bun_options_types::context::ContextData;
 use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string;
+use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal, join_abs_string};
+use bun_paths::string_paths::without_trailing_slash_windows_path;
 
 pub(crate) use self::declarations::{add_declaration_files, is_declaration_file};
 pub(crate) use self::package_files::add_package_files;
@@ -26,6 +27,7 @@ const EXTERNAL_PACKAGE_FIELDS: [&[u8]; 3] = [
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum LibraryError {
     OutdirHoldsProject { outdir: Vec<u8> },
+    OutdirLinksPackageJson { written: Vec<u8> },
     EntryPointInsideOutdir { entry_point: Vec<u8> },
     UnparsablePackageJson { path: Vec<u8> },
     NoEntryPoint { directory: Vec<u8> },
@@ -39,6 +41,11 @@ impl LibraryError {
                 b"--library writes a package.json into --outdir, so --outdir can't be the project folder (",
                 outdir,
                 b"). Use a folder inside it, such as --outdir=dist",
+            ]),
+            Self::OutdirLinksPackageJson { written } => write(&[
+                b"--library writes a package.json into --outdir, but ",
+                written,
+                b" is a link to the project's own package.json. Delete it or choose another --outdir",
             ]),
             Self::EntryPointInsideOutdir { entry_point } => write(&[
                 b"the entry point ",
@@ -111,78 +118,156 @@ fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
     join_abs_string::<Auto>(working_directory, &[path]).to_vec()
 }
 
-fn is_inside(ancestor: &[u8], path: &[u8]) -> bool {
-    let below = path.strip_prefix(ancestor);
-    below.is_some_and(|below| {
-        below
-            .first()
-            .is_some_and(|&byte| bun_paths::is_sep_any(byte))
-    })
+fn real_path(directory: &[u8]) -> Option<Vec<u8>> {
+    let opened = bun_sys::Dir::open(directory).ok()?;
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    Some(opened.get_fd_path(&mut buffer).ok()?.to_vec())
 }
 
-fn check_outdir(project: &Project, outdir: &[u8]) -> Result<(), LibraryError> {
-    if project.directory == outdir || is_inside(outdir, &project.directory) {
-        return Err(LibraryError::OutdirHoldsProject {
-            outdir: outdir.to_vec(),
-        });
-    }
-    Ok(())
+struct Outdir {
+    // `--outdir` on the working directory, with `.` and `..` resolved and no separator at its end.
+    folder: Vec<u8>,
+    // Where `folder` leads, when a link on the way to it makes that another path.
+    real: Option<Vec<u8>>,
+    as_written: Vec<u8>,
 }
 
-pub(super) fn find_default_library_entry_points(
-    working_directory: &[u8],
-    outdir: &[u8],
-) -> Result<Vec<Box<[u8]>>, LibraryError> {
-    let project = Project::find(working_directory);
-    let outdir = absolute_path(working_directory, outdir);
-    check_outdir(&project, &outdir)?;
-    let arena = Arena::new();
-    let package_json = project.parse_package_json(&arena)?;
-    let found = entry_points::find_entry_points(&project.directory, package_json.as_ref(), &outdir);
-    if found.is_empty() {
-        return Err(LibraryError::NoEntryPoint {
-            directory: project.directory,
-        });
-    }
-    Ok(found)
-}
-
-fn find_external_packages(
-    working_directory: &[u8],
-    outdir: &[u8],
-    entry_points: &[Box<[u8]>],
-) -> Result<Vec<Box<[u8]>>, LibraryError> {
-    let project = Project::find(working_directory);
-    let outdir = absolute_path(working_directory, outdir);
-    check_outdir(&project, &outdir)?;
-    let is_overwritten =
-        |entry_point: &[u8]| is_inside(&outdir, &absolute_path(working_directory, entry_point));
-    if let Some(entry_point) = entry_points.iter().find(|it| is_overwritten(it)) {
-        return Err(LibraryError::EntryPointInsideOutdir {
-            entry_point: entry_point.to_vec(),
-        });
-    }
-    let arena = Arena::new();
-    let mut packages: Vec<Box<[u8]>> = Vec::new();
-    if let Some(package_json) = project.parse_package_json(&arena)? {
-        for field in EXTERNAL_PACKAGE_FIELDS {
-            if let Some(dependencies) = package_json.get(field) {
-                dependencies.for_each_property(|name, _, _| packages.push(name.into()));
+impl Outdir {
+    fn find(
+        working_directory: &[u8],
+        as_written: &[u8],
+        project: &Project,
+    ) -> Result<Outdir, LibraryError> {
+        let folder = join_abs_string::<Auto>(working_directory, &[as_written]);
+        let mut outdir = Outdir {
+            folder: without_trailing_slash_windows_path(folder).to_vec(),
+            real: None,
+            as_written: as_written.to_vec(),
+        };
+        if outdir.holds(&project.directory) {
+            return Err(LibraryError::OutdirHoldsProject {
+                outdir: outdir.folder,
+            });
+        }
+        let Ok(opened) = bun_sys::Dir::open(&outdir.folder) else {
+            return Ok(outdir);
+        };
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        if let Ok(real) = opened.get_fd_path(&mut buffer) {
+            let real: &[u8] = real;
+            // A working directory from `getcwd()` has no link in it. On Windows it is kept as it was spelled.
+            let project_directory = match cfg!(windows) {
+                true => real_path(&project.directory),
+                false => None,
+            };
+            let project_directory = project_directory.as_deref().unwrap_or(&project.directory);
+            if is_parent_or_equal(real, project_directory) != ParentEqual::Unrelated {
+                return Err(LibraryError::OutdirHoldsProject {
+                    outdir: real.to_vec(),
+                });
+            }
+            if real != outdir.folder {
+                outdir.real = Some(real.to_vec());
             }
         }
+        if let Some(package_json) = &project.package_json
+            && let Ok(written) = bun_sys::fstatat(opened.fd, bun_core::zstr!("package.json"))
+            && let Ok(own) = bun_sys::stat(&bun_core::ZBox::from_bytes(&package_json.path))
+            // A file system without inode numbers reports `st_ino == 0`.
+            && written.st_ino != 0
+            && written.st_ino == own.st_ino
+            && written.st_dev == own.st_dev
+        {
+            let written = [&outdir.folder[..], &[bun_paths::SEP], b"package.json"].concat();
+            return Err(LibraryError::OutdirLinksPackageJson { written });
+        }
+        Ok(outdir)
     }
-    Ok(packages)
+
+    // `path` is the folder or is inside it.
+    fn holds(&self, path: &[u8]) -> bool {
+        let holds = |folder: &[u8]| is_parent_or_equal(folder, path) != ParentEqual::Unrelated;
+        holds(&self.folder) || self.real.as_deref().is_some_and(holds)
+    }
 }
 
-#[cold]
-pub(crate) fn configure_library(ctx: &mut ContextData) {
-    let working_directory = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
-    let packages = find_external_packages(
-        working_directory,
-        &ctx.bundler_options.outdir,
-        &ctx.args.entry_points,
-    );
-    ctx.args
-        .external
-        .extend(packages.unwrap_or_else(|error| error.exit()));
+pub(crate) struct Library {
+    project: Project,
+    outdir: Outdir,
+    external_packages: Vec<Box<[u8]>>,
+}
+
+impl Library {
+    // Finds the entry points too, when `ctx` has none.
+    #[cold]
+    pub(crate) fn find(ctx: &mut ContextData) -> Library {
+        let working_directory = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
+        let found = Library::try_find(
+            working_directory,
+            &ctx.bundler_options.outdir,
+            &mut ctx.args.entry_points,
+        );
+        found.unwrap_or_else(|error| error.exit())
+    }
+
+    fn try_find(
+        working_directory: &[u8],
+        outdir: &[u8],
+        entry_points: &mut Vec<Box<[u8]>>,
+    ) -> Result<Library, LibraryError> {
+        let project = Project::find(working_directory);
+        let outdir = Outdir::find(working_directory, outdir, &project)?;
+        let arena = Arena::new();
+        let package_json = if entry_points.is_empty() {
+            let package_json = project.parse_package_json(&arena)?;
+            *entry_points =
+                entry_points::find_entry_points(&project.directory, package_json.as_ref(), &outdir);
+            if entry_points.is_empty() {
+                return Err(LibraryError::NoEntryPoint {
+                    directory: project.directory,
+                });
+            }
+            package_json
+        } else {
+            let is_overwritten =
+                |entry_point: &[u8]| outdir.holds(&absolute_path(working_directory, entry_point));
+            if let Some(entry_point) = entry_points.iter().find(|it| is_overwritten(it)) {
+                return Err(LibraryError::EntryPointInsideOutdir {
+                    entry_point: entry_point.to_vec(),
+                });
+            }
+            project.parse_package_json(&arena)?
+        };
+        let mut external_packages: Vec<Box<[u8]>> = Vec::new();
+        if let Some(package_json) = package_json {
+            for field in EXTERNAL_PACKAGE_FIELDS {
+                if let Some(dependencies) = package_json.get(field) {
+                    dependencies
+                        .for_each_property(|name, _, _| external_packages.push(name.into()));
+                }
+            }
+        }
+        Ok(Library {
+            project,
+            outdir,
+            external_packages,
+        })
+    }
+
+    // The build leaves the project's dependencies as imports and writes into the folder that was checked.
+    pub(crate) fn configure(&mut self, ctx: &mut ContextData) {
+        ctx.args.external.append(&mut self.external_packages);
+        ctx.bundler_options.outdir = self.outdir.folder.as_slice().into();
+    }
+
+    // `root_directory` is a real path, and every entry point is inside it.
+    #[cold]
+    pub(crate) fn check_root_directory(&self, root_directory: &[u8], entry_points: &[Box<[u8]>]) {
+        if let Some(entry_point) = entry_points.first()
+            && self.outdir.holds(root_directory)
+        {
+            let entry_point = entry_point.to_vec();
+            LibraryError::EntryPointInsideOutdir { entry_point }.exit();
+        }
+    }
 }

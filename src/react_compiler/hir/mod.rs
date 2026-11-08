@@ -628,12 +628,10 @@ pub enum Pattern {
     Object(ObjectPattern),
 }
 
-/// Not in upstream: what the visit pass left for the callee of a call or the tag of a template. Upstream prints
-/// the expression that the place holds for both kinds, so a value that is `a.b` prints as a member call.
+/// Not in upstream: what the visit pass left for the callee of a call or the tag of a template.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BunCallee {
-    /// A property access, whose object is the `this` of the call, or an import item, which the printer can
-    /// write as a property access. Codegen prints the expression that the place holds.
+    /// A property access, whose object is the `this` of the call, or an import item. Codegen prints the place as is.
     Reference,
     /// Any other expression. The call has no `this`: codegen prints `(0, a.b)` where the place holds a `Reference`.
     Value,

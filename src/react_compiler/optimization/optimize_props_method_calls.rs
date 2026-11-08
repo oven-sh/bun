@@ -44,7 +44,7 @@ pub(crate) fn optimize_props_method_calls(func: &mut HirFunction, env: &Environm
                         instr.value = InstructionValue::CallExpression {
                             callee: property,
                             args,
-                            // Not in upstream: the source has `props.f()`. Codegen prints that while the callee has no name.
+                            // Not in upstream: the source is `props.f()`. Codegen prints it for a callee with no name.
                             bun_callee: crate::hir::BunCallee::Reference,
                             loc,
                         };

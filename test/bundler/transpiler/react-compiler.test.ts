@@ -1492,6 +1492,11 @@ describe("bundler", () => {
     PropsMethodLogicalArgument: ["return <b>{props.who(props.n && g())}</b>;", "props"],
     PropsMethodHookArgument: ["return <b>{props.who(useMemo(() => [g()], []))}</b>;", "props"],
     PropsMethodAssignedArgument: ["let x = 0; return <b>{props.who((x = props.n))}</b>;", "props"],
+    // For the target bun only this argument makes a statement. The others need a memo block for that.
+    PropsMethodStatementArgument: [
+      "return <b>{props.who((() => { const y = String(props.n); return y; })())}</b>;",
+      "props",
+    ],
     PropsPair: ['return <b>{props.who() + " " + (0, props.who)()}</b>;', "props none"],
     PropsIndexValue: ["return <b>{(0, props[keys.who])?.()}</b>;", "none"],
   };
@@ -1565,12 +1570,13 @@ describe("bundler", () => {
             // The compiler takes the pattern out of the parameters of each component that it compiles.
             expect(out.includes("({ n, own })")).toBe(!reactCompiler);
             // One that takes `props` whole keeps its parameter. In client mode each compiled one reads a memo cache.
+            const text = (name: string) =>
+              out.match(new RegExp(`^function ${name}\\(props\\) \\{\\n[^]*?^\\}`, "m"))?.[0];
             if (reactCompiler && target === "browser") {
-              for (const name of Object.keys(propsCallees)) {
-                const text = out.match(new RegExp(`^function ${name}\\(props\\) \\{\\n[^]*?^\\}`, "m"))?.[0];
-                expect(text).toContain("$[");
-              }
+              for (const name of Object.keys(propsCallees)) expect(text(name)).toContain("$[");
             }
+            // For each target the compiler puts the body of an arrow that is called at once in the place of the call.
+            expect(text("PropsMethodStatementArgument")?.includes("=>")).toBe(!reactCompiler);
             // A call of an import is printed as it is written.
             expect(out).not.toMatch(/\(0, \$?use(Memo|Reducer)\)/);
           },

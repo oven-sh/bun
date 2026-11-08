@@ -941,8 +941,7 @@ fn promote_interposed_instruction(
                     // Treat property of method call as constlike so we don't promote it.
                     consts.insert(property.identifier);
                 }
-                // Not in upstream: this one is a member call too, and a name for its callee takes the `this` away.
-                // A callee that writes, as `f()?.g` does, gets the name: `f()` has to stay in front of the statement.
+                // Not in upstream: a name for this callee takes the `this` away, so only one that writes gets a name.
                 InstructionValue::CallExpression {
                     callee,
                     bun_callee: crate::hir::BunCallee::Reference,

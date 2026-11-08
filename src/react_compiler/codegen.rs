@@ -1910,8 +1910,7 @@ fn codegen_base_instruction_value(
                 }
             }
             match binding.ref_() {
-                // The parser has an identifier for a namespace import, and not an import item as for the others.
-                // `codegen_callee` puts `(0, ...)` around an import item.
+                // As the parser has it: an identifier. `codegen_callee` takes an import item for a reference.
                 Some(r) if matches!(binding.kind, NonLocalKind::ImportNamespace { .. }) => {
                     cx.cg.host.record_usage(r);
                     Ok(Expr::init_identifier(r, loc))

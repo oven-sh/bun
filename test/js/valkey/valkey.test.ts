@@ -7518,6 +7518,73 @@ describe("RedisClient argument validation", () => {
       client.close();
     }
   });
+
+  test("a number is accepted as a value, a list element, a member and an option value", () => {
+    // packages/bun-types/redis.d.ts declares `number` at each of these positions, so no call here has a cast.
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      const calls = [
+        () => client.set("k", 0),
+        () => client.set("k", 1, "EX", 60, "NX"),
+        () => client.append("k", 1),
+        () => client.getset("k", 1),
+        () => client.setnx("k", 1),
+        () => client.setex("k", 60, 1),
+        () => client.psetex("k", 60_000, 1),
+        () => client.setrange("k", 0, 1),
+        () => client.mset("a", 1, "b", 2),
+        () => client.msetnx("a", 1, "b", 2),
+        () => client.lpush("list", 1, 2),
+        () => client.rpush("list", 1, 2),
+        () => client.lpushx("list", 1),
+        () => client.rpushx("list", 1),
+        () => client.lset("list", 0, 1),
+        () => client.lrem("list", 0, 1),
+        () => client.linsert("list", "BEFORE", 1, 2),
+        () => client.lpos("list", 1),
+        () => client.sadd("set", 1, 2),
+        () => client.srem("set", 1, 2),
+        () => client.sismember("set", 1),
+        () => client.smove("set", "set2", 1),
+        () => client.smismember("set", 1, 2),
+        () => client.zscore("zset", 1),
+        () => client.zincrby("zset", 1.5, 2),
+        () => client.zmscore("zset", 1, 2),
+        () => client.zrem("zset", 1, 2),
+        () => client.zrank("zset", 1),
+        () => client.zrevrank("zset", 1),
+        () => client.zrange("zset", 0, 10, "BYSCORE", "LIMIT", 0, 2),
+        () => client.zrangestore("dest", "zset", 1, 3, "BYSCORE", "LIMIT", 0, 2),
+        () => client.zrevrangebylex("zset", "+", "-", "LIMIT", 0, 2),
+        () => client.zscan("zset", 0, "COUNT", 10),
+        () => client.pfadd("hll", 1),
+        () => client.geodist("geo", 1, 2),
+        () => client.geohash("geo", 1),
+        () => client.geopos("geo", 1),
+        () => client.hset("hash", "f", 1, "g", 2),
+        () => client.hsetnx("hash", "f", 1),
+        () => client.hmset("hash", "f", 1, "g", 2),
+        () => client.hmset("hash", ["f", 1]),
+        () => client.hsetex("hash", "EX", 60, "FIELDS", 1, "f", 1),
+      ];
+      expect(calls.filter(call => syncThrow(call) !== undefined).map(String)).toEqual([]);
+
+      // The types refuse these (test/integration/bun-types/fixture/redis.ts), and so does the client.
+      for (const call of [
+        () => client.set("k", 10n as any),
+        () => client.set("k", true as any),
+        () => client.set("k", {} as any),
+        () => client.set("k", new Number(5) as any),
+        () => client.append("k", 10n as any),
+        () => client.lpush("list", true as any),
+        () => client.sadd("set", 10n as any),
+      ]) {
+        expect(syncThrow(call)).toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      }
+    } finally {
+      client.close();
+    }
+  });
 });
 
 describe("RedisClient command methods", () => {

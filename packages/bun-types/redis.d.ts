@@ -144,50 +144,55 @@ declare module "bun" {
     /**
      * Set key to hold the string value
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @returns Promise that resolves with "OK" on success
      */
-    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<"OK">;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number): Promise<"OK">;
 
     /**
      * Set key to hold the string value with expiration
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @param ex Set the specified expire time, in seconds
      * @returns Promise that resolves with "OK" on success
      */
-    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ex: "EX", seconds: number): Promise<"OK">;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number, ex: "EX", seconds: number): Promise<"OK">;
 
     /**
      * Set key to hold the string value with expiration
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @param px Set the specified expire time, in milliseconds
      * @returns Promise that resolves with "OK" on success
      */
-    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, px: "PX", milliseconds: number): Promise<"OK">;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number, px: "PX", milliseconds: number): Promise<"OK">;
 
     /**
      * Set key to hold the string value with expiration at a specific Unix
      * timestamp
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @param exat Set the specified Unix time at which the key will expire, in
      * seconds
      * @returns Promise that resolves with "OK" on success
      */
-    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, exat: "EXAT", timestampSeconds: number): Promise<"OK">;
+    set(
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
+      exat: "EXAT",
+      timestampSeconds: number,
+    ): Promise<"OK">;
 
     /**
      * Set key to hold the string value with expiration at a specific Unix timestamp
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @param pxat Set the specified Unix time at which the key will expire, in milliseconds
      * @returns Promise that resolves with "OK" on success
      */
     set(
       key: RedisClient.KeyLike,
-      value: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
       pxat: "PXAT",
       timestampMilliseconds: number,
     ): Promise<"OK">;
@@ -195,51 +200,55 @@ declare module "bun" {
     /**
      * Set key to hold the string value only if key does not exist
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @param nx Only set the key if it does not already exist
      * @returns Promise that resolves with "OK" on success, or null if the key
      * already exists
      */
-    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, nx: "NX"): Promise<"OK" | null>;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number, nx: "NX"): Promise<"OK" | null>;
 
     /**
      * Set key to hold the string value only if key already exists
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @param xx Only set the key if it already exists
      * @returns Promise that resolves with "OK" on success, or null if the key
      * does not exist
      */
-    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, xx: "XX"): Promise<"OK" | null>;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number, xx: "XX"): Promise<"OK" | null>;
 
     /**
      * Set key to hold the string value and return the old value
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @param get Return the old string stored at key, or null if key did not
      * exist
      * @returns Promise that resolves with the old value, or null if key did not
      * exist
      */
-    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, get: "GET"): Promise<string | null>;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number, get: "GET"): Promise<string | null>;
 
     /**
      * Set key to hold the string value and retain the time to live
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @param keepttl Retain the time to live associated with the key
      * @returns Promise that resolves with "OK" on success
      */
-    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, keepttl: "KEEPTTL"): Promise<"OK">;
+    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number, keepttl: "KEEPTTL"): Promise<"OK">;
 
     /**
      * Set key to hold the string value with various options
      * @param key The key to set
-     * @param value The value to set
+     * @param value The value to set. A number is sent as the string that `String(value)` returns.
      * @param options Array of options (EX, PX, EXAT, PXAT, NX, XX, KEEPTTL, GET)
      * @returns Promise that resolves with "OK" on success, null if NX/XX condition not met, or the old value if GET is specified
      */
-    set(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ...options: string[]): Promise<"OK" | string | null>;
+    set(
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
+      ...options: (string | number)[]
+    ): Promise<"OK" | string | null>;
 
     /**
      * Delete one or more keys
@@ -345,8 +354,8 @@ declare module "bun" {
     hset(
       key: RedisClient.KeyLike,
       field: RedisClient.KeyLike,
-      value: RedisClient.KeyLike,
-      ...rest: RedisClient.KeyLike[]
+      value: RedisClient.KeyLike | number,
+      ...rest: (RedisClient.KeyLike | number)[]
     ): Promise<number>;
 
     /**
@@ -356,7 +365,7 @@ declare module "bun" {
      * @param value The value to set
      * @returns Promise that resolves with true if field was set, false if field already exists
      */
-    hsetnx(key: RedisClient.KeyLike, field: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<boolean>;
+    hsetnx(key: RedisClient.KeyLike, field: RedisClient.KeyLike, value: RedisClient.KeyLike | number): Promise<boolean>;
 
     /**
      * Get and delete one or more hash fields (Redis 8.0.0+)
@@ -404,41 +413,41 @@ declare module "bun" {
      * @example redis.hsetex("mykey", "FNX", "EX", 10, "FIELDS", 1, "field1", "value1")
      */
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fnx: "FNX", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fxx: "FXX", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, keepttl: "KEEPTTL", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, keepttl: "KEEPTTL", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fnx: "FNX", ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fnx: "FNX", px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fnx: "FNX", exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fnx: "FNX", pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fnx: "FNX", keepttl: "KEEPTTL", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fnx: "FNX", keepttl: "KEEPTTL", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fxx: "FXX", ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", ex: "EX", seconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fxx: "FXX", px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", px: "PX", milliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fxx: "FXX", exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", exat: "EXAT", unixTimeSeconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fxx: "FXX", pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", pxat: "PXAT", unixTimeMilliseconds: number, fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
     //prettier-ignore
-    hsetex(key: RedisClient.KeyLike, fxx: "FXX", keepttl: "KEEPTTL", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: RedisClient.KeyLike[]): Promise<number>;
+    hsetex(key: RedisClient.KeyLike, fxx: "FXX", keepttl: "KEEPTTL", fieldsKeyword: "FIELDS", numfields: number, ...fieldValues: (RedisClient.KeyLike | number)[]): Promise<number>;
 
     /**
      * Set expiration for hash fields (Redis 7.4+)
@@ -619,8 +628,8 @@ declare module "bun" {
     hmset(
       key: RedisClient.KeyLike,
       field: RedisClient.KeyLike,
-      value: RedisClient.KeyLike,
-      ...rest: RedisClient.KeyLike[]
+      value: RedisClient.KeyLike | number,
+      ...rest: (RedisClient.KeyLike | number)[]
     ): Promise<"OK">;
 
     /**
@@ -632,7 +641,7 @@ declare module "bun" {
      * @param fieldValues An array of alternating field names and values
      * @returns Promise that resolves with "OK"
      */
-    hmset(key: RedisClient.KeyLike, fieldValues: RedisClient.KeyLike[]): Promise<"OK">;
+    hmset(key: RedisClient.KeyLike, fieldValues: (RedisClient.KeyLike | number)[]): Promise<"OK">;
 
     /**
      * Get the value of a hash field
@@ -763,7 +772,7 @@ declare module "bun" {
      * @returns Promise that resolves with true if the member exists, false
      * otherwise
      */
-    sismember(key: RedisClient.KeyLike, member: string): Promise<boolean>;
+    sismember(key: RedisClient.KeyLike, member: string | number): Promise<boolean>;
 
     /**
      * Add one or more members to a set
@@ -771,7 +780,7 @@ declare module "bun" {
      * @param members The members to add
      * @returns Promise that resolves with the number of members added
      */
-    sadd(key: RedisClient.KeyLike, ...members: string[]): Promise<number>;
+    sadd(key: RedisClient.KeyLike, ...members: (string | number)[]): Promise<number>;
 
     /**
      * Remove one or more members from a set
@@ -779,7 +788,7 @@ declare module "bun" {
      * @param members The members to remove
      * @returns Promise that resolves with the number of members removed
      */
-    srem(key: RedisClient.KeyLike, ...members: string[]): Promise<number>;
+    srem(key: RedisClient.KeyLike, ...members: (string | number)[]): Promise<number>;
 
     /**
      * Move a member from one set to another
@@ -788,7 +797,7 @@ declare module "bun" {
      * @param member The member to move
      * @returns Promise that resolves with true if the element was moved, false if it wasn't a member of source
      */
-    smove(source: RedisClient.KeyLike, destination: RedisClient.KeyLike, member: string): Promise<boolean>;
+    smove(source: RedisClient.KeyLike, destination: RedisClient.KeyLike, member: string | number): Promise<boolean>;
 
     /**
      * Get all the members in a set
@@ -859,8 +868,8 @@ declare module "bun" {
      */
     smismember(
       key: RedisClient.KeyLike,
-      member: RedisClient.KeyLike,
-      ...members: RedisClient.KeyLike[]
+      member: RedisClient.KeyLike | number,
+      ...members: (RedisClient.KeyLike | number)[]
     ): Promise<number[]>;
 
     /**
@@ -1165,7 +1174,7 @@ declare module "bun" {
      */
     lpos(
       key: RedisClient.KeyLike,
-      element: RedisClient.KeyLike,
+      element: RedisClient.KeyLike | number,
       ...options: (string | number)[]
     ): Promise<number | number[] | null>;
 
@@ -1227,7 +1236,7 @@ declare module "bun" {
      * console.log(await redis.lrange("mylist", 0, -1)); // ["zero", "two", "last"]
      * ```
      */
-    lset(key: RedisClient.KeyLike, index: number, element: RedisClient.KeyLike): Promise<string>;
+    lset(key: RedisClient.KeyLike, index: number, element: RedisClient.KeyLike | number): Promise<string>;
 
     /**
      * Remove the expiration from a key
@@ -1708,7 +1717,7 @@ declare module "bun" {
       key: RedisClient.KeyLike,
       start: string | number,
       stop: string | number,
-      ...options: string[]
+      ...options: (string | number)[]
     ): Promise<string[]>;
 
     /**
@@ -1794,7 +1803,7 @@ declare module "bun" {
      * @returns Promise that resolves with the length of the string after the
      * append operation
      */
-    append(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
+    append(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number): Promise<number>;
 
     /**
      * Set the value of a key and return its old value
@@ -1803,7 +1812,7 @@ declare module "bun" {
      * @returns Promise that resolves with the old value, or null if the key
      * didn't exist
      */
-    getset(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<string | null>;
+    getset(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number): Promise<string | null>;
 
     /**
      * Insert an element before or after another element in a list
@@ -1824,8 +1833,8 @@ declare module "bun" {
     linsert(
       key: RedisClient.KeyLike,
       position: "BEFORE" | "AFTER",
-      pivot: RedisClient.KeyLike,
-      element: RedisClient.KeyLike,
+      pivot: RedisClient.KeyLike | number,
+      element: RedisClient.KeyLike | number,
     ): Promise<number>;
 
     /**
@@ -1835,7 +1844,11 @@ declare module "bun" {
      * @returns Promise that resolves with the length of the list after the push
      * operation
      */
-    lpush(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ...rest: RedisClient.KeyLike[]): Promise<number>;
+    lpush(
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
+      ...rest: (RedisClient.KeyLike | number)[]
+    ): Promise<number>;
 
     /**
      * Prepend a value to a list, only if the list exists
@@ -1844,7 +1857,7 @@ declare module "bun" {
      * @returns Promise that resolves with the length of the list after the push
      * operation, or 0 if the list doesn't exist
      */
-    lpushx(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
+    lpushx(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number): Promise<number>;
 
     /**
      * Remove elements from a list
@@ -1863,7 +1876,7 @@ declare module "bun" {
      * // List is now: ["world", "hello"]
      * ```
      */
-    lrem(key: RedisClient.KeyLike, count: number, element: RedisClient.KeyLike): Promise<number>;
+    lrem(key: RedisClient.KeyLike, count: number, element: RedisClient.KeyLike | number): Promise<number>;
 
     /**
      * Trim a list to the specified range
@@ -1888,7 +1901,7 @@ declare module "bun" {
      * @returns Promise that resolves with 1 if the HyperLogLog was altered, 0
      * otherwise
      */
-    pfadd(key: RedisClient.KeyLike, element: string): Promise<number>;
+    pfadd(key: RedisClient.KeyLike, element: string | number): Promise<number>;
 
     /**
      * Append one or multiple values to a list
@@ -1897,7 +1910,11 @@ declare module "bun" {
      * @returns Promise that resolves with the length of the list after the push
      * operation
      */
-    rpush(key: RedisClient.KeyLike, value: RedisClient.KeyLike, ...rest: RedisClient.KeyLike[]): Promise<number>;
+    rpush(
+      key: RedisClient.KeyLike,
+      value: RedisClient.KeyLike | number,
+      ...rest: (RedisClient.KeyLike | number)[]
+    ): Promise<number>;
 
     /**
      * Append a value to a list, only if the list exists
@@ -1906,7 +1923,7 @@ declare module "bun" {
      * @returns Promise that resolves with the length of the list after the push
      * operation, or 0 if the list doesn't exist
      */
-    rpushx(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
+    rpushx(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number): Promise<number>;
 
     /**
      * Set the value of a key, only if the key does not exist
@@ -1915,7 +1932,7 @@ declare module "bun" {
      * @returns Promise that resolves with 1 if the key was set, 0 if the key
      * was not set
      */
-    setnx(key: RedisClient.KeyLike, value: RedisClient.KeyLike): Promise<number>;
+    setnx(key: RedisClient.KeyLike, value: RedisClient.KeyLike | number): Promise<number>;
 
     /**
      * Set key to hold the string value with expiration time in seconds
@@ -1930,7 +1947,7 @@ declare module "bun" {
      * // Key will expire after 10 seconds
      * ```
      */
-    setex(key: RedisClient.KeyLike, seconds: number, value: RedisClient.KeyLike): Promise<"OK">;
+    setex(key: RedisClient.KeyLike, seconds: number, value: RedisClient.KeyLike | number): Promise<"OK">;
 
     /**
      * Set key to hold the string value with expiration time in milliseconds
@@ -1945,7 +1962,7 @@ declare module "bun" {
      * // Key will expire after 10000 milliseconds (10 seconds)
      * ```
      */
-    psetex(key: RedisClient.KeyLike, milliseconds: number, value: RedisClient.KeyLike): Promise<"OK">;
+    psetex(key: RedisClient.KeyLike, milliseconds: number, value: RedisClient.KeyLike | number): Promise<"OK">;
 
     /**
      * Get the score associated with the given member in a sorted set
@@ -1954,7 +1971,7 @@ declare module "bun" {
      * @returns Promise that resolves with the score of the member as a number,
      * or null if the member or key doesn't exist
      */
-    zscore(key: RedisClient.KeyLike, member: string): Promise<number | null>;
+    zscore(key: RedisClient.KeyLike, member: string | number): Promise<number | null>;
 
     /**
      * Increment the score of a member in a sorted set
@@ -1963,7 +1980,7 @@ declare module "bun" {
      * @param member The member to increment
      * @returns Promise that resolves with the new score
      */
-    zincrby(key: RedisClient.KeyLike, increment: number, member: RedisClient.KeyLike): Promise<number>;
+    zincrby(key: RedisClient.KeyLike, increment: number, member: RedisClient.KeyLike | number): Promise<number>;
 
     /**
      * Returns the scores associated with the specified members in the sorted set
@@ -1974,8 +1991,8 @@ declare module "bun" {
      */
     zmscore(
       key: RedisClient.KeyLike,
-      member: RedisClient.KeyLike,
-      ...members: RedisClient.KeyLike[]
+      member: RedisClient.KeyLike | number,
+      ...members: (RedisClient.KeyLike | number)[]
     ): Promise<(number | null)[]>;
 
     /**
@@ -2074,7 +2091,11 @@ declare module "bun" {
      * const [cursor, elements] = await redis.zscan("myzset", "0", "COUNT", "100");
      * ```
      */
-    zscan(key: RedisClient.KeyLike, cursor: string | number, ...options: string[]): Promise<[string, string[]]>;
+    zscan(
+      key: RedisClient.KeyLike,
+      cursor: string | number,
+      ...options: (string | number)[]
+    ): Promise<[string, string[]]>;
 
     /**
      * Remove one or more members from a sorted set
@@ -2083,7 +2104,11 @@ declare module "bun" {
      * @param members Additional members to remove
      * @returns Promise that resolves with the number of members removed (not including non-existing members)
      */
-    zrem(key: RedisClient.KeyLike, member: RedisClient.KeyLike, ...members: RedisClient.KeyLike[]): Promise<number>;
+    zrem(
+      key: RedisClient.KeyLike,
+      member: RedisClient.KeyLike | number,
+      ...members: (RedisClient.KeyLike | number)[]
+    ): Promise<number>;
 
     /**
      * Remove all members in a sorted set within the given lexicographical range
@@ -2416,7 +2441,12 @@ declare module "bun" {
      * console.log(limited); // ["d", "c"] (first 2 members)
      * ```
      */
-    zrevrangebylex(key: RedisClient.KeyLike, max: string, min: string, ...options: string[]): Promise<string[]>;
+    zrevrangebylex(
+      key: RedisClient.KeyLike,
+      max: string,
+      min: string,
+      ...options: (string | number)[]
+    ): Promise<string[]>;
 
     /**
      * Store a range of members from a sorted set into a destination key
@@ -2454,7 +2484,7 @@ declare module "bun" {
       source: RedisClient.KeyLike,
       start: string | number,
       stop: string | number,
-      ...options: string[]
+      ...options: (string | number)[]
     ): Promise<number>;
 
     /**
@@ -2463,7 +2493,7 @@ declare module "bun" {
      * @param member The member to find
      * @returns Promise that resolves with the rank (index) of the member, or null if the member doesn't exist
      */
-    zrank(key: RedisClient.KeyLike, member: string): Promise<number | null>;
+    zrank(key: RedisClient.KeyLike, member: string | number): Promise<number | null>;
 
     /**
      * Determine the index of a member in a sorted set with score
@@ -2472,7 +2502,7 @@ declare module "bun" {
      * @param withscore "WITHSCORE" to include the score
      * @returns Promise that resolves with [rank, score] or null if the member doesn't exist
      */
-    zrank(key: RedisClient.KeyLike, member: string, withscore: "WITHSCORE"): Promise<[number, number] | null>;
+    zrank(key: RedisClient.KeyLike, member: string | number, withscore: "WITHSCORE"): Promise<[number, number] | null>;
 
     /**
      * Determine the index of a member in a sorted set, with scores ordered from high to low
@@ -2480,7 +2510,7 @@ declare module "bun" {
      * @param member The member to find
      * @returns Promise that resolves with the rank (index) of the member, or null if the member doesn't exist
      */
-    zrevrank(key: RedisClient.KeyLike, member: string): Promise<number | null>;
+    zrevrank(key: RedisClient.KeyLike, member: string | number): Promise<number | null>;
 
     /**
      * Determine the index of a member in a sorted set with score, with scores ordered from high to low
@@ -2489,7 +2519,11 @@ declare module "bun" {
      * @param withscore "WITHSCORE" to include the score
      * @returns Promise that resolves with [rank, score] or null if the member doesn't exist
      */
-    zrevrank(key: RedisClient.KeyLike, member: string, withscore: "WITHSCORE"): Promise<[number, number] | null>;
+    zrevrank(
+      key: RedisClient.KeyLike,
+      member: string | number,
+      withscore: "WITHSCORE",
+    ): Promise<[number, number] | null>;
 
     /**
      * Get the values of all specified keys
@@ -2516,7 +2550,7 @@ declare module "bun" {
      * await redis.mset("key1", "value1", "key2", "value2");
      * ```
      */
-    mset(...keyValuePairs: RedisClient.KeyLike[]): Promise<"OK">;
+    mset(...keyValuePairs: (RedisClient.KeyLike | number)[]): Promise<"OK">;
 
     /**
      * Set multiple keys to multiple values, only if none of the keys exist
@@ -2541,7 +2575,7 @@ declare module "bun" {
      * await redis.msetnx("key1", "newvalue", "key3", "value3");
      * ```
      */
-    msetnx(...keyValuePairs: RedisClient.KeyLike[]): Promise<number>;
+    msetnx(...keyValuePairs: (RedisClient.KeyLike | number)[]): Promise<number>;
 
     /**
      * Count the number of set bits (population counting) in a string
@@ -2594,7 +2628,7 @@ declare module "bun" {
      * @param value The string value to write at the offset
      * @returns Promise that resolves with the length of the string after modification
      */
-    setrange(key: RedisClient.KeyLike, offset: number, value: RedisClient.KeyLike): Promise<number>;
+    setrange(key: RedisClient.KeyLike, offset: number, value: RedisClient.KeyLike | number): Promise<number>;
 
     /**
      * Return a serialized version of the value stored at the specified key
@@ -3462,7 +3496,7 @@ declare module "bun" {
      * await redis.geodist("Sicily", "Palermo", "Catania"); // "166274.1516"
      * ```
      */
-    geodist(key: RedisClient.KeyLike, member1: string, member2: string): Promise<string | null>;
+    geodist(key: RedisClient.KeyLike, member1: string | number, member2: string | number): Promise<string | null>;
     /**
      * Return the distance between two members in the geospatial index
      * @param key The key of the geo set
@@ -3478,8 +3512,8 @@ declare module "bun" {
      */
     geodist(
       key: RedisClient.KeyLike,
-      member1: string,
-      member2: string,
+      member1: string | number,
+      member2: string | number,
       unit: "m" | "km" | "mi" | "ft" | "M" | "KM" | "MI" | "FT",
     ): Promise<string | null>;
 
@@ -3495,7 +3529,7 @@ declare module "bun" {
      * // ["sqc8b49rny0", "sqdtr74hyu0"]
      * ```
      */
-    geohash(key: RedisClient.KeyLike, ...members: string[]): Promise<(string | null)[]>;
+    geohash(key: RedisClient.KeyLike, ...members: (string | number)[]): Promise<(string | null)[]>;
 
     /**
      * Return the longitude/latitude of members of a geospatial index
@@ -3509,7 +3543,7 @@ declare module "bun" {
      * // [[13.36138933897018433, 38.11555639549629859]]
      * ```
      */
-    geopos(key: RedisClient.KeyLike, ...members: string[]): Promise<([number, number] | null)[]>;
+    geopos(key: RedisClient.KeyLike, ...members: (string | number)[]): Promise<([number, number] | null)[]>;
 
     /**
      * Query a geospatial index for members inside an area of a box or circle

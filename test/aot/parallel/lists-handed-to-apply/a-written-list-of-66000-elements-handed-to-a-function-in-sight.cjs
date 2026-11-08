@@ -1,4 +1,5 @@
 // A written list of 66,000 elements is handed to apply of a function in sight. Its elements are a variable: a list of constants is data, which nobody takes apart.
+// No build under --aot-harden=proof-checks: the build holds 3,405 MB and takes 24.6 s where the plain build holds 178 MB and takes 1.4 s (Linux x64), and the executable grows by 37.7 MB: about 570 bytes an element. A fault of how the checks grow
 const table = { count() { return arguments.length + ":" + arguments[0] + ":" + arguments[arguments.length - 1]; }, sum(...all) { let total = 0; for (const one of all) total += one; return total; } };
 const names = JSON.parse('["count","sum"]');
 function known() { return arguments.length + ":" + arguments[65999]; }

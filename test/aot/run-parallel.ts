@@ -76,6 +76,9 @@
 //                                      nor where no instructions are counted
 //   // Todo under --aot-erase-types: <why>   its build with those flags does not pass today. The others are held as ever. It fails once that one passes: the line goes out.
 //   // Todo under a check: <why>       the same for every build with --aot-check= among its flags
+//   // Skip under --aot-harden=proof-checks: <why>   its build with those flags is made and run, and what it prints is compared with nothing: `ways` says
+//                                      "built and run, not compared" of it. The others are held as ever. For a program that asks the collector whether an object is gone
+//   // No build under --aot-harden=proof-checks: <why>   it is not built with those flags. The others are held as ever. For a build that outgrows the machine: <why> says how large it is
 //   // Under: <flags>: <why>           it is built once more with those flags, and held to the same. A line for each such build
 //   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. What it prints is compared in the first build alone, and not under --more-flags.
 //                                      Every other build is made and run: `ways` says "built and run, not compared" of it, not "pass"
@@ -160,6 +163,8 @@ type Program = {
   todo?: string;
   skip?: string;
   todoOfBuildWith: (flags: readonly string[]) => string | undefined;
+  skipOfBuildWith: (flags: readonly string[]) => string | undefined;
+  isNotBuiltWith: (flags: readonly string[]) => boolean;
   marksNotRead: string[];
   /** The flags of each further build that it asks for. */
   under: string[][];
@@ -269,7 +274,7 @@ const whereProofsAreChecked = ["--aot-harden=proof-checks"];
 const waysBehindTheFirst = ways.map(({ flags }) => flags).filter(flags => flags.length > 0);
 const isOneOfTheWays = (flags: readonly string[]) => waysBehindTheFirst.some(way => way.join(" ") === flags.join(" "));
 /** The flags of each build of a program behind the first. */
-function furtherBuilds({ under, flags: own, buildErrors }: Program) {
+function furtherBuilds({ under, flags: own, buildErrors, isNotBuiltWith }: Program) {
   if (takesTheFirstBuildAlone || moreFlags.length || buildErrors !== undefined) return [];
   const asked: (readonly string[])[] = askedOfAll
     ? [askedOfAll]
@@ -277,7 +282,7 @@ function furtherBuilds({ under, flags: own, buildErrors }: Program) {
   const seen = new Set<string>();
   return asked.filter(flags => {
     const key = flags.join(" ");
-    if (seen.has(key) || flags.every(flag => own.includes(flag))) return false;
+    if (seen.has(key) || flags.every(flag => own.includes(flag)) || isNotBuiltWith(flags)) return false;
     seen.add(key);
     return true;
   });
@@ -918,6 +923,8 @@ function read(file: string): Program {
     ).flat(),
     todoOfBuildWith: flags =>
       lines(`Todo under ${flags.join(" ")}`)[0] ?? (flags.some(isCheck) ? lines("Todo under a check")[0] : undefined),
+    skipOfBuildWith: flags => lines(`Skip under ${flags.join(" ")}`)[0],
+    isNotBuiltWith: flags => lines(`No build under ${flags.join(" ")}`).length > 0,
     under: lines("Under").map(line => line.split(": ", 1)[0].split(/\s+/).filter(Boolean)),
     statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
     counts: bounds.filter(({ kind }) => kind !== "STATISTIC"),
@@ -1490,6 +1497,7 @@ const all = [
         ...program,
         way,
         todoOfWay: program.todoOfBuildWith(flags),
+        printsWhatIsSaved: program.printsWhatIsSaved || program.skipOfBuildWith(flags) !== undefined,
         marksNotRead: [program.todoOfBuildWith(flags) ?? []].flat().filter(said => !readMark(said)),
         flags: [...program.flags, ...flags.filter(flag => !program.flags.includes(flag))],
         statistics: [],

@@ -99,6 +99,19 @@ test("a program that prints what goes by the copy that runs is built and run the
   });
 }, 120_000);
 
+test("a line leaves one way uncompared, and another leaves its build out; the other ways are held as ever", async () => {
+  const waysUnder = async (head: string) => {
+    const { lines, exitCode } = await driven([], {}, head);
+    return { ways: lines.find(({ state }) => state !== "compiling")?.ways, exitCode };
+  };
+  const { "under --aot-harden=proof-checks": _, ...theOtherThree } = inFourWays("3").ways;
+  expect(await waysUnder("// Skip under --aot-harden=proof-checks: for the test\n")).toEqual({
+    ways: { ...theOtherThree, "under --aot-harden=proof-checks": "built and run, not compared" },
+    exitCode: 0,
+  });
+  expect(await waysUnder("// No build under --aot-harden=proof-checks: for the test\n")).toEqual({ ways: theOtherThree, exitCode: 0 });
+}, 240_000);
+
 test("--no-erased leaves it out with the other builds behind the first, and --deal prices it", async () => {
   expect(await waysOf(["--no-erased"])).toEqual({ ways: { compiled: "pass" }, exitCode: 0 });
   const priceOf = async (words: string[]) => (await driven(["--deal", ...words])).lines[0].ms as number;

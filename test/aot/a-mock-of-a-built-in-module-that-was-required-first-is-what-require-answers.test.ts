@@ -41,7 +41,16 @@ const ordersInLayers = "ra rb rs ha wb rbw rabr ia ib it ibw iarb irb ris a b ar
 // object marked `__esModule`. Plain Bun answers the object itself. Until the engine follows, those answers are not compared.
 const isAnsweredByImageWithDefault = (order: string) => /^[ia]*i[ia]*b/.test(order);
 const withoutAnswersOfImage = (told: string[]) =>
-  told.map(line => (isAnsweredByImageWithDefault(line.split(":")[0]) ? line.split(" ").slice(0, 2).join(" ") : line));
+  told.map(line => {
+    const order = line.split(":")[0];
+    if (!isAnsweredByImageWithDefault(order)) return line;
+    // What the imports before the mock got is compared still.
+    const importsBeforeMock = [...order.split("b")[0]].filter(step => step === "i").length;
+    return line
+      .split(" ")
+      .slice(0, 2 + importsBeforeMock)
+      .join(" ");
+  });
 
 const testFileOf = (name: string, order: string) => (id: string) => `
   import { mock, test } from "bun:test";

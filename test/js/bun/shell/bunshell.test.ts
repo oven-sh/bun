@@ -1523,9 +1523,12 @@ booga"
       using dir = tempDir("shell-path-assign-which", { [exe]: "" });
       if (!isWindows) chmodSync(join(String(dir), exe), 0o755);
 
-      const { stdout, stderr, exitCode } = await $`PATH=${String(dir)}; which onlyintool`.quiet().nothrow();
+      const found = join(String(dir), exe) + "\n";
+      const { stdout, stderr, exitCode } = await $`PATH=${String(dir)}; which onlyintool; export PATH; which onlyintool`
+        .quiet()
+        .nothrow();
       expect(stderr.toString()).toBe("");
-      expect(stdout.toString()).toBe(join(String(dir), exe) + "\n");
+      expect(stdout.toString()).toBe(found + found);
       expect(exitCode).toBe(0);
     });
 
@@ -3985,6 +3988,17 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
 
   {
     const { stdout, stderr, exitCode } = await $`export PATH=${toolDir}; onlyintool`.quiet().nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+
+  // `export PATH` with no value keeps the PATH.
+  {
+    const { stdout, stderr, exitCode } = await $`export PATH; onlyintool`
+      .env({ ...bunEnv, PATH: toolDir })
+      .quiet()
+      .nothrow();
     expect(stderr.toString()).toBe("");
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);

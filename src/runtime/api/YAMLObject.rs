@@ -78,8 +78,7 @@ struct Stringifier<'a> {
     prop_names: StringHashMap<usize>,
 
     space: Space,
-    /// With `aliases: false` there is no first pass. A repeated object is written in full, and
-    /// `known_collections` holds only the path from the root to the object being written.
+    /// `false`: no anchor pass, and `known_collections` is the path from the root.
     aliases: bool,
 }
 
@@ -422,8 +421,6 @@ impl<'a> Stringifier<'a> {
             return self.stringify_collection(global, unwrapped, after_key);
         }
 
-        // Without aliases there is no first pass. `known_collections` is the path from the root to
-        // here, so a hit is a cycle, which YAML cannot write without an alias.
         if self.known_collections.get_or_put(unwrapped)?.found_existing {
             return Err(global
                 .throw_type_error(format_args!(

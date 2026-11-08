@@ -1203,9 +1203,7 @@ fn find_specifier(
     };
     if found.is_out_of_data_file {
         let names = found.alternatives.iter().filter_map(|it| match *it {
-            ImportSpecifier::Constant(name) => {
-                Some((name, argument, found.may_be_changed_by_others))
-            }
+            ImportSpecifier::Constant(name) => Some((name, argument, false)),
             _ => None,
         });
         alternatives.names_out_of_data_files.extend(names);

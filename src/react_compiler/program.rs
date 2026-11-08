@@ -947,25 +947,98 @@ fn calls_hooks_or_creates_jsx_in_expr(host: &dyn Host, expr: &Expr) -> bool {
     }
 }
 
-fn is_valid_component_params(host: &dyn Host, args: &[G::Arg], has_rest_arg: bool) -> bool {
-    if args.is_empty() {
-        return true;
+/// What upstream's `isValidComponentParams` answers before it has read a type.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ComponentParams {
+    No,
+    Yes,
+    /// Yes, unless `isValidPropsAnnotation` refuses the type of the first parameter.
+    UnlessPropsTypeIsPrimitive,
+}
+
+/// Upstream's `isValidComponentParams`, on the parameters that Babel has. A TypeScript `this` parameter is one of
+/// them, an `Identifier`. A parameter that has a default is an `AssignmentPattern`, which is no `Identifier` and has
+/// no type of its own: the type is on its left side.
+///
+/// Upstream asks for the type of `params[0]` first. Here it is asked last, because the parser keeps no types and the
+/// host has to read that one again.
+fn component_params(
+    host: &dyn Host,
+    args: &[G::Arg],
+    flags: flags::FunctionSet,
+) -> ComponentParams {
+    let this_is_first = flags.contains(flags::Function::TsThisParamIsFirst);
+    let len = args.len() + usize::from(flags.contains(flags::Function::HasTsThisParam));
+    // `params[i]`, where `None` is the `this` parameter.
+    let param = |i: usize| match this_is_first {
+        true => i.checked_sub(1).and_then(|i| args.get(i)),
+        false => args.get(i),
+    };
+    let is_rest = |arg: &G::Arg| {
+        flags.contains(flags::Function::HasRestArg)
+            && args.last().is_some_and(|last| core::ptr::eq(arg, last))
+    };
+    let is_valid = match len {
+        0 => return ComponentParams::Yes,
+        1 => !param(0).is_some_and(is_rest),
+        2 => param(1).is_some_and(|arg| {
+            !is_rest(arg) && arg.default.is_none() && is_named_like_a_ref(host, arg)
+        }),
+        _ => false,
+    };
+    match param(0) {
+        _ if !is_valid => ComponentParams::No,
+        Some(arg) if arg.default.is_some() => ComponentParams::Yes,
+        _ => ComponentParams::UnlessPropsTypeIsPrimitive,
     }
-    if args.len() > 2 {
+}
+
+fn is_named_like_a_ref(host: &dyn Host, arg: &G::Arg) -> bool {
+    let b::B::BIdentifier(id) = &arg.binding.data else {
         return false;
+    };
+    let name = host.ref_name(id.r#ref);
+    bun_core::strings::contains(name, b"ref") || bun_core::strings::contains(name, b"Ref")
+}
+
+fn is_valid_component_params(host: &dyn Host, args: &[G::Arg], flags: flags::FunctionSet) -> bool {
+    match component_params(host, args, flags) {
+        ComponentParams::No => false,
+        ComponentParams::Yes => true,
+        ComponentParams::UnlessPropsTypeIsPrimitive => {
+            !flags.contains(flags::Function::HasPrimitivePropsType)
+        }
     }
-    if has_rest_arg && args.len() == 1 {
-        return false;
+}
+
+/// What the callback in `const A = memo(() => {})` is asked. Upstream gives the callback of `memo()` or `forwardRef()`
+/// no name, so it never asks one for the parameters of a component. Here such a callback has the name of its
+/// declarator, and is asked what it always was: two parameters at most, the second named like a ref.
+fn is_valid_hoc_callback_params(
+    host: &dyn Host,
+    args: &[G::Arg],
+    flags: flags::FunctionSet,
+) -> bool {
+    match args {
+        [] => true,
+        [_] => !flags.contains(flags::Function::HasRestArg),
+        [_, second] => is_named_like_a_ref(host, second),
+        _ => false,
     }
-    if args.len() == 1 {
-        return true;
-    }
-    if let b::B::BIdentifier(id) = &args[1].binding.data {
-        let name = host.ref_name(id.r#ref);
-        bun_core::strings::contains(name, b"ref") || bun_core::strings::contains(name, b"Ref")
-    } else {
-        false
-    }
+}
+
+/// Whether [`flags::Function::HasPrimitivePropsType`] decides if this function is a component. The host then reads the
+/// type, and asks [`ReactCompilerState::may_compile`] once more if the flag is to be set.
+pub fn reads_props_type(
+    host: &dyn Host,
+    name: Option<&[u8]>,
+    in_react_hoc: bool,
+    args: &[G::Arg],
+    flags: flags::FunctionSet,
+) -> bool {
+    !in_react_hoc
+        && name.is_some_and(is_component_name)
+        && component_params(host, args, flags) == ComponentParams::UnlessPropsTypeIsPrimitive
 }
 
 // -----------------------------------------------------------------------
@@ -990,7 +1063,7 @@ fn get_react_function_type(
             host,
             name,
             func.args(),
-            func.has_rest_arg(),
+            func.flags(),
             func.body().stmts.slice(),
             in_react_hoc,
         )
@@ -1019,14 +1092,17 @@ fn get_component_or_hook_like(
     host: &dyn Host,
     name: Option<&[u8]>,
     args: &[G::Arg],
-    has_rest_arg: bool,
+    flags: flags::FunctionSet,
     body: &[Stmt],
     in_react_hoc: bool,
 ) -> Option<ReactFunctionType> {
     if let Some(fn_name) = name {
         if is_component_name(fn_name) {
             let is_component = calls_hooks_or_creates_jsx_in_stmts(host, body)
-                && is_valid_component_params(host, args, has_rest_arg)
+                && match in_react_hoc {
+                    true => is_valid_hoc_callback_params(host, args, flags),
+                    false => is_valid_component_params(host, args, flags),
+                }
                 && !returns_non_node_in_stmts(body);
             return if is_component {
                 Some(ReactFunctionType::Component)
@@ -1243,6 +1319,8 @@ impl ReactCompilerState {
 
     /// Decides, before any of a function is visited, whether [`maybe_compile_pending`] will be given it.
     /// Functions nested in one that is given are never considered, so this has to be as exact as upstream's check.
+    ///
+    /// Without [`flags::Function::HasPrimitivePropsType`] in `flags`, the answer is for a type that props have.
     #[allow(clippy::too_many_arguments)]
     pub fn may_compile(
         &self,
@@ -1250,14 +1328,13 @@ impl ReactCompilerState {
         name: Option<&[u8]>,
         in_react_hoc: bool,
         is_top_level: bool,
-        has_react_hooks_suppression: bool,
+        flags: flags::FunctionSet,
         args: &[G::Arg],
-        has_rest_arg: bool,
         body: &[Stmt],
     ) -> bool {
         if self.fatal.is_some()
             || self.context.has_module_scope_opt_out
-            || has_react_hooks_suppression
+            || flags.contains(flags::Function::HasReactHooksSuppression)
         {
             return false;
         }
@@ -1287,8 +1364,7 @@ impl ReactCompilerState {
         match mode {
             "all" => true,
             "infer" => {
-                get_component_or_hook_like(host, name, args, has_rest_arg, body, in_react_hoc)
-                    .is_some()
+                get_component_or_hook_like(host, name, args, flags, body, in_react_hoc).is_some()
             }
             _ => false,
         }
@@ -1326,6 +1402,8 @@ pub struct PendingCompile {
     /// Declared directly in module scope. `compilationMode: "all"` only compiles these.
     pub is_top_level: bool,
 }
+// The parser's `visit_stmts` moves one out of the parser for each function body, with the compiler off too.
+const _: () = assert!(core::mem::size_of::<PendingCompile>() == 48);
 
 /// Compiled function pieces that must be written back to the original
 /// `G::Fn` / `E::Arrow` by `visit_func` / arrow-visit (the body has already

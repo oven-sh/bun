@@ -676,6 +676,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     //
     pub(crate) after_arrow_body_loc: bun_ast::Loc,
 
+    /// Set by `skip_type_script_type_with_root` while it has the metadata of a type say what its root is.
+    pub(crate) ts_type_root_only: bool,
+
     pub(crate) const_values: bun_ast::ast_result::ConstValuesMap,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
@@ -9836,6 +9839,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             decorated_class_names: BumpVec::new_in(arena),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
+            ts_type_root_only: false,
             const_values: Default::default(),
             binary_expression_stack: BumpVec::new_in(arena),
             binary_expression_simplify_stack: BumpVec::new_in(arena),

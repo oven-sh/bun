@@ -5,21 +5,59 @@
 //! single `maybe_compile_*` call, then dropped — it owns no state of its own.
 
 use bun_ast as js_ast;
+use bun_ast::flags;
 use bun_collections::VecExt;
 
 use crate::JSXImport;
+use crate::lexer::T;
 use crate::p::P;
+use crate::parse::parse_entry::end_of_binding_pattern;
 
 /// What [`P::enter_react_compiler_candidate`] decided about a function.
 #[derive(Clone, Copy)]
 pub(crate) struct ReactCompilerCandidate {
     pub(crate) prev_may_replace_body: bool,
-    /// The function is handed to the compiler once its body has been visited.
-    pub(crate) is_taken: bool,
+    pub(crate) taken: ReactCompilerTaken,
     /// The binding that names it: its own declaration, or the `A` in `const A = () => {}`.
     pub(crate) binding: Option<js_ast::Ref>,
     pub(crate) in_react_hoc: bool,
-    pub(crate) is_top_level: bool,
+}
+
+// A copy of this is in the frame of `visit_func` and of `e_arrow`, which recurse.
+const _: () = assert!(core::mem::size_of::<ReactCompilerCandidate>() == 16);
+
+/// Whether a function is handed to the compiler once its body has been visited. If it is, with the flags that the
+/// host read from the source for it, which its node does not have: [`flags::Function::TsThisParamIsFirst`] and
+/// [`flags::Function::HasPrimitivePropsType`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReactCompilerTaken {
+    No,
+    Yes {
+        this_param_is_first: bool,
+        has_primitive_props_type: bool,
+    },
+}
+
+impl ReactCompilerTaken {
+    /// For a function that is taken: the flags that the compiler gets on top of those of the node.
+    #[inline]
+    pub(crate) fn more_flags(self) -> Option<flags::FunctionSet> {
+        let Self::Yes {
+            this_param_is_first,
+            has_primitive_props_type,
+        } = self
+        else {
+            return None;
+        };
+        let mut more = flags::FUNCTION_NONE;
+        if this_param_is_first {
+            more |= flags::Function::TsThisParamIsFirst;
+        }
+        if has_primitive_props_type {
+            more |= flags::Function::HasPrimitivePropsType;
+        }
+        Some(more)
+    }
 }
 
 pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
@@ -221,45 +259,231 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     ///
     /// Consumes `react_compiler_candidate_name`, so that a function in a default argument can't pick it up, and sets
     /// `react_compiler_may_replace_body` for the visit.
+    ///
+    /// `flags` is only called with the compiler on: an arrow has to put its flags together. `open_parens_loc` is read
+    /// for a function that has a `this` parameter, which an arrow can't have.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,
         is_method: bool,
         is_top_level: bool,
-        has_react_hooks_suppression: bool,
+        flags: impl FnOnce() -> flags::FunctionSet,
+        open_parens_loc: bun_ast::Loc,
         args: &[js_ast::G::Arg],
-        has_rest_arg: bool,
+        body_loc: bun_ast::Loc,
+        body: &[js_ast::Stmt],
+    ) -> ReactCompilerCandidate {
+        // Without the compiler nothing sets the name, the `memo()` flag or `react_compiler_may_replace_body`.
+        if self.react_compiler.is_none() {
+            return ReactCompilerCandidate {
+                prev_may_replace_body: false,
+                taken: ReactCompilerTaken::No,
+                binding: None,
+                in_react_hoc: false,
+            };
+        }
+        self.discover_react_compiler_candidate(
+            is_method,
+            is_top_level,
+            flags(),
+            open_parens_loc,
+            args,
+            body_loc,
+            body,
+        )
+    }
+
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn discover_react_compiler_candidate(
+        &mut self,
+        is_method: bool,
+        is_top_level: bool,
+        mut flags: flags::FunctionSet,
+        open_parens_loc: bun_ast::Loc,
+        args: &[js_ast::G::Arg],
+        body_loc: bun_ast::Loc,
         body: &[js_ast::Stmt],
     ) -> ReactCompilerCandidate {
         let prev_may_replace_body = self.react_compiler_may_replace_body;
         let binding = (self.react_compiler_candidate_name.take()).filter(|r| r.is_valid());
         let in_react_hoc = core::mem::take(&mut self.react_compiler_in_react_hoc);
-        let mut is_taken = false;
+        let mut taken = ReactCompilerTaken::No;
         if !is_method
             && !prev_may_replace_body
             && self.enclosing_class_keyword.len == 0
             && let Some(rc) = self.react_compiler.take()
         {
             let name = binding.map(|r| self.load_name_from_ref(r));
-            is_taken = rc.may_compile(
+            // Upstream asks where a `this` parameter is, and if the type of the first parameter is one that props
+            // have. The parse pass kept neither.
+            if TS
+                && flags.contains(flags::Function::HasTsThisParam)
+                && self.starts_with_this_param(open_parens_loc)
+            {
+                flags |= flags::Function::TsThisParamIsFirst;
+            }
+            let mut is_claimed = rc.may_compile(
                 &ReactCompilerHost::new(self),
                 name,
                 in_react_hoc,
                 is_top_level,
-                has_react_hooks_suppression,
+                flags,
                 args,
-                has_rest_arg,
                 body,
             );
-            self.react_compiler_may_replace_body = is_taken;
+            // The type gives the compiler no function that it does not get without it, so it is read last, and
+            // only for a function that is claimed without it.
+            let mut is_readable = true;
+            if TS
+                && is_claimed
+                && bun_react_compiler::reads_props_type(
+                    &ReactCompilerHost::new(self),
+                    name,
+                    in_react_hoc,
+                    args,
+                    flags,
+                )
+            {
+                match self.read_props_type_again(flags, open_parens_loc, args, body_loc) {
+                    Some(true) => {
+                        flags |= flags::Function::HasPrimitivePropsType;
+                        is_claimed = rc.may_compile(
+                            &ReactCompilerHost::new(self),
+                            name,
+                            in_react_hoc,
+                            is_top_level,
+                            flags,
+                            args,
+                            body,
+                        );
+                    }
+                    Some(false) => {}
+                    None => is_readable = false,
+                }
+            }
+            self.react_compiler_may_replace_body = is_claimed;
             self.react_compiler = Some(rc);
+            // A type that could not be read: if props have such a type, upstream compiles the function, and if not,
+            // it asks about the functions inside it. Neither is done here, so that no function gets a memo cache
+            // that upstream does not give it.
+            if is_claimed && is_readable {
+                taken = ReactCompilerTaken::Yes {
+                    this_param_is_first: flags.contains(flags::Function::TsThisParamIsFirst),
+                    has_primitive_props_type: flags
+                        .contains(flags::Function::HasPrimitivePropsType),
+                };
+            }
         }
         ReactCompilerCandidate {
             prev_may_replace_body,
-            is_taken,
+            taken,
             binding,
             in_react_hoc,
-            is_top_level,
         }
+    }
+
+    /// Whether the parameters that start at `open_parens_loc` start with a `this` parameter.
+    fn starts_with_this_param(&mut self, open_parens_loc: bun_ast::Loc) -> bool {
+        let after_the_parse = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let is_first = self.put_lexer_at(open_parens_loc.start).is_ok()
+            && self.lexer.token == T::TOpenParen
+            && self.lexer.next().is_ok()
+            && self.lexer.token == T::TThis;
+        self.lexer.restore(&after_the_parse);
+        is_first
+    }
+
+    /// [`flags::Function::HasPrimitivePropsType`] for a function of the file, read from the source: the type of the
+    /// `this` parameter, which comes first in the parameters that Babel has, or else of the first argument. `None` if
+    /// the lexer can't get to where that type is.
+    #[cold]
+    #[inline(never)]
+    fn read_props_type_again(
+        &mut self,
+        flags: flags::FunctionSet,
+        open_parens_loc: bun_ast::Loc,
+        args: &[js_ast::G::Arg],
+        body_loc: bun_ast::Loc,
+    ) -> Option<bool> {
+        let after_the_parse = self.lexer.snapshot();
+        self.lexer.is_log_disabled = true;
+        let is_primitive = self.skip_to_props_type_again(flags, open_parens_loc, args, body_loc);
+        self.lexer.restore(&after_the_parse);
+        is_primitive.ok()
+    }
+
+    fn skip_to_props_type_again(
+        &mut self,
+        flags: flags::FunctionSet,
+        open_parens_loc: bun_ast::Loc,
+        args: &[js_ast::G::Arg],
+        body_loc: bun_ast::Loc,
+    ) -> Result<bool, crate::Error> {
+        use js_ast::binding::Data as B;
+        if flags.contains(flags::Function::TsThisParamIsFirst) {
+            self.put_lexer_at(open_parens_loc.start)?;
+            self.lexer.expect(T::TOpenParen)?;
+            self.lexer.expect(T::TThis)?;
+        } else {
+            // The parse pass went over the binding as a parameter or, for an arrow, as an expression, and kept where
+            // an object pattern ends.
+            let binding = &args.first().ok_or(crate::Error::Backtrack)?.binding;
+            match &binding.data {
+                B::BIdentifier(id) => {
+                    self.put_lexer_at(binding.loc.start)?;
+                    if self.lexer.token != T::TIdentifier
+                        || self.lexer.identifier != self.load_name_from_ref(id.r#ref)
+                    {
+                        return Err(crate::Error::Backtrack);
+                    }
+                    self.lexer.next()?;
+                }
+                B::BObject(object) => {
+                    self.put_lexer_at(object.close_brace_loc.start)?;
+                    self.lexer.expect(T::TCloseBrace)?;
+                }
+                B::BArray(_) => {
+                    self.put_lexer_at(binding.loc.start)?;
+                    // The binding of a function type has no default value, no hole after an element and no computed
+                    // key. An array pattern that has one of them is parsed once more, to where the body starts.
+                    if self.lexer.token != T::TOpenBracket
+                        || self.skip_type_script_binding().is_err()
+                    {
+                        let start = usize::try_from(binding.loc.start).ok();
+                        let text = start
+                            .zip(usize::try_from(body_loc.start).ok())
+                            .and_then(|(start, end)| self.lexer.contents.get(start..end));
+                        let end = text
+                            .and_then(|text| {
+                                end_of_binding_pattern(text, self.options.jsx.clone(), self.define)
+                            })
+                            .and_then(|end| i32::try_from(end).ok())
+                            .ok_or(crate::Error::Backtrack)?;
+                        self.put_lexer_at(binding.loc.start.saturating_add(end))?;
+                    }
+                }
+                B::BMissing(_) => return Err(crate::Error::Backtrack),
+            }
+            // "function foo(a?: any) {}"
+            if self.lexer.token == T::TQuestion {
+                self.lexer.next()?;
+            }
+        }
+        if self.lexer.token != T::TColon {
+            return Ok(false);
+        }
+        self.lexer.next()?;
+        self.skip_type_script_type_with_root()
+    }
+
+    /// Puts the lexer on the token that starts at the offset `start` of the source.
+    fn put_lexer_at(&mut self, start: i32) -> Result<(), crate::Error> {
+        self.lexer.current = usize::try_from(start).map_err(|_| crate::Error::Backtrack)?;
+        self.lexer.step();
+        Ok(self.lexer.next()?)
     }
 
     /// Whether `expr` is a function, or `memo(fn)` / `forwardRef(fn)`, in which case this returns `Some(true)`. Anything

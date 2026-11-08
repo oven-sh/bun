@@ -115,14 +115,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = func.body.loc;
         let body_stmts: &'a [Stmt] = func.body.stmts.slice();
+        let is_top_level = self.current_scope == self.module_scope;
         let rc_candidate = self.enter_react_compiler_candidate(
             func.flags
                 .contains(flags::Function::IsUniqueFormalParameters),
-            self.current_scope == self.module_scope,
-            func.flags
-                .contains(flags::Function::HasReactHooksSuppression),
+            is_top_level,
+            || func.flags,
+            func.open_parens_loc,
             func.args.slice(),
-            func.flags.contains(flags::Function::HasRestArg),
+            body_loc,
             body_stmts,
         );
 
@@ -146,16 +147,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut temp_opts = PrependTempRefsOpts {
             kind: StmtsKind::FnBody,
         };
-        if rc_candidate.is_taken {
+        if let Some(more_flags) = rc_candidate.taken.more_flags() {
             self.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: func.args,
-                flags: func.flags,
+                flags: func.flags | more_flags,
                 body_loc,
                 args_loc: func.open_parens_loc,
                 binding: rc_candidate.binding,
                 own_name: func.name.map(|n| n.ref_).filter(|r| r.is_valid()),
                 in_react_hoc: rc_candidate.in_react_hoc,
-                is_top_level: rc_candidate.is_top_level,
+                is_top_level,
             });
         }
         self.visit_stmts_and_prepend_temp_refs(&mut stmts, &mut temp_opts)

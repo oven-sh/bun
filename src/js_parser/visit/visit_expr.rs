@@ -2711,12 +2711,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
+        let is_top_level = p.current_scope().parent == Some(p.module_scope);
         let rc_candidate = p.enter_react_compiler_candidate(
             false,
-            p.current_scope().parent == Some(p.module_scope),
-            e_.has_react_hooks_suppression,
+            is_top_level,
+            || e_.flags(),
+            bun_ast::Loc::EMPTY,
             e_.args.slice(),
-            e_.has_rest_arg,
+            e_.body.loc,
             dupe,
         );
 
@@ -2745,26 +2747,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             kind: crate::parser::StmtsKind::FnBody,
             ..Default::default()
         };
-        if rc_candidate.is_taken {
-            let mut flags = bun_ast::flags::FUNCTION_NONE;
-            if e_.is_async {
-                flags |= bun_ast::flags::Function::IsAsync;
-            }
-            if e_.has_rest_arg {
-                flags |= bun_ast::flags::Function::HasRestArg;
-            }
-            if e_.has_react_hooks_suppression {
-                flags |= bun_ast::flags::Function::HasReactHooksSuppression;
-            }
+        if let Some(more_flags) = rc_candidate.taken.more_flags() {
             p.react_compiler_pending = Some(bun_react_compiler::PendingCompile {
                 args: e_.args,
-                flags,
+                flags: e_.flags() | more_flags,
                 body_loc: e_.body.loc,
                 args_loc: e_.body.loc,
                 binding: rc_candidate.binding,
                 own_name: None,
                 in_react_hoc: rc_candidate.in_react_hoc,
-                is_top_level: rc_candidate.is_top_level,
+                is_top_level,
             });
         }
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)

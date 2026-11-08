@@ -57,6 +57,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(result)
     }
 
+    /// Skips a type as `skip_type_script_type(Level::Lowest)` does, and says if its root is one of the kinds that
+    /// `flags::Function::HasPrimitivePropsType` names. The root is the node that Babel's tree has at the top:
+    /// `number[]` is an array there, `number[] | null` a union and `(number)` a parenthesized type.
+    ///
+    /// The metadata of a type says what it is for a decorator. With `ts_type_root_only` it says what the root is, and
+    /// no name in the type counts as used.
+    pub(crate) fn skip_type_script_type_with_root(&mut self) -> Result<bool, Error> {
+        // A leading `|` or `&` makes a union or an intersection, of one type too. `keyof`, `readonly`, `unique` and
+        // `infer` are the root of what they start.
+        let starts_with_an_operator = match self.lexer.token {
+            T::TBar | T::TAmpersand => true,
+            T::TIdentifier => matches!(
+                kind_for_identifier(self.lexer.identifier),
+                Some(
+                    TsIdentKind::PrefixKeyof
+                        | TsIdentKind::PrefixReadonly
+                        | TsIdentKind::Unique
+                        | TsIdentKind::Infer
+                )
+            ),
+            _ => false,
+        };
+        if starts_with_an_operator {
+            self.skip_type_script_type(Level::Lowest)?;
+            return Ok(false);
+        }
+        self.ts_type_root_only = true;
+        let root = self.skip_type_script_type_with_metadata(Level::Lowest);
+        self.ts_type_root_only = false;
+        Ok(matches!(
+            root?,
+            Metadata::MArray
+                | Metadata::MBigint
+                | Metadata::MBoolean
+                | Metadata::MFunction
+                | Metadata::MNever
+                | Metadata::MNumber
+                | Metadata::MString
+                | Metadata::MSymbol
+        ))
+    }
+
     pub(crate) fn skip_type_script_binding(&mut self) -> Result<(), Error> {
         self.mark_type_script_only();
         // Nested destructuring patterns in skipped type positions recurse through
@@ -223,8 +265,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             self.lexer.expect(T::TOpenParen)?;
             if GET_METADATA {
+                let inner = self.skip_type_script_type_with_metadata(Level::Lowest)?;
                 *result.expect("infallible: GET_METADATA implies Some") =
-                    self.skip_type_script_type_with_metadata(Level::Lowest)?;
+                    match self.ts_type_root_only {
+                        true => Metadata::MObject,
+                        false => inner,
+                    };
             } else {
                 self.skip_type_script_type(Level::Lowest)?;
             }
@@ -633,12 +679,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         TsIdentKind::Normal => {
                             if GET_METADATA {
-                                let ident = self.lexer.identifier;
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let named = match self.ts_type_root_only {
+                                    true => Metadata::MObject,
+                                    false => {
+                                        let ident = self.lexer.identifier;
+                                        Metadata::MIdentifier(
+                                            self.find_symbol(bun_ast::Loc::EMPTY, ident)?.r#ref,
+                                        )
+                                    }
+                                };
                                 **result
                                     .as_mut()
-                                    .expect("infallible: GET_METADATA implies Some") =
-                                    Metadata::MIdentifier(find_result.r#ref);
+                                    .expect("infallible: GET_METADATA implies Some") = named;
                             }
 
                             self.lexer.next()?;
@@ -826,6 +878,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 left,
                             );
                         }
+                        if self.ts_type_root_only {
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") =
+                                Metadata::MObject;
+                        }
                     } else {
                         self.skip_type_script_type_with_opts::<false>(
                             Level::BitwiseOr,
@@ -870,6 +928,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .expect("infallible: GET_METADATA implies Some"),
                                 left,
                             );
+                        }
+                        if self.ts_type_root_only {
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") =
+                                Metadata::MObject;
                         }
                     } else {
                         self.skip_type_script_type_with_opts::<false>(
@@ -948,7 +1012,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let r = result
                             .as_deref_mut()
                             .expect("infallible: GET_METADATA implies Some");
-                        if matches!(*r, Metadata::MNone) {
+                        if matches!(*r, Metadata::MNone) && !self.ts_type_root_only {
                             *r = Metadata::MArray;
                         } else {
                             // if something was skipped, it is object type
@@ -1006,6 +1070,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .expect("infallible: GET_METADATA implies Some"),
                                 left,
                             );
+                        }
+                        if self.ts_type_root_only {
+                            **result
+                                .as_mut()
+                                .expect("infallible: GET_METADATA implies Some") =
+                                Metadata::MObject;
                         }
                     } else {
                         self.lexer.expect(T::TQuestion)?;

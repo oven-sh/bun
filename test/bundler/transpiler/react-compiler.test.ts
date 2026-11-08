@@ -4297,6 +4297,277 @@ describe("bundler", () => {
     },
   });
 
+  // Upstream takes a function for a component by its parameters too: none, one, or two when the second is an
+  // identifier named like a ref. A TypeScript `this` parameter is one of them, a parameter that has a default value is
+  // no identifier, and the first one must not have a type that props never have: a primitive, a literal, an array, a
+  // tuple or a function. The parser keeps no type and no `this` parameter, so a helper that the code calls, such as
+  // `function Label(n: number)`, was compiled. Each call of it then took a memo cache of the component that was
+  // rendering, and a call outside of a render threw.
+  //
+  // Each function has a component `Cell` inside it. `[2]` is the cache of `Cell` compiled on its own, so the function
+  // around it was not taken. `[1]` is the function compiled as one unit. `[]` is a function that is taken and left as
+  // written: upstream compiles no function that has a `this` parameter, or that has a function with one inside it. The
+  // expected sizes are what babel-plugin-react-compiler 1.0.0 and 0.0.0-experimental-a1856f3-20260507 give for this
+  // file, but for the two lists that say otherwise.
+  {
+    const cell = `const Cell = (p: { x: number }) => <i x={p.x} />;`;
+    const body = `${cell} return <b v={Cell({ x: 1 })} />;`;
+    const fn = (name: string, parameters: string, statements = "") =>
+      `function ${name}(${parameters}) { ${statements} ${body} }`;
+    const arrow = (name: string, parameters: string, head = "") =>
+      `const ${name} = ${head}(${parameters}) => { ${body} };`;
+    type Row = [source: string, sizes: number[]];
+    const typed = (types: Record<string, string>, sizes: number[]) =>
+      Object.entries(types).map(([name, type]): Row => [fn(name, `p: ${type}`), sizes]);
+
+    const rows: Row[] = [
+      // The root of the type decides, as Babel has it: `number[] | string` is a union, `(number)` is a parenthesized
+      // type and `readonly number[]` is an operator.
+      ...typed(
+        {
+          NumberKeyword: "number",
+          StringKeyword: "string",
+          BooleanKeyword: "boolean",
+          BigintKeyword: "bigint",
+          SymbolKeyword: "symbol",
+          NeverKeyword: "never",
+          StringLiteral: `"a"`,
+          NumberLiteral: "1",
+          NegativeLiteral: "-1",
+          BigintLiteral: "1n",
+          TrueLiteral: "true",
+          TemplateLiteral: "`a`",
+          TemplateLiteralWithAType: "`a${string}`",
+          ArrayOfNumbers: "number[]",
+          ArrayOfArrays: "string[][]",
+          ArrayOfProps: "Props[]",
+          ArrayOfGeneric: "Props<1>[]",
+          ArrayOfParenthesized: "(number | string)[]",
+          ArrayOfTypeof: "typeof value[]",
+          ArrayOfTuple: "[number][]",
+          ArrayAfterAComment: "number /* of them */ []",
+          TupleType: "[number, string]",
+          EmptyTuple: "[]",
+          NamedTuple: "[first: number]",
+          FunctionType: "() => void",
+          FunctionWithParameters: "(a: number, b?: string) => void",
+          GenericFunctionType: "<T>(a: T) => T",
+          ConstructorType: "new () => object",
+          AbstractConstructorType: "abstract new () => object",
+        },
+        [2],
+      ),
+      ...typed(
+        {
+          AnyKeyword: "any",
+          UnknownKeyword: "unknown",
+          ObjectKeyword: "object",
+          UndefinedKeyword: "undefined",
+          NullKeyword: "null",
+          VoidKeyword: "void",
+          ThisType: "this",
+          TypeReference: "Props",
+          GenericReference: "Props<1>",
+          ArrayReference: "Array<number>",
+          QualifiedReference: "Space.Props",
+          ObjectType: "{ a: number }",
+          MappedType: "{ [K in keyof Props]: number }",
+          UnionType: "number | string",
+          UnionOfLiterals: `"a" | "b"`,
+          UnionWithAnArray: "string | number[]",
+          ArrayInAUnion: "number[] | string",
+          LeadingBar: "| number",
+          LeadingBarAndArray: "| number[]",
+          LeadingAmpersand: "& number",
+          IntersectionType: "number & {}",
+          Parenthesized: "(number)",
+          ParenthesizedFunction: "(() => void)",
+          ParenthesizedConstructor: "(new () => object)",
+          ReadonlyArrayType: "readonly number[]",
+          ReadonlyTupleType: "readonly [number, string]",
+          KeyofProps: "keyof Props",
+          KeyofAnArray: "keyof Props[]",
+          UniqueSymbol: "unique symbol",
+          TypeofValue: "typeof value",
+          IndexedAccess: `Props["a"]`,
+          IndexedAccessOfAnArray: `number[]["length"]`,
+          IndexedAccessOfATuple: "[number][number]",
+          ConditionalType: "number extends string ? 1 : 2",
+          ConditionalTypeOfArrays: "Props extends number ? number[] : string[]",
+          ImportType: `import("react").FC`,
+          TypeofImport: `typeof import("react")`,
+        },
+        [1],
+      ),
+      // Where the type is. A parameter that has a default value has no type of its own for Babel: the type is on the
+      // left side of it.
+      [fn("Optional", "n?: number"), [2]],
+      [fn("DefaultAfterTheType", "n: number = 1"), [1]],
+      [fn("ObjectPattern", "{ a }: number"), [2]],
+      [fn("ObjectPatternWithADefaultInside", "{ a = 1, ...rest }: number"), [2]],
+      [fn("ObjectPatternOfProps", "{ a = 1 }: Props"), [1]],
+      [fn("ObjectPatternWithADefault", "{ a }: number = 1 as any"), [1]],
+      [fn("ArrayPattern", "[a, b]: [number, number]"), [2]],
+      [fn("ArrayPatternOfAny", "[a, b]: any"), [1]],
+      [fn("ArrayPatternWithAHole", "[, a, , b]: [number, number, number, number]"), [2]],
+      [fn("ArrayPatternWithADefaultInside", "[a = 0, b]: [number, number]"), [2]],
+      [fn("ArrayPatternThatEndsInADefault", "[a, b = 1]: [number, number]"), [2]],
+      [fn("ArrayPatternThatEndsInADefaultOfAny", "[a, b = 1]: any"), [1]],
+      [fn("ArrayPatternThatEndsInADefaultUntyped", "[a, { b } = { b: /]/ }]"), [1]],
+      [fn("ArrayPatternWithAFunctionInside", "[a = () => { return [1]; }, ...b]: number[]"), [2]],
+      [fn("NoType", "n"), [1]],
+      [fn("NoParameters", ""), [1]],
+      [fn("CommentsAroundTheType", "n /* the count */ : /* a */ number"), [2]],
+      [fn("TypeOnTheNextLine", "\n  n\n  :\n  number\n"), [2]],
+      [fn("NameThatIsNotAscii", "ñ: number"), [2]],
+      [fn("NameWithAnEscape", "\\u0061bc: number"), [2]],
+      [fn("TypeParameterArray<T>", "n: T[]"), [2]],
+      [fn("TypeParameter<T>", "n: T"), [1]],
+      // What the function is.
+      [`export default ${fn("ExportedByDefault", "n: number")}`, [2]],
+      [`async ${fn("AsyncDeclaration", "n: number")}`, [2]],
+      [`const FunctionExpression = ${fn("", "n: number")};`, [2]],
+      [arrow("Arrow", "n: number"), [2]],
+      [arrow("ArrowOfProps", "props: Props"), [1]],
+      [arrow("ArrowWithAnObjectPattern", "{ a }: string"), [2]],
+      [arrow("ArrowWithAnArrayPattern", "[a, b = 1]: [number, number]"), [2]],
+      [arrow("ArrowWithADefaultAfterTheType", "n: number = 1"), [1]],
+      [arrow("ArrowWithAnOptionalParameter", "n?: number"), [2]],
+      [arrow("AsyncArrow", "n: number", "async "), [2]],
+      [arrow("GenericArrow", "n: number", "<T,>"), [2]],
+      // A hook takes any parameters, the callback of memo() or forwardRef() is not asked for its own, and a directive
+      // makes a function that is no component one of the type that is neither a component nor a hook.
+      [fn("useHook", "n: number", "useState(n);"), [1]],
+      [`const MemoCallback = memo((n: number) => { ${body} });`, [1]],
+      [`const ForwardRefCallback = forwardRef((n: number, ref: any) => { ${body} });`, [1]],
+      [`const ForwardRefCallbackWithADefault = forwardRef((props: Props, ref = null) => { ${body} });`, [1]],
+      [fn("OptsIn", "n: number", `"use memo";`), [1]],
+      // The second parameter.
+      [fn("SecondNamedRef", "props: Props, ref: number"), [1]],
+      [fn("SecondWithADefault", "props: Props, ref = null"), [2]],
+      [fn("SecondIsARest", "props: Props, ...refs: any[]"), [2]],
+      [fn("SecondIsAPattern", "props: Props, { ref }: any"), [2]],
+      [fn("SecondIsNoRef", "props: Props, other: any"), [2]],
+      [fn("PrimitiveAndARef", "n: number, ref: any"), [2]],
+      [fn("OnlyARest", "...props: Props[]"), [2]],
+      // A `this` parameter is the first parameter, so its type is the one that is asked for.
+      [fn("This", "this: Props"), []],
+      [fn("ThisWithNoType", "this"), []],
+      [fn("ThisAndARef", "this: Props, ref: any"), []],
+      [fn("ThisAndARest", "this: Props, ...refs: any[]"), [2]],
+      [fn("ThisOfAPrimitive", "this: number"), [2]],
+      [fn("ThisOfAnArray", "this: Props[], ref: any"), [2]],
+      [fn("ThisAndProps", "this: unknown, props: Props"), [2]],
+      [fn("ThisAndTwo", "this: unknown, props: Props, ref: any"), [2]],
+      [fn("ThisInAGeneric<T>", "this: T, props: Props"), [2]],
+      [`const ThisInAFunctionExpression = ${fn("", "this: Props")};`, []],
+      [fn("useThis", "this: unknown, n: number", "useState(n);"), []],
+      [`const ThisInAMemoCallback = memo(${fn("", "this: unknown, props: Props")});`, []],
+      [fn("ThisAndOptsIn", "this: unknown, props: Props", `"use memo";`), []],
+      [fn("ThisInADeclarationInside", "props: Props", "function onClick(this: void) {}"), []],
+      [fn("ThisInAnExpressionInside", "props: Props", "const onClick = function (this: void) {};"), []],
+      [fn("ThisInAMethodInside", "props: Props", "const handlers = { onClick(this: void) {} };"), []],
+      [fn("useThisInside", "props: Props", "useState(0); const onClick = function (this: void) {};"), []],
+    ];
+    // TypeScript wants a `this` parameter first. Babel takes one that is not first for a parameter too, and then
+    // prints it, which is no JavaScript. The log of the plugin says that it takes neither function and compiles `Cell`.
+    const thisThatIsNotFirst: Row[] = [
+      [fn("ThisAfterProps", "props: Props, this: unknown"), [2]],
+      [fn("ThisAfterARef", "ref: any, this: unknown"), [2]],
+    ];
+    // Upstream: `[]`. The visit pass removes the function that has the `this` parameter before the compiler sees it.
+    const onlyBunCompiles: Row[] = [
+      [fn("ThisInDeadCodeInside", "props: Props", "if (false) { const onClick = function (this: void) {}; }"), [1]],
+    ];
+    const table = [...rows, ...thisThatIsNotFirst, ...onlyBunCompiles];
+    const nameOf = ([source]: Row) => source.match(/(?:function|const) (\w+)/)![1];
+
+    itBundled("react-compiler/WhichParametersAComponentHas", {
+      files: {
+        "/entry.tsx": /* tsx */ `
+          import { forwardRef, memo, useState } from "react";
+          type Props<T = 0> = { a: number; t?: T };
+          namespace Space {
+            export type Props = { a: number };
+          }
+          const value = 1;
+          ${table.map(([source]) => source).join("\n")}
+          const all = { ${table.map(nameOf).join(", ")} };
+          // Prints the memo cache sizes found in each function's source text.
+          console.log(
+            JSON.stringify(
+              Object.fromEntries(
+                Object.entries(all).map(([name, fn]) => [name, [...String(fn).matchAll(/\\$\\d* = [\\w$]+\\((\\d+)\\)/g)].map(m => +m[1])]),
+              ),
+            ),
+          );
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        "/node_modules/react/index.js": `
+          exports.memo = exports.forwardRef = fn => fn;
+          exports.useState = value => [value, () => {}];
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      run: {
+        stdout: JSON.stringify(Object.fromEntries(table.map(row => [nameOf(row), row[1]]))),
+      },
+    });
+
+    // `bun test` compiles a file when it loads it, with no bundler. A test calls a helper as the code does, outside
+    // of a render, where React has no memo cache to give.
+    test("react-compiler/WhichParametersAComponentHas, in bun test", async () => {
+      using dir = tempDir("react-compiler-parameters", {
+        "helpers.tsx": /* tsx */ `
+          export function Label(n: number) {
+            return <b>{n}</b>;
+          }
+          export function Row(this: unknown, props: { a: number }) {
+            return <i>{props.a}</i>;
+          }
+          export function Card(props: { n: number }) {
+            return <b>{props.n}</b>;
+          }
+        `,
+        "helpers.test.tsx": /* tsx */ `
+          import { expect, test } from "bun:test";
+          import * as all from "./helpers";
+          test("a helper is called", () => {
+            console.log("compiled: " + Object.keys(all).filter(name => /\\$\\[\\d+\\]/.test(String(all[name]))).join(" "));
+            expect(all.Label(1).props).toEqual({ children: 1 });
+            expect(all.Row.call(null, { a: 2 }).props).toEqual({ children: 2 });
+          });
+        `,
+        "node_modules/react/package.json": JSON.stringify({
+          name: "react",
+          exports: {
+            "./compiler-runtime": "./compiler-runtime.js",
+            "./jsx-runtime": "./jsx.js",
+            "./jsx-dev-runtime": "./jsx.js",
+          },
+        }),
+        "node_modules/react/compiler-runtime.js": `export const c = () => { throw new Error("There is no memo cache outside of a render"); };`,
+        "node_modules/react/jsx.js": `export const jsxDEV = (type, props) => ({ type, props }), jsx = jsxDEV, jsxs = jsxDEV;`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--react-compiler", "./helpers.test.tsx"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ compiled: stdout.match(/compiled: (.*)/)?.[1] ?? stderr, exitCode }).toEqual({
+        compiled: "Card",
+        exitCode: 0,
+      });
+    });
+  }
+
   // A callback that uses nothing from its component is moved out of it. It can still use variables of the function that
   // encloses the component, so it has to stay next to the component. Upstream only does that for function declarations.
   // It moves the rest to the end of the module, where calling them throws a ReferenceError.

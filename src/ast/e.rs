@@ -366,6 +366,21 @@ impl Arrow {
         prefer_expr: false,
         has_react_hooks_suppression: false,
     };
+
+    /// What `G::Fn::flags` has for a function, of the flags that an arrow can have.
+    pub fn flags(&self) -> crate::flags::FunctionSet {
+        let mut flags = crate::flags::FUNCTION_NONE;
+        if self.is_async {
+            flags |= crate::flags::Function::IsAsync;
+        }
+        if self.has_rest_arg {
+            flags |= crate::flags::Function::HasRestArg;
+        }
+        if self.has_react_hooks_suppression {
+            flags |= crate::flags::Function::HasReactHooksSuppression;
+        }
+        flags
+    }
 }
 impl Default for Arrow {
     fn default() -> Self {

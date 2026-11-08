@@ -77,9 +77,9 @@ pub(crate) fn lower(
     // both of which behave correctly with `module_scope` for a top-level call.
     let scope = host.module_scope();
 
-    // `validate_ts_this_parameters_in_function_range`: Bun's parser strips
-    // `this` parameters before this pass runs, so the upstream check is a
-    // no-op here.
+    // `validate_ts_this_parameters_in_function_range`: `lower_inner` asks each
+    // function that it lowers. Bun's scopes do not say which has a `this`
+    // parameter, so a function that the visit pass removed is not asked.
 
     // `build_identifier_loc_index`: not ported — Bun has no `node_id`; callers
     // read `Ref` + `Loc` straight off the AST node via `convert_loc`.
@@ -127,8 +127,10 @@ pub(super) fn lower_inner<'h>(
     import_bindings: &'h IndexMap<Ref, VariableBinding>,
     is_top_level: bool,
 ) -> Result<(HirFunction, IndexMap<Ref, IdentifierId>), CompilerError> {
-    // `validate_ts_this_parameter`: Bun's parser strips `this` parameters
-    // before this pass runs, so the upstream check is a no-op here.
+    // `validate_ts_this_parameter`
+    if func.has_ts_this_param() {
+        return Err(CompilerError::from(reserved_identifier_diagnostic("this")));
+    }
 
     let params = func.args();
     let body_stmts = func.body().stmts.slice();

@@ -213,6 +213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
+                func.flags.insert(Flags::Function::HasTsThisParam);
                 p.lexer.next()?;
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;

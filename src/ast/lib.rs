@@ -2709,6 +2709,19 @@ pub mod flags {
         /// A `// eslint-disable… react-hooks/…` comment was scanned at or before
         /// this function's body close. The React Compiler skips such functions.
         HasReactHooksSuppression,
+
+        /// The function has a TypeScript `this` parameter: `function f(this: T, a) {}`. The parser makes no
+        /// argument of it. Babel does, so the React Compiler counts it, and compiles no function that has one.
+        HasTsThisParam,
+
+        /// The `this` parameter is the first parameter, which is where TypeScript wants it. The parse pass
+        /// does not set this. The React Compiler's host reads the source again for it, and sets it on the
+        /// flags that the compiler is given.
+        TsThisParamIsFirst,
+        /// The type of the first parameter, `this` included, is one that upstream's `isValidPropsAnnotation`
+        /// refuses: an array, a tuple, a function, a constructor or a literal type, or `bigint`, `boolean`,
+        /// `never`, `number`, `string` or `symbol`. The host sets it, as it sets `TsThisParamIsFirst`.
+        HasPrimitivePropsType,
     }
     pub type FunctionSet = EnumSet<Function>;
     pub const FUNCTION_NONE: FunctionSet = EnumSet::empty();

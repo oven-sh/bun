@@ -41,4 +41,5 @@ pub use options::ReactCompilerOptions;
 pub use program::{
     CompileResult, Host, JsxImportKind, PendingCompile, ReactCompilerState,
     collect_import_bindings, finish, has_module_scope_opt_out, maybe_compile_pending,
+    reads_props_type,
 };

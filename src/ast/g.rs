@@ -303,6 +303,8 @@ pub struct Fn {
 
     pub return_ts_metadata: TypeScript::Metadata,
 }
+// `flags` is two bytes, in what was padding.
+const _: () = assert!(core::mem::size_of::<Fn>() == 88);
 
 impl Default for Fn {
     fn default() -> Self {

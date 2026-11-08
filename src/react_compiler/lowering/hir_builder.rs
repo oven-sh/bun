@@ -182,6 +182,21 @@ impl<'a> FunctionNode<'a> {
         }
     }
 
+    /// A TypeScript `this` parameter, which the parser keeps as a flag only. An arrow can't have one.
+    pub(crate) fn has_ts_this_param(&self) -> bool {
+        match self {
+            FunctionNode::Function(f) => f.flags.contains(ast::flags::Function::HasTsThisParam),
+            FunctionNode::Arrow(_) => false,
+        }
+    }
+
+    pub(crate) fn flags(&self) -> ast::flags::FunctionSet {
+        match self {
+            FunctionNode::Function(f) => f.flags,
+            FunctionNode::Arrow(a) => a.flags(),
+        }
+    }
+
     pub(crate) fn loc(&self) -> Loc {
         match self {
             FunctionNode::Function(f) => f.body.loc,

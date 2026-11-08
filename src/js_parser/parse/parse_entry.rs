@@ -126,6 +126,36 @@ pub fn parse_only_text<R>(
     parser.parse_only(f).ok()
 }
 
+/// Where the binding pattern at the start of `text` ends: the offset of the token after it. `text` is TypeScript of
+/// one of the build's files, from a parameter to where its function's body starts. A parser of its own goes over it
+/// because the pattern can hold default values, and nothing else finds the end of an expression. Returns `None` if
+/// `text` does not start with a binding pattern.
+#[cold]
+pub(crate) fn end_of_binding_pattern(
+    text: &[u8],
+    jsx: options::JSX::Pragma,
+    define: &Define,
+) -> Option<usize> {
+    let arena = bun_alloc::Arena::new();
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    let _ast_scope = ast_memory_allocator.enter();
+    let source = bun_ast::Source::init_path_string(&b"parameters.tsx"[..], text);
+    let loader = match jsx.parse {
+        true => bun_ast::Loader::Tsx,
+        false => bun_ast::Loader::Ts,
+    };
+    let mut log = bun_ast::Log::init();
+    let parser = Parser::init(
+        Options::init(jsx, loader),
+        &mut log,
+        &source,
+        define,
+        &arena,
+    )
+    .ok()?;
+    parser.end_of_binding_pattern().ok()
+}
+
 pub struct Parser<'a> {
     pub(crate) options: Options<'a>,
     pub(crate) lexer: js_lexer::Lexer<'a>,
@@ -519,6 +549,29 @@ impl<'a> Parser<'a> {
             stmts: stmts.as_slice(),
             p,
         }))
+    }
+
+    /// Parses one binding pattern and nothing after it. See [`end_of_binding_pattern`].
+    #[cold]
+    fn end_of_binding_pattern(mut self) -> Result<usize, Error> {
+        type Pi<'a> = P<'a, true, false>;
+        let lexer = core::mem::replace(
+            &mut self.lexer,
+            js_lexer::Lexer::init_without_reading(
+                self.bump.alloc(bun_ast::Log::default()),
+                self.source,
+                self.bump,
+            ),
+        );
+        let options = core::mem::take(&mut self.options);
+        init_p!(let p: Pi<'_> =
+            (self.bump, self.log, self.source, self.define, lexer, options));
+        p.parse_binding(Default::default())?;
+        // What the parser only logs is still an error.
+        if p.log().errors > self.orig_error_count {
+            return Err(crate::Error::SyntaxError);
+        }
+        Ok(p.lexer.start)
     }
 
     /// Bundler-only scan pass (see `bundler/cache.rs`). Never reached from

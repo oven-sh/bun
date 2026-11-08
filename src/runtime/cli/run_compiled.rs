@@ -32,7 +32,7 @@ static FILES_RUN_FROM_SOURCE: Guarded<BTreeSet<Vec<u8>>> = Guarded::new(BTreeSet
 static NEWEST_REFUSAL_OF_RUNNING_TEST_FILE: Guarded<Vec<u8>> = Guarded::new(Vec::new());
 const MAX_LISTED_REFUSED_CHANGES: usize = 100;
 static CRASH_REPORT: OnceLock<&'static [u8]> = OnceLock::new();
-/// The entry points that stand in for what the runner does and no file of the run spells.
+/// The entry point that stands in for what the runner does and no file of the run spells.
 static STAND_IN: Guarded<Option<&'static FileMap>> = Guarded::new(None);
 
 pub(crate) enum NonFileTarget<'a> {
@@ -97,11 +97,6 @@ pub(crate) fn set_stand_in(path: &[u8], text: &[u8]) {
     }
     let key = key_of_stand_in(path);
     let mut files = FileMap::default();
-    if let Some(earlier) = *STAND_IN.lock() {
-        for (key, text) in earlier.map.iter() {
-            bun_core::handle_oom(files.map.put(key, text.clone()));
-        }
-    }
     bun_core::handle_oom(files.map.put(&key, Box::from(text)));
     // It lives as long as the build, which is the last thing the process does.
     *STAND_IN.lock() = Some(Box::leak(Box::new(files)));

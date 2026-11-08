@@ -4,7 +4,7 @@
 
 // RUN(ARROW): lower
 // ARROW-LABEL: function {{*}}name="s"
-// ARROW: captures=[{type=env {{*}}}, {type=anything}, {type=function flags=[IsFromCompiler]}] thisType
+// ARROW: captures=[{type=env {{*}}}] thisType
 // ARROW: = CallDirect [[this]] function=
 
 // RUN(TOKEN): lower
@@ -69,3 +69,6 @@ export class SuperCallInArrow extends B {
     s();
   }
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o: any) { return [o.m]; }

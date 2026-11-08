@@ -1569,6 +1569,13 @@ mod safe_libc {
             off: libc::off_t,
             len: libc::off_t,
         ) -> c_int;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        pub safe fn posix_fadvise(
+            fd: c_int,
+            offset: libc::off_t,
+            len: libc::off_t,
+            advice: c_int,
+        ) -> c_int;
         // BSD/Linux event-queue / notification syscalls — all by-value scalars;
         // bad args → errno (`EINVAL`/`EMFILE`/…), never UB.
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -5097,6 +5104,8 @@ macro_rules! syslog {
 pub mod c {
     #[cfg(unix)]
     pub use super::safe_libc::fchmod;
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    pub use super::safe_libc::posix_fadvise;
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     use core::ffi::c_int;
     #[cfg(unix)]
@@ -5581,9 +5590,20 @@ pub mod linux {
         unsafe { libc::ppoll(fds.as_mut_ptr(), fds.len() as _, timeout, sigmask) }
     }
     /// `EPOLL_CTL_DEL` takes no `event`.
+    ///
+    /// # Safety
+    /// Whoever waits on `epfd` gets `event.u64` back and may dereference it. It must be what they
+    /// expect for as long as `fd` is registered, and until they are done with the events that
+    /// they had fetched by then.
     #[inline]
-    pub fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: Option<&epoll_event>) -> c_int {
-        super::linux_syscall::epoll_ctl(epfd, op, fd, event)
+    pub unsafe fn epoll_ctl(
+        epfd: c_int,
+        op: c_int,
+        fd: c_int,
+        event: Option<&epoll_event>,
+    ) -> c_int {
+        // SAFETY: the caller's contract.
+        unsafe { super::linux_syscall::epoll_ctl(epfd, op, fd, event) }
     }
 
     // ── raw syscall thunks ──
@@ -7509,8 +7529,13 @@ pub fn kqueue() -> Maybe<Fd> {
 
 /// `kevent()` — slice-wrapped Maybe form. Retries on EINTR.
 /// Returns the number of events written into `eventlist`.
+///
+/// # Safety
+/// Whoever waits on `fd` gets the `udata` of each change back and may dereference it. It must be
+/// what they expect for as long as the change is registered, and until they are done with the
+/// events that they had fetched by then.
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-pub fn kevent(
+pub unsafe fn kevent(
     fd: Fd,
     changelist: &[libc::kevent],
     eventlist: &mut [libc::kevent],
@@ -7518,7 +7543,7 @@ pub fn kevent(
 ) -> Maybe<usize> {
     loop {
         // SAFETY: fd is a valid kqueue; slices give exact (ptr,len); timeout
-        // is either null or a valid timespec.
+        // is either null or a valid timespec. The caller answers for each `udata`.
         let rc = unsafe {
             libc::kevent(
                 fd.native(),

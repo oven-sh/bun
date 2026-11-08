@@ -1,0 +1,1 @@
+postMessage("lib/posts.mjs");

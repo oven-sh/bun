@@ -1,27 +1,32 @@
 mod bindings;
 mod commonjs_exports;
-mod deferred_data;
 mod deferred_exports;
-pub(crate) mod evicted;
+mod evicted;
 mod exports;
 mod failures;
 mod graph;
 mod imports;
 mod interop;
+#[cfg(test)]
+mod kept_frames_tests;
 mod known_members;
 mod module_set;
 mod namespace_members;
 mod order;
 mod plan;
-mod reached_targets;
 mod referents;
 mod requests;
 mod side_effects;
+mod spelled_files;
 mod synthetic_exports;
+mod test_replacements;
+mod test_run_evictions;
+mod test_run_names_handed_on;
 #[cfg(test)]
 pub(crate) mod testing;
 #[cfg(test)]
 mod tests;
+mod unlinked_files;
 mod unloadable;
 mod unread_exports;
 mod wrapped;
@@ -34,54 +39,64 @@ pub use bindings::{
 };
 pub use bun_core::strings::order_utf16 as compare_code_units;
 pub use commonjs_exports::CommonJsExports;
-pub use deferred_data::{DeferredData, bundle_pages};
+pub(crate) use commonjs_exports::find_literal_exported_under_name;
 pub use deferred_exports::DeferredExports;
 pub use failures::{FailureEffect, ModuleFailure, ModuleFailureId, ModuleFailureKind};
 pub use graph::ModuleGraph;
 pub use interop::{ImportPhase, Interop, ModuleKind, RequireResult, SyntheticExportRule};
 pub(crate) use known_members::{KnownMemberValues, KnownObjects, Validity, is_enum};
 pub use plan::{Member, ModuleRef, Shape, Site, View};
-pub use referents::{Library, LinkedProject};
+pub use referents::{Library, LinkedProject, find_name_stored_as_module_exports};
+pub use requests::Spelling;
+pub(crate) use spelled_files::directory_of;
+pub(crate) use test_replacements::asks_for_original_beside_mock;
+pub use unlinked_files::UnlinkedFiles;
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
 pub(crate) use written_descriptor::{DescribedPart, WrittenDescriptor};
 
+use crate::builtins::id::BuiltinId;
 use crate::builtins::{BuiltinNames, Platforms, RuntimeModule, table};
 use crate::ir::InParallel;
-use crate::ir::parallel::map_each;
+use crate::ir::parallel::{extend_from_boxes, map_each};
 use crate::known_helpers::KnownHelpers;
-use crate::link::{Beside, run_beside};
-use crate::load::replaced_by_tests::without_extension;
+use crate::link::{Beside, run_steps_beside};
+use crate::load::sources::parsed_source;
 use crate::load::{EntryPointKind, SourceKind, Sources};
-use crate::options::{
-    FilesThatTestsLoad, LoadsBelowFilesLeftToLoader, ReplacedExport, ReplacedModule,
-};
-use crate::statistics::{Counters, StatisticId};
-use bun_sema::atom::{Atom, Interner};
+use crate::statistics::{Stage, StepClock};
+use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::hir::StmtId;
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
-use commonjs_exports::{CommonJsInput, InnerCommonJs, scan_commonjs_modules};
+use commonjs_exports::{CommonJsInput, scan_commonjs_modules};
 use core::cmp::Ordering;
-use evicted::{find_evicted_modules, find_library_modules_stored_in_cache};
+use evicted::{EvictedModules, find_evicted_modules, find_files_that_run_again};
 use exports::{
-    ExportTables, Resolution, collect_export_entries, find_ambiguous_names, finish_exports,
-    resolve_exports,
+    ExportTables, Resolution, begin_exports, collect_export_entries, find_ambiguous_names,
+    finish_exports, resolve_begun_exports,
 };
 use failures::{PendingFailure, number_failures};
-use graph::{FileRow, find};
-use imports::{FileImports, bind_imports, finish_bindings, finish_named_members};
+use graph::{FileRow, StarNamesLeftOut, find};
+use imports::{
+    FileImports, bind_imports, find_mocked_modules, finish_bindings, finish_named_members,
+};
+use interop::file_interop;
 use module_set::{ModuleSet, collect_modules};
 use order::{SiteKey, SitePosition, compute_order};
 use plan::{Plan, StoredSite};
 use requests::{
-    ScannedSite, Scans, finish_requests, finish_site_answers,
+    ScannedSite, Scans, find_spelling, finish_requests, finish_site_answers,
     leave_imports_of_test_files_to_loader, scan_files,
 };
 use side_effects::is_declared_free_of_side_effects;
-use std::sync::Arc;
+use std::sync::OnceLock;
 use synthetic_exports::{ReplacedNames, number_synthetic_exports};
-use unloadable::{drop_errors_of_unloadable_modules, find_unloadable_modules};
+use test_run_names_handed_on::NamesHandedOn;
+use unloadable::{
+    UnloadableModule, drop_errors_of_unloadable_modules, find_files_that_sites_name,
+    find_unloadable_modules, let_late_commonjs_files_fail_at_load,
+    let_unlinkable_modules_fail_at_load,
+};
 
 pub struct BindInput<'a, 's> {
     pub files: &'a Files<'s>,
@@ -90,167 +105,186 @@ pub struct BindInput<'a, 's> {
     pub deferred_exports: &'a DeferredExports,
     pub known_helpers: &'a KnownHelpers,
     pub platform: Platforms,
-    /// Packages that an option of the build names as external. A computed specifier can name one that no import site names.
     pub external_packages: &'a [Vec<u8>],
-    /// What the engine found in an earlier compile of the program: a spy of the test runner may replace them.
-    pub replaced_exports: &'a [ReplacedExport],
-    /// `LoadOptions::replaced_builtins`
     pub replaced_builtins: &'a [u32],
-    /// `AotOptions::runs_in_place`: the program answers as `bun run`, not as `bun build --compile`, where the two differ.
+    pub names_added_to_builtins: &'a [(BuiltinId, Atom)],
     pub runs_in_place: bool,
-    /// `CodeOptions::working_directory`
-    pub working_directory: &'a [u8],
-    /// `CodeOptions::ignores_declared_side_effects`
     pub ignores_declared_side_effects: bool,
-    /// `LoadOptions::mocked_modules`
-    pub mocked_modules: &'a [ReplacedModule],
-    /// `LoadOptions::mocks_any_module`
     pub mocks_any_module: bool,
-    /// `LoadOptions::handed_on_modules`
-    pub handed_on_modules: &'a [ReplacedModule],
-    /// `LoadOptions::hands_on_any_module`
+    pub mocked_library_modules: &'a [RuntimeModule],
     pub hands_on_any_module: bool,
-    /// `LoadOptions::spies_on_unknown_objects`
-    pub spies_on_unknown_objects: bool,
-    /// `LoadOptions::names_spied_on_unknown_objects`
-    pub names_spied_on_unknown_objects: &'a [Vec<u8>],
-    /// `LoadOptions::names_spied_in_text`
-    pub names_spied_in_text: &'a [Vec<u8>],
-    /// `LoadOptions::modules_replaced_in_text`
-    pub modules_replaced_in_text: &'a [Vec<u8>],
-    /// `LoadOptions::every_export_is_asked_for`
-    pub every_export_is_asked_for: bool,
-    /// `LoadOptions::evicted_modules`
-    pub evicted_modules: &'a [ReplacedModule],
-    /// `LoadOptions::evicts_any_module`
-    pub evicts_any_module: bool,
-    /// `LoadOptions::loads_below_files_left_to_loader`
-    pub loads_below_files_left_to_loader: &'a [Arc<LoadsBelowFilesLeftToLoader>],
-    pub files_that_tests_load: &'a FilesThatTestsLoad,
+    pub any_module_loads_again: bool,
     pub runs_tests: bool,
-    /// The entry points are the test files and the preloads of `bun test --aot`, which the runner starts one after another.
     pub runner_starts_entry_points: bool,
-    /// `LoadOptions::stores_path_of_main_module`
-    pub stores_path_of_main_module: bool,
-    /// `AotOptions::entry_points_run_again`
+    pub written_entry_point_count: usize,
     pub entry_points_run_again: bool,
-    /// `AotOptions::typescript_drops_absent_exports`
     pub typescript_drops_absent_exports: bool,
-    /// `AotOptions::loads_code_from_disk`
-    pub loads_code_from_disk: bool,
-    /// `AotOptions::host_runs_files_from_disk`
-    pub host_runs_files_from_disk: bool,
-    /// `LoadOptions::stand_in_for_files_from_disk`
-    pub stand_in_for_files_from_disk: Option<FileId>,
-    pub application: Option<&'a ApplicationGraph<'a>>,
+    pub runs_in_several_realms: bool,
+    pub files_are_named_out_of_sight: bool,
+    pub helpers_of_tests_name_files: bool,
+    pub(crate) run: &'a crate::test_runs::RunContents,
     pub in_parallel: InParallel<'a>,
     pub beside: Beside<'a>,
 }
 
-/// For the graph of a typed package's own program. Every importer of a module has a say in how it exports, and only the application has all of them.
-pub struct ApplicationGraph<'a> {
-    pub graph: &'a ModuleGraph,
-    pub to_local: &'a (dyn Fn(FileId) -> Option<FileId> + Sync),
-    pub to_application: &'a (dyn Fn(FileId) -> Option<FileId> + Sync),
-}
-
-impl ApplicationGraph<'_> {
-    fn local_module(&self, module: ModuleRef) -> Option<ModuleRef> {
-        module.map_file(self.to_local)
-    }
-
-    fn application_module(&self, module: ModuleRef) -> Option<ModuleRef> {
-        module.map_file(self.to_application)
-    }
-
-    /// A program of its own asks its files for every name, so it loads code that a file hands on and nobody in the application asks for.
-    pub fn has_module(&self, local: FileId) -> bool {
-        (self.to_application)(local).is_some_and(|file| self.graph.has_record(file))
+impl BindInput<'_, '_> {
+    pub(in crate::modules) fn is_plain_name(&self, name: Atom) -> bool {
+        let atoms = &self.files.atoms;
+        let is_index = atoms.bytes(name).first().is_some_and(u8::is_ascii_digit);
+        let listed = self.builtin_names.get(name);
+        let is_member = listed
+            .is_some_and(|name| table::own_member(BuiltinId::ObjectPrototype, name).is_some());
+        let sought = (BuiltinId::ObjectPrototype, atoms.bytes(name));
+        let added = self.names_added_to_builtins;
+        let is_added = added
+            .binary_search_by(|&(holder, laid)| (holder, atoms.bytes(laid)).cmp(&sought))
+            .is_ok();
+        !is_index && !is_member && !is_added && name != known::__proto__
     }
 }
 
 pub struct BoundModules {
     pub graph: ModuleGraph,
-    pub counters: Counters,
+}
+
+type Draft<'a> = (FileId, Vec<ModuleRequest>, Option<&'a mut FileImports>);
+
+pub struct ScannedModules {
+    scans: Scans,
+    unloadable: Vec<UnloadableModule>,
+    evicted: EvictedModules,
+    modules: ModuleSet,
+    run_again: Vec<ModuleRef>,
 }
 
 pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
-    let file_count = input.files.modules.len();
+    bind_scanned_modules(input, scan_modules(input))
+}
+
+pub fn scan_modules(input: &BindInput<'_, '_>) -> ScannedModules {
+    let mut steps = StepClock::new(Stage::BindModules);
     let mut scans = scan_files(input);
+    steps.end("bind: scan files");
+    let_late_commonjs_files_fail_at_load(input, &mut scans);
     let unloadable = find_unloadable_modules(input, &mut scans);
-    let mut modules = collect_modules(input, &scans);
-    let mut evicted = find_evicted_modules(input, &scans, &modules);
+    let evicted = find_evicted_modules(input, &scans);
+    steps.end("bind: unloadable and evicted modules");
     let may_load_again = |file: FileId| {
-        let kind = modules.interop(ModuleRef::File(file)).kind;
         evicted.contains(ModuleRef::File(file))
             && match input.sources.kind(file) {
                 SourceKind::Program => {
+                    let kind = file_interop(input.files, input.sources, file).kind;
                     matches!(kind, ModuleKind::SourceText | ModuleKind::CommonJs)
                 }
                 SourceKind::Data => true,
                 _ => false,
             }
     };
-    // A test file whose statements the loader links imports no file that may load again, so it never runs from disk for the sake of one.
-    if leave_imports_of_test_files_to_loader(input, &mut scans, &may_load_again) {
-        modules = collect_modules(input, &scans);
-        evicted = find_evicted_modules(input, &scans, &modules);
-    }
-    let ((order, mut sites), entries) = run_beside(
+    leave_imports_of_test_files_to_loader(input, &mut scans, &may_load_again);
+    let ((mut run_again, texts_listed_ahead), mut modules) = run_steps_beside(
         input.beside,
-        || compute_order(input, &scans, &modules),
-        || collect_export_entries(input, &scans, &modules),
+        &mut steps,
+        ["bind: collect modules: files that run again", "the modules"],
+        || {
+            let kinds = ModuleSet::with_kinds_alone(input, &scans);
+            find_files_that_run_again(input, &scans, &kinds, &evicted)
+        },
+        || collect_modules(input, &scans),
     );
-    let mut entries = Some(entries);
-    let inner_commonjs_modules = collect_inner_commonjs_modules(&modules, file_count);
+    modules.texts_listed_ahead = texts_listed_ahead;
+    if input.entry_points_run_again {
+        let entry_points = input.sources.entry_points().iter();
+        run_again.extend(entry_points.map(|entry_point| ModuleRef::File(entry_point.file)));
+    }
+    ScannedModules {
+        scans,
+        unloadable,
+        evicted,
+        modules,
+        run_again,
+    }
+}
+
+pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) -> BoundModules {
+    let ScannedModules {
+        scans,
+        mut unloadable,
+        evicted,
+        mut modules,
+        run_again,
+    } = scanned;
+    let file_count = input.files.modules.len();
+    let mut steps = StepClock::new(Stage::BindModules);
+    modules.find_inner_modules(input, &run_again);
+    let modules = modules;
+    steps.end("bind: collect modules: modules inside files");
+    let ((order, mut sites, texts), (mocked, begun)) = run_steps_beside(
+        input.beside,
+        &mut steps,
+        [
+            "bind: order, CommonJS modules",
+            "entries of exports, stars, nodes",
+        ],
+        || {
+            let (order, sites) = compute_order(input, &scans, &modules);
+            let texts = scan_commonjs_modules(&CommonJsInput {
+                bind: input,
+                scans: &scans,
+                modules: &modules,
+                half: &|module: ModuleRef| order.half(module),
+                half_at_link: &|module: ModuleRef| order.half_at_link(module),
+                is_prefix_root: &|file: FileId| order.is_prefix_root(file),
+            });
+            (order, sites, texts)
+        },
+        || {
+            let entries = collect_export_entries(input, &scans, &modules);
+            let mocked = find_mocked_modules(input, &scans, &modules);
+            let begun = begin_exports(input, &scans, &modules, entries, &mocked);
+            (mocked, begun)
+        },
+    );
     let commonjs_input = CommonJsInput {
         bind: input,
         scans: &scans,
         modules: &modules,
-        inner_modules: &|file: FileId| &inner_commonjs_modules[file.idx()][..],
         half: &|module: ModuleRef| order.half(module),
         half_at_link: &|module: ModuleRef| order.half_at_link(module),
         is_prefix_root: &|file: FileId| order.is_prefix_root(file),
     };
-    let mut texts = scan_commonjs_modules(&commonjs_input);
-    let stored_in_cache = find_library_modules_stored_in_cache(input, &scans, &modules);
-    let mut stored_markers = FxHashSet::default();
-    let mut newly_stored_markers = find_markers_stored_in_application(input, &modules);
-    // What the build knows of the `__esModule` of a module counts until a store in another file is found.
-    let (tables, imports) = loop {
-        texts.forget_markers(&newly_stored_markers);
-        stored_markers.extend(newly_stored_markers);
-        let entries = entries
-            .take()
-            .unwrap_or_else(|| collect_export_entries(input, &scans, &modules));
-        let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
-        sites.settle(input.files, &modules, &tables);
-        let find_marker = |module: ModuleRef| match modules.interop(module).kind {
-            _ if stored_markers.contains(&module) => None,
-            // From the first `require` on.
-            ModuleKind::SourceText => Some(true),
-            ModuleKind::CommonJs => texts.marker(module),
-            _ => None,
-        };
-        let imports = bind_imports(
-            input,
-            &scans,
-            &modules,
-            &tables,
-            &order,
-            &sites,
-            &find_marker,
-            &evicted,
-            &stored_in_cache,
-        );
-        let stored = imports.iter().flat_map(|file| &file.stored_markers);
-        newly_stored_markers = stored.copied().collect();
-        if newly_stored_markers.is_empty() {
-            break (tables, imports);
-        }
+    let stored_markers: FxHashSet<ModuleRef> =
+        texts.markers_stored_from_outside().into_iter().collect();
+    let names_without_code = mocked.names_without_code.clone();
+    let (mut tables, imports_from_commonjs) =
+        resolve_begun_exports(input.files, &scans, &modules, begun, &texts);
+    sites.settle(input.files, &modules, &tables);
+    steps.end("bind: resolve exports");
+    let find_marker = |module: ModuleRef| match modules.interop(module).kind {
+        _ if stored_markers.contains(&module) => None,
+        ModuleKind::SourceText => Some(true),
+        ModuleKind::CommonJs => texts.marker(module),
+        _ => None,
     };
-    // A spy, and whoever is handed the object, gets hold of the namespace object of the compiled file.
-    let mut imports = imports;
+    let (found_in_commonjs, mut imports) = run_steps_beside(
+        input.beside,
+        &mut steps,
+        ["bind: imports from CommonJS modules", "imports"],
+        || tables.find_imports_from_commonjs_modules(&modules, imports_from_commonjs),
+        || {
+            bind_imports(
+                input,
+                &scans,
+                &modules,
+                &tables,
+                &order,
+                &sites,
+                &find_marker,
+                &evicted,
+            )
+        },
+    );
+    tables.keep_imports_from_commonjs_modules(found_in_commonjs);
+    let tables = tables;
     for file in &mut imports {
         let lists = [
             &mut file.imported_namespaces,
@@ -280,55 +314,43 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         | Resolution::NotFound
         | Resolution::Ambiguous => {}
     };
-    let replaced_modules = ReplacedModules::new(input, &modules);
-    let mut replaced_without_table = Vec::new();
-    for export in input.replaced_exports {
-        if let Some(module) = replaced_modules.find(&export.module) {
-            let name = input.files.atoms.intern(&export.name);
-            replace(tables.resolve_in(&modules, module, name).resolution);
-            // The names of a module of the library or a CommonJS file show at run time, and no file of this build may ask for this one.
-            if modules.table_file(module).is_none() {
-                replaced_without_table.push(module);
-            }
-        }
-    }
-    // In a test run a namespace object that goes somewhere may reach a spy that takes an object from somewhere. The engine would find
-    // that out behind a whole run of the flow analysis, and the program would be compiled again.
     let mocked_modules = imports.iter().flat_map(|file| &file.mocked_modules);
     let mut mocked_modules: FxHashSet<ModuleRef> = mocked_modules.copied().collect();
-    mocked_modules.extend(replaced_without_table);
-    // A test names an ES module of Bun's own as a module of the library. Its table stands here, with its file.
-    for module in input.mocked_modules {
-        let Some(ModuleRef::Runtime(module)) = replaced_modules.find(module) else {
-            continue;
-        };
-        let files = modules.compiled_files.iter();
-        let is_its_file =
-            |file: &&FileId| input.sources.kind(**file) == SourceKind::RuntimeModule(module);
-        mocked_modules.extend(files.filter(is_its_file).map(|&file| ModuleRef::File(file)));
-    }
-    // A file of the application may spy on or mock a module that is lowered in a program of its own.
-    if let Some(application) = input.application {
+    if !input.run.modules_replaced_in_text.is_empty() {
         for &file in &modules.compiled_files {
-            let module = ModuleRef::File(file);
-            let theirs = application.application_module(module);
-            if theirs.is_some_and(|theirs| application.graph.may_be_mocked(theirs)) {
-                mocked_modules.insert(module);
-            }
-            for &(_, resolved) in tables.names(file) {
-                let Resolution::Variable(variable) = resolved.resolution else {
-                    continue;
-                };
-                let their_file = (application.to_application)(variable.file);
-                let their_variable = their_file.map(|file| Sym { file, ..variable });
-                if their_variable.is_some_and(|it| application.graph.is_replaceable(it)) {
-                    replace(resolved.resolution);
-                }
+            let path = input.files.module(file).file_name();
+            if input.run.is_replaced_in_text(&input.files.atoms, path) {
+                mocked_modules.insert(ModuleRef::File(file));
             }
         }
     }
-    // In a test run a statement that names a file that is not there fails where the file loads, unless a mock stands under the name. The functions of the file
-    // are left out, so nothing may be said of what it exports.
+    let named_by_mocks = mocked_modules.clone();
+    let named_here = named_by_mocks.iter().filter_map(|&module| match module {
+        ModuleRef::Runtime(module) => Some(module),
+        _ => None,
+    });
+    let named_by_application = input.mocked_library_modules.iter().copied();
+    let mocked_es_modules_of_library: Vec<RuntimeModule> = named_here
+        .chain(named_by_application)
+        .filter(|&module| table::is_es_module(module))
+        .collect();
+    if !mocked_es_modules_of_library.is_empty() {
+        for &file in &modules.compiled_files {
+            if let SourceKind::RuntimeModule(module) = input.sources.kind(file)
+                && mocked_es_modules_of_library.contains(&module)
+            {
+                mocked_modules.insert(ModuleRef::File(file));
+            }
+        }
+    }
+    let mocked_files_with_stars = mocked_modules.iter().filter_map(|&module| {
+        let file = modules.table_file(module)?;
+        tables.has_dynamic_names(module).then_some(file)
+    });
+    let mocked_files_with_stars: Vec<FileId> = mocked_files_with_stars.collect();
+    for file in mocked_files_with_stars {
+        mocked_modules.extend(find_modules_behind_stars(input, &scans, &modules, file));
+    }
     if input.runs_tests {
         for &file in &modules.compiled_files {
             if scans.of(file).failures.is_empty() {
@@ -341,37 +363,14 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     }
     let mut spy_may_reach_any_module = false;
     let spies = imports.iter().map(|file| &file.spies_on_unknown_objects);
-    // Such a spy replaces what goes by the name that it is given, and nothing else. Under a name that nobody can read it replaces every name.
-    let told = input.names_spied_on_unknown_objects.iter();
-    let told = told.chain(input.names_spied_in_text);
-    let mut names_spied_on: FxHashSet<Atom> =
-        told.map(|name| input.files.atoms.intern(name)).collect();
-    names_spied_on.extend(spies.clone().flat_map(|it| &it.names));
-    // Whether somebody passes a helper its names is for the scan of the test files to say, which reads them all. Flow reads the callers in this program
-    // alone: below other programs it takes such a helper for a spy under any name, and what it finds that is not open starts the build over.
-    let is_seen_to_spy = spies
-        .clone()
-        .any(|it| it.is_any_name || !it.names.is_empty());
-    let loads_by_unknown_path = imports.iter().any(|file| file.loads_by_unknown_path);
-    // Where a file loads under a path that nobody reads, every namespace object has escaped for flow, and a spy in sight whose object and name it loses on
-    // the way is a spy on every export of them all: it finds that behind a whole front end. A name that is a constant where the spy is called it does not lose.
-    let meets_all_that_escaped = spies
-        .clone()
-        .any(|it| it.is_any_name || it.has_name_that_is_no_constant)
-        && loads_by_unknown_path
-        && !input.every_export_is_asked_for
-        && !input.host_runs_files_from_disk;
-    let is_any_name_spied_on = input.spies_on_unknown_objects
-        || meets_all_that_escaped
-        || spies.clone().any(|it| {
-            it.is_any_name || (it.takes_names_from_outside && input.every_export_is_asked_for)
-        });
+    let names_spied_on = spies.clone().flat_map(|it| &it.names);
+    let names_spied_on = names_spied_on.chain(&input.run.names_spied);
+    let names_spied_on: FxHashSet<Atom> = names_spied_on.copied().collect();
+    let is_any_name_spied_on =
+        input.run.spies_under_any_name || spies.clone().any(|it| it.is_any_name);
     if input.runs_tests && (is_any_name_spied_on || !names_spied_on.is_empty()) {
         let handed_out = imports.iter().flat_map(|file| &file.namespaces_handed_out);
         let mut handed_out: FxHashSet<ModuleRef> = handed_out.copied().collect();
-        let out_of_sight = input.handed_on_modules.iter();
-        handed_out.extend(out_of_sight.filter_map(|module| replaced_modules.find(module)));
-        // `export * as name`: whoever reads the name holds the object.
         for &file in &modules.compiled_files {
             handed_out.extend(tables.names(file).iter().filter_map(|&(_, resolved)| {
                 match resolved.resolution {
@@ -380,24 +379,17 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
                 }
             }));
         }
-        // Such a spy may be handed the object of any module. The engine says so behind a whole run of flow. Where the test files are not in the build it finds few: they reach the entry points alone.
-        if !input.host_runs_files_from_disk
-            && (input.hands_on_any_module
-                || ((is_seen_to_spy || !input.names_spied_in_text.is_empty())
-                    && loads_by_unknown_path))
-        {
+        if input.hands_on_any_module {
             spy_may_reach_any_module = true;
             let files = modules.compiled_files.iter();
             handed_out.extend(files.map(|&file| ModuleRef::File(file)));
         }
         for &module in &handed_out {
             let Some(file) = modules.table_file(module) else {
-                // The names of a module of the library or a CommonJS file show at run time.
                 mocked_modules.insert(module);
                 continue;
             };
-            // The object of such a module has no layout of its own, and flow takes a spy that may meet it for a spy on all its names.
-            let is_source_text = scans.of(file).interop.kind == ModuleKind::SourceText;
+            let is_source_text = modules.interop(module).kind == ModuleKind::SourceText;
             for &(name, resolved) in tables.names(file) {
                 if is_any_name_spied_on || !is_source_text || names_spied_on.contains(&name) {
                     replace(resolved.resolution);
@@ -406,7 +398,6 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             if !tables.has_dynamic_names(module) {
                 continue;
             }
-            // `export * from "node:os"`: whoever holds the object of the file reaches the names of that module, which show at run time.
             for behind in find_modules_behind_stars(input, &scans, &modules, file) {
                 if is_any_name_spied_on {
                     mocked_modules.insert(behind);
@@ -417,7 +408,6 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
                 }
             }
         }
-        // Whoever finds a file by its name gets the object of a file of data, and no text says who does.
         for &file in &modules.compiled_files {
             if scans.of(file).interop.kind == ModuleKind::Data {
                 for &(_, resolved) in tables.names(file) {
@@ -426,12 +416,22 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             }
         }
     }
+    if !input.run.exports_spied_in_text.is_empty() {
+        for &file in &modules.compiled_files {
+            let path = input.files.module(file).file_name();
+            for name in input.run.names_spied_in_text_on(&input.files.atoms, path) {
+                replace(
+                    tables
+                        .resolve_in(&modules, ModuleRef::File(file), name)
+                        .resolution,
+                );
+            }
+        }
+    }
     for &module in imports
         .iter()
         .flat_map(|file| &file.namespaces_spied_on_whole)
     {
-        // Where the names of the module are all known they are replaced, and that is all: the object of a module that may be mocked is an object that nobody
-        // knows for flow, and a spy on such an object under a name that nobody reads is a spy on every export of the program.
         match modules.table_file(module) {
             Some(file) if !tables.has_dynamic_names(module) => {
                 for &(_, resolved) in tables.names(file) {
@@ -447,58 +447,103 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             }
         }
     }
-    if loads_by_unknown_path && !input.modules_replaced_in_text.is_empty() {
+    if modules.has_sibling_forms() {
         for &file in &modules.compiled_files {
-            let path = input.files.module(file).file_name();
-            if (input.modules_replaced_in_text.iter()).any(|it| ends_with_module_in_text(path, it))
-            {
-                mocked_modules.insert(ModuleRef::File(file));
+            let has_siblings = || {
+                let siblings = modules.sibling_forms_of_kind(ModuleRef::File(file), None);
+                siblings.count() != 0
+            };
+            if scans.of(file).interop.kind == ModuleKind::Data && has_siblings() {
+                for &(_, resolved) in tables.names(file) {
+                    replace(resolved.resolution);
+                }
             }
         }
     }
+    let mocks_any_module =
+        input.mocks_any_module || imports.iter().any(|file| file.mocks_any_module);
+    if mocks_any_module {
+        let files = modules.compiled_files.iter();
+        mocked_modules.extend(files.map(|&file| ModuleRef::File(file)));
+    }
+    let of_library = |&module: &ModuleRef| match module {
+        ModuleRef::Runtime(module) => Some(module),
+        _ => None,
+    };
+    let mut mocked_library_modules: Vec<RuntimeModule> =
+        mocked_modules.iter().filter_map(of_library).collect();
+    mocked_library_modules.shared_sort_unstable();
+    let answered_for = imports.iter();
+    let answered_for = answered_for.flat_map(|file| &file.library_modules_answered_for);
+    mocked_modules.extend(answered_for.map(|&module| ModuleRef::Runtime(module)));
     let mocked_files = mocked_modules.iter();
     for file in mocked_files.filter_map(|&module| modules.table_file(module)) {
         for &(_, resolved) in tables.names(file) {
             replace(resolved.resolution);
         }
     }
-    let mocks_any_module = imports.iter().any(|file| file.mocks_any_module);
     let replaced = ReplacedNames {
         names: &replaced_names,
         modules: &mocked_modules,
         is_every_module: mocks_any_module || spy_may_reach_any_module,
     };
+    if input.runs_tests {
+        crate::test_run_report::say_what_tests_replace(
+            replaced_variables.len(),
+            modules.compiled_files.len(),
+            mocked_modules.len(),
+            is_any_name_spied_on,
+            names_spied_on.len(),
+            spy_may_reach_any_module,
+        );
+    }
+    steps.end("bind: what mocks and spies replace");
     let synthetic = number_synthetic_exports(input, &modules, &tables, &imports, &texts, replaced);
-    let ((mut pending, requests, is_library), mut commonjs_exports) = run_beside(
-        input.beside,
-        || {
-            (
-                collect_pending_failures(&scans, &modules, &tables, &imports),
-                finish_requests(&scans, &modules, &tables, &order, &sites),
-                find_library_files(input),
-            )
-        },
-        || CommonJsExports::finish(&commonjs_input, texts, &tables, &imports, &synthetic),
-    );
-    // What the text of the files that use a module says, dead code too. Reach says the same of the code that is left.
+    steps.end("bind: number synthetic exports");
+    let ((mut pending, requests, is_library, files_that_sites_name), mut commonjs_exports) =
+        run_steps_beside(
+            input.beside,
+            &mut steps,
+            ["bind: failures, requests", "exports of CommonJS modules"],
+            || {
+                (
+                    collect_pending_failures(&scans, &modules, &tables, &imports),
+                    finish_requests(&scans, &modules, &tables, &order, &sites, &mocked_modules),
+                    find_library_files(input),
+                    find_files_that_sites_name(input, &scans),
+                )
+            },
+            || CommonJsExports::finish(&commonjs_input, texts, &tables, &imports, &synthetic),
+        );
     for file_imports in &imports {
         for &module in &file_imports.exports_values {
             commonjs_exports.look_at(module);
         }
-        // A call through the object hands the object over as `this`.
         for &(accessed, owner, name) in &file_imports.called_members {
             if !commonjs_exports.ignores_this(owner, name) {
                 commonjs_exports.look_at(accessed);
             }
         }
     }
+    for &(module, _) in &replaced_names {
+        commonjs_exports.look_at(module);
+    }
     for file_imports in &imports {
         for &(module, name) in &file_imports.called_namespace_members {
             commonjs_exports.call_through_namespace(module, name);
         }
     }
+    let_unlinkable_modules_fail_at_load(
+        input,
+        &scans,
+        &files_that_sites_name,
+        &mut pending,
+        &mut imports,
+        &mut unloadable,
+    );
     drop_errors_of_unloadable_modules(&mut pending, &unloadable);
     let failures = number_failures(file_count, pending);
+    commonjs_exports.number_checks(&failures);
     let mut load_failures = Vec::with_capacity(unloadable.len());
     let mut erased_statements = find_statements_of_inner_modules(&modules);
     for module in &unloadable {
@@ -506,17 +551,31 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         let hir = input.files.hir(module.file);
         erased_statements.extend(hir.ids(hir.body).map(|statement| (module.file, statement)));
     }
-    let mut compiled_files = modules.compiled_files.iter().zip(imports).peekable();
+    let mut compiled_files = modules.compiled_files.iter().zip(&mut imports).peekable();
     let record_files = modules.record_files.iter().zip(requests.files);
-    let drafts: Vec<(FileId, Vec<ModuleRequest>, Option<FileImports>)> = record_files
+    let drafts: Vec<Draft<'_>> = record_files
         .map(|(&file, requests)| {
             let compiled = compiled_files.next_if(|&(&compiled_file, _)| compiled_file == file);
             (file, requests, compiled.map(|(_, imports)| imports))
         })
         .collect();
     debug_assert!(compiled_files.next().is_none());
-    let files_left_to_loader = modules.files_left_to_loader();
-    let rows = map_each(drafts, input.in_parallel, &|(file, requests, imports)| {
+    let reaches_mock =
+        find_files_that_reach_mocks(&drafts, &requests.inner_modules, &named_by_mocks);
+    let names_handed_on = NamesHandedOn::find(
+        &scans,
+        &tables,
+        &modules,
+        &mocked,
+        &named_by_mocks,
+        mocks_any_module,
+    );
+    let mut is_left_to_loader = vec![false; file_count];
+    for &(_, file) in &modules.left_to_loader {
+        is_left_to_loader[file.idx()] = true;
+    }
+    steps.end("bind: what follows for the rows");
+    let finish_row = |(file, requests, imports): Draft<'_>| {
         let (files, sources) = (input.files, input.sources);
         let interop = modules.interop(ModuleRef::File(file));
         let runtime_module = match sources.kind(file) {
@@ -536,14 +595,13 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             Some(imports) => (
                 finish_site_answers(files, &scans, file, &failures),
                 finish_exports(files, &tables, &synthetic, file),
-                imports,
+                core::mem::take(imports),
             ),
             None => (Vec::new(), Vec::new(), FileImports::default()),
         };
         let evaluating_sites = sites.of(file).iter().filter(|site| site.evaluates);
         let mut evaluating_sites: Vec<(SiteKey, StoredSite)> = evaluating_sites
             .map(|site| {
-                // The text of a file that keeps the function around it is lowered into that function, which is not the body.
                 let is_bare = site.position == SitePosition::InOrder
                     && site.is_proven
                     && !commonjs_exports.needs_wrapped_body(site.referrer);
@@ -556,7 +614,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             })
             .collect();
         evaluating_sites.shared_sort_unstable_by_key(|&(key, _)| key);
-        FileRow {
+        Box::new(FileRow {
             file,
             interop,
             runtime_module,
@@ -565,7 +623,6 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             has_top_level_await: is_compiled
                 && interop.kind == ModuleKind::SourceText
                 && files.analysis(file).has_live_top_level_await,
-            // A load that fails throws, whatever the package says of the file.
             has_no_side_effects: is_code_of_program
                 && !input.ignores_declared_side_effects
                 && !is_library[file.idx()]
@@ -596,150 +653,209 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             unread_sites: imports.unread_sites,
             holders: imports.holders,
             answer_members: imports.answer_members,
+            names_read_on_answers: imports.names_read_on_answers,
             exports,
             ambiguous_names: match is_compiled {
                 true => find_ambiguous_names(files, &tables, file),
                 false => Vec::new(),
             },
             unread_exports: Vec::new(),
-            is_data_linked_by_names_alone: false,
-            is_left_to_loader: files_left_to_loader.contains(&file),
+            is_left_to_loader: is_left_to_loader[file.idx()],
             required_names: imports.required_names,
             names_searched_behind_stars: imports.names_searched_behind_stars,
+            handed_on: names_handed_on.names_of(file, is_compiled),
+            named_by_stars: names_handed_on.files_named_by_stars(file, is_compiled),
+            names_from_stars: names_handed_on.names_from_stars(file, is_compiled),
+            reaches_mock: reaches_mock.contains(&file),
+        })
+    };
+    let inner_requests = requests.inner_modules;
+    let create_plan = || {
+        let mut plan = Plan::new(order.into_parts(), erased_statements);
+        for &module in &stored_markers {
+            plan.set_marker_is_stored(module);
         }
-    });
-    let mut counters = Counters::default();
-    let module_count = modules.record_files.len() + modules.other_modules.len();
-    counters.count(StatisticId::ModulesBound, module_count as u64);
-    for &file in &modules.compiled_files {
-        for &import in &scans.of(file).computed_imports {
-            counters.add_computed_import(import);
+        for &module in &imported_namespaces {
+            plan.set_is_imported_as_namespace(module);
         }
-    }
+        plan.set_replaced_variables(replaced_variables);
+        let importers = modules.compiled_files.iter();
+        let imported = importers.flat_map(|&file| input.files.hir(file).imported_requires.iter());
+        let made = imported.filter(|imported| imported.is_made);
+        let makers =
+            made.filter_map(|it| input.files.by_path.get(input.files.atoms.bytes(it.path)));
+        plan.set_makers_of_imported_requires(makers.collect());
+        plan.set_names_without_code_that_mocks_give(names_without_code);
+        plan.test_run = input.run.plan_of_files();
+        test_run_evictions::fill_plan_of_loads(input, evicted.modules(), &mut plan);
+        for &module in &mocked_modules {
+            plan.set_may_be_mocked(module);
+        }
+        let mut named_in_order: Vec<ModuleRef> = named_by_mocks.iter().copied().collect();
+        named_in_order.shared_sort_unstable_by(|&a, &b| compare_modules(a, b, &input.files.atoms));
+        for module in named_in_order {
+            plan.set_is_named_by_mock(module);
+        }
+        if mocks_any_module {
+            plan.set_every_module_may_be_mocked();
+        }
+        let asks_for_original = |&file: &FileId| {
+            let Some(source) = parsed_source(input.files, file) else {
+                return false;
+            };
+            asks_for_original_beside_mock(
+                input.files.hir(file),
+                input.files.bound(file),
+                input.files.analysis(file),
+                &source.builtins,
+                &input.files.atoms,
+                &|site| {
+                    matches!(
+                        scans.of(file).sites[site],
+                        ScannedSite::Module(ModuleRef::Runtime(RuntimeModule::BunTest))
+                    )
+                },
+            )
+        };
+        let is_any_module_named_by_mock = mocks_any_module || !named_by_mocks.is_empty();
+        if is_any_module_named_by_mock
+            && (mocks_any_module
+                || input.files_are_named_out_of_sight
+                || modules.compiled_files.iter().any(asks_for_original))
+        {
+            plan.set_originals_beside_mocks_may_run();
+        }
+        if input.runs_tests && (mocks_any_module || input.run.loader_functions_answer_requires) {
+            plan.set_test_runner_hands_out_every_runtime_module();
+        }
+        for &file in modules.compiled_files.iter().filter(|_| input.runs_tests) {
+            let sites = input.files.analysis(file).import_sites.iter();
+            for (site, answer) in sites.zip(&scans.of(file).sites) {
+                let is_asked_of_test_runner = matches!(
+                    site.kind,
+                    ImportSiteKind::MockModule(_)
+                        | ImportSiteKind::ImportByTestRunner(_)
+                        | ImportSiteKind::RequireByTestRunner(_)
+                );
+                let loads = matches!(
+                    site.kind,
+                    ImportSiteKind::Import(_)
+                        | ImportSiteKind::ExportFrom(_)
+                        | ImportSiteKind::ExportStar(_)
+                        | ImportSiteKind::ImportCall(_)
+                        | ImportSiteKind::Require(_)
+                        | ImportSiteKind::ImportMetaRequire(_)
+                );
+                if let (true, ImportSpecifier::Constant(written), &ScannedSite::Module(module)) =
+                    (loads, site.specifier, answer)
+                    && let ModuleRef::File(target) = module
+                    && let written = input.files.atoms.bytes(written)
+                    && let Some(spelling) = find_spelling(input.sources, file, written, target)
+                {
+                    plan.set_is_reached_by(module, spelling);
+                }
+                match *answer {
+                    _ if !is_asked_of_test_runner => {}
+                    ScannedSite::Module(ModuleRef::Runtime(module)) => {
+                        plan.set_is_handed_out_by_test_runner(module);
+                    }
+                    ScannedSite::Module(_) | ScannedSite::Unresolved | ScannedSite::Erased => {}
+                    ScannedSite::AllModules | ScannedSite::Candidates(_) => {
+                        plan.set_test_runner_hands_out_every_runtime_module();
+                    }
+                }
+            }
+        }
+        if input.runs_tests {
+            plan.set_runs_tests();
+        }
+        for module in run_again {
+            let is_es_module = modules.interop(module).kind == ModuleKind::SourceText;
+            plan.set_runs_again(module, is_es_module);
+        }
+        test_run_evictions::fill_plan_of_copies(
+            input, &scans, &modules, &evicted, &mocked, &mut plan,
+        );
+        if evicted.is_every_module() {
+            plan.set_every_module_may_be_evicted();
+        }
+        if input.runs_tests {
+            plan.set_reaches_entries_of_cache(evicted.is_table_reached());
+        }
+        plan.set_library_modules_stored_in_cache(evicted.library_modules_stored_in_cache());
+        let inner_requests = inner_requests.into_iter();
+        plan.inner_requests = inner_requests.map(|(_, requests)| requests).collect();
+        plan
+    };
+    let (rows, plan) = run_steps_beside(
+        input.beside,
+        &mut steps,
+        ["bind: rows", "plan"],
+        || {
+            let boxes = map_each(drafts, input.in_parallel, &finish_row);
+            let mut rows = Vec::new();
+            extend_from_boxes(&mut rows, boxes, input.in_parallel);
+            rows
+        },
+        create_plan,
+    );
+    drop(names_handed_on);
     let (errors, failures) = failures.into_lists();
-    let mut plan = Plan::new(order.into_parts(), erased_statements);
-    for &module in &stored_markers {
-        plan.set_marker_is_stored(module);
-    }
-    for &module in &imported_namespaces {
-        plan.set_is_imported_as_namespace(module);
-    }
-    plan.set_replaced_variables(replaced_variables);
-    for &module in &mocked_modules {
-        plan.set_may_be_mocked(module);
-    }
-    if mocks_any_module {
-        plan.set_every_module_may_be_mocked();
-    }
-    if input.runs_tests {
-        plan.set_runs_tests();
-    }
-    // `require.main` is what the cache holds under the path in `Bun.main`.
-    if input.runs_tests || input.stores_path_of_main_module {
-        plan.set_lists_files_in_cache();
-    }
-    if input.entry_points_run_again {
-        for entry_point in input.sources.entry_points() {
-            plan.set_runs_again(ModuleRef::File(entry_point.file));
-        }
-    }
-    plan.set_library_modules_stored_in_cache(stored_in_cache);
-    for module in evicted.iter() {
-        plan.set_may_be_evicted(module);
-    }
-    if evicted.is_every_module() {
-        plan.set_every_module_may_be_evicted();
-    }
-    for module in evicted.changed_on_disk() {
-        plan.set_is_changed_on_disk_by_run(module);
-    }
-    if evicted.is_table_reached() {
-        plan.set_reaches_entries_of_cache();
-    }
-    for module in evicted.asked_for_any_export() {
-        plan.set_every_export_is_asked_for(module);
-    }
-    if evicted.is_every_export_asked_for() || input.every_export_is_asked_for {
-        plan.set_every_export_of_every_module_is_asked_for();
-    }
-    if evicted.copies_name_every_module() {
-        plan.set_copies_name_every_module();
-    }
-    let inner_requests = requests.inner_modules.into_iter();
-    plan.inner_requests = inner_requests.map(|(_, requests)| requests).collect();
+    let leaves_out_names = |file: &&FileId| tables.leaves_out_names(**file);
+    let star_names_left_out = StarNamesLeftOut {
+        names: tables.names_left_out().clone(),
+        files: (modules
+            .record_files
+            .iter()
+            .filter(leaves_out_names)
+            .copied())
+        .collect(),
+    };
+    let laid = input.names_added_to_builtins.iter();
+    let laid = laid.filter(|added| added.0 == BuiltinId::ObjectPrototype);
+    let laid = laid.map(|added| input.files.atoms.bytes(added.1).into());
+    let laid_over = input.replaced_builtins.iter();
+    let laid_over = laid_over.filter_map(|&member| BuiltinId::from_wire(member).map(table::entry));
+    let laid_over = laid_over.filter(|member| member.holder == Some(BuiltinId::ObjectPrototype));
+    let laid_over = laid_over.map(|member| table::text_of_name(member.name).into());
+    let mut names_laid_on_object_prototype: Vec<Box<[u8]>> = laid.chain(laid_over).collect();
+    names_laid_on_object_prototype.shared_sort_unstable();
+    names_laid_on_object_prototype.dedup();
     let graph = ModuleGraph {
         row_by_file: vec![None; file_count],
         rows,
         record_files: Vec::new(),
         left_out_files: Vec::new(),
-        files_brought_by_calls: Vec::new(),
         placeholder_files: Vec::new(),
         left_out_inner_modules: Vec::new(),
         other_modules: modules.other_modules,
         external_kinds: modules.external_kinds,
-        statements_left_to_loader: modules.left_to_loader,
-        importers_that_stand_for_all: Vec::new(),
+        runs_code_out_of_sight: modules.runs_code_out_of_sight,
         synthetic_exports: synthetic.into_list(),
         errors,
         failures,
         load_failures,
+        files_that_sites_name,
+        mocked_library_modules,
         wrapped: modules.wrapped,
         commonjs_exports,
         plan,
+        member_stores: (0..file_count).map(|_| OnceLock::new()).collect(),
+        data_linked_by_names_alone: Box::default(),
+        forms_require_checks_first: modules.forms_require_checks_first,
+        star_names_left_out,
+        names_laid_on_object_prototype,
     };
-    let graph = graph.finish(input.in_parallel);
-    BoundModules { graph, counters }
+    let ((), graph) = run_steps_beside(
+        input.beside,
+        &mut steps,
+        ["bind: drop what was scanned", "graph"],
+        move || drop((scans, tables, sites, imports)),
+        || graph.finish(),
+    );
+    BoundModules { graph }
 }
 
-/// The modules of the program by what an option of the load names them with.
-pub fn names_es_module_of_library(module: &ReplacedModule) -> bool {
-    let module = match module {
-        ReplacedModule::File(specifier) => table::module_by_specifier(specifier),
-        ReplacedModule::Runtime(id) => RuntimeModule::from_registry_id(*id),
-    };
-    module.is_some_and(table::is_es_module)
-}
-
-struct ReplacedModules<'a> {
-    files: FxHashMap<&'a [u8], FileId>,
-}
-
-impl<'a> ReplacedModules<'a> {
-    fn new(input: &BindInput<'a, '_>, modules: &ModuleSet) -> ReplacedModules<'a> {
-        let names_none = input.replaced_exports.is_empty()
-            && input.mocked_modules.is_empty()
-            && input.handed_on_modules.is_empty();
-        match names_none {
-            true => ReplacedModules {
-                files: FxHashMap::default(),
-            },
-            false => ReplacedModules::of_every_file(input, modules),
-        }
-    }
-
-    fn of_every_file(input: &BindInput<'a, '_>, modules: &ModuleSet) -> ReplacedModules<'a> {
-        let files = modules.record_files.iter();
-        ReplacedModules {
-            files: files
-                .map(|&file| (input.files.module(file).file_name(), file))
-                .collect(),
-        }
-    }
-
-    fn find(&self, module: &ReplacedModule) -> Option<ModuleRef> {
-        match module {
-            ReplacedModule::File(path) => match self.files.get(&path[..]) {
-                Some(&file) => Some(ModuleRef::File(file)),
-                None => table::module_by_specifier(path).map(ModuleRef::Runtime),
-            },
-            ReplacedModule::Runtime(id) => {
-                RuntimeModule::from_registry_id(*id).map(ModuleRef::Runtime)
-            }
-        }
-    }
-}
-
-// The modules without a table that `file` passes on whole, by itself or through files that it passes on whole.
 fn find_modules_behind_stars(
     input: &BindInput<'_, '_>,
     scans: &Scans,
@@ -751,8 +867,11 @@ fn find_modules_behind_stars(
         if !seen.insert(file) {
             continue;
         }
+        let Some(scan) = scans.find(file) else {
+            continue;
+        };
         let sites = input.files.analysis(file).import_sites.iter();
-        for (site, scanned) in sites.zip(&scans.of(file).sites) {
+        for (site, scanned) in sites.zip(&scan.sites) {
             let (ImportSiteKind::ExportStar(_), &ScannedSite::Module(target)) =
                 (site.kind, scanned)
             else {
@@ -767,62 +886,50 @@ fn find_modules_behind_stars(
     found
 }
 
-fn find_markers_stored_in_application(
-    input: &BindInput<'_, '_>,
-    modules: &ModuleSet,
-) -> Vec<ModuleRef> {
-    let Some(application) = input.application else {
-        return Vec::new();
-    };
-    let files = modules.record_files.iter();
-    let files = files.map(|&file| ModuleRef::File(file));
-    files
-        .filter(|&module| {
-            let theirs = application.application_module(module);
-            theirs.is_some_and(|theirs| application.graph.is_marker_stored(theirs))
-        })
-        .collect()
-}
-
-// `"../lib.js"` in code that a test holds as text: the folder depends on where the file is written, and what is left of the path is what is known.
-fn ends_with_module_in_text(path: &[u8], written: &[u8]) -> bool {
-    let mut tail = written;
-    while let Some(rest) = (tail.strip_prefix(b"../"))
-        .or_else(|| tail.strip_prefix(b"./"))
-        .or_else(|| tail.strip_prefix(b"/"))
-    {
-        tail = rest;
+fn find_files_that_reach_mocks(
+    drafts: &[Draft<'_>],
+    requests_of_inner_modules: &[(ModuleRef, Vec<ModuleRequest>)],
+    named_by_mocks: &FxHashSet<ModuleRef>,
+) -> FxHashSet<FileId> {
+    let files_of_mocks = named_by_mocks.iter().filter_map(|&module| match module {
+        ModuleRef::File(file) | ModuleRef::Face(file) => Some(file),
+        _ => None,
+    });
+    let mut reaching: FxHashSet<FileId> = files_of_mocks.collect();
+    if reaching.is_empty() {
+        return reaching;
     }
-    let tail = without_extension(tail);
-    let path = without_extension(path);
-    let ends_in = |path: &[u8]| {
-        path.strip_suffix(tail)
-            .is_some_and(|folder| folder.is_empty() || folder.ends_with(b"/"))
-    };
-    !tail.is_empty() && (ends_in(path) || path.strip_suffix(b"/index").is_some_and(ends_in))
-}
-
-fn collect_inner_commonjs_modules(
-    modules: &ModuleSet,
-    file_count: usize,
-) -> Vec<Vec<InnerCommonJs>> {
-    let mut by_file = Vec::new();
-    by_file.resize_with(file_count, Vec::new);
-    for &file in &modules.compiled_files {
-        let inner_modules = modules.wrapped.of_file(file).iter();
-        let commonjs_modules =
-            inner_modules.filter(|inner| inner.kind == InnerModuleKind::CommonJs);
-        by_file[file.idx()] = commonjs_modules
-            .map(|inner| InnerCommonJs {
-                holder: inner.holder,
-                callback: inner.callback,
-            })
-            .collect();
+    let mut requested_by: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
+    let of_files = drafts.iter().map(|(file, requests, _)| (*file, requests));
+    let of_inner_modules = requests_of_inner_modules
+        .iter()
+        .filter_map(|(module, requests)| match *module {
+            ModuleRef::Inner { file, .. } => Some((file, requests)),
+            _ => None,
+        });
+    for (file, requests) in of_files.chain(of_inner_modules) {
+        for request in requests {
+            let (ModuleRef::File(target)
+            | ModuleRef::Face(target)
+            | ModuleRef::Check(target)
+            | ModuleRef::Inner { file: target, .. }) = request.target
+            else {
+                continue;
+            };
+            requested_by.entry(target).or_default().push(file);
+        }
     }
-    by_file
+    let mut pending: Vec<FileId> = reaching.iter().copied().collect();
+    while let Some(file) = pending.pop() {
+        for &from in requested_by.get(&file).into_iter().flatten() {
+            if reaching.insert(from) {
+                pending.push(from);
+            }
+        }
+    }
+    reaching
 }
 
-// Every variable that the statement of an inner module declares is a holder: a statement that declares something else has none.
 fn find_statements_of_inner_modules(modules: &ModuleSet) -> Vec<(FileId, StmtId)> {
     let mut statements = Vec::new();
     for &file in &modules.compiled_files {
@@ -833,6 +940,7 @@ fn find_statements_of_inner_modules(modules: &ModuleSet) -> Vec<(FileId, StmtId)
     statements.dedup();
     statements
 }
+
 fn rank_of_module(module: ModuleRef) -> u8 {
     match module {
         ModuleRef::File(_) => 0,
@@ -873,7 +981,6 @@ pub fn compare_modules(a: ModuleRef, b: ModuleRef, atoms: &Interner<'_>) -> Orde
         ) => a_importer
             .cmp(&b_importer)
             .then_with(|| atoms.bytes(a_specifier).cmp(atoms.bytes(b_specifier)))
-            // The module that no attribute asks for comes first.
             .then_with(|| a_type.map(|it| it as u8).cmp(&b_type.map(|it| it as u8))),
         (File(_) | Inner { .. } | Face(_) | Check(_) | Runtime(_) | External { .. }, _) => {
             rank_of_module(a).cmp(&rank_of_module(b))
@@ -904,7 +1011,14 @@ fn collect_pending_failures(
                 tables.failures_of(file),
                 imports.failures.as_slice(),
             ];
-            (file, lists.concat())
+            let mut failures = lists.concat();
+            if imports.fails_where_it_is_linked {
+                failures.retain(|pending| {
+                    pending.failure.exporter().is_none()
+                        || pending.failure.effect() != FailureEffect::StopsBuild
+                });
+            }
+            (file, failures)
         })
         .collect()
 }

@@ -1,4 +1,6 @@
 use bun_sema::hir::MemberId;
+use bun_sort_by_number::SortByNumber;
+use rustc_hash::FxHashMap;
 
 use crate::ir::PropertyKeyId;
 use crate::ir::generated::{Field, FieldFlags};
@@ -7,6 +9,7 @@ use crate::ir::generated::{Field, FieldFlags};
 pub(in crate::lower) struct OwnFields {
     fields: Vec<Field>,
     fields_by_key: Vec<u32>,
+    first_by_key: FxHashMap<PropertyKeyId, u32>,
     accessor_storages: Vec<(MemberId, u32)>,
     brand: Option<u32>,
 }
@@ -21,6 +24,11 @@ impl OwnFields {
         if field.flags.contains(FieldFlags::IS_BRAND) {
             debug_assert!(self.brand.is_none(), "a layout has one brand");
             self.brand = Some(index);
+        }
+        if let Some(key) = field.key
+            && !self.first_by_key.is_empty()
+        {
+            self.first_by_key.entry(key).or_insert(index);
         }
         self.fields.push(field);
         index
@@ -40,17 +48,31 @@ impl OwnFields {
         self.fields[index as usize] = field;
     }
 
-    pub(super) fn find_unindexed(&self, key: PropertyKeyId) -> Option<u32> {
-        let position = self.fields.iter().position(|field| field.key == Some(key));
-        position.map(|position| position as u32)
+    pub(super) fn find_unindexed(&mut self, key: PropertyKeyId) -> Option<u32> {
+        const FEW: usize = 16;
+        if self.fields.len() <= FEW {
+            let position = self.fields.iter().position(|field| field.key == Some(key));
+            return position.map(|position| position as u32);
+        }
+        if self.first_by_key.is_empty() {
+            for (index, field) in (0..).zip(&self.fields) {
+                if let Some(key) = field.key {
+                    self.first_by_key.entry(key).or_insert(index);
+                }
+            }
+        }
+        self.first_by_key.get(&key).copied()
     }
 
     pub(super) fn finish(mut self) -> OwnFields {
+        self.first_by_key = FxHashMap::default();
         let fields = &self.fields;
         let mut by_key: Vec<u32> = (0..fields.len() as u32)
             .filter(|&index| fields[index as usize].key.is_some())
             .collect();
-        by_key.sort_unstable_by_key(|&index| fields[index as usize].key);
+        by_key.sort_by_u64(|&index| {
+            (fields[index as usize].key).map_or(0, |key| u64::from(key.to_word()) + 1)
+        });
         debug_assert!(
             by_key
                 .iter()

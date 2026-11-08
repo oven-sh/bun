@@ -1,0 +1,106 @@
+# -- source: main.mjs
+# class Base1 { static make() { return 1; } }
+# class Middle1 extends Base1 { static make = 2; }
+# class Lowest1 extends Middle1 {}
+# function lay1(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Lowest1.make = value; return work; }
+# new Base1(); new Middle1(); new Lowest1();
+# lay1(3);
+# print(Base1.make(), Middle1.make, Lowest1.make);
+# class Base2 { static make() { return 1; } }
+# class Middle2 extends Base2 { static make = 2; }
+# class Lowest2 extends Middle2 {}
+# function lay2(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Lowest2.make = value; return work; }
+# new Base2(); new Middle2(); new Lowest2();
+# print(Base2.make(), Middle2.make, Lowest2.make);
+# class Base3 { static make() { return 1; } }
+# class Middle3 extends Base3 {}
+# class Lowest3 extends Middle3 {}
+# function lay3(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Lowest3.make = value; return work; }
+# new Base3(); new Middle3(); new Lowest3();
+# lay3(3);
+# print(Base3.make(), typeof Middle3.make, Lowest3.make);
+# class Base4 { static make = 2; }
+# class Middle4 extends Base4 { static make() { return 1; } }
+# class Lowest4 extends Middle4 {}
+# function lay4(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Lowest4.make = value; return work; }
+# new Base4(); new Middle4(); new Lowest4();
+# lay4(3);
+# print(Base4.make, Middle4.make(), Lowest4.make);
+# class Base5 { static make() { return 1; } }
+# class Middle5 extends Base5 { static make = 2; }
+# class Lowest5 extends Middle5 {}
+# new Base5(); new Middle5(); new Lowest5();
+# Lowest5.make = 3;
+# print(Base5.make(), Middle5.make, Lowest5.make);
+# class Base6 { static make() { return 1; } }
+# class Middle6 extends Base6 { static make = 2; }
+# class Lowest6 extends Middle6 {}
+# function lay6(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Object.defineProperty(Lowest6, "make", { value, writable: true, configurable: true, enumerable: true }); return work; }
+# new Base6(); new Middle6(); new Lowest6();
+# lay6(3);
+# print(Base6.make(), Middle6.make, Lowest6.make);
+# class Base7 { static make() { return 1; } }
+# class Middle7 extends Base7 { static make = 2; }
+# class Lowest7 extends Middle7 {}
+# function lay7(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Middle7.make = value; return work; }
+# new Base7(); new Middle7(); new Lowest7();
+# lay7(3);
+# print(Base7.make(), Middle7.make, Lowest7.make);
+# class Base8 { static make() { return 1; } }
+# class Middle8 extends Base8 { static #kept = 2; static get make() { return Middle8.#kept; } static set make(v) { Middle8.#kept = v; } }
+# class Lowest8 extends Middle8 {}
+# function lay8(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Lowest8.make = value; return work; }
+# new Base8(); new Middle8(); new Lowest8();
+# lay8(3);
+# print(Base8.make(), Middle8.make, Lowest8.make);
+# class Base9 { make() { return 1; } }
+# class Middle9 extends Base9 { make = 2; }
+# class Lowest9 extends Middle9 {}
+# function lay9(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Lowest9.prototype.make = value; return work; }
+# new Base9(); new Middle9(); new Lowest9();
+# lay9(3);
+# print(new Base9().make(), new Middle9().make, new Lowest9().make, Lowest9.prototype.make);
+# class Base10 { static make = 2; }
+# class Middle10 extends Base10 { static make() { return 1; } }
+# function lay10(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Middle10.make = value; return work; }
+# new Base10(); new Middle10();
+# lay10(3);
+# print(Base10.make, typeof Middle10.make);
+# class Base11 { static make = 2; }
+# class Middle11 extends Base11 { static make() { return 1; } }
+# class Lowest11 extends Middle11 {}
+# function lay11(value) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; Lowest11.make = value; return work; }
+# new Base11(); new Middle11(); new Lowest11();
+# lay11(3);
+# print(Base11.make, typeof Middle11.make, typeof Lowest11.make);
+# -- end of source
+# Eleven right programs, and nothing leaves compiled code in any of them. A class object gets a name of its own that a class of its row declares as a static method, while a class of the same row has a static field under that name.
+# Link lets the stored value flow into the variable of the field and leaves the method as it is, and the walk finds no static member without a look where a class of the row may have a static field under the name. So the store breaks no proof, and the run time lets a change of a class object through where a class of its row has a static field under the changed name.
+# The rows in order: the field between the store and the method . the store is never run . no field in the row, so the method is stored over in sight . the field above the method . the store at the top level . a definition by a descriptor . the store on the class that has the field . an accessor in the row . the same on the side of the prototype objects, with a field of the objects . the store over the method itself, the field above it . the field above the method, and nobody calls through the row.
+# The first row in TypeScript: store-on-a-class-object-of-a-row-with-a-static-field-goes-through-in-typescript.ir.
+# RUN: run-in-shell
+# CHECK: 1 2 3
+# CHECK-NEXT: 1 2 2
+# CHECK-NEXT: 1 function 3
+# CHECK-NEXT: 2 1 3
+# CHECK-NEXT: 1 2 3
+# CHECK-NEXT: 1 2 3
+# CHECK-NEXT: 1 3 3
+# CHECK-NEXT: 1 3 3
+# CHECK-NEXT: 1 2 2 3
+# CHECK-NEXT: 2 number
+# CHECK-NEXT: 2 function number
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 1 2 3
+# CALLED-NEXT: 1 2 2
+# CALLED-NEXT: 1 function 3
+# CALLED-NEXT: 2 1 3
+# CALLED-NEXT: 1 2 3
+# CALLED-NEXT: 1 2 3
+# CALLED-NEXT: 1 3 3
+# CALLED-NEXT: 1 3 3
+# CALLED-NEXT: 1 2 2 3
+# CALLED-NEXT: 2 number
+# CALLED-NEXT: 2 function number
+# CALLED-NEXT: exited with 0

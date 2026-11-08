@@ -1,0 +1,20 @@
+# -- source: what-a-door-asks-for-as-any-object-is-any-object-to-the-effects-of-a-function.js
+# class Reed { constructor() { this.reed = 1; } }
+# class Drum { constructor() { this.drum = 1; } }
+# class Horn { constructor() { this.horn = 1; } }
+# class Lute { constructor() { this.lute = 1; } }
+# class Bell { constructor() { this.bell = 1; } get a() { return 5; } }
+# function look(thing) { return thing.a; }
+# function few(thing) { return thing.a; }
+# function either(thing) { return thing.a; }
+# print(look(new Reed()), look(new Drum()), look(new Horn()), look(new Lute()), look(new Bell()), few(new Reed()), few(new Bell()), either(new Reed()), either(() => 1));
+# -- end of source
+# Five unrelated layouts meet at the parameter of look(): Link's type there says "one of the lost layouts" and no more. Which of them met the summarizer cannot tell, and where they have escaped the door asks for an object alone.
+# So the effects of look() believe nothing of it: any code.
+# Two layouts are a set, which the door asks in full: few() has its effects, the getter's among them.
+# A layout beside a function: where the door may not name the function it asks for an object: either() is any code.
+# f1 = look, f2 = few, f3 = either
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}mayCallUnknownCode
+# CHECK: function f2 {{*}}returns=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
+# CHECK: function f3 {{*}}mayCallUnknownCode

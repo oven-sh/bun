@@ -162,4 +162,140 @@ bench("deepStrictEqual (two Proxies with a get trap)", () => {
   assert.deepStrictEqual(reactiveA, reactiveB);
 });
 
+// The entries of a Set or a Map. A string is looked up, an object needs a partner.
+const words = Array.from({ length: 96 }, (_, index) => `word-${index}`);
+const wordSetA = new Set(words);
+const wordSetB = new Set(words);
+const wordMapA = new Map(words.map((word, index) => [word, index]));
+const wordMapB = new Map(words.map((word, index) => [word, index]));
+const records = (count, from = 0) => Array.from({ length: count }, (_, index) => ({ id: from + index }));
+const recordSetA = new Set(records(16));
+const recordSetB = new Set(records(16));
+const recordSetReversed = new Set(records(16).reverse());
+const otherRecordSet = new Set(records(16, 100));
+const largeRecordSetA = new Set(records(1000));
+const largeRecordSetB = new Set(records(1000));
+const recordMapA = new Map(records(1000).map((key, index) => [key, index]));
+const recordMapB = new Map(records(1000).map((key, index) => [key, index]));
+// Another order than that of the list: an entry then asks more than one entry of the other value for a partner.
+const reordered = list => list.map((_, index) => list[(index * 389) % list.length]);
+const largeRecordSetReordered = new Set(reordered(records(1000)));
+const recordMapReordered = new Map(reordered(records(1000).map((key, index) => [key, index])));
+const nest = depth => {
+  let value = new Set([{ id: 1 }]);
+  for (let level = 1; level < depth; level++) value = new Set([value]);
+  return value;
+};
+const nestedA = nest(8);
+const nestedB = nest(8);
+
+bench("deepStrictEqual (Sets of 96 strings)", () => {
+  assert.deepStrictEqual(wordSetA, wordSetB);
+});
+
+bench("deepStrictEqual (Maps of 96 string keys)", () => {
+  assert.deepStrictEqual(wordMapA, wordMapB);
+});
+
+bench("deepStrictEqual (Sets of 16 objects)", () => {
+  assert.deepStrictEqual(recordSetA, recordSetB);
+});
+
+bench("deepStrictEqual (Sets of 16 objects, reversed)", () => {
+  assert.deepStrictEqual(recordSetA, recordSetReversed);
+});
+
+bench("notDeepStrictEqual (Sets of 16 objects)", () => {
+  assert.notDeepStrictEqual(recordSetA, otherRecordSet);
+});
+
+bench("deepStrictEqual (Sets of 1000 objects, same order)", () => {
+  assert.deepStrictEqual(largeRecordSetA, largeRecordSetB);
+});
+
+bench("deepStrictEqual (Sets of 1000 objects, another order)", () => {
+  assert.deepStrictEqual(largeRecordSetA, largeRecordSetReordered);
+});
+
+bench("deepStrictEqual (Maps of 1000 object keys, same order)", () => {
+  assert.deepStrictEqual(recordMapA, recordMapB);
+});
+
+bench("deepStrictEqual (Maps of 1000 object keys, another order)", () => {
+  assert.deepStrictEqual(recordMapA, recordMapReordered);
+});
+
+bench("deepStrictEqual (8 nested Sets)", () => {
+  assert.deepStrictEqual(nestedA, nestedB);
+});
+
+// Two Maps that hold the same objects as keys, in the same order and in another.
+const sharedKeys = records(1000);
+const sharedKeyMapA = new Map(sharedKeys.map((key, index) => [key, index]));
+const sharedKeyMapB = new Map(sharedKeys.map((key, index) => [key, index]));
+const sharedKeyMapReordered = new Map(reordered(sharedKeys.map((key, index) => [key, index])));
+const sharedKeyMapChangedFirst = new Map(sharedKeyMapB).set(sharedKeys[0], -1);
+const sharedKeyMapChanged = new Map(sharedKeyMapB).set(sharedKeys[500], -1);
+const sharedKeyMapChangedAll = new Map(sharedKeys.map((key, index) => [key, -index - 1]));
+
+bench("deepStrictEqual (Maps that share 1000 object keys)", () => {
+  assert.deepStrictEqual(sharedKeyMapA, sharedKeyMapB);
+});
+
+bench("deepStrictEqual (Maps that share 1000 object keys, another order)", () => {
+  assert.deepStrictEqual(sharedKeyMapA, sharedKeyMapReordered);
+});
+
+bench("notDeepStrictEqual (Maps that share 1000 object keys, another first value)", () => {
+  assert.notDeepStrictEqual(sharedKeyMapA, sharedKeyMapChangedFirst);
+});
+
+bench("notDeepStrictEqual (Maps that share 1000 object keys, another value in the middle)", () => {
+  assert.notDeepStrictEqual(sharedKeyMapA, sharedKeyMapChanged);
+});
+
+bench("notDeepStrictEqual (Maps that share 1000 object keys, all other values)", () => {
+  assert.notDeepStrictEqual(sharedKeyMapA, sharedKeyMapChangedAll);
+});
+
+// A Set with keys of its own, as an instance of a class that extends Set has.
+class Tagged extends Set {
+  name = "tagged";
+  version = 1;
+  options = { strict: true };
+  owner = null;
+}
+const taggedSetA = new Tagged([1, 2, 3]);
+const taggedSetB = new Tagged([1, 2, 3]);
+
+bench("deepStrictEqual (Sets of a class with 4 fields)", () => {
+  assert.deepStrictEqual(taggedSetA, taggedSetB);
+});
+
+// Errors with own keys, in the same order and in another.
+const failure = (keys, reverse) => {
+  const names = Array.from({ length: keys }, (_, index) => `key${index}`);
+  return Object.assign(
+    new Error("failed"),
+    Object.fromEntries((reverse ? names.reverse() : names).map(name => [name, 1])),
+  );
+};
+const failureA = failure(8);
+const failureB = failure(8);
+const failureReversed = failure(8, true);
+const largeFailureA = failure(64);
+const largeFailureB = failure(64);
+
+bench("deepStrictEqual (Errors with 8 keys)", () => {
+  assert.deepStrictEqual(failureA, failureB);
+});
+
+bench("deepStrictEqual (Errors with 8 keys, another order)", () => {
+  assert.deepStrictEqual(failureA, failureReversed);
+});
+
+bench("deepStrictEqual (Errors with 64 keys)", () => {
+  assert.deepStrictEqual(largeFailureA, largeFailureB);
+});
+
 await run();

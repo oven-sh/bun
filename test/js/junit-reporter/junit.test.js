@@ -901,14 +901,24 @@ describe("junit reporter", () => {
   describe("an AggregateError of build and resolve errors", () => {
     const passes = `import { test } from "bun:test";\ntest("passes", () => {});`;
     const twoErrors = `const = ;`;
-    const bothErrors = ['error: Expected identifier but found "="', "error: This constant must be initialized"];
-    const twoErrorsFailure = { type: "BuildMessage", message: 'Expected identifier but found "="', errors: bothErrors };
+    const twoErrorsFailure = {
+      type: "BuildMessage",
+      message: 'Expected identifier but found "="',
+      text: [
+        "1 | const = ;",
+        "          ^",
+        'error: Expected identifier but found "="',
+        "1 | const = ;",
+        "          ^",
+        "error: This constant must be initialized",
+      ],
+    };
     const missing = { type: "ResolveMessage", message: "Cannot find module './nowhere'" };
     const cannotFind = "error: Cannot find module './nowhere'";
 
     // Runs `bun test` on `files`, once for each list of arguments in `runs`. For each run, `cases` has, for each
-    // file, each <testcase>: its name and, for each failure element, the attributes and the first line of each error
-    // in its text. `counted` is the N of the console's "N errors", and `stderr` is the console.
+    // file, each <testcase>: its name and, for each failure element, the attributes and the lines of its text, without
+    // the locations. `counted` is the N of the console's "N errors", and `stderr` is the console.
     async function reports(files, runs, env = {}) {
       await using tmpDir = tempDir("junit-aggregate", { "package.json": "{}", ...files });
       // A ResolveMessage names the importer by its path.
@@ -916,8 +926,8 @@ describe("junit reporter", () => {
       const summarize = ({ $, _ = "" }) => ({
         ...$,
         ...($.message !== undefined && { message: withoutImporter($.message) }),
-        errors: _.split("\n")
-          .filter(line => /^(?:warn|error|[A-Z]\w*): /.test(line))
+        text: _.split("\n")
+          .filter(line => line !== "" && !/^ +at /.test(line))
           .map(withoutImporter),
       });
       return await Promise.all(
@@ -949,7 +959,11 @@ describe("junit reporter", () => {
     }
 
     const unhandled = (...failure) => ({ name: "(unhandled error)", failure });
-    const unexpected = { type: "BuildMessage", message: "Unexpected ;", errors: ["error: Unexpected ;"] };
+    const unexpected = {
+      type: "BuildMessage",
+      message: "Unexpected ;",
+      text: ["1 | const half = ;", "                 ^", "error: Unexpected ;"],
+    };
 
     it("is one failed test case with every error when a file doesn't parse", async () => {
       const files = {
@@ -971,8 +985,12 @@ describe("junit reporter", () => {
           unhandled({
             type: "BuildMessage",
             message: 'The constant "half" must be initialized',
-            errors: [
+            text: [
+              "1 | --> a legacy comment",
+              "    ^",
               'warn: Treating "-->" as the start of a legacy HTML single-line comment',
+              "2 | const half;",
+              "          ^",
               'error: The constant "half" must be initialized',
             ],
           }),
@@ -1041,22 +1059,17 @@ describe("junit reporter", () => {
       expect(cases).toEqual({
         "build.test.js": [unhandled(unexpected)],
         "transpiler.test.js": [unhandled(twoErrorsFailure)],
-        "any.test.js": [unhandled({ ...missing, errors: [cannotFind, "error: Cannot find module './nowhere-too'"] })],
+        "any.test.js": [unhandled({ ...missing, text: [cannotFind, "error: Cannot find module './nowhere-too'"] })],
         // An Error among the errors gives the type and message. The text has every error.
-        "nested.test.js": [
-          unhandled({ type: "TypeError", message: "after", errors: [cannotFind, "TypeError: after"] }),
-        ],
+        "nested.test.js": [unhandled({ type: "TypeError", message: "after", text: [cannotFind, "TypeError: after"] })],
         // The ResolveMessage does not fill in what the Error leaves empty.
-        "no-message.test.js": [unhandled({ type: "TypeError", errors: [cannotFind] })],
-        "no-name.test.js": [unhandled({ type: "Error", errors: [cannotFind] })],
-        "describe.test.js": [unhandled({ ...missing, errors: [cannotFind] })],
-        "twice.test.js": [
-          unhandled({ ...missing, errors: [cannotFind] }),
-          unhandled({ ...missing, errors: [cannotFind] }),
-        ],
+        "no-message.test.js": [unhandled({ type: "TypeError", text: ["TypeError", cannotFind] })],
+        "no-name.test.js": [unhandled({ type: "Error", text: ["error", cannotFind] })],
+        "describe.test.js": [unhandled({ ...missing, text: [cannotFind] })],
+        "twice.test.js": [unhandled({ ...missing, text: [cannotFind] }), unhandled({ ...missing, text: [cannotFind] })],
         "reentrant.test.js": [
-          unhandled({ type: "TypeError", message: "inner", errors: ["TypeError: inner"] }),
-          unhandled({ type: "RangeError", message: "member", errors: ["RangeError: member"] }),
+          unhandled({ type: "TypeError", message: "inner", text: ["TypeError: inner"] }),
+          unhandled({ type: "RangeError", message: "member", text: ["RangeError: member"] }),
         ],
       });
       expect({ counted, exitCode }).toEqual({ counted: 11, exitCode: 1 });
@@ -1119,24 +1132,21 @@ describe("junit reporter", () => {
       };
       const [{ cases, counted, exitCode }] = await reports(files, [[]]);
 
-      const aggregate = { ...missing, errors: [cannotFind] };
+      const aggregate = { ...missing, text: [cannotFind] };
       expect(cases).toEqual({
         "in-test.test.js": [
           { name: "the test function rejects", failure: [twoErrorsFailure] },
-          {
-            name: "the test function awaits a failed build",
-            failure: [{ type: "BuildMessage", message: "Unexpected ;", errors: ["error: Unexpected ;"] }],
-          },
+          { name: "the test function awaits a failed build", failure: [unexpected] },
           { name: "done(error)", failure: [aggregate] },
           { name: "an uncaught error", failure: [{ ...aggregate, uncaught: "true" }] },
           { name: "passes on the second attempt", flakyFailure: [aggregate] },
           { name: "fails on every attempt", failure: [aggregate], rerunFailure: [aggregate] },
           {
             name: "rejects with a ResolveMessage and an Error",
-            failure: [{ type: "TypeError", message: "after", errors: [cannotFind, "TypeError: after"] }],
+            failure: [{ type: "TypeError", message: "after", text: [cannotFind, "TypeError: after"] }],
           },
         ],
-        "hook.test.js": [{ name: "after a hook", failure: [{ ...missing, errors: [cannotFind] }] }],
+        "hook.test.js": [{ name: "after a hook", failure: [{ ...missing, text: [cannotFind] }] }],
       });
       expect({ counted, exitCode }).toEqual({ counted: 0, exitCode: 1 });
     });
@@ -1166,8 +1176,8 @@ describe("junit reporter", () => {
       const [{ xml, cases, stderr, counted, exitCode }] = await reports(files, [[]], env);
       // The failure has what the console has: no detail where the printer gave up, and the TypeError where it did not.
       const failure = stderr.includes("TypeError: deep")
-        ? { type: "TypeError", message: "deep", errors: ["TypeError: deep"] }
-        : { type: "Error", errors: [] };
+        ? { type: "TypeError", message: "deep", text: ["TypeError: deep"] }
+        : { type: "Error", text: [] };
       expect(cases["deep.test.js"]).toEqual([{ name: "(unhandled error)", failure: [failure] }, { name: "runs" }]);
       expect(xml).toContain(
         '<testsuite name="deep.test.js" file="deep.test.js" tests="2" assertions="0" failures="1" skipped="0">',

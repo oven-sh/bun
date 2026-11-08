@@ -25,3 +25,5 @@ void make_family_of_three(void)
     node_of(family[0])->first = family[1];
     node_of(family[0])->second = family[2];
 }
+/* For the tp_dealloc of whoever holds it. */
+void keep_member(long index) { kept_by_c = Py_NewRef(family[index]); }

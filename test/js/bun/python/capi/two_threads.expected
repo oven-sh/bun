@@ -2,6 +2,8 @@
 each after its parent: True
 [1000000, 1000001, 1000002, 1000003, 1000004, 1000005, 1000006, 1000007, 1000008, 1000009, 1000010, 1000011, 1000012, 1000013, 1000014]
 [(15, 'MainThread'), (16, 'MainThread'), (17, 'MainThread')]
+[(18, 'MainThread'), (20, 'MainThread')]
+[(19, 'MainThread')]
 [(11, 'MainThread', "when nothing of C's runs for it"), (12, 'MainThread', "when nothing of C's runs for it")]
 [1000011, 1000012]
 cleared more than once: []

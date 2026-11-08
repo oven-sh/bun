@@ -143,6 +143,53 @@ call_at_dealloc(None)
 print(ended_by)
 take_events()
 
+# The tp_dealloc of a holder hands one of the two that it held on to C, which gives it back later, outside the end of anything. Nobody else has it, so whoever gives it back has dropped it: main, not its maker.
+# No collection has to find anything.
+keep_member = declare("keep_member", None, c_long)
+drop_what_c_kept = declare("drop_what_c_kept", None)
+ended_by = []
+has_made, have_ended = threading.Event(), threading.Event()
+
+
+def other():
+    make_member_of(Node, 1, 19)
+    make_member_of(Node, 2, 20)
+    has_made.set()
+    wait_for(have_ended, "the three have ended")
+
+
+@ctypes.CFUNCTYPE(None, c_long)
+def at_dealloc(id):
+    if id == 18:
+        keep_member(1)
+    ended_by.append((id, threading.current_thread().name))
+
+
+thread = threading.Thread(target=other, name="the other")
+thread.start()
+wait_for(has_made, "the other thread has made its share")
+make_member_of(Node, 0, 18)
+make_family_of_three()
+# (They are old by then. A collection of the young finds the holder dead alone: then the two still have their faces when it ends, and who drops a face later nobody knows.)
+gc.collect()
+call_at_dealloc(ctypes.cast(at_dealloc, c_void_p))
+drop_family()
+deadline = time.monotonic() + DEADLINE
+while len(ended_by) < 2:
+    if time.monotonic() > deadline:
+        give_up("the two have ended")
+    collect_unasked()
+print(ended_by)
+drop_what_c_kept()
+while len(ended_by) < 3:
+    if time.monotonic() > deadline:
+        give_up("the third has ended")
+have_ended.set()
+wait_for_end_of(thread)
+call_at_dealloc(None)
+print(ended_by[2:])
+take_events()
+
 # A collection that nobody has asked for finds a ring that C has made and dropped. The thread that made it begins the tp_clear of one node, which runs code of the program's; that lets the other thread call
 # gc.collect(), three times, which collects, and makes the calls that any thread owes.
 #  - A ring of two: the tp_clear of the second, which gives back a reference to the first. The first is not destroyed under its own tp_clear.

@@ -420,6 +420,131 @@ describe("Bun.Image", () => {
         code: "ERR_IMAGE_TOO_MANY_PIXELS",
       });
     });
+
+    test("a source that does not decode rejects with the decode error, never an empty plane", async () => {
+      await expect(new Bun.Image(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])).pixels()).rejects.toMatchObject({
+        code: "ERR_IMAGE_UNKNOWN_FORMAT",
+      });
+      // A PNG whose IHDR declares a zero dimension.
+      const zero = makePng(0, 1, () => [0, 0, 0, 0]);
+      await expect(new Bun.Image(zero).pixels()).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
+      // Valid header, truncated data.
+      await expect(new Bun.Image(cornersPng.subarray(0, 40)).pixels()).rejects.toMatchObject({
+        code: "ERR_IMAGE_DECODE_FAILED",
+      });
+    });
+
+    test("the shape travels with the bytes: later terminals on the same image do not change it", async () => {
+      const img = new Bun.Image(gradientPng).resize(8, 8, { fit: "fill" });
+      const px = await img.pixels();
+      expect([px.width, px.height]).toEqual([8, 8]);
+      // Each of these overwrites `img.width`/`img.height`; `px` is untouched.
+      expect(await img.metadata()).toEqual({ width: 16, height: 16, format: "png" });
+      expect(await img.placeholder()).toStartWith("data:image/png;base64,");
+      const other = await img.resize(3, 5, { fit: "fill" }).pixels();
+      expect([other.width, other.height, other.data.length]).toEqual([3, 5, 3 * 5 * 4]);
+      expect([px.width, px.height, px.data.length]).toEqual([8, 8, 8 * 8 * 4]);
+      expect([img.width, img.height]).toEqual([3, 5]);
+
+      // Two terminals in flight on one image: each call snapshots the pipeline,
+      // so the second resize does not reach the first task.
+      const race = new Bun.Image(gradientPng);
+      const [a, b] = await Promise.all([
+        race.resize(8, 8, { fit: "fill" }).pixels(),
+        race.resize(4, 2, { fit: "fill" }).pixels(),
+      ]);
+      expect([a.width, a.height, a.data.length]).toEqual([8, 8, 8 * 8 * 4]);
+      expect([b.width, b.height, b.data.length]).toEqual([4, 2, 4 * 2 * 4]);
+    });
+
+    test("agrees with the encoder: pixels() equals a decoded png() of the same pipeline", async () => {
+      const pipeline = () => new Bun.Image(gradientPng).resize(7, 5, { fit: "fill", filter: "mitchell" });
+      const px = await pipeline().pixels();
+      const png = decodePngRaw(await pipeline().png().bytes());
+      expect([png.w, png.h]).toEqual([px.width, px.height]);
+      expect(png.data).toEqual(px.data);
+    });
+
+    test("EXIF orientation is applied to the plane, so a 90° tag swaps the shape", async () => {
+      // A 4×2 JPEG with Orientation=6 (90° CW), the same splice as the
+      // metadata() test below: the plane is the upright 2×4 image unless the
+      // caller opts out.
+      const src = makePng(4, 2, x => (x < 2 ? [255, 0, 0, 255] : [0, 0, 255, 255]));
+      const jpg = await new Bun.Image(src).jpeg({ quality: 100 }).bytes();
+      // prettier-ignore
+      const tiff = new Uint8Array([
+        0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, // header
+        0x00, 0x01,                                     // 1 entry
+        0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,                         // next IFD = 0
+      ]);
+      const exif = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+      const seglen = exif.length + 2;
+      const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, seglen >> 8, seglen & 255]), exif]);
+      const withExif = Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]);
+
+      const upright = await new Bun.Image(withExif).pixels();
+      expect([upright.width, upright.height, upright.data.length]).toEqual([2, 4, 2 * 4 * 4]);
+      // A clockwise quarter turn sends source column x to row y = x, so the
+      // red left half of the source is the top two rows of the plane and the
+      // blue right half the bottom two.
+      const hue = (x: number, y: number) => {
+        const [r, , b] = rgbaAt(upright.data, 2, x, y);
+        return r > 150 && b < 100 ? "red" : b > 150 && r < 100 ? "blue" : `[${r},${b}]`;
+      };
+      expect([0, 1, 2, 3].map(y => [hue(0, y), hue(1, y)])).toEqual([
+        ["red", "red"],
+        ["red", "red"],
+        ["blue", "blue"],
+        ["blue", "blue"],
+      ]);
+
+      const asStored = await new Bun.Image(withExif, { autoOrient: false }).pixels();
+      expect([asStored.width, asStored.height]).toEqual([4, 2]);
+    });
+
+    test("a modulate() stage reaches the plane", async () => {
+      // modulate is the one in-place stage: the plane keeps its shape and
+      // saturation 0 leaves R = G = B on every pixel.
+      const grey = await new Bun.Image(cornersPng).modulate({ saturation: 0 }).pixels();
+      expect([grey.width, grey.height, grey.data.length]).toEqual([4, 3, 4 * 3 * 4]);
+      for (let i = 0; i < grey.data.length; i += 4) {
+        expect([grey.data[i], grey.data[i + 1]]).toEqual([grey.data[i + 2], grey.data[i + 2]]);
+      }
+      // The red corner is no longer red, so the stage ran.
+      expect(rgbaAt(grey.data, 4, 0, 0)).not.toEqual([255, 0, 0, 255]);
+    });
+
+    test("a JPEG source through shrink-on-load, and a 1×1 plane", async () => {
+      const big = makePng(64, 64, (x, y) => [(x * 4) & 255, (y * 4) & 255, ((x * y) >> 2) & 255, 255]);
+      const jpeg = await new Bun.Image(big).jpeg({ quality: 90 }).bytes();
+      // 64 → 8 is an exact 1/8 DCT scale, so the JPEG decoder produces the
+      // 8×8 buffer itself and that reduced buffer is the plane.
+      const small = await new Bun.Image(jpeg).resize(8, 8, { fit: "fill" }).pixels();
+      expect([small.width, small.height, small.data.length]).toEqual([8, 8, 8 * 8 * 4]);
+      expect(small.data.filter((_, i) => i % 4 === 3).every(a => a === 255)).toBe(true);
+
+      const one = await new Bun.Image(makePng(1, 1, () => [1, 2, 3, 4])).pixels();
+      expect([one.width, one.height, [...one.data]]).toEqual([1, 1, [1, 2, 3, 4]]);
+    });
+
+    test("the plane's buffer can be transferred, and its finalizer moves with it", async () => {
+      // The plane is an externally backed ArrayBuffer with the allocator's
+      // free as its destructor. A transfer moves the contents, destructor
+      // included, and detaches the source. Collecting the detached source
+      // must not free the bytes the new buffer now owns (a use-after-free
+      // under ASAN if it did).
+      const moved = await (async () => {
+        const px = await new Bun.Image(cornersPng).pixels();
+        const moved = structuredClone(px.data.buffer, { transfer: [px.data.buffer] });
+        expect([px.data.buffer.byteLength, moved.byteLength]).toEqual([0, 4 * 3 * 4]);
+        return moved;
+      })();
+      Bun.gc(true);
+      const plane = new Uint8Array(moved);
+      for (let y = 0; y < 3; y++)
+        for (let x = 0; x < 4; x++) expect(rgbaAt(plane, 4, x, y)).toEqual(cornerPattern(x, y));
+    });
   });
 
   describe("resize", () => {

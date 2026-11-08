@@ -81,8 +81,8 @@ def family():
     gc.collect()
 
 
-family()
 look_at_type(1)
+family()
 gc.collect()
 look_at_type(0)
 events = take_events()
@@ -118,7 +118,7 @@ for name, held in (
     gc.collect()
     be_curious_about(-1)
     heard = what_was_heard()
-    print(f"{name}: Py_TYPE() is NULL: {bool(heard // 1000)}; Py_IS_TYPE(it, that): {heard // 100 % 10}; it is tracked: {heard % 10}, and gc says {int(gc.is_tracked(held))}")
+    print(f"{name}: Py_TYPE() is NULL: {bool(heard // 1000)}; Py_IS_TYPE(it, that): {heard // 100 % 10}; PyType_IsSubtype(that, that): {heard // 10 % 10}; it is tracked: {heard % 10}, and gc says {int(gc.is_tracked(held))}")
 del node, held
 gc.collect()
 take_events()

@@ -285,6 +285,7 @@ Other True
 ['dealloc 227', 'dealloc 228']
 == so is an instance of a type that C has made on top of a class with __slots__
 ['Over', 'WithSlot', 'Node', 'object'] False [8, 8]
+[48, 56, 56, 80] 80
 ['dealloc 229'] Over in the slot
 ['dealloc 230']
 == a class that dies with its instance, and leads to it

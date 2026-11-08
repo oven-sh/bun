@@ -90,6 +90,9 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
     );
   }, 60_000);
 
+  /** A script that waits gives up, and says for what it has waited, before the test's own limit cuts it off. */
+  const deadlineWithin = (limit: number) => ({ CAPI_TEST_DEADLINE: String((limit * 3) / 4000) });
+
   async function run(script: string, library: string, options: Record<string, string> = {}, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(root, script), join(String(built), `lib${library}.so`), ...args],
@@ -107,7 +110,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
       test.concurrent(
         `${name}: ${mode}`,
         async () => {
-          const { stdout, stderr, exitCode } = await run(`${name}.py`, name, options);
+          const { stdout, stderr, exitCode } = await run(`${name}.py`, name, { ...options, ...deadlineWithin(limit) });
           expect(stderr).toBe("");
           expect(stdout).toBe(readFileSync(join(root, `${name}.expected`), "utf8"));
           expect(exitCode).toBe(0);
@@ -223,7 +226,7 @@ describe.skipIf(!isLinux || !compiler)("the C API", () => {
   async function runInTwo(script: string, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(root, "here", script), String(built), ...args],
-      env: bunEnv,
+      env: { ...bunEnv, ...deadlineWithin(limit) },
       cwd: String(built),
       stdout: "pipe",
       stderr: "pipe",

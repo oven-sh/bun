@@ -965,6 +965,9 @@ class WithSlot(Node):
 
 Over = make_type_over(WithSlot)
 print([cls.__name__ for cls in Over.__mro__], hasattr(Over(), "__dict__"), [cls.__basicsize__ - Node.__basicsize__ for cls in (WithSlot, Over)])
+# (What C adds begins at a multiple of 16.)
+OverWithData = declare("make_type_with_data_over", py_object, py_object)(WithSlot)
+print([cls.__basicsize__ for cls in (Node, WithSlot, Over, OverWithData)], OverWithData().__sizeof__())
 happened()
 tell(heard)
 tell_of_children(1)

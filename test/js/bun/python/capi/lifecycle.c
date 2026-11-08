@@ -420,6 +420,8 @@ void tell_of_children(long whether) { tells_of_children = whether; }
 static PyType_Slot over_slots[] = { { 0, NULL } };
 static PyType_Spec over_spec = { "lifecycle.Over", 0, 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, over_slots };
 PyObject *make_type_over(PyObject *base) { return PyType_FromSpecWithBases(&over_spec, base); }
+static PyType_Spec over_with_data_spec = { "lifecycle.OverWithData", -8, 0, Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE, over_slots };
+PyObject *make_type_with_data_over(PyObject *base) { return PyType_FromSpecWithBases(&over_with_data_spec, base); }
 void tell_of_itself(long whether) { tells_of_itself = whether; }
 
 /* Made by C: by tp_alloc, and as PyObject_GC_New() makes them. */

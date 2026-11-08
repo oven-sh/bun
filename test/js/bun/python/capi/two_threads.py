@@ -25,19 +25,22 @@ ended_by = []
 has_made, is_in_dealloc, has_collected = threading.Event(), threading.Event(), threading.Event()
 
 
-# Nothing here waits for ever.
+# Nothing here waits for ever, or for longer than whoever runs this is prepared to.
+DEADLINE = float(os.environ.get("CAPI_TEST_DEADLINE", "15"))
+
+
 def give_up(what):
     print("IT HAS NOT HAPPENED:", what, flush=True)
     os._exit(1)
 
 
 def wait_for(event, what):
-    if not event.wait(300):
+    if not event.wait(DEADLINE):
         give_up(what)
 
 
 def wait_for_end_of(thread):
-    thread.join(300)
+    thread.join(DEADLINE)
     if thread.is_alive():
         give_up("the other thread has ended")
 
@@ -129,7 +132,7 @@ make_member_of(Node, 0, 15)
 make_family_of_three()
 call_at_dealloc(ctypes.cast(at_dealloc, c_void_p))
 drop_family()
-deadline = time.monotonic() + 300
+deadline = time.monotonic() + DEADLINE
 while len(ended_by) < 3:
     if time.monotonic() > deadline:
         give_up("the three have ended")

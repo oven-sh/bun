@@ -5,14 +5,14 @@ at its real end: ['__del__'] [1000041]
 Py_TYPE(self) was Node itself in the tp_dealloc of the one that nobody holds: True
 [1000042, 1000043, 1000044]
 == a tp_traverse asks about what it holds. Nothing is made in the middle of a collection, so Py_TYPE() is NULL where the type might have to be (CPython: never)
-a str: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; it is tracked: 0, and gc says 0
-an int: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; it is tracked: 0, and gc says 0
-a list: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; it is tracked: 1, and gc says 1
-a tuple of numbers: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; it is tracked: 0, and gc says 0
-an instance: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; it is tracked: 1, and gc says 1
-a class: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; it is tracked: 1, and gc says 1
-a function: Py_TYPE() is NULL: True; Py_IS_TYPE(it, that): 0; it is tracked: 1, and gc says 1
-a built-in function: Py_TYPE() is NULL: True; Py_IS_TYPE(it, that): 0; it is tracked: 1, and gc says 1
-an instance of a class that derives from list: Py_TYPE() is NULL: True; Py_IS_TYPE(it, that): 0; it is tracked: 1, and gc says 1
-a typed array of JS's: Py_TYPE() is NULL: True; Py_IS_TYPE(it, that): 0; it is tracked: 1, and gc says 1
-a tuple with one in it: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; it is tracked: 1, and gc says 1
+a str: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; PyType_IsSubtype(that, that): 1; it is tracked: 0, and gc says 0
+an int: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; PyType_IsSubtype(that, that): 1; it is tracked: 0, and gc says 0
+a list: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; PyType_IsSubtype(that, that): 1; it is tracked: 1, and gc says 1
+a tuple of numbers: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; PyType_IsSubtype(that, that): 1; it is tracked: 0, and gc says 0
+an instance: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; PyType_IsSubtype(that, that): 1; it is tracked: 1, and gc says 1
+a class: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; PyType_IsSubtype(that, that): 1; it is tracked: 1, and gc says 1
+a function: Py_TYPE() is NULL: True; Py_IS_TYPE(it, that): 0; PyType_IsSubtype(that, that): 0; it is tracked: 1, and gc says 1
+a built-in function: Py_TYPE() is NULL: True; Py_IS_TYPE(it, that): 0; PyType_IsSubtype(that, that): 0; it is tracked: 1, and gc says 1
+an instance of a class that derives from list: Py_TYPE() is NULL: True; Py_IS_TYPE(it, that): 0; PyType_IsSubtype(that, that): 0; it is tracked: 1, and gc says 1
+a typed array of JS's: Py_TYPE() is NULL: True; Py_IS_TYPE(it, that): 0; PyType_IsSubtype(that, that): 0; it is tracked: 1, and gc says 1
+a tuple with one in it: Py_TYPE() is NULL: False; Py_IS_TYPE(it, that): 1; PyType_IsSubtype(that, that): 1; it is tracked: 1, and gc says 1

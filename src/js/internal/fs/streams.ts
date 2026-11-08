@@ -356,8 +356,7 @@ function ReadStream(
 $toClass(ReadStream, "ReadStream", ReadableOfProgram);
 const readStreamPrototype = ReadStream.prototype;
 
-// Else the class goes below Readable at its first use (`new`, `instanceof`, a read of `prototype`), so a WriteStream loads no Readable.
-// As in Node, that use takes what the program has stored under stream.Readable by then. A stub there throws, and the next use tries again.
+// Else the first use (`new`, `instanceof`, a read of `prototype`) puts the class below the Readable stored by then, as in Node.
 if (ReadableOfProgram === undefined)
   Object.defineProperty(ReadStream, "prototype", {
     get() {

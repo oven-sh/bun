@@ -6,7 +6,6 @@
 #include <JavaScriptCore/Weak.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/RefCounted.h>
-#include <wtf/SharedTask.h>
 #include <wtf/Vector.h>
 
 namespace Bun {
@@ -24,11 +23,6 @@ public:
     void discardRecords();
     void stop();
 
-    bool recordsCollections() const { return m_recordsCollections; }
-    // For the request of a synchronous collection: what tells which record is its own.
-    RefPtr<WTF::SharedTask<void()>> willCollectSynchronously();
-    // After a synchronous collection that the program asked for, and the sweep that follows it.
-    void didForceCollection();
     // Gives the records that wait to the listeners.
     void callListeners();
 
@@ -54,12 +48,7 @@ private:
     bool m_recordsCollections { false };
     // When the first listener came. As in Node, a collection that was under way then has no entry.
     WTF::MonotonicTime m_recordsSince;
-    RefPtr<WTF::SharedTask<void()>> m_synchronousCollectionDidEnd;
-    // The end phase of a synchronous collection sets it, on either thread. The completion callback that follows is the one of that collection.
-    std::atomic<bool> m_synchronousCollectionEnded { false };
     Records m_records;
-    // One past the record of the synchronous collection that JSC__VM__runGC is in, or 0.
-    unsigned m_synchronousRecordEnd { 0 };
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetGCPerformanceEntryListener);

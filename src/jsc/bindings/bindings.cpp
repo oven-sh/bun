@@ -105,7 +105,6 @@
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "ZigGlobalObject.h"
-#include "GCPerformanceEntries.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 
@@ -5623,10 +5622,15 @@ static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
         dead[i] = 0;
 }
 
-extern "C++" {
-// runGC<false> is what a VM with no observer of 'gc' performance entries runs, and clearStackBelowCaller() is sized for its frame. runGC<true> also marks the record of its collection as forced.
-template<bool observed>
-static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
+// The collection that Bun.gc(true) and gc() ask for. The tag is what the 'gc' entries of node:perf_hooks report as the forced flag (GCPerformanceEntries.cpp).
+static ALWAYS_INLINE JSC::GCRequest forcedFullCollection()
+{
+    JSC::GCRequest request(JSC::CollectionScope::Full);
+    request.isForced = true;
+    return request;
+}
+
+size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
@@ -5645,14 +5649,7 @@ static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
         clearStackBelowCaller();
-        if constexpr (observed) {
-            auto& gcPerformanceEntries = *WebCore::clientData(*vm)->gcPerformanceEntries;
-            JSC::GCRequest request(JSC::CollectionScope::Full);
-            request.didFinishEndPhase = gcPerformanceEntries.willCollectSynchronously();
-            vm->heap.collectNow(JSC::Sync, request);
-            gcPerformanceEntries.didForceCollection();
-        } else
-            vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+        vm->heap.collectNow(JSC::Sync, forcedFullCollection());
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif
@@ -5671,24 +5668,6 @@ static NEVER_INLINE size_t runGC(JSC::VM* vm, bool sync)
 #endif
 
     return vm->heap.sizeAfterLastFullCollection();
-}
-}
-
-// The sizes of clearStackBelowCaller() are measured for the frame of runGC<false>. The frame of runGC<true> is another, and nothing writes every slot of it. So it is built over zeroes: the collection then finds no word of an earlier call in it.
-static NEVER_INLINE size_t runGCWithPerformanceEntry(JSC::VM* vm)
-{
-    clearStackBelowCaller();
-    return runGC<true>(vm, true);
-}
-
-size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
-{
-    if (sync) {
-        if (auto* gcPerformanceEntries = WebCore::clientData(*vm)->gcPerformanceEntries.get(); gcPerformanceEntries && gcPerformanceEntries->recordsCollections()) [[unlikely]]
-            return runGCWithPerformanceEntry(vm);
-    }
-    // A tail call, so that runGC<false> has the frame of this function: clearStackBelowCaller() is sized for the frames from here on.
-    MUST_TAIL_CALL return runGC<false>(vm, sync);
 }
 
 NEVER_INLINE bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)

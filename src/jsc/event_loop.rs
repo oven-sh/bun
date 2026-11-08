@@ -1206,7 +1206,7 @@ impl EventLoop {
         }
         bun_core::hint::cold();
         // A macro runs on a loop of its own, which ends with the macro: what the hand-off queues there would never run.
-        if vm.macro_mode || !vm.is_event_loop_kept_alive() {
+        if vm.macro_mode || !vm.is_event_loop_alive_excluding_immediates() {
             return;
         }
         let global = vm.global();

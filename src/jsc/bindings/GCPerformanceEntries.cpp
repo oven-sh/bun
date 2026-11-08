@@ -35,33 +35,15 @@ void GCPerformanceEntries::didFinishCollection(JSContextGroupRef, void* self)
     auto& heap = entries.m_vm.heap;
     bool isFullCollection = heap.lastCollectionScope() == CollectionScope::Full;
     // JSC's own figures for the collection that has ended: how long its cycle was, and when it ended.
-    Seconds duration = isFullCollection ? heap.lastFullGCLength() : heap.lastEdenGCLength();
-    auto start = heap.lastGCBoundaryTime() - duration;
+    Seconds cycle = isFullCollection ? heap.lastFullGCLength() : heap.lastEdenGCLength();
+    auto start = heap.lastGCBoundaryTime() - cycle;
     if (start < entries.m_recordsSince)
         return;
-    entries.m_records.append({ start, duration, isFullCollection, false });
-    if (entries.m_synchronousCollectionEnded.exchange(false))
-        entries.m_synchronousRecordEnd = entries.m_records.size();
+    // The program waits for all of a collection that it forced (JSC__VM__runGC). Any other stops it for a part of the cycle only. The first stop begins a moment before JSC starts to time the cycle, hence the bound.
+    bool forced = heap.lastCollectionWasForced();
+    entries.m_records.append({ start, forced ? cycle : std::min(cycle, heap.lastCollectionPause()), isFullCollection, forced });
     // No wake: the entry waits for the next turn that the loop makes.
     Bun__VM__setGCPerformanceEntriesWait(entries.m_bunVM, true);
-}
-
-RefPtr<SharedTask<void()>> GCPerformanceEntries::willCollectSynchronously()
-{
-    ASSERT(!m_synchronousCollectionEnded.load() && !m_synchronousRecordEnd);
-    if (!m_synchronousCollectionDidEnd)
-        m_synchronousCollectionDidEnd = createSharedTask<void()>([this] { m_synchronousCollectionEnded.store(true); });
-    return m_synchronousCollectionDidEnd;
-}
-
-void GCPerformanceEntries::didForceCollection()
-{
-    if (auto end = std::exchange(m_synchronousRecordEnd, 0)) {
-        auto& record = m_records[end - 1];
-        record.forced = true;
-        // As in Node, the entry lasts nearly as long as the call: the sweep after the collection is part of it.
-        record.duration = MonotonicTime::now() - record.start;
-    }
 }
 
 void GCPerformanceEntries::setRecordsCollections(bool recordsCollections)
@@ -87,7 +69,6 @@ void GCPerformanceEntries::setListener(JSGlobalObject* realm, JSObject* listener
 
 void GCPerformanceEntries::discardRecords()
 {
-    ASSERT(!m_synchronousRecordEnd);
     m_records.clear();
     Bun__VM__setGCPerformanceEntriesWait(m_bunVM, false);
 }
@@ -102,7 +83,6 @@ void GCPerformanceEntries::stop()
 // https://github.com/nodejs/node/blob/v26.12.1/src/node_perf.cc#L208-L241
 void GCPerformanceEntries::callListeners()
 {
-    ASSERT(!m_synchronousRecordEnd);
     Records records = std::exchange(m_records, {});
     Bun__VM__setGCPerformanceEntriesWait(m_bunVM, false);
 

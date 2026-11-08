@@ -1866,12 +1866,6 @@ impl VirtualMachine {
             || self.has_immediates()
     }
 
-    /// The one rule of an unref'd `setImmediate` and of the hand-off of `gc` performance entries, because neither keeps the loop alive by itself.
-    #[inline]
-    pub fn is_event_loop_kept_alive(&self) -> bool {
-        self.is_event_loop_alive_excluding_immediates()
-    }
-
     /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
     pub fn has_work_left(&self) -> bool {
         // Must be read before the queues: the waiter thread posts a child's exit, then stops counting the child.

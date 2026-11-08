@@ -93,6 +93,9 @@ BunTestVitestAroundEach/0: it is not called: it reaches outside JavaScript
 BunTestVitestBeforeAll/0: it is not called: it reaches outside JavaScript
 BunTestVitestBeforeEach/0: it is not called: it reaches outside JavaScript
 BunTestVitestDescribe/0: it is not called: it reaches outside JavaScript
+BunTestVitestExpect/0: it is not called: it reaches outside JavaScript
+BunTestVitestExpectPoll/0: it is not called: it reaches outside JavaScript
+BunTestVitestExpectSoft/0: it is not called: it reaches outside JavaScript
 BunTestVitestOnTestFinished/0: it is not called: it reaches outside JavaScript
 BunTestVitestSpyOn/0: it is not called: it reaches outside JavaScript
 BunTestVitestTest/0: it is not called: it reaches outside JavaScript

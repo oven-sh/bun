@@ -52,6 +52,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
         spread_arguments_run_iterators: false,
+        objects_are_not_primitives: false,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

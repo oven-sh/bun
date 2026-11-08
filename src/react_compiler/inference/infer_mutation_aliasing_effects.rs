@@ -2871,6 +2871,14 @@ fn compute_signature_for_instruction(
                 reason: ValueReason::Other,
             });
         }
+        // Not in upstream, where the arm below has it.
+        InstructionValue::RegExpLiteral { .. } if env.config.objects_are_not_primitives => {
+            effects.push(AliasingEffect::Create {
+                into: lvalue.clone(),
+                value: ValueKind::Mutable,
+                reason: ValueReason::Other,
+            });
+        }
         // All primitive-creating instructions
         InstructionValue::TaggedTemplateExpression { .. }
         | InstructionValue::BinaryExpression { .. }

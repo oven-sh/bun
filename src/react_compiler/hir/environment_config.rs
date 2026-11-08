@@ -111,6 +111,9 @@ pub struct EnvironmentConfig {
     /// Upstream computes that effect and only uses it to refuse a spread into a hook. It had the rule until the
     /// inference was written again (`InferReferenceEffects`, 19.1.0).
     pub spread_arguments_run_iterators: bool,
+    /// A regular expression literal is an object: a call or a store can change it, so they are in its memo block, and
+    /// what is read from it can depend on a prop. To upstream it is a primitive. It was an object there in 19.1.0.
+    pub objects_are_not_primitives: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -170,6 +173,7 @@ impl Default for EnvironmentConfig {
             react_is_known_by_its_module: true,
             dependencies_are_sorted_by_bytes: false,
             spread_arguments_run_iterators: true,
+            objects_are_not_primitives: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

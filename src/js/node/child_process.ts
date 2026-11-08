@@ -42,9 +42,7 @@ var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
 
-// What a child receives (argv, shell command, stdio, environment) and what exec() returns are made by index and with direct
-// writes. Script can replace the functions of Array.prototype and the array iterator, and can put a setter on an index of
-// Array.prototype. fork() keeps its spreads: an iterable execArgv works there, as in Node.
+// By index and with direct writes: script can replace the functions of Array.prototype and the array iterator, or put a setter on an index.
 
 // `list.slice()`
 function copyArray<T>(list: ArrayLike<T>): T[] {
@@ -1528,8 +1526,7 @@ class ChildProcess extends EventEmitter {
 
     const cmd = spawnCommand(file, spawnargs);
     let started: $Bindgen.Subprocess | undefined;
-    // Set when this throws after the child started. The caller gets no ChildProcess then, so its exit reports to nobody:
-    // what failed here would fail there again, where nothing can catch it.
+    // Set when this throws after the child started: its exit then reports to nobody.
     let abandoned = false;
 
     try {

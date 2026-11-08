@@ -12,10 +12,7 @@ const createRecordable = $bindgen("histogram.bind.ts", "createRecordable");
 const createInterval = $bindgen("histogram.bind.ts", "createInterval");
 const isHistogram = $bindgen("histogram.bind.ts", "isHistogram");
 
-/**
- * Entry types routed through the registry of internal/shared instead of the native observer. The list is here, with its one
- * reader: `new Set([...])` reads the array iterator, and internal/shared loads with nearly every module.
- */
+/** Entry types routed through the registry of internal/shared instead of the native observer. */
 const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
 
 const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;

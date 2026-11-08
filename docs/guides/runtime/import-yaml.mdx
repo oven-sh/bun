@@ -77,7 +77,7 @@ console.log(data.hobbies); // => ["reading", "coding"]
 
 ## TypeScript Support
 
-To add TypeScript support for your YAML imports, create a declaration file with `.d.ts` appended to the YAML filename (for example, `config.yaml` → `config.yaml.d.ts`):
+Without a declaration file, TypeScript types the default import and each named import of a YAML file as `any`. To get exact types, create a declaration file with `.d.ts` appended to the YAML filename (for example, `config.yaml` → `config.yaml.d.ts`):
 
 ```ts config.yaml.d.ts icon="/icons/typescript.svg"
 declare const contents: {
@@ -98,6 +98,8 @@ declare const contents: {
 
 export = contents;
 ```
+
+With TypeScript 7.1 or newer, an import that has a `type` attribute takes its type from the attribute, and TypeScript does not read the declaration file for that import. See [Types of data files](/runtime/file-types#types-of-data-files).
 
 ---
 

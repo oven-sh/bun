@@ -562,3 +562,48 @@ declare module "*.svg" {
 This tells TypeScript to treat any default import from `.svg` as a string.
 
 </Accordion>
+
+---
+
+## Types of data files
+
+Bun parses a `.toml`, `.yaml`, `.yml`, `.jsonc`, `.json5`, or `.xml` file when you import it. TypeScript does not read these files, so `@types/bun` gives their imports these types:
+
+- The default import of a `.toml`, `.yaml`, `.yml`, `.jsonc`, or `.json5` file is `any`.
+- The default import of a `.xml` file is an [`XML.Document`](/runtime/xml).
+- A named import from any of these files is `any`.
+
+TypeScript accepts every name, including a key that the file does not have. Bun reports a missing key when it runs, bundles, or compiles the file that imports it.
+
+For exact types, add a declaration file beside the data file. Its name is the name of the data file followed by `.d.ts`:
+
+```toml config.toml
+[database]
+host = "localhost"
+port = 5432
+```
+
+```ts config.toml.d.ts
+declare const contents: {
+  database: {
+    host: string;
+    port: number;
+  };
+};
+
+export = contents;
+```
+
+TypeScript then takes the types of the default import and of each named import from `config.toml.d.ts`:
+
+```ts app.ts
+import config, { database } from "./config.toml";
+
+const host: string = config.database.host;
+const port: number = database.port;
+console.log(host, port); // "localhost" 5432
+```
+
+A named import of a key that `config.toml.d.ts` does not declare is now a type error. TypeScript does not compare the declaration file with the data file, so change both when a key changes.
+
+With TypeScript 7.1 or newer, an import that has a `type` attribute takes its type from the attribute. TypeScript does not read the declaration file for that import.

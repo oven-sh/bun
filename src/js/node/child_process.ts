@@ -1594,7 +1594,6 @@ class ChildProcess extends EventEmitter {
       if (started !== undefined) {
         // The child runs, and the caller gets no ChildProcess: nothing could wait for the child or stop it.
         started.kill("SIGKILL");
-        started.unref();
         throw ex;
       }
       const exCode =

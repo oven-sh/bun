@@ -1886,7 +1886,9 @@ describe("what a script stored on Array.prototype", () => {
         const printsVariable = windows ? "echo %REPLACED_ARRAY_FUNCTIONS%" : "echo $REPLACED_ARRAY_FUNCTIONS";
         result.shell = String(watch(() => cp.spawnSync(printsVariable, { env, shell: true })).stdout).trim();
         if (!windows) {
-          result.shellWithArgs = String(watch(() => cp.spawnSync(echo, ["intended", "last"], { env, shell: true })).stdout);
+          // join() takes null as "".
+          const words = ["intended", null, "last"];
+          result.shellWithArgs = String(watch(() => cp.spawnSync(echo, words, { env, shell: true })).stdout);
         }
         result.execFileSync = watch(() => cp.execFileSync(echo, echoed("intended", "last"), { env, encoding: "utf8" }));
         try {

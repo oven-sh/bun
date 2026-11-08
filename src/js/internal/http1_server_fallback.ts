@@ -4,12 +4,12 @@
 const { STATUS_CODES, kPendingCallbacks } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
 const AsyncContextFrame = require("internal/async_context_frame");
+const { reportUncaughtException } = require("internal/shared");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 // Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
 const kHttp1MessageOpen = Symbol("http1MessageOpen");
-const { reportUncaughtException } = require("internal/shared");
 
 function rethrowUncaught(err) {
   throw err;

@@ -98,7 +98,7 @@ function wrapStoreRun(store: Store, data: unknown, next: () => unknown, transfor
     try {
       context = transform(data);
     } catch (err) {
-      process.nextTick(reportUncaughtException, err);
+      process.nextTick(() => reportUncaughtException(err));
       return next();
     }
 
@@ -163,7 +163,7 @@ class ActiveChannel {
         const onMessage = subscribers![i];
         onMessage(data, this.name);
       } catch (err) {
-        process.nextTick(reportUncaughtException, err);
+        process.nextTick(() => reportUncaughtException(err));
       }
     }
   }

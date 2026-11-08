@@ -6,13 +6,17 @@ use super::errors::Container;
 use super::expr::TargetKind;
 use super::related::FileSpan;
 use super::shape::UntypedProperty;
+use super::unions::Growth;
 use super::*;
 use crate::bind::{
     Decl, Flow, FlowId, FlowTarget, FnOwner, MAX_FLOW_DEPTH, MemberOwner, Parent, PatParent,
     SymbolId, UNREACHABLE, entered_clauses,
 };
 use crate::util::{FxHashSet, SharedSort};
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 use smallvec::{SmallVec, smallvec};
+
+mod dominators;
 
 /// See `Checker::access_key`.
 #[derive(Copy, Clone)]
@@ -121,6 +125,28 @@ pub(super) struct Reference {
 }
 
 impl Reference {
+    /// A hash of `path` that agrees with `==`.
+    fn path_key(&self) -> u64 {
+        self.path.iter().fold(0, |key: u64, step| {
+            let part = match step.name.get() {
+                AccessedName::Some(name) => u64::from(name.0) << 2 | 1,
+                AccessedName::None => u64::from(root_key(step.variable)) << 2 | 2,
+                AccessedName::Unresolved(at) => u64::from(at.0) << 2 | 3,
+            };
+            (key.rotate_left(5) ^ part).wrapping_mul(0x517c_c1b7_2722_0a95)
+        })
+    }
+
+    /// `x`, `this`, `x.a.b`: two of them that are equal match the same expressions.
+    fn is_plain_chain(&self) -> bool {
+        matches!(self.root, Root::Symbol(_) | Root::This)
+            && self.has_key
+            && self.unresolved.get() == 0
+            && (self.unkeyed, self.satisfies, self.assigned) == (usize::MAX, usize::MAX, usize::MAX)
+            && self.accesses == self.path.len()
+            && (self.path.iter()).all(|step| matches!(step.name.get(), AccessedName::Some(_)))
+    }
+
     /// A reference that isn't an expression in the source: `root`, or `root.a.b`.
     fn synthetic(file: FileId, root: Root, path: SmallVec<[Step; 4]>, node: Node) -> Reference {
         Reference {
@@ -151,19 +177,26 @@ impl PartialEq for Reference {
 /// overwriting what a nested computation for the same node assigned.
 #[derive(Default)]
 pub(super) struct FlowMemo {
-    /// Built by `index_narrowing_subjects`, in field order: the file the index is for; by symbol,
-    /// the first flow node with a test, `switch` or assignment that concerns it (empty if the file
-    /// has no such filter); one bit per symbol, set while some call statement that mentions it
-    /// isn't known to be idle; those calls, by symbol.
     narrowing_index_file: Option<FileId>,
     first_narrowing_node: Vec<u32>,
+    /// The same for the nodes that name a property of the symbol. `a !== b` and `a = b` leave `a[0]` as declared:
+    /// without this, n reads `a[0]` to `a[n]` behind n loops that assign to `a` take n * n steps.
+    first_narrowing_node_of_property: Vec<u32>,
     in_call_statements: Vec<u64>,
     call_statements_by_symbol: Vec<(SymbolId, FlowId)>,
+    /// Indexed as `call_statements_by_symbol`, at the first entry of a symbol: how many of its entries, from there on, were
+    /// found idle.
+    idle_call_statements_in_front: Vec<u32>,
     /// Indexed by flow node: an upper bound on the node numbers reachable through its antecedents.
     /// (Only the back edge of a loop leads to a higher one.)
     max_antecedent: Vec<u32>,
     /// The same for a lower bound, up to the start of its function.
     min_antecedent: Vec<u32>,
+    some_walk_may_go_too_deep: bool,
+    /// While the checker reads types alone. For a function, or for the file outside of them: the position of the first
+    /// reference whose walk went too deep. A check of the file has the analysis off for the rest of that body. A question
+    /// begins with it on, so each reference behind that one would walk as deep again.
+    too_deep_since: FxHashMap<(FileId, Option<FnId>), u32>,
     /// The flow nodes at which a walk resolves the name of a key, in ascending order.
     computed_key_nodes: Vec<(u32, ResolvesKey)>,
     /// The call statements and the clauses of a `switch (true)` with a union
@@ -191,8 +224,8 @@ pub(super) struct FlowMemo {
     /// `finalArrayType` of an evolving array type whose element type is a union.
     final_array_types: FxHashMap<TypeId, TypeId>,
     /// Not in tsgo. Keyed by a flow node, which is an array mutation or shared, and the `root_key`
-    /// of a name. See `evolved_array_at`.
-    evolved_arrays: FxHashMap<(FileId, FlowId, u32), EvolvedArray>,
+    /// and the `path_key` of a reference. See `evolved_array_at`.
+    evolved_arrays: FxHashMap<(FileId, FlowId, u32, u64), EvolvedArray>,
     evolving_elements: Vec<EvolvingElements>,
     /// Two bits per flow node of the file `settled_calls_of`. The first marks a `Flow::Call` node
     /// whose call has an entry in `effects_signatures` (settled). The second marks one whose entry
@@ -214,11 +247,22 @@ pub(super) struct FlowMemo {
     /// `narrowTypeByEquality`, keyed by the type, the unmodified type of the other operand, whether
     /// the operator is `==`, and whether the operands are equal.
     equal_types: FxHashMap<(TypeId, TypeId, bool, bool), TypeId>,
+    switch_values: FxHashMap<(FileId, StmtId, u32, u32, TypeId), TypeId>,
+    unknown_union_type: Option<TypeId>,
     /// `flowLoopCache`, keyed by the loop label and `getFlowReferenceKey`: the declared and the
-    /// initial type, then the reference.
-    flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(Reference, TypeId); 1]>>,
+    /// initial type, then the reference, as an index into `flow_loop_references`.
+    flow_loop_cache: FxHashMap<FlowLoopKey, SmallVec<[(u32, TypeId); 1]>>,
+    /// A walk leaves its reference at every loop that it passes.
+    flow_loop_references: Vec<Reference>,
     /// `Checker::work` when it got its latest entry.
     flow_loop_cached_at: u64,
+    /// Not in tsgo. These three are for unions of `Growth::MIN_MEMBERS` or more, so that one that has grown by a member is
+    /// only asked about that member. `getTypeFacts`, by the union and the mask.
+    facts_of_unions: FxHashMap<(TypeId, u32), u32>,
+    /// `getTypeWithFacts`, by the union and the facts.
+    unions_with_facts: FxHashMap<(TypeId, u32), TypeId>,
+    /// The unions in which no member may be `undefined` or `null`, so `getAdjustedTypeWithFacts` leaves them as they are.
+    unions_of_non_nullable_members: FxHashSet<TypeId>,
     /// `switchStatementLinks`
     switch_statement_links: FxHashMap<(FileId, StmtId), SwitchStatementLinks>,
     /// `contextFreeTypes`, for the results that depend on the incomplete type of a loop in
@@ -226,11 +270,20 @@ pub(super) struct FlowMemo {
     context_free_types_in_loops: FxHashMap<(FileId, ExprId), TypeId>,
     /// How many times one of them was read.
     reads_of_types_in_loops: u64,
+    /// How many times `getNarrowableTypeForReference` may have returned another type than it was given.
+    narrowable_types_not_as_given: u64,
+    /// How many times `isConstantReference` looked at where a reference with a path stands.
+    chains_asked_where_they_stand: u64,
     /// The depth of `stack` when each `ExhaustiveState::Computing` was set, the innermost last.
     exhaustive_states_computing: SmallVec<[usize; 2]>,
     /// `last_assignment_pos`
     last_assignment_positions: std::cell::RefCell<FxHashMap<(FileId, SymbolId), u32>>,
     runs: FlowRuns,
+    dominators: dominators::FlowDominators,
+    /// Instead of `FAR_WALK`, for a test.
+    far_walk: Option<u32>,
+    /// How many steps the long walks of the file have taken. See `steps_before_far_skip`.
+    steps_of_long_walks: (Option<FileId>, u64),
     /// See `parent_of_whole_expression`.
     pub(super) parents_of_long_expressions: FxHashMap<(FileId, Node), Node>,
     /// See `check_testing_known_truthy_left_operand`.
@@ -332,13 +385,15 @@ struct RunNode {
     next_shared: u32,
 }
 
-/// What a walk for a name of an automatic type finds at a flow node, if every walk for the name
-/// finds the same there. See `Walk::is_unshareable`.
+/// What a walk that has `Walk::marks` finds at a flow node, if every walk for the reference finds
+/// the same there. See `Walk::is_unshareable`.
 #[derive(Copy, Clone)]
 struct EvolvedArray {
     /// The declared type of the name and `initial_of`.
     declared: TypeId,
     initial: TypeId,
+    /// The reference, if it has a path, as an index into `FlowMemo::flow_loop_references`.
+    reference: u32,
     /// The type at the node. With `unmade`, the type that those elements are added to.
     ty: TypeId,
     unmade: Option<ElementsSoFar>,
@@ -375,9 +430,9 @@ struct ElementsSoFar {
     count: u32,
 }
 
-/// `FlowLoopKey`, with the `root_key` of the reference in its place. Without that, n names in n nested loops take n * n * n
-/// comparisons.
-type FlowLoopKey = (FileId, FlowId, TypeId, TypeId, u32);
+/// `FlowLoopKey`, with the `root_key` and the `path_key` of the reference in its place. Without them, n names in n nested loops
+/// take n * n * n comparisons, and so do `a[0]` to `a[n]` behind n loops.
+type FlowLoopKey = (FileId, FlowId, TypeId, TypeId, u32, u64);
 
 /// `SwitchStatementLinks`. tsgo assigns both unconditionally, so they keep the first computation's
 /// result even if it saw a loop's incomplete types.
@@ -438,7 +493,23 @@ impl FlowMemo {
 
     fn cached_flow_loop_type(&self, key: &FlowLoopKey, reference: &Reference) -> Option<TypeId> {
         let cached = self.flow_loop_cache.get(key)?;
-        cached.iter().find(|c| c.0 == *reference).map(|c| c.1)
+        let is_same = |c: &&(u32, TypeId)| self.flow_loop_references[c.0 as usize] == *reference;
+        cached.iter().find(is_same).map(|c| c.1)
+    }
+
+    fn keep_reference(&mut self, reference: &Reference) -> u32 {
+        if self.flow_loop_references.last() != Some(reference) {
+            self.flow_loop_references.push(reference.clone());
+        }
+        (self.flow_loop_references.len() - 1) as u32
+    }
+
+    fn cache_flow_loop_type(&mut self, key: FlowLoopKey, reference: &Reference, ty: TypeId) {
+        let index = self.keep_reference(reference);
+        self.flow_loop_cache
+            .entry(key)
+            .or_default()
+            .push((index, ty));
     }
 }
 
@@ -475,6 +546,7 @@ struct FlowType {
 
 impl FlowType {
     /// `newFlowType`
+    #[inline]
     fn new(ty: TypeId, incomplete: bool) -> FlowType {
         FlowType {
             ty: if incomplete && ty.is_never() {
@@ -493,8 +565,10 @@ struct SharedFlows {
     /// too.
     first_entries: [(FlowId, FlowType, u32); 8],
     count: usize,
-    /// Overflow entries, added once `first_entries` was full.
-    overflow_entries: FxHashMap<FlowId, (FlowType, u32)>,
+    /// The entries added once `first_entries` was full: a table with open addressing, at most half full. Its length is
+    /// zero or a power of two. A free slot has no node.
+    overflow_entries: Vec<(FlowId, FlowType, u32)>,
+    overflow_count: usize,
 }
 
 impl Default for SharedFlows {
@@ -502,36 +576,78 @@ impl Default for SharedFlows {
         SharedFlows {
             first_entries: [(FlowId::NONE, FlowType::new(TypeId::NEVER, false), 0); 8],
             count: 0,
-            overflow_entries: FxHashMap::default(),
+            overflow_entries: Vec::new(),
+            overflow_count: 0,
         }
     }
 }
 
 impl SharedFlows {
+    #[inline]
     fn get(&self, flow: FlowId) -> Option<(FlowType, u32)> {
         let first_entries = &self.first_entries[..self.count];
         match first_entries.iter().find(|known| known.0 == flow) {
             Some(known) => Some((known.1, known.2)),
             None if self.overflow_entries.is_empty() => None,
-            None => {
-                cold_path();
-                self.overflow_entries.get(&flow).copied()
+            None => self.get_overflow(flow),
+        }
+    }
+
+    #[inline(never)]
+    fn get_overflow(&self, flow: FlowId) -> Option<(FlowType, u32)> {
+        let known = self.overflow_entries[self.overflow_slot(flow)];
+        known.0.is_some().then_some((known.1, known.2))
+    }
+
+    /// Where `flow` is in `overflow_entries`, which isn't empty, or the free slot where it belongs.
+    #[inline]
+    fn overflow_slot(&self, flow: FlowId) -> usize {
+        let entries = &self.overflow_entries[..];
+        let mask = entries.len() - 1;
+        let mut at =
+            (flow.0.wrapping_mul(0x9E37_79B1) >> (32 - entries.len().trailing_zeros())) as usize;
+        loop {
+            let node = entries[at & mask].0;
+            if node == flow || node.is_none() {
+                return at & mask;
+            }
+            at += 1;
+        }
+    }
+
+    #[cold]
+    fn grow_overflow(&mut self) {
+        let free = (FlowId::NONE, FlowType::new(TypeId::NEVER, false), 0);
+        let len = (self.overflow_entries.len() * 4).max(64);
+        for known in std::mem::replace(&mut self.overflow_entries, vec![free; len]) {
+            if known.0.is_some() {
+                let at = self.overflow_slot(known.0);
+                self.overflow_entries[at] = known;
             }
         }
     }
 
-    /// In tsgo, a node that's visited again while its type is computed gets two entries, and the
-    /// search finds the first. So a second entry is dropped here.
+    #[inline]
     fn push(&mut self, flow: FlowId, ty: FlowType, invocations: u32) {
-        if self.get(flow).is_some() {
-            return;
-        }
         if let Some(free) = self.first_entries.get_mut(self.count) {
             *free = (flow, ty, invocations);
             self.count += 1;
-        } else {
-            cold_path();
-            self.overflow_entries.insert(flow, (ty, invocations));
+            return;
+        }
+        self.push_overflow(flow, ty, invocations);
+    }
+
+    /// In tsgo, a node that's visited again while its type is computed gets two entries, and the
+    /// search finds the first. So a second entry is dropped here.
+    #[inline(never)]
+    fn push_overflow(&mut self, flow: FlowId, ty: FlowType, invocations: u32) {
+        if self.overflow_count * 2 >= self.overflow_entries.len() {
+            self.grow_overflow();
+        }
+        let at = self.overflow_slot(flow);
+        if self.overflow_entries[at].0.is_none() {
+            self.overflow_entries[at] = (flow, ty, invocations);
+            self.overflow_count += 1;
         }
     }
 }
@@ -612,6 +728,12 @@ struct Walk {
     next_skip: u32,
     /// How many steps the walk takes before it tries again, after a try that passed few nodes.
     steps_between_skips: u32,
+    /// The same two for `skip_to_dominator`.
+    next_far_skip: u32,
+    steps_between_far_skips: u32,
+    far_skipped: (u32, u32),
+    /// How many of `steps` are in `FlowMemo::steps_of_long_walks`.
+    steps_counted: u32,
     /// The number of nested `getTypeAtFlowNode` invocations that would be in progress.
     depth: u32,
     /// The depth reached `MAX_FLOW_DEPTH` (`flowAnalysisDisabled`), so the result is errorType.
@@ -621,9 +743,10 @@ struct Walk {
     /// The highest `depth` since the invocation in progress began. Unless the walk `is_exact`, as
     /// if it had found nothing in `sharedFlows`.
     deepest: u32,
-    /// `marks_of_walk` when the walk began, if it's for a name of an automatic type. While they
-    /// stay the same, what it has found is final.
-    marks: Option<((u64, u64), (u64, u64, u64), u64)>,
+    /// `marks_of_walk` when the walk began, if it's for a name of an automatic type or, while the
+    /// checker reads types alone, for a plain chain. While they stay the same, what it has found is
+    /// final.
+    marks: Option<((u64, u64), (u64, u64, u64), (u64, u64), (u64, u32))>,
     /// What the walk has found isn't final, or depends on where its reference is, other than
     /// through `initial_of`.
     is_unshareable: bool,
@@ -645,6 +768,12 @@ const MAX_STEPS: u32 = 2_000_000;
 const LONG_EXACT_WALK: u32 = 10_000;
 /// A walk that has taken this many steps starts to skip. See `skip_unrelated_nodes`.
 const LONG_WALK: u32 = 32;
+/// A walk that has taken this many steps pays for the index of `skip_to_dominator`.
+const FAR_WALK: u32 = 1024;
+/// So do the long walks of a file together, once they have taken this many steps for each of its nodes.
+const STEPS_A_NODE_FOR_INDEX: u64 = 8;
+/// A try of `skip_to_dominator` costs about as much as this many steps.
+const WORTHWHILE_FAR_SKIP: u32 = 64;
 /// A try to skip costs about as much as this many steps.
 const WORTHWHILE_SKIP: u32 = 8;
 /// A walk that has this many antecedents of a label ahead of it is long. See
@@ -652,6 +781,7 @@ const WORTHWHILE_SKIP: u32 = 8;
 const MANY_ANTECEDENTS: usize = 16;
 
 /// A key for a name or for `this`, not necessarily unique. 0 for any other root of a reference.
+#[inline]
 fn root_key(root: Root) -> u32 {
     match root {
         Root::Symbol(symbol) => symbol.0 << 2 | 1,
@@ -664,6 +794,22 @@ fn root_key(root: Root) -> u32 {
         | Root::Params(_)
         | Root::Other => 0,
     }
+}
+
+fn refilled<T: Copy>(list: &mut Vec<T>, len: usize, value: T) -> Vec<T> {
+    let mut list = emptied(list);
+    if list.capacity() < len {
+        drop(list);
+        list = Vec::with_capacity(len);
+    }
+    list.resize(len, value);
+    list
+}
+
+fn emptied<T>(list: &mut Vec<T>) -> Vec<T> {
+    let mut list = std::mem::take(list);
+    list.clear();
+    list
 }
 
 /// The references a test can narrow.
@@ -735,23 +881,41 @@ impl NarrowingSubjects for TestSubjects {
 }
 
 /// Fields: by symbol, the first flow node that concerns a reference rooted at it, whatever its
-/// path; the current node; what the node's keys require; whether `add_union` was called.
-struct FirstNarrowingNodes<'a>(&'a mut [u32], u32, ResolvesKey, bool);
+/// path; the current node; what the node's keys require; whether `add_union` was called; by symbol,
+/// the first flow node that concerns a reference rooted at it that has a path
+/// (`TestSubjects::concerns`).
+struct FirstNarrowingNodes<'a>(
+    &'a mut [u32],
+    u32,
+    ResolvesKey,
+    bool,
+    &'a mut [u32],
+    TestSubjects,
+);
 
 impl NarrowingSubjects for FirstNarrowingNodes<'_> {
-    fn add(&mut self, root: u32, _: u32) {
+    fn add(&mut self, root: u32, first_property: u32) {
+        if self.5.state != 0 {
+            self.5.add(root, first_property);
+        }
         if root & 3 == 1 {
             let first = &mut self.0[(root >> 2) as usize];
             *first = (*first).min(self.1);
+            if first_property != TestSubjects::NO_PROPERTY {
+                let first = &mut self.4[(root >> 2) as usize];
+                *first = (*first).min(self.1);
+            }
         }
     }
 
     fn bails_on_computed_key(&mut self, resolves: ResolvesKey) -> bool {
+        self.5.state |= TestSubjects::ANYTHING;
         self.2 = self.2.max(resolves);
         false
     }
 
     fn add_union(&mut self) {
+        self.5.state |= TestSubjects::ANYTHING;
         self.3 = true;
     }
 }
@@ -819,6 +983,7 @@ impl TestSubjects {
 
     /// True if one of `chains` can be `reference`, have it as a prefix, or be the object of its
     /// last property.
+    #[inline]
     fn concerns(&self, reference: &Reference) -> bool {
         let root = root_key(reference.root);
         if root == 0 || self.state & TestSubjects::ANYTHING != 0 {
@@ -969,12 +1134,31 @@ fn branch_label_antecedents<'b>(
 }
 
 /// `branch_label_antecedents` as a range of `Bound::flow_edges`: its start and length.
+#[inline]
 fn branch_label_edges(bound: &Bound, flow: FlowId, reduced: &[(FlowId, FlowId)]) -> (u32, u32) {
     let reduced = reduced.iter().rev().find(|r| r.0 == flow);
     match bound.flow[reduced.map_or(flow, |r| r.1).idx()] {
         Flow::Label { start, len } => (start, len),
         _ => (0, 0),
     }
+}
+
+#[inline]
+fn is_shared(bound: &Bound, flow: FlowId) -> bool {
+    let word = bound.flow_shared.get(flow.idx() / 64);
+    word.is_some_and(|word| word >> (flow.idx() % 64) & 1 != 0)
+}
+
+#[inline]
+fn edges_of<'b>(bound: &'b Bound, start: u32, len: u32) -> &'b [FlowId] {
+    &bound.flow_edges[start as usize..(start + len) as usize]
+}
+
+#[derive(Copy, Clone)]
+struct Trees<'p, 's> {
+    file: FileId,
+    hir: &'p File<'s>,
+    bound: &'p Bound<'s>,
 }
 
 impl Walk {
@@ -994,6 +1178,10 @@ impl Walk {
             back_edges: 0,
             steps: 0,
             next_skip: LONG_WALK,
+            next_far_skip: 0,
+            steps_between_far_skips: 0,
+            far_skipped: (0, 0),
+            steps_counted: 0,
             steps_between_skips: 0,
             depth: 0,
             too_deep: false,
@@ -1005,6 +1193,11 @@ impl Walk {
             is_exact: false,
             may_be_too_deep: false,
         }
+    }
+
+    #[inline]
+    fn has_far_skipped(&self, flow: FlowId) -> bool {
+        self.far_skipped.0 < flow.0 && flow.0 <= self.far_skipped.1
     }
 
     /// Starts over as an exact walk.
@@ -1314,9 +1507,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | Intrinsic::ImplicitNever
                 | Intrinsic::UniqueLiteral,
             ) => 0,
-            TypeData::Union(parts) => parts
-                .iter()
-                .fold(0, |all, &p| all | self.type_facts_worker(p, mask)),
+            TypeData::Union(parts) => self.facts_of_union(ty, parts, mask),
             // `getIntersectionTypeFacts`: next to a primitive, object types are tags.
             TypeData::Intersection(parts) => {
                 let ignore_objects = self.maybe_type_of_kind(ty, tf::PRIMITIVE);
@@ -1356,6 +1547,34 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    fn facts_of_union(&mut self, union: TypeId, parts: &[TypeId], mask: u32) -> u32 {
+        let mut facts = 0;
+        let mut rest = parts;
+        let before = self.marks_of_facts();
+        if parts.len() >= Growth::MIN_MEMBERS {
+            if let Some(&known) = self.flow_memo.facts_of_unions.get(&(union, mask)) {
+                return known;
+            }
+            if let Some(growth) = self.grown_unions.get(&union)
+                && let Some(&known) = self.flow_memo.facts_of_unions.get(&(growth.from, mask))
+            {
+                (facts, rest) = (known, std::slice::from_ref(&parts[growth.at]));
+            }
+        }
+        for &part in rest {
+            facts |= self.type_facts_worker(part, mask);
+        }
+        if parts.len() >= Growth::MIN_MEMBERS && before == self.marks_of_facts() {
+            self.flow_memo.facts_of_unions.insert((union, mask), facts);
+        }
+        facts
+    }
+
+    /// While they stay the same, the facts that were found are final.
+    fn marks_of_facts(&self) -> ((u64, u64), u64) {
+        (self.non_cacheable_mark(), self.times_cut_short.get())
+    }
+
     /// `isFunctionObjectType`
     fn is_function_object_type(&mut self, ty: TypeId) -> bool {
         let Some(members) = self.members(ty) else {
@@ -1373,9 +1592,30 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypeWithFacts`
     fn type_with_facts(&mut self, ty: TypeId, include: u32) -> TypeId {
-        self.cached_type_with_facts(ty, include, |c| {
-            c.filter(ty, |c, m| c.has_type_facts(m, include))
-        })
+        self.cached_type_with_facts(ty, include, |c| c.members_with_facts(ty, include))
+    }
+
+    fn members_with_facts(&mut self, ty: TypeId, include: u32) -> TypeId {
+        if self.parts(ty).len() < Growth::MIN_MEMBERS {
+            return self.filter(ty, |c, m| c.has_type_facts(m, include));
+        }
+        let before = self.marks_of_facts();
+        let kept = match self.members_of_grown_union_with_facts(ty, include) {
+            Some(kept) => kept,
+            None => self.filter(ty, |c, m| c.has_type_facts(m, include)),
+        };
+        if before == self.marks_of_facts() {
+            (self.flow_memo.unions_with_facts).insert((ty, include), kept);
+        }
+        kept
+    }
+
+    fn members_of_grown_union_with_facts(&mut self, ty: TypeId, include: u32) -> Option<TypeId> {
+        let growth = self.growth_of(ty)?;
+        let key = (growth.from, include);
+        let so_far = *self.flow_memo.unions_with_facts.get(&key)?;
+        let keeps_added = self.has_type_facts(growth.added, include);
+        self.filter_grown_union(ty, growth, so_far, keeps_added)
     }
 
     /// FOR SPEED: returns the result of `compute` for `ty`, cached in `FlowMemo::types_with_facts`
@@ -1490,15 +1730,36 @@ impl<'p, 's> Checker<'p, 's> {
                 IS_UNDEFINED,
                 TypeId::UNDEFINED,
             ),
-            NE_UNDEFINED_OR_NULL | TRUTHY => self.map_type(reduced, |c, m| {
-                if c.has_type_facts(m, EQ_UNDEFINED_OR_NULL) {
+            NE_UNDEFINED_OR_NULL | TRUTHY => self.with_non_nullable_members(reduced),
+            _ => reduced,
+        }
+    }
+
+    fn with_non_nullable_members(&mut self, ty: TypeId) -> TypeId {
+        let is_long = self.parts(ty).len() >= Growth::MIN_MEMBERS;
+        let before = self.marks_of_facts();
+        let growth = self.grown_unions.get(&ty).copied().filter(|_| is_long);
+        let is_as_it_is = growth.is_some_and(|growth| {
+            let so_far = &self.flow_memo.unions_of_non_nullable_members;
+            so_far.contains(&growth.from)
+                && !self.has_type_facts(growth.added, facts::EQ_UNDEFINED_OR_NULL)
+        });
+        if !is_as_it_is {
+            let mapped = self.map_type(ty, |c, m| {
+                if c.has_type_facts(m, facts::EQ_UNDEFINED_OR_NULL) {
                     c.global_non_nullable_type_instantiation(m)
                 } else {
                     m
                 }
-            }),
-            _ => reduced,
+            });
+            if mapped != ty {
+                return mapped;
+            }
         }
+        if is_long && before == self.marks_of_facts() {
+            (self.flow_memo.unions_of_non_nullable_members).insert(ty);
+        }
+        ty
     }
 
     /// `unknownUnionType`: `unknown` as `{} | null | undefined`.
@@ -1506,11 +1767,16 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.p.files.options.strict_null_checks {
             return TypeId::UNKNOWN;
         }
-        self.union(&[
+        if let Some(known) = self.flow_memo.unknown_union_type {
+            return known;
+        }
+        let union = self.union(&[
             TypeId::UNDEFINED,
             TypeId::NULL,
             TypeId::UNKNOWN_EMPTY_OBJECT,
-        ])
+        ]);
+        self.flow_memo.unknown_union_type = Some(union);
+        union
     }
 
     /// `recombineUnknownType`
@@ -1595,6 +1861,21 @@ impl<'p, 's> Checker<'p, 's> {
     /// passes.
     pub(super) fn reference_of(&mut self, file: FileId, e: ExprId) -> Reference {
         let hir = self.hir(file);
+        if let ExprKind::Ident(name) = hir[e].kind {
+            return Reference {
+                file,
+                root: self.root_of_identifier(file, e, name),
+                path: SmallVec::new(),
+                unresolved: std::cell::Cell::new(0),
+                at: e,
+                node: Node::NONE,
+                has_key: true,
+                unkeyed: usize::MAX,
+                satisfies: usize::MAX,
+                assigned: usize::MAX,
+                accesses: 0,
+            };
+        }
         let mut path: SmallVec<[Step; 4]> = SmallVec::new();
         let mut at = e;
         let (mut accesses, mut is_access) = (0, true);
@@ -2092,11 +2373,17 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `containsMatchingReference(reference, e)`: `e` is `x.a` or `x` for `x.a.b`.
+    #[inline]
     fn contains_matching_reference(&mut self, reference: &Reference, e: ExprId) -> bool {
-        let len = reference.path.len();
-        (len - reference.accesses..len)
-            .rev()
-            .any(|len| self.matches_prefix(reference, len, e, false))
+        let mut len = reference.path.len();
+        let shortest = len - reference.accesses;
+        while len > shortest {
+            len -= 1;
+            if self.matches_prefix(reference, len, e, false) {
+                return true;
+            }
+        }
+        false
     }
 
     /// `isOrContainsMatchingReference(reference, e)`
@@ -2224,6 +2511,29 @@ impl<'p, 's> Checker<'p, 's> {
     /// or binding element in `file`.
     #[inline(always)]
     fn name_of_value_declaration(&self, file: FileId, symbol: SymbolId) -> Option<PatId> {
+        self.name_of_value_declaration_in(self.bound(file), file, symbol)
+    }
+
+    #[inline]
+    fn name_of_value_declaration_in(
+        &self,
+        bound: &Bound,
+        file: FileId,
+        symbol: SymbolId,
+    ) -> Option<PatId> {
+        let declared = bound.symbol(symbol);
+        if declared.flags.contains(SymFlags::MERGED) {
+            return self.name_of_merged_value_declaration(file, symbol);
+        }
+        match declared.decls.get(declared.value_declaration as usize) {
+            Some(&(Decl::Var(pat) | Decl::Param(pat))) => Some(pat),
+            _ => None,
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn name_of_merged_value_declaration(&self, file: FileId, symbol: SymbolId) -> Option<PatId> {
         let files = self.files();
         match files.value_declaration(files.sym(file, symbol)) {
             Some((decl_file, Decl::Var(pat) | Decl::Param(pat))) if decl_file == file => Some(pat),
@@ -2430,6 +2740,7 @@ impl<'p, 's> Checker<'p, 's> {
         let file = reference.file;
         let hir = self.hir(file);
         if !reference.path.is_empty() {
+            self.flow_memo.chains_asked_where_they_stand += 1;
             if reference.at.is_none() {
                 return false;
             }
@@ -2490,16 +2801,21 @@ impl<'p, 's> Checker<'p, 's> {
     /// `GetRootDeclaration(symbol.ValueDeclaration)` for a variable or a parameter. `None` for
     /// anything else.
     fn root_declaration(&self, file: FileId, symbol: SymbolId) -> PatParent {
-        match self.name_of_value_declaration(file, symbol) {
-            Some(pat) => super::errors_names_and_exports::root_declaration(self.bound(file), pat),
+        let bound = self.bound(file);
+        match self.name_of_value_declaration_in(bound, file, symbol) {
+            Some(pat) => super::errors_names_and_exports::root_declaration(bound, pat),
             None => PatParent::None,
         }
     }
 
     /// `isParameterOrMutableLocalVariable`
     fn is_parameter_or_mutable_local_variable(&self, file: FileId, symbol: SymbolId) -> bool {
+        self.is_parameter_or_mutable_local_declaration(file, self.root_declaration(file, symbol))
+    }
+
+    fn is_parameter_or_mutable_local_declaration(&self, file: FileId, root: PatParent) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        match self.root_declaration(file, symbol) {
+        match root {
             PatParent::Param(_) => true,
             PatParent::Var(d) => {
                 let stmt = bound.var_stmt[d.idx()];
@@ -2520,9 +2836,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// because the name resolves to the export symbol, which isn't followed.
     fn is_constant_name(&self, file: FileId, symbol: SymbolId) -> bool {
         let hir = self.hir(file);
-        match self.root_declaration(file, symbol) {
+        let root = self.root_declaration(file, symbol);
+        match root {
             PatParent::Var(d) if hir[d].flags.contains(Flags::EXPORT) => false,
-            _ if self.is_parameter_or_mutable_local_variable(file, symbol) => {
+            _ if self.is_parameter_or_mutable_local_declaration(file, root) => {
                 !self.is_symbol_assigned(file, symbol)
             }
             // `isConstantVariable`
@@ -2698,6 +3015,16 @@ impl<'p, 's> Checker<'p, 's> {
             }
             Crossing::Yes => true,
             _ => false,
+        }
+    }
+
+    /// True if every reference to the same thing in the same function crosses as many starts of functions.
+    fn crosses_wherever_it_is(&self, walk: &Walk) -> bool {
+        match walk.crossing {
+            Crossing::PastLastAssignment(symbol, e) => {
+                self.flow_containers_up_to_declaration(walk.reference.file, symbol, e) == 0
+            }
+            _ => true,
         }
     }
 
@@ -2933,23 +3260,42 @@ impl<'p, 's> Checker<'p, 's> {
     /// Adds to `about` every expression `narrow` compares a reference with for the test `e`.
     /// `level` counts the constants holding a test that have been followed so far.
     fn note_test(&self, file: FileId, e: ExprId, level: u32, about: &mut impl NarrowingSubjects) {
+        self.note_test_in(self.trees(file), e, level, about);
+    }
+
+    #[inline]
+    fn trees(&self, file: FileId) -> Trees<'p, 's> {
+        Trees {
+            file,
+            hir: self.hir(file),
+            bound: self.bound(file),
+        }
+    }
+
+    fn note_test_in(
+        &self,
+        trees: Trees<'p, 's>,
+        e: ExprId,
+        level: u32,
+        about: &mut impl NarrowingSubjects,
+    ) {
         if about.is_full() || self.is_stack_low() {
             return;
         }
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        self.note_chain(file, e, true, TestSubjects::NO_PROPERTY, about);
+        let Trees { file, hir, bound } = trees;
+        self.note_chain(trees, e, true, TestSubjects::NO_PROPERTY, about);
         match hir[e].kind {
             // `const ok = test; if (ok)`
             ExprKind::Ident(_) if level < 5 => {
                 let symbol = bound.symbol_of_expr(e);
                 if symbol.is_some()
                     && bound.symbol(symbol).flags.contains(SymFlags::CONST)
-                    && let Some(pat) = self.name_of_value_declaration(file, symbol)
+                    && let Some(pat) = self.name_of_value_declaration_in(bound, file, symbol)
                     && let PatParent::Var(d) = bound.pat_parent[pat.idx()]
                     && hir[d].ty.is_none()
                     && hir[d].init.is_some()
                 {
-                    self.note_test(file, hir[d].init, level + 1, about);
+                    self.note_test_in(trees, hir[d].init, level + 1, about);
                 }
             }
             ExprKind::Call(c) => {
@@ -2957,29 +3303,29 @@ impl<'p, 's> Checker<'p, 's> {
                 // `hasMatchingArgument`: for `x.a`, an argument or a receiver `x` is enough to
                 // resolve the effects signature of the call.
                 for argument in hir.ids(call.args) {
-                    self.note_chain(file, argument, true, 0, about);
+                    self.note_chain(trees, argument, true, 0, about);
                 }
                 if let ExprKind::Dot { obj, .. } = hir.checked_kind(call.callee) {
-                    self.note_chain(file, obj, false, 0, about);
+                    self.note_chain(trees, obj, false, 0, about);
                 }
             }
             ExprKind::NonNull(x) | ExprKind::Satisfies { expr: x, .. } => {
-                self.note_test(file, x, level, about);
+                self.note_test_in(trees, x, level, about);
             }
             ExprKind::Unary {
                 op: UnOp::Not,
                 operand,
-            } => self.note_test(file, operand, level, about),
-            ExprKind::Assign { value, .. } => self.note_test(file, value, level, about),
+            } => self.note_test_in(trees, operand, level, about),
+            ExprKind::Assign { value, .. } => self.note_test_in(trees, value, level, about),
             ExprKind::Binary { op, left, right } => match op {
                 BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                     let (l, r) = (
-                        self.reference_candidate(file, left),
-                        self.reference_candidate(file, right),
+                        Self::reference_candidate_in(hir, left),
+                        Self::reference_candidate_in(hir, right),
                     );
                     for (side, other) in [(l, r), (r, l)] {
                         if let ExprKind::Index { index, .. } = hir.checked_kind(side)
-                            && self.is_computed_key(file, index)
+                            && Self::is_computed_key(trees, index)
                             && about.bails_on_computed_key(ResolvesKey::Always)
                         {
                             return;
@@ -2989,7 +3335,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 op: UnOp::Typeof,
                                 operand,
                             } => self.note_chain(
-                                file,
+                                trees,
                                 operand,
                                 true,
                                 TestSubjects::NO_PROPERTY,
@@ -2997,24 +3343,24 @@ impl<'p, 's> Checker<'p, 's> {
                             ),
                             // `test(x) === true`
                             _ if matches!(hir[other].kind, ExprKind::True | ExprKind::False) => {
-                                self.note_test(file, side, level, about);
+                                self.note_test_in(trees, side, level, about);
                             }
                             _ => {
-                                self.note_chain(file, side, true, TestSubjects::NO_PROPERTY, about)
+                                self.note_chain(trees, side, true, TestSubjects::NO_PROPERTY, about)
                             }
                         }
                     }
                 }
                 BinOp::Instanceof => {
-                    self.note_chain(file, left, false, TestSubjects::NO_PROPERTY, about)
+                    self.note_chain(trees, left, false, TestSubjects::NO_PROPERTY, about)
                 }
                 // `"a" in x` narrows `x.a`.
-                BinOp::In => self.note_chain(file, right, false, 0, about),
-                BinOp::Comma => self.note_test(file, right, level, about),
+                BinOp::In => self.note_chain(trees, right, false, 0, about),
+                BinOp::Comma => self.note_test_in(trees, right, level, about),
                 BinOp::And | BinOp::Or => {
                     about.add_union();
-                    self.note_test(file, left, level, about);
-                    self.note_test(file, right, level, about);
+                    self.note_test_in(trees, left, level, about);
+                    self.note_test_in(trees, right, level, about);
                 }
                 _ => {}
             },
@@ -3023,28 +3369,33 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `note_test` for `narrow_by_asserted`, which doesn't build a union for a `&&`.
-    fn note_asserted(&self, file: FileId, e: ExprId, about: &mut CallStatementSubjects<'_>) {
+    fn note_asserted(
+        &self,
+        trees: Trees<'p, 's>,
+        e: ExprId,
+        about: &mut CallStatementSubjects<'_>,
+    ) {
         if self.is_stack_low() {
             return;
         }
-        match self.hir(file)[e].kind {
+        match trees.hir[e].kind {
             ExprKind::Binary {
                 op: BinOp::And,
                 left,
                 right,
             } => {
-                self.note_asserted(file, left, about);
-                self.note_asserted(file, right, about);
+                self.note_asserted(trees, left, about);
+                self.note_asserted(trees, right, about);
             }
-            _ => self.note_test(file, e, 0, about),
+            _ => self.note_test_in(trees, e, 0, about),
         }
     }
 
     /// True if `literal_key` may resolve a type to get the key `index`'s name, which requires an
     /// entity name. False if that name is a variable in the file that isn't a constant, is bound by
     /// a pattern, or has neither an annotation nor an initializer, like a `for of` constant.
-    fn is_computed_key(&self, file: FileId, index: ExprId) -> bool {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    fn is_computed_key(trees: Trees<'p, 's>, index: ExprId) -> bool {
+        let (hir, bound) = (trees.hir, trees.bound);
         match hir.checked_kind(index) {
             ExprKind::Dot { .. } => true,
             ExprKind::Ident(_) => {
@@ -3071,12 +3422,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Returns the initializer that can make the constant `symbol` a `discriminant_alias`: `x.kind`
     /// in `const k = x.kind`, `x` in `const { kind: k } = x`.
-    fn initializer_of_discriminant_alias(&self, file: FileId, symbol: SymbolId) -> Option<ExprId> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    fn initializer_of_discriminant_alias(
+        &self,
+        trees: Trees<'p, 's>,
+        symbol: SymbolId,
+    ) -> Option<ExprId> {
+        let Trees { file, hir, bound } = trees;
         if !bound.symbol(symbol).flags.contains(SymFlags::CONST) {
             return None;
         }
-        let pat = self.name_of_value_declaration(file, symbol)?;
+        let pat = self.name_of_value_declaration_in(bound, file, symbol)?;
         let (declaration, is_element) = match bound.pat_parent[pat.idx()] {
             PatParent::Prop(parent_pat, _) | PatParent::Elem(parent_pat, _) => {
                 (bound.pat_parent[parent_pat.idx()], true)
@@ -3098,8 +3453,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// For `x.a.b`, `this.a.b.c`: what `note_chain` records for the root, and the two properties next
     /// to it. `None` for anything but names joined by dots, and for fewer than two of them.
-    fn first_names_of_plain_chain(&self, file: FileId, e: ExprId) -> Option<(u32, u32, u32)> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+    fn first_names_of_plain_chain(trees: Trees<'p, 's>, e: ExprId) -> Option<(u32, u32, u32)> {
+        let (hir, bound) = (trees.hir, trees.bound);
         let (mut at, mut first, mut second) = (e, None, None);
         let root = loop {
             match hir.checked_kind(at) {
@@ -3133,13 +3488,13 @@ impl<'p, 's> Checker<'p, 's> {
     /// property if there is none.
     fn note_chain(
         &self,
-        file: FileId,
+        trees: Trees<'p, 's>,
         e: ExprId,
         mut is_whole: bool,
         mut first: u32,
         about: &mut impl NarrowingSubjects,
     ) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (hir, bound) = (trees.hir, trees.bound);
         let mut at = e;
         // `at` is the `a` of `a?.b` or of a later link of an optional chain.
         let mut is_link = false;
@@ -3153,9 +3508,9 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     about.add(root_key(Root::Symbol(symbol)), first);
                     if is_whole
-                        && let Some(init) = self.initializer_of_discriminant_alias(file, symbol)
+                        && let Some(init) = self.initializer_of_discriminant_alias(trees, symbol)
                     {
-                        self.note_chain(file, init, false, TestSubjects::NO_PROPERTY, about);
+                        self.note_chain(trees, init, false, TestSubjects::NO_PROPERTY, about);
                     }
                     return;
                 }
@@ -3177,7 +3532,8 @@ impl<'p, 's> Checker<'p, 's> {
                     } else {
                         ResolvesKey::ForAccess
                     };
-                    if self.is_computed_key(file, index) && about.bails_on_computed_key(resolves) {
+                    if Self::is_computed_key(trees, index) && about.bails_on_computed_key(resolves)
+                    {
                         return;
                     }
                     is_whole = false;
@@ -3367,8 +3723,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getReferenceCandidate`: the candidate of `x = v`, `x ||= v` and similar is `x`, and that of
     /// `a, x` is `x`. `x!` isn't looked through.
-    fn reference_candidate(&self, file: FileId, mut e: ExprId) -> ExprId {
-        let hir = self.hir(file);
+    fn reference_candidate(&self, file: FileId, e: ExprId) -> ExprId {
+        Self::reference_candidate_in(self.hir(file), e)
+    }
+
+    #[inline]
+    fn reference_candidate_in(hir: &File, mut e: ExprId) -> ExprId {
         loop {
             e = match hir[e].kind {
                 ExprKind::Assign {
@@ -3398,8 +3758,8 @@ impl<'p, 's> Checker<'p, 's> {
         let file = reference.file;
         let hir = self.hir(file);
         let (l, r) = (
-            self.reference_candidate(file, left),
-            self.reference_candidate(file, right),
+            Self::reference_candidate_in(hir, left),
+            Self::reference_candidate_in(hir, right),
         );
         if let (
             ExprKind::Unary {
@@ -3784,6 +4144,17 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if self.is_unit(value_ty) {
             let is_plain = Self::is_literal_outside_enum(self.flags(value_ty));
+            // FOR SPEED: a union of such literals alone, none of them fresh, holds the value itself or nothing that is equal to it. The type of `x.kind`
+            // behind n tests of it no longer holds what they compared it with, and every reference passes all of them.
+            let literals = tf::STRING_LITERAL | tf::NUMBER_LITERAL | tf::BIGINT_LITERAL;
+            if is_plain
+                && let TypeData::Union(members) = self.data(ty)
+                && self.types().member_flags(ty) & !literals == 0
+                && !self.types().has_fresh_literal(ty)
+                && !self.contains_type(members, value_ty)
+            {
+                return ty;
+            }
             return self.filter(ty, |c, m| {
                 if is_plain && Self::is_literal_outside_enum(c.flags(m)) {
                     return c.with_freshness(m, false) != value_ty;
@@ -4101,7 +4472,7 @@ impl<'p, 's> Checker<'p, 's> {
         check_derived: CheckDerived,
     ) -> TypeId {
         if !self.is_union(ty) {
-            return self.narrowed_to_uncached(ty, candidate, sense, check_derived);
+            return self.narrowed_plain_type_to(ty, candidate, sense, check_derived);
         }
         let key = (ty, candidate, sense, check_derived == CheckDerived::Yes);
         if let Some(&known) = self.flow_memo.narrowed_types.get(&key) {
@@ -4110,6 +4481,36 @@ impl<'p, 's> Checker<'p, 's> {
         let (narrowed, stored) =
             self.run_memoizable(|c| c.narrowed_to_uncached(ty, candidate, sense, check_derived));
         if stored.is_some() {
+            self.flow_memo.narrowed_types.insert(key, narrowed);
+        }
+        narrowed
+    }
+
+    fn narrowed_plain_type_to(
+        &mut self,
+        ty: TypeId,
+        candidate: TypeId,
+        sense: bool,
+        check_derived: CheckDerived,
+    ) -> TypeId {
+        if ty == candidate
+            || ty == TypeId::UNKNOWN
+            || ty == TypeId::UNRESOLVED
+            || self.is_any(ty)
+            || !self.can_cache_type_facts()
+        {
+            return self.narrowed_to_uncached(ty, candidate, sense, check_derived);
+        }
+        let key = (ty, candidate, sense, check_derived == CheckDerived::Yes);
+        if let Some(&known) = self.flow_memo.narrowed_types.get(&key) {
+            return known;
+        }
+        let counter_snapshot = |c: &Self| (c.counter_snapshot(), c.times_cut_short.get(), c.taints);
+        let before = counter_snapshot(self);
+        let (narrowed, stored) =
+            self.run_memoizable(|c| c.narrowed_to_uncached(ty, candidate, sense, check_derived));
+        self.scopes_begun -= 1;
+        if stored.is_some() && counter_snapshot(self) == before {
             self.flow_memo.narrowed_types.insert(key, narrowed);
         }
         narrowed
@@ -4863,6 +5264,32 @@ impl<'p, 's> Checker<'p, 's> {
         from: usize,
         to: usize,
     ) -> TypeId {
+        if !self.can_cache_type_facts() {
+            return self.narrow_by_switch_values_uncached(file, ty, stmt, from, to);
+        }
+        let key = (file, stmt, from as u32, to as u32, ty);
+        if let Some(&known) = self.flow_memo.switch_values.get(&key) {
+            return known;
+        }
+        let counter_snapshot = |c: &Self| (c.counter_snapshot(), c.times_cut_short.get(), c.taints);
+        let before = counter_snapshot(self);
+        let (narrowed, stored) =
+            self.run_memoizable(|c| c.narrow_by_switch_values_uncached(file, ty, stmt, from, to));
+        self.scopes_begun -= 1;
+        if stored.is_some() && counter_snapshot(self) == before {
+            self.flow_memo.switch_values.insert(key, narrowed);
+        }
+        narrowed
+    }
+
+    fn narrow_by_switch_values_uncached(
+        &mut self,
+        file: FileId,
+        ty: TypeId,
+        stmt: StmtId,
+        from: usize,
+        to: usize,
+    ) -> TypeId {
         let switch_types = self.get_switch_clause_types(file, stmt);
         if switch_types.is_empty() {
             return ty;
@@ -5072,7 +5499,10 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Substitution {
                 base,
                 constraint: TypeId::UNKNOWN,
-            } => base,
+            } => {
+                self.flow_memo.narrowable_types_not_as_given += 1;
+                base
+            }
             _ => declared,
         };
         if check_mode.contains(CheckMode::INFERENTIAL)
@@ -5087,6 +5517,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(frame) = self.frames.last_mut() {
             frame.may_substitute_constraints = true;
         }
+        self.flow_memo.narrowable_types_not_as_given += 1;
         if !self.is_constraint_position(file, e, declared) {
             // `hasContextualTypeWithNoGenericTypes`
             let context_flags = if check_mode.contains(CheckMode::REST_BINDING_ELEMENT) {
@@ -5392,34 +5823,42 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// Not in tsgo. Indexes the symbols of `file` that some node of its flow graph refers to: a
-    /// condition (`note_test`, as for `is_test_about`), a `switch`, an assignment target, a
-    /// `for in` expression. Nothing else can change the type of a reference rooted at a name,
-    /// except an assertion call (see `FlowMemo::in_call_statements`). The index is left empty if
-    /// some backward path through the graph may take `MAX_FLOW_DEPTH` invocations, because the walk
-    /// that detects that has to report it. The same nodes resolve the names of keys
-    /// (`FlowMemo::computed_key_nodes`).
     #[inline(never)]
     fn index_narrowing_subjects(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let words = bound.symbols.len() / 64 + 1;
-        let mut first_nodes = vec![u32::MAX; bound.symbols.len()];
-        let mut last_call_statement = vec![u32::MAX; bound.symbols.len()];
-        let mut declaration_node = vec![u32::MAX; bound.symbols.len()];
-        let mut mentioned_in_calls = vec![0u64; words];
-        let mut call_statements_by_symbol = Vec::new();
-        let mut lengths = vec![0u32; bound.flow.len()];
-        let mut highest = vec![0u32; bound.flow.len()];
-        let mut lowest = vec![0u32; bound.flow.len()];
-        let mut computed_key_nodes = Vec::new();
-        let mut finally_blocks = Vec::new();
-        let mut finally_block_ends = Vec::new();
-        let mut union_nodes = Vec::new();
+        let trees = self.trees(file);
+        let (hir, bound) = (trees.hir, trees.bound);
+        let (symbols, nodes) = (bound.symbols.len(), bound.flow.len());
+        let memo = &mut self.flow_memo;
+        memo.narrowing_index_file = None;
+        memo.tests_of = None;
+        let mut tests = refilled(&mut memo.tests, nodes, TestSubjects::default());
+        let words = symbols / 64 + 1;
+        let mut first_nodes = refilled(&mut memo.first_narrowing_node, symbols, u32::MAX);
+        let of_properties = &mut memo.first_narrowing_node_of_property;
+        let mut first_nodes_of_properties = refilled(of_properties, symbols, u32::MAX);
+        let idle_in_front = &mut memo.idle_call_statements_in_front;
+        let mut last_call_statement = refilled(idle_in_front, symbols, u32::MAX);
+        let mut declaration_node = refilled(&mut memo.declaration_node, symbols, u32::MAX);
+        let mut mentioned_in_calls = refilled(&mut memo.in_call_statements, words, 0u64);
+        let mut call_statements_by_symbol = emptied(&mut memo.call_statements_by_symbol);
+        let mut lengths = refilled(&mut memo.unsettled_call_before, nodes, 0u32);
+        let mut highest = refilled(&mut memo.max_antecedent, nodes, 0u32);
+        let mut lowest = refilled(&mut memo.min_antecedent, nodes, 0u32);
+        let mut computed_key_nodes = emptied(&mut memo.computed_key_nodes);
+        let mut finally_blocks = emptied(&mut memo.finally_blocks);
+        let mut finally_block_ends = emptied(&mut memo.finally_block_ends);
+        let mut union_nodes = emptied(&mut memo.union_nodes);
         let mut noted_switches: FxHashMap<StmtId, (ResolvesKey, bool)> = FxHashMap::default();
         let mut longest = 0;
         for (i, &node) in bound.flow.iter().enumerate() {
-            let about =
-                &mut FirstNarrowingNodes(&mut first_nodes, i as u32, ResolvesKey::Never, false);
+            let about = &mut FirstNarrowingNodes(
+                &mut first_nodes,
+                i as u32,
+                ResolvesKey::Never,
+                false,
+                &mut first_nodes_of_properties,
+                TestSubjects::default(),
+            );
             let mut resolves_in_call = ResolvesKey::Never;
             let mut builds_union = false;
             let before = node.antecedents(&bound.flow_edges);
@@ -5450,19 +5889,31 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => 1,
             };
-            (highest[i], lowest[i], lengths[i]) = (i as u32, i as u32, 1);
+            let (mut high, mut low, mut length) = (i as u32, i as u32, 1);
             let is_start = matches!(node, Flow::Start { .. } | Flow::StartInvoked { .. });
-            for before in before.iter().filter(|before| before.is_some()) {
-                highest[i] = highest[i].max(before.0).max(highest[before.idx()]);
+            for &before in before {
+                if before.is_none() {
+                    continue;
+                }
+                if before.idx() == i {
+                    length += invocations;
+                    continue;
+                }
+                high = high.max(before.0).max(highest[before.idx()]);
                 if !is_start && before.idx() < i {
-                    lowest[i] = lowest[i].min(lowest[before.idx()]);
+                    low = low.min(lowest[before.idx()]);
                 }
                 // 0 for the back edge of a loop, which has a higher number.
-                lengths[i] = lengths[i].max(lengths[before.idx()] + invocations);
+                length = length.max(lengths[before.idx()] + invocations);
             }
-            longest = longest.max(lengths[i]);
+            (highest[i], lowest[i], lengths[i]) = (high, low, length);
+            longest = longest.max(length);
             match node {
-                Flow::Cond { expr, .. } => self.note_test(file, expr, 0, about),
+                Flow::Cond { expr, .. } => {
+                    about.5.state = TestSubjects::KNOWN;
+                    self.note_test_in(trees, expr, 0, about);
+                    tests[i] = about.5;
+                }
                 Flow::Switch { stmt, from, .. } => {
                     if let StmtKind::Switch { expr, cases } = hir[stmt].kind {
                         // Every node of a `switch` has the same subjects, and `first_nodes` only keeps
@@ -5471,13 +5922,13 @@ impl<'p, 's> Checker<'p, 's> {
                             (about.2, about.3) = (resolves, has_union);
                         } else {
                             // `switch (x)`, `switch (x.kind)`, `switch (typeof x)`, and `switch (true) { case test: }`
-                            self.note_test(file, expr, 0, about);
+                            self.note_test_in(trees, expr, 0, about);
                             if let ExprKind::Unary { operand, .. } = hir[expr].kind {
-                                self.note_test(file, operand, 0, about);
+                                self.note_test_in(trees, operand, 0, about);
                             }
                             for case in cases.iter() {
                                 if hir[case].test.is_some() {
-                                    self.note_test(file, hir[case].test, 0, about);
+                                    self.note_test_in(trees, hir[case].test, 0, about);
                                 }
                             }
                             noted_switches.insert(stmt, (about.2, about.3));
@@ -5491,7 +5942,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 Flow::Assign { target, .. } => match target {
                     FlowTarget::Expr(e) => {
-                        self.note_chain(file, e, false, TestSubjects::NO_PROPERTY, about)
+                        self.note_chain(trees, e, false, TestSubjects::NO_PROPERTY, about)
                     }
                     FlowTarget::Var(d) => {
                         if let Some(at) =
@@ -5505,7 +5956,7 @@ impl<'p, 's> Checker<'p, 's> {
                             && let StmtKind::ForIn { left, expr, .. } = hir[owner].kind
                             && left == stmt
                         {
-                            self.note_chain(file, expr, false, TestSubjects::NO_PROPERTY, about);
+                            self.note_chain(trees, expr, false, TestSubjects::NO_PROPERTY, about);
                         }
                     }
                     FlowTarget::Pat(p) => {
@@ -5526,9 +5977,9 @@ impl<'p, 's> Checker<'p, 's> {
                             ResolvesKey::Never,
                             false,
                         );
-                        self.note_test(file, call, 0, about);
+                        self.note_test_in(trees, call, 0, about);
                         for argument in hir.ids(hir[c].args) {
-                            self.note_asserted(file, argument, about);
+                            self.note_asserted(trees, argument, about);
                         }
                         (resolves_in_call, builds_union) = (about.3, about.4);
                     }
@@ -5547,15 +5998,21 @@ impl<'p, 's> Checker<'p, 's> {
                 union_nodes.push(i as u32);
             }
         }
-        if longest >= MAX_FLOW_DEPTH {
-            first_nodes.clear();
-        }
         for &(symbol, _) in &call_statements_by_symbol {
             mentioned_in_calls[symbol.idx() / 64] |= 1 << (symbol.idx() % 64);
         }
-        call_statements_by_symbol.shared_sort_unstable_by_key(|&(symbol, flow)| (symbol.0, flow.0));
+        call_statements_by_symbol.sort_by_u32(|&(symbol, _)| symbol.0);
         let memo = &mut self.flow_memo;
+        memo.some_walk_may_go_too_deep = longest >= MAX_FLOW_DEPTH;
+        memo.unsettled_call_before = lengths;
         memo.narrowing_index_file = Some(file);
+        (memo.tests, memo.tests_of) = (tests, Some(file));
+        memo.first_narrowing_node_of_property = first_nodes_of_properties;
+        memo.idle_call_statements_in_front = refilled(
+            &mut last_call_statement,
+            call_statements_by_symbol.len() + 1,
+            0,
+        );
         (
             memo.first_narrowing_node,
             memo.in_call_statements,
@@ -5661,7 +6118,7 @@ impl<'p, 's> Checker<'p, 's> {
                 break 0;
             }
         };
-        for at in passed {
+        for &at in &passed {
             self.flow_memo.unsettled_call_on_first_path[at.idx()] = found;
         }
         found
@@ -5780,7 +6237,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             found = passed[last_loop].0;
         }
-        for at in passed {
+        for &at in &passed {
             self.flow_memo.unsettled_call_before[at.idx()] = found;
         }
         found
@@ -5791,26 +6248,31 @@ impl<'p, 's> Checker<'p, 's> {
     /// in progress, and tsgo resolves it when a walk reaches it.
     #[inline(never)]
     fn are_call_statements_idle(&mut self, file: FileId, s: SymbolId, highest: u32) -> bool {
-        let memo = &self.flow_memo;
+        let memo = &mut self.flow_memo;
         let from = memo
             .call_statements_by_symbol
             .partition_point(|about| about.0.0 < s.0);
-        let calls = memo.call_statements_by_symbol[from..]
-            .iter()
-            .take_while(|about| about.0 == s);
-        let mut is_all = true;
-        for &(_, flow) in calls {
-            if !memo.is_idle_call(file, flow) {
-                if flow.0 <= highest {
-                    return false;
+        // They are in ascending order, so the first that isn't idle decides.
+        let mut next = from + memo.idle_call_statements_in_front[from] as usize;
+        let first_busy = loop {
+            match memo.call_statements_by_symbol.get(next) {
+                Some(&(symbol, flow)) if symbol == s => {
+                    if !memo.is_idle_call(file, flow) {
+                        break Some(flow);
+                    }
+                    next += 1;
                 }
-                is_all = false;
+                _ => break None,
+            }
+        };
+        memo.idle_call_statements_in_front[from] = (next - from) as u32;
+        match first_busy {
+            Some(flow) => flow.0 > highest,
+            None => {
+                memo.in_call_statements[s.idx() / 64] &= !(1 << (s.idx() % 64));
+                true
             }
         }
-        if is_all {
-            self.flow_memo.in_call_statements[s.idx() / 64] &= !(1 << (s.idx() % 64));
-        }
-        true
     }
 
     /// Not in tsgo. True if the walk for `reference` (the expression `e`), which passes no node
@@ -5863,6 +6325,9 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let memo = &self.flow_memo;
         let flow = bound.flow_of_expr(e);
+        if !self.reads_types_alone && memo.some_walk_may_go_too_deep {
+            return false;
+        }
         // Nothing matches `f()["a"]` or `a[i]`, and an assignment to `a` leaves `a[i]` as declared.
         let matches_nothing =
             |step: &Step| step.name.get() == AccessedName::None && step.variable == Root::Other;
@@ -5875,7 +6340,11 @@ impl<'p, 's> Checker<'p, 's> {
         let Root::Symbol(s) = reference.root else {
             return false;
         };
-        let Some(&first_about) = memo.first_narrowing_node.get(s.idx()) else {
+        let first_nodes = match reference.path.is_empty() {
+            true => &memo.first_narrowing_node,
+            false => &memo.first_narrowing_node_of_property,
+        };
+        let Some(&first_about) = first_nodes.get(s.idx()) else {
             return false;
         };
         let symbol = bound.symbol(s);
@@ -6054,9 +6523,18 @@ impl<'p, 's> Checker<'p, 's> {
         start: Start,
         name_crossing: Crossing,
     ) -> TypeId {
-        if self.flow_analysis_disabled.contains(&file) {
+        if !self.flow_analysis_disabled.is_empty() && self.flow_analysis_disabled.contains(&file) {
             cold_path();
             return TypeId::ERROR;
+        }
+        if !self.flow_memo.too_deep_since.is_empty() {
+            cold_path();
+            let body = (file, self.enclosing_fn_of_expr(file, e));
+            let first = self.flow_memo.too_deep_since.get(&body);
+            if first.is_some_and(|&first| first <= self.hir(file)[e].pos) {
+                self.disable_flow_analysis(file);
+                return TypeId::ERROR;
+            }
         }
         let bound = self.bound(file);
         let flow = bound.flow_of_expr(e);
@@ -6121,7 +6599,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getFlowTypeOfReferenceEx`, once the `FlowState` is set up.
     fn get_flow_type_of_reference(&mut self, walk: &mut Walk, flow: FlowId) -> TypeId {
         let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);
-        if self.flow_analysis_disabled.contains(&file) {
+        if !self.flow_analysis_disabled.is_empty() && self.flow_analysis_disabled.contains(&file) {
             cold_path();
             return TypeId::ERROR;
         }
@@ -6129,7 +6607,10 @@ impl<'p, 's> Checker<'p, 's> {
         let outer = std::mem::replace(&mut self.walk_declared, declared);
         let is_name = walk.reference.path.is_empty() && walk.reference.has_key;
         let begun = (is_name && self.is_automatic_type(declared)).then(|| self.begin_memoizable());
-        if begun.is_some() {
+        let is_kept = self.reads_types_alone
+            && self.flow_memo.far_walk != Some(u32::MAX)
+            && walk.reference.is_plain_chain();
+        if begun.is_some() || is_kept {
             walk.marks = Some(self.marks_of_walk());
         }
         let mut evolved = self.flow_type(walk, flow);
@@ -6155,6 +6636,14 @@ impl<'p, 's> Checker<'p, 's> {
             cold_path();
             self.disable_flow_analysis(file);
             self.report_flow_control_error(&walk.reference);
+            if self.reads_types_alone && e.is_some() {
+                let (body, at) = (
+                    (file, self.enclosing_fn_of_expr(file, e)),
+                    self.hir(file)[e].pos,
+                );
+                let first = self.flow_memo.too_deep_since.entry(body).or_insert(at);
+                *first = at.min(*first);
+            }
             return TypeId::ERROR;
         }
         if walk.steps >= MAX_STEPS {
@@ -6851,7 +7340,22 @@ impl<'p, 's> Checker<'p, 's> {
     /// each block nested in its `try` block: 3 to the power of n walks for n blocks. What a walk
     /// finds there only depends on the labels that stand for others at the time, so it's kept for
     /// each set of those that it can reach.
+    #[inline]
     fn flow_type_after_finally_block(&mut self, walk: &mut Walk, flow: FlowId) -> FlowType {
+        let memo = &self.flow_memo;
+        if memo.narrowing_index_file == Some(walk.reference.file)
+            && !matches!(
+                (memo.finally_block_ends.first(), memo.finally_block_ends.last()),
+                (Some(&first), Some(&last)) if first <= flow.0 && flow.0 <= last
+            )
+        {
+            return self.flow_type(walk, flow);
+        }
+        self.flow_type_after_listed_finally_block(walk, flow)
+    }
+
+    #[inline(never)]
+    fn flow_type_after_listed_finally_block(&mut self, walk: &mut Walk, flow: FlowId) -> FlowType {
         let file = walk.reference.file;
         if walk.too_deep || self.task.file != Some(file) {
             return self.flow_type(walk, flow);
@@ -6907,7 +7411,7 @@ impl<'p, 's> Checker<'p, 's> {
             return FlowType::new(TypeId::ERROR, false);
         }
         let file = walk.reference.file;
-        let bound = self.bound(file);
+        let (hir, bound) = (self.hir(file), self.bound(file));
         // The invocations waiting for the type at their antecedent, outermost first, each with its
         // `sharedFlow`. They resume afterwards, innermost first.
         let mut pending: SmallVec<[(Pending, FlowId); 8]> = SmallVec::new();
@@ -6941,7 +7445,7 @@ impl<'p, 's> Checker<'p, 's> {
                 walk.too_deep = true;
                 break TypeId::ERROR;
             }
-            if walk.steps > walk.next_skip
+            if (walk.steps > walk.next_skip || walk.has_far_skipped(flow))
                 && let Some((arrived_at, last_shared)) = self.try_to_skip(walk, flow)
             {
                 if last_shared.is_some() {
@@ -6959,7 +7463,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flow = arrived_at;
                 continue;
             }
-            if bound.is_shared(flow) {
+            if is_shared(bound, flow) {
                 above_shared_node = pending.len();
                 if let Some((known, invocations)) = walk.shared_flows.get(flow) {
                     if !walk.is_exact {
@@ -7001,7 +7505,8 @@ impl<'p, 's> Checker<'p, 's> {
                     let is_this = arrow
                         && walk.reference.root == Root::This
                         && walk.reference.path.is_empty();
-                    walk.is_unshareable |= outer.is_some();
+                    walk.is_unshareable |= outer.is_some()
+                        && !(self.reads_types_alone && self.crosses_wherever_it_is(walk));
                     if outer.is_some() && (is_this || self.settle_crossing(walk)) {
                         flow = outer;
                         continue;
@@ -7029,10 +7534,15 @@ impl<'p, 's> Checker<'p, 's> {
                     break self.initial_of(walk);
                 }
                 Flow::Assign { before, target } => {
-                    match self.type_at_assignment(walk, flow, target) {
+                    let not_as_given = self.flow_memo.narrowable_types_not_as_given;
+                    match self.type_at_assignment(walk, hir, bound, flow, target) {
                         AtAssignment::Type(t) => {
-                            // Any other type went through `getNarrowableTypeForReference`.
-                            walk.is_unshareable |= t != TypeId::UNREACHABLE_NEVER
+                            // Any other type went through `getNarrowableTypeForReference`, which looks at where the
+                            // reference is before it returns another type.
+                            let is_as_given = walk.reference.at.is_some()
+                                && not_as_given == self.flow_memo.narrowable_types_not_as_given;
+                            walk.is_unshareable |= !is_as_given
+                                && t != TypeId::UNREACHABLE_NEVER
                                 && !matches!(self.data(t), TypeData::EvolvingArray(_));
                             break t;
                         }
@@ -7136,7 +7646,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // It may stand for another label in another walk.
                     above_shared_node = pending.len();
                     let (first_edge, len) = branch_label_edges(bound, flow, &walk.reduced);
-                    let antecedents = bound.edges(first_edge, len);
+                    let antecedents = edges_of(bound, first_edge, len);
                     if let [only] = *antecedents {
                         flow = only;
                         continue;
@@ -7144,6 +7654,8 @@ impl<'p, 's> Checker<'p, 's> {
                     above_shared_node = pending.len() + 1;
                     // `getTypeAtFlowBranchLabel`
                     let mut types: SmallVec<[TypeId; 4]> = SmallVec::new();
+                    // Each of n `if (x === <a number of its own>) break;` comes with a type of its own.
+                    let mut types_listed = FxHashSet::default();
                     // The path that bypasses a `switch` when no case matched. It doesn't exist if
                     // the `switch` is exhaustive. That's only computed when it would change the
                     // result, because the computation can re-enter here.
@@ -7170,7 +7682,7 @@ impl<'p, 's> Checker<'p, 's> {
                             settled = true;
                             break;
                         }
-                        if !types.contains(&t.ty) {
+                        if !crate::util::is_listed(&types, &mut types_listed, t.ty) {
                             types.push(t.ty);
                         }
                         incomplete |= t.incomplete;
@@ -7182,7 +7694,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if !settled && let Some((edge, stmt)) = bypass {
                         let t = self.flow_type(walk, edge);
                         if !t.ty.is_never()
-                            && !types.contains(&t.ty)
+                            && !crate::util::is_listed(&types, &mut types_listed, t.ty)
                             && !self.is_exhaustive_switch(file, stmt)
                         {
                             incomplete |= t.incomplete;
@@ -7230,6 +7742,7 @@ impl<'p, 's> Checker<'p, 's> {
                         walk.declared,
                         initial,
                         root_key(walk.reference.root),
+                        walk.reference.path_key(),
                     );
                     if let Some(cached) =
                         self.flow_memo.cached_flow_loop_type(&key, &walk.reference)
@@ -7324,10 +7837,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && interruptions_before == self.interruptions()
                     {
                         self.flow_memo
-                            .flow_loop_cache
-                            .entry(key)
-                            .or_default()
-                            .push((walk.reference.clone(), result.ty));
+                            .cache_flow_loop_type(key, &walk.reference, result.ty);
                         self.flow_memo.flow_loop_cached_at = self.work;
                         walk.deepest = deepest_at_label;
                     } else {
@@ -7366,6 +7876,10 @@ impl<'p, 's> Checker<'p, 's> {
             let known = EvolvedArray {
                 declared: walk.declared,
                 initial,
+                reference: match reference.path.is_empty() {
+                    true => u32::MAX,
+                    false => c.flow_memo.keep_reference(reference),
+                },
                 ty,
                 unmade,
                 invocations: deepest - (depth + 1 + at as u32),
@@ -7374,12 +7888,12 @@ impl<'p, 's> Checker<'p, 's> {
                 may_be_too_deep: !walk.is_exact,
                 follows_finally_block: walk.has_left_finally_block,
             };
-            let key = (file, node, root_key(reference.root));
+            let key = (file, node, root_key(reference.root), reference.path_key());
             c.flow_memo.evolved_arrays.insert(key, known);
         };
         if shared_flow.is_some() {
             let at = pending.len();
-            if unmade.is_none() {
+            if unmade.is_none() && depth != 0 {
                 let invocations = deepest - (depth + 1 + at as u32);
                 let found = FlowType { ty, incomplete };
                 walk.shared_flows.push(shared_flow, found, invocations);
@@ -7434,7 +7948,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => {}
             }
-            if shared_flow.is_some() && unmade.is_none() {
+            if shared_flow.is_some() && unmade.is_none() && depth != 0 {
                 let invocations = deepest - (depth + 1 + at as u32);
                 let found = FlowType { ty, incomplete };
                 walk.shared_flows.push(shared_flow, found, invocations);
@@ -7536,12 +8050,27 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_at_assignment(
         &mut self,
         walk: &Walk,
+        hir: &File,
+        bound: &Bound,
         flow: FlowId,
         target: FlowTarget,
     ) -> AtAssignment {
         let (reference, declared) = (&walk.reference, walk.declared);
         let file = reference.file;
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        if let FlowTarget::Expr(e) = target
+            && let ExprKind::Ident(name) = hir[e].kind
+            && reference.assigned == usize::MAX
+            && reference.unresolved.get() == 0
+        {
+            let symbol = bound.symbol_of_expr(e);
+            let root = match symbol.is_none() {
+                true => Root::Global(name),
+                false => Root::Symbol(symbol),
+            };
+            if reference.accesses != reference.path.len() || reference.root != root {
+                return AtAssignment::Unaffected;
+            }
+        }
         // The name is compared with a declaration if `containsMatchingReference` gets that far.
         let declares = |pat: PatId| {
             reference.root == Root::Symbol(bound.pat_symbol[pat.idx()])
@@ -7562,7 +8091,7 @@ impl<'p, 's> Checker<'p, 's> {
             FlowTarget::Pat(p) if declares(p) => reference.path.is_empty(),
             FlowTarget::Expr(e) if self.matches(reference, e) => true,
             FlowTarget::Expr(e) if self.contains_matching_reference(reference, e) => false,
-            _ if self.is_for_in_over(reference, target) => {
+            _ if self.is_for_in_over(hir, bound, reference, target) => {
                 return AtAssignment::Antecedent(Pending::NonNull);
             }
             _ => return AtAssignment::Unaffected,
@@ -7650,6 +8179,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         if let Some(&cached) = self.flow_type_cache.get(&(file, e)) {
             // The entry was computed from an incomplete loop type.
+            self.flow_memo.reads_of_types_in_loops += 1;
             self.taint_from(depth);
             return cached;
         }
@@ -8021,11 +8551,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// True if `target` is the `k` in `for (const k in x)`, where `x` is the reference or an access
     /// chain that contains it.
-    fn is_for_in_over(&mut self, reference: &Reference, target: FlowTarget) -> bool {
+    fn is_for_in_over(
+        &mut self,
+        hir: &File,
+        bound: &Bound,
+        reference: &Reference,
+        target: FlowTarget,
+    ) -> bool {
         let FlowTarget::Var(d) = target else {
             return false;
         };
-        let (hir, bound) = (self.hir(reference.file), self.bound(reference.file));
         let stmt = bound.var_stmt[d.idx()];
         if stmt.is_some()
             && let Parent::Stmt(owner) = bound.parent_of_stmt(stmt)
@@ -8519,14 +9054,60 @@ impl<'p, 's> Checker<'p, 's> {
     /// between are at most as many as it had to take before.
     fn try_to_skip(&mut self, walk: &mut Walk, flow: FlowId) -> Option<(FlowId, FlowId)> {
         let steps = walk.steps;
+        let has_far_skipped = walk.has_far_skipped(flow);
+        if self.reads_types_alone
+            && (has_far_skipped || steps > walk.next_far_skip.max(self.steps_before_far_skip(walk)))
+        {
+            let skipped = self.skip_to_dominator(walk, flow);
+            walk.far_skipped = match skipped {
+                Some((arrived_at, _)) if arrived_at.0 == walk.far_skipped.0 => {
+                    (arrived_at.0, flow.0.max(walk.far_skipped.1))
+                }
+                Some((arrived_at, _)) => (arrived_at.0, flow.0),
+                None if has_far_skipped => (0, 0),
+                None => walk.far_skipped,
+            };
+            walk.steps_between_far_skips = match skipped {
+                Some((_, passed)) if passed >= WORTHWHILE_FAR_SKIP => 0,
+                Some(_) if has_far_skipped => walk.steps_between_far_skips,
+                _ => (walk.steps_between_far_skips.saturating_mul(2)).max(WORTHWHILE_FAR_SKIP),
+            };
+            walk.next_far_skip = steps.saturating_add(walk.steps_between_far_skips);
+            if let Some((arrived_at, _)) = skipped {
+                return Some((arrived_at, FlowId::NONE));
+            }
+        }
         let skipped = self.skip_unrelated_nodes(walk, flow);
         walk.steps_between_skips = if walk.steps - steps >= WORTHWHILE_SKIP {
             0
         } else {
-            (walk.steps_between_skips * 2).max(1)
+            walk.steps_between_skips.saturating_mul(2).max(1)
         };
         walk.next_skip = walk.steps.saturating_add(walk.steps_between_skips);
         skipped
+    }
+
+    /// How many steps a walk takes before it tries `skip_to_dominator`. Where the index is there, as many as a try costs.
+    /// Otherwise n names behind n loops take `FAR_WALK` steps each, or n where that is less.
+    fn steps_before_far_skip(&mut self, walk: &mut Walk) -> u32 {
+        if let Some(for_test) = self.flow_memo.far_walk {
+            return for_test;
+        }
+        let file = walk.reference.file;
+        if self.flow_memo.dominators.file == Some(file) {
+            return WORTHWHILE_FAR_SKIP;
+        }
+        let nodes = self.bound(file).flow.len() as u64;
+        let taken = &mut self.flow_memo.steps_of_long_walks;
+        if taken.0 != Some(file) {
+            *taken = (Some(file), 0);
+        }
+        taken.1 += u64::from(walk.steps - walk.steps_counted);
+        walk.steps_counted = walk.steps;
+        match taken.1 > nodes * STEPS_A_NODE_FOR_INDEX {
+            true => WORTHWHILE_FAR_SKIP,
+            false => FAR_WALK,
+        }
     }
 
     /// FOR SPEED. Follows a walk from `flow` through the nodes of its run that leave the reference
@@ -8650,9 +9231,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// FOR SPEED. Returns what an earlier walk for the same name found at `flow`. Only the depth of
-    /// the walk depends on the nodes that this one doesn't visit. Without this, n references
-    /// between n calls `a.push(x)` take n * n steps, and each step builds a union.
+    /// FOR SPEED. Returns what an earlier walk for the same reference found at `flow`. Only the depth
+    /// of the walk depends on the nodes that this one doesn't visit. Without this, n references
+    /// between n calls `a.push(x)` take n * n steps, and each step builds a union. So do n
+    /// references behind n tests of what they refer to.
     ///
     /// An invocation that isn't the outermost one of its walk may find a shared node in
     /// `sharedFlows` and end there, at a lower depth and after fewer steps. See
@@ -8663,8 +9245,14 @@ impl<'p, 's> Checker<'p, 's> {
         flow: FlowId,
         is_outermost: bool,
     ) -> Option<EvolvedArray> {
-        let key = (walk.reference.file, flow, root_key(walk.reference.root));
+        let reference = &walk.reference;
+        let (root, path) = (root_key(reference.root), reference.path_key());
+        let key = (reference.file, flow, root, path);
         let known = *self.flow_memo.evolved_arrays.get(&key)?;
+        let references = &self.flow_memo.flow_loop_references;
+        if (references.get(known.reference as usize)).is_some_and(|kept| kept != reference) {
+            return None;
+        }
         let ends_as_in_tsgo = is_outermost || !known.passes_shared_node;
         let is_exact = ends_as_in_tsgo && !known.may_be_too_deep;
         let steps = if ends_as_in_tsgo { known.steps } else { 0 };
@@ -8681,16 +9269,29 @@ impl<'p, 's> Checker<'p, 's> {
         Some(known)
     }
 
-    /// True if `walk` is for a name of an automatic type and what it has found is final.
+    /// True if `walk` has `marks` and what it has found is final.
     fn is_final_so_far(&self, walk: &Walk) -> bool {
         walk.marks == Some(self.marks_of_walk())
             && !self.relation_too_complex
             && self.reliability == 0
+            && self.inline_level == 0
+            && self.flow_memo.type_predicates_in_progress.is_empty()
+            && self.flow_analysis_disabled.is_empty()
     }
 
-    fn marks_of_walk(&self) -> ((u64, u64), (u64, u64, u64), u64) {
-        let reads = self.flow_memo.reads_of_types_in_loops;
-        (self.non_cacheable_mark(), self.interruptions(), reads)
+    fn marks_of_walk(&self) -> ((u64, u64), (u64, u64, u64), (u64, u64), (u64, u32)) {
+        let memo = &self.flow_memo;
+        let reads = (
+            memo.reads_of_types_in_loops,
+            memo.chains_asked_where_they_stand,
+        );
+        let stand_ins = (self.taints, self.any_signature_reads);
+        (
+            self.non_cacheable_mark(),
+            self.interruptions(),
+            reads,
+            stand_ins,
+        )
     }
 
     /// FOR SPEED. `at..end` are antecedents of one label, as indices of `Bound::flow_edges`. Returns
@@ -8781,7 +9382,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline(never)]
     fn index_flow_runs(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
+        let trees = self.trees(file);
+        let (hir, bound) = (trees.hir, trees.bound);
         // The run of each node at first, then its index in `nodes`.
         let mut position = vec![u32::MAX; bound.flow.len()];
         let mut is_continued = vec![false; bound.flow.len()];
@@ -8818,7 +9420,7 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             };
             if let FlowTarget::Expr(e) = target
-                && let Some((root, first, second)) = self.first_names_of_plain_chain(file, e)
+                && let Some((root, first, second)) = Self::first_names_of_plain_chain(trees, e)
             {
                 if root != 0 {
                     deep_assignments.push((root, first, second, i as u32));
@@ -8833,7 +9435,7 @@ impl<'p, 's> Checker<'p, 's> {
             };
             let declared = match target {
                 FlowTarget::Expr(e) => {
-                    self.note_chain(file, e, false, TestSubjects::NO_PROPERTY, about);
+                    self.note_chain(trees, e, false, TestSubjects::NO_PROPERTY, about);
                     PatId::NONE
                 }
                 FlowTarget::Var(d) => hir[d].pat,
@@ -8853,13 +9455,13 @@ impl<'p, 's> Checker<'p, 's> {
                 && left == stmt
             {
                 about.ignores_property = true;
-                self.note_chain(file, expr, false, TestSubjects::NO_PROPERTY, about);
+                self.note_chain(trees, expr, false, TestSubjects::NO_PROPERTY, about);
             }
             if about.resolves_key {
                 computed_key_nodes.push(i as u32);
             }
         }
-        assignments.shared_sort_unstable();
+        assignments.sort_by_u64(|&(root, first, _)| number_of_pair(root, first));
         deep_assignments.shared_sort_unstable();
         let mut end = 0;
         let starts: Vec<u32> = (lengths.iter())
@@ -8883,7 +9485,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         for at in (0..nodes.len()).rev() {
-            nodes[at].next_shared = if bound.is_shared(FlowId(nodes[at].flow)) {
+            nodes[at].next_shared = if is_shared(bound, FlowId(nodes[at].flow)) {
                 at as u32
             } else {
                 match nodes.get(at + 1) {
@@ -8992,8 +9594,10 @@ impl<'p, 's> Checker<'p, 's> {
             memo.settled_calls_of = Some(file);
             memo.settled_calls.clear();
             memo.settled_calls.resize(words, (0, 0));
+            memo.idle_call_statements_in_front.fill(0);
             memo.idle_runs.clear();
             memo.runs.file = None;
+            memo.dominators.file = None;
         }
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         memo.settled_calls[word].0 |= bit;
@@ -9125,7 +9729,7 @@ impl<'p, 's> Checker<'p, 's> {
             if (file, flow) == (self.last_flow_node.0, self.last_flow_node.1) {
                 break self.last_flow_node.2;
             }
-            if keeps_every_node || bound.is_shared(flow) {
+            if keeps_every_node || is_shared(bound, flow) {
                 if let Some(cached_reachable) =
                     self.p.flow_node_reachable.get(&self.task, &(file, flow))
                 {
@@ -9420,7 +10024,10 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getTypePredicateFromBody`: `x => x.kind === "a"` is a type guard without declaring one.
     pub(super) fn inferred_predicate(&mut self, file: FileId, func: FnId) -> Option<Predicate> {
-        let (body, before) = self.returned_expression_of_type_guard(file, func)?;
+        let written = &self.hir(file)[func];
+        if written.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || written.params.is_empty() {
+            return None;
+        }
         if let Some(cached_predicate) = self
             .p
             .type_predicates_from_body
@@ -9428,6 +10035,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return cached_predicate;
         }
+        let (body, before) = self.returned_expression_of_type_guard(file, func)?;
         // `sig.resolvedTypePredicate = c.noTypePredicate // avoid infinite loop`. A condition
         // evaluated below may call this function.
         if (self.flow_memo.type_predicates_in_progress).contains(&(file, func)) {
@@ -9449,11 +10057,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// True if every later `inferred_predicate` call for `func` returns the same result without
     /// computing anything.
     pub(super) fn is_inferred_predicate_settled(&self, file: FileId, func: FnId) -> bool {
-        self.returned_expression_of_type_guard(file, func).is_none()
-            || (self.p.type_predicates_from_body)
-                .get(&self.task, &(file, func))
-                .is_some()
-                && !(self.flow_memo.type_predicates_in_progress).contains(&(file, func))
+        let written = &self.hir(file)[func];
+        if written.flags.intersects(Flags::ASYNC | Flags::GENERATOR) || written.params.is_empty() {
+            return true;
+        }
+        let is_stored = (self.p.type_predicates_from_body)
+            .get(&self.task, &(file, func))
+            .is_some();
+        match is_stored {
+            true => !(self.flow_memo.type_predicates_in_progress).contains(&(file, func)),
+            false => self.returned_expression_of_type_guard(file, func).is_none(),
+        }
     }
 
     /// Runs the syntax checks at the start of `getTypePredicateFromBody`. Returns the only
@@ -9515,10 +10129,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn check_expression_cached_again(&mut self, file: FileId, e: ExprId) -> TypeId {
         let q = Query::Expr(file, e);
         let from = self.resolution_start.min(self.stack.len());
-        let Some(first) = self.stack[from..].iter().rposition(|&x| x == q) else {
+        let Some(first) = self.innermost_in_flight(q).filter(|&first| first >= from) else {
             return self.type_of_expr(file, e);
         };
-        let first = first + from;
         if let Some(raw) = self.provisional(q) {
             return TypeId(raw as u32);
         }

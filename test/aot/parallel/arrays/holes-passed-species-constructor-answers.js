@@ -1,5 +1,6 @@
 // concat, slice and map ask the species constructor of their receiver for an object and define on it the elements that the receiver has. An index at which the receiver has a hole is passed
-// over. Here the constructor answers a list that already holds something at that index, which stays.
+// over. Here the constructor answers a list that already holds something at that index, which stays under slice, map and filter. The concat of Bun writes the hole over it, and an
+// executable does as Bun does.
 const answering = kept => ({
   [Symbol.species]: function () {
     return kept;
@@ -40,9 +41,3 @@ const show = (name, made, kept) =>
     kept,
   );
 }
-/* Output:
-concat true true 2 4 [2,1,2,4]
-slice true true 2 3 [2,1,2]
-map true true 2 3 [2,1,2]
-filter true true 1 3 [1,2,"more"]
-*/

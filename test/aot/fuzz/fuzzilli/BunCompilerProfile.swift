@@ -26,11 +26,9 @@ let bunCompilerProfile = Profile(
         ]
         // A program that uses Bun's own modules compiles them too, and checking those takes most of the time.
         if ProcessInfo.processInfo.environment["BUN_FUZZILLI_CHECKS_PASSES"] != "0" {
-            args += ["--aot-validate", "--aot-verify-each-pass"]
+            args.append("--aot-check=Validate")
         }
         if randomize {
-            if probability(0.2) { args.append("--aot-heat=everything-is-hot") }
-            else if probability(0.2) { args.append("--aot-heat=everything-is-cold") }
             // The same text has to print the same when the compiler doesn't read its types.
             if TypeScriptSettings.fromEnvironment != nil && probability(0.15) { args.append("--aot-erase-types") }
         }

@@ -1,12 +1,11 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: parameters=[{type=undefined|null|L{{*}} flags=[IsExpected]}] results=[{type=number site=[[result]]}]
+// CHECK: parameters=[{type=undefined|null|L{{*}} flags=[IsExpected]}] results=[{type=anything}]
 // CHECK-NOT: Convert
 // CHECK: [[read]] = PropGet {{*}}key="x"
-// CHECK-NEXT: [[returned]] = Convert [[read]] declared={type=number site=[[result]]} @
-// CHECK-NEXT: Return [[returned]]
+// CHECK-NEXT: Return [[read]]
 
-// Nobody compared a declaration file with the code it describes, so a type from one is only expected. The only conversion of what is read is the one to the result of `f`.
+// Nobody compared a declaration file with the code it describes, so a type from one is only expected. What is read is converted to nothing.
 /// <reference path="../types/imports/shapes.d.ts" />
 
 export function f(d: Declared) {

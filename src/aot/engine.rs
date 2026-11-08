@@ -1,5 +1,4 @@
 mod records;
-mod registry;
 #[cfg(test)]
 mod shared;
 mod used_features;
@@ -15,38 +14,41 @@ mod unlinked_engine;
 use core::ffi::c_void;
 use core::num::NonZeroUsize;
 use core::ptr::NonNull;
-use core::time::Duration;
 
 #[cfg(not(test))]
 use bun_aot_interface::engine::shared;
 use bun_core::CodeGenerationFromStrings;
 use bun_core::ffi::zeroed;
-use bun_options_types::aot_options::{AotOptions, ExplainSet, HeapSize, ImagesBelow, ReportDetail};
+use bun_options_types::aot_options::{AotOptions, HeapSize};
 use bun_removable_features::{Feature, FeatureSet};
 
-pub use self::records::{Position, Witness, builtin_of, feature_of, position_of, witness_of};
-pub use self::registry::{is_optional_pass, operation_names};
+pub use self::records::{Position, builtin_of, feature_of, position_of};
 pub use self::shared::{
-    EngineModuleId, ExecutableIdentity, RejectedOptionWord, TargetImageForm,
-    describe_difference_of_runtime, describe_regexp_syntax_error, has_compiler, image_alignment,
-    relocate_image,
+    EngineModuleId, ExecutableIdentity, RegExpLiteralCreation, RejectedOptionWord, StoredStrings,
+    TargetImageForm, classify_regexp_literal, describe_difference_of_runtime,
+    describe_regexp_construction_error, describe_regexp_syntax_error, has_compiler,
+    image_alignment, read_stored_strings, relocate_image,
+};
+#[cfg(test)]
+use self::tests::{
+    fake_apply_option_word as Bun__AOT__applyOptionWord,
+    fake_initialize_options as Bun__AOT__initializeOptions,
 };
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};
 pub use crate::ir::generated::{
-    AccessCountRecord, AccessRecord, AddedNameRecord, AllocationRemarkRecord, BuiltinUseRecord,
-    DeclineRecord, FeatureUseRecord, FunctionReportRecord, InternalErrorRecord,
-    LackedFunctionRecord, LocaleUseRecord, ObfuscatedSiteRecord, OperationCountRecord,
-    OtherOriginsRecord, PassTimeRecord, RemainingCheckRecord, ReplacedBuiltinRecord,
-    ReplacedExportRecord, SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord,
-    UserDiagnosticRecord, WorkerEntryRecord, WorkerStartRecord,
+    AccessCountRecord, AccessRecord, AllocationRemarkRecord, BuiltinUseRecord, FeatureUseRecord,
+    FormBytesRecord, FunctionNameRecord, InternalErrorRecord, LackedFunctionRecord,
+    LackedModuleRecord, LayoutNameRecord, LocaleUseRecord, ModuleBytesRecord, ObfuscatedSiteRecord,
+    SourceLocation, TextRange, TypeTestRecord, UnseenCodeRecord, UserDiagnosticRecord, Witness,
+    WorkerEntryRecord, WorkerStartRecord, WorkerURLRecord,
 };
 use crate::ir::generated::{
-    AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, LimitId, MismatchPolicy,
-    OutputOptions, ReferenceWidth, ReportSet, ResultSection,
+    AdmittedCode, CompileAction, CompileOptions, ExcludedCode, ImageForm, OutputOptions,
+    ReferenceWidth, ReportSet, ResultSection,
 };
 use crate::ir::ids::{Id, ModuleId};
-use crate::report::{ModuleSource, SourceTexts};
+use crate::report::{ModuleSource, SourceTexts, engine_reports_for};
 use crate::statistics::LimitValues;
 
 #[derive(Copy, Clone)]
@@ -55,31 +57,22 @@ pub struct EngineRequest<'a> {
     pub identity: ExecutableIdentity,
     pub image_form: Option<TargetImageForm>,
     pub thread_count: NonZeroUsize,
-    pub reports_functions: bool,
 }
 
 pub struct EngineOptions {
     record: CompileOptions,
-    /// Nobody chose a thread count, so the engine gets no more threads than the program has work for.
-    fits_threads_to_program: bool,
-    images_below: Vec<[u64; 2]>,
 }
-
-/// A thread that joins a build touches megabytes of its own first.
-const PROGRAM_BYTES_PER_THREAD: usize = 512 << 10;
 
 bun_core::impl_zeroable!(CompileOptions);
 
 fn default_record() -> CompileOptions {
     let mut record: CompileOptions = zeroed();
-    // SAFETY: the engine writes one `CompileOptions` through the pointer before it returns.
-    unsafe { Bun__AOT__initializeOptions(&raw mut record) };
+    Bun__AOT__initializeOptions(&mut record);
     record
 }
 
 fn apply_option_word(record: &mut CompileOptions, word: &[u8]) -> Result<(), RejectedOptionWord> {
     let mut sentence = Vec::new();
-    // A rejected word leaves the record unchanged, so the call is repeated with room for the sentence.
     loop {
         // SAFETY: the engine reads `word`, reads and writes `record`, and writes at most `sentence.len()` bytes before it returns.
         let length = unsafe {
@@ -102,43 +95,12 @@ fn apply_option_word(record: &mut CompileOptions, word: &[u8]) -> Result<(), Rej
 }
 
 fn reports_of(options: &AotOptions) -> ReportSet {
-    let site_reports = ExplainSet::TEXT
-        | ExplainSet::JSON
-        | ExplainSet::CHECKS
-        | ExplainSet::CHECKS_JSON
-        | ExplainSet::RUNTIME_USE
-        | ExplainSet::ONLY_UNKNOWN_CODE
-        | ExplainSet::ONLY_UNPROVEN_TYPE
-        | ExplainSet::ONLY_MUTATION
-        | ExplainSet::ONLY_LIMIT;
-    let detail = options.build_report.as_ref().map(|report| report.detail);
     let mut reports = ReportSet::default();
-    if options.explain.intersects(site_reports) || detail == Some(ReportDetail::Sites) {
-        reports |= ReportSet::FLOW;
-    }
-    if options.explain.contains(ExplainSet::DECLINES) || detail.is_some() {
-        reports |= ReportSet::DECLINES;
-    }
-    if options.explain.contains(ExplainSet::ALLOCATIONS) {
-        reports |= ReportSet::ALLOCATIONS;
-    }
-    if detail >= Some(ReportDetail::Functions) {
-        reports |= ReportSet::FUNCTIONS;
-    }
     if options.emits_symbols {
         reports |= ReportSet::SYMBOLS;
     }
-    if options.explain.contains(ExplainSet::STATISTICS) || detail.is_some() {
-        reports |= ReportSet::ACCESS_COUNTS;
-    }
+    reports |= engine_reports_for(options.explain);
     reports
-}
-
-// A list of records of the same form, one for each image. The engine reads it while it reads the options.
-fn list_images_below(images: &[&'static [u8]]) -> Vec<[u64; 2]> {
-    (images.iter())
-        .map(|image| [image.as_ptr() as u64, image.len() as u64])
-        .collect()
 }
 
 fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
@@ -155,15 +117,7 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
         HeapSize::Standard => ReferenceWidth::Narrow,
         HeapSize::Huge => ReferenceWidth::Wide,
     };
-    record.mismatch_policy = if options.reports_type_mismatches {
-        MismatchPolicy::Report
-    } else {
-        MismatchPolicy::Silent
-    };
     record.reports = reports_of(options);
-    if request.reports_functions {
-        record.reports |= ReportSet::FUNCTIONS;
-    }
     record.thread_count = u32::try_from(request.thread_count.get()).unwrap_or(u32::MAX);
     if options.admits_inspector {
         record.admitted_code |= AdmittedCode::INSPECTOR;
@@ -171,10 +125,7 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if options.runs_tests {
         record.admitted_code |= AdmittedCode::REPLACED_BUILTINS;
     }
-    if options.host_runs_files_from_disk {
-        record.admitted_code |= AdmittedCode::FILES_RUN_BY_HOST;
-    }
-    if options.library_runs_compiled_alone {
+    if !options.omits_builtin_modules {
         record.excluded_code |= ExcludedCode::LIBRARY_TEXT;
     }
     match options.code_generation_from_strings {
@@ -193,21 +144,20 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     if !options.loads_code_from_disk {
         record.excluded_code |= ExcludedCode::CODE_OUTSIDE_IMAGE;
     }
+    if options.isolates_code_from_disk {
+        record.excluded_code |= ExcludedCode::FILES_OF_IMAGE_FOR_CODE_OUTSIDE;
+    }
     if options.obfuscates {
         record.output |= OutputOptions::OBFUSCATE;
     }
-    if options.holds_library_alone {
-        record.output |= OutputOptions::HOLDS_LIBRARY_ALONE;
-        if let Some(library) = options.reference_library_image {
-            record.target.reference_library_image.address = library.as_ptr() as u64;
-            record.target.reference_library_image.size = library.len() as u64;
-        }
-    }
-    if options.shares_realms {
-        record.output |= OutputOptions::SHARES_REALMS;
+    if options.keeps_names {
+        record.output |= OutputOptions::KEEPS_FUNCTION_NAMES;
     }
     if options.runs_in_several_realms {
         record.output |= OutputOptions::RUNS_IN_SEVERAL_REALMS;
+    }
+    if options.runs_in_place {
+        record.output |= OutputOptions::RUNS_IN_PLACE_OF_FILES;
     }
     let mut removed = FeatureSet::from_features(&options.trim.remove_internal);
     for name in &options.trim.remove {
@@ -220,10 +170,17 @@ fn fill_record(record: &mut CompileOptions, request: &EngineRequest<'_>) {
     } else if options.trim.removes_unused && !is_allowed(Feature::Ffi) {
         record.excluded_code |= ExcludedCode::FOREIGN_CALLS_OF_UNSEEN_CODE;
     }
+    if options.trim.removes_unused {
+        record.excluded_code |= ExcludedCode::FEATURES_NAMED_AT_RUN_TIME;
+    }
     fill_feature_bits(&mut record.removed_features, &removed);
     fill_feature_bits(
         &mut record.target.features_kept_only_when_named,
-        &bun_trim::features_kept_only_when_named(),
+        &if options.trim.removes_unused {
+            FeatureSet::all()
+        } else {
+            bun_trim::features_kept_only_when_named()
+        },
     );
 }
 
@@ -241,53 +198,31 @@ impl EngineOptions {
         for word in &request.options.option_words {
             apply_option_word(&mut record, word)?;
         }
-        Ok(EngineOptions {
-            record,
-            fits_threads_to_program: request.options.thread_count.is_none(),
-            images_below: match request.options.shares_realms {
-                true => list_images_below(&request.options.images_below.images),
-                false => Vec::new(),
-            },
-        })
+        Ok(EngineOptions { record })
     }
 
-    /// `ImagesBelow::wait_for_all`: the last of them was not there when the options were made.
-    pub fn wait_for_images_below(&mut self, below: &ImagesBelow) {
-        if below.wait_for_all.is_some() {
-            self.images_below = list_images_below(&below.all());
-        }
+    pub fn limit_threads(&mut self, count: NonZeroUsize) {
+        let count = u32::try_from(count.get()).unwrap_or(u32::MAX);
+        self.record.thread_count = self.record.thread_count.min(count);
     }
 
     pub fn check_only(&mut self) {
         self.record.action = CompileAction::CheckOnly;
     }
 
+    pub fn refuse_code_outside_image(&mut self) {
+        self.record.excluded_code |= ExcludedCode::CODE_OUTSIDE_IMAGE;
+    }
+
     pub fn makes_image(&self) -> bool {
         self.record.action == CompileAction::Compile
     }
 
-    fn record_for(&self, program_bytes: usize) -> CompileOptions {
-        let mut record = self.record;
-        record.target.images_below.address = self.images_below.as_ptr() as u64;
-        record.target.images_below.size = self.images_below.len() as u64;
-        if self.fits_threads_to_program {
-            let useful = program_bytes / PROGRAM_BYTES_PER_THREAD + 1;
-            record.thread_count =
-                (record.thread_count).min(u32::try_from(useful).unwrap_or(u32::MAX));
-        }
-        record
-    }
-
     pub fn limit_values(&self) -> LimitValues {
-        let mut limits = LimitValues::for_target(self.record.target.architecture);
-        if self.record.lowered_limit != LimitId::None {
-            limits.lower(self.record.lowered_limit, self.record.lowered_limit_value);
-        }
-        limits
+        LimitValues::for_target(self.record.target.architecture)
     }
 }
 
-/// Whether the engine takes `word` after `earlier_words`: a second `limit=` is refused because of the first.
 pub fn check_option_word(
     earlier_words: &[Box<[u8]>],
     word: &[u8],
@@ -299,51 +234,34 @@ pub fn check_option_word(
     apply_option_word(&mut record, word)
 }
 
-/// What the flow analysis says a program uses of Bun's own code.
-#[derive(Copy, Clone)]
-pub struct FlowFindings<'a> {
-    pub unseen_code: &'a [UnseenCodeRecord],
-    pub builtins_used: &'a [BuiltinUseRecord],
-    pub library_functions_lacked: &'a [LackedFunctionRecord],
-    pub exports_that_spies_replace: &'a [ReplacedExportRecord],
-    pub builtins_that_tests_replace: &'a [ReplacedBuiltinRecord],
-    /// Their names are ranges of `text_of_names`.
-    pub names_that_tests_add: &'a [AddedNameRecord],
-    pub text_of_names: &'a [u8],
-}
-
-/// Asked on a thread of the engine's.
-pub type JudgeOfFlowFindings<'a> = &'a (dyn Fn(FlowFindings<'_>) -> bool + Sync);
-
-/// The engine frees the program as soon as it has read it, long before it returns.
-/// `goes_on`: asked when the flow analysis has ended. False: the engine ends there, with its report and without an image.
 pub fn compile(
     program: ProgramBytes,
     options: &EngineOptions,
     texts: &SourceTexts,
-    goes_on: JudgeOfFlowFindings<'_>,
 ) -> EngineResult {
-    let record = options.record_for(program.size_with_external_bodies());
+    let record = options.record;
     let bytes = BunAOTBytes::from_slice(program.as_slice());
-    let external_bodies = program
+    let list_of_bodies = program
         .external_bodies()
         .map(ExternalBodies::as_engine_argument);
+    let external_bodies = list_of_bodies
+        .as_ref()
+        .map_or(core::ptr::null(), core::ptr::from_ref);
     let mut owner = ProgramOwner {
         program: Some(program),
         frees_on_pool_thread: record.thread_count > 1,
-        goes_on,
         texts,
     };
-    // SAFETY: the engine reads the program until it calls `release_program` or returns, calls that and `goes_on_behind_flow_analysis`
-    // at most once, one after the other, reads the record only until it returns, and its result has no other owner.
+    // SAFETY: the engine reads the bytes until it calls `release_bytes_of_program`, the program and its bodies until it calls `release_program` or returns, calls each at most once, reads
+    // the list of bodies, which may be null, the owner and the record only until it returns, and its result has no other owner.
+    // It still calls `schedule` of the pool after it has returned, and what it schedules runs then: `REGION_THREADS` and its pool live
+    // as long as the process.
     unsafe {
         let result = Bun__AOT__compile(
             bytes,
-            external_bodies
-                .as_ref()
-                .map_or(core::ptr::null(), core::ptr::from_ref),
+            external_bodies,
             release_program,
-            goes_on_behind_flow_analysis,
+            release_bytes_of_program,
             (&raw mut owner).cast::<c_void>(),
             &raw const record,
             &raw const REGION_THREADS,
@@ -357,7 +275,6 @@ pub fn compile(
 struct ProgramOwner<'a> {
     program: Option<ProgramBytes>,
     frees_on_pool_thread: bool,
-    goes_on: JudgeOfFlowFindings<'a>,
     texts: &'a SourceTexts,
 }
 
@@ -383,68 +300,7 @@ unsafe extern "C" fn copy_function_text(owner: *mut c_void, module: u32, destina
     source.copy_function_text_to(destination);
 }
 
-/// `JSC::AOT::FlowFindings`.
-#[repr(C)]
-struct FlowFindingsOfEngine {
-    unseen_code: *const UnseenCodeRecord,
-    unseen_code_count: usize,
-    builtins_used: *const BuiltinUseRecord,
-    builtins_used_count: usize,
-    library_functions_lacked: *const LackedFunctionRecord,
-    library_functions_lacked_count: usize,
-    exports_that_spies_replace: *const ReplacedExportRecord,
-    exports_that_spies_replace_count: usize,
-    builtins_that_tests_replace: *const ReplacedBuiltinRecord,
-    builtins_that_tests_replace_count: usize,
-    names_that_tests_add: *const AddedNameRecord,
-    names_that_tests_add_count: usize,
-    text_of_names: *const u8,
-    text_of_names_size: usize,
-}
-
-/// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until the engine returns, and the lists of
-/// `findings` are readable until this returns.
-unsafe extern "C" fn goes_on_behind_flow_analysis(
-    owner: *mut c_void,
-    findings: *const FlowFindingsOfEngine,
-) -> bool {
-    /// SAFETY: `first` is readable for `count` records, or `count` is 0.
-    unsafe fn list<'a, T>(first: *const T, count: usize) -> &'a [T] {
-        match count {
-            0 => &[],
-            // SAFETY: the caller's promise.
-            _ => unsafe { core::slice::from_raw_parts(first, count) },
-        }
-    }
-    // SAFETY: the caller's promise.
-    unsafe {
-        let owner = &*owner.cast::<ProgramOwner<'_>>();
-        let findings = &*findings;
-        (owner.goes_on)(FlowFindings {
-            unseen_code: list(findings.unseen_code, findings.unseen_code_count),
-            builtins_used: list(findings.builtins_used, findings.builtins_used_count),
-            library_functions_lacked: list(
-                findings.library_functions_lacked,
-                findings.library_functions_lacked_count,
-            ),
-            exports_that_spies_replace: list(
-                findings.exports_that_spies_replace,
-                findings.exports_that_spies_replace_count,
-            ),
-            builtins_that_tests_replace: list(
-                findings.builtins_that_tests_replace,
-                findings.builtins_that_tests_replace_count,
-            ),
-            names_that_tests_add: list(
-                findings.names_that_tests_add,
-                findings.names_that_tests_add_count,
-            ),
-            text_of_names: list(findings.text_of_names, findings.text_of_names_size),
-        })
-    }
-}
-
-/// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until the engine returns.
+/// SAFETY: `owner` is the `ProgramOwner` of a running `compile`, which nothing else touches until this returns.
 unsafe extern "C" fn release_program(owner: *mut c_void) {
     // SAFETY: the caller's promise.
     let owner = unsafe { &mut *owner.cast::<ProgramOwner<'_>>() };
@@ -453,32 +309,26 @@ unsafe extern "C" fn release_program(owner: *mut c_void) {
     };
     if !owner.frees_on_pool_thread {
         drop(program);
-        give_freed_pages_back_after(USUAL_DELAY);
         return;
     }
-    // The engine waits for this call, and a large program is hundreds of thousands of allocations.
     let program = Box::into_raw(Box::new(program)).cast::<c_void>();
     // SAFETY: `free_program` gets the box once.
     unsafe { bun_sema_driver::run_on_region_thread(free_program, program) };
+}
+
+/// SAFETY: as `release_program`, and the engine reads no byte of the program any more. The code of the functions stays.
+unsafe extern "C" fn release_bytes_of_program(owner: *mut c_void) {
+    // SAFETY: the caller's promise.
+    let owner = unsafe { &mut *owner.cast::<ProgramOwner<'_>>() };
+    if let Some(program) = &mut owner.program {
+        program.free_bytes();
+    }
 }
 
 /// SAFETY: `program` is a `Box<ProgramBytes>` that has no other owner.
 unsafe extern "C" fn free_program(program: *mut c_void) {
     // SAFETY: the caller's promise.
     drop(unsafe { Box::from_raw(program.cast::<ProgramBytes>()) });
-    give_freed_pages_back_after(USUAL_DELAY);
-}
-
-// The allocator keeps a freed page for a while, in case somebody wants it again. The stages of the engine do, all the time. What the
-// front end frees nobody wants for seconds, and it is much: while it waits, the engine's first stages take new pages beside it.
-pub(crate) const DELAY_UNTIL_THE_PROGRAM_IS_READ: Duration = Duration::from_millis(20);
-pub(crate) const USUAL_DELAY: Duration = Duration::from_millis(100);
-
-pub(crate) fn give_freed_pages_back_after(delay: Duration) {
-    use bun_alloc::mimalloc::{Option, mi_option_set_default};
-    if bun_alloc::USE_MIMALLOC {
-        mi_option_set_default(Option::purge_delay, delay.as_millis() as _);
-    }
 }
 
 pub struct EngineResult {
@@ -501,6 +351,15 @@ impl EngineResult {
         (!image.is_empty()).then_some(image)
     }
 
+    pub fn image_mut_and_symbols(&mut self) -> (Option<&mut [u8]>, &[u8]) {
+        let BunAOTBytes { ptr, len } = self.sections[ResultSection::Image as usize];
+        // SAFETY: the bytes are memory of the engine's result that may be written, no other section holds any of them, `self` is the
+        // only owner of the result, and its exclusive borrow lasts as long as the slice.
+        let image =
+            (len > 0).then(|| unsafe { core::slice::from_raw_parts_mut(ptr.cast_mut(), len) });
+        (image, self.symbols())
+    }
+
     pub fn text(&self, range: TextRange) -> &[u8] {
         let start = range.offset as usize;
         self.elements::<u8>(ResultSection::Text)
@@ -516,24 +375,8 @@ impl EngineResult {
         self.elements(ResultSection::Statistics)
     }
 
-    pub fn limit_value(&self, limit: LimitId) -> u64 {
-        self.elements::<u64>(ResultSection::LimitValues)[limit as usize]
-    }
-
     pub fn symbols(&self) -> &[u8] {
         self.elements(ResultSection::Symbols)
-    }
-
-    pub fn flow_findings(&self) -> FlowFindings<'_> {
-        FlowFindings {
-            unseen_code: self.unseen_code(),
-            builtins_used: self.builtins_used(),
-            library_functions_lacked: self.library_functions_lacked(),
-            exports_that_spies_replace: self.exports_that_spies_replace(),
-            builtins_that_tests_replace: self.builtins_that_tests_replace(),
-            names_that_tests_add: self.names_that_tests_add(),
-            text_of_names: self.elements(ResultSection::Text),
-        }
     }
 
     fn elements<T>(&self, section: ResultSection) -> &[T] {
@@ -549,9 +392,9 @@ impl Drop for EngineResult {
     }
 }
 
-// SAFETY: the C++ object is immutable after `Bun__AOT__compile` returns, and `Bun__AOT__freeResult` may run on any thread.
+// SAFETY: nothing but its owner touches the C++ object after `Bun__AOT__compile` returns, and `Bun__AOT__freeResult` may run on any thread.
 unsafe impl Send for EngineResult {}
-// SAFETY: immutable after `Bun__AOT__compile` returns, so every accessor only reads.
+// SAFETY: every accessor that shares `self` only reads.
 unsafe impl Sync for EngineResult {}
 
 #[repr(C)]
@@ -584,50 +427,19 @@ struct BunAOTResult {
     _opaque: [u8; 0],
 }
 
-/// `JSC::AOT::HostThreadPool`.
 #[repr(C)]
 struct HostThreadPool {
     schedule: unsafe extern "C" fn(run: unsafe extern "C" fn(*mut c_void), argument: *mut c_void),
-    give_free_memory_of_current_thread_back: extern "C" fn(may_wait: bool) -> bool,
 }
 
-static TURN_TO_COLLECT: bun_threading::Mutex = bun_threading::Mutex::new();
-/// The threads that have the turn or wait for it.
-static THREADS_IN_LINE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
-
-// The engine asks every thread of the pool at once. A forced collect purges the arenas of the whole process, one thread at a time, and a thread that finds another at
-// it calls sched_yield() until it is its turn: the time in the kernel grew with the square of the threads, and without bound where the one at it had lost its
-// processor. So they take turns here, asleep, and a thread that has work in hand goes on with it.
-extern "C" fn give_free_memory_of_current_thread_back(may_wait: bool) -> bool {
-    use core::sync::atomic::Ordering::{AcqRel, Acquire, Release};
-    if !bun_alloc::USE_MIMALLOC {
-        return true;
-    }
-    if may_wait {
-        THREADS_IN_LINE.fetch_add(1, AcqRel);
-    } else if THREADS_IN_LINE
-        .compare_exchange(0, 1, AcqRel, Acquire)
-        .is_err()
-    {
-        return false;
-    }
-    {
-        let _turn = TURN_TO_COLLECT.lock_guard();
-        bun_alloc::mimalloc::mi_collect(true);
-        bun_alloc::mimalloc::mi_on_thread_idle();
-    }
-    THREADS_IN_LINE.fetch_sub(1, Release);
-    true
-}
-
-/// The engine's loops run on the threads that the front end's did.
 static REGION_THREADS: HostThreadPool = HostThreadPool {
     schedule: bun_sema_driver::run_on_region_thread,
-    give_free_memory_of_current_thread_back,
 };
 
 unsafe extern "C" {
-    fn Bun__AOT__initializeOptions(options: *mut CompileOptions);
+    #[cfg(not(test))]
+    safe fn Bun__AOT__initializeOptions(options: &mut CompileOptions);
+    #[cfg(not(test))]
     fn Bun__AOT__applyOptionWord(
         options: *mut CompileOptions,
         word: BunAOTBytes,
@@ -637,11 +449,8 @@ unsafe extern "C" {
     fn Bun__AOT__compile(
         program: BunAOTBytes,
         external_bodies: *const ExternalFunctionBodies,
-        release_program: unsafe extern "C" fn(owner: *mut c_void),
-        goes_on_behind_flow_analysis: unsafe extern "C" fn(
-            owner: *mut c_void,
-            findings: *const FlowFindingsOfEngine,
-        ) -> bool,
+        release_program: unsafe extern "C" fn(*mut c_void),
+        release_bytes_of_program: unsafe extern "C" fn(*mut c_void),
         program_owner: *mut c_void,
         options: *const CompileOptions,
         thread_pool: *const HostThreadPool,
@@ -650,9 +459,6 @@ unsafe extern "C" {
     ) -> *mut BunAOTResult;
     fn Bun__AOT__resultSection(result: *const BunAOTResult, section: u32) -> BunAOTBytes;
     fn Bun__AOT__freeResult(result: *mut BunAOTResult);
-    safe fn Bun__AOT__operationCount() -> usize;
-    safe fn Bun__AOT__operationName(index: usize) -> BunAOTBytes;
-    safe fn Bun__AOT__isOptionalPass(pass: u32) -> bool;
 }
 
 trait ResultRecord: Copy {
@@ -678,23 +484,20 @@ result_records! {
     internal_errors: InternalErrorRecord = InternalErrors,
     unseen_code: UnseenCodeRecord = UnseenCode,
     builtins_used: BuiltinUseRecord = BuiltinsUsed,
-    library_functions_lacked: LackedFunctionRecord = LibraryFunctionsLacked,
-    exports_that_spies_replace: ReplacedExportRecord = ExportsThatSpiesReplace,
-    builtins_that_tests_replace: ReplacedBuiltinRecord = BuiltinsThatTestsReplace,
-    names_that_tests_add: AddedNameRecord = NamesThatTestsAdd,
     features_used: FeatureUseRecord = FeaturesUsed,
     locales_used: LocaleUseRecord = LocalesUsed,
     worker_entries: WorkerEntryRecord = WorkerEntries,
     worker_starts_without_name: WorkerStartRecord = WorkerStartsWithoutName,
-    access_counts: AccessCountRecord = AccessCounts,
-    accesses: AccessRecord = Accesses,
-    other_origins: OtherOriginsRecord = OtherOrigins,
-    remaining_checks: RemainingCheckRecord = RemainingChecks,
-    type_tests: TypeTestRecord = TypeTests,
-    declines: DeclineRecord = Declines,
-    allocation_remarks: AllocationRemarkRecord = AllocationRemarks,
-    functions: FunctionReportRecord = Functions,
-    operation_counts: OperationCountRecord = OperationCounts,
-    pass_times: PassTimeRecord = PassTimes,
+    urls_that_start_workers: WorkerURLRecord = URLsThatStartWorkers,
+    library_functions_lacked: LackedFunctionRecord = LibraryFunctionsLacked,
+    library_modules_lacked: LackedModuleRecord = LibraryModulesLacked,
     obfuscated_sites: ObfuscatedSiteRecord = ObfuscatedSites,
+    bytes_by_module: ModuleBytesRecord = BytesByModule,
+    accesses: AccessRecord = Accesses,
+    access_counts: AccessCountRecord = AccessCounts,
+    type_tests: TypeTestRecord = TypeTests,
+    allocation_remarks: AllocationRemarkRecord = AllocationRemarks,
+    bytes_by_form: FormBytesRecord = BytesByForm,
+    function_names: FunctionNameRecord = FunctionNames,
+    layout_names: LayoutNameRecord = LayoutNames,
 }

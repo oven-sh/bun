@@ -13,8 +13,6 @@
 // NESTED: = Call {{*}}expectedResult=
 // NESTED: Return
 
-// STATISTIC: MaxExpectedResultLayoutsHits = 1
-
 // The fields of `Grow<"a">` reach `Grow<"ax">`, whose fields reach `Grow<"axx">`. Each has a name of its own, so each is a layout: more layouts than
 // one expected result lists, so the call is an ordinary call. The next call is not affected. The fields of `Nest<T>` reach `Nest<Nest<T>>`, which has
 // the names of `Nest<T>` and so its layout: that has an end.

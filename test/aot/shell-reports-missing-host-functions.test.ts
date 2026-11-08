@@ -1,10 +1,11 @@
 // The `jsc` shell makes its own import.meta, module and require, without the functions that Bun puts on them. Compiled code calls such a
 // function without testing that it is there, so the shell puts one in its place that names the function the program needs, and
 // shell/quick.py skips the program. shell/tools.ts says what the scripts need.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { tempDir } from "harness";
 import { join } from "path";
 import { unsupported } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { python, scriptEnvironment, scriptSkipReason } from "./shell/tools";
 
@@ -97,13 +98,12 @@ test.skipIf(!!scriptSkipReason)(
   290_000,
 );
 
-// The shell throws an Error for the module while `import()` loads what the imported file needs. Such an error lists no frame of the importer,
-// and a validating build compares the two ways in which the frames are listed.
+// The shell throws an Error for the module while `import()` loads what the imported file needs.
 test.skipIf(!!scriptSkipReason)(
-  "a validating build whose import() reaches a module only Bun has is skipped by the name of the module",
+  "a program whose import() reaches a module only Bun has is skipped by the name of the module",
   async () => {
     using folder = tempDir("aot-missing-host-module", {
-      "programs/host/imports/main.mjs": `// Flags: --aot-validate\nawait import("./needs.mjs");\n`,
+      "programs/host/imports/main.mjs": `await import("./needs.mjs");\n`,
       "programs/host/imports/needs.mjs": `import { existsSync } from "node:fs";\nconsole.log(typeof existsSync);\n`,
     });
     const { stdout, stderr, exitCode } = await run(

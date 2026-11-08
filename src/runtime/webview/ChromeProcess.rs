@@ -141,7 +141,7 @@ unsafe extern "C" fn Bun__Chrome__ensure(
             // SAFETY: caller guarantees extra_argv points to extra_argv_len entries.
             unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
-        let vm = global.bun_vm_ptr();
+        let vm = global.bun_vm();
         let user_data_dir = if user_data_dir.is_null() {
             None
         } else {
@@ -478,7 +478,7 @@ fn find_playwright_shell() -> Option<ZBox> {
 
 /// Returns `Bun__Chrome__ensure`'s success value.
 fn spawn(
-    vm: *mut VirtualMachine,
+    vm: &VirtualMachine,
     user_data_dir: Option<&CStr>,
     explicit_path: Option<&CStr>,
     extra_argv: &[*const c_char],
@@ -493,9 +493,7 @@ fn spawn(
             bstr::BStr::new(chrome.as_bytes())
         );
 
-        // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
-        // per-thread `jsc::EventLoop`.
-        let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
+        let event_loop = EventLoopHandle::init(vm.event_loop().cast());
         let mut endpoints = Endpoints::create(event_loop)?;
 
         // Minimal flags. --remote-debugging-pipe is the one that matters;
@@ -571,10 +569,8 @@ fn spawn(
         }
         argv.push(core::ptr::null());
 
-        // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
-        // `transpiler.env` is set during VM init and lives for VM lifetime;
-        // `.map` is its `&mut Map` slot.
-        let env = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
+        // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime.
+        let env = unsafe { (*vm.transpiler.env).map.create_null_delimited_env_map() }?;
 
         let opts = SpawnOptions {
             stdin: Stdio::Ignore,
@@ -923,7 +919,7 @@ enum PipeEvent {
 }
 
 #[cfg(windows)]
-struct QueuedEvent {
+pub(crate) struct QueuedEvent {
     generation: u32,
     event: PipeEvent,
 }
@@ -931,25 +927,34 @@ struct QueuedEvent {
 #[cfg(windows)]
 impl PipeEvent {
     fn post(self, generation: u32) {
-        let queued = bun_core::heap::into_raw(Box::new(QueuedEvent {
-            generation,
-            event: self,
-        }));
         // Not dispatched from the read callback: C++ runs JS that may spin a nested event loop (bun:test does), and libuv re-arms the read only after the callback returns.
         VirtualMachine::get()
             .as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_owned(
-                queued,
-                QueuedEvent::deliver,
-            ));
+            .enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
+                generation,
+                event: self,
+            })));
+    }
+}
+
+#[cfg(windows)]
+impl bun_event_loop::Taskable for QueuedEvent {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ChromePipeEvent;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — boxed in `PipeEvent::post`.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
+    /// Enters no context.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
     }
 }
 
 #[cfg(windows)]
 impl QueuedEvent {
-    fn deliver(this: *mut QueuedEvent) -> bun_jsc::JsResult<()> {
-        // SAFETY: the box leaked by `post`; ManagedTask hands it over once.
-        let queued = unsafe { bun_core::heap::take(this) };
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn deliver(self: Box<Self>) -> bun_jsc::JsResult<()> {
+        let queued = self;
         if queued.generation != GENERATION.load(Ordering::Relaxed) {
             scoped_log!(
                 Chrome,

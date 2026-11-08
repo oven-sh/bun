@@ -185,7 +185,7 @@ describe("Bun.FetchSession", () => {
     }
     // The close crosses two threads after the collection; give it until a
     // deadline, and fail with a message instead of hanging.
-    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline; ) {
+    for (const deadline = Date.now() + 5000; !done && Date.now() < deadline;) {
       await new Promise(resolve => setImmediate(resolve));
     }
     expect(done).toBe(true);
@@ -739,7 +739,7 @@ describe("session.fetch", () => {
   test("rejects like fetch() does", async () => {
     using session = new Bun.FetchSession();
     expect(await (session.fetch as any)().catch((e: Error) => e.message)).toBe(
-      "fetch() expects a string but received no arguments.",
+      'The "input" argument must be specified',
     );
     using dead = await deadPort();
     expect(await session.fetch(`http://127.0.0.1:${dead.port}/`).catch(e => e.code)).toBe("ECONNREFUSED");

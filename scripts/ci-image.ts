@@ -2,7 +2,7 @@
 
 // The cloud side of CI's machine images (scripts/build/ci-images): whether an
 // image exists, waiting for one, and baking a Windows one. These only work in
-// CI: the cloud credentials are Buildkite cluster secrets.
+// CI: a Buildkite job's token is what signs in to the clouds.
 //
 //   bake-image --key=<image key> --name=<image name>
 //     Bake a Windows image on Azure with Packer, from the bake directory
@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { getArch, requireCommand, run } from "./agent.ts";
+import { getArch, request, requireCommand, run } from "./agent.ts";
 import {
   type WindowsImage,
   bakeDirectory,
@@ -42,7 +42,23 @@ interface AwsImage {
   State: string;
 }
 
+/** A short-lived token from Buildkite that says which job this is, for `audience` to verify. */
+function getOidcToken(audience: string, ...options: string[]): string {
+  const { error, status, stdout, stderr } = spawnSync(
+    requireCommand("buildkite-agent"),
+    ["oidc", "request-token", "--audience", audience, ...options],
+    { encoding: "utf8" },
+  );
+  if (error || status !== 0) {
+    throw new Error(`buildkite-agent oidc request-token failed: ${stderr?.trim() ?? error?.message}`, { cause: error });
+  }
+  return stdout.trim();
+}
+
 function getLinuxImageState(name: string): ImageState {
+  // The aws CLI exchanges the token in this file for the role's credentials.
+  const tokenPath = join(tmpdir(), "aws-web-identity-token");
+  writeFileSync(tokenPath, getOidcToken("sts.amazonaws.com"), { mode: 0o600 });
   const { error, status, stdout, stderr } = spawnSync(
     requireCommand("aws"),
     ["ec2", "describe-images", "--owners", "self", "--filters", `Name=name,Values=${name}`, "--output", "json"],
@@ -50,8 +66,8 @@ function getLinuxImageState(name: string): ImageState {
       encoding: "utf8",
       // The aws CLI gets these and nothing else of this job's environment.
       env: {
-        AWS_ACCESS_KEY_ID: getSecret("EC2_ACCESS_KEY_ID"),
-        AWS_SECRET_ACCESS_KEY: getSecret("EC2_SECRET_ACCESS_KEY"),
+        AWS_ROLE_ARN: getSecret("EC2_ROLE_ARN"),
+        AWS_WEB_IDENTITY_TOKEN_FILE: tokenPath,
         AWS_REGION: getSecret("EC2_REGION"),
       },
     },
@@ -67,6 +83,17 @@ function getLinuxImageState(name: string): ImageState {
   return states.size ? "failed" : "missing";
 }
 
+const azureAttempts = 5;
+
+/**
+ * `request()` names the URL in its error, and Azure's name the tenant or the
+ * subscription. This has the status and what came with it: the body of the
+ * response, or why there was none.
+ */
+function azureError(what: string, { error, status }: Awaited<ReturnType<typeof request>>): Error {
+  return new Error(`${what}: ${status ?? "no response"}`, { cause: error?.cause });
+}
+
 type Azure = {
   token: string;
   subscriptionId: string;
@@ -75,22 +102,33 @@ type Azure = {
   location: string;
 };
 
-async function getAzure(): Promise<Azure> {
+/** Azure compares a token's subject with one string, so the subject is the pipeline's id and not Buildkite's default. */
+function getAzureOidcToken(...options: string[]): string {
+  return getOidcToken("api://AzureADTokenExchange", "--subject-claim", "pipeline_id", ...options);
+}
+
+async function getAzure(clientId: string): Promise<Azure> {
   const tenantId = getSecret("AZURE_TENANT_ID");
-  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+  const response = await request(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "client_credentials",
-      client_id: getSecret("AZURE_CLIENT_ID"),
-      client_secret: getSecret("AZURE_CLIENT_SECRET"),
+      client_id: clientId,
+      client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      client_assertion: getAzureOidcToken(),
       scope: "https://management.azure.com/.default",
-    }),
+    }).toString(),
+    json: true,
+    attempts: azureAttempts,
   });
-  if (!response.ok) {
-    throw new Error(`Azure auth failed: ${response.status}`);
+  if (response.error) {
+    // Without the body of a response, which can name the client.
+    throw response.status
+      ? new Error(`Azure auth failed: ${response.status}`)
+      : azureError("Azure auth failed", response);
   }
-  const { access_token: token } = (await response.json()) as { access_token: string };
+  const { access_token: token } = response.body as { access_token: string };
   return {
     token,
     subscriptionId: getSecret("AZURE_SUBSCRIPTION_ID"),
@@ -101,12 +139,13 @@ async function getAzure(): Promise<Azure> {
 }
 
 /** A request to the gallery image definition `name`, or to a path under it. */
-function galleryRequest(azure: Azure, name: string, path: string, init?: RequestInit): Promise<Response> {
+function galleryRequest(azure: Azure, name: string, path: string, init?: { method: string; body?: string }) {
   const { subscriptionId, resourceGroup, galleryName, token } = azure;
   const definition = `/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.Compute/galleries/${galleryName}/images/${name}`;
-  return fetch(`https://management.azure.com${definition}${path}?api-version=2024-03-03`, {
+  return request(`https://management.azure.com${definition}${path}?api-version=2024-03-03`, {
     ...init,
     headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+    attempts: azureAttempts,
   });
 }
 
@@ -118,10 +157,10 @@ async function getWindowsImageState(azure: Azure, name: string): Promise<ImageSt
   if (response.status === 404) {
     return "missing";
   }
-  if (!response.ok) {
-    throw new Error(`Azure gallery lookup of ${name} failed: ${response.status} ${await response.text()}`);
+  if (response.error) {
+    throw azureError(`Azure gallery lookup of ${name} failed`, response);
   }
-  const { properties } = (await response.json()) as { properties: { provisioningState: string } };
+  const { properties } = JSON.parse(response.body as string) as { properties: { provisioningState: string } };
   switch (properties.provisioningState) {
     case "Succeeded":
       return "available";
@@ -133,7 +172,9 @@ async function getWindowsImageState(azure: Azure, name: string): Promise<ImageSt
 }
 
 export async function getImageState(os: "linux" | "windows", name: string): Promise<ImageState> {
-  return os === "windows" ? getWindowsImageState(await getAzure(), name) : getLinuxImageState(name);
+  return os === "windows"
+    ? getWindowsImageState(await getAzure(getSecret("AZURE_LIST_IMAGES_CLIENT_ID")), name)
+    : getLinuxImageState(name);
 }
 
 async function waitImage(os: "linux" | "windows", name: string, timeoutMinutes: number): Promise<void> {
@@ -195,7 +236,8 @@ async function bakeWindowsImage(key: string, name: string, timeoutMinutes: numbe
   await run(["buildkite-agent", "artifact", "download", `${bakeDirectory(key)}/*`, "."]);
   const directory = resolve(bakeDirectory(key));
   const image = JSON.parse(readFileSync(join(directory, "image.json"), "utf8")) as WindowsImage;
-  const azure = await getAzure();
+  const clientId = getSecret("AZURE_BAKE_IMAGES_CLIENT_ID");
+  const azure = await getAzure(clientId);
 
   const state = await getWindowsImageState(azure, name);
   if (state === "available") {
@@ -226,16 +268,16 @@ async function bakeWindowsImage(key: string, name: string, timeoutMinutes: numbe
       },
     }),
   });
-  if (!definition.ok && definition.status !== 409) {
-    throw new Error(`Failed to create gallery image definition: ${definition.status} ${await definition.text()}`);
+  if (definition.error && definition.status !== 409) {
+    throw azureError("Failed to create gallery image definition", definition);
   }
 
   if (state === "failed") {
     // Packer refuses to publish over a version that exists, and this one never became an image.
     console.log(`[packer] Deleting the failed version of ${name}`);
     const deleted = await galleryRequest(azure, name, galleryVersion, { method: "DELETE" });
-    if (!deleted.ok) {
-      throw new Error(`Failed to delete the failed version of ${name}: ${deleted.status} ${await deleted.text()}`);
+    if (deleted.error) {
+      throw azureError(`Failed to delete the failed version of ${name}`, deleted);
     }
     while ((await getWindowsImageState(azure, name)) !== "missing") {
       await new Promise(done => setTimeout(done, 10_000));
@@ -247,8 +289,10 @@ async function bakeWindowsImage(key: string, name: string, timeoutMinutes: numbe
   await run([packer, "init", template]);
 
   const values: Record<(typeof packerVariables)[number], string> = {
-    client_id: getSecret("AZURE_CLIENT_ID"),
-    client_secret: getSecret("AZURE_CLIENT_SECRET"),
+    client_id: clientId,
+    // Packer signs in with it again each time Azure's access runs out, after an hour or more.
+    // Two hours is the longest Buildkite makes a token last.
+    client_jwt: getAzureOidcToken("--lifetime", `${2 * 60 * 60}`),
     subscription_id: azure.subscriptionId,
     tenant_id: getSecret("AZURE_TENANT_ID"),
     // Its own resource group, in a region where the bake's VM does not

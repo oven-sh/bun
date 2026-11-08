@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import type { webcrypto } from "node:crypto";
 
 // Test vectors from RFC 7748 / Node.js test suite
 const x25519Vector = {
@@ -7,7 +8,7 @@ const x25519Vector = {
   result: "2768409dfab99ec23b8c89b93ff5880295f76176088f89e43dfebe7ea1950008",
 };
 
-async function importX25519Keys(usages: KeyUsage[] = ["deriveBits"]) {
+async function importX25519Keys(usages: webcrypto.KeyUsage[] = ["deriveBits"]) {
   const [privateKey, publicKey] = await Promise.all([
     crypto.subtle.importKey("pkcs8", Buffer.from(x25519Vector.pkcs8, "hex"), { name: "X25519" }, true, usages),
     crypto.subtle.importKey("spki", Buffer.from(x25519Vector.spki, "hex"), { name: "X25519" }, true, []),
@@ -27,7 +28,6 @@ test("X25519 deriveBits with known test vector", async () => {
 test("X25519 deriveBits with null length returns full output", async () => {
   const { privateKey, publicKey } = await importX25519Keys();
 
-  // @ts-expect-error types not updated to reflect WebCryptoAPI spec change
   const bits = await crypto.subtle.deriveBits({ name: "X25519", public: publicKey }, privateKey, null);
 
   expect(bits).toBeInstanceOf(ArrayBuffer);
@@ -82,8 +82,8 @@ test("X25519 deriveBits zeroes the unused trailing bits of the last byte", async
 });
 
 test("X25519 deriveBits with generated keys", async () => {
-  const aliceKeys = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
-  const bobKeys = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const aliceKeys: any = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+  const bobKeys: any = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
 
   const [aliceShared, bobShared] = await Promise.all([
     crypto.subtle.deriveBits({ name: "X25519", public: bobKeys.publicKey }, aliceKeys.privateKey, 256),
@@ -140,4 +140,19 @@ test("X25519 deriveKey produces an AES-GCM key from the shared secret", async ()
   expect(key.algorithm.name).toBe("AES-GCM");
   const raw = await crypto.subtle.exportKey("raw", key);
   expect(Buffer.from(raw).toString("hex")).toBe(x25519Vector.result);
+});
+
+test("X25519 keys survive structuredClone and remain usable", async () => {
+  const { privateKey, publicKey } = await importX25519Keys();
+
+  const clonedPrivate = structuredClone(privateKey);
+  const clonedPublic = structuredClone(publicKey);
+
+  expect(clonedPrivate.algorithm.name).toBe("X25519");
+  expect(clonedPrivate.type).toBe("private");
+  expect(clonedPublic.algorithm.name).toBe("X25519");
+  expect(clonedPublic.type).toBe("public");
+
+  const bits = await crypto.subtle.deriveBits({ name: "X25519", public: clonedPublic }, clonedPrivate, 256);
+  expect(Buffer.from(bits).toString("hex")).toBe(x25519Vector.result);
 });

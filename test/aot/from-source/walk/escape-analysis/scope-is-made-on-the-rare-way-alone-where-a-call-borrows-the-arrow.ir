@@ -1,0 +1,48 @@
+# -- source: scope-is-made-on-the-rare-way-alone-where-a-call-borrows-the-arrow.ts
+# declare function report(value: unknown): void;
+# interface Row { id: number; name: string; }
+# function forEach<T>(list: T[], f: (x: T) => void): void { for (let i = 0; i < list.length; i++) f(list[i]); }
+# function total(rows: Row[]): number { let sum = 0; forEach(rows, row => { sum += row.id; }); return sum; }
+# function totalThroughUnknown(rows: Row[], each: any): number { let sum = 0; each(rows, (row: Row) => { sum += row.id; }); return sum; }
+# function totalCaught(rows: Row[]): number { let sum = 0; try { forEach(rows, row => { if (row.id > 5) throw new Error("over"); sum += row.id; }); } catch { return -sum; } return sum; }
+# (globalThis as any).fns = { total, totalThroughUnknown, totalCaught, forEach };
+# const rows: Row[] = [];
+# for (let i = 0; i < 12; i++) rows.push({ id: i, name: "row" + i });
+# report((globalThis as any).fns.total(rows) + 1);
+# report((globalThis as any).fns.total(rows) + 1);
+# report((globalThis as any).fns.totalThroughUnknown(rows, (globalThis as any).fns.forEach) + 1);
+# report((globalThis as any).fns.totalThroughUnknown(rows, (globalThis as any).fns.forEach) + 1);
+# report((globalThis as any).fns.totalCaught(rows) + 1);
+# report((globalThis as any).fns.totalCaught(rows) + 1);
+# -- end of source
+# `total` is reached from outside, so nothing is proven of `rows`: the tests of the helper's guard stand in front of its copy, and where one fails the slow version is called with the arrow.
+# That call only borrows the arrow (Link: the helper only calls what arrives there), and nobody has the scope of `sum` so far: so a scope is made there, out of what the state holds, the arrow over it, and `sum` is read back behind the call.
+# The first scope then has no reader on any way: no store is left in a turn, and the one allocation stands in the rare block. Behind the read nobody has that cell, by the proof that let it be lent: it is handed back there.
+# OPTIONS: check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: Branch {{*}}notTaken [[slow]]()
+# CHECK: [[slow]]() frequency=Rare:
+# CHECK-NEXT: [[copy]]: {{*}} = NewObject {{*}}fields=[0]
+# CHECK-NEXT: [[lent]]: {{*}} = NewClosure [[copy]] {{*}}loan=ToFunctionEntered
+# CHECK: = CallDirect {{*}}role=SlowBody
+# CHECK-NEXT: = GetEnvironmentField [[copy]]
+# CHECK-NEXT: ReleaseEnvironment [[copy]]
+# RUN(STORES): walk f2 mechanisms=all
+# STORES-NOT: PutEnvironmentField
+# Whoever may keep the arrow shares the scope with what the maker writes later: a call by value of what nobody knows takes the arrow over the one scope, which is made and written as ever and read behind the call.
+# RUN(STUB): walk f4 mechanisms=all
+# STUB-LABEL: code f4:Body
+# STUB: [[scope]]: {{*}} = NewObject
+# STUB: PutEnvironmentField [[scope]]
+# STUB: = NewClosure [[scope]]
+# STUB: = Call
+# STUB: = GetEnvironmentField [[scope]]
+# RUN(ONE): walk f4 mechanisms=all
+# ONE-NOT: fields=[0]
+# A throw in the borrowed call leads to a handler that reads the memory of the first scope: under a handler the first scope itself is lent.
+# RUN(CAUGHT): walk f6 mechanisms=all
+# CAUGHT-LABEL: code f6:Body
+# CAUGHT-NOT: fields=[0]
+# RUN(WITHHELD): walk f2 mechanisms=all-EscapeAnalysis
+# WITHHELD: PutEnvironmentField

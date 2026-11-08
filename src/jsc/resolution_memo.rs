@@ -10,8 +10,12 @@ pub struct Kind(u8);
 
 impl Kind {
     #[inline]
-    pub fn new(is_esm: bool, source_is_a_file_path: bool) -> Self {
-        Self(u8::from(is_esm) | u8::from(source_is_a_file_path) << 1)
+    pub fn new(
+        is_esm: bool,
+        source_is_a_file_path: bool,
+        global_cache: bun_resolver::GlobalCache,
+    ) -> Self {
+        Self(u8::from(is_esm) | u8::from(source_is_a_file_path) << 1 | (global_cache as u8) << 2)
     }
 }
 

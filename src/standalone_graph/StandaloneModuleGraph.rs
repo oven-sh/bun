@@ -12,14 +12,30 @@ use bun_bundler::options::{self, OutputFile};
 use bun_collections::StringArrayHashMap;
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, ZStr};
-use bun_exe_format::{elf as bun_elf, macho as bun_macho, pe as bun_pe};
+use bun_exe_format::mapped_file::FileBytes;
+use bun_exe_format::{macho as bun_macho, pe as bun_pe};
 use bun_options_types::bundle_enums::{Format, WindowsOptions};
 #[cfg(not(windows))]
 use bun_paths::SEP_STR;
 use bun_paths::fs as bun_fs;
 use bun_paths::{self as path, PathBuffer, strings};
+use bun_resolver::LINKED_BYTECODE_REGION_COUNT;
+use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, ImageFile};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
+
+use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, Payload};
+use crate::executable_file::{
+    ElfWriteError, ImageRange, MappedFile, Original, PayloadParts, TemplateBytes,
+    with_executable_image, write_elf,
+};
+use crate::executable_request::{
+    ExecutableAdditions, GraphBytes, InjectionAdditions, append_compiled_program_record,
+};
+pub use crate::executable_request::{
+    ExecutableDetails, ExecutableOutcome, ExecutableRequest, GraphRequest, to_graph_bytes,
+    write_executable,
+};
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
@@ -44,9 +60,13 @@ pub struct StandaloneModuleGraph {
     pub compile_exec_argv: &'static [u8],
     pub flags: Flags,
     /// InternalModuleRegistry id → its bytecode inside `bytes` (JSC reads it in place; see `File::bytecode`).
-    pub builtin_bytecode: Vec<(u32, *mut [u8])>,
+    /// The `u32`: where the module's cache entry starts in those bytes (a linked payload, see `linked_bytecode_payload`).
+    pub builtin_bytecode: Vec<(u32, *mut [u8], u32)>,
     /// The one shared bytecode string table (`JSC::EncoderStringTable::serialize`) every chunk's payload references by ordinal; installed on the VM's `DecoderStringTable` at startup.
     pub bytecode_string_table: &'static [u8],
+    /// Built with a payload order file: the one payload every `File::bytecode` is (`JSC::BytecodeLinkEncoder`) and where
+    /// each of its regions ends; `None` when each file has a payload of its own.
+    pub linked_bytecode_payload: Option<(*mut [u8], [u32; LINKED_BYTECODE_REGION_COUNT])>,
     /// The slot table every module's `module_info` body indexes (`ModuleInfoSlotTable`); empty when there is none.
     pub module_info_string_table: &'static [u8],
     /// The pre-resolved ES module graph JSC's loader consumes (`JSC::PrelinkedModuleGraph`, built by
@@ -58,6 +78,7 @@ pub struct StandaloneModuleGraph {
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
     pub runtime_options: RuntimeOptions,
+    pub compiled_program: Option<CompiledProgram>,
 }
 
 /// Runtime defaults chosen at build time (`Flags::HAS_RUNTIME_OPTIONS` record: `u32 flags`, `u32 value`).
@@ -180,12 +201,6 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
 }
 
 impl StandaloneModuleGraph {
-    // `&mut` only for `File::sourcemap` (`LazySourceMap::load`); every other
-    // per-`File` access goes through `get_ref()` / `find_ref()`.
-    pub fn entry_point(&mut self) -> &mut File {
-        &mut self.files.values_mut()[self.entry_point_id as usize]
-    }
-
     // by normalized file path
     pub fn find(&mut self, name: &[u8]) -> Option<&mut File> {
         if !is_bun_standalone_file_path(name) {
@@ -194,19 +209,19 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
-    fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+    pub(crate) fn lookup_file(&self, name: &[u8]) -> Option<&File> {
         #[cfg(windows)]
-        {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            return self.files.get(normalize_file_key(name, &mut buf));
-        }
-        #[cfg(not(windows))]
-        self.files.get(name)
+        let mut buf = bun_paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let name = normalize_file_key(name, &mut buf);
+        self.files
+            .get(name)
+            .or_else(|| self.files.get(&self.key_of_asset_named_at_root(name)?))
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
-            return None;
+            return self.find_at_source_path(name);
         }
         self.lookup_file(name)
     }
@@ -216,10 +231,7 @@ impl StandaloneModuleGraph {
     }
 
     pub fn stat(&self, name: &[u8]) -> Option<Stat> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
-        if let Some(file) = self.lookup_file(name) {
+        if let Some(file) = self.find_ref(name) {
             return Some(file.stat());
         }
         if self.find_dir(name) {
@@ -228,7 +240,7 @@ impl StandaloneModuleGraph {
         None
     }
 
-    fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    pub(crate) fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
         #[cfg(windows)]
         let name = normalize_file_key(name, buf);
         #[cfg(not(windows))]
@@ -241,26 +253,22 @@ impl StandaloneModuleGraph {
     }
 
     pub fn find_dir(&self, name: &[u8]) -> bool {
-        if !is_bun_standalone_file_path(name) {
-            return false;
-        }
         let mut buf = bun_paths::path_buffer_pool::get();
-        let name = Self::normalize_dir_path(name, &mut buf);
-        self.dirs.contains_key(name)
+        self.directory_key(name, &mut buf).is_some()
     }
 
     /// Directory `name`'s stored key (posix-separated, no trailing `/`), or
     /// the errno an `open(O_DIRECTORY)` of it would produce.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
-        if !is_bun_standalone_file_path(name) {
-            return Err(E::ENOENT);
-        }
         let mut buf = bun_paths::path_buffer_pool::get();
-        let name = Self::normalize_dir_path(name, &mut buf);
-        if let Some(index) = self.dirs.get_index(name) {
-            return Ok(&self.dirs.keys()[index]);
+        if let Some(key) = self.directory_key(name, &mut buf) {
+            return Ok(match self.dirs.get_index(key) {
+                Some(index) => &self.dirs.keys()[index],
+                None => keep_key_of_directory_with_code_alone(key),
+            });
         }
-        Err(if self.lookup_file(name).is_some() {
+        let name = Self::normalize_dir_path(name, &mut buf);
+        Err(if self.find_ref(name).is_some() {
             E::ENOTDIR
         } else {
             E::ENOENT
@@ -269,14 +277,8 @@ impl StandaloneModuleGraph {
 
     /// `(entry, is_dir)`; `entry` is the basename, or the `name`-relative path when `recursive`.
     pub fn readdir(&self, name: &[u8], recursive: bool) -> Option<Vec<(Box<[u8]>, bool)>> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
         let mut buf = bun_paths::path_buffer_pool::get();
-        let name = Self::normalize_dir_path(name, &mut buf);
-        if !self.dirs.contains_key(name) {
-            return None;
-        }
+        let name = self.directory_key(name, &mut buf)?;
         let mut prefix: Vec<u8> = Vec::with_capacity(name.len() + 1);
         prefix.extend_from_slice(name);
         prefix.push(b'/');
@@ -295,11 +297,40 @@ impl StandaloneModuleGraph {
                 let _ = seen.put(rel, is_dir);
             }
         };
-        for key in self.files.keys() {
-            push(key, false);
+        // An entry point that was compiled ahead of time is listed below, under the name of its source.
+        let is_compiled_entry_point = |index: usize| {
+            let program = self.compiled_program.as_ref();
+            program.is_some_and(|program| {
+                u32::try_from(index)
+                    .is_ok_and(|index| program.entry_point_by_file_index(index).is_some())
+            })
+        };
+        for (index, key) in self.files.keys().iter().enumerate() {
+            if !is_compiled_entry_point(index) {
+                push(key, false);
+            }
         }
         for key in self.dirs.keys() {
             push(key, true);
+        }
+        if let Some(program) = &self.compiled_program {
+            let mut source_path: Vec<u8> = Vec::new();
+            for entry_point in program.entry_points_in_directory(name) {
+                source_path.clear();
+                source_path.extend_from_slice(entry_point.source_path);
+                path::resolve_path::platform_to_posix_in_place::<u8>(&mut source_path);
+                push(&source_path, false);
+            }
+            program.for_each_module_below(name, &mut |path| {
+                let mut end = prefix.len();
+                while recursive && let Some(length) = strings::index_of_char(&path[end..], b'/') {
+                    end += length as usize;
+                    push(&path[..end], true);
+                    end += 1;
+                }
+                push(path, false);
+                true
+            });
         }
 
         let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
@@ -311,17 +342,32 @@ impl StandaloneModuleGraph {
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
-        {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            return self.files.get_mut(normalize_file_key(name, &mut buf));
+        let mut buf = bun_paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let name = normalize_file_key(name, &mut buf);
+        if self.compiled_program.is_none() || self.files.contains_key(name) {
+            return self.files.get_mut(name);
         }
-        #[cfg(not(windows))]
-        self.files.get_mut(name)
+        let key = self.key_of_asset_named_at_root(name)?;
+        self.files.get_mut(&key)
     }
 }
 
+/// A directory that holds nothing but compiled files has no key in the graph. Whoever opens one holds its key for as long as the process lives, so each is copied once.
+fn keep_key_of_directory_with_code_alone(key: &[u8]) -> &'static [u8] {
+    static KEPT: bun_threading::Guarded<std::collections::BTreeSet<&'static [u8]>> =
+        bun_threading::Guarded::new(std::collections::BTreeSet::new());
+    let mut kept = KEPT.lock();
+    if let Some(&key) = kept.get(key) {
+        return key;
+    }
+    let key: &'static [u8] = Box::leak(Box::from(key));
+    kept.insert(key);
+    key
+}
+
 #[cfg(windows)]
-fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+pub(crate) fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
     let input = strings::paths::without_nt_prefix::<u8>(name);
     path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
 }
@@ -374,8 +420,13 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn compile_exec_argv(&self) -> &[u8] {
         self.compile_exec_argv
     }
-    fn builtin_module_bytecode(&self, id: u32) -> Option<*mut [u8]> {
+    fn builtin_module_bytecode(&self, id: u32) -> Option<(*mut [u8], u32)> {
         StandaloneModuleGraph::builtin_module_bytecode(self, id)
+    }
+    fn for_each_builtin_bytecode(&self, each: &mut dyn FnMut(u32, *mut [u8], u32)) {
+        for &(id, bytes, entry_offset) in &self.builtin_bytecode {
+            each(id, bytes, entry_offset);
+        }
     }
     fn bytecode_string_table(&self) -> &'static [u8] {
         self.bytecode_string_table
@@ -386,14 +437,66 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
             .values()
             .iter()
             .filter(|f| f.loader.is_javascript_like() || !f.bytecode.is_empty())
-            .map(|f| if f.bytecode.is_empty() { f.contents.len() } else { f.bytecode.len() } + f.module_info.len())
+            .map(|f| {
+                (if f.bytecode.is_empty() {
+                    f.contents.len()
+                } else if self.linked_bytecode_payload.is_some() {
+                    0 // every file has the same payload: counted once below
+                } else {
+                    f.bytecode.len()
+                }) + f.module_info.len()
+            })
             .sum();
+        let linked_payload = self
+            .linked_bytecode_payload
+            .map_or(0, |(payload, _)| payload.len());
         let builtins: usize = self
             .builtin_bytecode
             .iter()
-            .map(|&(_, bytes)| bytes.len())
+            // (In a linked payload they are part of what is counted once below.)
+            .filter(|_| self.linked_bytecode_payload.is_none())
+            .map(|&(_, bytes, _)| bytes.len())
             .sum();
-        modules + builtins + self.bytecode_string_table.len()
+        modules + linked_payload + builtins + self.bytecode_string_table.len()
+    }
+    fn for_each_path(&self, each: &mut dyn FnMut(&'static [u8])) {
+        for file in self.files.values() {
+            each(file.name);
+            if !file.bytecode_origin_path.is_empty() {
+                each(file.bytecode_origin_path);
+            }
+        }
+    }
+    fn for_each_bytecode_module(&self, each: &mut dyn FnMut(bun_resolver::BytecodeModule)) {
+        for file in self
+            .files
+            .values()
+            .iter()
+            .filter(|f| !f.bytecode.is_empty())
+        {
+            each(bun_resolver::BytecodeModule {
+                source: file.to_wtf_string(),
+                origin_path: file.bytecode_origin_path,
+                is_esm: file.module_format != ModuleFormat::Cjs,
+                bytecode: file.bytecode,
+                bytecode_entry_offset: file.bytecode_entry_offset,
+            });
+        }
+    }
+    fn linked_bytecode_payload(
+        &self,
+    ) -> Option<(*const [u8], [u32; LINKED_BYTECODE_REGION_COUNT])> {
+        self.linked_bytecode_payload
+            .map(|(payload, region_ends)| (payload.cast_const(), region_ends))
+    }
+    fn compiled_program(&self) -> Option<&CompiledProgram> {
+        self.compiled_program.as_ref()
+    }
+    fn compiled_entry_point(&self, name: &[u8]) -> Option<&CompiledEntryPoint> {
+        self.entry_point_by_name(name)
+    }
+    fn file_at_source_path(&self, path: &[u8]) -> Option<&'static [u8]> {
+        self.find_at_source_path(path).map(|file| file.name)
     }
 }
 
@@ -413,6 +516,7 @@ pub(crate) struct CompiledModuleGraphFile {
     pub module_format: ModuleFormat,
     pub side: FileSide,
 }
+bun_core::impl_no_uninit!(CompiledModuleGraphFile);
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -448,7 +552,7 @@ mod macho {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
+        pub(super) safe fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
     }
 
     /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
@@ -456,8 +560,7 @@ mod macho {
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI call returns pointer to embedded section header or null.
-        let length_ptr = unsafe { Bun__getStandaloneModuleGraphMachoLength() };
+        let length_ptr = Bun__getStandaloneModuleGraphMachoLength();
         if length_ptr.is_null() {
             return None;
         }
@@ -536,7 +639,8 @@ mod pe {
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI calls.
+        // SAFETY: `from_executable` is the only caller. It runs once, on the main thread at
+        // startup, so nothing races the first call.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
             return None;
@@ -556,7 +660,7 @@ mod elf {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
-        pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
+        pub(super) safe fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
@@ -564,8 +668,7 @@ mod elf {
     /// `&[u8]` here would freeze it to read-only and make the later
     /// `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI call.
-        let vaddr_ptr = unsafe { Bun__getStandaloneModuleGraphELFVaddr() };
+        let vaddr_ptr = Bun__getStandaloneModuleGraphELFVaddr();
         if vaddr_ptr.is_null() {
             return None;
         }
@@ -580,19 +683,166 @@ mod elf {
         // `dlpi_addr` of the object containing BUN_COMPILED itself; for
         // non-PIE it is 0.
         // Format at target: [u64 payload_len][payload bytes]
-        // Synthesize a `*mut u8` directly so the provenance carries write
-        // permission for the in-place bytecode mutation done by JSC.
         let load_bias =
             bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
-        let target = (vaddr as usize).wrapping_add(load_bias) as *mut u8;
-        // SAFETY: target points to 8-byte little-endian length prefix.
+        let target = (vaddr as usize).wrapping_add(load_bias);
+        // A corrupt file can contain any vaddr and length, so check both against what is mapped from `target` on.
+        let mapped_end = end_of_adjacent_segments(&bun_sys::elf::find_loaded_module(target)?);
+        let payload_capacity = (mapped_end - target).checked_sub(8)?;
+        exit_if_page_is_past_eof(target);
+        // Synthesize a `*mut u8` directly so the provenance carries write
+        // permission for the in-place bytecode mutation done by JSC.
+        let target = target as *mut u8;
+        // SAFETY: at least 8 bytes are mapped at `target`.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
-        if payload_len < 8 {
+        if payload_len < 8 || payload_len > payload_capacity as u64 {
             return None;
         }
-        // SAFETY: payload_len bytes follow the 8-byte header at `target`.
-        Some((unsafe { target.add(8) }, payload_len as usize))
+        // SAFETY: at least `payload_len` bytes are mapped after the 8-byte header.
+        let payload = unsafe { target.add(8) };
+        // Truncation only removes the end of the file, so if the last page is present, the whole payload is.
+        exit_if_page_is_past_eof(payload as usize + payload_len as usize - 1);
+        Some((payload, payload_len as usize))
+    }
+
+    /// The size of the payload if it holds a program compiled ahead of time, else 0.
+    /// Allocates nothing: it is asked before the allocator has started.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__sizeOfPayloadWithCompiledProgram() -> usize {
+        use super::{Flags, Offsets, TRAILER};
+
+        // SAFETY: it returns the address of a static.
+        let vaddr = unsafe { core::ptr::read_unaligned(Bun__getStandaloneModuleGraphELFVaddr()) };
+        // SAFETY: `getauxval` only reads the vector the kernel gave the process.
+        let (first_header, header_count) = unsafe {
+            (
+                libc::getauxval(libc::AT_PHDR) as *const libc::Elf64_Phdr,
+                libc::getauxval(libc::AT_PHNUM) as usize,
+            )
+        };
+        if vaddr == 0 || first_header.is_null() {
+            return 0;
+        }
+        // SAFETY: the kernel mapped that many program headers of this executable there.
+        let headers = unsafe { core::slice::from_raw_parts(first_header, header_count) };
+        let load_bias = headers
+            .iter()
+            .find(|header| header.p_type == libc::PT_PHDR)
+            .map_or(0, |header| {
+                (first_header as usize).wrapping_sub(header.p_vaddr as usize)
+            });
+        let target = (vaddr as usize).wrapping_add(load_bias);
+        // `PT_LOAD` headers are in the order of their addresses.
+        let mut mapped_end = None;
+        for header in headers {
+            if header.p_type != bun_sys::elf::PT_LOAD {
+                continue;
+            }
+            let start = load_bias.wrapping_add(header.p_vaddr as usize);
+            let end = start + header.p_memsz as usize;
+            match mapped_end {
+                None if (start..end).contains(&target) => mapped_end = Some(end),
+                Some(previous_end) if previous_end == start => mapped_end = Some(end),
+                _ => {}
+            }
+        }
+        let Some(capacity) = mapped_end.and_then(|end| (end - target).checked_sub(8)) else {
+            return 0;
+        };
+        // `get_data` reports a truncated executable, at a time when errors can be printed.
+        if is_page_past_eof(target) {
+            return 0;
+        }
+        // SAFETY: at least 8 bytes are mapped at `target`.
+        let len =
+            u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target as *const [u8; 8]) });
+        if len > capacity as u64 || (len as usize) < size_of::<Offsets>() + TRAILER.len() {
+            return 0;
+        }
+        let end = target + 8 + len as usize;
+        if is_page_past_eof(end - 1) {
+            return 0;
+        }
+        // SAFETY: the payload is mapped up to `end` and is at least as long as both.
+        let (offsets, trailer) = unsafe {
+            (
+                core::ptr::read_unaligned(
+                    (end - TRAILER.len() - size_of::<Offsets>()) as *const Offsets,
+                ),
+                core::slice::from_raw_parts((end - TRAILER.len()) as *const u8, TRAILER.len()),
+            )
+        };
+        if trailer == TRAILER && offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
+            len as usize
+        } else {
+            0
+        }
+    }
+
+    /// The end of the `PT_LOAD` segments that follow the found one without a gap.
+    fn end_of_adjacent_segments(module: &bun_sys::elf::LoadedModule) -> usize {
+        // SAFETY: `program_headers` points to `program_header_count` headers of a loaded object.
+        let headers = unsafe {
+            core::slice::from_raw_parts(module.program_headers, module.program_header_count)
+        };
+        let mut end = module.segment_end;
+        // `PT_LOAD` headers are in the order of their addresses.
+        for header in headers {
+            if header.p_type == bun_sys::elf::PT_LOAD
+                && module.base_address.wrapping_add(header.p_vaddr as usize) == end
+            {
+                end += header.p_memsz as usize;
+            }
+        }
+        end
+    }
+
+    /// Exits with an error if the page at `addr` is past the end of a truncated executable.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn exit_if_page_is_past_eof(addr: usize) {
+        if is_page_past_eof(addr) {
+            exit_truncated();
+        }
+    }
+
+    /// Whether the page at `addr` is past the end of a truncated executable.
+    ///
+    /// Linux maps a `PT_LOAD`'s full `p_filesz` without checking the file's length, so a truncated
+    /// executable still starts, and reading a page past the end of the file raises SIGBUS.
+    /// `MADV_POPULATE_READ` (Linux 5.14) faults the page in like a read, but fails with `EFAULT`
+    /// instead. Any other result, such as `EINVAL` from an older kernel, skips the check.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn is_page_past_eof(addr: usize) -> bool {
+        let page_size = bun_alloc::page_size();
+        let page = (addr & !(page_size - 1)) as *mut core::ffi::c_void;
+        // SAFETY: `madvise` validates the range and doesn't read or write through it.
+        let rc = unsafe { libc::madvise(page, page_size, libc::MADV_POPULATE_READ) };
+        rc != 0 && bun_sys::last_errno() == libc::EFAULT
+    }
+
+    /// No-op, because FreeBSD's `execve` rejects a truncated executable.
+    #[cfg(target_os = "freebsd")]
+    fn exit_if_page_is_past_eof(_: usize) {}
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cold]
+    #[inline(never)]
+    fn exit_truncated() -> ! {
+        match bun_core::self_exe_path() {
+            Ok(exe) => bun_core::err_generic!(
+                "{} is truncated. Part of its embedded program is missing.",
+                bun_core::fmt::quote(exe.as_bytes())
+            ),
+            Err(_) => bun_core::err_generic!(
+                "This executable is truncated. Part of its embedded program is missing."
+            ),
+        }
+        bun_core::note!(
+            "The download or copy was probably interrupted. Download or install it again."
+        );
+        bun_core::Global::exit(1);
     }
 
     /// `MADV_WILLNEED` over `[lo, hi)`: queues page-cache readahead for the
@@ -638,7 +888,10 @@ pub struct File {
     wtf_string: std::sync::OnceLock<BunString>,
     utf8: std::sync::OnceLock<Box<[u8]>>,
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
+    // Built with a payload order file, this is the one payload all files share, and the file's own cache entry
+    // starts `bytecode_entry_offset` into it.
     pub bytecode: *mut [u8],
+    pub bytecode_entry_offset: u32,
     pub module_info: *mut [u8],
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
@@ -666,16 +919,8 @@ impl File {
     /// An `Encoding::Utf16` body as code units.
     fn utf16_units(&self) -> &'static [u16] {
         debug_assert!(self.encoding == Encoding::Utf16);
-        let bytes = self.contents.as_bytes();
-        debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
-        #[expect(
-            clippy::cast_ptr_alignment,
-            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
-        )]
-        // SAFETY: even byte count at a 2-byte-aligned offset of a section that is never freed.
-        unsafe {
-            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-        }
+        // `to_bytes` writes UTF-16 at an even offset of a page-aligned section.
+        bun_core::cast_slice(self.contents.as_bytes())
     }
 
     /// `contents` as the file's bytes: the section itself, or a UTF-8 transcode of a UTF-16 body made once.
@@ -727,9 +972,7 @@ impl File {
                             self.source_hash,
                         );
                     }
-                    Encoding::Latin1 => {
-                        BunString::create_static_external(self.contents.as_bytes(), true)
-                    }
+                    Encoding::Latin1 => BunString::create_static_external(self.contents.as_bytes()),
                     Encoding::Utf16 => {
                         let units = self.utf16_units();
                         if self.source_hash != 0 {
@@ -748,7 +991,7 @@ impl File {
     }
 }
 
-fn dir_stat() -> Stat {
+pub(crate) fn dir_stat() -> Stat {
     let mut result: Stat = bun_core::ffi::zeroed();
     result.st_mode = (libc::S_IFDIR | 0o755) as _;
     result
@@ -783,8 +1026,6 @@ impl LazySourceMap {
                 let ism = SourceMap::InternalSourceMap {
                     data: blob.as_ptr(),
                 };
-                // Note: `from_internal` fills `internal = Some(ism)` +
-                // `input_line_count = ism.input_line_count()` and defaults the rest.
                 let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
                 let source_files_count = serialized.source_files_count();
@@ -809,22 +1050,16 @@ impl LazySourceMap {
                     }));
                 }
 
-                let data = Box::new(SerializedSourceMapLoaded {
-                    map: SerializedSourceMap {
+                let data = Box::new(SourceMap::SerializedSourceMap::Loaded {
+                    map: SourceMap::SerializedSourceMap::SerializedSourceMap {
                         bytes: serialized.bytes,
                     },
                     decompressed_files: decompressed_contents_slice.into_boxed_slice(),
                 });
 
                 stored.external_source_names = file_names;
-                // `from_provider` stores the pointer as a raw address in
-                // `SourceContentPtr.data`; the provider dispatch is never
-                // invoked for this type-punned pointer (guarded by
-                // `is_standalone_module_graph`).
-                stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
-                    bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
-                );
-                stored.is_standalone_module_graph = true;
+                // Never freed, like the graph that holds `stored`.
+                stored.standalone_module_graph = Some(Box::leak(data));
 
                 let parsed = Arc::new(stored);
                 // The Arc clone held in self keeps the parsed map alive.
@@ -879,7 +1114,14 @@ bitflags::bitflags! {
         const HAS_PRELINKED_MODULE_GRAPH    = 1 << 11;
         /// After the prelinked-graph record: `u32 flags`, `u32 value` (`RuntimeOptions`). Absent = defaults.
         const HAS_RUNTIME_OPTIONS           = 1 << 12;
-        // _padding: u19
+        /// After the runtime options: `StringPointer` to the one bytecode payload of all modules
+        /// (`JSC::BytecodeLinkEncoder`, built with a payload order file), then where each of its
+        /// `bytecode_order::REGION_COUNT` regions ends (`u32` each; the first two regions are what the recorded run
+        /// read). A module's `bytecode` then runs from its cache entry to the end of that payload.
+        const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
+        /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
+        const HAS_COMPILED_PROGRAM          = 1 << 14;
+        // _padding: u17
     }
 }
 
@@ -896,10 +1138,11 @@ fn wtf_latin1_string_hash(bytes: &[u8]) -> u32 {
 }
 
 impl StandaloneModuleGraph {
-    fn from_bytes(
+    pub(crate) fn from_bytes(
         raw_ptr: *mut u8,
         raw_len: usize,
         offsets: Offsets,
+        payload_file: Option<ImageFile>,
     ) -> crate::Result<StandaloneModuleGraph> {
         if raw_len == 0 {
             return Ok(StandaloneModuleGraph {
@@ -911,11 +1154,13 @@ impl StandaloneModuleGraph {
                 flags: Flags::default(),
                 builtin_bytecode: Vec::new(),
                 bytecode_string_table: &[],
+                linked_bytecode_payload: None,
                 module_info_string_table: &[],
                 prelinked_module_graph: &[],
                 prelinked_module_files: Vec::new(),
                 startup_module_count: 0,
                 runtime_options: RuntimeOptions::default(),
+                compiled_program: None,
             });
         }
 
@@ -938,10 +1183,6 @@ impl StandaloneModuleGraph {
         // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
         let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
         let modules_list_base = modules_list_bytes.as_ptr();
-
-        if offsets.entry_point_id as usize > modules_list_count {
-            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
-        }
 
         let read_u32 = |at: usize| -> u32 {
             debug_assert!(at + 4 <= raw_len);
@@ -972,7 +1213,7 @@ impl StandaloneModuleGraph {
             None
         };
 
-        let mut builtin_bytecode: Vec<(u32, *mut [u8])> = Vec::new();
+        let mut builtin_bytecode: Vec<(u32, *mut [u8], u32)> = Vec::new();
         if offsets.flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
             let count = read_u32(record_at) as usize;
             record_at += size_of::<u32>();
@@ -986,7 +1227,7 @@ impl StandaloneModuleGraph {
                 record_at += 3 * size_of::<u32>();
                 // SAFETY: same provenance rules as `File::bytecode`: a writable subrange JSC may patch in place.
                 let bytes = unsafe { slice_to_mut(raw_ptr, raw_len, pointer) };
-                builtin_bytecode.push((id, bytes));
+                builtin_bytecode.push((id, bytes, 0));
             }
         }
 
@@ -1077,7 +1318,64 @@ impl StandaloneModuleGraph {
                 }
             }
         }
+        let mut linked_bytecode_payload = StringPointer::default();
+        let mut linked_bytecode_region_ends = [0u32; LINKED_BYTECODE_REGION_COUNT];
+        const LINKED_PAYLOAD_RECORD: usize = (2 + LINKED_BYTECODE_REGION_COUNT) * size_of::<u32>();
+        if offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD)
+            && record_at + LINKED_PAYLOAD_RECORD <= raw_len
+        {
+            let ptr = StringPointer {
+                offset: read_u32(record_at),
+                length: read_u32(record_at + 4),
+            };
+            for (i, end) in linked_bytecode_region_ends.iter_mut().enumerate() {
+                *end = read_u32(record_at + 8 + i * size_of::<u32>());
+            }
+            record_at += LINKED_PAYLOAD_RECORD;
+            if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len
+                && linked_bytecode_region_ends.is_sorted()
+                && linked_bytecode_region_ends[LINKED_BYTECODE_REGION_COUNT - 1] == ptr.length
+            {
+                linked_bytecode_payload = ptr;
+            }
+        }
+        let compiled_program = if offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
+            let payload = Payload {
+                base: raw_const,
+                length: raw_len,
+                file: payload_file,
+            };
+            Some(compiled_program::read(
+                &payload,
+                &mut record_at,
+                modules_list_count,
+            )?)
+        } else {
+            None
+        };
+        if linked_bytecode_payload.length != 0 {
+            // Like a module's `bytecode`, an internal module's runs from its cache entry to the end of the payload.
+            builtin_bytecode.retain_mut(|(_, bytes, entry_offset)| {
+                let start = (bytes.cast::<u8>() as usize).wrapping_sub(raw_ptr as usize);
+                let Some(offset) = start
+                    .checked_sub(linked_bytecode_payload.offset as usize)
+                    .filter(|&offset| offset < linked_bytecode_payload.length as usize)
+                else {
+                    return false;
+                };
+                *entry_offset = offset as u32;
+                // SAFETY: the payload's bounds were checked when its record was read.
+                *bytes = unsafe { slice_to_mut(raw_ptr, raw_len, linked_bytecode_payload) };
+                true
+            });
+        } else if offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD) {
+            // The flag without a payload that checks out (an executable someone edited): an internal module's entry
+            // refers to what lies before it, like a module's, so it cannot be decoded as a payload of its own either.
+            builtin_bytecode.clear();
+        }
         let _ = record_at;
+        let has_linked_bytecode_payload =
+            offsets.flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD);
         let mut file_prelinked_index = vec![u32::MAX; modules_list_count];
         for (module_index, &file) in prelinked_module_files.iter().enumerate() {
             file_prelinked_index[file as usize] = module_index as u32;
@@ -1095,6 +1393,17 @@ impl StandaloneModuleGraph {
                 )
             };
             let module = &module;
+            // A cache entry inside the linked payload; anything else (an executable someone edited) has no bytecode:
+            // what the entry refers to lies before it, so it cannot be decoded as a payload of its own.
+            let linked_entry_offset = (linked_bytecode_payload.length != 0
+                && module.bytecode.length > 0)
+                .then(|| {
+                    module
+                        .bytecode
+                        .offset
+                        .wrapping_sub(linked_bytecode_payload.offset)
+                })
+                .filter(|&entry_offset| entry_offset < linked_bytecode_payload.length);
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is in-bounds
             // (serialized by `to_bytes`) and disjoint from the writable bytecode/module_info
             // subranges; section bytes are a live 'static allocation.
@@ -1122,15 +1431,28 @@ impl StandaloneModuleGraph {
                     } else {
                         LazySourceMap::None
                     },
-                    bytecode: if module.bytecode.length > 0 {
+                    bytecode: if module.bytecode.length > 0
+                        && (linked_entry_offset.is_some() || !has_linked_bytecode_payload)
+                    {
                         // SAFETY: section bytes are a writable 'static allocation; JSC mutates
                         // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
                         // disjoint from every read-only subslice handed out above — no
                         // `&[u8]` is ever formed over this range.
-                        unsafe { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
+                        unsafe {
+                            slice_to_mut(
+                                raw_ptr,
+                                raw_len,
+                                if linked_entry_offset.is_some() {
+                                    linked_bytecode_payload
+                                } else {
+                                    module.bytecode
+                                },
+                            )
+                        }
                     } else {
                         std::ptr::from_mut::<[u8]>(&mut [])
                     },
+                    bytecode_entry_offset: linked_entry_offset.unwrap_or(0),
                     module_info: if module.module_info.length > 0 {
                         // SAFETY: see bytecode above.
                         unsafe { slice_to_mut(raw_ptr, raw_len, module.module_info) }
@@ -1157,11 +1479,20 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
+        let entry_point_id = offsets.entry_point_id;
+        // `entry_point()` indexes `files`, which has one entry per name, not one per record.
+        if entry_point_id as usize >= module_count {
+            return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
+        }
         modules.lock_pointers(); // make the pointers stable forever
 
         // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
         let mut dirs = StringArrayHashMap::<()>::new();
         for key in modules.keys() {
+            // `add_source_directories` adds these: it stops at the first ancestor already in `dirs`, this loop at 8 bytes.
+            if !is_bun_standalone_file_path(key) {
+                continue;
+            }
             let mut rest: &[u8] = key;
             while let Some(sep) = strings::last_index_of_char(rest, b'/') {
                 rest = &rest[..sep as usize];
@@ -1171,6 +1502,9 @@ impl StandaloneModuleGraph {
                 let _ = dirs.put(rest, ());
             }
         }
+        if let Some(program) = &compiled_program {
+            compiled_program::add_source_directories(&mut dirs, &modules, program);
+        }
         dirs.lock_pointers();
 
         Ok(StandaloneModuleGraph {
@@ -1179,7 +1513,7 @@ impl StandaloneModuleGraph {
             bytes: core::ptr::slice_from_raw_parts(raw_const, offsets.byte_count),
             files: modules,
             dirs,
-            entry_point_id: offsets.entry_point_id,
+            entry_point_id,
             // SAFETY: read-only argv string subrange, disjoint from writable regions.
             compile_exec_argv: unsafe {
                 slice_to_z(raw_const, raw_len, offsets.compile_exec_argv_ptr)
@@ -1188,20 +1522,28 @@ impl StandaloneModuleGraph {
             flags: offsets.flags,
             builtin_bytecode,
             bytecode_string_table,
+            linked_bytecode_payload: (linked_bytecode_payload.length != 0).then(|| {
+                (
+                    // SAFETY: the payload's bounds were checked when its record was read.
+                    unsafe { slice_to_mut(raw_ptr, raw_len, linked_bytecode_payload) },
+                    linked_bytecode_region_ends,
+                )
+            }),
             module_info_string_table,
             prelinked_module_graph,
             prelinked_module_files,
             startup_module_count: startup_module_count.min(module_count as u32),
             runtime_options,
+            compiled_program,
         })
     }
 
     /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.
-    pub fn builtin_module_bytecode(&self, id: u32) -> Option<*mut [u8]> {
+    pub fn builtin_module_bytecode(&self, id: u32) -> Option<(*mut [u8], u32)> {
         self.builtin_bytecode
             .iter()
-            .find(|(candidate, _)| *candidate == id)
-            .map(|(_, bytes)| *bytes)
+            .find(|(candidate, _, _)| *candidate == id)
+            .map(|&(_, bytes, entry_offset)| (bytes, entry_offset))
     }
 }
 
@@ -1219,7 +1561,6 @@ unsafe fn slice_to(base: *const u8, len: usize, ptr: StringPointer) -> &'static 
     let off = ptr.offset as usize;
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
-    let _ = len;
     // SAFETY: caller contract — `[off, off+n)` lies within a live 'static read-only allocation.
     unsafe { core::slice::from_raw_parts(base.add(off), n) }
 }
@@ -1234,7 +1575,6 @@ unsafe fn slice_to_mut(base: *mut u8, len: usize, ptr: StringPointer) -> *mut [u
     let off = ptr.offset as usize;
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end <= len));
-    let _ = len;
     // SAFETY: caller contract — `off` is in-bounds of the writable allocation at `base`.
     core::ptr::slice_from_raw_parts_mut(unsafe { base.add(off) }, n)
 }
@@ -1248,7 +1588,6 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
     let off = ptr.offset as usize;
     let n = ptr.length as usize;
     debug_assert!(off.checked_add(n).is_some_and(|end| end < len));
-    let _ = len;
     // SAFETY: caller contract — `[off, off+n]` is in-bounds with a NUL terminator at `base[off+n]`.
     unsafe { ZStr::from_raw(base.add(off), n) }
 }
@@ -1334,7 +1673,9 @@ pub(crate) fn to_bytes(
     compile_exec_argv: &[u8],
     flags: Flags,
     runtime_options: RuntimeOptions,
-) -> crate::Result<Vec<u8>> {
+    program: Option<&CompiledProgramInput<'_>>,
+    image_place: ImagePlace,
+) -> crate::Result<GraphBytes> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
 
@@ -1347,7 +1688,11 @@ pub(crate) fn to_bytes(
     let mut string_builder = bun_core::StringBuilder::default();
     let mut module_count: usize = 0;
     for output_file in output_files {
-        string_builder.count_z(&output_file.dest_path);
+        // `module.name` is formatted through `BStr`, which expands each invalid UTF-8 byte to 3 bytes.
+        string_builder.fmt_count(format_args!(
+            "{}\0",
+            bstr::BStr::new(&output_file.dest_path)
+        ));
         string_builder.count_z(prefix);
         if let options::OutputFileValue::Buffer { bytes } = &output_file.value {
             if output_file.output_kind == options::OutputKind::Sourcemap {
@@ -1359,6 +1704,7 @@ pub(crate) fn to_bytes(
             } else if output_file.output_kind == options::OutputKind::Bytecode
                 || output_file.output_kind == options::OutputKind::BuiltinBytecode
                 || output_file.output_kind == options::OutputKind::BytecodeStringTable
+                || output_file.output_kind == options::OutputKind::BytecodePayload
             {
                 // Allocate up to 256 byte alignment for bytecode (+ a table record for builtin bytecode)
                 string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
@@ -1386,15 +1732,19 @@ pub(crate) fn to_bytes(
     }
 
     if module_count == 0 || !has_entry_point {
-        return Ok(Vec::new());
+        return Ok(GraphBytes::default());
     }
 
     string_builder.cap +=
         (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
     string_builder.cap += TRAILER.len();
     string_builder.cap += 16 + 4 * size_of::<u32>();
+    string_builder.cap += (2 + bun_bundler::bytecode_order::REGION_COUNT) * size_of::<u32>();
     string_builder.cap += size_of::<Offsets>();
     string_builder.count_z(compile_exec_argv);
+    if let Some(program) = program {
+        string_builder.cap += compiled_program::capacity(program);
+    }
 
     string_builder.allocate()?;
 
@@ -1425,7 +1775,7 @@ pub(crate) fn to_bytes(
         module_files.push(output_file);
     }
     let Some(entry_point_file) = entry_point_file else {
-        return Ok(Vec::new());
+        return Ok(GraphBytes::default());
     };
     // Every per-module region below is written in load order (entry point's
     // static imports first, then dynamic imports breadth-first) so the modules
@@ -1444,6 +1794,15 @@ pub(crate) fn to_bytes(
         .take_while(|f| f.loads_at_startup)
         .count();
     let mut shared_bytecode: Option<(Vec<u8>, StringPointer, StringPointer, StringPointer)> = None;
+    // Built with a payload order file: all modules' bytecode is one payload (`JSC::BytecodeLinkEncoder`), written
+    // right after the shared bytecode so that its hot front extends the startup run; each module's `Bytecode` file says
+    // where its cache entry is in it (`bytecode_entry_offset`).
+    let linked_payload: Option<(&[u8], [u32; bun_bundler::bytecode_order::REGION_COUNT])> =
+        output_files
+            .iter()
+            .find(|f| f.output_kind == options::OutputKind::BytecodePayload)
+            .map(|f| bun_bundler::bytecode_order::split_payload_file(f.value.as_slice()));
+    let mut linked_payload_ptr = StringPointer::default();
 
     // `Flags::HAS_PRELINKED_MODULE_GRAPH`: graph module index -> file-table position, so the runtime registers a whole
     // import closure by index without looking any path up. Empty (and the graph is not embedded) unless every graph
@@ -1479,7 +1838,11 @@ pub(crate) fn to_bytes(
                 &mut string_builder,
                 output_files,
                 embed_prelinked_graph,
+                linked_payload.is_some(),
             ));
+            if let Some((payload, _)) = linked_payload {
+                linked_payload_ptr = append_bytecode_aligned(&mut string_builder, payload);
+            }
         }
         let buf_bytes = output_file.value.as_slice();
 
@@ -1501,10 +1864,15 @@ pub(crate) fn to_bytes(
                 //   RW PT_LOAD (see exe_format/elf.rs) at a page-aligned address, also
                 //   preceded by the same 8-byte length header, so the same arithmetic
                 //   applies.
-                let bytecode = output_files[output_file.bytecode_index as usize]
-                    .value
-                    .as_slice();
-                break 'brk append_bytecode_aligned(&mut string_builder, bytecode);
+                let bytecode = &output_files[output_file.bytecode_index as usize];
+                if linked_payload.is_some() {
+                    // The cache-entry offset for now; made a range of the payload once that is placed (below).
+                    break 'brk StringPointer {
+                        offset: bytecode.bytecode_entry_offset,
+                        length: 1,
+                    };
+                }
+                break 'brk append_bytecode_aligned(&mut string_builder, bytecode.value.as_slice());
             } else {
                 break 'brk StringPointer::default();
             }
@@ -1609,8 +1977,38 @@ pub(crate) fn to_bytes(
         module_info_string_table_ptr,
         prelinked_module_graph_ptr,
     ) = shared_bytecode.unwrap_or_else(|| {
-        append_shared_bytecode(&mut string_builder, output_files, embed_prelinked_graph)
+        let shared = append_shared_bytecode(
+            &mut string_builder,
+            output_files,
+            embed_prelinked_graph,
+            linked_payload.is_some(),
+        );
+        if let Some((payload, _)) = linked_payload {
+            linked_payload_ptr = append_bytecode_aligned(&mut string_builder, payload);
+        }
+        shared
     });
+    let mut builtin_bytecode_table = builtin_bytecode_table;
+    if linked_payload.is_some() {
+        // `u32 count`, then `{ u32 id, StringPointer bytes }` each.
+        for record in builtin_bytecode_table[4..].as_chunks_mut::<12>().0 {
+            let entry_offset = u32::from_le_bytes(record[4..8].try_into().expect("4 bytes"));
+            record[4..8].copy_from_slice(&(linked_payload_ptr.offset + entry_offset).to_le_bytes());
+            record[8..12]
+                .copy_from_slice(&(linked_payload_ptr.length - entry_offset).to_le_bytes());
+        }
+        for module in modules.iter_mut().filter(|m| m.bytecode.length != 0) {
+            let entry_offset = module.bytecode.offset;
+            module.bytecode = StringPointer {
+                offset: linked_payload_ptr.offset + entry_offset,
+                length: linked_payload_ptr.length - entry_offset,
+            };
+        }
+    }
+
+    let image_ptr = program
+        .map(|program| compiled_program::append_image(&mut string_builder, program, image_place))
+        .transpose()?;
 
     // Region layout after the bytecode/module_info run above: source maps
     // (unread until an error prints), then every file's source text as one run
@@ -1665,16 +2063,10 @@ pub(crate) fn to_bytes(
                 .append_count_z(&output_files[output_file.bytecode_index as usize].dest_path);
         }
     }
+    let entry_point_path_ptrs = program
+        .map(|program| compiled_program::append_entry_point_paths(&mut string_builder, program));
 
-    // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
-    // invariants; reinterpreting its backing storage as bytes is sound.
-    let modules_as_bytes: &[u8] = unsafe {
-        core::slice::from_raw_parts(
-            modules.as_ptr().cast::<u8>(),
-            modules.len() * size_of::<CompiledModuleGraphFile>(),
-        )
-    };
-    let modules_ptr = string_builder.append_count(modules_as_bytes);
+    let modules_ptr = string_builder.append_count(bun_core::slice_as_bytes(&modules));
     let hashes_ptr = string_builder.append_count(&source_hashes);
     debug_assert_eq!(hashes_ptr.offset, modules_ptr.offset + modules_ptr.length);
     let builtin_table_ptr = string_builder.append_count(&builtin_bytecode_table);
@@ -1722,6 +2114,28 @@ pub(crate) fn to_bytes(
         let _ = string_builder.append_count(&record);
         flags |= Flags::HAS_RUNTIME_OPTIONS;
     }
+    if let Some((_, region_ends)) = linked_payload {
+        let mut record: Vec<u8> = Vec::with_capacity(8 + 4 * region_ends.len());
+        record.extend_from_slice(&linked_payload_ptr.offset.to_le_bytes());
+        record.extend_from_slice(&linked_payload_ptr.length.to_le_bytes());
+        for end in region_ends {
+            record.extend_from_slice(&end.to_le_bytes());
+        }
+        let _ = string_builder.append_count(&record);
+        flags |= Flags::HAS_LINKED_BYTECODE_PAYLOAD;
+    }
+    if let (Some(program), Some(image_ptr), Some(entry_point_path_ptrs)) =
+        (program, image_ptr, &entry_point_path_ptrs)
+    {
+        append_compiled_program_record(
+            &mut string_builder,
+            program,
+            image_ptr,
+            entry_point_path_ptrs,
+            &module_files,
+        )?;
+        flags |= Flags::HAS_COMPILED_PROGRAM;
+    }
     if !target.is_host_platform()
         && output_files
             .iter()
@@ -1745,7 +2159,8 @@ pub(crate) fn to_bytes(
         flags,
     };
 
-    // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.
+    // SAFETY: `Offsets` is `#[repr(C)]` POD without padding. (`impl_no_uninit!` cannot see
+    // through the associated type `bitflags!` stores `Flags` in.)
     let offsets_as_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts((&raw const offsets).cast::<u8>(), size_of::<Offsets>())
     };
@@ -1762,8 +2177,10 @@ pub(crate) fn to_bytes(
             string_builder.ptr.unwrap().as_ptr(),
             string_builder.len,
             offsets,
+            None,
         )?;
         debug_assert_eq!(graph.files.count(), modules.len());
+        debug_assert_eq!(graph.compiled_program.is_some(), program.is_some());
         graph.files.unlock_pointers();
         graph.dirs.unlock_pointers();
 
@@ -1781,7 +2198,10 @@ pub(crate) fn to_bytes(
                 m.bytecode_origin_path,
             ]
         });
-        for p in others.chain([offsets.modules_ptr, offsets.compile_exec_argv_ptr]) {
+        for p in others
+            .chain([offsets.modules_ptr, offsets.compile_exec_argv_ptr])
+            .chain(image_ptr)
+        {
             let r = range(p);
             debug_assert!(p.length == 0 || r.end <= lo || r.start >= hi);
         }
@@ -1794,7 +2214,13 @@ pub(crate) fn to_bytes(
     let len = string_builder.len;
     let mut output = string_builder.move_to_slice().into_vec();
     output.truncate(len);
-    Ok(output)
+    Ok(GraphBytes {
+        bytes: output,
+        image: image_ptr.map(|pointer| ImageRange {
+            offset: pointer.offset,
+            length: pointer.length,
+        }),
+    })
 }
 
 pub(crate) type InjectOptions = WindowsOptions;
@@ -1876,12 +2302,16 @@ impl<'a> Injected<'a> {
 }
 
 pub(crate) fn inject<'a>(
-    bytes: &[u8],
+    payload: &mut PayloadParts<'_>,
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
+    output_directory: &[u8],
     temp_path_buf: &'a mut PathBuffer,
+    additions: &mut InjectionAdditions<'_>,
 ) -> Option<Injected<'a>> {
+    additions.name_executable(payload);
+    additions.log_part("behind the engine: name of the executable");
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
         Ok(len) => &cwd_buf[..len],
@@ -1917,6 +2347,21 @@ pub(crate) fn inject<'a>(
             return None;
         }
     };
+    // An executable with compiled code can be large: beside the output file, so the rename at the end stays in one directory of one file system.
+    #[cfg(not(windows))]
+    {
+        if additions.has_code {
+            let beside = bun_core::strings::concat(&[
+                output_directory,
+                SEP_STR.as_bytes(),
+                zname.as_bytes(),
+                &[0],
+            ]);
+            zname = ZStr::from_slice_with_nul(zname_owned.insert(beside));
+        }
+    }
+    #[cfg(windows)]
+    let _ = output_directory;
 
     let cleanup = |name: &ZStr, fd: Fd| {
         // Ensure we own the file
@@ -2022,19 +2467,13 @@ pub(crate) fn inject<'a>(
                                     let zname_z = bun_core::strings::concat(&[
                                         bun_bundler::bun_fs::RealFS::tmpdir_path(),
                                         SEP_STR.as_bytes(),
-                                        zname.as_bytes(),
+                                        bun_paths::basename(zname.as_bytes()),
                                         &[0],
                                     ]);
                                     // Note: the concat buffer is parked in
                                     // `zname_owned` (declared at fn entry) so it outlives the
                                     // loop and drops at fn exit.
-                                    let len = zname_z.len().saturating_sub(1);
-                                    zname_owned = Some(zname_z);
-                                    // SAFETY: trailing 0 byte appended above; `zname_owned`
-                                    // keeps the allocation alive for the rest of the fn.
-                                    zname = unsafe {
-                                        ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len)
-                                    };
+                                    zname = ZStr::from_slice_with_nul(zname_owned.insert(zname_z));
                                     continue;
                                 }
                             }
@@ -2088,7 +2527,14 @@ pub(crate) fn inject<'a>(
         {
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
-            if let Err(e) = bun_sys::copy_file(self_fd, fd) {
+            // A trimmed executable is written whole, from the template's bytes: an ELF one where it has compiled code.
+            let is_written_whole = additions.trims()
+                && match target.os {
+                    CompileTargetOs::Linux | CompileTargetOs::Freebsd => additions.has_code,
+                    CompileTargetOs::Mac => true,
+                    _ => false,
+                };
+            if !is_written_whole && let Err(e) = bun_sys::copy_file(self_fd, fd) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     e
@@ -2100,19 +2546,33 @@ pub(crate) fn inject<'a>(
             break 'brk fd;
         }
     };
+    #[cfg(windows)]
     let _ = (&mut zname_owned, &mut zname);
+    additions.log_part("behind the engine: copy of the template");
 
     match target.os {
         CompileTargetOs::Mac => {
-            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
-                    cleanup(zname, cloned_executable_fd);
-                    return None;
-                }
+            let bytes = payload.joined();
+            let symbols_size = additions.symbols.map_or(0, |symbols| symbols.table.len());
+            let mapped = MappedFile::open_with_room(self_exe, |template_size| {
+                bun_macho::MachoFile::room_for(template_size, bytes.len(), symbols_size)
+            });
+            let mut template = match mapped {
+                Some(mapped) => FileBytes::Mapping(mapped),
+                None => match bun_sys::File::read_from(Fd::cwd(), self_exe.as_bytes()) {
+                    Ok(b) => FileBytes::Vector(b),
+                    Err(err) => {
+                        bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
+                        cleanup(zname, cloned_executable_fd);
+                        return None;
+                    }
+                },
             };
-            let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
+            if !additions.edit_template(&mut template) {
+                cleanup(zname, cloned_executable_fd);
+                return None;
+            }
+            let mut macho_file = match bun_macho::MachoFile::over(template) {
                 Ok(f) => f,
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing standalone module graph: {}", e);
@@ -2120,24 +2580,16 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
-            if let Err(e) = macho_file.write_section(bytes) {
+            additions.add_macho_symbols(&mut macho_file);
+            if let Err(e) = macho_file.write_section(bytes, additions.has_code) {
                 bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
-            drop(input_bytes);
 
-            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
-
-            let mut buffered_writer = std::io::BufWriter::with_capacity(
-                512 * 1024,
-                bun_sys::FileWriter(cloned_executable_fd),
-            );
-            let written = match macho_file.build_and_sign(&mut buffered_writer) {
+            let file = bun_sys::File::borrow(&cloned_executable_fd);
+            let holds_template = !additions.has_code && !additions.trims();
+            let written = match macho_file.build_and_sign_into(file, holds_template) {
                 Ok(n) => n,
                 Err(e) => {
                     bun_core::pretty_errorln!(
@@ -2148,11 +2600,6 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
-            if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
-                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
             // The template copy may be longer than the signed output; codesign rejects bytes past the signature.
             if let Err(err) = Syscall::ftruncate(
                 cloned_executable_fd,
@@ -2164,8 +2611,7 @@ pub(crate) fn inject<'a>(
             }
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2175,7 +2621,8 @@ pub(crate) fn inject<'a>(
             ));
         }
         CompileTargetOs::Windows => {
-            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
+            let bytes = payload.joined();
+            let mut input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
@@ -2183,6 +2630,10 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
+            if !additions.edit_template(&mut input_bytes) {
+                cleanup(zname, cloned_executable_fd);
+                return None;
+            }
             let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
                 Ok(f) => f,
                 Err(e) => {
@@ -2199,7 +2650,7 @@ pub(crate) fn inject<'a>(
                 }
             }
             // Always strip authenticode when adding .bun section for --compile
-            if let Err(e) = pe_file.add_bun_section(bytes) {
+            if let Err(e) = pe_file.add_bun_section(bytes, additions.has_code) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return None;
@@ -2230,8 +2681,7 @@ pub(crate) fn inject<'a>(
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2242,59 +2692,105 @@ pub(crate) fn inject<'a>(
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
-            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    bun_core::pretty_errorln!("Error reading executable: {}", err);
+            let mapped_template = match additions.trims() {
+                true => None,
+                false => MappedFile::open(self_exe),
+            };
+            #[cfg(target_os = "linux")]
+            let written_from_cut_mapping = match additions.trims() && additions.has_code {
+                true => MappedFile::open(self_exe),
+                false => None,
+            }
+            .map(|mut mapped| {
+                if !additions.edit_template(&mut mapped) {
+                    return None;
+                }
+                Some(write_elf(
+                    cloned_executable_fd,
+                    TemplateBytes::ReadOnce(&mut mapped),
+                    None,
+                    payload,
+                    additions.symbols,
+                ))
+            });
+            #[cfg(not(target_os = "linux"))]
+            let written_from_cut_mapping = None;
+            let written = if let Some(written) = written_from_cut_mapping {
+                let Some(written) = written else {
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                };
+                written
+            } else if let Some(mut mapped) = mapped_template {
+                additions.write_build_id(&mut mapped);
+                let addresses = mapped.addresses();
+                let (template, file) = mapped.bytes_and_file();
+                write_elf(
+                    cloned_executable_fd,
+                    TemplateBytes::Kept(template),
+                    Some(Original {
+                        file,
+                        mapping: Some((addresses.start, addresses.end)),
+                    }),
+                    payload,
+                    additions.symbols,
+                )
+            } else {
+                let template = if additions.has_code {
+                    bun_sys::File::read_from(Fd::cwd(), self_exe.as_bytes())
+                } else {
+                    bun_sys::File::borrow(&cloned_executable_fd).read_to_end()
+                };
+                let mut input_bytes = match template {
+                    Ok(b) => b,
+                    Err(err) => {
+                        bun_core::pretty_errorln!("Error reading executable: {}", err);
+                        cleanup(zname, cloned_executable_fd);
+                        return None;
+                    }
+                };
+                if !additions.edit_template(&mut input_bytes) {
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                }
+                write_elf(
+                    cloned_executable_fd,
+                    TemplateBytes::Kept(&mut input_bytes),
+                    None,
+                    payload,
+                    additions.symbols,
+                )
+            };
+
+            additions.has_symbols = match written {
+                Ok(written) => written.has_symbols,
+                Err(error) => {
+                    match error {
+                        ElfWriteError::Template(e) => {
+                            bun_core::pretty_errorln!("Error initializing ELF file: {}", e)
+                        }
+                        ElfWriteError::Elf(e) => {
+                            bun_core::pretty_errorln!("Error writing .bun section to ELF: {}", e)
+                        }
+                        ElfWriteError::Seek(err) => bun_core::pretty_errorln!(
+                            "Error seeking to start of temporary file: {}",
+                            err
+                        ),
+                        ElfWriteError::Write(err) => {
+                            bun_core::pretty_errorln!("Error writing ELF file: {}", err)
+                        }
+                        ElfWriteError::Truncate(err) => {
+                            bun_core::pretty_errorln!("Error truncating ELF file: {}", err)
+                        }
+                    }
                     cleanup(zname, cloned_executable_fd);
                     return None;
                 }
             };
-
-            let mut elf_file = match bun_elf::ElfFile::init(input_bytes) {
-                Ok(f) => f,
-                Err(e) => {
-                    bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
-                    cleanup(zname, cloned_executable_fd);
-                    return None;
-                }
-            };
-
-            elf_file.normalize_interpreter();
-
-            if let Err(e) = elf_file.write_bun_section(bytes) {
-                bun_core::pretty_errorln!("Error writing .bun section to ELF: {}", e);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
-
-            if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
-
-            // Write the modified ELF data back to the file
-            let write_file = bun_sys::File::borrow(&cloned_executable_fd);
-            if let Err(err) = write_file.write_all(&elf_file.data) {
-                bun_core::pretty_errorln!("Error writing ELF file: {}", err);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
-            // Truncate the file to the exact size of the modified ELF
-            if let Err(err) = Syscall::ftruncate(
-                cloned_executable_fd,
-                i64::try_from(elf_file.data.len()).expect("int cast"),
-            ) {
-                bun_core::pretty_errorln!("Error truncating ELF file: {}", err);
-                cleanup(zname, cloned_executable_fd);
-                return None;
-            }
 
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
             return Some(Injected::new(
                 cloned_executable_fd,
@@ -2304,6 +2800,14 @@ pub(crate) fn inject<'a>(
             ));
         }
         _ => {
+            if additions.needs_executable_format() {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> this platform's executables cannot hold compiled code"
+                );
+                cleanup(zname, cloned_executable_fd);
+                return None;
+            }
+            let bytes = payload.joined();
             let total_byte_count: usize;
             #[cfg(windows)]
             {
@@ -2357,7 +2861,7 @@ pub(crate) fn inject<'a>(
                 }
             }
 
-            let mut remain = bytes;
+            let mut remain: &[u8] = bytes;
             while !remain.is_empty() {
                 match Syscall::write(cloned_executable_fd, remain) {
                     Ok(written) => remain = &remain[written..],
@@ -2376,8 +2880,7 @@ pub(crate) fn inject<'a>(
             let _ = Syscall::write(cloned_executable_fd, &total_byte_count.to_ne_bytes());
             #[cfg(not(windows))]
             {
-                // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755);
             }
 
             return Some(Injected::new(
@@ -2439,6 +2942,7 @@ pub(crate) fn download_to_path(
                 b"",
                 b"",
                 http_proxy,
+                bun_http::ProxySettings::from_env(env),
                 bun_http::FetchRedirect::Follow,
             ));
             async_http.client.progress_node =
@@ -2503,12 +3007,12 @@ pub(crate) fn download_to_path(
                 scopeguard::defer! {
                     let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
                 }
-                let extract_res = bun_libarchive::Archiver::extract_to_dir(
+                let extract_res = bun_archive::Archiver::extract_to_dir(
                     tarball_bytes.as_slice(),
                     tmpdir.fd(),
                     None,
                     &mut (),
-                    bun_libarchive::ExtractOptions {
+                    bun_archive::ExtractOptions {
                         // "package/bin"
                         depth_to_skip: 2,
                         ..Default::default()
@@ -2582,7 +3086,17 @@ pub fn target_executable(
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
-        let dest_z = target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download);
+        let dest_z =
+            match target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download) {
+                Ok(dest) => dest,
+                Err(_) => {
+                    return Err(CompileError::fmt(format_args!(
+                        "Cache directory path for '{}' is too long: {}",
+                        target,
+                        bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
+                    )));
+                }
+            };
 
         if needs_download {
             if let Err(e) = download_to_path(target, env, dest_z) {
@@ -2626,8 +3140,17 @@ pub fn target_builtins(
 ) -> Result<Option<std::sync::Arc<[u8]>>, CompileError> {
     use bun_exe_format::builtins::{Builtins, BuiltinsError, find_section};
     let exe = target_executable(target, env, self_exe_path)?;
-    let file = match bun_sys::File::read_from(Fd::cwd(), exe.as_bytes()) {
-        Ok(bytes) => bytes,
+    let section = match with_executable_image(&exe, |image| {
+        find_section(image).and_then(|(offset, length)| {
+            let mut section = vec![0u8; length];
+            if !(image.read)(offset, &mut section) {
+                return Err(BuiltinsError::Invalid);
+            }
+            Builtins::parse(&section)?;
+            Ok(section)
+        })
+    }) {
+        Ok(section) => section,
         Err(e) => {
             return Err(CompileError::fmt(format_args!(
                 "failed to read executable for '{}': {}",
@@ -2635,7 +3158,7 @@ pub fn target_builtins(
             )));
         }
     };
-    match find_section(&file).and_then(|section| Builtins::parse(section).map(|_| section)) {
+    match section {
         Ok(section) => Ok(Some(std::sync::Arc::from(section))),
         // No section (a bun from before there was one), a newer layout than this bun reads, or a container this reader
         // doesn't handle: its internal modules load from source. A section that is there but malformed is an error.
@@ -2648,6 +3171,17 @@ pub fn target_builtins(
             "failed to read the builtin modules of the executable for '{}': {}",
             target, e
         ))),
+    }
+}
+
+/// The writer of ELF files takes the image from where it lies. Those of Mach-O and PE files make the whole file in one buffer.
+fn place_of_image(
+    target: &CompileTarget,
+    program: Option<&CompiledProgramInput<'_>>,
+) -> ImagePlace {
+    match (target.os, program) {
+        (CompileTargetOs::Linux | CompileTargetOs::Freebsd, Some(_)) => ImagePlace::OutsideGraph,
+        _ => ImagePlace::InGraph,
     }
 }
 
@@ -2664,10 +3198,12 @@ pub fn to_executable(
     self_exe_path: Option<&[u8]>,
     flags: Flags,
     runtime_options: RuntimeOptions,
+    additions: &mut ExecutableAdditions<'_, '_>,
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
-    let bytes = match to_bytes(
+    let image_place = place_of_image(target, additions.compiled_program.as_deref());
+    let GraphBytes { mut bytes, image } = match to_bytes(
         target,
         module_prefix,
         output_files,
@@ -2675,6 +3211,8 @@ pub fn to_executable(
         compile_exec_argv,
         flags,
         runtime_options,
+        additions.compiled_program.as_deref(),
+        image_place,
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -2687,6 +3225,9 @@ pub fn to_executable(
     if bytes.is_empty() {
         return Ok(CompileResult::fail(CompileErrorReason::NoOutputFiles));
     }
+    if additions.compiled_program.is_some() {
+        bun_aot::statistics::log_part_outside_stages("behind the engine: the payload");
+    }
     // bytes drops at end of scope
 
     let self_exe = match target_executable(target, env, self_exe_path) {
@@ -2695,12 +3236,36 @@ pub fn to_executable(
     };
 
     let mut temp_path_buf = bun_paths::path_buffer_pool::get();
+    #[cfg(windows)]
+    let output_directory: &[u8] = b".";
+    #[cfg(not(windows))]
+    let mut output_directory_buf = bun_paths::path_buffer_pool::get();
+    #[cfg(not(windows))]
+    let output_directory: &[u8] = if additions.compiled_program.is_some() {
+        match bun_sys::get_fd_path(root_dir, &mut output_directory_buf) {
+            Ok(directory) => directory,
+            Err(_) => b".",
+        }
+    } else {
+        b"."
+    };
+    let mut injection = additions.for_injection(image);
+    let image_outside_graph = match image_place {
+        ImagePlace::InGraph => None,
+        ImagePlace::OutsideGraph => additions
+            .compiled_program
+            .as_deref_mut()
+            .map(|program| &mut *program.image),
+    };
+    let mut payload = PayloadParts::new(&mut bytes, image, image_outside_graph);
     let Some(injected) = inject(
-        &bytes,
+        &mut payload,
         &self_exe,
         windows_options,
         target,
+        output_directory,
         &mut temp_path_buf,
+        &mut injection,
     ) else {
         // inject() has already printed the specific error.
         return Ok(CompileResult::fail_fmt(format_args!(
@@ -2709,6 +3274,7 @@ pub fn to_executable(
         )));
     };
     let fd = injected.fd;
+    additions.details = injection.into_details(fd);
     // Closed explicitly at every return below rather than by a guard: on Windows
     // the handle has to be closed mid-function, before `MoveFileExW`.
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
@@ -2822,12 +3388,11 @@ pub fn to_executable(
     #[cfg(not(windows))]
     {
         let temp_posix = injected.temp_path;
-        let outfile_basename = bun_paths::basename(outfile);
-        let mut outfile_posix_buf = bun_paths::path_buffer_pool::get();
-        let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
+        // `resolve_path::z` returns "" for a name that's too long, which would make the rename fail with ENOENT.
+        let outfile_posix = bun_core::ZBox::from_bytes(bun_paths::basename(outfile));
 
         if let Err(e) =
-            bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, outfile_posix)
+            bun_sys::move_file_z_with_handle(fd, Fd::cwd(), temp_posix, root_dir, &outfile_posix)
         {
             fd.close();
 
@@ -2874,9 +3439,47 @@ impl StandaloneModuleGraph {
         let Some((base, len)) = data else {
             return Ok(None);
         };
+        Self::from_payload(base, len, None)
+    }
+
+    /// For an executable that can run nothing but its embedded program, and found none.
+    #[cold]
+    #[inline(never)]
+    pub fn exit_without_program() -> ! {
+        match bun_core::self_exe_path() {
+            Ok(exe) => bun_core::err_generic!(
+                "{} is damaged. Its embedded program can't be read.",
+                bun_core::fmt::quote(exe.as_bytes())
+            ),
+            Err(_) => bun_core::err_generic!(
+                "This executable is damaged. Its embedded program can't be read."
+            ),
+        }
+        bun_core::note!(
+            "The download or copy was probably interrupted. Download or install it again."
+        );
+        bun_core::Global::exit(1);
+    }
+
+    /// `payload_file`: the file `base` was mapped from; `None` when it is a loaded section of this executable.
+    pub(crate) fn from_payload(
+        base: *mut u8,
+        len: usize,
+        payload_file: Option<ImageFile>,
+    ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+        let Some(offsets) = Self::read_offsets(base, len) else {
+            return Ok(None);
+        };
+        let graph = from_bytes_alloc(base, len, offsets, payload_file)?;
+        // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
+        unsafe { &*graph }.prefetch_startup_pages();
+        Ok(Some(graph))
+    }
+
+    fn read_offsets(base: *mut u8, len: usize) -> Option<Offsets> {
         if len < size_of::<Offsets>() + TRAILER.len() {
             bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-            return Ok(None);
+            return None;
         }
         // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
         // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
@@ -2887,14 +3490,10 @@ impl StandaloneModuleGraph {
             unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
         if trailer_bytes != TRAILER {
             bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-            return Ok(None);
+            return None;
         }
         // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-        let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-        let graph = from_bytes_alloc(base, len, offsets)?;
-        // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
-        unsafe { &*graph }.prefetch_startup_pages();
-        Ok(Some(graph))
+        Some(unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) })
     }
 
     /// Starts reading the payload pages the entry point's static import closure
@@ -2913,11 +3512,30 @@ impl StandaloneModuleGraph {
         }
         let startup = &self.files.values()[..self.startup_module_count as usize];
         let span = if startup.iter().any(|f| !f.bytecode.is_empty()) {
+            // A linked payload follows the string table; its hot front is what any module reads at startup.
+            let linked_hot = self.linked_bytecode_payload.map(|(payload, region_ends)| {
+                // Heads of the modules the recorded run evaluated, then the function bodies it decoded.
+                core::ptr::slice_from_raw_parts_mut(payload.cast::<u8>(), region_ends[1] as usize)
+            });
             address_span(
                 startup
                     .iter()
-                    .flat_map(|f| [f.bytecode, f.module_info])
-                    .chain(self.builtin_bytecode.iter().map(|&(_, bytes)| bytes))
+                    .flat_map(|f| {
+                        let own_bytecode = if self.linked_bytecode_payload.is_some() {
+                            core::ptr::slice_from_raw_parts_mut(f.bytecode.cast::<u8>(), 0)
+                        } else {
+                            f.bytecode
+                        };
+                        [own_bytecode, f.module_info]
+                    })
+                    .chain(linked_hot)
+                    .chain(
+                        self.builtin_bytecode
+                            .iter()
+                            // (In a linked payload their hot part is in `linked_hot`.)
+                            .filter(|_| self.linked_bytecode_payload.is_none())
+                            .map(|&(_, bytes, _)| bytes),
+                    )
                     .map(|bytes| (bytes.cast::<u8>().cast_const(), bytes.len()))
                     .chain([(
                         self.bytecode_string_table.as_ptr(),
@@ -3039,6 +3657,7 @@ fn append_shared_bytecode(
     string_builder: &mut bun_core::StringBuilder,
     output_files: &[OutputFile],
     embed_prelinked_graph: bool,
+    linked: bool,
 ) -> (Vec<u8>, StringPointer, StringPointer, StringPointer) {
     let mut builtin_bytecode_table: Vec<u8> = Vec::new();
     let mut count: u32 = 0;
@@ -3056,7 +3675,15 @@ fn append_shared_bytecode(
         else {
             continue;
         };
-        let pointer = append_bytecode_aligned(string_builder, bytes);
+        let pointer = if linked {
+            // The cache-entry offset for now; `to_bytes` makes it a range of the payload once that is placed.
+            StringPointer {
+                offset: output_file.bytecode_entry_offset,
+                length: 0,
+            }
+        } else {
+            append_bytecode_aligned(string_builder, bytes)
+        };
         builtin_bytecode_table.extend_from_slice(&id.to_le_bytes());
         builtin_bytecode_table.extend_from_slice(&pointer.offset.to_le_bytes());
         builtin_bytecode_table.extend_from_slice(&pointer.length.to_le_bytes());
@@ -3134,8 +3761,9 @@ fn from_bytes_alloc(
     raw_ptr: *mut u8,
     raw_len: usize,
     offsets: Offsets,
+    payload_file: Option<ImageFile>,
 ) -> crate::Result<*mut StandaloneModuleGraph> {
-    let graph = StandaloneModuleGraph::from_bytes(raw_ptr, raw_len, offsets)?;
+    let graph = StandaloneModuleGraph::from_bytes(raw_ptr, raw_len, offsets, payload_file)?;
     Ok(StandaloneModuleGraph::set(graph))
 }
 
@@ -3202,16 +3830,6 @@ impl SerializedSourceMap {
     }
 }
 
-/// Once loaded, this map stores additional data for keeping track of source code.
-pub struct SerializedSourceMapLoaded {
-    pub map: SerializedSourceMap,
-
-    /// Only decompress source code once! Once a file is decompressed,
-    /// it is stored here. Decompression failures are stored as an empty
-    /// string, which will be treated as "no contents".
-    pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
-}
-
 pub(crate) fn serialize_json_source_map_for_standalone(
     header_list: &mut Vec<u8>,
     string_payload: &mut Vec<u8>,
@@ -3258,7 +3876,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         return Err(crate::Error::InvalidSourceMap);
     }
 
-    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq, 0)
+    let map_blob = SourceMap::InternalSourceMap::from_vlq(map_vlq)
         .map_err(|_| crate::Error::InvalidSourceMap)?;
 
     // Every offset/length in the serialized map is a u32 `StringPointer`;

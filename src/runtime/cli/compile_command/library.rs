@@ -9,7 +9,7 @@ use bun_ast::Expr;
 use bun_core::{Global, Output};
 use bun_options_types::context::ContextData;
 use bun_paths::platform::Auto;
-use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal, join_abs_string};
+use bun_paths::resolve_path::join_abs_string;
 use bun_paths::string_paths::without_trailing_slash_windows_path;
 
 pub(crate) use self::declarations::{add_declaration_files, is_declaration_file};
@@ -118,6 +118,18 @@ fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
     join_abs_string::<Auto>(working_directory, &[path]).to_vec()
 }
 
+// `path` is `folder` or is inside it. The bytes are compared as they are, so a name in another case is another
+// folder. Where the file system takes the two for one, the real path of the folder shows it.
+fn is_or_holds(folder: &[u8], path: &[u8]) -> bool {
+    // Only a root has a separator at its end.
+    let folder = folder.strip_suffix(&[bun_paths::SEP]).unwrap_or(folder);
+    match path.strip_prefix(folder) {
+        Some([]) => true,
+        Some([first, ..]) => bun_paths::is_sep_native(*first),
+        None => false,
+    }
+}
+
 fn real_path(directory: &[u8]) -> Option<Vec<u8>> {
     let opened = bun_sys::Dir::open(directory).ok()?;
     let mut buffer = bun_paths::path_buffer_pool::get();
@@ -161,7 +173,7 @@ impl Outdir {
                 false => None,
             };
             let project_directory = project_directory.as_deref().unwrap_or(&project.directory);
-            if is_parent_or_equal(real, project_directory) != ParentEqual::Unrelated {
+            if is_or_holds(real, project_directory) {
                 return Err(LibraryError::OutdirHoldsProject {
                     outdir: real.to_vec(),
                 });
@@ -184,9 +196,8 @@ impl Outdir {
         Ok(outdir)
     }
 
-    // `path` is the folder or is inside it.
     fn holds(&self, path: &[u8]) -> bool {
-        let holds = |folder: &[u8]| is_parent_or_equal(folder, path) != ParentEqual::Unrelated;
+        let holds = |folder: &[u8]| is_or_holds(folder, path);
         holds(&self.folder) || self.real.as_deref().is_some_and(holds)
     }
 }
@@ -260,11 +271,11 @@ impl Library {
         ctx.bundler_options.outdir = self.outdir.folder.as_slice().into();
     }
 
-    // `root_directory` is a real path, and every entry point is inside it.
+    // `folder` is the real path of the folder that the entry points share.
     #[cold]
-    pub(crate) fn check_root_directory(&self, root_directory: &[u8], entry_points: &[Box<[u8]>]) {
+    pub(crate) fn check_folder_of_entry_points(&self, folder: &[u8], entry_points: &[Box<[u8]>]) {
         if let Some(entry_point) = entry_points.first()
-            && self.outdir.holds(root_directory)
+            && self.outdir.holds(folder)
         {
             let entry_point = entry_point.to_vec();
             LibraryError::EntryPointInsideOutdir { entry_point }.exit();

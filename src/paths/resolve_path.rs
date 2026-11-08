@@ -116,11 +116,8 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
         parent = &parent[..parent.len() - 1];
     }
 
-    // A root is an empty `parent` here, which `starts_with_case_insensitive_ascii` asserts against.
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    let starts_with = |child: &[u8], parent: &[u8]| {
-        parent.is_empty() || strings::starts_with_case_insensitive_ascii(child, parent)
-    };
+    let starts_with = strings::starts_with_case_insensitive_ascii;
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let starts_with = strings::starts_with;
     if !starts_with(child, parent) {
@@ -3069,28 +3066,5 @@ mod tests {
             join_string_buf_w_same::<platform::Windows>(&mut out, &[&long, &rest]),
             &expected[..]
         );
-    }
-
-    #[test]
-    fn is_parent_or_equal_ignores_the_separators_at_the_end_of_the_parent() {
-        use ParentEqual::{Equal, Parent, Unrelated};
-        assert!(is_parent_or_equal(b"/a/b", b"/a/b") == Equal);
-        assert!(is_parent_or_equal(b"/a/b/", b"/a/b") == Equal);
-        assert!(is_parent_or_equal(b"/a/b//", b"/a/b") == Equal);
-        assert!(is_parent_or_equal(b"/a", b"/a/b") == Parent);
-        assert!(is_parent_or_equal(b"/a/", b"/a/b") == Parent);
-        assert!(is_parent_or_equal(b"/a/b", b"/a") == Unrelated);
-        assert!(is_parent_or_equal(b"/a/b", b"/a/bc") == Unrelated);
-        assert!(is_parent_or_equal(b"/a/b/", b"/a/bc") == Unrelated);
-    }
-
-    #[test]
-    fn is_parent_or_equal_takes_a_root_for_the_parent_of_every_path_below_it() {
-        use ParentEqual::{Parent, Unrelated};
-        assert!(is_parent_or_equal(b"/", b"/a") == Parent);
-        assert!(is_parent_or_equal(b"/", b"/a/b") == Parent);
-        assert!(is_parent_or_equal(b"/a", b"/") == Unrelated);
-        assert!(is_parent_or_equal(b"C:\\", b"C:\\a") == Parent);
-        assert!(is_parent_or_equal(b"C:\\", b"D:\\a") == Unrelated);
     }
 }

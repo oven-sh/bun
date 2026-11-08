@@ -7,13 +7,11 @@ use crate::load::sources::SourceKind;
 use crate::load::{
     EntryPointKind, PerProject, ProgramFile, ProjectId, Sources, is_host_path, read_file_bytes,
 };
-use crate::modules::{ModuleGraph, ModuleRef, SiteAnswer};
+use crate::modules::{ModuleGraph, ModuleRef};
 use crate::report::{ModuleOrigin, ModuleSource, SourceTexts};
 use crate::statistics::{Stage, StepClock};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::erasure::PackedTypeRanges;
-use bun_sema::hir::ExprKind;
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::to_native;
@@ -93,34 +91,6 @@ pub(super) fn collect_names_followed(
             {
                 let found = || Some(sources.public_path(target).to_vec());
                 let name = files.atoms.bytes(spelled.spelling);
-                names.push(FollowedName {
-                    folder_and_name_as_written: [folder, b"//", name].concat(),
-                    public_path_for_require: is_required.then(found).flatten(),
-                    public_path_for_import: (!is_required).then(found).flatten(),
-                });
-            }
-        }
-        let analysis = files.analysis(file);
-        for (index, site) in analysis.import_sites.iter().enumerate() {
-            if analysis.path_to_resolve_from(index).is_some() {
-                continue;
-            }
-            let (call, is_required) = match site.kind {
-                ImportSiteKind::RequireResolve(call) => (call, true),
-                ImportSiteKind::ImportMetaResolve(call) => (call, false),
-                _ => continue,
-            };
-            let hir = files.hir(file);
-            if !matches!(hir[call].kind, ExprKind::Call(call) if hir[call].args.len() == 1) {
-                continue;
-            }
-            if let ImportSpecifier::Constant(written) = site.specifier
-                && let Some(SiteAnswer::Module(ModuleRef::File(target))) =
-                    graph.find_site_answer(file, site.kind)
-                && left_out.binary_search(&target).is_err()
-            {
-                let found = || Some(sources.public_path(target).to_vec());
-                let name = files.atoms.bytes(written);
                 names.push(FollowedName {
                     folder_and_name_as_written: [folder, b"//", name].concat(),
                     public_path_for_require: is_required.then(found).flatten(),

@@ -1,0 +1,51 @@
+# -- source: main.ts
+# declare const seen: any;
+# function note(value: any) {}
+#
+# class Idle {}
+#
+# class Counter {
+#   bump() {}
+# }
+# function turn(holder: any): any {
+#   for (;;) {
+#     while (holder !== holder) note(holder);
+#     holder.bump();
+#     while (seen);
+#   }
+# }
+# const idle: any = new Idle();
+#
+# class Plain {}
+#
+# class Stepper extends Plain {
+#   bump() {}
+# }
+# function pass(holder: any, more?: any): any {
+#   note(holder);
+# }
+# const plain: any = new Plain();
+#
+# class Spare {}
+# function spin(holder: any, other: any): any {
+#   for (;;) note(other);
+# }
+# let calls = 0;
+# Reflect.set(idle, ["bump"][0], () => void calls++);
+# try {
+#   turn(idle), turn(new Counter())(idle())[(pass(new Stepper()), pass(plain, plain()))](spin(0, new Spare()).join);
+# } catch (error: any) {
+#   console.log(error.constructor.name, calls);
+# }
+# export {};
+# -- end of source
+# `holder.bump();`: some of the receivers have a row in the table of methods and the others have none: a test of the shape, the call through the table on one side, the read and the call as written on the other.
+# The other side guesses at the method that it finds and has a meeting of its own, and what nobody reads behind a meeting is bound to nothing. The walk took "nothing is bound" for "this side has ended":
+# the block of that meeting, which two edges lead to, had no end: the build stopped.
+# f2 = turn
+# RUN: walk f2 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK: = CallTable {{*}}key="bump"
+# CHECK: = PropGet {{*}}key="bump"
+# CHECK: = TypeTest {{*}}testedType=f
+# CHECK: = Call {{*}}calleeKey="bump"

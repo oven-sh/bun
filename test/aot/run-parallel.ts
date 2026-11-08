@@ -12,7 +12,7 @@
 //                     keeps more than a build without it: what a program says that a build counts or prints is not asked, and no `// Todo:` is held to fail
 //   --env-of-the-executable="A=b C=d"   every executable runs with these variables too. No build does, and no reference: the programs under a collector that is forced, say.
 //                     What a run counts, how it grows and what it prints of what the compiler saves hang on when the collector runs: they are not asked, and no `// Todo:` is held to fail
-//   --instructions    how a program grows with its data, or a build with its program, is counted in instructions (`perf stat`, Linux), not taken from the clock: the same on a machine that is shared
+//   --instructions    how a program grows with its data, or a build with its program, is counted by `perf stat` (Linux): for a machine on which this process may open no counter of its own
 //   --deal            builds and runs nothing: prints a line for each program, { ms, files }, with what all its builds take. scripts/runner.node.ts deals the programs to the shards by it
 //   --keep-statistics   the first build of every program is asked what it counted, and the line of the file says it: `statistics: { <name>: <n>, .. }`, without the zeros:
 //                     for whoever sums over all programs how often each mechanism of the compiler fires, build of Bun by build of Bun. CI does not say it
@@ -68,7 +68,8 @@
 //                                      Nothing anywhere else. There is no such line for every platform
 //   // Skip under ASAN: <why>          the same where Bun is built with the address sanitizer
 //   // Todo under ASAN: <why>          the same where Bun is built with the address sanitizer, and nothing anywhere else. There it goes before the other two
-//                                      How a program or its build grows is not asked under ASAN, so no `// Todo:` of a program that says `// Grows:` is held to fail there
+//                                      How a program or its build grows is not asked under ASAN, so no `// Todo:` of a program that says `// Grows:` is held to fail there,
+//                                      nor where no instructions are counted
 //   // Todo under --aot-erase-types: <why>   its build with those flags does not pass today. The others are held as ever. It fails once that one passes: the line goes out.
 //   // Todo under a check: <why>       the same for every build with --aot-check= among its flags
 //   // Under: <flags>: <why>           it is built once more with those flags, and held to the same. A line for each such build
@@ -90,9 +91,10 @@
 //                                      In a folder with a main file they may stand in any file: none of the others is a program
 //   // Sizes: 1000 4000 16000          what one piece of its data costs must not hang on how much data there is. The program makes its data of the size that SIZE says and
 //   // Passes: 350                     does its deed PASSES times over. Three sizes, each four times the one before. The executable of the first build is run at each, and
-//   // Grows: linear                   (t(16n) - t(4n)) / (t(4n) - t(n)) is at most 9: the differences strike out the start, linear gives 4, n log n less than 5, a square 16.
-//                                      t is the time the processors spent in the program, and the passes are raised until the smallest run takes 50 ms. Only what is over
-//                                      the bound is run twice more, and judged by the least at each size. Under --instructions t is a count, and the bound is 6.
+//   // Grows: linear                   (t(16n) - t(4n)) / (t(4n) - t(n)) is at most 6: the differences strike out the start, linear gives 4, n log n less than 5, a square 16.
+//                                      t is a count of instructions: under --instructions, and without it wherever Linux lets this process open a counter of its own (in CI:
+//                                      Alpine on x64). Elsewhere the executable is run at each size all the same and held to end as the program ends, and what the clock
+//                                      read is said and not judged. So a square that only the code for one platform has shows only where that platform counts.
 //                                      All three lines or none. Not asked under --more-flags or ASAN.
 //                                      Whoever writes one: the passes make some 200 M instructions at the smallest size; what it keeps alive stays small (past some 30,000
 //                                      cells a unit costs twice as much, once, in plain Bun too: three sizes cannot tell that step from a square); plain Bun is linear in it
@@ -762,8 +764,9 @@ function settle(program: Program, verdict: Record<string, unknown>) {
   if (program.todo !== undefined && !all.some(({ died }) => died)) {
     // Whichever way ends last settles the file, and only the first build says how it grows.
     const growth = asWritten.find(({ file }) => file === program.file)?.growth;
-    // Of how a build grows only the peak is judged where nothing is counted: a mark may stand for the instructions, and a run that has not counted them has not seen it met.
-    const isHalfJudged = growth?.of === "the build" && !countsInstructions && !opensCounterOfItsOwn();
+    // Where nothing is counted, only the peak is judged of how a build grows, and nothing of how a program grows: a mark may stand for the instructions, and a run that has not
+    // counted them has not seen it met.
+    const isHalfJudged = growth && !countsInstructions && !opensCounterOfItsOwn();
     if (failed || moreFlags.length || !runsAreAsUsersRunThem || (isASAN && growth) || isHalfJudged) {
       if (program.todo.startsWith("only frames")) programsMarkedForFramesAlone++;
       return say({ file: program.file, state: "skip", message: `todo: ${program.todo}`, ...goalsNotMetOf(program.file) });
@@ -1015,16 +1018,11 @@ function unmetBounds(file: string, counted: Map<string, number>, bounds: Bound[]
   });
 }
 
-// Counted, a linear program reads 3.9 to 5.2. By the clock, on a machine with twice as much to do as it has processors, up to 6.9; a square 14 to 16 either way.
-const mostThatIsLinear = countsInstructions ? 6 : 9;
-// No linear program has read more than this. What reads more is measured again, and the least of three runs at each size is judged.
-// What then still reads more than is linear is measured on, up to seven runs at each size: a program that counted reads 4.03 read 8.77 at the most in 200 such judgements
-// on a busy machine, and 9.96 and 10.15 on another. A square reads 14 to 16 however often it is measured.
-const mostThatIsLinearAtOnce = countsInstructions ? 6 : 6.9;
-const leastMsOfSmallestRun = 50;
+// A linear program reads 3.9 to 5.2, a square 14 to 16.
+const mostThatIsLinear = 6;
 /**
  * How what the executable takes grows with its data. A run that does not end as the program ends fails it.
- * Other work on the machine can only make a run longer. A longer run at the middle size makes a square look linear: 54 | 429 | 3170 ms read 7.31.
+ * The clock is no count: on one kind of machine two programs that counted read 3.92 and 4.08 read 10.15 and 9.66 by it, the second by the least of seven runs at each size.
  */
 async function measureGrowth(
   { growth, exitCode }: Program,
@@ -1033,16 +1031,28 @@ async function measureGrowth(
   env: Record<string, string | undefined>,
 ): Promise<{ growth: number; measured?: string; message?: string; output?: Output }> {
   const { sizes } = growth!;
+  const isCounted = countsInstructions || opensCounterOfItsOwn();
   // A count has no noise to speak of, and an eighth of the work says the same.
-  let passes = countsInstructions ? Math.max(1, Math.round(growth!.passes / 8)) : growth!.passes;
+  const passes = isCounted ? Math.max(1, Math.round(growth!.passes / 8)) : growth!.passes;
   const counted = `${executable}.instructions`;
-  const take = async (size: number) => {
+  const take = async (size: number): Promise<{ output: Output; taken: number }> => {
+    const sized = { ...env, SIZE: String(size), PASSES: String(passes) };
+    if (isCounted && !countsInstructions) {
+      const run = await withSlot(() => measureHere(cwd, [executable], timeLimit([executable]) * 1000, sized));
+      const output = {
+        exitCode: run.signalCode ? null : run.exitCode,
+        signal: run.signalCode,
+        stdout: run.stdout,
+        stderr: run.stderr,
+        overLimit: run.exceededMemoryLimit ? "it held more than it may" : undefined,
+      };
+      const endsAsTheProgram = !output.overLimit && !output.signal && output.exitCode === exitCode;
+      return { output, taken: endsAsTheProgram ? (run.instructions ?? NaN) / 1e6 : NaN };
+    }
     const cmd = countsInstructions
       ? ["perf", "stat", "-x,", "-e", "instructions:u", "-o", counted, "--", executable]
       : [executable];
-    const { output, userMs } = await withSlot(() =>
-      start(cmd, cwd, { ...env, SIZE: String(size), PASSES: String(passes) }),
-    );
+    const { output, userMs } = await withSlot(() => start(cmd, cwd, sized));
     if (output.overLimit || output.signal || output.exitCode !== exitCode) return { output, taken: NaN };
     if (!countsInstructions) return { output, taken: userMs };
     const written = await Bun.file(counted)
@@ -1052,33 +1062,21 @@ async function measureGrowth(
     const [, instructions] = /^(\d+),,instructions/m.exec(written) ?? [];
     return { output, taken: Number(instructions) / 1e6 };
   };
-  const unit = countsInstructions ? "M instructions" : "ms";
-  for (let raised = 0; !countsInstructions && raised < 4; raised++) {
-    const { output, taken } = await take(sizes[0]);
+  const all: number[] = [];
+  for (const size of sizes) {
+    const { output, taken } = await take(size);
     if (Number.isNaN(taken))
-      return { growth: NaN, message: `at the size ${sizes[0]} it ended by ${describeEnd(output)}`, output };
-    if (taken >= leastMsOfSmallestRun) break;
-    passes *= Math.ceil((1.2 * leastMsOfSmallestRun) / Math.max(taken, 5));
+      return {
+        growth: NaN,
+        message: `at the size ${size} it ended by ${describeEnd(output)}, or nothing was counted`,
+        output,
+      };
+    all.push(taken);
   }
-  const least = sizes.map(() => Infinity);
-  let grows = Infinity;
-  for (let round = 0; !(grows <= (round < 3 ? mostThatIsLinearAtOnce : mostThatIsLinear)) && round < 7; round++) {
-    for (const [index, size] of sizes.entries()) {
-      const { output, taken } = await take(size);
-      if (Number.isNaN(taken))
-        return {
-          growth: NaN,
-          message: `at the size ${size} it ended by ${describeEnd(output)}, or nothing was counted`,
-          output,
-        };
-      least[index] = Math.min(least[index], taken);
-    }
-    grows = (least[2] - least[1]) / Math.max(least[1] - least[0], Number.MIN_VALUE);
-    if (countsInstructions) break;
-  }
+  const grows = (all[2] - all[1]) / Math.max(all[1] - all[0], Number.MIN_VALUE);
   const rounded = Math.round(grows * 100) / 100;
-  const measured = `${least.map(taken => Math.round(taken)).join(" | ")} ${unit} at the sizes ${sizes.join(" | ")}, ${passes} passes`;
-  if (grows <= mostThatIsLinear) return { growth: rounded, measured };
+  const measured = `${all.map(taken => Math.round(taken)).join(" | ")} ${isCounted ? "M instructions" : "ms, which is not judged,"} at the sizes ${sizes.join(" | ")}, ${passes} passes`;
+  if (!isCounted || grows <= mostThatIsLinear) return { growth: rounded, measured };
   return {
     growth: rounded,
     message: `what it takes grows faster than its data: ${rounded}, and at most ${mostThatIsLinear} is linear (4 is, 16 is a square): ${measured}`,

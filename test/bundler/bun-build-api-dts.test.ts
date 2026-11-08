@@ -325,9 +325,18 @@ export function useQueried(first = 1, maybe: string | undefined = undefined, pic
   const picked: typeof pick<number> = pick;
   return String(kept) + picked(first);
 }
-export function useSigned(first: number = 1, second: typeof first = 2): number {
+export function useSigned(
+  first: number = 1,
+  second: typeof first = 2,
+  pick: typeof same = same,
+  run: typeof pick<number> = pick,
+): number {
   const [value] = useState(first);
-  return value + second;
+  return value + second + run(1);
+}
+export function useMeasured(first = 1, unit = 2): number {
+  const [value] = useState(first);
+  return (value + 1) as typeof unit;
 }
 export function useCell(first = 1, unit = Unit.Px as Unit | null): string {
   const [value] = useState(first);
@@ -371,7 +380,7 @@ export function plain(first: number = 1, second: number = 2): number {
 console.log(useName(), usePoint(), useUnit(), usePadded(undefined, undefined, undefined, "a"), useNested(1));
 console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain(), useCast(), useCast(1, null, "blue"));
 console.log(useCell(), useCell(1, null), useCell(1, Unit.Em), useParse(undefined, undefined, "1"), useTyped());
-console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2));
+console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2), useMeasured());
 `;
   // The parameters of each function, from the second one on where the first one is the compiler's. The first default
   // value of a list is where the `length` of the function ends, and how the compiler prints it is not the subject here.
@@ -419,7 +428,8 @@ console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2)
     useTyped: "t1?: number",
     useQueried: "t1?: string | undefined, t2?: typeof same",
     // Where only the parameter is in scope, `T & ({} | null)` is its type without `undefined`.
-    useSigned: "t1?: (typeof t0 & ({} | null))",
+    useSigned: "t1?: (typeof t0 & ({} | null)), t2?: typeof same, t3?: (typeof t2<number> & ({} | null))",
+    useMeasured: "t1?: number",
     same: "value: T",
     // Its `switch` has a `case` for each value only if `unit` has its type.
     useCell: expect.stringMatching(/^t1\?: Unit\d* \| null$/),
@@ -454,6 +464,8 @@ console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2)
     expect(typed).toContain("2 as typeof first");
     expect(typed).toContain("kept: typeof maybe = value");
     expect(typed).toContain("picked: typeof pick<number> = pick");
+    // The output has no variable for a parameter that only a type names.
+    expect(typed).toContain("value + 1 as (typeof t1 & ({} | null))");
   });
 
   test("in a module that is not checked", async () => {

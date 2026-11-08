@@ -341,6 +341,15 @@ impl<'a, 's> Syntax<'a, 's> {
         body.is_some_and(|body| at < body) && !is_in_default
     }
 
+    /// The span of the type arguments of the `typeof a<T>` that starts at `start`.
+    fn type_arguments_of_query(&self, start: u32) -> Option<(u32, u32)> {
+        let query = self.file.types.iter().find(|node| node.pos == start)?;
+        match query.kind {
+            TypeNodeKind::Typeof { args, .. } => self.type_arguments_span(args),
+            _ => None,
+        }
+    }
+
     /// Where the `typeof` before the name at `at` starts.
     fn typeof_before(&self, at: u32) -> Option<u32> {
         let end = self.before_trivia(at) as usize;
@@ -2845,33 +2854,35 @@ fn link(
                 let moved = (syntax.typeof_before(at))
                     .filter(|_| !may_have_default_without_slot(output.text, offset))
                     .zip(syntax.function_with_default(binding));
-                let (start, tail, members) = match moved {
-                    Some((_, function)) if !syntax.is_in_signature(function, at) => {
-                        // The variable that holds the default value has the type of `a`.
-                        let parameter = (index as u32, binding);
-                        match variable_of_moved_default(output, mappings, parameter) {
-                            Some(variable) if variable != syntax.word(at) => {
-                                edits.push((at, end, variable.to_vec()));
-                            }
-                            Some(_) => {}
-                            None => edits.push((at, end, new.to_vec())),
-                        }
-                        continue;
+                // In the function body, the variable that holds the default value has the type of `a`.
+                let variable = moved
+                    .filter(|&(_, function)| !syntax.is_in_signature(function, at))
+                    .and_then(|_| {
+                        variable_of_moved_default(output, mappings, (index as u32, binding))
+                    });
+                if let Some(variable) = variable {
+                    if variable != syntax.word(at) {
+                        edits.push((at, end, variable.to_vec()));
                     }
-                    // Only the parameter is in scope. `T & ({} | null)` is `T` without `undefined`.
-                    Some((start, _)) => {
-                        let (tail, members) = syntax.members_behind(end);
-                        (start, tail, members)
-                    }
-                    None => (at, end, Vec::new()),
+                    continue;
+                }
+                let Some((start, _)) = moved else {
+                    edits.push((at, end, new.to_vec()));
+                    continue;
                 };
-                let is_instantiated = syntax.byte(syntax.after_trivia(tail)) == b'<';
-                edits.push(if start == at || is_instantiated {
-                    (at, end, new.to_vec())
+                // Only the parameter is in scope. `T & ({} | null)` is `T` without `undefined`.
+                let (tail, members) = syntax.members_behind(end);
+                let (open, close) = ([&b"(typeof "[..], new].concat(), b" & ({} | null))");
+                if syntax.byte(syntax.after_trivia(tail)) != b'<' {
+                    edits.push((start, tail, [&open[..], close, &members].concat()));
+                } else if let Some((_, behind)) =
+                    (syntax.type_arguments_of_query(start)).filter(|_| members.is_empty())
+                {
+                    edits.push((start, end, open));
+                    edits.push((behind, behind, close.to_vec()));
                 } else {
-                    let text = [&b"(typeof "[..], new, b" & ({} | null))", &members].concat();
-                    (start, tail, text)
-                });
+                    edits.push((at, end, new.to_vec()));
+                }
             }
             edits.extend(
                 types

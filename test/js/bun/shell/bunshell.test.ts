@@ -566,106 +566,147 @@ describe("bunshell", () => {
     );
   });
 
-  describe("command substitution ending in something other than a word", () => {
-    // Each of these used to fail to parse with: expected a command or assignment but got: "CmdSubstEnd"
-    const BACKTICK = { raw: "`" };
+  // The lexer left a Delimit after the last token of these bodies, and the `$` call threw
+  // `expected a command or assignment but got: "CmdSubstEnd"`.
+  describe("command substitution that does not end in a word", () => {
+    // Runs `source`. Each `@` in it is the next of `objects`.
+    const sh = (source: string, ...objects: unknown[]) =>
+      $({ raw: source.split("@") } as unknown as TemplateStringsArray, ...objects).quiet();
+    const output = (result: { stdout: Buffer; stderr: Buffer; exitCode: number }) => ({
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+      exitCode: result.exitCode,
+    });
+    const xyz = () => Buffer.from("xyz");
 
-    test.concurrent("$( (subshell) )", async () => {
-      const { stdout } = await $`echo $( (echo hi) ) $( (echo there) )`;
-      expect(stdout.toString()).toEqual("hi there\n");
+    test.concurrent("the lines of the report", async () => {
+      const buf = xyz();
+      const bt = { raw: "`" };
+      expect(await $`echo $(cat < ${buf})`.text()).toBe("xyz\n");
+      expect(await $`echo "$(cat < ${buf})"`.text()).toBe("xyz\n");
+      expect(await $`X=$(cat < ${buf}) && echo $X`.text()).toBe("xyz\n");
+      expect(await $`echo $( (echo hi) )`.text()).toBe("hi\n");
+      expect(await $`echo ${bt}cat < ${buf}${bt}`.text()).toBe("xyz\n");
     });
 
-    test.concurrent("`(subshell)`", async () => {
-      const { stdout } = await $`echo ${BACKTICK}(echo hi)${BACKTICK}`;
-      expect(stdout.toString()).toEqual("hi\n");
-    });
-
-    test.concurrent("$([[ cond ]] )", async () => {
-      const { stdout } = await $`echo $([[ -n x ]] ) && echo yes`;
-      expect(stdout.toString()).toEqual("\nyes\n");
-    });
-
-    test.concurrent("`cmd;` with a trailing semicolon", async () => {
-      const { stdout } = await $`echo ${BACKTICK}echo hi;${BACKTICK}`;
-      expect(stdout.toString()).toEqual("hi\n");
-    });
-
-    test.concurrent("empty $() and ``", async () => {
-      const { stdout } = await $`echo "[$()]" a $() b ${BACKTICK}${BACKTICK} c`;
-      expect(stdout.toString()).toEqual("[] a b c\n");
-    });
-
-    test.concurrent("$(cmd > buffer)", async () => {
-      const buffer = Buffer.alloc(64);
-      const { stdout } = await $`echo a $(echo hi > ${buffer}) b`;
-      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
-        stdout: "a b\n",
-        buffer: "hi\n",
+    // [the script, its objects, stdout]
+    const cases: [string, () => unknown[], string][] = [
+      ["echo $(cat < @ ) $(cat < @)", () => [xyz(), xyz()], "xyz xyz\n"],
+      ["echo $(echo outer $(cat < @))", () => [xyz()], "outer xyz\n"],
+      ["echo é $(cat < @)", () => [xyz()], "é xyz\n"],
+      ["echo $( (echo hi) ) $( (echo there))", () => [], "hi there\n"],
+      ["echo `(echo hi)`", () => [], "hi\n"],
+      ["echo $([[ -n x ]] ) && echo yes", () => [], "\nyes\n"],
+      ["echo `echo hi;`", () => [], "hi\n"],
+      ["echo `echo hi\n`", () => [], "hi\n"],
+      ['echo "[$()]" a $() b `` c', () => [], "[] a b c\n"],
+      ['X=$() && echo "[$X]" x$()y', () => [], "[] xy\n"],
+      ["$()", () => [], ""],
+      ["``", () => [], ""],
+      // Text directly before the backtick.
+      ["X=`echo hi;` && echo $X", () => [], "hi\n"],
+      ["X=`cat < @` && echo $X", () => [xyz()], "xyz\n"],
+      ["echo pre`(echo hi)`post", () => [], "prehipost\n"],
+      ['echo "a `echo hi\n` b"', () => [], "a hi b\n"],
+      // `$((` that is a subshell. `$((...))` is arithmetic expansion.
+      ["echo $((echo a); echo b)", () => [], "a b\n"],
+      ["echo $((echo a) )", () => [], "a\n"],
+      ["echo $((echo a) && (echo b))", () => [], "a b\n"],
+    ];
+    for (const [source, objects, stdout] of cases) {
+      test.concurrent(source.replaceAll("\n", "\\n"), async () => {
+        expect(output(await sh(source, ...objects()))).toEqual({ stdout, stderr: "", exitCode: 0 });
       });
-    });
+    }
 
-    test.concurrent("$(cmd > buffer ) with whitespace before the closing paren", async () => {
-      const buffer = Buffer.alloc(64);
-      const { stdout } = await $`echo a $(echo hi > ${buffer} ) b`;
-      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
-        stdout: "a b\n",
-        buffer: "hi\n",
+    // [the kind of object, the object]
+    const inputs: [string, () => unknown][] = [
+      ["Uint8Array", () => new Uint8Array([120, 121, 122])],
+      ["Blob", () => new Blob(["xyz"])],
+      ["Response", () => new Response("xyz")],
+    ];
+    for (const [kind, object] of inputs) {
+      test.concurrent(`$(cat < ${kind}) and \`cat < ${kind}\``, async () => {
+        expect(output(await sh("echo $(cat < @)", object()))).toEqual({ stdout: "xyz\n", stderr: "", exitCode: 0 });
+        expect(output(await sh("echo `cat < @`", object()))).toEqual({ stdout: "xyz\n", stderr: "", exitCode: 0 });
       });
-    });
+    }
 
-    test.concurrent("$(cmd 2> buffer)", async () => {
-      const buffer = Buffer.alloc(128);
-      const { stdout } = await $`echo $(${BUN} -e ${"console.log('out'); console.error('err')"} 2> ${buffer})`.env(
-        bunEnv,
-      );
-      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
+    // [the script, what the object holds after it, stdout]
+    const outputs: [string, string, string][] = [
+      ["echo a $(echo hi > @) b", "hi\n", "a b\n"],
+      ["echo a $(echo hi > @ ) b", "hi\n", "a b\n"],
+      ["echo a $(echo hi &> @) b", "hi\n", "a b\n"],
+      ["echo a `echo hi > @` b", "hi\n", "a b\n"],
+      ['echo "[$(echo hi > @)]"', "hi\n", "[]\n"],
+      ["echo $(echo outer $(echo inner > @))", "inner\n", "outer\n"],
+    ];
+    for (const [source, written, stdout] of outputs) {
+      for (const [kind, object] of [
+        ["Buffer", () => Buffer.alloc(16)],
+        ["Uint8Array", () => new Uint8Array(16)],
+      ] as const) {
+        test.concurrent(`${source} with a ${kind}`, async () => {
+          const target = object();
+          expect({ ...output(await sh(source, target)), written: stringifyBuffer(target) }).toEqual({
+            stdout,
+            stderr: "",
+            exitCode: 0,
+            written,
+          });
+        });
+      }
+    }
+
+    test.concurrent("$(cmd 2> Buffer)", async () => {
+      const target = Buffer.alloc(64);
+      const result = await sh("echo $(@ -e @ 2> @)", BUN, "console.log('out'); console.error('err')", target);
+      expect({ ...output(result), written: stringifyBuffer(target) }).toEqual({
         stdout: "out\n",
-        buffer: "err\n",
+        stderr: "",
+        exitCode: 0,
+        written: "err\n",
       });
     });
 
-    test.concurrent("$(cmd < buffer)", async () => {
-      const input = Buffer.from("from buffer\n");
-      const { stdout } = await $`echo got: $(cat < ${input})`;
-      expect(stdout.toString()).toEqual("got: from buffer\n");
-    });
-
-    test.concurrent('"$(cmd > buffer)" inside double quotes', async () => {
-      const buffer = new Uint8Array(64);
-      const { stdout } = await $`echo "[$(echo hi > ${buffer})]"`;
-      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
-        stdout: "[]\n",
-        buffer: "hi\n",
-      });
-    });
-
-    test.concurrent("`cmd > buffer`", async () => {
-      const buffer = Buffer.alloc(64);
-      const { stdout } = await $`echo a ${BACKTICK}echo hi > ${buffer}${BACKTICK} b`;
-      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
-        stdout: "a b\n",
-        buffer: "hi\n",
-      });
-    });
-
-    test.concurrent("nested: $(cmd $(cmd > buffer))", async () => {
-      const buffer = Buffer.alloc(64);
-      const { stdout } = await $`echo $(echo outer $(echo inner > ${buffer}))`;
-      expect({ stdout: stdout.toString(), buffer: stringifyBuffer(buffer) }).toEqual({
-        stdout: "outer\n",
-        buffer: "inner\n",
-      });
-    });
-
-    test.concurrent("the rest of the outer command still runs", async () => {
-      const first = Buffer.alloc(64);
-      const second = Buffer.alloc(64);
-      const { stdout } = await $`echo $(echo one > ${first}) && echo two > ${second} && echo three`;
-      expect({ stdout: stdout.toString(), first: stringifyBuffer(first), second: stringifyBuffer(second) }).toEqual({
+    test.concurrent("the outer command goes on after the substitution", async () => {
+      const first = Buffer.alloc(16);
+      const second = Buffer.alloc(16);
+      const result = await sh("echo $(echo one > @) && echo two > @ && echo three", first, second);
+      expect({ ...output(result), first: stringifyBuffer(first), second: stringifyBuffer(second) }).toEqual({
         stdout: "\nthree\n",
+        stderr: "",
+        exitCode: 0,
         first: "one\n",
         second: "two\n",
       });
+    });
+
+    for (const source of ["`exit 3;`", "`exit 3\n`", "`(exit 3)`", "$( (exit 3) )"]) {
+      test.concurrent(`${source.replaceAll("\n", "\\n")} exits with the exit code of its body`, async () => {
+        expect(output(await sh(source))).toEqual({ stdout: "", stderr: "", exitCode: 3 });
+      });
+    }
+
+    test.concurrent("an empty body, 20 times", async () => {
+      for (let i = 0; i < 20; i++) {
+        expect(output(await sh('echo "[$()]" `` x$()y'))).toEqual({ stdout: "[] xy\n", stderr: "", exitCode: 0 });
+      }
+    });
+
+    test.concurrent("in a new $.Shell()", async () => {
+      const shell = new $.Shell();
+      const source = "echo $( (echo hi) ) `echo there;` $(cat < @)";
+      const result = await shell({ raw: source.split("@") } as unknown as TemplateStringsArray, xyz()).quiet();
+      expect(output(result)).toEqual({ stdout: "hi there xyz\n", stderr: "", exitCode: 0 });
+    });
+
+    test("$((...)) is an error when the script is parsed", () => {
+      expect(() => sh("echo $((1+2))")).toThrow(
+        new Error(
+          "Arithmetic expansion `$((...))` is not supported. For a subshell inside a command substitution, write `$( (...) )`.",
+        ),
+      );
     });
   });
 

@@ -351,141 +351,108 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  // The lexer used to leave a Delimit after the last token of these bodies, and the substitution
+  // failed with `expected a command or assignment but got: "CmdSubstEnd"`. The token streams
+  // are in "end of cmd subst" in lex.test.ts.
   describe("end of cmd subst", () => {
-    // Closing a `$(...)` or backtick substitution used to push a Delimit even when
-    // the last token was not a word (a JS object redirect target, a subshell's `)`,
-    // a `;`, or an empty body); the parser then read that Delimit as the start of
-    // another command and failed with `expected a command or assignment but got: "CmdSubstEnd"`.
-    const BACKTICK = { raw: "`" };
-    const buffer = new Uint8Array(64);
-
-    // `echo <cmd_subst>` whose substituted script has the given statements.
-    const echoOfSubst = (stmts: unknown[], quoted = false) => ({
-      stmts: [
-        {
-          exprs: [
-            {
-              cmd: {
-                assigns: [],
-                name_and_args: [{ simple: { Text: "echo" } }, { simple: { cmd_subst: { script: { stmts }, quoted } } }],
-                redirect: redirect({}),
-                redirect_file: null,
-              },
-            },
-          ],
-        },
-      ],
-    });
-
-    const echoHi = {
-      cmd: {
-        assigns: [],
-        name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "hi" } }],
-        redirect: redirect({}),
-        redirect_file: null,
-      },
+    const buffer = new Uint8Array(8);
+    // `@` in the source is an interpolated Buffer.
+    const ast = (source: string) => {
+      const raw = source.split("@");
+      return JSON.parse(parse({ raw }, ...raw.slice(1).map(() => buffer)));
     };
-
-    // A single command redirected to jsbuf #0.
-    const redirectedToBuffer = (name_and_args: unknown[], flags: Parameters<typeof redirect>[0]) => [
-      {
-        exprs: [
-          { cmd: { assigns: [], name_and_args, redirect: redirect(flags), redirect_file: { jsbuf: { idx: 0 } } } },
-        ],
-      },
+    const word = (Text: string) => ({ simple: { Text } });
+    const cmd = (
+      name_and_args: unknown[],
+      flags: Parameters<typeof redirect>[0] = {},
+      redirect_file: unknown = null,
+    ) => ({ cmd: { assigns: [], name_and_args, redirect: redirect(flags), redirect_file } });
+    const echo = (text: string) => cmd([word("echo"), word(text)]);
+    const echoHiTo = (flags: Parameters<typeof redirect>[0]) => [
+      { exprs: [cmd([word("echo"), word("hi")], flags, { jsbuf: { idx: 0 } })] },
     ];
-    const echoFooToBuffer = redirectedToBuffer([{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }], {
-      stdout: true,
+    const script = (expr: unknown) => ({ stmts: [{ exprs: [expr] }] });
+    const subshell = (expr: unknown) => ({
+      subshell: { script: script(expr), redirect: null, redirect_flags: redirect({}) },
+    });
+    const subst = (stmts: unknown[], quoted = false) => ({ simple: { cmd_subst: { script: { stmts }, quoted } } });
+
+    // [what the body ends in, the body, the statements of the body]
+    const bodies: [string, string, unknown[]][] = [
+      ["a JS object after `>`", "echo hi > @", echoHiTo({ stdout: true })],
+      ["a JS object after `2>`", "echo hi 2> @", echoHiTo({ stderr: true })],
+      ["a JS object after `&>`", "echo hi &> @", echoHiTo({ stdout: true, stderr: true })],
+      ["a JS object after `<`", "cat < @", [{ exprs: [cmd([word("cat")], { stdin: true }, { jsbuf: { idx: 0 } })] }]],
+      ["a JS object and a blank", "echo hi > @ ", echoHiTo({ stdout: true })],
+      ["a subshell", " (echo hi)", [{ exprs: [subshell(echo("hi"))] }]],
+      ["`]]`", "[[ -n x ]] ", [{ exprs: [{ condexpr: { op: "-n", args: [word("x")] } }] }]],
+      ["nothing", "", []],
+      ["a blank", " ", []],
+      ["`;`", "echo hi;", [{ exprs: [echo("hi")] }]],
+      ["a newline", "echo hi\n", [{ exprs: [echo("hi")] }]],
+      ["`2>&1`", "echo hi 2>&1", [{ exprs: [cmd([word("echo"), word("hi")], { stdout: true, duplicate_out: true })] }]],
+    ];
+
+    // [the form, the source for a body, the script for the statements of the body]
+    const forms: [string, (body: string) => string, (stmts: unknown[]) => unknown][] = [
+      ["$(...)", body => `echo $(${body})`, stmts => script(cmd([word("echo"), subst(stmts)]))],
+      ["`...`", body => "echo `" + body + "`", stmts => script(cmd([word("echo"), subst(stmts)]))],
+      ['"$(...)"', body => `echo "$(${body})"`, stmts => script(cmd([word("echo"), subst(stmts, true)]))],
+      ["X=$(...)", body => `X=$(${body})`, stmts => script({ assign: [{ label: "X", value: subst(stmts) }] })],
+      ["X=`...`", body => "X=`" + body + "`", stmts => script({ assign: [{ label: "X", value: subst(stmts) }] })],
+      [
+        "$(echo $(...))",
+        body => `echo $(echo $(${body}))`,
+        stmts => script(cmd([word("echo"), subst([{ exprs: [cmd([word("echo"), subst(stmts)])] }])])),
+      ],
+    ];
+
+    test.each(
+      forms.flatMap(([form, source, expected]) =>
+        bodies.map(([end, body, stmts]) => [`${form} ends in ${end}`, source(body), expected(stmts)] as const),
+      ),
+    )("%s", (_name, source, expected) => {
+      expect(ast(source)).toEqual(expected);
     });
 
-    describe("redirect to a js obj", () => {
-      test("$(cmd > buf)", () => {
-        expect(JSON.parse(parse`echo $(echo foo > ${buffer})`)).toEqual(echoOfSubst(echoFooToBuffer));
-      });
-
-      test("$(cmd > buf ) with whitespace before the closing paren", () => {
-        expect(JSON.parse(parse`echo $(echo foo > ${buffer} )`)).toEqual(echoOfSubst(echoFooToBuffer));
-      });
-
-      test('"$(cmd > buf)" quoted', () => {
-        expect(JSON.parse(parse`echo "$(echo foo > ${buffer})"`)).toEqual(echoOfSubst(echoFooToBuffer, true));
-      });
-
-      test("$(cmd 2> buf)", () => {
-        expect(JSON.parse(parse`echo $(echo foo 2> ${buffer})`)).toEqual(
-          echoOfSubst(
-            redirectedToBuffer([{ simple: { Text: "echo" } }, { simple: { Text: "foo" } }], { stderr: true }),
-          ),
-        );
-      });
-
-      test("$(cmd < buf)", () => {
-        expect(JSON.parse(parse`echo $(cat < ${buffer})`)).toEqual(
-          echoOfSubst(redirectedToBuffer([{ simple: { Text: "cat" } }], { stdin: true })),
-        );
-      });
-
-      test("`cmd > buf`", () => {
-        expect(JSON.parse(parse`echo ${BACKTICK}echo foo > ${buffer}${BACKTICK}`)).toEqual(
-          echoOfSubst(echoFooToBuffer),
-        );
-      });
-
-      test("$(cmd > buf) followed by more of the outer command", () => {
-        const expected = {
-          stmts: [
-            {
-              exprs: [
-                {
-                  binary: {
-                    op: "And",
-                    left: echoOfSubst(echoFooToBuffer).stmts[0].exprs[0],
-                    right: {
-                      cmd: {
-                        assigns: [],
-                        name_and_args: [{ simple: { Text: "echo" } }, { simple: { Text: "bar" } }],
-                        redirect: redirect({ stdout: true }),
-                        redirect_file: { jsbuf: { idx: 1 } },
-                      },
-                    },
-                  },
-                },
-              ],
-            },
-          ],
-        };
-        expect(JSON.parse(parse`echo $(echo foo > ${buffer}) && echo bar > ${buffer}`)).toEqual(expected);
-      });
+    test("the outer command goes on after the substitution", () => {
+      expect(ast("echo $(echo hi > @) && echo hi > @")).toEqual(
+        script({
+          binary: {
+            op: "And",
+            left: cmd([word("echo"), subst(echoHiTo({ stdout: true }))]),
+            right: cmd([word("echo"), word("hi")], { stdout: true }, { jsbuf: { idx: 1 } }),
+          },
+        }),
+      );
     });
 
-    test("subshell", () => {
-      const expected = echoOfSubst([
-        {
-          exprs: [
-            {
-              subshell: {
-                script: { stmts: [{ exprs: [echoHi] }] },
-                redirect: null,
-                redirect_flags: redirect({}),
-              },
-            },
-          ],
-        },
-      ]);
-      expect(JSON.parse(parse`echo $( (echo hi) )`)).toEqual(expected);
-      expect(JSON.parse(parse`echo ${BACKTICK}(echo hi)${BACKTICK}`)).toEqual(expected);
+    // [the body, the error]
+    test.each([
+      ["echo hi |", "expected a command or assignment"],
+      ["echo hi ||", "expected a command or assignment"],
+      ["echo hi &&", "expected a command or assignment"],
+      ["echo hi >", "Redirection with no file"],
+      ["echo hi &", 'Background commands "&" are not supported yet.'],
+      ["echo @", 'expected a command or assignment but got: "JSObjRef"'],
+    ])("a body that is not valid stays an error: %s", (body, message) => {
+      for (const source of [`echo $(${body})`, "echo `" + body + "`"]) {
+        expect(() => ast(source)).toThrow(new Error(message));
+      }
     });
 
-    test("trailing semicolon", () => {
-      const expected = echoOfSubst([{ exprs: [echoHi] }]);
-      expect(JSON.parse(parse`echo $(echo hi;)`)).toEqual(expected);
-      expect(JSON.parse(parse`echo ${BACKTICK}echo hi;${BACKTICK}`)).toEqual(expected);
-    });
-
-    test("empty", () => {
-      expect(JSON.parse(parse`echo $()`)).toEqual(echoOfSubst([]));
-      expect(JSON.parse(parse`echo "$()"`)).toEqual(echoOfSubst([], true));
-      expect(JSON.parse(parse`echo ${BACKTICK}${BACKTICK}`)).toEqual(echoOfSubst([]));
+    // `$((` is a subshell when the `)` of that subshell does not also end the substitution.
+    // `$((...))` is arithmetic expansion: "arithmetic expansion" in lex.test.ts.
+    test.each([
+      ["echo $((echo a); echo b)", [{ exprs: [subshell(echo("a"))] }, { exprs: [echo("b")] }]],
+      ["echo $((echo a) )", [{ exprs: [subshell(echo("a"))] }]],
+      ["echo $( (echo a))", [{ exprs: [subshell(echo("a"))] }]],
+      [
+        "echo $((echo a) && (echo b))",
+        [{ exprs: [{ binary: { op: "And", left: subshell(echo("a")), right: subshell(echo("b")) } }] }],
+      ],
+    ])("a substitution that starts with a subshell: %s", (source, stmts) => {
+      expect(ast(source)).toEqual(script(cmd([word("echo"), subst(stmts)])));
     });
   });
 

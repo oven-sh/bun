@@ -821,76 +821,148 @@ describe("lex shell", () => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
   });
 
+  // The `)` of `$(` and the closing backtick put a Delimit before CmdSubstEnd only after a
+  // token that is part of a word. The parser takes a Delimit after any other token for the
+  // start of one more command: `expected a command or assignment but got: "CmdSubstEnd"`.
   describe("end of cmd subst", () => {
-    // Closing a `$(...)` or backtick substitution used to always push a Delimit,
-    // even after tokens that do not end a word (JSObjRef, CloseParen, `;`, or
-    // nothing at all); the parser then took that Delimit as the start of another
-    // command and failed with `expected a command or assignment but got: "CmdSubstEnd"`.
-    const BACKTICK = { raw: "`" };
     const buffer = new Uint8Array(8);
-    const echoTo = (tail: object[]) => [
-      { Text: "echo" },
-      { Delimit: {} },
-      { CmdSubstBegin: {} },
-      { Text: "echo" },
-      { Delimit: {} },
-      { Text: "hi" },
-      { Delimit: {} },
-      ...tail,
-      { CmdSubstEnd: {} },
-      { Eof: {} },
+    // `@` in the source is an interpolated Buffer.
+    const tokens = (source: string) => {
+      const raw = source.split("@");
+      return JSON.parse(lex({ raw }, ...raw.slice(1).map(() => buffer)));
+    };
+    const echo = [{ Text: "echo" }, { Delimit: {} }];
+    const echoHi = [...echo, { Text: "hi" }, { Delimit: {} }];
+    const toBuffer = [...echoHi, { Redirect: redirect({ stdout: true }) }, { JSObjRef: 0 }];
+
+    // [what the body ends in, the body, the tokens of the body]
+    const bodies: [string, string, object[]][] = [
+      ["a JS object", "echo hi > @", toBuffer],
+      ["a JS object and a blank", "echo hi > @ ", toBuffer],
+      ["a subshell", " (echo hi)", [{ OpenParen: {} }, ...echoHi, { CloseParen: {} }]],
+      [
+        "`]]`",
+        "[[ -n x ]] ",
+        [
+          { DoubleBracketOpen: {} },
+          { Text: "-n" },
+          { Delimit: {} },
+          { Text: "x" },
+          { Delimit: {} },
+          { DoubleBracketClose: {} },
+        ],
+      ],
+      ["`[[`", "[[ ", [{ DoubleBracketOpen: {} }]],
+      ["nothing", "", []],
+      ["a blank", " ", []],
+      ["`;`", "echo hi;", [...echoHi, { Semicolon: {} }]],
+      ["a newline", "echo hi\n", [...echoHi, { Newline: {} }]],
+      ["`2>&1`", "echo hi 2>&1", [...echoHi, { Redirect: redirect({ stdout: true, duplicate_out: true }) }]],
+      ["`|`", "echo hi |", [...echoHi, { Pipe: {} }]],
+      ["`||`", "echo hi ||", [...echoHi, { DoublePipe: {} }]],
+      ["`&&`", "echo hi &&", [...echoHi, { DoubleAmpersand: {} }]],
+      ["`&`", "echo hi &", [...echoHi, { Ampersand: {} }]],
+      // A token that is part of a word keeps its Delimit.
+      ["a variable", "echo $FOO", [...echo, { Var: "FOO" }, { Delimit: {} }]],
+      ["a closing quote", 'echo "hi"', [...echo, { DoubleQuotedText: "hi" }, { Delimit: {} }]],
+      [
+        "a nested substitution",
+        "echo $(ls)",
+        [...echo, { CmdSubstBegin: {} }, { Text: "ls" }, { Delimit: {} }, { CmdSubstEnd: {} }, { Delimit: {} }],
+      ],
     ];
 
-    test("js obj redirect target", () => {
-      const expected = echoTo([{ Redirect: redirect({ stdout: true }) }, { JSObjRef: 0 }]);
-      expect(JSON.parse(lex`echo $(echo hi > ${buffer})`)).toEqual(expected);
-      expect(JSON.parse(lex`echo ${BACKTICK}echo hi > ${buffer}${BACKTICK}`)).toEqual(expected);
+    test.each(
+      bodies.flatMap(([end, body, expected]) => [
+        ["$(...) ends in " + end, "$(" + body + ")", expected] as const,
+        ["`...` ends in " + end, "`" + body + "`", expected] as const,
+      ]),
+    )("%s", (_name, subst, expected) => {
+      // A script that is not ASCII goes through the other lexer.
+      for (const word of ["echo", "écho"]) {
+        expect(tokens(`${word} ${subst}`)).toEqual([
+          { Text: word },
+          { Delimit: {} },
+          { CmdSubstBegin: {} },
+          ...expected,
+          { CmdSubstEnd: {} },
+          { Eof: {} },
+        ]);
+      }
     });
 
-    test("subshell", () => {
-      const expected = [
-        { Text: "echo" },
-        { Delimit: {} },
+    test.each(['echo "$()"', 'echo "``"'])("empty body in double quotes: %s", source => {
+      expect(tokens(source)).toEqual([
+        ...echo,
         { CmdSubstBegin: {} },
-        { OpenParen: {} },
-        { Text: "echo" },
-        { Delimit: {} },
-        { Text: "hi" },
-        { Delimit: {} },
-        { CloseParen: {} },
+        { CmdSubstQuoted: {} },
         { CmdSubstEnd: {} },
         { Eof: {} },
-      ];
-      expect(JSON.parse(lex`echo $( (echo hi) )`)).toEqual(expected);
-      expect(JSON.parse(lex`echo ${BACKTICK}(echo hi)${BACKTICK}`)).toEqual(expected);
+      ]);
     });
 
-    test("semicolon", () => {
-      const expected = echoTo([{ Semicolon: {} }]);
-      expect(JSON.parse(lex`echo $(echo hi;)`)).toEqual(expected);
-      expect(JSON.parse(lex`echo ${BACKTICK}echo hi;${BACKTICK}`)).toEqual(expected);
-    });
-
-    test("empty", () => {
-      const expected = [{ Text: "echo" }, { Delimit: {} }, { CmdSubstBegin: {} }, { CmdSubstEnd: {} }, { Eof: {} }];
-      expect(JSON.parse(lex`echo $()`)).toEqual(expected);
-      expect(JSON.parse(lex`echo ${BACKTICK}${BACKTICK}`)).toEqual(expected);
-    });
-
-    test("a trailing word is still delimited", () => {
-      const expected = [
-        { Text: "echo" },
-        { Delimit: {} },
-        { CmdSubstBegin: {} },
-        { Text: "echo" },
-        { Delimit: {} },
-        { Var: "FOO" },
-        { Delimit: {} },
-        { CmdSubstEnd: {} },
-        { Eof: {} },
-      ];
-      expect(JSON.parse(lex`echo $(echo $FOO)`)).toEqual(expected);
-      expect(JSON.parse(lex`echo ${BACKTICK}echo $FOO${BACKTICK}`)).toEqual(expected);
+    // Text directly before the opening backtick stays outside the body.
+    test.each([
+      [
+        "X=`echo hi;`",
+        [{ Text: "X=" }, { CmdSubstBegin: {} }, ...echoHi, { Semicolon: {} }, { CmdSubstEnd: {} }, { Eof: {} }],
+      ],
+      [
+        "X=`cat < @`",
+        [
+          { Text: "X=" },
+          { CmdSubstBegin: {} },
+          { Text: "cat" },
+          { Delimit: {} },
+          { Redirect: redirect({ stdin: true }) },
+          { JSObjRef: 0 },
+          { CmdSubstEnd: {} },
+          { Eof: {} },
+        ],
+      ],
+      [
+        "echo pre`(echo hi)`post",
+        [
+          ...echo,
+          { Text: "pre" },
+          { CmdSubstBegin: {} },
+          { OpenParen: {} },
+          ...echoHi,
+          { CloseParen: {} },
+          { CmdSubstEnd: {} },
+          { Text: "post" },
+          { Delimit: {} },
+          { Eof: {} },
+        ],
+      ],
+      [
+        'echo "a `echo hi\n` b"',
+        [
+          ...echo,
+          { DoubleQuotedText: "a " },
+          { CmdSubstBegin: {} },
+          { CmdSubstQuoted: {} },
+          ...echoHi,
+          { Newline: {} },
+          { CmdSubstEnd: {} },
+          { DoubleQuotedText: " b" },
+          { Eof: {} },
+        ],
+      ],
+      [
+        "echo a``b",
+        [
+          ...echo,
+          { Text: "a" },
+          { CmdSubstBegin: {} },
+          { CmdSubstEnd: {} },
+          { Text: "b" },
+          { Delimit: {} },
+          { Eof: {} },
+        ],
+      ],
+    ])("text before the backtick: %s", (source, expected) => {
+      expect(tokens(source)).toEqual(expected);
     });
   });
 
@@ -931,6 +1003,26 @@ describe("lex shell", () => {
         .run();
 
       await TestBuilder.command`echo hi && (echo uh oh`.error("Unclosed subshell").run();
+    });
+
+    // bash reads `$((...))` as arithmetic, never as a subshell inside a command substitution.
+    test.each([
+      "echo $((1+2))",
+      "echo $(( 1 + 2 ))",
+      "echo $(((1+2)*3))",
+      "echo $(())",
+      'echo "$((1+2))"',
+      "X=$((X+1))",
+      "echo $((echo hi))",
+      "echo $(echo $((1+2)))",
+      "echo `echo $((1+2))`",
+      "écho $((1+2))",
+    ])("arithmetic expansion: %s", source => {
+      expect(() => lex({ raw: [source] })).toThrow(
+        new Error(
+          "Arithmetic expansion `$((...))` is not supported. For a subshell inside a command substitution, write `$( (...) )`.",
+        ),
+      );
     });
 
     // https://github.com/oven-sh/bun/issues/33235

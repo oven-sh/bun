@@ -27,6 +27,11 @@ describe("bun exec", () => {
     .stdout('hi "there bud"\n')
     .runAsTest("it works2");
 
+  TestBuilder.command`${BUN} exec ${'echo $( (echo one) ) `echo two;` "[$()]"'}`
+    .env(bunEnv)
+    .stdout("one two []\n")
+    .runAsTest("command substitution that does not end in a word");
+
   TestBuilder.command`${BUN} exec ${"cat filename"}`
     .file(
       "filename",

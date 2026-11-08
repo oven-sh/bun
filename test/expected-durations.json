@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-snapshot-of-a-module-namespace-with-an-export-that-is-not-set-yet.test.ts": {
+    "default": 9000,
+    "asan": 36000
+  },
   "aot/a-database-asked-for-by-a-path-made-of-the-own-folder-is-not-refused.test.ts": {
     "default": 60000,
     "asan": 240000

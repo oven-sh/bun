@@ -34,15 +34,22 @@ def give_up(what):
     os._exit(1)
 
 
+# In many short waits. Here a thread may hold an object for as long as one wait of its own lasts: the frames of a wait do not write all of their words, what was written there before stays, whoever
+# wrote it (that has not been established), and the collector takes every word of a live frame that looks like a pointer for one.
+# (Once the frame in which a thread waits has no such words, one long wait will do again, and is then the row for that.)
 def wait_for(event, what):
-    if not event.wait(DEADLINE):
-        give_up(what)
+    deadline = time.monotonic() + DEADLINE
+    while not event.wait(0.01):
+        if time.monotonic() > deadline:
+            give_up(what)
 
 
 def wait_for_end_of(thread):
-    thread.join(DEADLINE)
-    if thread.is_alive():
-        give_up("the other thread has ended")
+    deadline = time.monotonic() + DEADLINE
+    while thread.is_alive():
+        if time.monotonic() > deadline:
+            give_up("the other thread has ended")
+        thread.join(0.01)
 
 
 def make(id):

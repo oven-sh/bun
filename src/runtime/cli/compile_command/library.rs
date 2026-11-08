@@ -45,7 +45,7 @@ impl LibraryError {
             Self::OutdirLinksPackageJson { written } => write(&[
                 b"--library writes a package.json into --outdir, but ",
                 written,
-                b" is a link to the project's own package.json. Delete it or choose another --outdir",
+                b" is a link to the project's own package.json. Choose another --outdir",
             ]),
             Self::EntryPointInsideOutdir { entry_point } => write(&[
                 b"the entry point ",
@@ -118,12 +118,6 @@ fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
     join_abs_string::<Auto>(working_directory, &[path]).to_vec()
 }
 
-// `absolute_path` with no separator at its end.
-fn absolute_folder(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
-    let folder = join_abs_string::<Auto>(working_directory, &[path]);
-    without_trailing_slash_windows_path(folder).to_vec()
-}
-
 // `path` is `folder` or is inside it. Case is not ignored: the real path settles a name in another case.
 fn is_or_holds(folder: &[u8], path: &[u8]) -> bool {
     // Only a root has a separator at its end.
@@ -155,8 +149,9 @@ impl Outdir {
         as_written: &[u8],
         project: &Project,
     ) -> Result<Outdir, LibraryError> {
+        let folder = join_abs_string::<Auto>(working_directory, &[as_written]);
         let mut outdir = Outdir {
-            folder: absolute_folder(working_directory, as_written),
+            folder: without_trailing_slash_windows_path(folder).to_vec(),
             real: None,
             as_written: as_written.to_vec(),
         };
@@ -287,11 +282,14 @@ impl Library {
             return;
         }
         let working_directory = ctx.args.absolute_working_dir.as_deref().unwrap_or_default();
-        let root = &ctx.bundler_options.root_dir;
-        // An entry point that is not below `--root` is not in the root directory.
+        // Only with `--root` can an entry point be outside the root directory.
         let is_in_root = |entry_point: &[u8]| {
-            let absolute = |path: &[u8]| absolute_folder(working_directory, path);
-            root.is_empty() || is_or_holds(&absolute(root), &absolute(entry_point))
+            if ctx.bundler_options.root_dir.is_empty() {
+                return true;
+            }
+            let path = absolute_path(working_directory, entry_point);
+            let folder = real_path(&path).or_else(|| real_path(bun_paths::dirname(&path)?));
+            folder.is_some_and(|folder| is_or_holds(root_directory, &folder))
         };
         if let Some(entry_point) = entry_points.iter().find(|it| is_in_root(it)) {
             let entry_point = entry_point.to_vec();

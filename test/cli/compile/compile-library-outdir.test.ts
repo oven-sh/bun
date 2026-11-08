@@ -172,7 +172,7 @@ describe.concurrent("bun compile --library --outdir", () => {
     const installed = join(String(dir), "packages/app/node_modules/@acme/shapes");
     mkdirSync(installed, { recursive: true });
     linkSync(join(project, "package.json"), join(installed, "package.json"));
-    const refused = `error: --library writes a package.json into --outdir, but ${join(installed, "package.json")} is a link to the project's own package.json. Delete it or choose another --outdir\n`;
+    const refused = `error: --library writes a package.json into --outdir, but ${join(installed, "package.json")} is a link to the project's own package.json. Choose another --outdir\n`;
     await expectRefused(String(dir), project, ["--outdir", "../app/node_modules/@acme/shapes"], refused);
   });
 
@@ -199,6 +199,7 @@ describe.concurrent("bun compile --library --outdir", () => {
   test.each([
     [["sources/index.js", "--outdir", "src"]],
     [["sources/index.js", "--root", "sources", "--outdir", "src"]],
+    [["sources/index.js", "--root", "src", "--outdir", "src"]],
   ])("the folder of an entry point is refused when a link leads to the entry point: %j", async args => {
     using dir = workspace();
     const project = join(String(dir), "packages/shapes");

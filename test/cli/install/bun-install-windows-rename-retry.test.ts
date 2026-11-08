@@ -16,14 +16,21 @@
 // The isolated linker retries one more rename: it moves an installed
 // project-local package aside before it links it again. If that rename fails it
 // links in place, so the install succeeds either way.
+//
+// One rename replaces a file: bun writes its own `config` into a cached git
+// clone before it runs git there. That one fails with STATUS_SHARING_VIOLATION
+// (EBUSY) for as long as a handle without FILE_SHARE_DELETE is open on the
+// `config` itself. git opens the file that way to read it.
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const PKG = "av-test-pkg";
+const GIT_PKG = "av-test-git-pkg";
 const ENV = "BUN_INSTALL_WINDOWS_RENAME_RETRY_MS";
 const HOLD_MS = 2000;
 
@@ -99,7 +106,7 @@ function serveRegistry(stallTarballUntil?: Promise<void>) {
   return server;
 }
 
-function spawnBlocker(watchDir: string, subdirFilter: string, holdMs: number) {
+function spawnBlocker(watchDir: string, subdirFilter: string, holdMs: number, fileName = "") {
   const proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -107,6 +114,7 @@ function spawnBlocker(watchDir: string, subdirFilter: string, holdMs: number) {
       watchDir,
       subdirFilter,
       String(holdMs),
+      ...(fileName ? [fileName] : []),
     ],
     env: bunEnv,
     stdout: "pipe",
@@ -176,6 +184,38 @@ function scaffold(name: string, bunfig: string, packageJson: Record<string, unkn
 }
 
 const registryBunfig = (port: number) => `[install]\nregistry = "http://localhost:${port}/"\n`;
+
+const gitEnv = {
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "Test",
+  GIT_AUTHOR_EMAIL: "test@example.com",
+  GIT_COMMITTER_NAME: "Test",
+  GIT_COMMITTER_EMAIL: "test@example.com",
+};
+
+// A repository with one commit, to depend on through its `file:` URL.
+async function makeGitRepo() {
+  const dir = tempDir("rename-retry-git-repo", {
+    "package.json": JSON.stringify({ name: GIT_PKG, version: "1.0.0" }),
+    "index.js": `module.exports = "from git";\n`,
+  });
+  for (const args of [
+    ["init", "-q"],
+    ["add", "."],
+    ["commit", "-q", "-m", "first"],
+  ]) {
+    await using proc = Bun.spawn({
+      cmd: ["git", ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, ...gitEnv },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed:\n${stderr}`);
+  }
+  return dir;
+}
 
 const modes = [
   { mode: "default budget outlasts a 2s hold", budget: undefined, holdMs: HOLD_MS },
@@ -272,6 +312,44 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
       }
     }
     expect(held, "the fixture never held the staging directory").toBe(true);
+  });
+
+  // The clone is in the cache, and its `config` holds a setting that is not bun's, like the `config` of a clone that
+  // an older bun left there. So the install has to replace the file before it runs `git fetch` in the clone.
+  test.each(modes)("config of a cached git clone: $mode", async ({ budget, holdMs }) => {
+    using repo = await makeGitRepo();
+    using s = scaffold("rename-retry-git-config", "", {
+      dependencies: { [GIT_PKG]: `git+${pathToFileURL(String(repo))}` },
+    });
+    const env = { ...s.env, ...gitEnv };
+    expect(await runInstall(s.project, env)).toMatchObject({ exitCode: 0 });
+
+    const [clone] = readdirSync(s.cache).filter(name => name.endsWith(".git"));
+    const config = join(s.cache, clone, "config");
+    const written = readFileSync(config, "utf8");
+    writeFileSync(config, written + "[core]\n\tfilemode = false\n");
+    rmSync(join(s.project, "node_modules"), { recursive: true, force: true });
+    rmSync(join(s.project, "bun.lock"));
+
+    // The file already exists, so the fixture holds it before the install starts.
+    const blocker = spawnBlocker(s.cache, ".git", holdMs, "config");
+    await blocker.held;
+
+    const result = await runInstall(s.project, { ...env, [ENV]: budget });
+    expect(await blocker.finish()).toContain(`HELD ${config}`);
+
+    if (budget === undefined) {
+      expect(result).toMatchObject({ exitCode: 0 });
+      expect(readFileSync(config, "utf8")).toBe(written);
+      expect(existsSync(join(s.project, "node_modules", GIT_PKG, "index.js"))).toBe(true);
+    } else {
+      expect(result.stderr).toContain(`writing "config" for "${GIT_PKG}" failed: EBUSY`);
+      expect(result.stderr).toContain("NtSetInformationFile");
+      expect(result.stderr).toContain(ENV);
+      expect(result.exitCode).toBe(1);
+    }
+    // The temporary file that was to replace `config` is not left behind.
+    expect(readdirSync(join(s.cache, clone)).filter(name => name.endsWith(".tmp"))).toEqual([]);
   });
 
   // The held file is not one of the package's: it is gone if the old directory was moved aside

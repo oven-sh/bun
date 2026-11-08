@@ -24,7 +24,7 @@ use bun_sys::Fd;
 use bun_sys::windows::libuv as uv;
 use bun_threading::thread_pool as ThreadPool;
 
-use crate::cache_publish::StagedEntry;
+use crate::cache_publish::{RenameError, RenameRetry, StagedEntry};
 use crate::install::{ExtractData, ExtractDataJson};
 use crate::package_manager_task::{self as Task, Tag};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
@@ -221,7 +221,8 @@ fn finish_checkout(
     }
 
     let folder_name = checkout_folder_name(&resolved);
-    let package_dir = staging.publish(&mut task.log, &name, &folder_name, &is_usable_checkout)?;
+    let (package_dir, _) =
+        staging.publish(&mut task.log, &name, &folder_name, &is_usable_checkout)?;
     let json = read_package_json_in(&package_dir);
     read_package_json(task, package_dir, json)
 }
@@ -559,20 +560,24 @@ impl CacheStaging {
     }
 
     /// Opens `folder_name`, which is either the staging folder renamed into place, or a folder that
-    /// already exists and passes `is_complete`.
+    /// already exists and passes `is_complete`. Also returns whether it is the latter.
     fn publish(
         self,
         log: &mut bun_ast::Log,
         name: &[u8],
         folder_name: &[u8],
         is_complete: &dyn Fn(&bun_sys::Dir) -> bool,
-    ) -> Result<bun_sys::Dir, Error> {
+    ) -> Result<(bun_sys::Dir, bool), Error> {
+        let folder_name = bun_core::ZBox::from_bytes(folder_name);
         StagedEntry::new(self.cache_dir, &bun_core::ZBox::from_bytes(&self.tmp_name))
-            .publish_and_open(
-                self.cache_dir,
-                &bun_core::ZBox::from_bytes(folder_name),
-                is_complete,
-            )
+            .publish(self.cache_dir, &folder_name, is_complete)
+            .and_then(|kept| match kept {
+                Some(kept) => Ok((kept, true)),
+                None => {
+                    let cache = bun_sys::Dir::borrow(&self.cache_dir);
+                    Ok((cache.open_at(folder_name.as_bytes())?, false))
+                }
+            })
             .map_err(|err| {
                 log.add_error_fmt(
                     None,
@@ -664,8 +669,9 @@ fn read_clone_config(repo: &bun_sys::Dir) -> bun_sys::Maybe<Vec<u8>> {
     }
 }
 
-/// Overwrites the `config` file of the clone in `repo` with the output of `clone_config`.
-fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> bun_sys::Maybe<()> {
+/// Overwrites the `config` file of the clone in `repo` with the output of `clone_config`. On
+/// Windows, the rename waits while another program has one of its two files open.
+fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> Result<(), RenameError> {
     let old = read_clone_config(repo)?;
     let config = clone_config(url, &old);
     if config == old {
@@ -676,8 +682,39 @@ fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> bun_sys::Maybe<()> {
     let tmp_name =
         Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENOSPC, bun_sys::Tag::open))?;
-    bun_sys::File::write_file(repo.fd(), tmp_name, &config)?;
-    bun_sys::renameat(repo.fd(), tmp_name, repo.fd(), bun_core::zstr!("config"))
+    let mut retry = RenameRetry::new();
+    let mut result =
+        bun_sys::File::write_file(repo.fd(), tmp_name, &config).map_err(RenameError::from);
+    while result.is_ok() {
+        let Err(err) = bun_sys::renameat(repo.fd(), tmp_name, repo.fd(), bun_core::zstr!("config"))
+        else {
+            return Ok(());
+        };
+        result = retry.wait(err);
+        // Another install of the same URL may have written this text during the wait.
+        if result.is_ok() && read_clone_config(repo).is_ok_and(|written| written == config) {
+            break;
+        }
+    }
+    let _ = bun_sys::unlinkat(repo.fd(), tmp_name);
+    result
+}
+
+/// The message for a `config` that `write_clone_config` could not write.
+struct ConfigNotWritten<'a> {
+    name: &'a [u8],
+    err: &'a RenameError,
+}
+
+impl core::fmt::Display for ConfigNotWritten<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "writing \"config\" for \"{}\" failed: {}",
+            for_terminal(BStr::new(self.name)),
+            self.err
+        )
+    }
 }
 
 /// Moves the URL that the clone's `config` records to the end of `urls`, so it is tried first.
@@ -756,8 +793,8 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
     true
 }
 
-/// Moves the clone of `url` from `staging` into the cache. A usable clone that is already in the
-/// cache is kept instead, unless `replaces` is set.
+/// Writes the `config` of the clone of `url` in `staging`, then moves the clone into the cache. A
+/// usable clone that is already in the cache is kept instead, unless `replaces` is set.
 fn finish_clone(
     task: &mut Task::Task<'_>,
     staging: CacheStaging,
@@ -765,23 +802,34 @@ fn finish_clone(
     replaces: bool,
 ) -> Result<bun_sys::Dir, Error> {
     let name = task.request_git_clone().name.slice().to_vec();
-    let repo = staging.publish(
+    let not_written = |log: &mut bun_ast::Log, err: &RenameError| {
+        let message = ConfigNotWritten { name: &name, err };
+        log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{message}"));
+        Error::InstallFailed
+    };
+    // The clone gets its `config` before it is published, so the installs that find it in the
+    // cache find this text too. None of them then replaces the `config` of a clone that others
+    // already use, which Windows can refuse.
+    let written = bun_sys::Dir::borrow(&staging.cache_dir)
+        .open_at(&staging.tmp_name)
+        .map_err(RenameError::from)
+        // The folder is closed again before `publish`, because Windows cannot rename a directory
+        // with an open handle inside it.
+        .and_then(|staged| write_clone_config(&staged, url));
+    if let Err(err) = written {
+        staging.discard();
+        return Err(not_written(&mut task.log, &err));
+    }
+    let (repo, kept) = staging.publish(
         &mut task.log,
         &name,
         &bare_repo_folder_name(task.id),
         &|repo| !replaces && is_own_clone(repo),
     )?;
-    if let Err(err) = write_clone_config(&repo, url) {
-        task.log.add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "writing \"config\" for \"{}\" failed: {}",
-                for_terminal(BStr::new(&name)),
-                BStr::new(err.name())
-            ),
-        );
-        return Err(Error::InstallFailed);
+    // The clone of another install, which published first. Its `config` can record another URL,
+    // or still be git's own.
+    if kept {
+        write_clone_config(&repo, url).map_err(|err| not_written(&mut task.log, &err))?;
     }
     Ok(repo)
 }
@@ -940,7 +988,7 @@ impl GitSubprocess {
                     if !offline {
                         return Self::fetch_next(this, repo);
                     }
-                    write_clone_config(&repo, this.urls.get().last().expect("is not empty"))?;
+                    this.write_config(&repo, this.urls.get().last().expect("is not empty"))?;
                     Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
                     return Ok(());
                 }
@@ -988,8 +1036,20 @@ impl GitSubprocess {
     fn fetch_next(this: ThisPtr<Self>, repo: bun_sys::Dir) -> Result<(), Error> {
         let url = this.next_url("fetch");
         // Each attempt records its URL in `config`, so the URL that works is the one that remains.
-        write_clone_config(&repo, &url)?;
+        this.write_config(&repo, &url)?;
         Self::spawn_fetch(this, repo, &url, false)
+    }
+
+    /// `write_clone_config` for a clone that was found in the cache. Logs a failure.
+    fn write_config(&self, repo: &bun_sys::Dir, url: &[u8]) -> Result<(), Error> {
+        write_clone_config(repo, url).map_err(|err| {
+            let message = ConfigNotWritten {
+                name: &self.name,
+                err: &err,
+            };
+            self.log_failure(format_args!("{message}"));
+            Error::InstallFailed
+        })
     }
 
     /// Builds `--git-dir=<bare clone>`. With `-C` instead, git would search the parent folders for

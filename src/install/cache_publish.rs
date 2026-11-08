@@ -87,8 +87,8 @@ impl Drop for StagedEntry<'_> {
     }
 }
 
-/// Windows can't rename a directory while a virus scanner has one of its new files open. All the
-/// waits share one time budget.
+/// Windows can't rename a directory while a virus scanner has one of its new files open, and can't
+/// replace a file that another program has open. All the waits share one time budget.
 pub(crate) struct RenameRetry {
     #[cfg(windows)]
     started: Option<std::time::Instant>,
@@ -130,31 +130,52 @@ impl RenameRetry {
                 return Ok(());
             };
             // A directory at `to` fails the rename with the same errors, and no wait helps.
-            if !matches!(err.get_errno(), E::EPERM | E::EACCES | E::EBUSY)
-                || sys::exists_at_type(to_dir, to).is_ok()
-            {
+            if is_in_use(&err) && sys::exists_at_type(to_dir, to).is_ok() {
                 return Err(err.into());
             }
-            let waited_ms = self
-                .started
-                .get_or_insert_with(std::time::Instant::now)
-                .elapsed()
-                .as_millis() as u64;
-            if waited_ms
-                >= bun_core::env_var::BUN_INSTALL_WINDOWS_RENAME_RETRY_MS
-                    .get()
-                    .unwrap()
-            {
-                return Err(RenameError {
-                    err,
-                    gave_up_after_ms: Some(waited_ms),
-                });
-            }
-            // 10 ms more each time, up to 100 ms, as graceful-fs does.
-            self.backoff_ms = (self.backoff_ms + 10).min(100);
-            std::thread::sleep(core::time::Duration::from_millis(self.backoff_ms));
+            self.wait(err)?;
         }
     }
+
+    /// Sleeps before the next attempt at a rename that failed with `err`. Returns `err` if it
+    /// doesn't mean that another program has a file open, or once the budget is spent.
+    #[cfg(not(windows))]
+    pub(crate) fn wait(&mut self, err: sys::Error) -> Result<(), RenameError> {
+        Err(err.into())
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn wait(&mut self, err: sys::Error) -> Result<(), RenameError> {
+        if !is_in_use(&err) {
+            return Err(err.into());
+        }
+        let waited_ms = self
+            .started
+            .get_or_insert_with(std::time::Instant::now)
+            .elapsed()
+            .as_millis() as u64;
+        if waited_ms
+            >= bun_core::env_var::BUN_INSTALL_WINDOWS_RENAME_RETRY_MS
+                .get()
+                .unwrap()
+        {
+            return Err(RenameError {
+                err,
+                gave_up_after_ms: Some(waited_ms),
+            });
+        }
+        // 10 ms more each time, up to 100 ms, as graceful-fs does.
+        self.backoff_ms = (self.backoff_ms + 10).min(100);
+        std::thread::sleep(core::time::Duration::from_millis(self.backoff_ms));
+        Ok(())
+    }
+}
+
+/// Returns whether `err` is one that Windows fails a rename with while another program has a file
+/// open.
+#[cfg(windows)]
+fn is_in_use(err: &sys::Error) -> bool {
+    matches!(err.get_errno(), E::EPERM | E::EACCES | E::EBUSY)
 }
 
 pub(crate) struct RenameError {

@@ -1641,7 +1641,8 @@ test.concurrent(
 // Two installs of different projects that share a cold cache both clone the repository of a git dependency. The one
 // that finishes second finds the other's clone already in the cache. It used to swap in its own clone and delete the
 // other one, which the first install still had open. The first install's checkout then failed with "fatal: repository
-// '<cache>/.<id>.tmp (deleted)' does not exist". The same applies to the checkout folder.
+// '<cache>/.<id>.tmp (deleted)' does not exist". The same applies to the checkout folder. The clone that it keeps is
+// not its own, so it writes bun's `config` into that clone before it runs git there, like into any cached clone.
 test.concurrent.skipIf(isWindows)(
   "an install keeps the git cache folders that another install published first",
   async () => {
@@ -1663,8 +1664,13 @@ wait_for() { i=0; while [ ! -e "$steps/$1" ] && [ $i -lt 200 ]; do sleep 0.05; i
 case "$INSTALL $*" in
   # Both look for the bare clone in the cache before "first" publishes its own.
   "first "*" clone "*" --bare "*) wait_for second-clones-bare ;;
-  # "second" publishes its bare clone after "first" did, and before "first" uses its own.
-  "second "*" clone "*" --bare "*) reach second-clones-bare; wait_for first-runs-log ;;
+  # "second" publishes its bare clone after "first" did, and before "first" uses its own. By then the clone of
+  # "first" holds a setting that is not bun's.
+  "second "*" clone "*" --bare "*)
+    reach second-clones-bare; wait_for first-runs-log
+    for config in ${quote(join(root, "cache"))}/*.git/config; do
+      printf '[core]\\n\\tfilemode = false\\n' >> "$config" && reach second-changes-config
+    done ;;
   "first "*" --git-dir="*" log "*) reach first-runs-log; wait_for second-runs-log ;;
   "second "*" --git-dir="*" log "*) reach second-runs-log ;;
   # Both look for the checkout in the cache before either publishes its own.
@@ -1701,10 +1707,12 @@ exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
     expect(readdirSync(steps).sort()).toEqual([
       "first-clones-checkout",
       "first-runs-log",
+      "second-changes-config",
       "second-clones-bare",
       "second-clones-checkout",
       "second-runs-log",
     ]);
+    expect(readFileSync(join(bareCloneIn(cache), "config"), "utf8")).not.toContain("filemode");
     expect(
       readdirSync(cache)
         .map(name => name.replace(/^[0-9a-f]{16}(?=\.git$)/, "<clone id>"))
@@ -1745,6 +1753,111 @@ test.concurrent.skipIf(!isWindows)(
     }
   },
   30_000,
+);
+
+// The installs above also failed now and then with `writing "config" for "<name>" failed: EBUSY`: each of them replaced
+// the `config` of the shared clone after that clone was in the cache, and Windows refused one of those replaces. A new
+// clone now gets its `config` before it is moved into the cache. That order shows without Windows, in a clone whose
+// `config` can't be written: it used to reach the cache, where each later install failed on it. (Not on Windows, where
+// a script can't replace git.)
+test.concurrent.skipIf(isWindows)("a clone whose config can't be written does not reach the cache", async () => {
+  using dir = tempDir("git-dep-config-before-publish", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}#main` });
+  const cache = join(root, "cache");
+  mkdirSync(join(root, "bin"));
+  // A git that leaves a folder where the `config` of a new clone belongs. The clone is the last argument.
+  writeFileSync(
+    join(root, "bin", "git"),
+    `#!/bin/sh
+${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@" || exit $?
+case " $* " in
+  *" clone "*) for clone; do :; done; rm "$clone/config" && mkdir -p "$clone/config/folder" ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+
+  const failed = await runInstall(project, cache, { PATH: `${join(root, "bin")}:${gitEnv.PATH}` });
+  expect(diagnostics(failed.stderr)).toEqual([
+    expect.stringMatching(/^error: writing "config" for "dep" failed: EISDIR/),
+    "error: InstallFailed cloning repository for dep",
+    expect.stringContaining("failed to resolve"),
+  ]);
+  expect(readdirSync(cache).filter(name => /\.(git|tmp)$/.test(name))).toEqual([]);
+  expect(failed.exitCode).toBe(1);
+
+  const { stderr, exitCode } = await runInstall(project, cache, {});
+  expect(diagnostics(stderr)).toEqual([]);
+  expect(await installedVersionOf(project, "dep")).toBe("main");
+  expect(exitCode).toBe(0);
+});
+
+// A project whose git dependency is cloned in the cache and checked out nowhere, so that the next `bun update` or
+// `bun install --offline` uses the cached clone again.
+async function projectWithCachedClone(root: string) {
+  const bare = await makeSharedRepo(root, [{ name: "dep", branch: "main" }]);
+  await git(bare, "symbolic-ref", "HEAD", "refs/heads/main");
+  const project = writeProject(root, { dep: `git+${pathToFileURL(bare)}` });
+  const cache = join(root, "cache");
+  expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+  dropCheckouts(project, cache);
+  rmSync(join(project, "bun.lock"));
+  return { project, cache, clone: bareCloneIn(cache) };
+}
+
+// A clone that is already in the cache gets bun's `config` again before each use. A failure there names the file too,
+// and is reported at once: a wait helps only while another program has the file open.
+test.concurrent.each(["update", "install --offline"])(
+  "bun %s names the config of a cached clone that can't be written",
+  async command => {
+    using dir = tempDir("git-dep-config-report", {});
+    const { project, cache, clone } = await projectWithCachedClone(String(dir));
+    rmSync(join(clone, "config"));
+    mkdirSync(join(clone, "config", "folder"), { recursive: true });
+
+    const { stderr, exitCode } = await runBun(project, cache, {}, ...command.split(" "));
+    expect(diagnostics(stderr)).toEqual([
+      expect.stringMatching(/^error: writing "config" for "dep" failed: EISDIR/),
+      "error: InstallFailed cloning repository for dep",
+      expect.stringContaining("failed to resolve"),
+    ]);
+    expect(stderr).not.toContain("BUN_INSTALL_WINDOWS_RENAME_RETRY_MS");
+    expect(exitCode).toBe(1);
+  },
+);
+
+// The new `config` is written to a temporary file first. When that fails, the file is removed again. `ulimit -f 0`
+// makes every write to a file fail with EFBIG, for root too, and setting it needs a POSIX shell.
+test.concurrent.skipIf(isWindows).each(["update", "install --offline"])(
+  "bun %s leaves no temporary file in a cached clone whose config it can't write",
+  async command => {
+    using dir = tempDir("git-dep-config-temporary", {});
+    const { project, cache, clone } = await projectWithCachedClone(String(dir));
+    // With a setting that is not bun's, the file has to be written again.
+    const config = readFileSync(join(clone, "config"), "utf8") + "[core]\n\tfilemode = false\n";
+    writeFileSync(join(clone, "config"), config);
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", 'ulimit -f 0 && exec "$0" "$@"', bunExe(), ...command.split(" ")],
+      cwd: project,
+      env: { ...gitEnv, BUN_INSTALL_CACHE_DIR: cache },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(diagnostics(stderr)).toEqual([
+      expect.stringMatching(/^error: writing "config" for "dep" failed: EFBIG/),
+      "error: InstallFailed cloning repository for dep",
+      expect.stringContaining("failed to resolve"),
+    ]);
+    expect({
+      config: readFileSync(join(clone, "config"), "utf8"),
+      temporary: readdirSync(clone).filter(name => name.endsWith(".tmp")),
+    }).toEqual({ config, temporary: [] });
+    expect(exitCode).toBe(1);
+  },
 );
 
 // Only a folder with `.bun-tag` is a complete checkout. A folder without it (left by a killed install of an older

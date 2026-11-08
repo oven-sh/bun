@@ -3,14 +3,14 @@
 // FILE_SHARE_DELETE on any file inside a directory makes a rename of that
 // directory fail with STATUS_ACCESS_DENIED.
 //
-// argv: <watchDir> <subdirFilter> <holdMs>
+// argv: <watchDir> <subdirFilter> <holdMs> [fileName]
 //
 // Spin-polls watchDir until a subdirectory whose name contains subdirFilter
-// ("" matches any) contains a regular file, opens that file via CreateFileW
-// with dwShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE (no DELETE), prints
-// "HELD <path>", keeps the handle open for holdMs, closes it, prints
-// "RELEASED" and exits 0. Prints "MISSED" and exits 0 if nothing shows up
-// within 15s.
+// ("" matches any) contains a regular file (one named fileName, if that is
+// given), opens that file via CreateFileW with dwShareMode = FILE_SHARE_READ |
+// FILE_SHARE_WRITE (no DELETE), prints "HELD <path>", keeps the handle open
+// for holdMs, closes it, prints "RELEASED" and exits 0. Prints "MISSED" and
+// exits 0 if nothing shows up within 15s.
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { readdirSync } from "node:fs";
@@ -21,7 +21,7 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
-const [, , watchDir, subdirFilter, holdMsStr] = process.argv;
+const [, , watchDir, subdirFilter, holdMsStr, fileName = ""] = process.argv;
 const holdMs = Number(holdMsStr);
 
 const { symbols } = dlopen("kernel32.dll", {
@@ -59,8 +59,9 @@ function tryOpenNoShareDelete(path: string): bigint {
 }
 
 // Returns a handle to the first regular file found at most `depth` levels
-// below `dir`, or INVALID_HANDLE_VALUE. Directories fail to open with
-// FILE_ATTRIBUTE_NORMAL, which is what lets this tell them apart.
+// below `dir` (the first one named `fileName`, if that is given), or
+// INVALID_HANDLE_VALUE. Directories fail to open with FILE_ATTRIBUTE_NORMAL,
+// which is what lets this tell them apart.
 function grabFileBelow(dir: string, depth: number): [bigint, string] {
   let entries;
   try {
@@ -71,6 +72,7 @@ function grabFileBelow(dir: string, depth: number): [bigint, string] {
   for (const entry of entries) {
     const path = join(dir, entry.name);
     if (entry.isFile()) {
+      if (fileName !== "" && entry.name !== fileName) continue;
       const h = tryOpenNoShareDelete(path);
       if (h !== INVALID_HANDLE_VALUE && h !== 0n) return [h, path];
     } else if (entry.isDirectory() && depth > 0) {

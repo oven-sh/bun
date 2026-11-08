@@ -48,6 +48,8 @@ pub struct Fragment {
     pub layouts_named_by_code: Vec<LayoutId>,
     pub allocated_layouts: Vec<LayoutId>,
     pub written_keys: Vec<PropertyKeyId>,
+    pub read_keys: Vec<PropertyKeyId>,
+    pub keys_laid_by_descriptors: Vec<PropertyKeyId>,
     pub variables: Vec<(VariableId, Variable)>,
     pub eval_scopes: Vec<(EvalScopeId, EvalScope)>,
     pub data: Vec<(DataId, Data)>,
@@ -175,6 +177,8 @@ pub(crate) struct FileMarks {
     layout_allocated_in: Vec<u32>,
     layout_written_under_dictionary_type_in: Vec<u32>,
     key_written_in: Vec<u32>,
+    key_read_in: Vec<u32>,
+    key_laid_by_descriptor_in: Vec<u32>,
 }
 
 #[inline]
@@ -233,6 +237,8 @@ pub(crate) struct FragmentBuilder {
     marks: FileMarks,
     allocated_layouts: Vec<LayoutId>,
     written_keys: Vec<PropertyKeyId>,
+    read_keys: Vec<PropertyKeyId>,
+    keys_laid_by_descriptors: Vec<PropertyKeyId>,
     variables: Vec<(VariableId, Variable)>,
     eval_scope_count: u32,
     eval_scopes: Vec<(EvalScopeId, EvalScope)>,
@@ -285,6 +291,8 @@ impl FragmentBuilder {
             marks: take(&mut state.marks),
             allocated_layouts: Vec::new(),
             written_keys: Vec::new(),
+            read_keys: Vec::new(),
+            keys_laid_by_descriptors: Vec::new(),
             variables: Vec::new(),
             eval_scope_count: tables.eval_scope_count,
             eval_scopes: Vec::new(),
@@ -487,6 +495,18 @@ impl FragmentBuilder {
         }
     }
 
+    pub(crate) fn note_key_laid_by_descriptor(&mut self, key: PropertyKeyId) {
+        if set_mark(&mut self.marks.key_laid_by_descriptor_in, key, self.visit) {
+            self.keys_laid_by_descriptors.push(key);
+        }
+    }
+
+    pub(crate) fn note_read(&mut self, key: PropertyKeyId) {
+        if set_mark(&mut self.marks.key_read_in, key, self.visit) {
+            self.read_keys.push(key);
+        }
+    }
+
     fn note_what_is_built(&mut self, reference: Reference) {
         match reference {
             Reference::Layout(layout) => self.note_allocation(layout),
@@ -583,6 +603,8 @@ impl FragmentBuilder {
         self.layouts_named_in_file.sort_unstable();
         self.allocated_layouts.sort_unstable();
         self.written_keys.sort_unstable();
+        self.read_keys.sort_unstable();
+        self.keys_laid_by_descriptors.sort_unstable();
 
         let tables = Box::new(UnitTables {
             strings: self.strings,
@@ -620,6 +642,8 @@ impl FragmentBuilder {
             layouts_named_by_code: self.layouts_named_in_file,
             allocated_layouts: self.allocated_layouts,
             written_keys: self.written_keys,
+            read_keys: self.read_keys,
+            keys_laid_by_descriptors: self.keys_laid_by_descriptors,
             variables: self.variables,
             eval_scopes: self.eval_scopes,
             data: self.data,

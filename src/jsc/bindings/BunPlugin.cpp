@@ -519,6 +519,9 @@ public:
     // Moments, see OnLoad::momentOfModuleMocks: when the factory was called, and when the import() that led to it was. They outlast the run of the factory: whoever asked meanwhile comes to its turn later.
     uint32_t calledAt { 0 };
     uint32_t askedForAt { 0 };
+#if ENABLE(AOT)
+    bool wasCalledUnderRequire { false };
+#endif
     ModuleMockFunction function;
     // The factory's promise is pending and will patch the already-loaded module when it settles.
     bool hasPendingPatch { false };
@@ -1789,7 +1792,7 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         String path = specifier->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto compiled = isBuiltinModuleKey(path) ? std::nullopt : JSC::AOT::formThatMockFinds(globalObject, path, Bun::moduleThatMockReplaces(path));
-        if (compiled && JSC::AOT::hasBegunToLoad(globalObject, *compiled) && !JSC::AOT::hasMockInPlace(globalObject, *compiled)) {
+        if (compiled && JSC::AOT::hasBegunToLoad(globalObject, *compiled) && !JSC::AOT::hasOnlyBeenLinked(globalObject, *compiled) && !JSC::AOT::hasMockInPlace(globalObject, *compiled)) {
             // With an earlier mock laid over it, what it exports now is that mock, whose functions an automock would keep.
             JSValue before = JSC::AOT::hasMockLaidOver(globalObject, *compiled) ? JSC::AOT::exportsBeforeMock(globalObject, *compiled, false) : JSValue();
             RETURN_IF_EXCEPTION(scope, {});
@@ -2171,6 +2174,7 @@ __attribute__((minsize)) JSC::JSPromise* JSModuleMock::run(Zig::GlobalObject* gl
         calledAt = ++globalObject->onLoadPlugins.momentOfModuleMocks;
         auto import = JSC::AOT::importThatAsks(globalObject);
         askedForAt = import ? import->momentOfCall : calledAt;
+        wasCalledUnderRequire = JSC::AOT::requireRunsMocks(vm);
     }
 #endif
 
@@ -4437,7 +4441,8 @@ static bool waitsForMockOf(Zig::GlobalObject* globalObject, JSModuleMock* runnin
     auto* entry = findRunningModuleMock(globalObject, running);
     // A factory that was not running when import() was called is nothing to that call: it asks for the module and gets what stands for it.
     // Compiled code calls some factories earlier than `bun test` does: one whose import() was called ahead of the asker's would have been running.
-    if (import && !callers.isEmpty() && running->calledAt > import->momentOfCall && running->askedForAt > uncheckedDowncast<JSModuleMock>(callers[0])->askedForAt)
+    // A require() calls a factory at the moment at which `bun test` does.
+    if (import && !callers.isEmpty() && running->calledAt > import->momentOfCall && (running->askedForAt > uncheckedDowncast<JSModuleMock>(callers[0])->askedForAt || uncheckedDowncast<JSModuleMock>(callers[0])->wasCalledUnderRequire))
         return true;
     auto fileThatWroteImport = import ? std::optional(import->fileThatWroteIt) : std::nullopt;
     auto asked = import ? std::optional(import->fileAskedFor) : std::nullopt;

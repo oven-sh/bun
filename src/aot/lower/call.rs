@@ -563,8 +563,10 @@ impl FileLowering<'_, '_, '_, '_> {
             ) => 0,
             _ => return,
         };
-        if let Some(written) = self.hir.ids(site.args).nth(place) {
-            self.find_constant_key(written);
+        if let Some(written) = self.hir.ids(site.args).nth(place)
+            && let Some(key) = self.find_constant_key(written)
+        {
+            self.fragment.note_key_laid_by_descriptor(key);
         }
     }
 

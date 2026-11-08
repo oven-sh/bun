@@ -1725,6 +1725,17 @@ export const shapes: Shape[] = [
     }),
   },
   {
+    name: "statements of one loop that each take what the one before left, in a check",
+    counted: "statements",
+    size: 1600,
+    entry: "main.ts",
+    isCheckedAlone: true,
+    write: size => ({
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] } }\n`,
+      "main.ts": `declare function first(more: number): boolean;\ndeclare const turns: number;\nexport function long(): boolean {\n  let all = true;\n  for (let i = 0; i < turns; i++) {\n${lines(size, () => `    all = first(i) && all;`)}  }\n  return all;\n}\n`,
+    }),
+  },
+  {
     name: "type parameters of one function, in a check",
     counted: "type parameters",
     size: 8000,

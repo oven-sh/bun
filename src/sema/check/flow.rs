@@ -2475,11 +2475,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getQuickTypeOfExpression`, which checks the callee uncached, and in the resolution of a
     /// `...rest`, for which it checks the initializer uncached (`CheckModeRestBindingElement`).
     pub(super) fn is_flow_loop_visible(&self, depth: usize) -> bool {
-        let depth = depth.min(self.stack.len());
-        !self.stack[depth..].iter().enumerate().any(|(i, &q)| {
-            let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&(depth + i));
-            self.is_resolution(q) && !self.quick_initializers.iter().any(is_quick)
-        })
+        let mut below = self.stack.len();
+        loop {
+            let height = self.height_of_nearest_resolution(below);
+            if height <= depth {
+                return true;
+            }
+            let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&(height - 1));
+            if !self.quick_initializers.iter().any(is_quick) {
+                return false;
+            }
+            below = height - 1;
+        }
     }
 
     /// Returns the `quick_initializers` entry for a declaration whose resolutions are right below

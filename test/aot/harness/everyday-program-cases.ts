@@ -105,6 +105,12 @@ const bodies: [string, string, string][] = [
     "ROWS[i] = ROWS[i] + workers[i % 2].step();",
   ],
   ["through-a-local", "", "const was = ROWS[i];\nROWS[i] = was + 1;"],
+  ["this-place-and-the-next", "", "ROWS[i] = ROWS[i] + 1;\nif (i + 1 < ROWS.length) ROWS[i + 1] = ROWS[i];"],
+  ["a-fraction-stored", "", "ROWS[i] = ROWS[i] + 0.5;"],
+  ["the-one-before-read", "", "const before = ROWS[i - 1] ?? 0;\nROWS[i] = ROWS[i] + 1 + (before > 100 ? 1 : 0);"],
+  ["summed-into-an-integer", "let sum = 0;", "sum = (sum + ROWS[i]) | 0;\nROWS[i] += 1;"],
+  ["under-a-label", "", "skip: {\n  if (ROWS[i] > 100) break skip;\n  ROWS[i] += 1;\n}"],
+  ["a-text-built", 'let text = "";', "text += ROWS[i];\nROWS[i] += 1;"],
 ];
 
 const files = ["js", "ts", "ts-with-any"] as const;

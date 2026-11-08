@@ -37,6 +37,8 @@ pub struct LinkUnit {
     pub(super) layouts_named_by_code: Vec<LayoutId>,
     pub(super) allocated_layouts: Vec<LayoutId>,
     pub(super) written_keys: Vec<PropertyKeyId>,
+    pub(super) read_keys: Vec<PropertyKeyId>,
+    pub(super) keys_laid_by_descriptors: Vec<PropertyKeyId>,
     pub(super) variable_definitions: Vec<(VariableId, Variable)>,
     pub(super) records: UnitRecords,
     pub(super) supertype_edges: Vec<(LayoutId, LayoutId)>,
@@ -80,6 +82,8 @@ impl LinkUnit {
             layouts_named_by_code: fragment.layouts_named_by_code,
             allocated_layouts: fragment.allocated_layouts,
             written_keys: fragment.written_keys,
+            read_keys: fragment.read_keys,
+            keys_laid_by_descriptors: fragment.keys_laid_by_descriptors,
             variable_definitions: fragment.variables,
             records: UnitRecords {
                 eval_scopes: fragment.eval_scopes,

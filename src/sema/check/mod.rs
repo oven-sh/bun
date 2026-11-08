@@ -871,6 +871,7 @@ impl<'s> Program<'s> {
             variance_type_parameter: Atom::NONE,
             auto_array_type: self.auto_array_type,
             stack: Vec::new(),
+            nearest_resolutions: Default::default(),
             in_progress: vec![0; 1024],
             in_progress_shift: 54,
             frames: Vec::new(),
@@ -1527,9 +1528,13 @@ mod marks {
         drops_reported: bool,
     }
 
-    /// The frames that have both marks because `mark_tainted_from` gave them to every frame from one up.
+    /// The frames that have both marks because `mark_tainted_from` gave them to every frame from one up, and those
+    /// that `taint_from` has marked in the same way.
     #[derive(Default)]
-    pub(super) struct FullyMarked(RangesInProgress);
+    pub(super) struct FullyMarked {
+        with_both_marks: RangesInProgress,
+        tainted_by_incomplete_flow: RangesInProgress,
+    }
 
     impl Marks {
         #[inline]
@@ -1568,12 +1573,13 @@ mod marks {
 
         pub(super) fn clear_tainted(&mut self, fully_marked: &mut FullyMarked) {
             self.tainted = false;
-            fully_marked.0.clear();
+            fully_marked.with_both_marks.clear();
+            fully_marked.tainted_by_incomplete_flow.clear();
         }
 
         pub(super) fn set_drops_reported(&mut self, drops: bool, fully_marked: &mut FullyMarked) {
             if self.drops_reported && !drops {
-                fully_marked.0.clear();
+                fully_marked.with_both_marks.clear();
             }
             self.drops_reported = drops;
         }
@@ -1583,10 +1589,25 @@ mod marks {
         /// Gives both marks to every frame from `from` up that isn't known to have them.
         pub(super) fn mark_from(&mut self, frames: &mut [QueryFrame], from: usize) {
             let mut unmarked: SmallVec<[Range<usize>; 2]> = SmallVec::new();
-            self.0.add_from(frames, from, |new| unmarked.push(new));
+            (self.with_both_marks).add_from(frames, from, |new| unmarked.push(new));
             for new in unmarked {
                 for frame in &mut frames[new] {
                     frame.marks = Marks::both();
+                }
+            }
+        }
+
+        pub(super) fn taint_by_incomplete_flow_from(
+            &mut self,
+            frames: &mut [QueryFrame],
+            from: usize,
+        ) {
+            let mut unmarked: SmallVec<[Range<usize>; 2]> = SmallVec::new();
+            (self.tainted_by_incomplete_flow).add_from(frames, from, |new| unmarked.push(new));
+            for new in unmarked {
+                for frame in &mut frames[new] {
+                    frame.marks.taint();
+                    frame.incomplete_flow = true;
                 }
             }
         }
@@ -2153,6 +2174,7 @@ pub struct Checker<'p, 's> {
     /// The same for `union_unreduced`, in the order of the arguments.
     recent_unreduced_unions: instantiate::Recent,
     stack: Vec<Query>,
+    nearest_resolutions: std::cell::RefCell<Vec<(u64, u32)>>,
     /// One per entry of `stack`.
     frames: Vec<QueryFrame>,
     /// The patterns whose implied type is being computed as the contextual type of their
@@ -3686,6 +3708,31 @@ impl<'p, 's> Checker<'p, 's> {
         self.add_diagnostic_of(Some(Query::Comparison(entry)), diagnostic);
     }
 
+    fn height_of_nearest_resolution(&self, below: usize) -> usize {
+        let mut known = self.nearest_resolutions.borrow_mut();
+        if known.len() < below {
+            known.resize(below, (0, 0));
+        }
+        let mut height = below;
+        let (nearest, asked_from) = loop {
+            if height == 0 {
+                break (0, 0);
+            }
+            let (serial, nearest) = known[height - 1];
+            if serial == self.frames[height - 1].serial {
+                break (nearest as usize, height);
+            }
+            if self.is_resolution(self.stack[height - 1]) {
+                break (height, height - 1);
+            }
+            height -= 1;
+        };
+        for at in asked_from..below {
+            known[at] = (self.frames[at].serial, nearest as u32);
+        }
+        nearest
+    }
+
     /// True if `q` is a query that TypeScript tracks as well (`TypeSystemPropertyName`): the type of a named
     /// declaration, the return type of a function, the base types of a class or an interface, the target of a
     /// type alias, the base constraint of a type, or whether a parameter's initializer can be `undefined`. In
@@ -4792,13 +4839,19 @@ impl<'p, 's> Checker<'p, 's> {
         // `getTypeOfVariableOrParameterOrProperty` stores what `getQuickTypeOfExpression` returns,
         // which checks the callee with the loops visible, and the type of a `...rest`. Nothing stores
         // the type of a pattern around a binding element, which is recomputed for the next element.
-        for at in depth..self.frames.len() {
-            let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&at);
-            if self.quick_initializers.iter().any(is_quick) && self.is_resolution(self.stack[at]) {
-                continue;
+        if self.quick_initializers.is_empty() {
+            (self.fully_marked).taint_by_incomplete_flow_from(&mut self.frames, depth);
+        } else {
+            for at in depth..self.frames.len() {
+                let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&at);
+                if self.quick_initializers.iter().any(is_quick)
+                    && self.is_resolution(self.stack[at])
+                {
+                    continue;
+                }
+                self.frames[at].marks.taint();
+                self.frames[at].incomplete_flow = true;
             }
-            self.frames[at].marks.taint();
-            self.frames[at].incomplete_flow = true;
         }
         self.taints += 1;
         self.incomplete_flow_taints += 1;

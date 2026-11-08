@@ -90,7 +90,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     pub(crate) fn emit_get(&mut self, object: ValueId, name: PropertyName) -> ValueId {
         match self.resolve_access(name) {
-            PropertyName::Constant(key) => self.builder.prop_get(object, key, false, false),
+            PropertyName::Constant(key) => {
+                self.file.fragment.note_read(key);
+                self.builder.prop_get(object, key, false, false)
+            }
             PropertyName::Computed(property) => self.builder.elem_get(object, property),
         }
     }

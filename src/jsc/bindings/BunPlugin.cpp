@@ -462,6 +462,56 @@ static String relativeSpecifierToFileSystemPath(const URL& base, const String& s
     return path;
 }
 
+// The hook of a global object's method table while a mock waits for a module (OnLoad::addModuleMockWaitingForModule()). The mock of
+// a module that is not an ES module patches it before the body of a module that imports it, and the mock of this module right
+// behind its body. The body runs through the hook that the global object has while no mock waits.
+static JSC::JSValue moduleLoaderEvaluateWhileModuleMocksWait(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSModuleLoader* moduleLoader, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher, JSValue sentValue, JSValue resumeMode)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The method table with this hook is a copy that one global object has made for itself.
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    const JSC::GlobalObjectMethodTable* methodTable = globalObject->onLoadPlugins.methodTableWithoutModuleMocks(*globalObject);
+    Bun::patchImportsThatHaveLoaded(globalObject, moduleLoader, moduleRecordValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue result = methodTable->moduleLoaderEvaluate(lexicalGlobalObject, moduleLoader, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+    RETURN_IF_EXCEPTION(scope, result);
+    Bun::patchModuleWhoseBodyHasRun(globalObject, moduleLoader, moduleRecordValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
+}
+
+void BunPlugin::OnLoad::addModuleMockWaitingForModule(Zig::GlobalObject& owner, JSC::JSObject* mock)
+{
+    ASSERT(&owner.onLoadPlugins == this);
+    m_moduleMocksWaitingForModule.append(JSC::Strong<JSC::JSObject> { owner.vm(), mock });
+    if (m_moduleMocksWaitingForModule.size() > 1)
+        return;
+    // Zig::GlobalObject::globalObjectMethodTable() is the table that every global object starts with, not the one that this one has.
+    m_methodTableWithoutModuleMocks = static_cast<JSC::JSGlobalObject&>(owner).globalObjectMethodTable();
+    if (!m_methodTableWhileModuleMocksWait) {
+        m_methodTableWhileModuleMocksWait = makeUniqueWithoutFastMallocCheck<JSC::GlobalObjectMethodTable>(*m_methodTableWithoutModuleMocks);
+        m_methodTableWhileModuleMocksWait->moduleLoaderEvaluate = moduleLoaderEvaluateWhileModuleMocksWait;
+    }
+    owner.m_globalObjectMethodTable = m_methodTableWhileModuleMocksWait.get();
+}
+
+void BunPlugin::OnLoad::removeModuleMockWaitingForModule(Zig::GlobalObject& owner, JSC::JSObject* mock)
+{
+    ASSERT(&owner.onLoadPlugins == this);
+    if (!m_moduleMocksWaitingForModule.removeFirstMatching([&](auto& waiting) { return waiting.get() == mock; }) || !m_moduleMocksWaitingForModule.isEmpty())
+        return;
+    owner.m_globalObjectMethodTable = m_methodTableWithoutModuleMocks;
+}
+
+Vector<JSC::Strong<JSC::JSObject>> BunPlugin::OnLoad::takeModuleMocksWaitingForModule(Zig::GlobalObject& owner)
+{
+    ASSERT(&owner.onLoadPlugins == this);
+    if (!m_moduleMocksWaitingForModule.isEmpty())
+        owner.m_globalObjectMethodTable = m_methodTableWithoutModuleMocks;
+    return std::exchange(m_moduleMocksWaitingForModule, {});
+}
+
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
@@ -2579,7 +2629,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionEvictModulesThatHaveLoaded);
 // record that the loader has linked (JSModuleMock::recordWaitedFor) is not it: that one waits for its record, whatever the key loads.
 static JSModuleMock* moduleMockWaitingFor(Zig::GlobalObject* globalObject, const String& key)
 {
-    for (auto& waiting : globalObject->onLoadPlugins.moduleMocksWaitingForModule) {
+    for (auto& waiting : globalObject->onLoadPlugins.moduleMocksWaitingForModule()) {
         auto* mock = uncheckedDowncast<JSModuleMock>(waiting.get());
         if (!mock->recordWaitedFor && mock->specifier->tryGetValue().data == key)
             return mock;
@@ -2590,7 +2640,7 @@ static JSModuleMock* moduleMockWaitingFor(Zig::GlobalObject* globalObject, const
 // The mock that waits for the body of `record`, if there is one.
 static JSModuleMock* moduleMockWaitingFor(Zig::GlobalObject* globalObject, JSC::JSModuleRecord* record)
 {
-    for (auto& waiting : globalObject->onLoadPlugins.moduleMocksWaitingForModule) {
+    for (auto& waiting : globalObject->onLoadPlugins.moduleMocksWaitingForModule()) {
         auto* mock = uncheckedDowncast<JSModuleMock>(waiting.get());
         if (mock->recordWaitedFor.get() == record)
             return mock;
@@ -2603,7 +2653,7 @@ __attribute__((minsize, noinline)) static void stopWaiting(Zig::GlobalObject* gl
 {
     mock->waitsForModule = false;
     mock->recordWaitedFor.clear();
-    globalObject->onLoadPlugins.moduleMocksWaitingForModule.removeFirstMatching([&](auto& waiting) { return waiting.get() == mock; });
+    globalObject->onLoadPlugins.removeModuleMockWaitingForModule(*globalObject, mock);
 }
 
 // Nor does the mock that waits for the module under `key`.
@@ -2614,9 +2664,9 @@ static void stopWaitingForModule(Zig::GlobalObject* globalObject, const String& 
 }
 
 // No mock waits any more.
-static void stopWaitingForModules(BunPlugin::OnLoad& plugins)
+static void stopWaitingForModules(Zig::GlobalObject* globalObject)
 {
-    for (auto& waiting : std::exchange(plugins.moduleMocksWaitingForModule, {})) {
+    for (auto& waiting : globalObject->onLoadPlugins.takeModuleMocksWaitingForModule(*globalObject)) {
         auto* mock = uncheckedDowncast<JSModuleMock>(waiting.get());
         mock->waitsForModule = false;
         mock->recordWaitedFor.clear();
@@ -3766,7 +3816,7 @@ static void waitForModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, J
     mock->waitsForModule = true;
     mock->isRecordMadeOfMock = false;
     mock->recordWaitedFor.setMayBeNull(vm, mock, yetToRun);
-    globalObject->onLoadPlugins.moduleMocksWaitingForModule.append(JSC::Strong<JSC::JSObject> { vm, mock });
+    globalObject->onLoadPlugins.addModuleMockWaitingForModule(*globalObject, mock);
     if (beingFetched)
         thenWithContext(globalObject, beingFetched, jsFunctionModuleMockDidLoadItsModule, jsFunctionModuleMockDidLoadItsModule, mock);
 }
@@ -4842,7 +4892,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     }
     if (!nextLoadSharesModules) {
         // The next file has modules of its own, and nothing of this one's is left for a mock to patch.
-        stopWaitingForModules(plugins);
+        stopWaitingForModules(globalObject);
         return;
     }
 
@@ -4866,7 +4916,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
     }
     // The module that a mock still waits for has never become the mock. It goes, like every module that is mocked before it has
     // loaded: a fetch that never settles must not outlive the test file.
-    for (auto& waiting : plugins.moduleMocksWaitingForModule)
+    for (auto& waiting : plugins.moduleMocksWaitingForModule())
         evict.modules.append(uncheckedDowncast<JSModuleMock>(waiting.get())->specifier->tryGetValue().data);
     for (auto* mock : lastPatchFirst) {
         unmockModule(globalObject, mock, mock->specifier->tryGetValue().data, evict);
@@ -4874,7 +4924,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             (void)scope.tryClearException();
     }
     // What still waits is a preload's mock, or one that jest.resetModules() or build.module() has put another in the place of.
-    stopWaitingForModules(plugins);
+    stopWaitingForModules(globalObject);
 
 #if ENABLE(AOT)
     if (globalObject->vm().hasCompiledCode())
@@ -5795,7 +5845,7 @@ __attribute__((minsize, noinline)) void patchImportsThatHaveLoaded(Zig::GlobalOb
         return;
     // In the order in which the mocks were made. A factory may mock, or unmock.
     JSC::MarkedArgumentBuffer waiting;
-    for (auto& waitingMock : globalObject->onLoadPlugins.moduleMocksWaitingForModule) {
+    for (auto& waitingMock : globalObject->onLoadPlugins.moduleMocksWaitingForModule()) {
         auto* mock = uncheckedDowncast<Zig::JSModuleMock>(waitingMock.get());
         // An ES module, which patchModuleWhoseBodyHasRun() comes for.
         if (mock->recordWaitedFor)
@@ -5833,10 +5883,10 @@ void evictModulesThatHaveLoaded(Zig::GlobalObject* globalObject)
     // A module that has loaded may leave the registry now, ahead of the reaction of a mock that waits for it. The module that asked
     // for it is linked to it all the same, so the mock patches it first. What its factory throws is not for whoever is up the stack
     // here: it goes where that reaction would have sent it, to a promise that nothing handles.
-    if (!plugins.moduleMocksWaitingForModule.isEmpty()) [[unlikely]] {
+    if (!plugins.moduleMocksWaitingForModule().isEmpty()) [[unlikely]] {
         // A factory may mock, or unmock.
         JSC::MarkedArgumentBuffer waiting;
-        for (auto& mock : plugins.moduleMocksWaitingForModule)
+        for (auto& mock : plugins.moduleMocksWaitingForModule())
             waiting.append(mock.get());
         for (size_t i = 0; i < waiting.size(); ++i) {
             // This function is reached without bun:test too: the patch is a door of the feature Test.
@@ -6256,12 +6306,12 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
         RETURN_IF_EXCEPTION(scope, {});
     }
 #endif
-    Zig::stopWaitingForModules(plugins);
+    Zig::stopWaitingForModules(global);
     auto moduleMocksBeingLoaded = std::exchange(plugins.moduleMocksBeingLoaded, {});
     auto runningModuleMocks = std::exchange(plugins.runningModuleMocks, {});
     auto waitingModuleMocks = std::exchange(plugins.waitingModuleMocks, {});
     auto moduleMocksWithTurn = std::exchange(plugins.moduleMocksWithTurn, {});
-    plugins.clear();
+    plugins.clear(*global);
     plugins.moduleMocksBeingLoaded = WTF::move(moduleMocksBeingLoaded);
     plugins.runningModuleMocks = WTF::move(runningModuleMocks);
     plugins.waitingModuleMocks = WTF::move(waitingModuleMocks);

@@ -916,7 +916,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
 
     // The plugin registries hold Strong<> roots into the old realm; owned by the global itself,
     // they would keep it (and everything it loaded) alive for the rest of the run.
-    oldGlobal->onLoadPlugins.clear();
+    oldGlobal->onLoadPlugins.clear(*oldGlobal);
     oldGlobal->onResolvePlugins.clear();
     // If JSC's CodeCache holds fewer entries than a file loads modules, each file evicts what the next one needs.
     // Capped because an entry keeps 20 to 100 KB of unlinked and Baseline code alive.
@@ -1383,8 +1383,11 @@ JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* glob
     // is still populating it.
     JSC::DeferGC deferGC(vm);
     const JSC::GlobalObjectMethodTable* methodTable = &Zig::GlobalObject::globalObjectMethodTable();
-    if (vm.hasCompiledCode() && Bun::compiledProgramRunsInSeveralRealmsAtOnce()) [[unlikely]]
-        methodTable = globalObject->globalObjectMethodTable();
+    if (vm.hasCompiledCode() && Bun::compiledProgramRunsInSeveralRealmsAtOnce()) [[unlikely]] {
+        // Not the copy that a global object has while a module mock waits: that one is its own.
+        auto* parent = dynamicDowncast<Zig::GlobalObject>(globalObject);
+        methodTable = parent ? parent->onLoadPlugins.methodTableWithoutModuleMocks(*parent) : globalObject->globalObjectMethodTable();
+    }
     Zig::GlobalObject* shadow = Zig::GlobalObject::create(
         vm,
         Zig::GlobalObject::createStructure(vm),
@@ -5020,28 +5023,6 @@ extern "C" void Bun__noteEntryEvaluation(Zig::GlobalObject* globalObject)
     noteModuleEvaluation(globalObject, globalObject->moduleLoader());
 }
 
-// GlobalObject::moduleLoaderEvaluate() while a mock waits for a module (JSModuleMock::waitsForModule). The mock of a module that is
-// not an ES module patches it before the body of a module that imports it, and the mock of this module right after its body.
-// Out of line and without the key, which the caller doesn't keep, so that the hook pays one load and one branch for it when no mock waits.
-// The two calls are doors of the feature Test: an executable that is trimmed of bun:test keeps nothing of what stands behind them.
-NEVER_INLINE static JSC::JSValue evaluateModuleWhileModuleMocksWait(Zig::GlobalObject* globalObject, JSGlobalObject* lexicalGlobalObject,
-    JSModuleLoader* moduleLoader, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>&& scriptFetcher,
-    JSValue sentValue, JSValue resumeMode)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    noteModuleEvaluation(globalObject, moduleLoader);
-    JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::patchImportsThatHaveLoaded>(globalObject, moduleLoader, moduleRecordValue);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* record = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue);
-    JSValue key = record ? identifierToJSValue(vm, record->moduleKey()) : jsUndefined();
-    JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
-    RETURN_IF_EXCEPTION(scope, {});
-    JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::patchModuleWhoseBodyHasRun>(globalObject, moduleLoader, moduleRecordValue);
-    RETURN_IF_EXCEPTION(scope, {});
-    return result;
-}
-
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
@@ -5052,10 +5033,9 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    if (!globalObject->onLoadPlugins.moduleMocksWaitingForModule.isEmpty()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, evaluateModuleWhileModuleMocksWait(globalObject, lexicalGlobalObject, moduleLoader, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
-    noteModuleEvaluation(globalObject, moduleLoader);
+    // While a module mock waits, the loader comes here through the hook that patches for it: BunPlugin::OnLoad::addModuleMockWaitingForModule().
+    ASSERT(lexicalGlobalObject->globalObjectMethodTable()->moduleLoaderEvaluate != &moduleLoaderEvaluate || defaultGlobalObject(lexicalGlobalObject)->onLoadPlugins.moduleMocksWaitingForModule().isEmpty());
+    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
     RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
 
@@ -5074,12 +5054,9 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     // As in GlobalObject::moduleLoaderEvaluate: nothing evaluates in a disposed Bun.ModuleGraph.
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
+    // As in GlobalObject::moduleLoaderEvaluate: while a module mock waits, the loader comes here through the hook that patches for it.
+    ASSERT(lexicalGlobalObject->globalObjectMethodTable()->moduleLoaderEvaluate != &moduleLoaderEvaluate || globalObject->onLoadPlugins.moduleMocksWaitingForModule().isEmpty());
     noteModuleEvaluation(globalObject, moduleLoader);
-    // As in evaluateModuleWhileModuleMocksWait().
-    if (!globalObject->onLoadPlugins.moduleMocksWaitingForModule.isEmpty()) [[unlikely]] {
-        JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::patchImportsThatHaveLoaded>(globalObject, moduleLoader, moduleRecordValue);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
     JSC::JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue,
         WTF::move(scriptFetcher), sentValue, resumeMode);
     // The new C++ loader propagates the module body's throw out of
@@ -5087,10 +5064,6 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
     // dispatching here. Don't call back into native code (which opens an
     // ExceptionValidationScope) with an exception still pending.
     RETURN_IF_EXCEPTION(scope, result);
-    if (!globalObject->onLoadPlugins.moduleMocksWaitingForModule.isEmpty()) [[unlikely]] {
-        JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::patchModuleWhoseBodyHasRun>(globalObject, moduleLoader, moduleRecordValue);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
 
     if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(key))) {
         // For a module with top-level `await`, JSC compiles the body as a

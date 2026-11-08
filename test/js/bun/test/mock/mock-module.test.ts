@@ -8914,6 +8914,7 @@ describe.concurrent("a module that is mocked while a module which imports it has
         ...removed("vi.doUnmock", "vi.doMock", `; vi.doUnmock("./tax.js");`),
         ...removed("jest.dontMock", "jest.doMock", `; jest.dontMock("./tax.js");`),
         ...removed("[Symbol.dispose]", "vi.doMock", `[Symbol.dispose]();`),
+        ...removed("Bun.plugin.clearAll()", "mock.module", `; Bun.plugin.clearAll();`),
         // The factory of a mock that another mock replaces before the module has run is never called.
         ...askedByESModule(
           "mocked again",
@@ -8947,7 +8948,7 @@ describe.concurrent("a module that is mocked while a module which imports it has
           { seen: "globalThis.required" },
         ),
       };
-      await expectFixturesToPass(files, 10);
+      await expectFixturesToPass(files, 11);
     });
 
     test("whatever the mock is made of", async () => {

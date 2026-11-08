@@ -3,6 +3,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Strong.h>
 #include <JavaScriptCore/Weak.h>
@@ -18,6 +19,8 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 namespace Zig {
 
 using namespace JSC;
+
+class GlobalObject;
 
 class BunPlugin {
 public:
@@ -148,7 +151,18 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // The mocks of modules that a load in flight had asked for when they were mocked, oldest first. The modules of that load are
         // linked to such a module, so its mock patches it: an ES module once the loader has run its body, another once it has loaded.
-        Vector<JSC::Strong<JSC::JSObject>> moduleMocksWaitingForModule = {};
+        const Vector<JSC::Strong<JSC::JSObject>>& moduleMocksWaitingForModule() const { return m_moduleMocksWaitingForModule; }
+        // All that changes that list. While it has a mock, the method table of `owner`, whose plugins these are, is a copy of its
+        // own with moduleLoaderEvaluateWhileModuleMocksWait() in it: the loader runs the body of an ES module through that hook, and
+        // through the hook of `owner` itself, which knows nothing of mocks, while the list is empty.
+        void addModuleMockWaitingForModule(Zig::GlobalObject& owner, JSC::JSObject* mock);
+        void removeModuleMockWaitingForModule(Zig::GlobalObject& owner, JSC::JSObject* mock);
+        Vector<JSC::Strong<JSC::JSObject>> takeModuleMocksWaitingForModule(Zig::GlobalObject& owner);
+        // The method table of `owner` itself, which is not the one that it has while a mock waits.
+        const JSC::GlobalObjectMethodTable* methodTableWithoutModuleMocks(const JSC::JSGlobalObject& owner) const
+        {
+            return m_moduleMocksWaitingForModule.isEmpty() ? owner.globalObjectMethodTable() : m_methodTableWithoutModuleMocks;
+        }
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
 
@@ -168,7 +182,8 @@ public:
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
-        void clear()
+        // `owner`: the global object whose plugins these are.
+        void clear(Zig::GlobalObject& owner)
         {
             Base::clear();
             delete virtualModules;
@@ -182,7 +197,7 @@ public:
             modulesAskedFor.clear();
             fetchesOfModulesAskedFor.clear();
             moduleMocksBeingLoaded.clear();
-            moduleMocksWaitingForModule.clear();
+            takeModuleMocksWaitingForModule(owner);
             loadedByImportActual.clear();
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
@@ -243,6 +258,13 @@ public:
                 delete virtualModules;
             }
         }
+
+    private:
+        Vector<JSC::Strong<JSC::JSObject>> m_moduleMocksWaitingForModule = {};
+        // While a mock waits: the method table that the global object had until then, and has again afterwards.
+        const JSC::GlobalObjectMethodTable* m_methodTableWithoutModuleMocks { nullptr };
+        // The copy that the global object has in its place meanwhile. Made when the first mock waits, and kept for the next one.
+        std::unique_ptr<JSC::GlobalObjectMethodTable> m_methodTableWhileModuleMocksWait;
     };
 
     class OnResolve final : public Base {

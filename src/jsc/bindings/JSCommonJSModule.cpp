@@ -1860,7 +1860,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                         moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
                         RETURN_IF_EXCEPTION(scope, void());
-                        if (!globalObject->onLoadPlugins.moduleMocksWaitingForModule.isEmpty()) [[unlikely]]
+                        if (!globalObject->onLoadPlugins.moduleMocksWaitingForModule().isEmpty()) [[unlikely]]
                             JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::didMakeRecordOfModuleObject>(globalObject, requireMap, moduleKey);
                     }
                 } else {

@@ -818,7 +818,7 @@ extern "C" __attribute__((minsize)) void Bun__TestFile__leaveModuleGraph(Zig::Gl
     finished->dispose(globalObject);
     (void)scope.tryClearException();
     // Preloads run again for the next file and re-register their plugins and mocks.
-    globalObject->onLoadPlugins.clear();
+    globalObject->onLoadPlugins.clear(*globalObject);
     globalObject->onResolvePlugins.clear();
     // The runner restores the working directory.
     globalObject->processObject()->clearCachedCwd();

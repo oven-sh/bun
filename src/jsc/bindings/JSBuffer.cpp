@@ -1946,7 +1946,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
 
     // Inspect special properties as well, if possible.
     if (ctx.toBoolean(globalObject)) {
-        auto showHiddenValue = ctx.get(globalObject, Identifier::fromString(vm, "showHidden"_s));
+        auto showHiddenName = Identifier::fromString(vm, "showHidden"_s);
+        auto showHiddenValue = ctx.get(globalObject, showHiddenName);
         RETURN_IF_EXCEPTION(scope, {});
         JSC::PropertyNameArrayBuilder array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
 
@@ -1961,6 +1962,16 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
         RETURN_IF_EXCEPTION(scope, {});
 
         if (array.size() > 0) {
+            // Node prints the values with `{ ...ctx }`: only an own enumerable `showHidden` reaches them.
+            bool showHiddenInValues = false;
+            if (showHidden && ctx.isObject()) {
+                auto* options = asObject(ctx);
+                PropertySlot slot(options, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool isOwn = options->methodTable()->getOwnPropertySlot(options, globalObject, showHiddenName, slot);
+                RETURN_IF_EXCEPTION(scope, {});
+                showHiddenInValues = isOwn && !(slot.attributes() & PropertyAttribute::DontEnum);
+            }
+
             any = true;
             if (data.size() > 0) {
                 result.append(',');
@@ -1973,7 +1984,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 result.append(": "_s);
                 auto value = castedThis->get(globalObject, ident);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto inspected = Bun__inspect_singleline_show_hidden(globalObject, value, showHidden).transferToWTFString();
+                auto inspected = Bun__inspect_singleline_show_hidden(globalObject, value, showHiddenInValues).transferToWTFString();
                 RETURN_IF_EXCEPTION(scope, {});
                 result.append(inspected);
                 i++;

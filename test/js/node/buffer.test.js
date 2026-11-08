@@ -3798,11 +3798,19 @@ for (let withOverridenBufferWrite of [false, true]) {
         buf.prop = Object.defineProperty({ shown: 1 }, "hidden", { value: 2, enumerable: false });
         Object.defineProperty(buf, "hiddenProp", { value: 7, enumerable: false });
         const listed = "<Buffer 61 62, prop: { shown: 1, [hidden]: 2 }, hiddenProp: 7>";
+        // Node prints the values with `{ ...ctx }`, so only an own enumerable `showHidden` reaches them.
+        const inItsOwnKeysOnly = "<Buffer 61 62, prop: { shown: 1 }, hiddenProp: 7>";
         const plain = "<Buffer 61 62, prop: { shown: 1 }>";
         expect({
           utilInspect: util.inspect(buf, { showHidden: true }),
           utilFormat: util.format("%o", buf),
           inspect: buf.inspect(2, { showHidden: true }),
+          inAnObject: util.inspect({ buf }, { showHidden: true }),
+          inspectInherited: buf.inspect(2, Object.create({ showHidden: true })),
+          inspectNotEnumerable: buf.inspect(
+            2,
+            Object.defineProperty({}, "showHidden", { value: true, enumerable: false }),
+          ),
           utilInspectPlain: util.inspect(buf),
           utilFormatPlain: util.format("%O", buf),
           inspectPlain: buf.inspect(2, { showHidden: false }),
@@ -3810,6 +3818,9 @@ for (let withOverridenBufferWrite of [false, true]) {
           utilInspect: listed,
           utilFormat: listed,
           inspect: listed,
+          inAnObject: `{ buf: ${listed} }`,
+          inspectInherited: inItsOwnKeysOnly,
+          inspectNotEnumerable: inItsOwnKeysOnly,
           utilInspectPlain: plain,
           utilFormatPlain: plain,
           inspectPlain: plain,
@@ -3829,6 +3840,69 @@ for (let withOverridenBufferWrite of [false, true]) {
           inAValue: "<Buffer 62, holder: { [back]: <Buffer 62, holder: {}> }>",
         });
       });
+
+      it("inspect() with showHidden throws what a non-enumerable key of a value throws", () => {
+        const throws = {
+          [util.inspect.custom]() {
+            throw new Error("thrown");
+          },
+        };
+        const buf = Buffer.from("a");
+        buf.prop = Object.defineProperty({}, "h", { value: throws, enumerable: false });
+        expect(() => util.inspect(buf, { showHidden: true })).toThrow("thrown");
+        expect(util.inspect(buf)).toBe("<Buffer 61, prop: {}>");
+      });
+
+      // Each value of a Buffer has a formatter of its own. No print knows which Buffers another print is in.
+      it.each([
+        ["util.inspect", util.inspect],
+        ["Bun.inspect", Bun.inspect],
+      ])(
+        "inspect() prints a Buffer in full for code of the program that prints it while it is printed, by %s",
+        (_, inspect) => {
+          let again = false;
+          const reported = Buffer.from("a");
+          reported.x = Object.defineProperty(Buffer.from("i"), "g", {
+            get: () => (again ? "again" : ((again = true), "first:" + inspect(reported))),
+            enumerable: true,
+          });
+          const twice = Buffer.from("c");
+          twice.first = Object.assign(Buffer.from("d"), { x: 1 });
+          twice.second = twice.first;
+          expect({ reported: inspect(reported), twice: inspect(twice) }).toEqual({
+            reported: `<Buffer 61, x: <Buffer 69, g: "first:<Buffer 61, x: <Buffer 69, g: \\"again\\">>">>`,
+            twice: "<Buffer 63, first: <Buffer 64, x: 1>, second: <Buffer 64, x: 1>>",
+          });
+
+          // Each of these runs `print` from code that the print of `buf` calls.
+          const sites = {
+            "a getter of the Buffer": (buf, print) => Object.defineProperty(buf, "g", { get: print, enumerable: true }),
+            "a getter of a Buffer in a value": (buf, print) =>
+              (buf.x = Object.defineProperty(Buffer.from("i"), "g", { get: print, enumerable: true })),
+            "a custom inspect function of a value": (buf, print) => (buf.x = { [util.inspect.custom]: print }),
+            "a getter of an Error in a value": (buf, print) =>
+              (buf.x = Object.defineProperty(new Error("m"), "message", { get: print })),
+            "a Proxy among the prototypes of a value": (buf, print) =>
+              (buf.x = Object.create(new Proxy({ k: 1 }, { get: (target, key) => (print(), target[key]) }))),
+          };
+          const printedBySite = {};
+          const printedAlone = {};
+          for (const [name, site] of Object.entries(sites)) {
+            const buf = Buffer.from("a");
+            site(buf, () => {
+              if (!(name in printedBySite)) {
+                printedBySite[name] = "";
+                printedBySite[name] = inspect(buf);
+              }
+              return "value";
+            });
+            inspect(buf);
+            printedAlone[name] = inspect(buf);
+          }
+          expect(Object.keys(printedBySite)).toEqual(Object.keys(sites));
+          expect(printedBySite).toEqual(printedAlone);
+        },
+      );
 
       it("read alias", () => {
         var buf = new Buffer(1024);

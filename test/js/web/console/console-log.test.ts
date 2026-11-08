@@ -502,6 +502,36 @@ describe("non-enumerable keys", () => {
     });
   });
 
+  it.concurrent("a Buffer is printed as in a plain print, also with an inherited showHidden", async () => {
+    expect(
+      await run(`
+        // Code of the program that prints a Buffer while it is printed gets the Buffer in full.
+        let again = false;
+        const outer = Buffer.from("a");
+        outer.x = Object.defineProperty(Buffer.from("i"), "g", { get: () => (again ? "again" : ((again = true), "first:" + Bun.inspect(outer))), enumerable: true });
+        console.log(outer);
+        Object.prototype.showHidden = true;
+        const buf = hide(Buffer.from("ab"), "hiddenProp", 7);
+        buf.prop = hide({ shown: 1 });
+        console.log(buf);
+        const inItself = Buffer.from("c");
+        console.log(hide(inItself, "self", inItself));
+        const inAValue = Buffer.from("d");
+        inAValue.holder = hide({}, "back", inAValue);
+        console.log(inAValue);`),
+    ).toEqual({
+      stdout: [
+        `<Buffer 61, x: <Buffer 69, g: "first:<Buffer 61, x: <Buffer 69, g: \\"again\\">>">>`,
+        "<Buffer 61 62, prop: { shown: 1 }>",
+        "<Buffer 63>",
+        "<Buffer 64, holder: {}>",
+        "",
+      ].join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it.concurrent("no getter of the program is called, and no lazy value of native code is created", async () => {
     const { stdout, stderr, exitCode } = await run(`
       let calls = 0;

@@ -106,8 +106,6 @@ impl All {
         minimum_ms: u32,
         warn: bool,
     ) -> JsResult<u32> {
-        // A value outside `1..=i32::MAX` becomes 1 or `minimum_ms`, so callers
-        // always receive a value in the [0, i32::MAX] range.
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         let countdown_double = countdown.to_number(global_this)?;
@@ -149,13 +147,10 @@ impl All {
         Ok(countdown_int)
     }
 
-    /// The longest `Bun.sleep()`, about 68 years. The event loop waits in the kernel for the time left to the
-    /// first deadline, and `kevent()` on macOS fails with `EINVAL` above `i32::MAX` seconds:
-    /// https://github.com/apple-oss-distributions/xnu/blob/xnu-12377.1.9/bsd/kern/kern_time.c#L677-L686
+    /// `i32::MAX` seconds, about 68 years. `WTFTimer::update` saturates there too, and `kevent()` on macOS takes no longer timeout.
     const MAX_SLEEP_MS: u64 = i32::MAX as u64 * 1000;
 
-    /// `Bun.sleep()`: a timeout that fulfills a promise. It waits for up to `MAX_SLEEP_MS`, where `setTimeout()`
-    /// replaces a delay above `i32::MAX` ms with 1 ms.
+    /// `Bun.sleep()`: a timeout that fulfills a promise. Its wait is not limited to `i32::MAX` ms, as the delay of `setTimeout()` is.
     pub(crate) fn sleep(
         cx: &bun_jsc::JsThread<'_>,
         promise: JSValue,

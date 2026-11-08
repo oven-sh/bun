@@ -160,4 +160,19 @@ describe("the length of the wait, on the fake clock", () => {
     await jest.runAllTimersAsync();
     expect(order).toEqual(["signal before", "sleep", "signal after"]);
   });
+
+  // Five sleeps of 2^31-1 seconds put the fake clock past 2^63 nanoseconds.
+  test("a timer counts from the fake clock after sleeps moved it by 340 years", () => {
+    jest.useFakeTimers({ now: 0 });
+    for (let i = 0; i < 5; i++) {
+      Bun.sleep(Infinity);
+      jest.runAllTimers();
+    }
+    expect(Date.now()).toBe(5 * MAX_SLEEP);
+    const signal = AbortSignal.timeout(1000);
+    jest.advanceTimersByTime(999);
+    expect(signal.aborted).toBe(false);
+    jest.advanceTimersByTime(1);
+    expect(signal.aborted).toBe(true);
+  });
 });

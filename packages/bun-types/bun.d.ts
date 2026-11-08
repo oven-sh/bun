@@ -6394,7 +6394,8 @@ declare module "bun" {
   function sleep(ms: number | Date): Promise<void>;
 
   /**
-   * Block the thread for a given number of milliseconds.
+   * Block the thread for a given number of milliseconds. The longest wait is
+   * 2,147,483,647 milliseconds (about 24.8 days).
    *
    * Internally, it calls [nanosleep(2)](https://man7.org/linux/man-pages/man2/nanosleep.2.html)
    */

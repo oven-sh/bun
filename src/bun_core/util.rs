@@ -4890,24 +4890,14 @@ impl Timespec {
         }
     }
 
-    /// Construct from a signed nanosecond count. Euclidean division keeps
-    /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
-    #[inline]
-    pub(crate) const fn from_ns(ns: i64) -> Timespec {
-        Timespec {
-            sec: ns.div_euclid(Self::NS_PER_S),
-            nsec: ns.rem_euclid(Self::NS_PER_S),
-        }
-    }
-
     /// Monotonic clock (`CLOCK_MONOTONIC` / QPC). Boot-relative on every
     /// platform; never compare against wall-clock epoch. Fake-timers override
     /// via `mock_time::set` / `mock_time::clear`.
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
-            if let Some(ns) = mock_time::get() {
-                return Timespec::from_ns(ns);
+            if let Some(mocked) = mock_time::get() {
+                return mocked;
             }
         }
         Self::now_real()
@@ -4974,26 +4964,26 @@ pub mod mock_time {
     use core::cell::Cell;
 
     thread_local! {
-        static MOCKED_TIME_NS: Cell<Option<i64>> = const { Cell::new(None) };
+        static MOCKED_TIME: Cell<Option<super::Timespec>> = const { Cell::new(None) };
         /// Mocked wall-clock `Date.now()` in ms.
         static MOCKED_WALL_MS: Cell<Option<f64>> = const { Cell::new(None) };
     }
 
-    /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
+    /// Set the mocked monotonic time. Called by fake-timers.
     #[inline]
-    pub fn set(ns: i64) {
-        MOCKED_TIME_NS.set(Some(ns));
+    pub fn set(time: super::Timespec) {
+        MOCKED_TIME.set(Some(time));
     }
     /// Clear the mocked time so `Timespec::now(AllowMockedTime)` reads the
     /// real clock again.
     #[inline]
     pub fn clear() {
-        MOCKED_TIME_NS.set(None);
+        MOCKED_TIME.set(None);
     }
     /// Current mocked time, or `None` if not mocked.
     #[inline]
-    pub fn get() -> Option<i64> {
-        MOCKED_TIME_NS.get()
+    pub fn get() -> Option<super::Timespec> {
+        MOCKED_TIME.get()
     }
     /// Set the mocked wall-clock time (`Date.now()` in ms). Called by
     /// fake-timers alongside `set` so calendar-based consumers and the

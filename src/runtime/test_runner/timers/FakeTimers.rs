@@ -502,8 +502,8 @@ pub(crate) struct FakeTimers {
     /// Armed in the real heap while `tick_mode` is `Interval`.
     tick_timer: EventLoopTimer,
     auto_step_posted: bool,
-    /// `Bun.cron()` jobs whose tick `fire` started. A job is in no heap while its tick runs or is pending, so `clear` stops these too.
-    cron_ticks: Vec<RefPtr<CronJob>>,
+    /// The `Bun.cron()` ticks that `fire` started. A job is in no heap while its tick runs or is pending, so `clear` finds it here.
+    cron_ticks: Vec<CronTick>,
 }
 
 impl Default for FakeTimers {
@@ -582,6 +582,12 @@ extern "C" fn Bun__FakeTimers__replacedPerformanceNow() -> f64 {
 pub(crate) struct Popped {
     installs: u32,
     clears: u32,
+}
+
+struct CronTick {
+    job: RefPtr<CronJob>,
+    /// The deadline that the job had. It has a later one when it is armed again.
+    at: Timespec,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -805,10 +811,13 @@ impl FakeTimers {
     fn clear(&mut self) -> ClearedTimers {
         self.clears = self.clears.wrapping_add(1);
         self.ticks.clear();
-        let mut cleared = ClearedTimers {
-            cron_jobs: core::mem::take(&mut self.cron_ticks),
-            ..Default::default()
-        };
+        let mut cleared = ClearedTimers::default();
+        // The job of a tick that is over is in the heap, where the loop below finds it, or stopped.
+        for tick in core::mem::take(&mut self.cron_ticks) {
+            if tick.job.is_mid_tick(&tick.at) {
+                cleared.cron_jobs.push(tick.job);
+            }
+        }
         while let Some(timer) = self.timers.delete_min() {
             // SAFETY: `delete_min` returned a live node; the owner it belongs
             // to stays live until the caller's release pass.
@@ -834,12 +843,9 @@ impl FakeTimers {
                             .push(AbortSignalTimeout::from_timer_ptr(timer));
                     }
                     EventLoopTimerTag::CronJob => {
-                        let job = CronJob::from_timer_ptr(timer);
-                        // Already there if `fire` started a tick of it and it armed itself again.
-                        let jobs = &mut cleared.cron_jobs;
-                        if !jobs.iter().any(|ticked| ticked.as_ptr() == job) {
-                            jobs.push(RefPtr::init_ref(job));
-                        }
+                        cleared
+                            .cron_jobs
+                            .push(RefPtr::init_ref(CronJob::from_timer_ptr(timer)));
                     }
                     tag => debug_assert!(
                         false,
@@ -851,6 +857,19 @@ impl FakeTimers {
         }
 
         cleared
+    }
+
+    /// Lists a `Bun.cron()` tick that `fire` starts. Not inlined: `fire` runs for each fake timer.
+    #[inline(never)]
+    fn start_cron_tick(&mut self, tick: CronTick) {
+        let ticks = &mut self.cron_ticks;
+        // Forgets the ticks that are over. Only a full list is searched, so that the cost of a tick does not grow with the list.
+        if ticks.len() == ticks.capacity() {
+            ticks.retain(|tick| tick.job.is_mid_tick(&tick.at));
+            // The list is not full again before `len + 1` more ticks.
+            ticks.reserve(ticks.len() + 1);
+        }
+        ticks.push(tick);
     }
 
     fn count(&self) -> usize {
@@ -1057,10 +1076,8 @@ impl FakeTimers {
         let popped = unsafe {
             let this = &mut (*timer_all()).fake_timers;
             if tag == EventLoopTimerTag::CronJob {
-                // Forgets the jobs that are back in the heap, or stopped.
-                this.cron_ticks.retain(|ticked| ticked.is_mid_tick());
-                let job = CronJob::from_timer_ptr(timer);
-                this.cron_ticks.push(RefPtr::init_ref(job));
+                let job = RefPtr::init_ref(CronJob::from_timer_ptr(timer));
+                this.start_cron_tick(CronTick { job, at });
             }
             Popped {
                 installs: this.installs,

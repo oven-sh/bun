@@ -579,6 +579,57 @@ describe("clearAllTimers() from the callback of a timer", () => {
     expect({ ticks, pending: vi.getTimerCount() }).toEqual({ ticks: 1, pending: 0 });
   });
 
+  test("stops a Bun.cron() job whose sixth tick calls it", () => {
+    vi.useFakeTimers();
+    let ticks = 0;
+    Bun.cron("* * * * *", () => void (++ticks === 6 && vi.clearAllTimers()));
+    vi.advanceTimersByTime(10 * 60_000);
+    expect({ ticks, pending: vi.getTimerCount() }).toEqual({ ticks: 6, pending: 0 });
+  });
+
+  test("stops a Bun.cron() job whose sixth tick has not settled yet", async () => {
+    vi.useFakeTimers();
+    let ticks = 0;
+    const tick = Promise.withResolvers<void>();
+    Bun.cron("* * * * *", () => (++ticks === 6 ? tick.promise : undefined));
+    vi.advanceTimersByTime(6 * 60_000);
+    vi.clearAllTimers();
+    tick.resolve();
+    await tick.promise;
+    vi.advanceTimersByTime(5 * 60_000);
+    expect({ ticks, pending: vi.getTimerCount() }).toEqual({ ticks: 6, pending: 0 });
+  });
+
+  test("stops a Bun.cron() job whose tick calls it after many ticks of other jobs", () => {
+    vi.useFakeTimers();
+    const ticks = { outer: 0, inner: 0 };
+    Bun.cron("* * * * *", () => {
+      ticks.outer++;
+      vi.advanceTimersByTime(20 * 60_000);
+      vi.clearAllTimers();
+    });
+    for (let i = 0; i < 7; i++) Bun.cron("* * * * *", () => void ticks.inner++);
+    vi.advanceTimersByTime(60_000);
+    vi.advanceTimersByTime(5 * 60_000);
+    expect({ ...ticks, timers: vi.getTimerCount() }).toEqual({ outer: 1, inner: 7 * 21, timers: 0 });
+  });
+
+  test("stops each of many Bun.cron() jobs whose tick has not settled yet", async () => {
+    vi.useFakeTimers();
+    const ticks = { returned: 0, pending: 0 };
+    const tick = Promise.withResolvers<void>();
+    for (let i = 0; i < 12; i++) {
+      Bun.cron("* * * * *", () => void ticks.returned++);
+      Bun.cron("* * * * *", () => (ticks.pending++, tick.promise));
+    }
+    vi.advanceTimersByTime(60_000);
+    vi.clearAllTimers();
+    tick.resolve();
+    await tick.promise;
+    vi.advanceTimersByTime(5 * 60_000);
+    expect({ ...ticks, timers: vi.getTimerCount() }).toEqual({ returned: 12, pending: 12, timers: 0 });
+  });
+
   test.each(["setInterval", "setTimeout with _repeat"] as const)(
     "a %s on the real clock goes on after it",
     async schedule => {

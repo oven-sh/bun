@@ -24,6 +24,8 @@ in the place of another: object copy SystemError: the list that keeps what a Pic
 in the place of another: object assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
 one less: copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
 one less: assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one of them twice: copy SystemError: the list that keeps what a Pickler has memoized has been changed from outside
+one of them twice: assign SystemError: the list that keeps what a Pickler has memoized has been changed from outside
 as it was: copy no exception
 as it was: assign no exception
 [0, 1, 2]

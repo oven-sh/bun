@@ -14,6 +14,7 @@ for junk in (1, 2.5, None, 'not memoized', object()):
     keys.append(junk); uses('one more: ' + type(junk).__name__); keys.pop()
     was = keys[1]; keys[1] = junk; uses('in the place of another: ' + type(junk).__name__); keys[1] = was
 was = keys.pop(); uses('one less:'); keys.append(was)
+was = keys[1]; keys[1] = keys[0]; uses('one of them twice:'); keys[1] = was
 uses('as it was:')
 print(sorted(number for number, value in p.memo.copy().values()))
 gc.collect()

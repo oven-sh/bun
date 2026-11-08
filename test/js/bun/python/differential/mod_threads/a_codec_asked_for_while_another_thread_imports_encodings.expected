@@ -1,0 +1,4 @@
+status: 0
+script: 089c911931d525c8
+---
+[('first', b'\xa7'), ('second', b'\xa7')]

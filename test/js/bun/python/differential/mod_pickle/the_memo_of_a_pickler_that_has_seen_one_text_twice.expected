@@ -1,0 +1,8 @@
+status: 0
+script: 14cdc5267880ca47
+---
+the literals of two functions: copy 2 | taken over, then copied 2 | reduced ['type', 'tuple'] 2
+interned twice: copy 2 | taken over, then copied 2 | reduced ['type', 'tuple'] 2
+the name of an attribute beside the same text: copy 3 | taken over, then copied 3 | reduced ['type', 'tuple'] 3
+the keys of three dicts: copy 5 | taken over, then copied 5 | reduced ['type', 'tuple'] 5
+two instances: copy 9 | taken over, then copied 9 | reduced ['type', 'tuple'] 9

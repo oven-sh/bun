@@ -55,6 +55,59 @@ list.length = 5;
 list.sort((a, b) => a - b);
 console.log(list.join(), list.length);
 `;
+// The same for reads alone: what the first word reads is what it has stored one further, so it never meets a place that nothing was stored into.
+const readsFurther = "--aot-testing=VouchedReadsAreTakenOneFurther";
+const linesOfSort = readFileSync(
+  join(import.meta.dir, "..", "..", "src", "aot", "prelude", "array-sort.ts"),
+  "utf8",
+).split("\n");
+const stopAtWhatIsVouchedFor = (place: string) =>
+  new RegExp(
+    `^AOT: f\\d+ at ${place}:\\d+: what memory holds where the compiler remembers another value is not of the type`,
+    "m",
+  );
+const stopInSortAt = (words: string) =>
+  stopAtWhatIsVouchedFor(String(linesOfSort.findIndex(line => line.includes(words)) + 1));
+const underAComparator = (list: string) => `let calls = 0;
+const list: (number | undefined)[] = ${list};
+list.sort((a, b) => (calls++, (a as number) - (b as number)));
+console.log(list.join(), list.length, calls > 0);
+`;
+const vouchedFalsely: [string, string, string, string, RegExp][] = [
+  [
+    "a store of the program's own",
+    oneFurther,
+    `const list: number[] = [];
+for (let i = 0; i < 8; i++) list.push(i + 0.25);
+list.length = 5;
+for (let i = 0; i < list.length; i++) list[i] = i + 0.5;
+console.log(list.join(), list.length);
+`,
+    "0.5,1.5,2.5,3.5,4.5 5\n",
+    stopAtWhatIsVouchedFor("4"),
+  ],
+  [
+    "a run of elements copied out of the list",
+    oneFurther,
+    underAComparator("[3, undefined, 1, , 2, 5, undefined, 4]"),
+    "1,2,3,4,5,,, 8 true\n",
+    stopInSortAt("$tryCopyFilledElements(from, array, length)"),
+  ],
+  [
+    "a run of elements copied back into the list",
+    oneFurther,
+    underAComparator("[3, , 1, 2, 9];\nlist[200000] = 0;\nlist.length = 7"),
+    "1,2,3,9,,, 7 true\n",
+    stopInSortAt("$tryPutElements(array, from, count)"),
+  ],
+  [
+    "a read of a place that nothing was stored into",
+    readsFurther,
+    underAComparator("[3, , 1, 2, 9];\nlist[200000] = 0;\nlist.length = 7"),
+    "1,2,3,9,,, 7 true\n",
+    stopInSortAt("const inserted: T = $getOwnContiguousIndex<T>(from, i);"),
+  ],
+];
 // The compiler takes the turns of a loop to leave the storage of lists and of views, and so their lengths, as they were in front of it: what a turn reads of them is read once, in front.
 // Each program stays inside memory that is still there: it reads no element, or it reads one where it lay before, and it stores nothing.
 const asInFront = "--aot-testing=StorageAndLengthsAreTakenToBeAsInFront";
@@ -473,10 +526,25 @@ describe.concurrent("--aot-harden=proof-checks", () => {
     using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });
     await build(String(folder), ["--aot-harden=proof-checks", oneFurther]);
     const { stdout, stderr, exitCode } = await runBuilt(String(folder));
-    expect(stderr).toMatch(stopAtBound);
+    expect(stderr).toMatch(stopInSortAt("const value: number = $getOwnInt32Index(array, index);"));
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
   }, 120_000);
+
+  test.each(vouchedFalsely)(
+    "stops the program at %s that is vouched for falsely, and leaves the honest program alone",
+    async (_, lie, source, honest, stop) => {
+      using folder = tempDir("aot-harden", { "program.ts": source });
+      await build(String(folder), ["--aot-harden=proof-checks"]);
+      expect(await runBuilt(String(folder))).toEqual({ stdout: honest, stderr: "", exitCode: 0 });
+      await build(String(folder), ["--aot-harden=proof-checks", lie]);
+      const { stdout, stderr, exitCode } = await runBuilt(String(folder));
+      expect(stderr).toMatch(stop);
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
 
   test("leaves no access without its test", async () => {
     expect((await countsOf(countedLoops, [])).RangeChecksRemoved).toBeGreaterThan(0);
@@ -523,10 +591,25 @@ describe.concurrent("--aot-harden=ignore-told-ranges", () => {
     using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });
     await build(String(folder), ["--aot-harden=ignore-told-ranges", oneFurther]);
     const { stdout, stderr, exitCode } = await runBuilt(String(folder));
-    expect(stderr).toMatch(stopAtBound);
+    expect(stderr).toMatch(stopInSortAt("const value: number = $getOwnInt32Index(array, index);"));
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
   }, 120_000);
+
+  test.each(vouchedFalsely)(
+    "stops the program at %s that is vouched for falsely, and leaves the honest program alone",
+    async (_, lie, source, honest, stop) => {
+      using folder = tempDir("aot-harden", { "program.ts": source });
+      await build(String(folder), ["--aot-harden=ignore-told-ranges"]);
+      expect(await runBuilt(String(folder))).toEqual({ stdout: honest, stderr: "", exitCode: 0 });
+      await build(String(folder), ["--aot-harden=ignore-told-ranges", lie]);
+      const { stdout, stderr, exitCode } = await runBuilt(String(folder));
+      expect(stderr).toMatch(stop);
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
 
   test("leaves alone a program whose vouched positions hold", async () => {
     using folder = tempDir("aot-harden", { "program.ts": sortedInPlace });

@@ -30,6 +30,7 @@ use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet};
+use bun_sort_by_number::SortByNumber;
 use core::ops::Range;
 use std::borrow::Cow;
 
@@ -659,9 +660,21 @@ impl ModuleGraph {
         let Some(site) = self.find_stored_site(file, SiteKey::Call(call)) else {
             return true;
         };
-        let mut holders = self.holders(file).iter();
         !self.stands_without_object(site.target)
-            || holders.any(|holder| holder.call == call && holder.is_needed_as_value)
+            || (self.holders_of_call(file, call)).any(|holder| holder.is_needed_as_value)
+    }
+
+    fn holders_of_call(&self, file: FileId, call: ExprId) -> impl Iterator<Item = &Holder> {
+        let holders = self.holders(file);
+        let by_call = self.row(file).holders_by_call.get_or_init(|| {
+            let mut by_call: Vec<u32> = (0..holders.len() as u32).collect();
+            by_call.sort_by_u32(|&at| holders[at as usize].call.0);
+            by_call
+        });
+        let first = by_call.partition_point(|&at| holders[at as usize].call.0 < call.0);
+        (by_call[first..].iter())
+            .map(|&at| &holders[at as usize])
+            .take_while(move |holder| holder.call == call)
     }
 
     fn stands_without_object(&self, module: ModuleRef) -> bool {

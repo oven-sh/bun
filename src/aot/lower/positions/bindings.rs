@@ -215,8 +215,18 @@ impl FileLowering<'_, '_, '_, '_> {
                 files.bound(declaring_file),
                 pattern,
             );
-        let is_expected_by_its_uses =
-            is_read && self.queries.uses_say_what_read_is(pattern, is_element);
+        let is_given_by_a_call = !is_stored_again
+            && !is_parameter
+            && !self.is_checked()
+            && declaring_file == self.file
+            && comes_from_elsewhere(
+                files.hir(declaring_file),
+                files.bound(declaring_file),
+                pattern,
+            );
+        let is_expected_by_its_uses = (is_read
+            && self.queries.uses_say_what_read_is(pattern, is_element))
+            || (is_given_by_a_call && self.queries.uses_say_list_of_lists(pattern));
         let is_declared = is_parameter
             || is_stored_again
             || is_expected_by_its_uses

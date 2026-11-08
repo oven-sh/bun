@@ -1,4 +1,5 @@
 // RUN(LOAD): lower
+// DIAGNOSTIC: TS100093 1
 // LOAD-LABEL: function {{*}}name="load"
 // LOAD: [[expected]] = ModuleBuiltin builtin=ModuleRequire module=m
 // LOAD-NEXT: [[same]] = StrictEq [[callee]], [[expected]]

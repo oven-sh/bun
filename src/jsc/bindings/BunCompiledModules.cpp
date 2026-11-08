@@ -185,6 +185,7 @@ extern "C" bool Bun__AOT__isWorkerTextRefusedByTrimming(JSC::JSGlobalObject*, co
 extern "C" bool Bun__AOT__isMainModule(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isLoadedSynchronously(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(JSC::JSGlobalObject*);
+extern "C" bool Bun__AOT__hasImmediatesYetToRun(JSC::JSGlobalObject*);
 extern "C" uint64_t Bun__AOT__stampOfFile(const char* path, size_t length);
 extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSC::JSGlobalObject*, const BunString* path);
 extern "C" bool Bun__AOT__allowsCodeFromDisk();
@@ -1969,7 +1970,8 @@ static bool loadsSynchronously(JSGlobalObject* globalObject, AOT::ModuleID modul
 static void deliverTextInLaterTurn(WebCore::ScriptExecutionContext& context, bool wasPutOff)
 {
     context.postTaskAfterYield([wasPutOff](WebCore::ScriptExecutionContext& context) {
-        if (isBunTest && !wasPutOff && Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(context.globalObject())) [[unlikely]]
+        // A task behind the yield that an immediate has posted runs in the same iteration, ahead of the next immediates. The thread of `bun test` is not that fast.
+        if (isBunTest && !wasPutOff && (Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(context.globalObject()) || Bun__AOT__hasImmediatesYetToRun(context.globalObject()))) [[unlikely]]
             return deliverTextInLaterTurn(context, true);
         AOT::deliverTextThatWaits(context.vm());
         // What the delivery has queued runs here, ticks too, so that the run time hears where it ends: what a later turn calls for is held again.

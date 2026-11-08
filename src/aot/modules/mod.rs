@@ -664,6 +664,7 @@ pub fn bind_scanned_modules(input: &BindInput<'_, '_>, scanned: ScannedModules) 
             evaluating_sites,
             unread_sites: imports.unread_sites,
             holders: imports.holders,
+            holders_by_call: OnceLock::new(),
             answer_members: imports.answer_members,
             names_read_on_answers: imports.names_read_on_answers,
             exports,

@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-type-error-in-a-text-that-the-build-was-given-stops-the-build.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -268,6 +272,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-file-that-the-test-runner-is-asked-for-finds-the-names-it-imports.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-file-that-threw-is-named-where-a-mock-is-laid-over-a-file-that-a-refused-load-left-unlinked.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -496,6 +504,10 @@
     "default": 11400,
     "asan": 45600
   },
+  "aot/a-name-that-only-a-package-json-explains-is-found-beside-a-plugin-that-touches-nothing.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-nearer-copy-of-a-package-ends-the-search-in-a-program-with-one-entry-point.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -625,6 +637,10 @@
     "asan": 240000
   },
   "aot/a-requirer-that-is-no-file-of-the-executable-keeps-one-object-for-a-file.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-resolve-that-lists-folders-finds-what-each-of-them-answers.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -1920,6 +1936,54 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/mocks-over-a-file-that-fails-first-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-10.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-11.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-12.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-3.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-4.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-5.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-6.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-7.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-8.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/mocks-over-a-file-that-fails-first-9.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/modules-above-an-evicted-file-are-checked-once.test.ts": {
     "default": 4500,
     "asan": 18000
@@ -2677,6 +2741,10 @@
     "asan": 3200
   },
   "aot/the-suites-of-the-test-runner-run-compiled.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-tests-that-run-as-users-build-are-listed.test.ts": {
     "default": 60000,
     "asan": 240000
   },

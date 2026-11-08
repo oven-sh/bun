@@ -26,7 +26,8 @@ const loads: Record<string, (name: string) => string> = {
 };
 
 // With a second argument the call is left to the run, whatever the argument holds. The build has written down where the name leads from the folder of the file, so an argument that
-// names no other folder answers as `bun <file>` does. `paths` that name another folder are looked through at the run, and nothing of that folder is in the executable.
+// names no other folder answers as `bun <file>` does. `paths` that name another folder are looked through at the run too, and where the build can read the list it has brought what each
+// listed folder answers.
 // An executable that is built without --aot finds none of them.
 const notFollowed: Record<string, (name: string) => string> = {
   "resolve-symbol.cjs": name => `require(require.resolve("${name}", { [Symbol.for("outside")]: true }))`,
@@ -48,7 +49,7 @@ async function build(project: string, entry: string, executable: string) {
 
 const packageOf = (file: string) => "dep-" + file.replace(".", "-");
 
-test("require.resolve() with a second argument answers from the folder of the file and from no other", async () => {
+test("require.resolve() with a second argument answers as bun <file> does", async () => {
   const files = Object.keys(notFollowed);
   using dir = tempDir("aot-made-requires-not-followed", {
     "project/package.json": `{ "name": "project" }`,
@@ -80,8 +81,7 @@ test("require.resolve() with a second argument answers from the folder of the fi
   const plain = await run([bunExe(), "entry.cjs"], project, bunEnv);
   expect(plain.stdout.trim().split("\n")).toEqual(files.map(file => `sub for ${file}`));
   for (const flags of [["--aot"], []]) {
-    const isFound = (file: string) => flags.length > 0 && file !== fromAnotherFolder;
-    const expected = files.map(file => (isFound(file) ? `sub for ${file}` : `${file} MODULE_NOT_FOUND`));
+    const expected = files.map(file => (flags.length > 0 ? `sub for ${file}` : `${file} MODULE_NOT_FOUND`));
     const executable = join(String(dir), "program" + flags.join(""));
     const built = await run(
       [bunExe(), "build", "--compile", ...flags, "./entry.cjs", "--outfile", executable],

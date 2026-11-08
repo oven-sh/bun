@@ -53,6 +53,10 @@ pub(crate) fn collect_import_sites<'s>(
         asked_of_data_files: slice_in(&calls.asked_of_data_files, arena),
         asked_of_own_exports: slice_in(&calls.asked_of_own_exports, arena),
         names_out_of_data_files: slice_in(&calls.names_out_of_data_files, arena),
+        names_resolved_from_listed_folders: slice_in(
+            &calls.names_resolved_from_listed_folders,
+            arena,
+        ),
         keys_stored_in_caches: slice_in(&calls.keys_stored_in_caches, arena),
         first_call_site,
         sites_by_kind: slice_in(&sites_by_kind, arena),

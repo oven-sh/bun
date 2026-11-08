@@ -63,9 +63,6 @@ test/js/bun/test/mock/mock-module.test.ts: vi.mock() with an async factory, of a
 # Compiled runs that importer first. The fixtures see another order, an export that should have no value yet, or "Cannot access 'Base' before initialization".
 # These: vi.importActual(X) in a factory that is running, where X imports the module that is being mocked. Plain links X to the original and runs it.
 # Compiled links X to the mock, which has no exports yet: "Cannot access '<name>' before initialization", or the original never runs. With import() for vi.importActual() compiled is right.
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets its own copy of a module that waits for the mock, imported after the mock
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets its own copy of a module that waits for the mock, imported before the mock
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets the original of the module that is being mocked
 # These: what a running factory loads is a copy of its own in plain. The copy sees the original, and the importers that wait for the mock get another instance, which sees the mock.
 # Compiled has the one instance and hands the factory's to the importers.
 test/js/bun/test/mock/mock-module.test.ts: a factory doesn't wait for an onLoad() callback in an unrelated load > a module that the factory shares with the importers of the mock stays linked to the mock

@@ -617,6 +617,41 @@ fn original_beside_a_mock_names_what_the_mocked_file_imports() {
 }
 
 #[test]
+fn file_that_the_test_runner_is_asked_for_names_what_it_imports() {
+    let files = [
+        (
+            "a.test.js",
+            "import { test, vi } from \"bun:test\";\ntest(\"t\", async () => {\n  await import(\"./state.js\");\n  vi.doMock(\"./state.js\", async () => ({ x: (await vi.importActual(\"./asked.js\")).sees() }));\n  await import(\"./state.js\");\n  await import(\"./far.js\");\n});\n",
+        ),
+        ("state.js", "export const x = 1;\n"),
+        (
+            "asked.js",
+            "import { through } from \"./between.js\";\nexport const sees = () => through();\n",
+        ),
+        (
+            "between.js",
+            "import \"./state.js\";\nexport * from \"./handed-on.js\";\n",
+        ),
+        (
+            "handed-on.js",
+            "export const through = () => 1;\nexport const unread = 1;\n",
+        ),
+        (
+            "far.js",
+            "export const far = 1;\nexport const unread = 2;\n",
+        ),
+    ];
+    with_graph(&files, |files, graph| {
+        let module = |name: &str| ModuleRef::File(file_named(files, name));
+        for name in ["between.js", "handed-on.js"] {
+            assert!(graph.is_named_by_copies(module(name)), "{name}");
+            assert!(graph.is_every_export_asked_for(module(name)), "{name}");
+        }
+        assert!(!graph.is_every_export_asked_for(module("far.js")));
+    });
+}
+
+#[test]
 fn run_that_takes_nothing_out_marks_no_file() {
     let helper = ("evicts.cjs", "exports.evict = () => {};\n");
     with_graph_around_state(helper, |files, graph| {

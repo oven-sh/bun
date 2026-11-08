@@ -1246,6 +1246,7 @@ async function run(program: Program): Promise<void> {
     "--aot",
     `--aot-threads=${threads}`,
     ...program.flags,
+    ...(program.flags.includes(whereProofsAreChecked[0]) ? ["--aot-testing=ReadsByKeyOffFilledRecordsAreListed"] : []),
     ...(program.statistics.length || (keepsStatistics && program.way === "compiled") ? ["--explain=statistics"] : []),
     entry,
     ...program.entryPoints,

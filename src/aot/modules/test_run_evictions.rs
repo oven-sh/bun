@@ -204,8 +204,31 @@ pub(super) fn fill_plan_of_copies(
     let mut is_every_file = is_code_changed || mocked.is_every_module();
     is_every_file |= !evicted.modules().is_empty();
     let mut named: Vec<ModuleRef> = Vec::new();
+    let mut asked_of_test_runner: Vec<ModuleRef> = Vec::new();
+    for &file in (modules.compiled_files.iter()).filter(|_| is_any_module_mocked) {
+        let Some(scan) = scans.find(file) else {
+            continue;
+        };
+        let sites = input.files.analysis(file).import_sites.iter();
+        for (site, answer) in sites.zip(&scan.sites) {
+            let is_asked = matches!(
+                site.kind,
+                ImportSiteKind::ImportByTestRunner(_) | ImportSiteKind::RequireByTestRunner(_)
+            );
+            match *answer {
+                _ if !is_asked => {}
+                ScannedSite::Module(module) => asked_of_test_runner.push(module),
+                ScannedSite::Candidates(ref range) => {
+                    asked_of_test_runner.extend(scan.modules_spelled_in(range));
+                }
+                ScannedSite::AllModules => is_every_file = true,
+                ScannedSite::Unresolved | ScannedSite::Erased => {}
+            }
+        }
+    }
     let copies = evicted.modules().iter().chain(mocked.iter());
-    for &module in copies.chain(&copied_under_queries) {
+    let copies = copies.chain(&copied_under_queries);
+    for &module in copies.chain(&asked_of_test_runner) {
         let ModuleRef::File(file) = module else {
             continue;
         };

@@ -634,6 +634,68 @@ export const shapes: Shape[] = [
         `test("it loads", () => { expect(asked()).toBe(2); });\n`,
     }),
   },
+  {
+    name: "halls that each open by two files onto the next, the last onto the first again, over one mocked file, in a test run",
+    counted: "halls",
+    size: 6,
+    entry: "a.test.js",
+    isTestRun: true,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "cellar.js": `export const wine = 1;\n`,
+      "vault.js": `export const gold = 2;\n`,
+      "door.js": size ? `export * from "./hall0.js";\n` : `export * from "./cellar.js";\nexport * from "./vault.js";\n`,
+      ...Object.fromEntries(
+        upTo(size, level => {
+          const below =
+            level + 1 < size
+              ? `export * from "./hall${level + 1}.js";\n`
+              : `export * from "./hall0.js";\nexport * from "./cellar.js";\nexport * from "./vault.js";\n`;
+          return [
+            [`hall${level}.js`, `export * from "./left${level}.js";\nexport * from "./right${level}.js";\n`],
+            [`left${level}.js`, below],
+            [`right${level}.js`, below],
+          ];
+        }).flat(),
+      ),
+      "a.test.js":
+        `import { expect, mock, test } from "bun:test";\nmock.module("./vault.js", () => ({ gold: 3 }));\nimport { gold, wine } from "./door.js";\n` +
+        `test("it loads", () => { expect(wine + (gold > 0 ? 1 : 0)).toBe(2); });\n`,
+    }),
+  },
+  {
+    name: "halls that each open by two files onto the next, the last onto the first again, loaded behind a mock that the test lays",
+    counted: "halls",
+    size: 10,
+    entry: "a.test.js",
+    isTestRun: true,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "cellar.js": `export const wine = 1;\n`,
+      "vault.js": `export const gold = 2;\n`,
+      "hall0.js": size
+        ? `export * from "./left0.js";\nexport * from "./right0.js";\n`
+        : `export * from "./cellar.js";\nexport * from "./vault.js";\n`,
+      ...Object.fromEntries(
+        upTo(size, level => {
+          const below =
+            level + 1 < size
+              ? `export * from "./hall${level + 1}.js";\n`
+              : `export * from "./hall0.js";\nexport * from "./cellar.js";\nexport * from "./vault.js";\n`;
+          return [
+            ...(level ? [[`hall${level}.js`, `export * from "./left${level}.js";\nexport * from "./right${level}.js";\n`]] : []),
+            [`left${level}.js`, below],
+            [`right${level}.js`, below],
+          ];
+        }).flat(),
+      ),
+      "guest.js": `import { gold, wine } from "./hall0.js";\nexport const look = () => wine + gold;\n`,
+      "a.test.js":
+        `import { expect, test, vi } from "bun:test";\ntest("it loads", async () => {\n  vi.doMock("./vault.js", () => ({ gold: 3 }));\n` +
+        `  const halls = await import("./hall0.js");\n  expect(Object.keys(halls).length + halls.wine + halls.gold).toBe(6);\n` +
+        `  expect((await import("./guest.js")).look()).toBe(4);\n});\n`,
+    }),
+  },
   // Two files a layer, each exporting everything of both files of the next, and every file mocked. The read of one imported name wrote out the way to its declaration, and at each file that holds
   // a mock all that lies behind it anew: the ways double a layer. 16 layers took 13 G instructions and 1.2 GB, 22 never ended. A file that the way has written out once is asked of the run after that.
   {
@@ -1167,6 +1229,27 @@ export const shapes: Shape[] = [
         `}\nconsole.log(sum);\n`,
     }),
   },
+  // Each wrapper is a module of its own. For each module that the top of the file mentions the verifier went through all that it had listed for that function: 16,000 wrappers took 3.6 G instructions.
+  {
+    name: "CommonJS wrappers as a bundler writes them in one file, each called at the top of the file",
+    counted: "wrappers",
+    size: 8000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `let used = 0;\nfunction use(value) { if (value !== undefined) used++; }\n` +
+        `var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);\n` +
+        `var require_first = __commonJS((exports, module) => {\n  module.exports = { value: 0 };\n});\n` +
+        lines(
+          size,
+          index =>
+            `var require_m${index} = __commonJS((exports, module) => {\n  var before = ${index ? `require_m${(index - 1) >> 1}` : "require_first"}();\n  module.exports = { value: before.value + ${index} };\n});`,
+        ) +
+        `use(require_first().value);\n` +
+        lines(size, index => `use(require_m${index}().value);`) +
+        `console.log(used);\n`,
+    }),
+  },
   // `module.exports = { .. }`: for each key that another file reads, all stores so far were gone through to drop an earlier one of the same name: 16,000 keys took 2.8 G instructions.
   {
     name: "keys of a literal that a CommonJS file exports, each read in another file",
@@ -1530,6 +1613,70 @@ export const shapes: Shape[] = [
     write: size => ({
       "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] } }\n`,
       "main.ts": `export function take(list: number[]) {\n  let last = 0;\n  [\n${lines(size, () => "    last,")}  ] = list;\n  return last;\n}\n`,
+    }),
+  },
+  {
+    name: "literals copied onto one prototype",
+    counted: "literals",
+    size: 16000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function Target() {}\n${lines(size, index => `Object.assign(Target.prototype, { m${index}: ${index} });`)}console.log(typeof Target);\n`,
+    }),
+  },
+  {
+    name: "getters defined on the exports as TypeScript emits them",
+    counted: "getters",
+    size: 8000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `"use strict";\nObject.defineProperty(exports, "__esModule", { value: true });\n${lines(size, index => `exports.x${index} = void 0;`)}let one = 1;\n${lines(size, index => `Object.defineProperty(exports, "x${index}", { enumerable: true, get: function () { return one + ${index}; } });`)}console.log(Object.keys(exports).length);\n`,
+    }),
+  },
+  {
+    name: "members of one literal with a name that is a number near its front, every eighth read by a getter",
+    counted: "members",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `const table = {\n  first: 0,\n  "1.5": 1,\n${lines(size, index => `  x${index}: ${index},`)}};\nconst views = {};\n${lines(Math.floor(size / 8), index => `Object.defineProperty(views, "x${index * 8}", { enumerable: true, get: function () { return table.x${index * 8}; } });`)}console.log(Object.keys(views).length);\n`,
+    }),
+  },
+  // A layout has 4,095 fields at most. The two sizes lie on either side of it.
+  {
+    name: "members of one literal, every eighth read by a getter",
+    counted: "members",
+    size: 3000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `const table = {\n  first: 0,\n${lines(size, index => `  x${index}: ${index},`)}};\nconst views = {};\n${lines(Math.floor(size / 8), index => `Object.defineProperty(views, "x${index * 8}", { enumerable: true, get: function () { return table.x${index * 8}; } });`)}console.log(Object.keys(views).length);\n`,
+    }),
+  },
+  {
+    name: "members of one literal that calls name under constant keys",
+    counted: "members",
+    size: 16000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function handle(id) {\n  return id;\n}\nconst routes = {\n  "/first": handle,\n${lines(size, index => `  "/r${index}": handle,`)}};\nroutes["/first"](0);\n${lines(size, index => `routes["/r${index}"](${index});`)}console.log(typeof routes);\n`,
+    }),
+  },
+  {
+    name: "classes with a static method under one name",
+    counted: "classes",
+    size: 16000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `class First {\n  static encode() {\n    return -1;\n  }\n}\n${lines(size, index => `class Message${index} {\n  static encode() {\n    return ${index};\n  }\n}`)}console.log(typeof First);\n`,
+    }),
+  },
+  {
+    name: "modules that a bundler wrapped, each held by a variable of another",
+    counted: "modules",
+    size: 8000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);\nvar require_first = __commonJS((exports, module) => {\n  module.exports = { value: 0 };\n});\n${lines(size, index => `var require_m${index} = __commonJS((exports, module) => {\n  var before = ${index === 0 ? "require_first" : `require_m${(index - 1) >> 1}`}();\n  module.exports = { value: before.value + ${index} };\n});`)}console.log(require_first().value);\n`,
     }),
   },
   {
@@ -7327,6 +7474,18 @@ export {};
         `console.log(sum + crates[0].wide + crates[1].tall);\n`,
     }),
   },
+  {
+    name: "groups of four classes that each answer one name in their own way, called in a loop over a list of the group",
+    counted: "groups",
+    size: 150,
+    entry: "main.ts",
+    write: size => ({
+      "main.ts":
+        `const picks: number[] = JSON.parse("[0,1,2,3,2,1,0,3]");\nlet sum = 0;\n` +
+        lines(size, index => `interface Kind${index} { weigh${index}(): number }\nclass A${index} implements Kind${index} { constructor(private a: number) {} weigh${index}(): number { return this.a + ${index}; } }\nclass B${index} implements Kind${index} { constructor(private b: number) {} weigh${index}(): number { return this.b * 2; } }\nclass C${index} implements Kind${index} { constructor(private c: number) {} weigh${index}(): number { return this.c - 1; } }\nclass D${index} implements Kind${index} { constructor(private d: number) {} weigh${index}(): number { return 0 * this.d; } }\nfunction make${index}(pick: number): Kind${index} { return pick === 0 ? new A${index}(pick) : pick === 1 ? new B${index}(pick) : pick === 2 ? new C${index}(pick) : new D${index}(pick); }\nfunction all${index}(list: Kind${index}[]): number { let s = 0; for (const each of list) s += each.weigh${index}(); return s; }\nsum += all${index}(picks.map(make${index}));`) +
+        `console.log(sum);\n`,
+    }),
+  },
   // A walk of a loop that believes a variable as it stood in front folds away the test behind which a helper stores the next variable, so each walk learned one store more:
   // as many walks as helpers, each over all the calls, up to the bound on the tries of one loop, behind which the loop claimed nothing: 30 helpers walked 8,826 values, 60 walked 33,816.
   {
@@ -7487,6 +7646,25 @@ export {};
       }),
     }),
   ),
+  // `x instanceof C` in a loop is answered by the shapes of the classes of C's tree. Each asking went through every class of the family, climbed from each to the top and looked each up in two
+  // lists that grew with them: classes x classes. 2,000 classes took 2.65 G instructions, then 2.05 G; what a doubling adds grew 2.5 times, then 2.0 times.
+  {
+    name: "classes below one base, objects of all of them asked in one loop whether they are of six of the classes",
+    counted: "classes",
+    size: 1000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class Base { constructor(x) { this.x = x; } }\n` +
+        lines(size, index => `class C${index} extends ${index % 4 === 3 ? `C${index - 1}` : "Base"} {}`) +
+        `const makers = [Base, ${upTo(size, index => `C${index}`).join(", ")}];\n` +
+        `const picks = JSON.parse("[" + Array.from({ length: 64 }, (_, i) => (i * 37) % makers.length).join() + "]");\n` +
+        `const things = picks.map((pick, i) => new makers[pick](i));\n` +
+        `function count() {\n  let sum = 0;\n  for (let i = 0; i < things.length; i++) {\n    const thing = things[i];\n` +
+        lines(6, question => `    if (thing instanceof ${size ? `C${(question * 37) % size}` : "Base"}) sum += ${question + 1};`) +
+        `  }\n  return sum;\n}\nlet all = 0;\nfor (let turn = 0; turn < 30; turn++) all += count();\nconsole.log(all);\n`,
+    }),
+  },
 ];
 
 if (import.meta.main) {

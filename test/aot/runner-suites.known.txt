@@ -103,10 +103,7 @@ test/js/bun/test/mock/mock-module.test.ts: a failing factory that import()s its 
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets its own copy of a module that waits for the mock, imported after the mock
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets its own copy of a module that waits for the mock, imported before the mock
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets the original if the factory has no source file either
-test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets the original of the module that is being mocked
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > a Vitest test file with no mock call of its own still runs its imports one at a time > the transpiler cache doesn't mix up a file run as a test with the same file imported

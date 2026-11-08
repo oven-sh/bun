@@ -47,6 +47,7 @@ use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::ThisPositions;
 use bun_sema::program::{FileId, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
+use bun_sort_by_number::SortByNumber;
 use std::cell::OnceCell;
 
 pub(super) struct CommonJsInput<'a, 'b, 's> {
@@ -1078,6 +1079,7 @@ struct Scan<'t, 'a, 's> {
     marking_calls: Vec<ExprId>,
     inline_stars: Vec<InlineStar>,
     quiet_head: OnceCell<u32>,
+    names_by_statement: OnceCell<Vec<u32>>,
 }
 
 impl Scan<'_, '_, '_> {
@@ -1382,6 +1384,20 @@ impl Scan<'_, '_, '_> {
         Some(())
     }
 
+    fn names_written_at(&self, statement: StmtId) -> impl Iterator<Item = &StoredName> {
+        let names = &self.summary.names;
+        let by_statement = self.names_by_statement.get_or_init(|| {
+            let mut by_statement: Vec<u32> = (0..names.len() as u32).collect();
+            by_statement.sort_by_u32(|&at| names[at as usize].statement().0);
+            by_statement
+        });
+        let first =
+            by_statement.partition_point(|&at| names[at as usize].statement().0 < statement.0);
+        (by_statement[first..].iter())
+            .map(|&at| &names[at as usize])
+            .take_while(move |name| name.statement() == statement)
+    }
+
     fn add_names_of_helper(
         &mut self,
         written_at: StmtId,
@@ -1391,15 +1407,14 @@ impl Scan<'_, '_, '_> {
         let text = self.text;
         let mut aliases = Vec::new();
         let mut marks_module = false;
-        for stored in &self.summary.names {
+        for stored in self.names_written_at(written_at) {
             match *stored {
                 StoredName::Getter {
                     name,
-                    statement,
                     getter,
                     is_enumerable,
                     ..
-                } if statement == written_at => {
+                } => {
                     let returned = self.find_returned_expression(getter)?;
                     let (target, needs_marker, handed_to_helper) =
                         self.find_alias_target(returned, definition, is_read_behind_body)?;
@@ -1408,20 +1423,12 @@ impl Scan<'_, '_, '_> {
                     }
                     aliases.push((name, target, returned, is_enumerable, needs_marker));
                 }
-                StoredName::Value {
-                    name,
-                    statement,
-                    value,
-                } if statement == written_at && name == known::__esModule && value.is_none() => {
+                StoredName::Value { name, value, .. }
+                    if name == known::__esModule && value.is_none() =>
+                {
                     marks_module = true;
                 }
-                StoredName::Value { statement, .. } | StoredName::AllOf { statement, .. }
-                    if statement == written_at =>
-                {
-                    return None;
-                }
-                StoredName::Value { .. } | StoredName::Getter { .. } | StoredName::AllOf { .. } => {
-                }
+                StoredName::Value { .. } | StoredName::AllOf { .. } => return None,
             }
         }
         if (aliases.is_empty() && !marks_module)
@@ -2199,6 +2206,7 @@ fn begin_scan<'t, 'a, 's>(
             }),
         },
         quiet_head: OnceCell::new(),
+        names_by_statement: OnceCell::new(),
     }
 }
 

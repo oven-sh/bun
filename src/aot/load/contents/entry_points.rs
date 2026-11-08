@@ -4,6 +4,8 @@ use std::mem::take;
 
 use bun_ast::Loader;
 use bun_core::strings;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::join_spill;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, CodeUnit};
 use bun_sema::hir::{ExprKind, Flags, StmtKind};
@@ -447,6 +449,49 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                         is_guess,
                         may_be_left_out: is_guess,
                     }),
+                }));
+            }
+            let listed = analysis.names_resolved_from_listed_folders;
+            for of_site in listed.chunk_by(|one, next| one.2 == next.2) {
+                let own_folder = self.input.host.directory_of(code.file_name(file));
+                let folders = of_site.iter().map(|it| {
+                    let parts = [&own_folder[..], code.atoms().bytes(it.1)];
+                    join_spill::<Posix>(&mut Vec::new(), &parts).to_vec()
+                });
+                let folders: Vec<Vec<u8>> = folders.collect();
+                let name = code.atoms().bytes(of_site[0].0);
+                let host = self.input.host;
+                let package = bun_paths::is_package_path(name).then(|| {
+                    let parts = if name.starts_with(b"@") { 2 } else { 1 };
+                    let end = name.iter().enumerate().filter(|it| *it.1 == b'/');
+                    &name[..end.map(|it| it.0).nth(parts - 1).unwrap_or(name.len())]
+                });
+                let holds_package = |folder: &[u8]| {
+                    package.is_some_and(|it| host.is_dir(&[folder, b"/node_modules/", it].concat()))
+                };
+                let answers_from_above = |folder: &[u8]| {
+                    let above = std::iter::successors(Some(folder), |&it| {
+                        let end = strings::last_index_of_char(it, b'/')?;
+                        (end > 0).then(|| &it[..end])
+                    });
+                    !holds_package(folder) && above.skip(1).any(holds_package)
+                };
+                if !folders
+                    .iter()
+                    .all(|it| host.is_dir(it) && !answers_from_above(it))
+                {
+                    continue;
+                }
+                mentions.extend(folders.iter().map(|folder| Mention {
+                    named: Named::ByName(Question {
+                        file_name: [&folder[..], b"/asker"].concat(),
+                        read_as: ReadAs::Require,
+                        names: vec![(name.to_vec(), None)],
+                        is_guess: false,
+                    }),
+                    because: FoundBecause::NamedByData,
+                    started_at: None,
+                    named_by: None,
                 }));
             }
             if let Some(source) = parsed_source_in(code, file) {

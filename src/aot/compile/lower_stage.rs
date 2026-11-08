@@ -500,7 +500,21 @@ impl Build<'_> {
         let mut found = checked.diagnostics;
         let files = loaded.project(project).loaded.files();
         let brings_declarations = files.brings_declarations();
-        self.keep_what_project_itself_reports(&mut found, |it| {
+        let host = loaded.project(project).host;
+        let held_in_memory = &self.options.load.in_memory_files;
+        let read_texts_of_build = || {
+            let held = held_in_memory.iter();
+            let held = held.map(|(path, text)| (driver::host::from_native(path), text.clone()));
+            let given = files.compiled_files().iter().filter_map(|&file| {
+                let path = files.module(file).file_name();
+                let is_file_on_disk =
+                    parsed_source(files, file).is_some_and(|it| it.plugin_module.is_none());
+                (is_file_on_disk && host.is_plugin_source(path))
+                    .then(|| (path.to_vec(), host.read_source(path).into_owned()))
+            });
+            held.chain(given).collect()
+        };
+        self.keep_what_project_itself_reports(&mut found, &read_texts_of_build, |it| {
             let file = it.diagnostic.file;
             brings_declarations || file.is_some_and(|file| files.hir(file).is_script_for_project)
         });
@@ -555,6 +569,7 @@ impl Build<'_> {
     fn keep_what_project_itself_reports(
         &self,
         diagnostics: &mut Vec<BuildDiagnostic>,
+        read_texts_of_build: &dyn Fn() -> driver::host::AlreadyRead,
         is_seen_otherwise_by_project: impl Fn(&BuildDiagnostic) -> bool,
     ) {
         let is_asked = |it: &BuildDiagnostic| {
@@ -615,8 +630,12 @@ impl Build<'_> {
         let needs_extension = |it: &&driver::Diagnostic| matches!(it.code, 2834 | 2835);
         type Places = FxHashSet<(Vec<u8>, u32, bool, bool)>;
         let mut spans: FxHashMap<Vec<u8>, Vec<(u32, u32)>> = FxHashMap::default();
+        let provided = driver::host::Provided {
+            already_read: read_texts_of_build(),
+            ..Default::default()
+        };
         let (reported, unasked): (Places, FxHashSet<Vec<u8>>) =
-            driver::check_then(&request, |report| {
+            driver::check_provided_then(&request, provided, |report| {
                 let reported = report.diagnostics.iter();
                 let errors = reported.filter(|it| it.category == driver::Category::Error);
                 for it in errors.clone() {

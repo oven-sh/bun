@@ -241,6 +241,7 @@ pub(super) struct ResolverOutput {
     pub(super) keys_taken_out_of_module_cache: Vec<KeyOfModuleCache>,
     pub(super) entries_deleted_from_module_cache: Vec<ExprId>,
     pub(super) entries_stored_in_module_cache: Vec<ExprId>,
+    pub(super) places_that_hand_module_cache_on: Vec<ExprId>,
     pub(super) keys_of_entries_handed_on: Vec<KeyOfModuleCache>,
     pub(super) loses_sight_of_module_cache: bool,
     pub(super) hands_module_cache_on: bool,
@@ -1021,6 +1022,9 @@ impl<'a, 's> Resolver<'a, 's> {
                 .into_boxed_slice(),
             entries_stored_in_module_cache: output
                 .entries_stored_in_module_cache
+                .into_boxed_slice(),
+            places_that_hand_module_cache_on: output
+                .places_that_hand_module_cache_on
                 .into_boxed_slice(),
             keys_taken_out_of_module_cache: output
                 .keys_taken_out_of_module_cache

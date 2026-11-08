@@ -1,6 +1,7 @@
 // The build writes down where a name that the program resolves leads, under the folder that the name is looked for from. Two ways in which such a row answered another question:
 // `require.resolve(name, { paths })` looks from the listed folders in their order, and the run passed over a listed folder of which the executable knows nothing and took the row of a
-// later one: another folder's package, silently. A row answers no search through `paths`: what the executable cannot say is refused aloud.
+// later one: another folder's package, silently. A row answers no search through `paths`: what the executable cannot say is refused aloud. Where the build can read the list, it brings
+// what each listed folder answers, and the search finds what `bun <file>` finds.
 // `createRequire(__dirname)` takes the folder for a file, so it looks from the folder ABOVE. Its row stood under the own folder, and a name that the file's own require made at the run
 // found the file above.
 import { expect } from "bun:test";
@@ -35,27 +36,40 @@ async function buildAndRun(files: Record<string, string>, entry: string, folders
   return { plain: plain.stdout, compiled: await run([program], String(elsewhere)) };
 }
 
-test("a row answers no search through paths", async () => {
-  const { plain, compiled } = await buildAndRun(
-    {
-      ...packageIn("first"),
-      ...packageIn("second"),
-      "first/main.cjs": `const { join } = require("node:path");
-${ask}const second = join(__dirname, "..", "second");
+const listed: Record<string, { second: string; found: string }> = {
+  "a search through paths that the build can read finds what bun <file> finds": {
+    second: `"second"`,
+    found: "second/node_modules/gauge/lib/main.js",
+  },
+  "a row answers no search through paths that the build cannot read": {
+    second: `[..."dnoces"].reverse().join("")`,
+    found: "MODULE_NOT_FOUND",
+  },
+};
+
+for (const [name, { second, found }] of Object.entries(listed)) {
+  test(name, async () => {
+    const { plain, compiled } = await buildAndRun(
+      {
+        ...packageIn("first"),
+        ...packageIn("second"),
+        "first/main.cjs": `const { join } = require("node:path");
+${ask}const second = join(__dirname, "..", ${second});
 console.log("SAID", ask(() => require.resolve("gauge")));
 console.log("SAID", ask(() => require.resolve("gauge", { paths: [second, __dirname] })));
 `,
-    },
-    "first/main.cjs",
-    ["first", "second"],
-  );
-  expect(plain).toBe("SAID first/node_modules/gauge/lib/main.js\nSAID second/node_modules/gauge/lib/main.js\n");
-  expect(compiled).toEqual({
-    stdout: "SAID first/node_modules/gauge/lib/main.js\nSAID MODULE_NOT_FOUND\n",
-    stderr: "",
-    exitCode: 0,
+      },
+      "first/main.cjs",
+      ["first", "second"],
+    );
+    expect(plain).toBe("SAID first/node_modules/gauge/lib/main.js\nSAID second/node_modules/gauge/lib/main.js\n");
+    expect(compiled).toEqual({
+      stdout: `SAID first/node_modules/gauge/lib/main.js\nSAID ${found}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
-});
+}
 
 test("a require made for a folder looks from the folder above", async () => {
   const { plain, compiled } = await buildAndRun(

@@ -77,6 +77,11 @@ impl Resolver<'_, '_> {
         {
             self.output.tables_of_loaders_written.push(holder);
         }
+        if self.input.dialect == SourceDialect::Program
+            && (table::members(holder_of(id)).iter()).any(|&it| is_module_cache(it))
+        {
+            self.output.places_that_hand_module_cache_on.push(holder);
+        }
     }
 
     fn find_key_that_call_deletes(&self, table: ExprId) -> Option<ExprId> {
@@ -213,5 +218,8 @@ impl Resolver<'_, '_> {
         };
         self.output.loses_sight_of_module_cache |= is_handed_on;
         self.output.hands_module_cache_on |= is_handed_on;
+        if is_handed_on && self.input.dialect == SourceDialect::Program {
+            self.output.places_that_hand_module_cache_on.push(table);
+        }
     }
 }

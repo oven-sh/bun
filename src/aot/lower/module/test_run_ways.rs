@@ -277,7 +277,6 @@ impl<'a> WayToDeclaration<'a> {
         {
             return answer;
         }
-        let rings_met = self.rings_met;
         let below = self.stations_on_path.last().copied();
         let stays = |&&on_path: &&FileId| !self.modules.is_left_out(ModuleRef::File(on_path));
         let asked_from = self.path.iter().rev().find(stays).copied();
@@ -337,7 +336,7 @@ impl<'a> WayToDeclaration<'a> {
         self.path.pop();
         self.names_of_path.pop();
         self.names_on_path.remove(&(file, name));
-        if is_kept && rings_met == self.rings_met {
+        if is_kept {
             self.answers_to_stars
                 .insert((file, name), (is_found, below));
         }
@@ -801,6 +800,28 @@ pub(super) fn emit_behind_stations(
         *blocks[index].get_or_insert_with(|| lowering.create_block())
     }
     let first = block_at(lowering, &mut blocks, 0);
+    let mut ends_question = vec![false; steps.len() + 2];
+    let mut is_inside_question = vec![false; steps.len() + 2];
+    let mut end_of_widest = 0;
+    for (station, step) in steps.iter().enumerate() {
+        is_inside_question[station] = station < end_of_widest;
+        if let Step::Station {
+            asked_by: AskedBy::Star,
+            behind,
+            ..
+        } = *step
+            && behind > station + 1
+        {
+            ends_question[behind] = true;
+            end_of_widest = end_of_widest.max(behind);
+        }
+    }
+    let end_of_question = (end_of_widest > 0).then(|| {
+        let end_of_question = lowering.builder.create_variable(None);
+        let none = lowering.builder.integer(0);
+        lowering.builder.write_variable(end_of_question, none);
+        end_of_question
+    });
     match runtime_station {
         Some((module, _)) if is_asked_only_of_built_in => {
             let key = VariableKey::MockOfRuntimeModule(module);
@@ -820,6 +841,21 @@ pub(super) fn emit_behind_stations(
             continue;
         };
         lowering.continue_in(block);
+        if let Some(end_of_question) = end_of_question.filter(|_| ends_question[index]) {
+            let end = lowering.builder.read_variable(end_of_question);
+            let here = lowering.builder.integer(index as _);
+            let ends_here = lowering.builder.strict_eq(end, here);
+            let ends_here = lowering.split_on_truthiness(ends_here);
+            let goes_on = lowering.create_block();
+            lowering.builder.switch_to(ends_here.taken);
+            let none = lowering.builder.integer(0);
+            lowering.builder.write_variable(end_of_question, none);
+            lowering.jump(goes_on);
+            lowering.builder.switch_to(ends_here.not_taken);
+            lowering.jump(goes_on);
+            lowering.continue_in(goes_on);
+        }
+        let question = end_of_question.filter(|_| is_inside_question[index]);
         let mut rest = steps[index + 1..].iter();
         let is_way_left = rest.any(|step| !matches!(step, Step::Declaration));
         let asked_of_run = match step {
@@ -855,6 +891,14 @@ pub(super) fn emit_behind_stations(
             let next = block_at(lowering, &mut blocks, index + 1);
             lowering.jump(next);
             lowering.builder.switch_to(has.taken);
+            if let Some(end_of_question) = question {
+                let end = lowering.builder.read_variable(end_of_question);
+                let is_open = lowering.split_on_truthiness(end);
+                lowering.builder.switch_to(is_open.taken);
+                let nothing = block_at(lowering, &mut blocks, nothing);
+                lowering.jump(nothing);
+                lowering.builder.switch_to(is_open.not_taken);
+            }
             let answered = read_off(lowering, object, name);
             lowering.builder.write_variable(result, answered);
             lowering.jump(join);
@@ -868,6 +912,29 @@ pub(super) fn emit_behind_stations(
             behind,
         } = step
         else {
+            if let Some(end_of_question) = question {
+                let end = lowering.builder.read_variable(end_of_question);
+                let is_open = lowering.split_on_truthiness(end);
+                lowering.builder.switch_to(is_open.taken);
+                if let Step::ModuleWithoutTable { module, name, .. } = step {
+                    let module = modules.face(module).unwrap_or(module);
+                    let module = lowering.file.fragment.declare_module(module);
+                    let phase = ImportPhase::Evaluation;
+                    let original = lowering
+                        .builder
+                        .module_namespace(module, phase, true, false);
+                    let key = lowering.file.name_key(name);
+                    let shows = lowering.emit_has(original, PropertyName::Constant(key));
+                    let shows = lowering.split_on_truthiness(shows);
+                    lowering.builder.switch_to(shows.not_taken);
+                    let next = block_at(lowering, &mut blocks, index + 1);
+                    lowering.jump(next);
+                    lowering.builder.switch_to(shows.taken);
+                }
+                let nothing = block_at(lowering, &mut blocks, nothing);
+                lowering.jump(nothing);
+                lowering.builder.switch_to(is_open.not_taken);
+            }
             let declaration = block_at(lowering, &mut blocks, declaration);
             lowering.jump(declaration);
             continue;
@@ -885,7 +952,9 @@ pub(super) fn emit_behind_stations(
             None => lowering.file.module_id(),
         };
         let reader = reader_through(importer);
-        let sees_mock = lowering.builder.sees_mock_of(mocked, importer, reader);
+        let sees_mock = lowering
+            .builder
+            .sees_mock_of(mocked, importer, reader, false);
         let asks_mock = lowering.create_block();
         (lowering.builder).branch(sees_mock, Edge::to(asks_mock), Edge::to(next));
         lowering.continue_in(asks_mock);
@@ -900,7 +969,30 @@ pub(super) fn emit_behind_stations(
                 AskedBy::Name | AskedBy::Statement => nothing,
             };
             let lacking = block_at(lowering, &mut blocks, lacking);
-            lowering.jump(lacking);
+            let has_steps_of_its_own = asked_by == AskedBy::Star && behind > index + 1;
+            match end_of_question.filter(|_| has_steps_of_its_own) {
+                Some(end_of_question) => {
+                    let keeps_names = lowering
+                        .builder
+                        .sees_mock_of(mocked, importer, reader, true);
+                    let asks_original = lowering.create_block();
+                    (lowering.builder).branch(
+                        keeps_names,
+                        Edge::to(asks_original),
+                        Edge::to(lacking),
+                    );
+                    lowering.continue_in(asks_original);
+                    let end = lowering.builder.read_variable(end_of_question);
+                    let is_open = lowering.split_on_truthiness(end);
+                    lowering.builder.switch_to(is_open.taken);
+                    lowering.jump(next);
+                    lowering.builder.switch_to(is_open.not_taken);
+                    let end = lowering.builder.integer(behind as _);
+                    lowering.builder.write_variable(end_of_question, end);
+                    lowering.jump(next);
+                }
+                None => lowering.jump(lacking),
+            }
             lowering.builder.switch_to(has.taken);
         }
         let answered = read_off(lowering, mock, name);
@@ -932,7 +1024,7 @@ pub(super) fn emit_behind_stations(
                 let holder = (lowering.file.fragment).declare_module(ModuleRef::File(holder));
                 let mocked = (lowering.file.fragment).declare_module(ModuleRef::Runtime(module));
                 let reader = reader_through(holder);
-                let sees_mock = lowering.builder.sees_mock_of(mocked, holder, reader);
+                let sees_mock = lowering.builder.sees_mock_of(mocked, holder, reader, false);
                 let asks_mock = lowering.create_block();
                 (lowering.builder).branch(sees_mock, Edge::to(asks_mock), Edge::to(real));
                 lowering.continue_in(asks_mock);
@@ -960,5 +1052,17 @@ pub(super) fn emit_behind_stations(
         lowering.jump(join);
     }
     lowering.continue_in(join);
+    if let Some(end_of_question) = end_of_question {
+        let end = lowering.builder.read_variable(end_of_question);
+        let is_open = lowering.split_on_truthiness(end);
+        let goes_on = lowering.create_block();
+        lowering.builder.switch_to(is_open.taken);
+        let undefined = lowering.builder.undefined();
+        lowering.builder.write_variable(result, undefined);
+        lowering.jump(goes_on);
+        lowering.builder.switch_to(is_open.not_taken);
+        lowering.jump(goes_on);
+        lowering.continue_in(goes_on);
+    }
     lowering.builder.read_variable(result)
 }

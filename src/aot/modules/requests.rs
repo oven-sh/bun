@@ -491,7 +491,7 @@ impl FileScanner<'_, '_> {
         let is_followed_further = is_followed_further_than_bundler(self.files, self.file, site);
         let asks_loader =
             self.asks_loader_where_bundler_does && (finds_nothing || is_followed_further);
-        if asks_loader && let Some(scanned) = self.leave_site_to_loader(answer) {
+        if asks_loader && let Some(scanned) = self.leave_site_to_loader(site, answer) {
             if let (false, ImportSpecifier::Constant(specifier), CodeAnswer::NotFound(reason)) =
                 (is_followed_further, site.specifier, answer)
             {
@@ -513,7 +513,11 @@ impl FileScanner<'_, '_> {
         }
     }
 
-    fn leave_site_to_loader(&mut self, answer: CodeAnswer<'_>) -> Option<ScannedSite> {
+    fn leave_site_to_loader(
+        &mut self,
+        site: &ImportSite,
+        answer: CodeAnswer<'_>,
+    ) -> Option<ScannedSite> {
         let at = self.spellings.len() as u32;
         let target = match answer {
             CodeAnswer::File(target) => target,
@@ -532,7 +536,14 @@ impl FileScanner<'_, '_> {
             return None;
         }
         self.candidates.push(ModuleRef::File(target));
-        Some(ScannedSite::Candidates(at..at))
+        if let ImportSpecifier::Constant(spelling) = site.specifier {
+            self.spellings.push(SpelledModule {
+                spelling,
+                module: ModuleRef::File(target),
+                is_left_to_loader: true,
+            });
+        }
+        Some(ScannedSite::Candidates(at..self.spellings.len() as u32))
     }
 
     fn with_type_attribute(&self, site: &ImportSite, scanned: ScannedSite) -> ScannedSite {

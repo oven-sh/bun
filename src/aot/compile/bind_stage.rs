@@ -5,7 +5,9 @@ use super::program_reach::{
 };
 use super::summary::{collect_names_followed, collect_program_file_paths};
 use super::{BoundBuild, BoundProject, Build, LoadedBuild};
-use crate::builtins::{BuiltinValuePaths, RuntimeModule, builtin_type_paths, table};
+use crate::builtins::{
+    BuiltinValuePaths, RuntimeModule, builtin_type_paths, is_module_cache, table,
+};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span};
 use crate::known_helpers::KnownHelpers;
@@ -17,14 +19,19 @@ use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId};
 use crate::module_keys::type_attribute_of;
 use crate::modules::{
-    self, BindInput, BoundModules, DeferredExports, ModuleGraph, ModuleKind, ModuleRef, Shape,
+    self, BindInput, BoundModules, DeferredExports, LinkedProject, ModuleGraph, ModuleKind,
+    ModuleRef, Shape,
 };
 use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
 use bun_paths::is_absolute;
-use bun_sema::check::aot::BuiltinTypeSymbols;
+use bun_sema::bind::{
+    Binding, Decl, FunctionFlags, Parent, ReferentCertainty, ResolvedReferent, StaticReferent,
+    static_referent,
+};
+use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef};
 use bun_sema::fold::{Constant, FoldedValue};
-use bun_sema::hir::{ExprId, MemberKey, NodeData};
+use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PatKind};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files};
 use bun_sema::resolve::CodeImportKind;
@@ -84,6 +91,82 @@ fn key_names_no_file_of_program(files: &Files<'_>, file: FileId, entry: ExprId) 
     };
     let path = files.atoms.bytes(path);
     !is_absolute(path) || !files.by_path.contains(&from_native(path))
+}
+
+fn hands_module_cache_to_code_out_of_sight(
+    project: &LinkedProject<'_, '_>,
+    file: FileId,
+    handed: ExprId,
+) -> bool {
+    let (hir, bound) = (project.files.hir(file), project.files.bound(file));
+    let named = parsed_source(project.files, file)
+        .and_then(|source| source.builtins.builtin_of_expression(handed));
+    if named.is_some_and(is_module_cache) {
+        return true;
+    }
+    let mut operand = handed;
+    while let Parent::Expr(parent) = bound.parent_of_expr(operand)
+        && hir.type_assertion_operand(parent) == Some(operand)
+    {
+        operand = parent;
+    }
+    let Parent::Expr(user) = bound.parent_of_expr(operand) else {
+        return false;
+    };
+    let (ExprKind::Call(call) | ExprKind::New(call)) = hir[user].kind else {
+        return false;
+    };
+    let Some(index) = hir.ids(hir[call].args).position(|it| it == operand) else {
+        return false;
+    };
+    let mut in_front = hir.ids(hir[call].args).take(index);
+    if in_front.any(|it| matches!(hir[it].kind, ExprKind::Spread(_))) {
+        return true;
+    }
+    let callee = hir.skip_type_assertions(hir[call].callee);
+    let called = match hir[callee].kind {
+        ExprKind::Fn(function) => FunctionRef { file, function },
+        _ => match static_referent(project, file, callee) {
+            ResolvedReferent {
+                referent: StaticReferent::Function(called),
+                certainty: ReferentCertainty::Proven,
+            } => called,
+            ResolvedReferent {
+                referent: StaticReferent::Builtin(_),
+                certainty: ReferentCertainty::Proven,
+            } => return false,
+            _ => return true,
+        },
+    };
+    let (hir, bound) = (
+        project.files.hir(called.file),
+        project.files.bound(called.file),
+    );
+    let flags = bound.function_flags(called.function);
+    if flags.contains(FunctionFlags::USES_ARGUMENTS) || !bound.runtime.eval_scopes().is_empty() {
+        return true;
+    }
+    let Some(parameter) = hir[called.function].params.iter().nth(index) else {
+        return false;
+    };
+    let parameter = &hir[parameter];
+    let symbol = bound.declared_symbol(Decl::Param(parameter.pat));
+    if !matches!(hir[parameter.pat].kind, PatKind::Ident(_))
+        || parameter.default.is_some()
+        || parameter.flags.contains(Flags::REST)
+        || !bound.is_stable_binding(symbol)
+    {
+        return true;
+    }
+    let mut reads = (0..hir.exprs.len() as u32).map(ExprId).filter(|&it| {
+        matches!(hir[it].kind, ExprKind::Ident(_)) && bound.binding(it) == Binding::Symbol(symbol)
+    });
+    !reads.all(|read| match bound.parent_of_expr(read) {
+        Parent::Expr(parent) => {
+            matches!(hir[parent].kind, ExprKind::Call(call) if hir[call].callee == read)
+        }
+        _ => false,
+    })
 }
 
 fn warn_where_modules_are_reset(
@@ -579,6 +662,23 @@ impl Build<'_> {
                         let hir = view.files().hir(file);
                         let span = Span::of_node(hir, file, NodeData::Expr(entry));
                         let code = Code::EntryStoredInModuleCacheIsNotAsked;
+                        let warning = Diagnostic::new(code, Some(span), &[]);
+                        self.diagnostics.add(Some(view), warning);
+                    }
+                    let linked = LinkedProject {
+                        files: view.files(),
+                        graph: &graph,
+                        builtin_names: loaded.builtin_names,
+                        platform: self.platform,
+                        library: None,
+                    };
+                    for &(file, place) in &reached.places_that_hand_module_cache_on {
+                        if !hands_module_cache_to_code_out_of_sight(&linked, file, place) {
+                            continue;
+                        }
+                        let hir = view.files().hir(file);
+                        let span = Span::of_node(hir, file, NodeData::Expr(place));
+                        let code = Code::ModuleCacheIsHandedOn;
                         let warning = Diagnostic::new(code, Some(span), &[]);
                         self.diagnostics.add(Some(view), warning);
                     }

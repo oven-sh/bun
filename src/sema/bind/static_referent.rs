@@ -77,6 +77,8 @@ pub(super) struct MemberAssignment {
 pub struct MemberStores {
     pub(super) assignments: Vec<MemberAssignment>,
     pub(super) copies: Vec<(SymbolId, CallId)>,
+    pub(super) holds_long_literals: bool,
+    pub(super) values_in_long_literals: Vec<(u64, Option<ExprId>)>,
 }
 
 pub trait ReferentContext<'s> {

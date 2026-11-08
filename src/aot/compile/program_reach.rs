@@ -112,6 +112,7 @@ enum Interest {
     EntryOfModuleCache,
     DeletionFromModuleCache(ExprId),
     StoreIntoModuleCache(ExprId),
+    ModuleCacheHandedOn(ExprId),
     LoadByUnknownName,
     NameReadFromLoadByUnknownName(Atom),
     LoadOfIsolatedCode,
@@ -1904,6 +1905,10 @@ impl<'a, 's> FileScan<'a, 's> {
             let interest = Interest::StoreIntoModuleCache(entry);
             self.add_interest(self.hir[entry].pos, interest);
         }
+        for &place in source.builtins.places_that_hand_module_cache_on() {
+            let interest = Interest::ModuleCacheHandedOn(place);
+            self.add_interest(self.hir[place].pos, interest);
+        }
         let only_reads_entries = source.builtins.keys_taken_out_of_module_cache().is_empty()
             && !source.builtins.loses_sight_of_module_cache();
         if source.builtins.reaches_module_cache()
@@ -2189,6 +2194,7 @@ struct Found {
     replaced_loader_hooks: Vec<ReplacedLoaderHook>,
     deletions_from_module_cache: Vec<(FileId, ExprId)>,
     stores_into_module_cache: Vec<(FileId, ExprId)>,
+    places_that_hand_module_cache_on: Vec<(FileId, ExprId)>,
     stores_loader_function: bool,
     files_that_computed_names_may_ask_for: Vec<FileId>,
     readers_of_built_in_modules: Vec<(FileId, RuntimeModule)>,
@@ -2212,6 +2218,8 @@ impl Found {
             .append(&mut other.deletions_from_module_cache);
         self.stores_into_module_cache
             .append(&mut other.stores_into_module_cache);
+        self.places_that_hand_module_cache_on
+            .append(&mut other.places_that_hand_module_cache_on);
         self.stores_loader_function |= other.stores_loader_function;
         self.files_that_computed_names_may_ask_for
             .append(&mut other.files_that_computed_names_may_ask_for);
@@ -3517,6 +3525,9 @@ impl Reacher<'_, '_, '_> {
             Interest::StoreIntoModuleCache(entry) => {
                 self.found.stores_into_module_cache.push((file, entry));
             }
+            Interest::ModuleCacheHandedOn(place) => {
+                (self.found.places_that_hand_module_cache_on).push((file, place));
+            }
             Interest::StoreOfLoaderFunction(replaced) => {
                 self.keep_every_module_object(file);
                 self.found.stores_loader_function = true;
@@ -3912,6 +3923,7 @@ pub(crate) struct ReachedModules {
     pub replaced_loader_hooks: Vec<ReplacedLoaderHook>,
     pub deletions_from_module_cache: Vec<(FileId, ExprId)>,
     pub stores_into_module_cache: Vec<(FileId, ExprId)>,
+    pub places_that_hand_module_cache_on: Vec<(FileId, ExprId)>,
     pub stores_loader_function: bool,
     required: SharedSet<(ModuleRef, ModuleRef)>,
     left_to_calls: FxHashSet<(FileId, FileId)>,
@@ -3998,6 +4010,9 @@ fn fingerprint(
     }
     for &(file, entry) in &reached.stores_into_module_cache {
         add(11, file, u64::from(entry.0));
+    }
+    for &(file, place) in &reached.places_that_hand_module_cache_on {
+        add(16, file, u64::from(place.0));
     }
     for &(file, module) in &reached.readers_of_built_in_modules {
         add(15, file, FxBuildHasher.hash_one(module));
@@ -4149,6 +4164,11 @@ pub(crate) fn find_left_out_code(
         .stores_into_module_cache
         .sort_unstable_by_key(|&(file, entry)| (file, entry.0));
     reached_modules.stores_into_module_cache.dedup();
+    reached_modules.places_that_hand_module_cache_on = found.places_that_hand_module_cache_on;
+    reached_modules
+        .places_that_hand_module_cache_on
+        .sort_unstable_by_key(|&(file, place)| (file, place.0));
+    reached_modules.places_that_hand_module_cache_on.dedup();
     reached_modules
         .replaced_loader_hooks
         .sort_unstable_by_key(|replaced| (replaced.file, replaced.assignment.0));

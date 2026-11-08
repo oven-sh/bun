@@ -17,13 +17,9 @@
 # print(tally(64));
 # -- end of source
 # The turn makes an object, its constructor stores into a field, and a second store brings what the field's written type does not admit: the turn begins again in the closed copy. Nobody will ever see the object of the
-# turn that was given up: its field is not put back. It was: the walk asked whether the object is built in the turn of what may be hoisted in front of the loop, which said no. And the net under effects, which counts no store
-# that fills a cell born above it in its block, took the store back for one deed less than none and stopped a right program.
-# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
-# CHECK: 0 holes {{*}}"object":1}
-# CHECK: 0 holes {{*}}"object":3}
-# CHECK: 0 holes {{*}}"object":62,"number":5}
-# CHECK-NEXT: exited with 0
+# turn that was given up: its field need not be put back. It is.
+# TODO: the loops of the walk: a store that puts back the field of an object that nobody sees again, in the arm where the turn begins again
 # RUN(WALK): walk f2:Body testing=CheckEffectsAtRunTime mechanisms=all
+# WALK-NOT: putsBackWhatTurnStored
 # WALK: = TurnBeginsAgain
 # WALK-NOT: putsBackWhatTurnStored

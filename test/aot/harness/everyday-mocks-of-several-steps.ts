@@ -73,6 +73,7 @@ function each(
   }
 }
 type Outcome = Awaited<ReturnType<typeof outcomeOf>>;
+export { each };
 
 // In a compiled run the top-level code of a file runs once, also for the next test file, and the run says at its end which files that was. So a compiled run may print other lines than `bun test` here, and
 // then it has to say so.
@@ -85,10 +86,6 @@ export function mocksFromOneTestFileToTheNextIn(part: number, parts: number) {
 
 // Where the two runs part today. Such a case fails once they agree: its line goes out.
 const partsInAChain: [cases: RegExp, what: string][] = [
-  [
-    /^(bare|a-spy|a-factory-over-the-original)--imported-at-run-time--(two|three)--unmocked-meanwhile$/,
-    "the load of the spring that was under way hands out the mock, though the mock was ended meanwhile",
-  ],
   [
     /^(bare|a-spy|a-factory-over-the-original)--(imported|the-original-asked-for)--(two|three)--modules-reset-meanwhile$/,
     "the body of the spring runs once more",
@@ -139,8 +136,9 @@ export function mocksInAChainIn(part: number, parts: number) {
   );
 }
 
-// Where the two runs part today, and all that the compiled run prints there. Such a case fails by any other difference, and once the two runs agree: its line goes out.
-const stillWrong: [cases: RegExp, printed: string, what: string][] = [
+// Where the two runs part today, and all that the compiled run prints there. Such a case fails by any other difference, and once the two runs agree: its line goes out. Where a file does not run again, which a
+// compiled run may do, the run has to say so at its end: `saysSo`.
+const stillWrong: [cases: RegExp, printed: string, what: string, saysSo?: true][] = [
   [
     /^[a-z-]+--the-original-in-the-factory--reset-modules--laid-again--imported-at-run-time$/,
     "laid 1 ; the body of the lamp runs 1 ; 1 mock1 own 1 ; laid 2 ; threw EvalError",
@@ -154,30 +152,35 @@ const stillWrong: [cases: RegExp, printed: string, what: string][] = [
   [
     /^vi-do-mock--a-factory--nothing-between--laid-again--imported-at-run-time$/,
     "laid 1 ; 1 mock1 mocked 0 ; laid 2 ; 2 mock2 mocked 0 ; held mock2 mocked",
-    "what the test held from its first import() follows the second mock",
+    "the room does not run again, so what the test held from its first import() follows the second mock",
+    true,
   ],
   [
     /^vi-do-mock--the-original-in-the-factory--nothing-between--laid-again--imported-at-run-time$/,
     "laid 1 ; the body of the lamp runs 1 ; 1 mock1 own 1 ; laid 2 ; 2 mock2 own 1 ; held mock2 own",
     "the same",
+    true,
   ],
   [
     /^vi-do-mock--a-factory--nothing-between--laid-again--required$/,
     "laid 1 ; 1 mock1 mocked 0 ; laid 2 ; 2 mock1 mocked 0 ; held mock1 mocked",
-    "the second require() still gets the first mock",
+    "the room does not run again, so the second require() still gets the first mock",
+    true,
   ],
   [
     /^vi-do-mock--the-original-in-the-factory--nothing-between--laid-again--required$/,
     "laid 1 ; the body of the lamp runs 1 ; 1 mock1 own 1 ; laid 2 ; 2 mock1 own 1 ; held mock1 own",
     "the same",
+    true,
   ],
 ];
 
 export function mocksLaidTwiceIn(part: number, parts: number) {
   each(mocksLaidTwice(), part, parts, (name, plain, compiled) => {
-    const printed = stillWrong.find(([names]) => names.test(name))?.[1];
+    const [, printed, , saysSo] = stillWrong.find(([names]) => names.test(name)) ?? [];
     expect({ ...compiled, didNotRunAgain: 0 }).toEqual(
       printed === undefined ? plain : { ...plain, printed: printed.split(" ; ").map(line => "SAID " + line) },
     );
+    if (saysSo) expect(compiled.didNotRunAgain).toBeGreaterThan(0);
   });
 }

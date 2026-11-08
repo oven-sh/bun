@@ -1,5 +1,5 @@
 // A written union makes one family of two trees of classes: an animal is a stranger to Marked by its shape, until the topmost animal's prototype is laid below Marked's.
-// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin >= 2
+// STATISTIC: MissesOfInstanceOfAnsweredByShapesOfKin = 2
 class Marked { mark = 1; }
 class Stamped extends Marked {}
 class Animal { n: number; constructor(n: number) { this.n = n; } }

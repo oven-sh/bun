@@ -2485,9 +2485,6 @@ impl BlobExt for Blob {
         if could_be_all_ascii == Some(true) {
             return EncodedSlice::latin1(buf).to_json_object(global);
         }
-        if LIFETIME != Lifetime::Temporary {
-            self.set_is_ascii_flag(bom.is_none() && strings::is_all_ascii(buf));
-        }
         EncodedSlice::utf8(buf).to_json_object(global)
     }
 

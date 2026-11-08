@@ -355,7 +355,8 @@ fn find_stations(mocked: &[&str], rest: &str, others: &[(&str, &str)]) -> Vec<St
         if line.starts_with("function ") {
             is_in_test_file = file_of(line, "module=m").as_deref() == Some(TEST_FILE);
         }
-        if is_in_test_file && line.contains(" = SeesMockOf ") {
+        let asks_for_names = line.contains("thatKeepsNamesOfOriginal");
+        if is_in_test_file && line.contains(" = SeesMockOf ") && !asks_for_names {
             let mocked = file_of(line, "module=m").expect("the operation names a module");
             let importer = file_of(line, "referrer=m").expect("the operation names a referrer");
             stations.push(format!("{mocked} seen by {importer}"));

@@ -1135,6 +1135,38 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         checked.is_ok_and(|ty| self.c.is_any(ty))
     }
 
+    pub fn uses_say_list_of_lists(&mut self, pattern: PatId) -> bool {
+        let Ok(said) = self.ask(|queries| Ok(queries.infer_binding_type(pattern, TypeId::ANY)))
+        else {
+            return false;
+        };
+        let mut names_list = false;
+        for &part in self.c.parts(said) {
+            if self.c.flags(part) & tf::NULLABLE != 0 {
+                continue;
+            }
+            let Some(element) = self.c.array_element(part) else {
+                return false;
+            };
+            let holds_lists_alone = self.c.some_type(element, |c, held| c.is_array(held))
+                && self.c.every_type(element, |c, held| {
+                    c.is_array(held) || c.flags(held) & tf::NULLABLE != 0
+                });
+            if !holds_lists_alone {
+                return false;
+            }
+            names_list = true;
+        }
+        if !names_list {
+            return false;
+        }
+        let checked = self.ask(|queries| {
+            let ty = queries.c.type_of_pat(queries.file, pattern);
+            queries.resolved(ty)
+        });
+        checked.is_ok_and(|ty| self.c.is_any(ty))
+    }
+
     pub fn return_type(&mut self, function: FnId) -> CheckedType {
         self.ask(|queries| {
             let ty = queries.c.return_type_of_fn(queries.file, function);

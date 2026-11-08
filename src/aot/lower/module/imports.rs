@@ -245,7 +245,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder.switch_to(split.not_taken);
         if let Some(importer) = importer {
             let target = (self.file.fragment).declare_module(ModuleRef::File(mocked));
-            let sees_mock = self.builder.sees_mock_of(target, importer, importer);
+            let sees_mock = self.builder.sees_mock_of(target, importer, importer, false);
             let (of_mock, own) = (self.create_block(), self.create_block());
             (self.builder).branch(sees_mock, Edge::to(of_mock), Edge::to(own));
             self.continue_in(own);

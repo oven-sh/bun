@@ -1,0 +1,16 @@
+# The Saves at the heads of a framed part. `clear` sets up its frame late, in the arm that calls; `this` waits in a slot across the call, and behind it the slow road of the store to `#timer` alone reads it, as a cold operand out of that slot: the head of the arm saves it. THE LIE, testing=SavesAtHeadsThatPatchesAloneReadAreLeftOut: the pruning of those Saves passes over the places that patches read, so it leaves this one out and the slot is read without its value.
+# No check is asked for here, as in a build of a user: the allocation is checked all the same, because a head left out a Save, and the build stops by name. Without that check it would end well and the code would be wrong.
+# f3 = clear
+# -- source: a-save-at-a-head-that-a-cold-operand-alone-reads-and-that-is-left-out-stops-the-build-by-name.ts
+# declare function sink(...values: unknown[]): void;
+# declare function cancel(handle: unknown): void;
+# class Sweeper {
+#   #timer: unknown = null;
+#   set(handle: unknown) { this.#timer = handle; }
+#   clear() { if (this.#timer !== null) { cancel(this.#timer); this.#timer = null; } }
+# }
+# sink(Sweeper);
+# -- end of source
+# AS-USERS-BUILD: the check of the allocation where a head leaves out a Save runs in every build, and under the check of the runner the allocation is checked anyway
+# DIAGNOSTIC: SpillSlotLacksItsValue
+# RUN: emit f3 mechanisms=all testing=SavesAtHeadsThatPatchesAloneReadAreLeftOut

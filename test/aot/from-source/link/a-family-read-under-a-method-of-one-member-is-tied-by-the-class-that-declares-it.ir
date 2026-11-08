@@ -15,6 +15,10 @@
 # COUNT: statistic ReadsThroughFamiliesTiedByClassesThatDeclare 1
 # RUN: link functions mechanisms=all
 # CHECK: function f2 {{*}}result=undefined|f10 
+# RUN(SLOWCOUNT): compile ReadsThroughFamiliesTiedByClassesThatDeclare testing=ReadsThroughFamiliesAreTiedMemberByMember mechanisms=all
+# SLOWCOUNT: statistic ReadsThroughFamiliesTiedByClassesThatDeclare 0
+# RUN(SLOW): link functions testing=ReadsThroughFamiliesAreTiedMemberByMember mechanisms=all
+# SLOW: function f2 {{*}}result=undefined|f10 
 # RUN(ANSWERS): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
 # ANSWERS: function undefined
 

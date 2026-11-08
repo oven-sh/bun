@@ -110,8 +110,10 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) failure_skip_to: usize,
     /// Like `ExecutionSequence::pending_matchers`, for matchers whose calling sequence isn't known.
     pub(crate) pending_matchers: u32,
-    /// A test with no timeout was running when one of `pending_matchers` was called, so they have no deadline.
+    /// A test or hook with no timeout was running when one of `pending_matchers` was called, so they have no deadline.
     pub(crate) pending_matchers_have_no_deadline: bool,
+    /// The latest deadline of the tests and hooks that were running when one of `pending_matchers` was called.
+    pub(crate) pending_matchers_deadline: Timespec,
 }
 
 impl ConcurrentGroup {
@@ -125,6 +127,7 @@ impl ConcurrentGroup {
             next_sequence_index: 0,
             pending_matchers: 0,
             pending_matchers_have_no_deadline: false,
+            pending_matchers_deadline: Timespec::EPOCH,
         }
     }
 
@@ -220,12 +223,10 @@ impl ExecutionSequence {
         self.callback_done
     }
 
-    /// The callback of its test has started, and the test has not ended.
-    pub(crate) fn runs_test_with_no_timeout(&self) -> bool {
-        self.executing
-            && self.active_entry == self.test_entry
-            // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
-            && self.test_entry.is_some_and(|entry| unsafe { entry.as_ref() }.timeout == 0)
+    /// The test or hook whose callback has started and that has not ended.
+    pub(crate) fn running_entry(&self) -> Option<&ExecutionEntry> {
+        // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
+        self.active_entry.filter(|_| self.executing).map(|entry| unsafe { entry.as_ref() })
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -1041,7 +1042,7 @@ fn step_group(
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
         let group = unsafe { &mut *group_ptr.as_ptr() };
         if group.pending_matchers > 0 {
-            // Any test in the group may have called them, so wait until the latest test deadline.
+            // Any test in the group may have called them, so wait until the latest test deadline, or that of a hook that ran at a call.
             let timeout = if group.pending_matchers_have_no_deadline {
                 Timespec::EPOCH
             } else {
@@ -1050,7 +1051,7 @@ fn step_group(
                     .filter_map(|sequence| sequence.test_entry)
                     // SAFETY: arena-owned entry
                     .map(|entry| unsafe { entry.as_ref() }.timespec)
-                    .fold(Timespec::EPOCH, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest })
+                    .fold(group.pending_matchers_deadline, |latest, timespec| if timespec.order(&latest).is_gt() { timespec } else { latest })
             };
             if timeout.eql(&Timespec::EPOCH) || timeout.order(now).is_gt() {
                 return Ok(StepResult::Waiting { timeout });

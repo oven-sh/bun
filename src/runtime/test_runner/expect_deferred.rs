@@ -227,9 +227,20 @@ impl RunningEntry {
             if let Some(group_index) = self.group_index() {
                 let execution = &mut buntest.get().execution;
                 let sequences = execution.groups[group_index].sequences(execution);
-                // Such a test may be the caller, and the deadline of another test must not end its wait.
-                let may_have_no_timeout = sequences.iter().any(ExecutionSequence::runs_test_with_no_timeout);
-                execution.groups[group_index].pending_matchers_have_no_deadline |= may_have_no_timeout;
+                // A running test or hook may be the caller, and an earlier deadline than its own must not end its wait.
+                let (mut has_no_timeout, mut deadline) = (false, Timespec::EPOCH);
+                for entry in sequences.iter().filter_map(ExecutionSequence::running_entry) {
+                    if entry.timeout == 0 {
+                        has_no_timeout = true;
+                    } else if entry.timespec.order(&deadline).is_gt() {
+                        deadline = entry.timespec;
+                    }
+                }
+                let group = &mut execution.groups[group_index];
+                group.pending_matchers_have_no_deadline |= has_no_timeout;
+                if deadline.order(&group.pending_matchers_deadline).is_gt() {
+                    group.pending_matchers_deadline = deadline;
+                }
             }
         }
         self
@@ -260,7 +271,9 @@ impl RunningEntry {
             *pending_matchers.as_ptr() == 0
         };
         if let (true, Some(group_index)) = (none_left, self.group_index()) {
-            buntest.get().execution.groups[group_index].pending_matchers_have_no_deadline = false;
+            let group = &mut buntest.get().execution.groups[group_index];
+            group.pending_matchers_have_no_deadline = false;
+            group.pending_matchers_deadline = Timespec::EPOCH;
         }
         let next = match self.sequence(&buntest) {
             Some(sequence) => {

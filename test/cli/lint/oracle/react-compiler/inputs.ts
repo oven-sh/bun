@@ -406,6 +406,138 @@ function NotNull(props: Props) {
 }
 `;
 
+/**
+ * `bun build` infers what upstream's compiler doesn't: a spread argument takes from an iterator. The closure would
+ * then change `pair`, JSX would freeze it, and the store after that would be reported.
+ */
+const takenFrom = `function SpreadArgumentInAClosure(props) {
+  const pair = makePair(props.a);
+  const count = () => {
+    const seen = new Set();
+    seen.add(...pair);
+    return seen.size;
+  };
+  const button = <Button onClick={count} />;
+  pair[2] = 1;
+  return button;
+}
+`;
+
+/** To `bun build` these are objects, which JSX freezes. To upstream's compiler they are primitives. */
+const madePrimitive = `function StoreOnALiteral(props) {
+  const pattern = /a/g;
+  const input = <input pattern={pattern} />;
+  pattern.lastIndex = 0;
+  return <div title={String(pattern.test(props.text))}>{input}</div>;
+}
+
+function StoreOnANewString(props) {
+  const made = new String("x");
+  const shown = <Show value={made} />;
+  made.seen = props.text;
+  return shown;
+}
+`;
+
+/**
+ * A tagged template is a call to `bun build` and to oxc's fork of the compiler: what it returns can be frozen, and it
+ * can write what the tag captures. The tag gets the template object: one with two parameters is given too few.
+ */
+const tagged = `function StoreAfterJsx(props) {
+  const made = box\`x\`;
+  const shown = <Show value={made} />;
+  made.seen = props.text;
+  return shown;
+}
+
+function StoreAfterAHook(props) {
+  const made = box\`x\`;
+  useThing(made);
+  made.seen = props.text;
+  return <Show />;
+}
+
+function PushAfterJsx(props) {
+  const made = box\`x\`;
+  const shown = <Show value={made} />;
+  made.list.push(props.text);
+  return shown;
+}
+
+function TagWritesWhatJsxHas(props) {
+  const log = [];
+  const tag = () => {
+    log.push(props.text);
+    return 1;
+  };
+  const shown = <Show log={log} />;
+  const one = tag\`x\`;
+  return <div title={one}>{shown}</div>;
+}
+
+function StoreBeforeJsx(props) {
+  const made = box\`x\`;
+  made.seen = props.text;
+  return <Show value={made} />;
+}
+
+function StoreInAnEffect(props) {
+  const made = css\`color: red;\`;
+  useEffect(() => {
+    made.used = true;
+  }, [made]);
+  return <div className={made} />;
+}
+
+function TagWithAParameter(props) {
+  const log = [];
+  const tag = strings => {
+    log.push(props.text);
+    return strings[0];
+  };
+  const shown = <Show log={log} />;
+  const one = tag\`x\`;
+  return <div title={one}>{shown}</div>;
+}
+
+function TagWithARestParameter(props) {
+  const log = [];
+  const tag = (strings, ...values) => {
+    log.push(props.text);
+    return values.length;
+  };
+  const shown = <Show log={log} />;
+  const one = tag\`x\`;
+  return <div title={one}>{shown}</div>;
+}
+
+function TagWithTwoParameters(props) {
+  const log = [];
+  const tag = (strings, first) => {
+    log.push(props.text);
+    return first;
+  };
+  const shown = <Show log={log} />;
+  const one = tag\`x\`;
+  return <div title={one}>{shown}</div>;
+}
+
+function StoreOnWhatALocalTagReturned(props) {
+  const tag = strings => ({ text: strings[0] });
+  const made = tag\`x\`;
+  const shown = <Show value={made} />;
+  made.seen = props.text;
+  return shown;
+}
+`;
+
+/** Inputs for what `bun build` infers and upstream's compiler doesn't, linted as oxlint and as the plugin. */
+export const onlyInABuild: Files = {
+  "taken-from.jsx": takenFrom,
+  "made-primitive.jsx": madePrimitive,
+  "tagged.jsx": tagged,
+};
+
 /** The small input directories, keyed by test name. */
 export const small: Record<string, Files> = {
   comments,
@@ -644,6 +776,7 @@ function Component(props) {
     "callback-of-map.jsx": callbackOfMap,
   },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
+  "only in a build": { ".oxlintrc.json": rc(), ...onlyInABuild },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,

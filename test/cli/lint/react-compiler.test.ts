@@ -14,6 +14,7 @@ import {
   eslintSmall,
   type Files,
   long,
+  onlyInABuild,
   rc,
   small,
   twoLabels,
@@ -678,3 +679,35 @@ describe.concurrent(
     });
   },
 );
+
+// `bun build` infers that a spread argument takes from an iterator, and that a regular expression literal and
+// `new String()` are objects. The two tools don't, and report no store in taken-from.jsx and made-primitive.jsx.
+// One at a time: side by side, a debug build needs most of the time limit for each of the two.
+describe("bun lint: what only `bun build` infers isn't reported", () => {
+  // A tagged template is a call of its tag to oxlint too: all but the tag with two parameters are reported.
+  test(`as oxlint ${expected.oxlint}, to which a tagged template is a call`, async () => {
+    const { diagnostics, files, exit } = await report(small["only in a build"]);
+    expect(diagnostics).toEqual(expected.reports["only in a build"].diagnostics);
+    expect(Object.keys(diagnostics)).toEqual(["tagged.jsx"]);
+    expect(locationsOf(diagnostics["tagged.jsx"])).toEqual([
+      ["react(immutability)", 11, 3],
+      ["react(immutability)", 25, 5],
+      ["react(immutability)", 4, 3],
+      ["react(immutability)", 42, 5],
+      ["react(immutability)", 50, 5],
+      ["react(immutability)", 61, 5],
+      ["react(immutability)", 84, 3],
+    ]);
+    expect(files).toBe(3);
+    expect(exit).toBe(1);
+  });
+
+  test(`as eslint-plugin-react-hooks ${expected.eslint.plugin}, to which it is not`, async () => {
+    const files = { "eslint.config.js": eslintConfig, ...onlyInABuild };
+    const { raw, stderr, exitCode, directories } = await lint(files, ["-f", "json"]);
+    if (!raw.startsWith("[")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
+    expect(byEslintFile(JSON.parse(raw), directories)).toEqual(expected.eslint.build);
+    expect(expected.eslint.build).toEqual({});
+    expect(exitCode).toBe(0);
+  });
+});

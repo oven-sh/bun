@@ -1,5 +1,5 @@
 status: 0
-script: 695471e22adfb443
+script: 10271859e319d197
 ---
 builtins.TypeError pack expected at least 1 argument, got 0
 builtins.TypeError Struct() argument 1 must be a str or bytes object, not int
@@ -104,6 +104,10 @@ unpack_iterator _struct True 3 (256, 2) 2 [(1027, 5), (1798, 8)] 0
 builtins.StopIteration 
 builtins.StopIteration 
 [] [(25185,), (25699,)] [97, 98, 99] [(b'aa',), (b'bb',), (b'cc',)] [(), ()]
+builtins.BufferError memoryview: underlying buffer is not C-contiguous
+builtins.BufferError memoryview: underlying buffer is not C-contiguous
+builtins.BufferError memoryview: underlying buffer is not C-contiguous
+[(98,), (99,)]
 TypeError
 ['__iter__', '__length_hint__', '__next__']
 builtins.TypeError _struct._clearcache() takes no arguments (1 given)

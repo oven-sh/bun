@@ -43,6 +43,7 @@ t(lambda: S.iter_unpack("i")); t(lambda: S.iter_unpack("i", "abcd")); t(lambda: 
 it = S.iter_unpack("<hb", bytes(range(9)))
 print(type(it).__name__, type(it).__module__, iter(it) is it, it.__length_hint__(), next(it), it.__length_hint__(), list(it), it.__length_hint__()); t(lambda: next(it)); t(lambda: next(it))
 print(list(S.iter_unpack("<h", b"")), list(S.iter_unpack("<h", bytearray(b"abcd"))), [x for x, in S.iter_unpack("B", b"abc")], list(S.iter_unpack("2s", b"aabbcc")), list(S.iter_unpack("x", b"ab")))
+t(lambda: list(S.iter_unpack("B", memoryview(b"abcd")[::-1]))); t(lambda: list(S.iter_unpack("B", memoryview(b"abcd")[::2]))); t(lambda: list(S.Struct("B").iter_unpack(memoryview(bytearray(b"abcd"))[::-1]))); print(list(S.iter_unpack("B", memoryview(b"abcd")[1:3])))
 tn(lambda: type(it)()); print(sorted(k for k in type(it).__dict__ if k not in ("__doc__", "__module__", "__getattribute__")))
 t(lambda: S._clearcache(1)); print(S._clearcache())
 for i in range(250):

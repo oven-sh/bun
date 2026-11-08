@@ -244,6 +244,31 @@ const writes = `export default function Component(props) {
 }
 `;
 
+/** `zero` is a zero on each path, of one sign or of two. If `test` folds to true, every render sets state. */
+const zeroOnEachPath = (ifFlag: string, otherwise: string, test: string) => `import { useState } from "react";
+
+export function Component({ flag }) {
+  const [state, setState] = useState(0);
+  let zero;
+  if (flag) zero = ${ifFlag};
+  else zero = ${otherwise};
+  if (${test}) setState(1);
+  return <div>{state}</div>;
+}
+`;
+
+/**
+ * To the compilers of oxlint 1.87 and of eslint-plugin-react-hooks 7.1.1, a local that is `0` on one path and `-0` on
+ * the other is the zero of the first path, so a test of it is a constant. facebook/react#37995, after which it is not,
+ * is later than both. What Bun builds follows it. `bun lint` does not, while these are the tools it is compared with.
+ */
+export const zeros: Files = {
+  "same.jsx": zeroOnEachPath("0", "0", "1 / zero > 0"),
+  "equal.jsx": zeroOnEachPath("0", "-0", "zero === 0"),
+  "first.jsx": zeroOnEachPath("0", "-0", "1 / zero > 0"),
+  "first-is-minus.jsx": zeroOnEachPath("-0", "0", "1 / zero > 0"),
+};
+
 /** These aren't React's hooks, despite their names. */
 const ownHooks = `export function Component(props) {
   const f = useCallback(() => [props.a()], [props.a()]);
@@ -644,6 +669,7 @@ function Component(props) {
     "callback-of-map.jsx": callbackOfMap,
   },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
+  zeros: { ".oxlintrc.json": rc(), ...zeros },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,

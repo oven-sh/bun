@@ -17,6 +17,7 @@ import {
   rc,
   small,
   twoLabels,
+  zeros,
 } from "./oracle/react-compiler/inputs";
 
 afterAll(endChildren);
@@ -402,6 +403,19 @@ ${chain}
     expect([0, 1]).toContain(exit);
   });
 
+  // What Bun builds keeps `0` and `-0` apart (facebook/react#37995). oxlint's compiler is older.
+  test(
+    "a local that is `0` on one path and `-0` on the other is the first of the two, as it is for oxlint",
+    async () => {
+      const { diagnostics, exit } = await report(small.zeros);
+      expect(diagnostics).toEqual(expected.reports.zeros.diagnostics);
+      // `first-is-minus.jsx` has no report: `1 / -0 > 0` is false.
+      expect(Object.keys(diagnostics)).toEqual(["equal.jsx", "first.jsx", "same.jsx"]);
+      expect(exit).toBe(1);
+    },
+    slow,
+  );
+
   test("reports nothing for a path that contains node_modules", async () => {
     const { diagnostics, files, exit } = await report(small.node_modules);
     expect(diagnostics).toEqual(expected.reports.node_modules.diagnostics);
@@ -676,5 +690,22 @@ describe.concurrent(
       ]);
       expect(exitCode).toBe(1);
     });
+
+    // These are the reports of ESLint 10.12.0 with the plugin 7.1.1, whose compiler is older than facebook/react#37995.
+    test(
+      "a local that is `0` on one path and `-0` on the other is the first of the two, as it is for the plugin",
+      async () => {
+        const { files, exitCode } = await messages(zeros);
+        const setsState = (columns: string) =>
+          `react-hooks/set-state-in-render 8:${columns} Error: Cannot call setState during render`;
+        expect(briefly(files)).toEqual({
+          "equal.jsx": [setsState("19-8:27")],
+          "first.jsx": [setsState("21-8:29")],
+          "same.jsx": [setsState("21-8:29")],
+        });
+        expect(exitCode).toBe(1);
+      },
+      slow,
+    );
   },
 );

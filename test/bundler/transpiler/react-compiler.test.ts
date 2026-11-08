@@ -1683,6 +1683,139 @@ describe("bundler", () => {
     run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
   });
 
+  // `0 === -0`, but a local that is `0` on one path and `-0` on another is not a constant. Constant propagation took
+  // the zero of one path for it, also of a path that is never taken (facebook/react#37995). Each component renders
+  // three times on one memo cache, with `flag` true, false and true, and has to render what the plain build renders.
+  // A memo block does not run again for a dependency of which only the sign changes (its guard is `!==`), so each
+  // component reads its zero in a division, which no memo block holds.
+  const zeroOrMinusZero: Record<string, string> = {
+    ZeroOrMinusZero: "Infinity -Infinity Infinity",
+    MinusZeroOrZero: "-Infinity Infinity -Infinity",
+    ZeroFromATernary: "true false true",
+    ZeroUnlessAssigned: "-Infinity Infinity -Infinity",
+    ZeroFromASwitch: "Infinity -Infinity Infinity",
+    ZeroInACallback: "Infinity -Infinity Infinity",
+    ZeroBesideADeadPath: "Infinity",
+    SameZeroOnBothPaths: "Infinity,-Infinity,42,true",
+  };
+  const zeroOrMinusZeroFiles = {
+    "/entry.js": /* js */ `
+      import { render } from "react";
+      import * as forms from "./forms.jsx";
+      const show = value => (Object.is(value, -0) ? "-0" : String(value));
+      for (const [name, Form] of Object.entries(forms)) {
+        const renders = [true, false, true].map(flag => [render(Form, { flag }).children].flat().map(show).join());
+        console.log(name + "=" + (new Set(renders).size === 1 ? renders[0] : renders.join(" ")));
+      }
+    `,
+    "/forms.jsx": /* jsx */ `
+      export function ZeroOrMinusZero({ flag }) {
+        let z;
+        if (flag) z = 0;
+        else z = -0;
+        return <i>{1 / z}</i>;
+      }
+      export function MinusZeroOrZero({ flag }) {
+        let z;
+        if (flag) z = -0;
+        else z = 0;
+        return <i>{1 / z}</i>;
+      }
+      export function ZeroFromATernary({ flag }) {
+        const z = flag ? 0 : -0;
+        return <i>{1 / z > 0}</i>;
+      }
+      export function ZeroUnlessAssigned({ flag }) {
+        let z = 0;
+        if (flag) z = -0;
+        return <i>{1 / z}</i>;
+      }
+      export function ZeroFromASwitch({ flag }) {
+        let z;
+        switch (flag) {
+          case true:
+            z = 0;
+            break;
+          default:
+            z = -0;
+        }
+        return <i>{1 / z}</i>;
+      }
+      export function ZeroInACallback({ flag }) {
+        const divide = on => {
+          let z;
+          if (on) z = 0;
+          else z = -0;
+          return 1 / z;
+        };
+        return <i>{divide(flag)}</i>;
+      }
+      // The assignment never runs. Its \`-0\` was still the constant for \`z\`.
+      export function ZeroBesideADeadPath() {
+        const never = false;
+        let z = 0;
+        if (never) z = -0;
+        return <i>{[1 / z]}</i>;
+      }
+      // The same zero on both paths is still a constant, and so is a number that is not zero.
+      export function SameZeroOnBothPaths({ flag }) {
+        let zero, minusZero, other;
+        if (flag) {
+          zero = 0;
+          minusZero = -0;
+          other = 42;
+        } else {
+          zero = 0;
+          minusZero = -0;
+          other = 42;
+        }
+        return <i>{[1 / zero, 1 / minusZero, other, 0 === -0]}</i>;
+      }
+    `,
+    // One memo cache per component, kept between renders, as a fiber keeps it.
+    "/node_modules/react/index.js": /* js */ `
+      const fibers = new Map();
+      let current;
+      exports.render = (Component, props) => {
+        current = fibers.get(Component);
+        if (!current) fibers.set(Component, (current = { cache: null }));
+        return Component(props);
+      };
+      exports.memoCache = size =>
+        (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+    `,
+    "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+  const zeroOrMinusZeroBuilds = {
+    plain: { reactCompiler: false, backend: "api" },
+    api: { reactCompiler: true, backend: "api" },
+    cli: { reactCompiler: true, backend: "cli" },
+    ssr: { reactCompiler: true, backend: "api", reactCompilerOutputMode: "ssr" },
+    minified: { reactCompiler: true, backend: "api", minifySyntax: true },
+  } as const;
+  for (const [build, options] of Object.entries(zeroOrMinusZeroBuilds)) {
+    itBundled(`react-compiler/ZeroAndMinusZeroAreNotOneConstant-${build}`, {
+      files: zeroOrMinusZeroFiles,
+      ...options,
+      target: "browser",
+      run: {
+        stdout: Object.entries(zeroOrMinusZero)
+          .map(([name, renders]) => `${name}=${renders}`)
+          .sort()
+          .join("\n"),
+      },
+      onAfterBundle(api) {
+        if (!options.reactCompiler || "minifySyntax" in options) return;
+        // The last two are constants in the output: the compiler still computes them.
+        const out = api.readFile("/out.js").replace(/\s/g, "");
+        expect(["[Infinity]", "[Infinity,-Infinity,42,true]"].filter(array => !out.includes(array))).toEqual([]);
+      },
+    });
+  }
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `

@@ -300,7 +300,9 @@ describe("what a script stored on Array.prototype", () => {
 
   // The stdio list is read by index now. map() left a hole where the list has one, and so does the loop.
   it("a hole in the stdio list is no pipe", async () => {
-    const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [, "pipe", "pipe"] });
+    const stdio: "pipe"[] = new Array(3);
+    stdio[1] = stdio[2] = "pipe";
+    const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio });
     expect([child.stdin, typeof child.stdout, child.stdio.length]).toEqual([null, "object", 3]);
     child.stdout!.resume();
     child.stderr!.resume();

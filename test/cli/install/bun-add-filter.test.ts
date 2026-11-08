@@ -478,6 +478,30 @@ test.concurrent("the note follows the warning of install, outdated and update", 
   ]);
 });
 
+// No package is named `packages`.
+test.concurrent("a list of names that matches directories gets a note", async () => {
+  const dir = await makeMonorepo();
+  const before = await allPackageJsonTexts(dir);
+
+  {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "{packages,nope}"], dir);
+    expect(stderr).toBe(
+      'error: No workspace packages matched the filter "{packages,nope}"\n' +
+        'note: "{packages,nope}" is a list of package names. For directories, write "{./{packages,nope}}"\n',
+    );
+    expect(exitCode).toBe(1);
+    expect(await allPackageJsonTexts(dir)).toStrictEqual(before);
+  }
+
+  // The spelling of the note selects the packages in the directory.
+  {
+    const { stderr, exitCode } = await run(["add", "no-deps", "--filter", "{./{packages,nope}}"], dir);
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+    await expectAddedOnlyTo(dir, before, ["api", "web", "pkg-a", "pkg-b"]);
+  }
+});
+
 test.concurrent("braces around a list of names select by name", async () => {
   const dir = await makeMonorepo();
   const before = await allPackageJsonTexts(dir);

@@ -1230,6 +1230,63 @@ describe("selectors", () => {
     });
   });
 
+  // No package is named `apps` or `libs`.
+  const dirs_root = tempDirWithFiles("filter-brace-note-directories", {
+    apps: { web: { "package.json": JSON.stringify({ name: "web", scripts: { present: "echo out-web" } }) } },
+    libs: { util: { "package.json": JSON.stringify({ name: "util", scripts: { present: "echo out-util" } }) } },
+    "package.json": JSON.stringify({ name: "ws", workspaces: ["apps/*", "libs/*"] }),
+  });
+  const directoriesNote = (filter: string, write: string) =>
+    `note: "${filter}" is a list of package names. For directories, write "${write}"\n`;
+  const appsLibsNote = directoriesNote("{apps,libs}", "{./{apps,libs}}");
+
+  // The last column is what the spelling of the note runs.
+  test.concurrent.each<[string, string, string[]]>([
+    ["{apps,libs}", "{./{apps,libs}}", ["util", "web"]],
+    ["{apps,nope}", "{./{apps,nope}}", ["web"]],
+    ["...{apps,libs}", "...{./{apps,libs}}", ["util", "web"]],
+  ])("a list of names that matches directories gets a note: '%s'", async (filter, write, ran) => {
+    expect(
+      await Promise.all([runPresent(["--filter", filter], dirs_root), runPresent(["--filter", write], dirs_root)]),
+    ).toEqual([
+      { ran: [], stderr: unmatched("error", filter) + directoriesNote(filter, write), exitCode: 1 },
+      { ran, stderr: "", exitCode: 0 },
+    ]);
+  });
+
+  // `{apps,libs}` is there to get its note. The filters after it match nothing and get none.
+  const silentLists: [string, string[]][] = [
+    ["{nope,nada}", ["{nope,nada}"]],
+    ["...^{apps,libs}", ["...^{apps,libs}"]],
+    // `libs` holds only `util`.
+    ["{libs,nope} !util", ["{libs,nope}", "!util"]],
+    // Without braces `apps` is a name, and the directory of that name gets no note.
+    ["apps", ["apps"]],
+  ];
+  // The directory reading does not fit a path, and that is no error. A Windows command line is too short for it.
+  if (!isWindows) {
+    silentLists.push([
+      "a list that is too long for a path",
+      [`{nope,${Buffer.alloc(MAX_PATH_BYTES, "x").toString()}}`],
+    ]);
+  }
+  test.concurrent.each(silentLists)("no note when the list matches no directory: %s", async (_, silent) => {
+    expect(await runPresent(filterArgs(["{apps,libs}", ...silent]), dirs_root)).toEqual({
+      ran: [],
+      stderr: unmatched("error", "{apps,libs}", ...silent) + appsLibsNote,
+      exitCode: 1,
+    });
+  });
+
+  // In `apps` there is no directory `util`, `apps` or `libs`.
+  test.concurrent("the directories of a list are looked up from the current directory", async () => {
+    expect(await runPresent(filterArgs(["{util}", "{apps,libs}"]), join(dirs_root, "apps"))).toEqual({
+      ran: [],
+      stderr: unmatched("error", "{util}", "{apps,libs}") + packageNote("{util}", "util", "util"),
+      exitCode: 1,
+    });
+  });
+
   test("'foo...' follows optionalDependencies but not peerDependencies", () => {
     using dir = tempDir("filter-optional-peer", {
       packages: {

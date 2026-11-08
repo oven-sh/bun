@@ -50,6 +50,8 @@ pub struct Unmatched {
 enum BraceHint {
     /// The braces were read as a directory. Their text also matches a package name.
     Package,
+    /// The braces were read as a list of names. As a list of directories they hold a workspace.
+    Directories,
 }
 
 /// Importers a filtered add/remove/update selected; None is the root. Only their dependencies get linked.
@@ -318,6 +320,11 @@ fn respell(raw: &[u8], hint: BraceHint, braces: &Range<usize>) -> Vec<u8> {
     let mut out = raw[..braces.start].to_vec();
     match hint {
         BraceHint::Package => out.extend_from_slice(&text[1..text.len() - 1]),
+        BraceHint::Directories => {
+            out.extend_from_slice(b"{./");
+            out.extend_from_slice(text);
+            out.push(b'}');
+        }
     }
     out.extend_from_slice(&raw[braces.end..]);
     out
@@ -328,6 +335,8 @@ fn respell(raw: &[u8], hint: BraceHint, braces: &Range<usize>) -> Vec<u8> {
 fn other_reading(
     sel: &Selector,
     raw: &[u8],
+    original_cwd: &[u8],
+    path_buf: &mut [u8],
     candidates: &[Candidate<'_>],
     exclude: &DynamicBitSet,
     explicit_root_only: bool,
@@ -336,28 +345,38 @@ fn other_reading(
     if sel.exclude_self {
         return None;
     }
-    // Only braces make a `Base::Subtree`.
-    let Base::Subtree(_) = &sel.base else {
-        return None;
-    };
     let text = cut_relation(strip_negations(raw).0).text;
     let start = text.as_ptr().addr() - raw.as_ptr().addr();
     let braces = start..start + text.len();
-    let name = brace_body(text)?;
-    // `parse` reads none of these as a name glob, and a glob that starts with `!` matches every other name.
-    if matches!(name, b"*" | b"**")
-        || matches!(name.first(), Some(b'.' | b'!'))
-        || brace_body(name).is_some()
-    {
-        return None;
-    }
-    let hint = BraceHint::Package;
-    // The note prints this spelling. Without the braces, the marks of `raw` must not take a part of `name` with them.
-    let respelled = respell(raw, hint, &braces);
-    if cut_relation(strip_negations(&respelled).0).text != name {
-        return None;
-    }
-    let other = Base::Name(Prepared::new(name.into()));
+    let (hint, other) = match &sel.base {
+        // Only braces make a `Base::Subtree`.
+        Base::Subtree(_) => {
+            let name = brace_body(text)?;
+            // `parse` reads none of these as a name glob, and a glob that starts with `!` matches every other name.
+            if matches!(name, b"*" | b"**")
+                || matches!(name.first(), Some(b'.' | b'!'))
+                || brace_body(name).is_some()
+            {
+                return None;
+            }
+            // The note prints this spelling. Without the braces, the marks of `raw` must not take a part of `name`
+            // with them.
+            let respelled = respell(raw, BraceHint::Package, &braces);
+            if cut_relation(strip_negations(&respelled).0).text != name {
+                return None;
+            }
+            (BraceHint::Package, Base::Name(Prepared::new(name.into())))
+        }
+        // Braces around a list of names. `{./<text>}` is the directory that this builds. `parse` exits when the path
+        // is too long, and a hint must not.
+        Base::Name(_) if brace_body(text).is_some() => {
+            let joined =
+                join_abs_string_buf_checked::<platform::Posix>(original_cwd, path_buf, &[text])?;
+            let dir = Prepared::new(strings::without_trailing_slash(joined).into());
+            (BraceHint::Directories, Base::Subtree(dir))
+        }
+        _ => return None,
+    };
 
     candidates
         .iter()
@@ -370,6 +389,8 @@ fn other_reading(
 fn with_hints(
     missed: Vec<(usize, Selector)>,
     patterns: &[&[u8]],
+    original_cwd: &[u8],
+    path_buf: &mut [u8],
     candidates: &[Candidate<'_>],
     exclude: &DynamicBitSet,
     explicit_root_only: bool,
@@ -381,6 +402,8 @@ fn with_hints(
             hint: other_reading(
                 &sel,
                 patterns[pattern],
+                original_cwd,
+                path_buf,
                 candidates,
                 exclude,
                 explicit_root_only,
@@ -444,7 +467,15 @@ pub fn select(
     let unmatched_patterns = if missed.is_empty() {
         Vec::new()
     } else {
-        with_hints(missed, patterns, candidates, &exclude, explicit_root_only)
+        with_hints(
+            missed,
+            patterns,
+            original_cwd,
+            &mut path_buf.0,
+            candidates,
+            &exclude,
+            explicit_root_only,
+        )
     };
     include.unmanaged.set_exclude(&exclude.unmanaged);
     Selection {
@@ -743,6 +774,11 @@ fn note_other_readings(patterns: &[&[u8]], unmatched_patterns: &[Unmatched]) {
                 "\"{}\" is the directory {}. For the package, write \"{}\"",
                 BStr::new(raw),
                 BStr::new(&text[1..text.len() - 1]),
+                BStr::new(&respelled),
+            ),
+            BraceHint::Directories => bun_core::note!(
+                "\"{}\" is a list of package names. For directories, write \"{}\"",
+                BStr::new(raw),
                 BStr::new(&respelled),
             ),
         }

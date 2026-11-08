@@ -368,6 +368,7 @@ describe("node:test", () => {
     const events = await run({
       files: [join(import.meta.dirname, "fixtures", "33-retry-todo.js")],
       argv: ["--retry", "1"],
+      env: bunEnv,
     }).toArray();
     // One event for each attempt. The first attempt of each test is the one that a stray error failed.
     const todos = events.filter(({ type }) => type === "test:pass").map(({ data }) => [data.name, data.todo]);

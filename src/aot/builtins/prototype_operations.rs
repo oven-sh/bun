@@ -23,6 +23,13 @@ pub fn prototype_operation_of(builtin: BuiltinId) -> Option<PrototypeOperation> 
             parent: 2,
         }),
         BuiltinId::ObjectAssign => Some(PrototypeOperation::CopyProperties { target: 0 }),
+        BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty => {
+            Some(PrototypeOperation::DefineProperty {
+                object: 0,
+                key: 1,
+                descriptor: 2,
+            })
+        }
         BuiltinId::FunctionPrototypeCall | BuiltinId::FunctionPrototypeApply => {
             Some(PrototypeOperation::CallFunction { receiver: 0 })
         }
@@ -30,7 +37,7 @@ pub fn prototype_operation_of(builtin: BuiltinId) -> Option<PrototypeOperation> 
     }
 }
 
-#[allow(clippy::needless_pass_by_value)] // taken apart
+#[allow(clippy::needless_pass_by_value)]
 pub fn named_value_of<M>(referent: StaticReferent<BuiltinId, M>) -> Option<NamedValue> {
     match referent {
         StaticReferent::Class(class) => Some(NamedValue::Class(class)),

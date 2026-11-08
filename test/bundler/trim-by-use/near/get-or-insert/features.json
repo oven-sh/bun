@@ -1,1 +1,1 @@
-{ "features": ["MapGetOrInsert"], "keptToday": true }
+{ "features": ["MapGetOrInsert"], "keptToday": ["MapGetOrInsert"] }

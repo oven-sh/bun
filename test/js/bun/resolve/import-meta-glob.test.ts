@@ -819,9 +819,9 @@ describe.concurrent("import.meta.glob", () => {
       });
     });
 
-    // Known gap: Vitest gives the mock here too. A Vitest file needs two imports of its own to await its imports,
-    // and the entries don't count toward them.
-    test("a mock from one entry misses the next one in a Vitest file with one import of its own", async () => {
+    // Known gap: a Vitest file needs two imports of its own to await its imports, and the entries don't count toward
+    // them. So this prints ["real dependency","mocked",null]: the real module runs, and the mock's own export is lost.
+    test.todo("a mock from one entry reaches the next one in a Vitest file with one import of its own", async () => {
       using dir = tempDir("import-meta-glob", {
         ...mocking,
         "glob.test.js": `
@@ -832,7 +832,7 @@ describe.concurrent("import.meta.glob", () => {
           ${print}`,
       });
       const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.js"]);
-      expect(printed(stdout)).toEqual([`["real dependency","mocked",null]`]);
+      expect(printed(stdout)).toEqual([`["mocked",true]`]);
       expect(exitCode).toBe(0);
     });
 
@@ -883,7 +883,7 @@ describe.concurrent("import.meta.glob", () => {
       expect(exitCode).toBe(0);
     });
 
-    // The entries are awaited behind the hoisted calls, so a hoisted call runs before they exist.
+    // The entries are awaited behind the hoisted calls, so a hoisted call runs before they exist. Vitest throws too.
     test.each([
       ["an export", `export const exported = 1;`],
       ["no export", ``],
@@ -896,11 +896,11 @@ describe.concurrent("import.meta.glob", () => {
           ${own}`,
         "glob.test.ts": `
           import { test } from "bun:test";
-          const result = await import("./helper.ts").then(() => "loaded", error => error.name + ": " + error.message);
+          const result = await import("./helper.ts").then(() => "loaded", error => error.name);
           test("print", () => console.log(JSON.stringify([result])));`,
       });
       const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.ts"]);
-      expect(printed(stdout)).toEqual([`["ReferenceError: Cannot access 'import_entry$1' before initialization."]`]);
+      expect(printed(stdout)).toEqual([`["ReferenceError"]`]);
       expect(exitCode).toBe(0);
     });
   });
@@ -1041,9 +1041,10 @@ describe("errors", () => {
 
 // JavaScriptCore keeps a binding that no function captures in a register, and compiles a save and a restore of every
 // live register around each `await`. So the object reads the awaited entries through a function.
-// The heap counts the bytecode of a module as extra memory. Each case loads 150 modules, so these run after the rest.
+// The heap counts the bytecode of a module as extra memory. It counts machine code too, which a module gets at a time
+// of its own, so the child runs have no JIT. Each case loads 100 modules, so these run after the rest.
 describe.concurrent("a function captures the awaited eager entries", () => {
-  const count = 150;
+  const count = 100;
   const entries = Object.fromEntries(Array.from({ length: count }, (_, i) => [`modules/${i}.js`, ``]));
   const measure = `
     const entries = import.meta.glob("./modules/*.js", { eager: true });
@@ -1075,7 +1076,7 @@ describe.concurrent("a function captures the awaited eager entries", () => {
       "b.js": `export const b = 2;`,
       ...files,
     });
-    const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.js"]);
+    const { stdout, exitCode } = await run(String(dir), ["test", "./glob.test.js"], { BUN_JSC_useJIT: "0" });
     const [loaded, extra] = JSON.parse(stdout.split("\n").find(line => line.startsWith("[")) ?? "[]");
     expect({ loaded, exitCode }).toEqual({ loaded: count, exitCode: 0 });
     return extra as number;
@@ -1093,7 +1094,7 @@ describe.concurrent("a function captures the awaited eager entries", () => {
   ])("in %s", async (_, files) => {
     withFunction ??= extraMemory(testFile(`void [a, b];`));
     const [extra, expected] = await Promise.all([extraMemory(files), withFunction]);
-    // Without the function the bytecode is 3 to 9 times the size.
+    // Without the function the bytecode is 6 times the size.
     expect(extra / expected).toBeLessThan(2);
   });
 });

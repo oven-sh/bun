@@ -5,6 +5,7 @@
 //! runs in the parser: `hir::DiagnosticKind::Js`.
 
 use super::*;
+use crate::bind::FnOwner;
 
 /// `plainJSErrors` (compiler/program.go): the codes reported for JavaScript that isn't opted into checking. Sorted.
 pub(super) const PLAIN_JS_ERRORS: [u32; 91] = [
@@ -100,17 +101,23 @@ impl Checker<'_, '_> {
         if !hir.is_js || hir.legacy_decorators || self.is_check_js(file) {
             return;
         }
+        let bound = self.bound(file);
         let mut previous_owner = None;
         for &(owner, decorator) in &hir.decorators {
             if previous_owner.replace(owner) != Some(owner)
-                && matches!(owner, DecoratorOwner::Param(_))
+                && let DecoratorOwner::Param(parameter) = owner
             {
                 // `decorator.Loc`, which starts at the end of the previous token. `export` and `default` can come
                 // before it.
                 let at_sign = self.decorator_position(file, decorator).at_sign;
                 let pos = self.end_of_token_before(file, at_sign);
                 let at = (file, pos, end_of_expr(hir, decorator));
-                self.add_diagnostic(Reported::bare(at, 1206));
+                // `bun run` reads one on a parameter of a member of a class.
+                let function = bound.fns.get(bound.param_fn[parameter.idx()].idx());
+                let is_in_class = function.is_some_and(|it| matches!(it.owner, FnOwner::Member(_)));
+                let class =
+                    DiagnosticClass::early_error_if(!is_in_class, DiagnosticClass::of_code(1206));
+                self.add_diagnostic(Reported::bare(at, 1206).with_class(class));
             }
         }
     }

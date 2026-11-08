@@ -6,6 +6,7 @@
 //!   body of an arrow function.
 //! - The message: something is missing, something is in excess, or just that the type isn't assignable.
 
+use super::aot::DiagnosticSubject;
 use super::explain::NOWHERE;
 use super::explain_relation::RelationDiagnostic;
 use super::relate::Relation;
@@ -145,7 +146,8 @@ impl Checker<'_, '_> {
         if source.is_undefined()
             && let crate::bind::JsDeclarationKind::ExportsProperty(name) =
                 crate::bind::assignment_declaration_kind(hir, assignment)
-            && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[target].kind
+            && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } =
+                hir.checked_kind(target)
         {
             let object = self.type_of_expr(file, obj);
             let object = self.apparent_type(object);
@@ -157,7 +159,8 @@ impl Checker<'_, '_> {
             }
         }
         let head = self.exact_optional_head_message(file, target, source);
-        self.check_assignable_with_end(
+        let from = self.reported.len();
+        let is_assignable = self.check_assignable_with_end(
             file,
             source,
             left,
@@ -166,6 +169,11 @@ impl Checker<'_, '_> {
             value,
             head.unwrap_or(2322),
         );
+        if !is_assignable && self.is_target_brought(file, target) {
+            for diagnostic in self.reported.iter_mut().skip(from) {
+                diagnostic.subject = (diagnostic.subject).or(DiagnosticSubject::BroughtDeclaration);
+            }
+        }
     }
 
     /// True if `checkDestructuringAssignment` treats the assignment `e` as a target with a default, as in `[a = 1] =
@@ -907,14 +915,28 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let is_variable = self.is_type_variable(ty);
         let mut constraints: Vec<TypeId> = Vec::new();
-        let (mut above, mut covariant) = (hir.parent(hir.node(node)), true);
+        let (mut below, mut covariant) = (hir.node(node), true);
+        let mut steps = 0;
         loop {
+            // Few nodes are nested this deeply. In a chain of `A extends B ? C : ...` every node is, and walking from
+            // each of them to the statement takes quadratic time.
+            if steps == Self::MAX_FLOW_TYPE_STEPS {
+                let skip = self.skip_ancestors_without_flow_constraint(file, below, node);
+                below = skip.below;
+                covariant ^= skip.flips_variance;
+                if skip.node.is_some() {
+                    node = skip.node;
+                }
+            } else {
+                steps += 1;
+            }
+            let above = hir.parent(below);
             let parent = match hir.data(above) {
                 NodeData::Type(parent) => parent,
                 NodeData::Stmt(_) | NodeData::File | NodeData::None => break,
                 data => {
                     covariant ^= matches!(data, NodeData::Param(_));
-                    above = hir.parent(above);
+                    below = above;
                     continue;
                 }
             };
@@ -937,13 +959,67 @@ impl Checker<'_, '_> {
             {
                 constraints.push(constraint);
             }
-            (node, above) = (parent, hir.parent(above));
+            (node, below) = (parent, above);
         }
         if constraints.is_empty() {
             return ty;
         }
         let constraint = self.intersection(&constraints);
         self.substitution_type(ty, constraint)
+    }
+
+    /// How many ancestors `conditional_flow_type_of_type` visits before it starts to skip.
+    const MAX_FLOW_TYPE_STEPS: u32 = 16;
+
+    /// Follows the ancestors of `start` for as long as `conditional_flow_type_of_type` has nothing to do at them but
+    /// to go on: up to the true branch of a conditional type, a child of a mapped type, or a child of the statement.
+    /// `node` is the type node that `start` is or that the walk passed last. The result is remembered for every node on
+    /// the way.
+    fn skip_ancestors_without_flow_constraint(
+        &mut self,
+        file: FileId,
+        start: Node,
+        mut node: TypeNodeId,
+    ) -> FlowTypeSkip {
+        let hir = self.hir(file);
+        let mut passed: Vec<Node> = Vec::new();
+        let mut below = start;
+        let mut skip = loop {
+            if let Some(&known) = self.flow_type_skips.get(&(file, below)) {
+                break known;
+            }
+            let above = hir.parent(below);
+            let is_passed = match hir.data(above) {
+                NodeData::Stmt(_) | NodeData::File | NodeData::None => false,
+                NodeData::Type(parent) => {
+                    let child = std::mem::replace(&mut node, parent);
+                    match hir[parent].kind {
+                        TypeNodeKind::Cond { yes, .. } => yes != child,
+                        TypeNodeKind::Mapped(_) => false,
+                        _ => true,
+                    }
+                }
+                _ => true,
+            };
+            if !is_passed {
+                break FlowTypeSkip {
+                    below,
+                    node: TypeNodeId::NONE,
+                    flips_variance: false,
+                };
+            }
+            passed.push(below);
+            below = above;
+        };
+        for &below in passed.iter().rev() {
+            match hir.data(hir.parent(below)) {
+                NodeData::Type(parent) if skip.node.is_none() => skip.node = parent,
+                NodeData::Param(_) => skip.flips_variance ^= true,
+                _ => {}
+            }
+            self.flow_type_skips.insert((file, below), skip);
+        }
+        skip
     }
 
     /// The mapped type arm of `getConditionalFlowTypeOfType`. If `node` is the template `X` of the mapped type
@@ -1049,9 +1125,9 @@ impl Checker<'_, '_> {
         // `GetErrorRangeForNode`: the keyword.
         let node = (file, hir[s].start, hir[s].start + b"return".len() as u32);
         let return_type = self.return_type_of_fn(file, container);
-        if e.is_none() && !self.p.files.options.strict_null_checks && !return_type.is_never() {
+        if e.is_none() && !self.reports_null_checks(file) && !return_type.is_never() {
             if hir[container].kind != FnKind::Constructor
-                && self.p.files.options.no_implicit_returns
+                && self.module_options(file).no_implicit_returns
                 && !self.is_unwrapped_return_type_undefined_void_or_any(
                     file,
                     container,
@@ -1281,9 +1357,13 @@ impl Checker<'_, '_> {
         expr: Option<(FileId, ExprId)>,
         is_effective: bool,
         head_message: Option<u32>,
-        diagnostic_output: Option<&mut Vec<Reported>>,
+        mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
         let is_outermost = self.begin_comparison(error_node);
+        let from = match &diagnostic_output {
+            Some(output) => output.len(),
+            None => self.reported.len(),
+        };
         let is_assignable = self.check_type_assignable_to_and_optionally_elaborate_worker(
             source,
             target,
@@ -1291,9 +1371,15 @@ impl Checker<'_, '_> {
             expr,
             is_effective,
             head_message,
-            diagnostic_output,
+            diagnostic_output.as_deref_mut(),
         );
         self.end_comparison(is_outermost);
+        if !is_assignable && expr.is_some_and(|(file, e)| self.is_expression_brought(file, e)) {
+            let reported = diagnostic_output.unwrap_or(&mut self.reported);
+            for diagnostic in reported.iter_mut().skip(from) {
+                diagnostic.subject = (diagnostic.subject).or(DiagnosticSubject::BroughtDeclaration);
+            }
+        }
         is_assignable
     }
 
@@ -1312,7 +1398,7 @@ impl Checker<'_, '_> {
         if self.try_is_type_related_to(source, target, Relation::Assignable, false) == Ok(true) {
             return true;
         }
-        if error_node.is_none() {
+        if error_node.is_none() || self.task.was_discarded() {
             return false;
         }
         let output = diagnostic_output.as_deref_mut();
@@ -1596,6 +1682,9 @@ impl Checker<'_, '_> {
             )
         {
             return true;
+        }
+        if self.task.was_discarded() {
+            return false;
         }
         let specific_source = if next.is_some() {
             self.check_expression_for_mutable_location_with_contextual_type(
@@ -1904,6 +1993,7 @@ impl Checker<'_, '_> {
             at,
             mut lines,
             related,
+            subject,
         } = diagnostic;
         if lines.is_empty() {
             return;
@@ -1912,6 +2002,7 @@ impl Checker<'_, '_> {
         let mut diagnostic = Reported::new(at, first.code, first.args);
         super::explain::add_lines(&mut diagnostic.message_chain, lines);
         diagnostic.related_information = related;
+        diagnostic.subject = subject;
         self.add_diagnostic(diagnostic);
     }
 

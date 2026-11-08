@@ -8,7 +8,7 @@ pub struct NoMissingLinkFragments {
     allow_pattern: util::PatternOption,
 }
 
-const INVALID_FRAGMENT: Message = Message::new(
+const INVALID_FRAGMENT: &Message = &Message::new(
     "invalidFragment",
     "Link fragment '#{{fragment}}' does not reference a heading or anchor in this document.",
 );

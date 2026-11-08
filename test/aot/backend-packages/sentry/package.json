@@ -1,0 +1,8 @@
+{
+  "name": "backend-packages",
+  "private": true,
+  "dependencies": {
+    "@sentry/node": "11.8.0",
+    "@types/node": "26.6.5"
+  }
+}

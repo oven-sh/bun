@@ -8,9 +8,9 @@ pub struct IdList<const IS_BLACKLIST: bool> {
 
 pub type IdDenylist = IdList<false>;
 
-const RESTRICTED: Message = Message::new("restricted", "Identifier '{{name}}' is restricted.");
-const RESTRICTED_PRIVATE: Message =
-    Message::new("restrictedPrivate", "Identifier '#{{name}}' is restricted.");
+const RESTRICTED: &Message = &Message::new("restricted", "Identifier '{{name}}' is restricted.");
+const RESTRICTED_PRIVATE: &Message =
+    &Message::new("restrictedPrivate", "Identifier '#{{name}}' is restricted.");
 
 /// `name` includes the `#` of a private name.
 fn report<'a, R: Rule>(at: Span, name: &'a [u8], cx: &Cx<'a, R>) {

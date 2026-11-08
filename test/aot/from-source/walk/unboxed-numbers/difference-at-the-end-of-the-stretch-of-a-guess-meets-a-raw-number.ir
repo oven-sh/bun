@@ -1,0 +1,22 @@
+# `s += list[i].end - list[i].pos`: that both are numbers are two guesses, one in the other. Beside the number that the outer test has proven, the other arm of the inner one is a difference of a number and a value, which gives a raw number:
+# so the arms meet raw, and the typed difference is built on doubles. Kept boxed, as a `+` at the end of a stretch is, it was unboxed again for the meeting: four instructions more
+# The list leaves the program, so that Link has seen nothing of what comes out of it (LinkTables::resultsOfReadsByKey).
+# -- source: spans.ts
+# interface Range { pos: number; end: number }
+# function spans(list: Range[]): number {
+#   let s = 0;
+#   for (let i = 0; i < list.length; i++) s += list[i].end - list[i].pos;
+#   return s;
+# }
+# const list: Range[] = [];
+# for (let i = 0; i < 10; i++) list.push({ pos: i, end: i + (i & 7) });
+# (globalThis as any).kept = list;
+# console.log(spans(list));
+# -- end of source
+# RUN(RAW): walk f1 mechanisms=all-Inlining
+# REQUIRES(RAW): entries-of-bun
+# RAW-LABEL: code f1:Body
+# RAW: number @Double = Sub {{*}}form=Numbers
+# RUN(NEVER): walk f1 mechanisms=all-Inlining
+# REQUIRES(NEVER): entries-of-bun
+# NEVER-NOT: @JSValue = Sub {{*}}form=Numbers

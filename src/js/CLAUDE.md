@@ -9,6 +9,7 @@ Write JS builtins for Bun's Node.js compatibility and APIs. Run `bun bd` after c
 - `bun/` - Bun modules (`bun:ffi`, `bun:sqlite`)
 - `thirdparty/` - NPM replacements (`ws`, `node-fetch`)
 - `internal/` - Internal modules
+- `ahead-of-time/` - Second texts of some modules, under the same names: `bun build --compile --aot` compiles them in place of the first. A change to one text goes into the other too
 
 ## Writing Modules
 

@@ -61,6 +61,7 @@ pub(crate) struct Result<'a> {
 /// Filter `test_files` in place to only the entries whose module graph
 /// reaches a changed file. On success, `test_files` is compacted (preserving
 /// order) and the new length is returned via `Result.test_files`.
+#[optimize(size)]
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
     vm: &mut VirtualMachine,
@@ -568,6 +569,7 @@ pub(crate) enum GitResult {
     },
 }
 
+#[optimize(size)]
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
     argv.push(git_path);

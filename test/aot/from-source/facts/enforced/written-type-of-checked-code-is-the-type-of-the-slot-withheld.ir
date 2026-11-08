@@ -1,0 +1,16 @@
+# the same program with typed slots withheld: nothing is written into Facts, and every slot takes every value
+# RUN: facts enforced mechanisms=all-TypedSlots
+# CHECK: counts fields [[fields]] | written 0 | family 0 | proven 0 | compiler 0 | taken back 0
+# RUN(NEVER): facts enforced mechanisms=all-TypedSlots
+# NEVER-NOT: source=
+# NEVER-NOT: held=
+# NEVER-NOT: differs-from-table
+# RUN(PLAN): plan layouts mechanisms=all-TypedSlots
+# PLAN-NOT: type=
+# -- source: written-type-of-checked-code-is-the-type-of-the-slot.ts
+# declare function sink(...values: unknown[]): void;
+# enum TypeFlags { Any = 1, Union = 2, Object = 4 }
+# class Sym { name: string; constructor(name: string) { this.name = name; } }
+# class Type { flags: TypeFlags; ratio: number; open: boolean; symbol: Sym; label: string; loose: any; constructor(flags: TypeFlags, ratio: number, open: boolean, symbol: Sym, label: string, loose: any) { this.flags = flags; this.ratio = ratio; this.open = open; this.symbol = symbol; this.label = label; this.loose = loose; } }
+# sink(Type, Sym);
+# -- end of source

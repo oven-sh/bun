@@ -17,6 +17,9 @@ interface MockableTimers {
   setTimeout: unknown;
   setInterval: unknown;
   setImmediate: unknown;
+  clearTimeout: unknown;
+  clearInterval: unknown;
+  clearImmediate: unknown;
 }
 const nodeTimersPromises = require("node:timers/promises");
 const EventEmitter = require("node:events");
@@ -32,18 +35,18 @@ const TIMEOUT_MAX = 2 ** 31 - 1;
 // the two nodes to compare, similar to the native Array#sort. Crucially
 // this enables priority queues that are based on a comparison of more than
 // just a single criteria.
-class PriorityQueue {
-  #compare = (a, b) => a - b;
+class PriorityQueue<T> {
+  #compare: (a: T, b: T) => number = (a, b) => (a as number) - (b as number);
   #heap: any[] = [undefined, undefined];
-  #setPosition;
+  #setPosition: ((node: T, pos: number) => void) | undefined;
   #size = 0;
 
-  constructor(comparator, setPosition) {
+  constructor(comparator?: (a: T, b: T) => number, setPosition?: (node: T, pos: number) => void) {
     if (comparator !== undefined) this.#compare = comparator;
     if (setPosition !== undefined) this.#setPosition = setPosition;
   }
 
-  insert(value) {
+  insert(value: T) {
     const heap = this.#heap;
     const pos = ++this.#size;
     heap[pos] = value;
@@ -51,15 +54,15 @@ class PriorityQueue {
     this.percolateUp(pos);
   }
 
-  peek() {
+  peek(): T | undefined {
     return this.#heap[1];
   }
 
-  peekBottom() {
+  peekBottom(): T | undefined {
     return this.#heap[this.#size];
   }
 
-  percolateDown(pos) {
+  percolateDown(pos: number) {
     const compare = this.#compare;
     const setPosition = this.#setPosition;
     const hasSetPosition = setPosition !== undefined;
@@ -90,7 +93,7 @@ class PriorityQueue {
     if (hasSetPosition) setPosition(item, pos);
   }
 
-  percolateUp(pos) {
+  percolateUp(pos: number) {
     const heap = this.#heap;
     const compare = this.#compare;
     const setPosition = this.#setPosition;
@@ -110,7 +113,7 @@ class PriorityQueue {
     if (hasSetPosition) setPosition(item, pos);
   }
 
-  removeAt(pos) {
+  removeAt(pos: number) {
     const heap = this.#heap;
     let size = this.#size;
     heap[pos] = heap[size];
@@ -123,7 +126,7 @@ class PriorityQueue {
     }
   }
 
-  shift() {
+  shift(): T | undefined {
     const heap = this.#heap;
     const value = heap[1];
     if (value === undefined) return;
@@ -134,7 +137,7 @@ class PriorityQueue {
   }
 }
 
-function validateStringArray(value, name) {
+function validateStringArray(value: string[], name: string) {
   validateArray(value, name);
   for (let i = 0; i < value.length; i++) {
     validateString(value[i], `${name}[${i}]`);
@@ -142,19 +145,19 @@ function validateStringArray(value, name) {
 }
 
 // Internal reference to the MockTimers class inside MockDate
-let kMock;
+let kMock: symbol;
 // Initial epoch to which #now should be set to
 const kInitialEpoch = 0;
 
-function compareTimersLists(a, b) {
+function compareTimersLists(a: Timeout, b: Timeout) {
   return a.runAt - b.runAt || a.id - b.id;
 }
 
-function setPosition(node, pos) {
+function setPosition(node: Timeout, pos: number) {
   node.priorityQueuePosition = pos;
 }
 
-function abortIt(signal) {
+function abortIt(signal: AbortSignal) {
   return $makeAbortError(undefined, { cause: signal.reason });
 }
 
@@ -164,16 +167,32 @@ const TIMERS_DEFAULT_INTERVAL = {
   setImmediate: -1,
 };
 
-class Timeout {
-  #clear;
-  id;
-  callback;
-  runAt;
-  interval;
-  args;
-  priorityQueuePosition;
+type TimerCallback = (...args: any[]) => void;
 
-  constructor(opts) {
+interface TimeoutOptions {
+  __proto__?: null;
+  id: number;
+  callback: TimerCallback;
+  runAt: number;
+  interval: number | undefined;
+  args: unknown[];
+  clear: (timer: Timeout) => void;
+}
+
+interface PromisifiedTimerOptions {
+  signal?: AbortSignal;
+}
+
+class Timeout {
+  #clear: (timer: Timeout) => void;
+  id: number;
+  callback: TimerCallback;
+  runAt: number;
+  interval: number | undefined;
+  args: unknown[];
+  priorityQueuePosition: number | undefined;
+
+  constructor(opts: TimeoutOptions) {
     this.id = opts.id;
     this.callback = opts.callback;
     this.runAt = opts.runAt;
@@ -218,7 +237,7 @@ class MockTimers {
 
   #realPromisifiedSetTimeout;
   #realPromisifiedSetInterval;
-  #realTimersPromisifiedSchedulerWait;
+  #realTimersPromisifiedSchedulerWait!: (delay: number, options?: PromisifiedTimerOptions) => Promise<unknown>;
 
   #realTimersSetTimeout;
   #realTimersClearTimeout;
@@ -308,7 +327,7 @@ class MockTimers {
     Object.defineProperty(AbortSignal, "timeout", this.#realAbortSignalTimeout);
   }
 
-  #createTimer(isInterval, callback, delay, ...args) {
+  #createTimer(isInterval: boolean, callback: TimerCallback, delay: number, ...args: unknown[]) {
     // Only the upper bound is clamped, like Node: `setInterval(fn, 0)` re-fires
     // within one tick() until cleared. Real timers clamp to 1ms; clamping here
     // would diverge from the port.
@@ -317,7 +336,7 @@ class MockTimers {
     }
 
     const timerId = this.#currentTimer++;
-    const opts = {
+    const opts: TimeoutOptions = {
       __proto__: null,
       id: timerId,
       callback,
@@ -332,7 +351,7 @@ class MockTimers {
     return timer;
   }
 
-  #clearTimer(timer) {
+  #clearTimer(timer: Timeout | null | undefined) {
     if (timer?.priorityQueuePosition !== undefined) {
       this.#executionQueue.removeAt(timer.priorityQueuePosition);
       timer.priorityQueuePosition = undefined;
@@ -351,8 +370,8 @@ class MockTimers {
      * and returns a Date object with a mocked implementation
      */
     function MockDate(year, month, date, hours, minutes, seconds, ms) {
-      const mockTimersSource = MockDate[kMock];
-      const nativeDate = mockTimersSource.#nativeDateDescriptor.value;
+      const mockTimersSource: MockTimers = MockDate[kMock];
+      const nativeDate: DateConstructor = mockTimersSource.#nativeDateDescriptor.value;
 
       // As of the fake-timers implementation for Sinon
       // ref https://github.com/sinonjs/fake-timers/blob/a4c757f80840829e45e0852ea1b17d87a998388e/src/fake-timers-src.js#L456
@@ -432,10 +451,10 @@ class MockTimers {
     return MockDate;
   }
 
-  async *#setIntervalPromisified(interval, result, options) {
+  async *#setIntervalPromisified(interval: number, result: unknown, options?: PromisifiedTimerOptions) {
     const emitter = new EventEmitter();
 
-    let abortListener;
+    let abortListener: Disposable | undefined;
     if (options?.signal) {
       validateAbortSignal(options.signal, "options.signal");
 
@@ -444,7 +463,7 @@ class MockTimers {
       }
 
       abortListener = addAbortListener(options.signal, () => {
-        emitter.emit("error", abortIt(options.signal));
+        emitter.emit("error", abortIt(options.signal!));
       });
     }
 
@@ -462,7 +481,7 @@ class MockTimers {
     }
   }
 
-  #setImmediate(callback, ...args) {
+  #setImmediate(callback: TimerCallback, ...args: unknown[]) {
     return this.#createTimer(false, callback, TIMERS_DEFAULT_INTERVAL.setImmediate, ...args);
   }
 
@@ -474,15 +493,15 @@ class MockTimers {
     options,
   }: {
     __proto__?: null;
-    timerFn;
-    clearFn;
-    ms;
-    result;
-    options;
+    timerFn: (callback: TimerCallback, ms: number) => Timeout;
+    clearFn: (timer: Timeout) => void;
+    ms: number;
+    result: unknown;
+    options: PromisifiedTimerOptions | undefined;
   }) {
     const { promise, resolve, reject } = Promise.withResolvers();
 
-    let abortListener;
+    let abortListener: Disposable | undefined;
     if (options?.signal) {
       validateAbortSignal(options.signal, "options.signal");
 
@@ -491,7 +510,7 @@ class MockTimers {
       }
 
       abortListener = addAbortListener(options.signal, () => {
-        reject(abortIt(options.signal));
+        reject(abortIt(options.signal!));
       });
     }
 
@@ -506,7 +525,7 @@ class MockTimers {
     }
   }
 
-  #setImmediatePromisified(result, options) {
+  #setImmediatePromisified(result?: unknown, options?: PromisifiedTimerOptions) {
     return this.#promisifyTimer({
       __proto__: null,
       timerFn: this.#setImmediate.bind(this),
@@ -517,7 +536,7 @@ class MockTimers {
     });
   }
 
-  #setTimeoutPromisified(ms, result, options) {
+  #setTimeoutPromisified(ms: number, result?: unknown, options?: PromisifiedTimerOptions) {
     return this.#promisifyTimer({
       __proto__: null,
       timerFn: this.#setTimeout.bind(this),
@@ -534,7 +553,7 @@ class MockTimers {
     }
   }
 
-  #assertTimeArg(time) {
+  #assertTimeArg(time: number) {
     if (time < 0) {
       // Node's swapped-arg bug reproduced verbatim (nodejs/node v26.3.0
       // lib/internal/test_runner/mock/mock_timers.js:558).
@@ -542,7 +561,7 @@ class MockTimers {
     }
   }
 
-  #isValidDateWithGetTime(maybeDate) {
+  #isValidDateWithGetTime(maybeDate: unknown) {
     // Validation inspired on https://github.com/inspect-js/is-date-object/blob/main/index.js#L3-L11
     try {
       DatePrototypeGetTime.$call(maybeDate);
@@ -552,7 +571,7 @@ class MockTimers {
     }
   }
 
-  #toggleEnableTimers(activate) {
+  #toggleEnableTimers(activate: boolean) {
     const options = {
       __proto__: null,
       toFake: {
@@ -566,24 +585,26 @@ class MockTimers {
         "setTimeout": () => {
           this.#storeOriginalSetTimeout();
 
-          (globalThis as MockableTimers).setTimeout = this.#setTimeout;
-          globalThis.clearTimeout = this.#clearTimeout;
+          (globalThis as unknown as MockableTimers).setTimeout = this.#setTimeout;
+          (globalThis as unknown as MockableTimers).clearTimeout = this.#clearTimeout;
 
           (nodeTimers as MockableTimers).setTimeout = this.#setTimeout;
-          nodeTimers.clearTimeout = this.#clearTimeout;
+          (nodeTimers as MockableTimers).clearTimeout = this.#clearTimeout;
 
-          nodeTimersPromises.setTimeout = this.#setTimeoutPromisified.bind(this);
+          (nodeTimersPromises as Pick<MockableTimers, "setTimeout">).setTimeout =
+            this.#setTimeoutPromisified.bind(this);
         },
         "setInterval": () => {
           this.#storeOriginalSetInterval();
 
-          (globalThis as MockableTimers).setInterval = this.#setInterval;
-          globalThis.clearInterval = this.#clearInterval;
+          (globalThis as unknown as MockableTimers).setInterval = this.#setInterval;
+          (globalThis as unknown as MockableTimers).clearInterval = this.#clearInterval;
 
           (nodeTimers as MockableTimers).setInterval = this.#setInterval;
-          nodeTimers.clearInterval = this.#clearInterval;
+          (nodeTimers as MockableTimers).clearInterval = this.#clearInterval;
 
-          nodeTimersPromises.setInterval = this.#setIntervalPromisified.bind(this);
+          (nodeTimersPromises as Pick<MockableTimers, "setInterval">).setInterval =
+            this.#setIntervalPromisified.bind(this);
         },
         "setImmediate": () => {
           this.#storeOriginalSetImmediate();
@@ -593,12 +614,13 @@ class MockTimers {
           // "Receiver must be an instance of MockTimers"
           // because #setImmediate is the only function here
           // that calls #createTimer and it's not bound to MockTimers
-          (globalThis as MockableTimers).setImmediate = this.#setImmediate.bind(this);
-          globalThis.clearImmediate = this.#clearImmediate;
+          (globalThis as unknown as MockableTimers).setImmediate = this.#setImmediate.bind(this);
+          (globalThis as unknown as MockableTimers).clearImmediate = this.#clearImmediate;
 
           (nodeTimers as MockableTimers).setImmediate = this.#setImmediate.bind(this);
-          nodeTimers.clearImmediate = this.#clearImmediate;
-          nodeTimersPromises.setImmediate = this.#setImmediatePromisified.bind(this);
+          (nodeTimers as MockableTimers).clearImmediate = this.#clearImmediate;
+          (nodeTimersPromises as Pick<MockableTimers, "setImmediate">).setImmediate =
+            this.#setImmediatePromisified.bind(this);
         },
         "Date": () => {
           this.#nativeDateDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Date");
@@ -647,9 +669,9 @@ class MockTimers {
       },
     };
 
-    const target = activate ? options.toFake : options.toReal;
+    const target: Record<string, (() => void) | null> = activate ? options.toFake : options.toReal;
     for (const timer of this.#timersInContext) {
-      target[timer]();
+      target[timer]!();
     }
     this.#isEnabled = activate;
   }
@@ -723,7 +745,7 @@ class MockTimers {
     if (this.#isValidDateWithGetTime(initialTime)) {
       this.#now = DatePrototypeGetTime.$call(initialTime);
     } else if (validateNumber(initialTime, "initialTime") === undefined) {
-      this.#assertTimeArg(initialTime);
+      this.#assertTimeArg(initialTime as number);
       this.#now = initialTime as number;
     }
 

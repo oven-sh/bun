@@ -8,6 +8,7 @@
 //! rechecks it for each candidate (`check_argument`). Whenever that leaves a candidate's applicability undecided,
 //! nothing is reported.
 
+use super::aot::DiagnosticSubject;
 use super::call::{Arg, CallLike, CallState};
 use super::explain::{Line, NOWHERE};
 use super::relate::Relation;
@@ -192,7 +193,7 @@ impl Checker<'_, '_> {
                 }
                 // `invocationErrorDetails`: a parenthesized access doesn't count as a called access.
                 let is_bare = !is_parenthesized(hir, data.callee);
-                let start = match hir[data.callee].kind {
+                let start = match hir.checked_kind(data.callee) {
                     ExprKind::Dot { .. } if is_bare => hir.name_pos(data.callee),
                     _ => self.start_of(file, data.callee),
                 };
@@ -204,7 +205,7 @@ impl Checker<'_, '_> {
                 } else {
                     2349
                 };
-                let end = match hir[data.callee].kind {
+                let end = match hir.checked_kind(data.callee) {
                     ExprKind::Dot { .. } if is_bare => {
                         self.end_of_name_at(file, hir.name_pos(data.callee))
                     }
@@ -267,9 +268,13 @@ impl Checker<'_, '_> {
             // `signature.declaration != nil`
             let has_declaration =
                 sig.map(|sig| self.sig_decl(self.types().sig_origin(sig)).is_some());
-            if self.p.files.options.no_implicit_any {
+            if self.module_options(file).no_implicit_any {
                 // `checkCallExpression`
-                if has_declaration != Some(false) {
+                if has_declaration != Some(false)
+                    && self
+                        .type_constructed_by_function(file, data.callee, sig)
+                        .is_none()
+                {
                     self.error_at(
                         (file, node_start, self.end_inside_parentheses(file, e)),
                         7009,
@@ -324,6 +329,9 @@ impl Checker<'_, '_> {
             self.related_to_invocation_error(at.0, target, apparent, construct, has_one_argument);
         if let Some(head) = head {
             diagnostic = self.new_diagnostic_chain(Some(diagnostic), at, head, &[]);
+        }
+        if construct && self.is_class_below_brought_class(at.0, target) {
+            diagnostic.subject = (diagnostic.subject).or(DiagnosticSubject::BroughtDeclaration);
         }
         self.add_diagnostic(diagnostic);
     }
@@ -588,7 +596,7 @@ impl Checker<'_, '_> {
     /// `invocationErrorDetails`: true if `e` is `a.b` or `a["b"]` where `b` has `SymbolFlagsGetAccessor`, i.e. it's
     /// declared with `get` or with `accessor`.
     fn is_get_accessor_access(&mut self, file: FileId, e: ExprId) -> bool {
-        let (obj, name) = match self.hir(file)[e].kind {
+        let (obj, name) = match self.hir(file).checked_kind(e) {
             ExprKind::Dot { obj, name, .. } => (obj, name),
             // `getPropertyTypeForIndexType` records the property as the element access's symbol
             // (`AccessFlagsCacheSymbol`).
@@ -742,7 +750,7 @@ impl Checker<'_, '_> {
         };
         // `SkipOuterExpressions(expression, OEKAll)`
         loop {
-            callee = match hir[callee].kind {
+            callee = match hir.checked_kind(callee) {
                 ExprKind::As { expr, .. }
                 | ExprKind::Satisfies { expr, .. }
                 | ExprKind::Instantiation { expr, .. }
@@ -763,7 +771,7 @@ impl Checker<'_, '_> {
             (CallLike::Call(c), ExprKind::Call(_)) => {
                 let callee = hir[c].callee;
                 is_parenthesized(hir, callee)
-                    || !matches!(hir[callee].kind, ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if matches!(hir[obj].kind, ExprKind::Super))
+                    || !matches!(hir.checked_kind(callee), ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if matches!(hir[obj].kind, ExprKind::Super))
             }
             _ => true,
         }
@@ -778,6 +786,21 @@ impl Checker<'_, '_> {
 
     /// `reportCallResolutionErrors`
     pub(super) fn report_call_resolution_errors(
+        &mut self,
+        s: &CallState<'_>,
+        sigs: &[SigId],
+        head: Option<u32>,
+    ) {
+        let from = self.reported.len();
+        self.report_call_resolution_errors_of(s, sigs, head);
+        if sigs.iter().any(|&sig| self.is_signature_brought(sig)) {
+            for diagnostic in self.reported.iter_mut().skip(from) {
+                diagnostic.subject = (diagnostic.subject).or(DiagnosticSubject::BroughtDeclaration);
+            }
+        }
+    }
+
+    fn report_call_resolution_errors_of(
         &mut self,
         s: &CallState<'_>,
         sigs: &[SigId],
@@ -1125,7 +1148,7 @@ impl Checker<'_, '_> {
             }
             (CallLike::Call(c), ExprKind::Call(_)) => {
                 let callee = hir[c].callee;
-                match hir[callee].kind {
+                match hir.checked_kind(callee) {
                     ExprKind::Dot { .. } if !is_parenthesized(hir, callee) => (
                         hir.name_pos(callee),
                         self.end_of_name_at(file, hir.name_pos(callee)),
@@ -1198,7 +1221,7 @@ impl Checker<'_, '_> {
         // declaration doesn't.
         let declares_this = hir[func].this_ty(hir).is_some();
         let has_this = match self.types().sig(sig) {
-            SigData::Synth { this, .. } => this.is_some(),
+            SigData::Synth(SynthSig { this, .. }) => this.is_some(),
             _ => declares_this,
         };
         let Some(param) = (actual + usize::from(has_this))

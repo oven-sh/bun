@@ -240,7 +240,8 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
         loop {
             let ty = self.resolve_type_of_symbol_once(sym);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query(Query::Symbol(sym))
+            {
                 return ty;
             }
             if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
@@ -268,7 +269,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // This comes before the query is entered, because `lateBindMember` resolves the names of
         // the other members, which may re-enter this query.
-        let mut flags = self.files().flags(sym);
+        let table_flags = self.files().flags(sym);
+        let mut flags = table_flags;
         let (mut members, mut declarations) = (SmallVec::new(), List::default());
         if flags.intersects(SymFlags::CLASS_MEMBER) {
             (flags, value_declaration, declarations) = self.merged_symbol_of_property(sym);
@@ -356,7 +358,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.resolution_start = resolution_start;
         // For `module` and `exports`, `getTypeOfVariableOrParameterOrPropertyWorker` returns
         // without `popTypeResolution`: only a `pushTypeResolution` that fails reports.
-        let is_module_exports = self.files().flags(sym).contains(SymFlags::MODULE_EXPORTS);
+        let is_module_exports = table_flags.contains(SymFlags::MODULE_EXPORTS);
         let left = match is_module_exports {
             true => self.leave_without_pop(sym),
             false => self.leave(Query::Symbol(sym)),
@@ -403,7 +405,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.is_deferred_to_assign_parameter_type(file, pat, ty)) => {}
             // `getTypeOfEnumMember` assigns `links.resolvedType` regardless of what a nested call
             // assigned.
-            Ok(stored) if self.files().flags(sym).contains(SymFlags::ENUM_MEMBER) => {
+            Ok(stored) if table_flags.contains(SymFlags::ENUM_MEMBER) => {
                 self.p.symbol_types.rewrite(&self.task, sym, ty, stored);
             }
             Ok(stored) => {
@@ -427,7 +429,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         let code = if ty == TypeId::ERROR {
             2502
-        } else if self.p.files.options.no_implicit_any && !is_bare_parameter {
+        } else if self.module_options(at.0).no_implicit_any && !is_bare_parameter {
             7022
         } else {
             return;
@@ -867,6 +869,9 @@ impl<'p, 's> Checker<'p, 's> {
             if self.files().is_shorthand_ambient_module_symbol(sym) {
                 return TypeId::ANY;
             }
+            if self.p.aot_symbols().is_bun_module_without_values(sym) {
+                return TypeId::ANY;
+            }
             return self.intern(TypeData::Anon {
                 origin: Origin::Module(sym),
                 mapper: MapperId::IDENTITY,
@@ -893,7 +898,7 @@ impl<'p, 's> Checker<'p, 's> {
                         return TypeId::EMPTY_OBJECT;
                     }
                     let ty = self.type_of_expr(file, e);
-                    return if is_json {
+                    return if is_json || self.is_made_by_loader(file) {
                         self.widened(ty)
                     } else {
                         self.widened_for_declaration(ty, None)
@@ -1123,7 +1128,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let before = self.non_cacheable_mark();
         let ty = self.check_expression_cached_ex(file, e, CheckMode::empty());
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             // `argumentsSymbol` isn't a property of any type.
             ExprKind::Ident(name)
                 if name == known::arguments
@@ -1194,9 +1199,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// the result unless types are needed, which is when the alias chain doesn't resolve to a
     /// symbol, or there's a symbol to combine on it. `combineValueAndTypeSymbols` returns a
     /// `typeSymbol` that's already a value unchanged, so flags with a value meaning are final too.
+    #[inline]
     fn symbol_flags_by_types(
         &mut self,
-        mut symbol: Sym,
+        symbol: Sym,
         table_flags: SymFlags,
         exclude_type_only_meanings: bool,
     ) -> SymFlags {
@@ -1206,6 +1212,16 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return table_flags;
         }
+        self.symbol_flags_along_aliases(symbol, exclude_type_only_meanings)
+    }
+
+    #[inline(never)]
+    fn symbol_flags_along_aliases(
+        &mut self,
+        mut symbol: Sym,
+        exclude_type_only_meanings: bool,
+    ) -> SymFlags {
+        let files = self.files();
         let mut flags = files.flags(symbol);
         let mut seen_symbols: SmallVec<[Sym; 4]> = SmallVec::new();
         while files.flags(symbol).contains(SymFlags::ALIAS)
@@ -1293,8 +1309,22 @@ impl<'p, 's> Checker<'p, 's> {
         ignore_errors: bool,
     ) -> Option<Sym> {
         let files = self.files();
-        let texts: SmallVec<[Atom; 4]> = self.hir(file).texts(names).collect();
-        let found = files.resolve_entity_with(file, scope, &texts, meaning, !ignore_errors, self);
+        let written = self.hir(file).texts(names);
+        let mut few = [Atom::NONE; 4];
+        let many;
+        let texts: &[Atom] = match few.get_mut(..names.len()) {
+            Some(texts) => {
+                for (text, name) in texts.iter_mut().zip(written) {
+                    *text = name;
+                }
+                &*texts
+            }
+            None => {
+                many = written.collect::<Vec<Atom>>();
+                &many[..]
+            }
+        };
+        let found = files.resolve_entity_with(file, scope, texts, meaning, !ignore_errors, self);
         if found.is_none() && !ignore_errors {
             self.report_unresolved_entity_name(file, scope, names, meaning);
         }
@@ -1388,7 +1418,9 @@ impl<'p, 's> Checker<'p, 's> {
             .symbol()
             .unwrap_or_else(|| files.module_value(module));
         // `getTypeWithSyntheticDefaultOnly`
-        if files.is_only_importable_as_default(file, module) {
+        if files.is_only_importable_as_default(file, module)
+            || self.has_only_default_at_run_time(file, ty)
+        {
             return Some(self.intern(TypeData::Anon {
                 origin: Origin::Namespace {
                     module: value,
@@ -1415,8 +1447,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        let usage = files.emit_syntax_of_import(file);
-        let with_default = self.has_synthetic_default_import_type(ty, usage, module);
+        let with_default = self.has_synthetic_default_import_type(ty, file, module);
         Some(self.intern(TypeData::Anon {
             origin: Origin::Namespace {
                 module: value,
@@ -1434,7 +1465,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn has_synthetic_default_import_type(
         &mut self,
         ty: TypeId,
-        usage: ResolutionMode,
+        usage: impl crate::program::Usage,
         module: Sym,
     ) -> bool {
         if let Some(&known) = self.synthetic_default_import_types.get(&ty) {
@@ -1499,6 +1530,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let mode = files.mode_of_import(file, hir[import].mode);
                 Some((hir[import].spec, mode))
             }
+            Decl::ImportSpec(s) if hir[s].imported != known::default => None,
+            Decl::ExportSpec(s) if hir[s].local != known::default => None,
             Decl::ImportSpec(_) | Decl::ExportSpec(_) => {
                 let (spec, mode, name) = files.external_module_member_of(file, decl)?;
                 (name == known::default).then_some((spec, mode))
@@ -1629,7 +1662,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         // `getEmitSyntaxForModuleSpecifierExpression` of the argument of `require`.
-        let usage = ResolutionMode::Require;
+        let usage = (file, ResolutionMode::Require);
         let has_synthetic_default = files.is_only_importable_as_default(usage, module)
             || self.can_have_synthetic_default(usage, module);
         if !self.leave_alias_targets(resolving) || !has_synthetic_default {
@@ -1732,6 +1765,30 @@ impl<'p, 's> Checker<'p, 's> {
         self.get_widened_type(ty)
     }
 
+    /// `widened`, except that each member of a union is widened by itself: `getWidenedType` gives each object literal of a
+    /// union the names of all the others, as properties that are `undefined`, which for n literals with a name of their
+    /// own is n * n properties.
+    pub fn widened_member_by_member(&mut self, ty: TypeId) -> TypeId {
+        let ty = self.widen_literal(ty);
+        let TypeData::Union(types) = self.data(ty) else {
+            return self.get_widened_type(ty);
+        };
+        let widened_types: SmallVec<[TypeId; 8]> = types
+            .iter()
+            .map(|&t| match self.is_nullish(t) {
+                true => t,
+                false => self.get_widened_type(t),
+            })
+            .collect();
+        if widened_types[..] == types[..] {
+            ty
+        } else if widened_types.iter().any(|&t| self.is_empty_object_type(t)) {
+            self.union_reduced(&widened_types)
+        } else {
+            self.union(&widened_types)
+        }
+    }
+
     /// `widenTypeForVariableLikeDeclaration`: the type of a named declaration, given the type it's
     /// inferred from. A `unique symbol` belongs to the declaration it was created for, which
     /// doesn't reach this function. For any other declaration it's a `symbol`. `name` is the
@@ -1752,7 +1809,10 @@ impl<'p, 's> Checker<'p, 's> {
         name: Option<(FileId, PatId)>,
         has_type_node: bool,
     ) -> TypeId {
-        let ty = if !has_type_node && matches!(self.data(ty), TypeData::UniqueSymbol { .. }) {
+        let ty = if !has_type_node
+            && matches!(self.data(ty), TypeData::UniqueSymbol { .. })
+            && !self.keeps_unique_symbol(name)
+        {
             TypeId::SYMBOL
         } else {
             ty
@@ -1761,6 +1821,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getTypeOfVariableOrParameterOrPropertyWorker` uses `symbol.ValueDeclaration`.
         if let Some((file, pat)) = name
             && self.contains_widening_type(ty)
+            && self.module_options(file).no_implicit_any
             && self.value_declaration_of_variable_name(file, pat) == (file, pat)
             && self.report_errors_from_widening(ty)
         {
@@ -1776,11 +1837,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `reportErrorsFromWidening`. Returns true if `reportImplicitAny` still has to be called,
-    /// which is left to the caller, since it knows the declaration.
+    /// which is left to the caller, since it knows the declaration. So is `noImplicitAny`, which it asks of the declaration's file.
     pub(super) fn report_errors_from_widening(&mut self, ty: TypeId) -> bool {
-        self.p.files.options.no_implicit_any
-            && self.contains_widening_type(ty)
-            && !self.report_widening_errors_in_type(ty)
+        self.contains_widening_type(ty) && !self.report_widening_errors_in_type(ty)
     }
 
     /// `reportWideningErrorsInType`: 7018
@@ -1858,7 +1917,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         kind: WideningKind,
     ) {
-        if !self.p.files.options.no_implicit_any || !self.contains_widening_type(ty) {
+        if !self.module_options(file).no_implicit_any || !self.contains_widening_type(ty) {
             return;
         }
         let f = &self.hir(file)[func];
@@ -1925,7 +1984,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// whose type resolves to `ty`: 7005, 7006 7019 7051, 7031.
     pub(super) fn report_implicit_any_of_name(&mut self, file: FileId, pat: PatId, ty: TypeId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !self.p.files.options.no_implicit_any || hir.is_js && !self.is_check_js(file) {
+        if !self.module_options(file).no_implicit_any || hir.is_js && !self.is_check_js(file) {
+            return;
+        }
+        if let PatParent::Param(root) = root_declaration(bound, pat)
+            && self.is_given_to_what_has_no_declaration(file, bound.param_fn[root.idx()])
+        {
             return;
         }
         let start = hir[pat].pos;
@@ -2068,11 +2132,15 @@ impl<'p, 's> Checker<'p, 's> {
                 let union_context = context.unwrap_or_else(|| {
                     self.new_widening_context(None, Atom::NONE, Some(Rc::from(&types[..])))
                 });
+                let each_by_itself =
+                    context.is_none() && self.are_widened_each_by_itself(types, union_context);
                 let widened_types: SmallVec<[TypeId; 8]> = types
                     .iter()
                     .map(|&t| {
                         if self.is_nullish(t) {
                             t
+                        } else if each_by_itself {
+                            self.get_widened_type(t)
                         } else {
                             self.get_widened_type_with_context(t, Some(union_context))
                         }
@@ -2083,7 +2151,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 if widened_types[..] == types[..] {
                     ty
-                } else if widened_types.iter().any(|&t| self.is_empty_object_type(t)) {
+                } else if !each_by_itself
+                    && widened_types.iter().any(|&t| self.is_empty_object_type(t))
+                {
                     self.union_reduced(&widened_types)
                 } else {
                     self.union(&widened_types)
@@ -2130,6 +2200,41 @@ impl<'p, 's> Checker<'p, 's> {
             self.widened_types.insert(ty, result);
         }
         result
+    }
+
+    /// `getWidenedType` gives each object literal of a union the names of all the others, as properties that are `undefined`:
+    /// n literals with a name of their own get n * n properties. In a compile build the types of an untyped file are only
+    /// expected, and an object type stands for the objects that have its names. Where no literal of the union has every name,
+    /// no object has them all, and each literal is widened by itself. `context` is that of the union `types`.
+    /// A symbol, a number and `__proto__` may be no field of an object, so the literals are held by their other names.
+    fn are_widened_each_by_itself(&mut self, types: &[TypeId], context: usize) -> bool {
+        if !self.p.files.is_compile_build() {
+            return false;
+        }
+        let atoms = self.atoms();
+        let is_surely_field = |name: Atom| {
+            !atoms.is_symbol_name(name) && !atoms.is_numeric_name(name) && name != known::__proto__
+        };
+        let (mut literals, mut most_names) = (0, 0);
+        for &t in types {
+            if !self.is_object_literal_type(t) {
+                continue;
+            }
+            if !self.has_js_literal_flag(t) {
+                return false;
+            }
+            let Some(members) = self.members(t) else {
+                return false;
+            };
+            let names = (members.shape().props.iter()).filter(|prop| is_surely_field(prop.name));
+            most_names = most_names.max(names.count());
+            literals += 1;
+        }
+        if literals < 2 {
+            return false;
+        }
+        let all = self.get_properties_of_context(context);
+        most_names < all.iter().filter(|prop| is_surely_field(prop.name)).count()
     }
 
     /// `core.SameMap(types, c.getWidenedType)`. `None` if nothing changed.
@@ -2179,7 +2284,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getUndefinedProperty`. It's created once per name, from the first property it's requested
     /// for, and keeps that property's declarations.
     fn get_undefined_property(&mut self, prop: &Prop) -> Prop<'s> {
-        if let Some(cached) = self.undefined_properties.get(&prop.name) {
+        // Which files share a checker depends on the number of threads.
+        let is_shared = !self.p.files.is_compile_build();
+        if is_shared && let Some(cached) = self.undefined_properties.get(&prop.name) {
             return cached.clone_in(self.arena);
         }
         // `undefinedOrMissingType`, which isn't widened again wherever it's copied to.
@@ -2196,8 +2303,10 @@ impl<'p, 's> Checker<'p, 's> {
             mapper: MapperId::IDENTITY,
             name_type: self.name_type_of_copy(TypeId::UNRESOLVED, prop),
         };
-        self.undefined_properties
-            .insert(prop.name, result.clone_in(self.arena));
+        if is_shared {
+            self.undefined_properties
+                .insert(prop.name, result.clone_in(self.arena));
+        }
         result
     }
 
@@ -2380,12 +2489,13 @@ impl<'p, 's> Checker<'p, 's> {
         context: usize,
     ) -> TypeId {
         let original = self.type_of_prop(prop, mapper);
-        if self.may_require_widening(original) {
+        let widened = if self.may_require_widening(original) {
             let prop_context = self.get_child_context(context, prop.name);
             self.get_widened_type_with_context(original, Some(prop_context))
         } else {
             original
-        }
+        };
+        self.widened_type_of_literal_member(prop, widened)
     }
 
     /// `WideningContext.getChildContext`
@@ -2612,7 +2722,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_resolution(query) {
             return None;
         }
-        let first = self.stack.iter().rposition(|&q| q == query)?;
+        let first = self.innermost_in_flight(query)?;
         // The resolutions of the binding element that requests the pattern haven't called
         // `checkExpressionCached`, and what they find is stored.
         let resolutions = self.resolutions_below(self.stack.len());
@@ -2664,7 +2774,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// from it if a loop's back edge has led here again. In that case the result contains the depth
     /// of `stack` when that loop was pushed. `None` if the query wasn't entered.
     fn enter_again_in_flow_loop(&mut self, query: Query) -> Option<Option<usize>> {
-        let first = self.stack.iter().rposition(|&q| q == query);
+        let first = self.innermost_in_flight(query);
         let Some(pushed_at) = first.and_then(|first| self.flow_loop_pushed_since(first)) else {
             return self.enter(query).then_some(None);
         };
@@ -2854,7 +2964,7 @@ impl<'p, 's> Checker<'p, 's> {
         widened: TypeId,
     ) -> Option<TypeId> {
         if !self.hir(file).is_js {
-            None
+            self.implicit_any_in_non_strict_file(file, widened)
         } else if self.is_empty_literal_type(widened) {
             Some(TypeId::ANY)
         } else if self.is_empty_array_literal_type(widened) {
@@ -2862,6 +2972,32 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             None
         }
+    }
+
+    /// Without `strictNullChecks`, `getWidenedType` turns `null` and `undefined` into `any`, and `[]` into `any[]`.
+    fn implicit_any_in_non_strict_file(&mut self, file: FileId, widened: TypeId) -> Option<TypeId> {
+        if self.hir(file).is_js || !self.is_non_strict_file_in_strict_program(file) {
+            None
+        } else if matches!(widened, TypeId::NULL | TypeId::UNDEFINED) {
+            Some(TypeId::ANY)
+        } else if self.is_empty_array_literal_type(widened) {
+            Some(self.array_of(TypeId::ANY))
+        } else {
+            None
+        }
+    }
+
+    /// `widened` is the widened type of `prop`.
+    pub(super) fn widened_type_of_literal_member(
+        &mut self,
+        prop: &Prop,
+        widened: TypeId,
+    ) -> TypeId {
+        let PropSource::Literal(file, _) = prop.source else {
+            return widened;
+        };
+        self.implicit_any_in_non_strict_file(file, widened)
+            .unwrap_or(widened)
     }
 
     /// `getNonUndefinedType`: `ty` without `undefined`. If the constraint of some generic member
@@ -3013,8 +3149,8 @@ impl<'p, 's> Checker<'p, 's> {
                     && hir[p].default.is_some()
                     && hir[bound.param_fn[p.idx()]].kind != FnKind::Setter
                     && (is_rest
-                        || self.stack.contains(&Query::Pat(file, parent))
-                        || self.stack.contains(&Query::ParameterSymbol(file, parent)))
+                        || self.is_in_flight(Query::Pat(file, parent))
+                        || self.is_in_flight(Query::ParameterSymbol(file, parent)))
                     && {
                         let func = bound.param_fn[p.idx()];
                         let index = (p.0 - hir[func].params.start) as usize;
@@ -3097,9 +3233,9 @@ impl<'p, 's> Checker<'p, 's> {
             return ty;
         }
         let (hir, bound) = (self.hir(file), self.bound(file));
-        // `IsPartOfParameterDeclaration`
-        if matches!(root_declaration(bound, pattern), PatParent::Param(_))
-            && hir.is_ambient(hir.node(pattern))
+        // `IsPartOfParameterDeclaration`. Nothing between a pattern and its parameter can be declared ambient.
+        if let PatParent::Param(parameter) = root_declaration(bound, pattern)
+            && hir.is_ambient(hir.node(parameter))
         {
             return self.non_nullable(ty);
         }
@@ -3138,7 +3274,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> TypeId {
         // Destructuring `any` yields `any`, and nothing else is checked, not even a default.
         if self.is_any(parent_ty) {
-            return parent_ty;
+            let listed = self.type_predicate_listed_for_element_of_any(file, pat);
+            return listed.unwrap_or(parent_ty);
         }
         let hir = self.hir(file);
         let parent_ty = match self.bound(file).pat_parent[pat.idx()] {
@@ -3329,7 +3466,7 @@ impl<'p, 's> Checker<'p, 's> {
         // For anything else it's the iterated type of the whole, if the iteration gets that far
         // (`includeUndefinedInIndexSignature`).
         let element = self.iterated_type_of_destructuring(ty);
-        if self.p.files.options.no_unchecked_indexed_access {
+        if self.no_unchecked_indexed_access_at(nodes.map_or(AccessNode::Other, |it| it.1)) {
             self.optional(element)
         } else {
             element
@@ -3587,7 +3724,7 @@ impl<'p, 's> Checker<'p, 's> {
         // A catch variable can only be annotated `any` or `unknown`.
         if stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Try { .. }) {
             if decl.ty.is_none() {
-                return if self.p.files.options.use_unknown_in_catch_variables {
+                return if self.module_options(file).use_unknown_in_catch_variables {
                     TypeId::UNKNOWN
                 } else {
                     TypeId::ANY
@@ -3624,14 +3761,17 @@ impl<'p, 's> Checker<'p, 's> {
         // When an implicit `any` is an error, control flow analysis determines the type of the
         // variable at each position. This depends on the syntax of the initializer, not on its
         // type.
-        if self.p.files.options.no_implicit_any
+        if self.follows_variables_that_start_empty(file)
             && is_name
             && !decl.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
             && hir.kind != FileKind::Declaration
         {
             match decl.init.is_some().then(|| hir[decl.init].kind) {
+                None if !is_constant && self.follows_untyped_variables(file) => {
+                    return TypeId::AUTO;
+                }
                 // `isNullOrUndefined`
-                None | Some(ExprKind::Null) if !is_constant => return TypeId::AUTO,
+                Some(ExprKind::Null) if !is_constant => return TypeId::AUTO,
                 Some(ExprKind::Ident(known::undefined))
                     if !is_constant && self.bound(file).symbol_of_expr(decl.init).is_none() =>
                 {
@@ -3685,11 +3825,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// on this.
     #[inline]
     pub(super) fn is_resolved_on_request(&self, file: FileId, p: ParamId) -> bool {
-        let (hir, func) = (self.hir(file), self.bound(file).param_fn[p.idx()]);
-        matches!(hir[hir[p].pat].kind, PatKind::Object(_) | PatKind::Array(_))
-            && hir[p].ty.is_none()
-            && func.is_some()
-            && !self.is_function_expression_or_object_literal_method(file, func)
+        let hir = self.hir(file);
+        if !matches!(hir[hir[p].pat].kind, PatKind::Object(_) | PatKind::Array(_))
+            || hir[p].ty.is_some()
+        {
+            return false;
+        }
+        let func = self.bound(file).param_fn[p.idx()];
+        func.is_some() && !self.is_function_expression_or_object_literal_method(file, func)
     }
 
     /// `IsFunctionExpressionOrArrowFunction(func) || IsObjectLiteralMethod(func)`: the functions
@@ -3741,7 +3884,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `reportErrorsFromWidening`. Under strictNullChecks there's no widening type.
         let options = &self.p.files.options;
-        let reports = options.no_implicit_any && !options.strict_null_checks;
+        let reports = self.module_options(file).no_implicit_any && !options.strict_null_checks;
         // A single checker would already have collected `file`'s diagnostics and resolved the names
         // in the pattern.
         if reports && !self.is_reported_in_time(None, file) {
@@ -3846,12 +3989,12 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             // `signature.composite != nil`
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ret: TypeId::UNRESOLVED,
                 ref of,
                 ..
-            } if of.len() > 1 => {}
-            SigData::Synth { ret, .. } => {
+            }) if of.len() > 1 => {}
+            SigData::Synth(&SynthSig { ret, .. }) => {
                 return if self.is_resolving_return_type(sig) {
                     self.any_for_return_type_in_resolution()
                 } else {
@@ -4314,7 +4457,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
         loop {
             let ty = self.resolve_return_type_of_fn_once(file, func);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len()
+                || !self.retry_too_deep_query(Query::Return(file, func))
+            {
                 return ty;
             }
             if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
@@ -4521,6 +4666,12 @@ impl<'p, 's> Checker<'p, 's> {
                 ret = self.widen_literal_for_context(ret, contextual);
             }
             ret = self.get_widened_type(ret);
+            // A function that returns nothing where `undefined` is expected has `undefined` too.
+            if ret != TypeId::UNDEFINED
+                && let Some(any) = self.implicit_any_in_non_strict_file(file, ret)
+            {
+                ret = any;
+            }
             if is_async {
                 return self.promise_of(ret);
             }
@@ -4528,6 +4679,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `checkAndAggregateYieldOperandTypes`
         let (mut yields, mut nexts) = (Vec::new(), Vec::new());
+        let mut yields_listed = crate::util::FxHashSet::default();
+        let mut nexts_listed = crate::util::FxHashSet::default();
         for e in self.bound(file).ids(info.yields) {
             let ExprKind::Yield { value, star } = hir[e].kind else {
                 continue;
@@ -4557,7 +4710,7 @@ impl<'p, 's> Checker<'p, 's> {
             let yielded =
                 self.get_yielded_type_of_yield_expression(file, e, operand, TypeId::ANY, is_async);
             if let Some(ty) = yielded
-                && !yields.contains(&ty)
+                && !crate::util::is_listed(&yields, &mut yields_listed, ty)
             {
                 yields.push(ty);
             }
@@ -4572,7 +4725,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.contextual_type(file, e, ContextFlags::empty())
             };
             if let Some(next) = next
-                && !nexts.contains(&next)
+                && !crate::util::is_listed(&nexts, &mut nexts_listed, next)
             {
                 nexts.push(next);
             }
@@ -4679,6 +4832,7 @@ impl<'p, 's> Checker<'p, 's> {
         let info = self.bound(file).fns[func.idx()];
         let is_async = f.flags.contains(Flags::ASYNC);
         let mut aggregated_types: SmallVec<[TypeId; 4]> = SmallVec::new();
+        let mut listed: crate::util::FxHashSet<TypeId> = Default::default();
         // `functionHasImplicitReturn`
         let mut has_return_with_no_expression =
             info.end != UNREACHABLE && self.is_reachable(file, info.end);
@@ -4710,7 +4864,7 @@ impl<'p, 's> Checker<'p, 's> {
                 has_return_of_type_never = true;
             }
             ty = self.regular_in_const_context(file, expr, ty);
-            if !aggregated_types.contains(&ty) {
+            if !crate::util::is_listed(&aggregated_types, &mut listed, ty) {
                 aggregated_types.push(ty);
             }
         }
@@ -4962,7 +5116,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.reliability == 0
             // A frame that drops its diagnostics reports them when it is evaluated again.
             && !(self.reported.len() > reported
-                && self.frames.last().is_some_and(|frame| frame.drops_reported))
+                && (self.frames.last()).is_some_and(|frame| frame.marks.drops_reported()))
         {
             self.p.awaited_types.insert(&self.task, ty, awaited, stored);
         }
@@ -5329,10 +5483,10 @@ impl<'p, 's> Checker<'p, 's> {
             return has_string.then_some(TypeId::STRING);
         }
         let element = self.index_type_of_type(arrays, TypeId::NUMBER)?;
+        let options = error_node.map_or(self.p.files.options, |at| self.module_options(at.0));
         Some(if !has_string {
             element
-        } else if self.is_string_like(element) && !self.p.files.options.no_unchecked_indexed_access
-        {
+        } else if self.is_string_like(element) && !options.no_unchecked_indexed_access {
             TypeId::STRING
         } else {
             self.union_reduced(&[element, TypeId::STRING])

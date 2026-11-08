@@ -80,71 +80,50 @@ impl Editor {
         None
     }
 
-    pub(crate) fn by_path_for_editor<'a>(
+    fn by_path_for_editor<'a>(
         env: &mut dot_env::Loader,
         editor: Editor,
         buf: &'a mut PathBuffer,
         cwd: &[u8],
-        out: &mut &'a [u8],
-    ) -> bool {
-        let Some(path_env) = env.get(b"PATH") else {
-            return false;
-        };
+    ) -> Option<&'a [u8]> {
+        let path_env = env.get(b"PATH")?;
+        let bin_name = BIN_NAME[editor].filter(|name| !name.is_empty())?;
+        which(buf, path_env, cwd, bin_name).map(|bin| bin.as_bytes())
+    }
 
-        if let Some(bin_name) = BIN_NAME[editor] {
-            if !bin_name.is_empty() {
-                if let Some(bin) = which(buf, path_env, cwd, bin_name) {
-                    *out = bin.as_bytes();
-                    return true;
+    fn by_fallback_path_for_editor(editor: Editor) -> Option<&'static [u8]> {
+        for path in bin_path(editor)? {
+            match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
+                bun_sys::Result::Ok(opened) => {
+                    let _ = opened.close(); // close error is non-actionable
+                    return Some(path.as_bytes());
                 }
+                bun_sys::Result::Err(_) => {}
             }
         }
 
-        false
+        None
     }
 
-    pub(crate) fn by_fallback_path_for_editor(
+    /// Looks in `PATH` first, then in the usual install locations.
+    fn find<'a>(
+        env: &mut dot_env::Loader,
         editor: Editor,
-        out: Option<&mut &'static [u8]>,
-    ) -> bool {
-        if let Some(paths) = bin_path(editor) {
-            for path in paths {
-                match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
-                    bun_sys::Result::Ok(opened) => {
-                        let _ = opened.close(); // close error is non-actionable
-                        if let Some(out) = out {
-                            *out = path.as_bytes();
-                        }
-                        return true;
-                    }
-                    bun_sys::Result::Err(_) => {}
-                }
-            }
-        }
-
-        false
+        buf: &'a mut PathBuffer,
+        cwd: &[u8],
+    ) -> Option<&'a [u8]> {
+        Self::by_path_for_editor(env, editor, buf, cwd)
+            .or_else(|| Self::by_fallback_path_for_editor(editor))
     }
 
-    pub(crate) fn by_fallback<'a>(
+    fn by_fallback<'a>(
         env: &mut dot_env::Loader,
         buf: &'a mut PathBuffer,
         cwd: &[u8],
-        out: &mut &'a [u8],
-    ) -> Option<Editor> {
-        // Note: borrowck — see `by_path` above; same Polonius-case reborrow.
-        let buf_ptr: *mut PathBuffer = buf;
+    ) -> Option<(Editor, &'a [u8])> {
         for &editor in &DEFAULT_PREFERENCE_LIST {
-            // SAFETY: exclusive per-iteration reborrow; we return immediately on hit.
-            if Self::by_path_for_editor(env, editor, unsafe { &mut *buf_ptr }, cwd, out) {
-                return Some(editor);
-            }
-
-            // Note: reshaped for borrowck — by_fallback_path_for_editor writes a
-            // 'static slice; we widen `out` to accept it via a temporary.
-            let mut static_out: &'static [u8] = b"";
-            if Self::by_fallback_path_for_editor(editor, Some(&mut static_out)) {
-                *out = static_out;
-                return Some(editor);
+            if let Some(path) = Self::find(env, editor, buf, cwd) {
+                return Some((editor, path));
             }
         }
 
@@ -162,19 +141,15 @@ impl Editor {
         line: Option<&[u8]>,
         column: Option<&[u8]>,
     ) -> crate::Result<()> {
-        let mut spawned = Box::new(SpawnedEditorContext::default());
-
-        let mut cursor = std::io::Cursor::new(&mut spawned.file_path_buf[..]);
-        // Note: `args_buf` entries borrow both static strings and `file_path_buf`
-        // (self-referential once boxed). Kept as raw byte-slice ptrs; reconstructed
-        // as slices when handed to the child process.
-        let mut i: usize = 0;
+        let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(5);
+        // On the heap because `MAX_PATH_BYTES` is large on Windows. A longer argument is `WriteFailed`.
+        let mut file_path_buf: Vec<u8> = vec![0; 1024 + MAX_PATH_BYTES];
+        let mut cursor = std::io::Cursor::new(&mut file_path_buf[..]);
 
         macro_rules! push_arg {
-            ($s:expr) => {{
-                spawned.buf[i] = ($s.as_ptr(), $s.len());
-                i += 1;
-            }};
+            ($s:expr) => {
+                argv.push(Box::from(&$s[..]))
+            };
         }
 
         if matches!(self, Editor::Vim | Editor::Emacs | Editor::Neovim) {
@@ -219,8 +194,7 @@ impl Editor {
                 }
                 let pos = usize::try_from(cursor.position()).expect("int cast");
                 if pos > 0 {
-                    let written = &spawned.file_path_buf[0..pos];
-                    push_arg!(written);
+                    push_arg!(file_path_buf[0..pos]);
                 }
             }
             Editor::Textmate => {
@@ -229,9 +203,6 @@ impl Editor {
                     .map_err(|_| crate::Error::WriteFailed)?;
                 let file_path_len = usize::try_from(cursor.position()).expect("int cast");
 
-                // Note: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
-                // hoist all writes/position reads above the slice reads so NLL can
-                // end the cursor borrow before we re-borrow `file_path_buf` immutably.
                 let mut end_pos = file_path_len;
                 if let Some(line_) = line {
                     if !line_.is_empty() {
@@ -250,16 +221,13 @@ impl Editor {
                         end_pos = usize::try_from(cursor.position()).expect("int cast");
                     }
                 }
-                // cursor's borrow of spawned.file_path_buf ends here (NLL).
 
                 if end_pos > file_path_len {
-                    let line_column = &spawned.file_path_buf[file_path_len..end_pos];
-                    push_arg!(line_column);
+                    push_arg!(file_path_buf[file_path_len..end_pos]);
                 }
 
                 if end_pos > 0 {
-                    let file_path = &spawned.file_path_buf[0..file_path_len];
-                    push_arg!(file_path);
+                    push_arg!(file_path_buf[0..file_path_len]);
                 }
             }
             _ => {
@@ -268,29 +236,16 @@ impl Editor {
                         .write_all(file)
                         .map_err(|_| crate::Error::WriteFailed)?;
                     let pos = usize::try_from(cursor.position()).expect("int cast");
-                    let file_path = &spawned.file_path_buf[0..pos];
-                    push_arg!(file_path);
+                    push_arg!(file_path_buf[0..pos]);
                 }
             }
         }
 
-        spawned.argc = i;
-        let spawned_ptr = bun_core::heap::into_raw(spawned);
         // bun_threading has no detached-spawn helper; std::thread::spawn is used
         // and the JoinHandle is dropped, detaching the thread.
-        // SAFETY: `spawned_ptr` is a uniquely-owned Box raw pointer; ownership is
-        // transferred to the spawned thread which reconstitutes it via heap::take.
-        // Smuggled across the thread boundary as `usize` (`*mut T: !Send`).
-        let spawned_addr = spawned_ptr as usize;
         std::thread::Builder::new()
-            .spawn(move || auto_close(spawned_addr as *mut SpawnedEditorContext))
-            .map_err(|_| {
-                // After `into_raw`, Box's Drop guard is gone,
-                // so reclaim explicitly on the spawn-failure path.
-                // SAFETY: closure never ran, so we are still the sole owner of `spawned_ptr`.
-                drop(unsafe { bun_core::heap::take(spawned_addr as *mut SpawnedEditorContext) });
-                crate::Error::ThreadSpawnFailed
-            })?;
+            .spawn(move || auto_close(argv))
+            .map_err(|_| crate::Error::ThreadSpawnFailed)?;
         Ok(())
     }
 }
@@ -366,40 +321,8 @@ fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     }
 }
 
-// Note: `buf` stores (ptr, len) pairs because entries point into `file_path_buf`
-// (self-referential) as well as caller-provided/static slices. Reconstructed as slices
-// in `auto_close`.
-pub(super) struct SpawnedEditorContext {
-    pub file_path_buf: [u8; 1024 + MAX_PATH_BYTES],
-    pub buf: [(*const u8, usize); 10],
-    pub argc: usize,
-}
-
-impl Default for SpawnedEditorContext {
-    fn default() -> Self {
-        Self {
-            file_path_buf: [0; 1024 + MAX_PATH_BYTES],
-            buf: [(core::ptr::null(), 0); 10],
-            argc: 0,
-        }
-    }
-}
-
-fn auto_close(spawned: *mut SpawnedEditorContext) {
-    // SAFETY: `spawned` came from heap::alloc in `Editor::open`; this thread is the
-    // sole owner and reconstitutes the Box to drop it at scope exit.
-    let spawned = unsafe { bun_core::heap::take(spawned) };
-
+fn auto_close(argv: Vec<Box<[u8]>>) {
     Global::set_thread_name(bun_core::zstr!("Open Editor"));
-
-    // Reconstruct argv slices from stored (ptr, len).
-    let mut argv: [&[u8]; 10] = [b""; 10];
-    for j in 0..spawned.argc {
-        let (p, l) = spawned.buf[j];
-        // SAFETY: pointers reference either 'static data or `spawned.file_path_buf`,
-        // both of which outlive this function.
-        argv[j] = unsafe { bun_core::ffi::slice(p, l) };
-    }
 
     // FIXME(windows-leak): the sync::spawn path
     // requires a `WindowsOptions.loop_`; `MiniEventLoop::init_global` heap-allocates a
@@ -407,14 +330,10 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
     // runs on a fresh detached std::thread per `Editor::open()` call, every editor-open on
     // Windows leaks one MiniEventLoop + uv_loop_t (+ DotEnv Loader/Map if env was null).
     // Proper fix needs either (a) a MiniEventLoop teardown helper (none exists today), or
-    // (b) plumbing the caller's existing EventLoopHandle through SpawnedEditorContext
+    // (b) plumbing the caller's existing EventLoopHandle through to this thread
     // (signature change to Editor::open + callers). Both are out-of-scope for this file.
-    let owned_argv: Vec<Box<[u8]>> = argv[0..spawned.argc]
-        .iter()
-        .map(|s| s.to_vec().into_boxed_slice())
-        .collect();
     let _ = sync::spawn(&sync::Options {
-        argv: owned_argv,
+        argv,
         envp: None,
         stderr: sync::SyncStdio::Inherit,
         stdout: sync::SyncStdio::Inherit,
@@ -432,22 +351,11 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub(crate) struct EditorContext {
     pub(crate) editor: Option<Editor>,
-    // Note: `name`/`path` are never freed; `path` is backed by
-    // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.
-    pub name: &'static [u8],
-    pub path: &'static [u8],
-}
-
-impl Default for EditorContext {
-    fn default() -> Self {
-        Self {
-            editor: None,
-            name: b"",
-            path: b"",
-        }
-    }
+    pub name: Vec<u8>,
+    pub path: Vec<u8>,
 }
 
 impl EditorContext {
@@ -464,98 +372,41 @@ impl EditorContext {
     }
 
     pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
-        // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
-        // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
-        // we return immediately so only one `&mut` is ever live.
-        let buf_ptr: *mut PathBuffer = &raw mut *buf;
-        let mut out: &[u8] = b"";
-
         // first: choose from user preference
-        if !self.name.is_empty() {
-            // /usr/bin/vim
-            if bun_paths::is_absolute(self.name) {
-                self.editor =
-                    Some(Editor::by_name(bun_paths::basename(self.name)).unwrap_or(Editor::Other));
-                self.path = self.name;
-                return;
-            }
+        // /usr/bin/vim
+        if bun_paths::is_absolute(&self.name) {
+            self.editor =
+                Some(Editor::by_name(bun_paths::basename(&self.name)).unwrap_or(Editor::Other));
+            self.path.clone_from(&self.name);
+            return;
+        }
 
-            // "vscode"
-            if let Some(editor_) = Editor::by_name(bun_paths::basename(self.name)) {
-                if Editor::by_path_for_editor(
-                    env,
-                    editor_,
-                    // SAFETY: see note above — exclusive per-call reborrow.
-                    unsafe { &mut *buf_ptr },
-                    Fs::FileSystem::instance().top_level_dir(),
-                    &mut out,
-                ) {
-                    self.editor = Some(editor_);
-                    self.path = Fs::FileSystem::instance()
-                        .dirname_store
-                        .append_slice(out)
-                        .expect("unreachable");
-                    return;
-                }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let cwd = Fs::FileSystem::get().top_level_dir();
 
-                // not in path, try common ones
-                let mut static_out: &'static [u8] = b"";
-                if Editor::by_fallback_path_for_editor(editor_, Some(&mut static_out)) {
-                    self.editor = Some(editor_);
-                    self.path = Fs::FileSystem::instance()
-                        .dirname_store
-                        .append_slice(static_out)
-                        .expect("unreachable");
-                    return;
-                }
-            }
+        // "vscode"
+        if !self.name.is_empty()
+            && let Some(editor_) = Editor::by_name(bun_paths::basename(&self.name))
+            && let Some(path) = Editor::find(env, editor_, &mut buf, cwd)
+        {
+            self.editor = Some(editor_);
+            self.path = path.to_vec();
+            return;
         }
 
         // EDITOR=code
-        if let Some(editor_) = Editor::detect(env) {
-            if Editor::by_path_for_editor(
-                env,
-                editor_,
-                // SAFETY: see note above — exclusive per-call reborrow.
-                unsafe { &mut *buf_ptr },
-                Fs::FileSystem::instance().top_level_dir(),
-                &mut out,
-            ) {
-                self.editor = Some(editor_);
-                self.path = Fs::FileSystem::instance()
-                    .dirname_store
-                    .append_slice(out)
-                    .expect("unreachable");
-                return;
-            }
-
-            // not in path, try common ones
-            let mut static_out: &'static [u8] = b"";
-            if Editor::by_fallback_path_for_editor(editor_, Some(&mut static_out)) {
-                self.editor = Some(editor_);
-                self.path = Fs::FileSystem::instance()
-                    .dirname_store
-                    .append_slice(static_out)
-                    .expect("unreachable");
-                return;
-            }
+        if let Some(editor_) = Editor::detect(env)
+            && let Some(path) = Editor::find(env, editor_, &mut buf, cwd)
+        {
+            self.editor = Some(editor_);
+            self.path = path.to_vec();
+            return;
         }
 
         // Don't know, so we will just guess based on what exists
-        if let Some(editor_) = Editor::by_fallback(
-            env,
-            // SAFETY: see note above — exclusive per-call reborrow.
-            unsafe { &mut *buf_ptr },
-            Fs::FileSystem::instance().top_level_dir(),
-            &mut out,
-        ) {
+        if let Some((editor_, path)) = Editor::by_fallback(env, &mut buf, cwd) {
             self.editor = Some(editor_);
-            self.path = Fs::FileSystem::instance()
-                .dirname_store
-                .append_slice(out)
-                .expect("unreachable");
+            self.path = path.to_vec();
             return;
         }
 

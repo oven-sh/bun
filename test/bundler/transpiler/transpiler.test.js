@@ -2758,271 +2758,118 @@ export const after = { a: 1 };
     });
   });
 
-  // The first token of a define value says what it is: `K= false` is the boolean.
+  // Whitespace and then one whole JSON value or keyword is that value: `K= false` is the boolean.
   describe("define with whitespace before the value", () => {
-    // What `\s` matches, then two runs.
+    // What `\s` matches.
     const whitespace = [
       ..." \t\n\v\f\r\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff",
-      "\r\n",
-      " \t\n ",
     ];
-    const behind = value => whitespace.map(space => space + value);
-    const print = value => new Bun.Transpiler({ define: { K: value } }).transformSync("x(K);").trim();
-    const read = value => {
-      try {
-        return print(value);
-      } catch (e) {
-        return "error: " + e.message;
-      }
+    const print = text => new Bun.Transpiler({ define: { K: text } }).transformSync("x(K);").trim();
+    const valueOf = text => {
+      let value;
+      new Function("x", print(text))(argument => (value = argument));
+      return value;
     };
-    const printed = values => Object.fromEntries(values.map(value => [JSON.stringify(value), read(value)]));
-    const each = (values, output) => Object.fromEntries(values.map(value => [JSON.stringify(value), output]));
 
-    // The text of a value, what it is read as, and where that reading is from:
-    //   "1.3.14"  Bun 1.3.14 read it this way.
-    //   "1.4"     Bun 1.3.14 did not. The JSON parser of Bun 1.4.0 does, and that stays.
-    //   "bare"    No release did. It is the reading of the same text without the whitespace before it.
-    //   "new"     No release did.
-    it.each([
-      // Keywords. What is behind the word is dropped.
-      ["false", "x(false);", "1.3.14"],
-      ["true", "x(true);", "1.3.14"],
-      ["null", "x(null);", "1.3.14"],
-      ["undefined", "x(undefined);", "1.3.14"],
-      ["false ", "x(false);", "1.3.14"],
-      ["true;", "x(true);", "1.3.14"],
-      ["true false", "x(true);", "1.3.14"],
-      ["null}", "x(null);", "1.3.14"],
-      ["true.x", "x(true);", "1.3.14"],
-      // Numbers.
-      ["0", "x(0);", "1.3.14"],
-      ["-1", "x(-1);", "1.3.14"],
-      ["- 1", "x(-1);", "1.3.14"],
-      [".5", "x(0.5);", "1.3.14"],
-      ["-.25", "x(-0.25);", "1.3.14"],
-      ["1e3", "x(1000);", "1.3.14"],
-      ["0x10", "x(16);", "1.3.14"],
-      ["01", "x(1);", "1.3.14"],
-      ["1_000", "x(1000);", "1.3.14"],
-      ["1.", "x(1);", "1.3.14"],
-      // Strings, objects and arrays.
-      ['"s"', 'x("s");', "1.3.14"],
-      ["'s'", 'x("s");', "1.3.14"],
-      ['"production" ', 'x("production");', "1.3.14"],
-      ["{}", "x({});", "1.3.14"],
-      ["[]", "x([]);", "1.3.14"],
-      ["[1]", "x([1]);", "1.3.14"],
-      ['{"a":1}', "x({ a: 1 });", "1.3.14"],
-      ["[1, 2,]", "x([1, 2]);", "1.3.14"],
-      ['{"a":1,}', "x({ a: 1 });", "1.3.14"],
-      ['\\"s\\"', 'x("s");', "1.3.14"],
-      // A name is an identifier.
-      ["production", "x(production);", "1.3.14"],
-      ["a.b", "x(a.b);", "1.3.14"],
-      ["truefalse", "x(truefalse);", "1.3.14"],
-      // Other text is a string.
-      ["hello world", 'x("hello world");', "1.3.14"],
-      ["foo ", 'x("foo ");', "1.3.14"],
-      ["-abc", 'x("-abc");', "1.4"],
-      ["-", 'x("-");', "1.4"],
-      [".env", 'x(".env");', "1.3.14"],
-      [".", 'x(".");', "1.3.14"],
-      ["*{box-sizing:border-box}", 'x("*{box-sizing:border-box}");', "1.3.14"],
-      ["/* c */ false", 'x("/* c */ false");', "1.3.14"],
-      ["@x", 'x("@x");', "1.4"],
-      ["#x", 'x("#x");', "1.4"],
-      ["+1", 'x("+1");', "1.4"],
-      ["!1", 'x("!1");', "1.4"],
-      ["a\\nb", "x(`a\nb`);", "1.4"],
-      ["first line\nsecond", "x(`first line\nsecond`);", "1.4"],
-      // A keyword ends where its identifier ends.
-      ["false\u00e9 x", 'x("false\u00e9 x");', "1.3.14"],
-      ["null\u00e9 x", 'x("null\u00e9 x");', "1.3.14"],
-      ["true\\u0065 x", 'x("truee x");', "new"],
-      ["false\u0301 x", 'x("false\u0301 x");', "1.3.14"],
-      ["null\u00b7 x", 'x("null\u00b7 x");', "1.3.14"],
-      ["false\u{1F600}", "x(false);", "1.3.14"],
-      ["true\u00a0x", "x(true);", "1.3.14"],
-      ["null\u2192", "x(null);", "1.3.14"],
-      ["undefined\ufeff", "x(undefined);", "1.3.14"],
-      ["false\\", "x(false);", "1.4"],
-      ["false\\n", "x(false);", "1.4"],
-      ["null\\t", "x(null);", "1.4"],
-      // Text behind a JSON value is dropped: https://github.com/oven-sh/bun/pull/45386
-      ['1"', "x(1);", "1.4"],
-      ["1 2", "x(1);", "1.3.14"],
-      ["7 days", "x(7);", "1.3.14"],
-      ["12:30", "x(12);", "1.3.14"],
-      ["42 # answer", "x(42);", "1.4"],
-      ['"a" + "b"', 'x("a");', "1.4"],
-      // Not a value.
-      ["[1", 'error: Expected "]" but found end of file', "1.3.14"],
-      ['"abc', "error: Unterminated string literal", "1.3.14"],
-      ["1.2.3", "error: Unexpected 1.2.3", "1.4"],
-      ["2024-01-15", "error: Unexpected 2024-01-15", "1.4"],
-      ["{a:1}", 'error: Expected string but found "a"', "1.4"],
-      ["1n", "error: Syntax Error", "1.3.14"],
-      [".5x", "error: Syntax Error", "1.3.14"],
-      ["0x", "error: Syntax Error", "1.3.14"],
-      ["a\\x4", "error: Syntax Error", "1.3.14"],
-      // Whitespace, then JSON or a keyword.
-      [" false", "x(false);", "1.3.14"],
-      ["\tfalse", "x(false);", "1.3.14"],
-      ["\nfalse", "x(false);", "1.3.14"],
-      ["\r\nfalse", "x(false);", "1.3.14"],
-      ["  false  ", "x(false);", "1.3.14"],
-      [" true", "x(true);", "1.3.14"],
-      [" null", "x(null);", "1.3.14"],
-      [" undefined", "x(undefined);", "1.3.14"],
-      [" 0", "x(0);", "1.3.14"],
-      [" 1", "x(1);", "1.3.14"],
-      [" -1", "x(-1);", "1.3.14"],
-      [" - 1", "x(-1);", "1.3.14"],
-      [" .5", "x(0.5);", "1.3.14"],
-      [' "s"', 'x("s");', "1.3.14"],
-      [" 's'", 'x("s");', "1.3.14"],
-      [" {}", "x({});", "1.3.14"],
-      [" [1]", "x([1]);", "1.3.14"],
-      [' {"a":1}', "x({ a: 1 });", "1.3.14"],
-      ['\n{\n  "a": [1]\n}\n', "x({\n  a: [1]\n});", "1.3.14"],
-      ["\u00a0false", "x(false);", "1.3.14"],
-      ["\ufefffalse", "x(false);", "1.3.14"],
-      // Whitespace, then a name or other text on one line. Whitespace alone.
-      [" production", 'x("production");', "1.3.14"],
-      [" a.b", 'x("a.b");', "1.3.14"],
-      [" foo bar", 'x("foo bar");', "1.3.14"],
-      [" hello\n", "x(`hello\n`);", "1.3.14"],
-      [" ", 'x("");', "1.3.14"],
-      ["\t", 'x("");', "1.3.14"],
-      ["\n\n", 'x("");', "1.3.14"],
-      [' \\"s\\"', 'x("s");', "bare"],
-      [" -abc", 'x("-abc");', "bare"],
-      [" -", 'x("-");', "bare"],
-      [" @x", 'x("@x");', "bare"],
-      [" +1", 'x("+1");', "bare"],
-      [" /* c */ false", 'x("/* c */ false");', "1.3.14"],
-      // Whitespace, then text of several lines: kept whole.
-      ["\n  key: value\n  other: 1\n", "x(`\n  key: value\n  other: 1\n`);", "1.4"],
-      [" first line\nsecond", "x(` first line\nsecond`);", "1.4"],
-      // Whitespace, then a keyword and more.
-      [" false\u00e9", 'x("false\u00e9");', "1.3.14"],
-      [" false\\u0065", 'x("falsee");', "bare"],
-      [" false\u{1F600}", "x(false);", "1.3.14"],
-      [" true\\", "x(true);", "bare"],
-      [" true;", "x(true);", "1.3.14"],
-      [" false true", "x(false);", "1.3.14"],
-      // Whitespace, then a JSON value and more.
-      [' 1"', "x(1);", "bare"],
-      [" 7 days", "x(7);", "1.3.14"],
-      [" 12:30", "x(12);", "1.3.14"],
-      [" 42 # answer", "x(42);", "bare"],
-      ["\n  1. Step one\n  2. Step two\n", "x(1);", "1.3.14"],
-      // Whitespace, then what is not a value.
-      [" [1", 'error: Expected "]" but found end of file', "1.3.14"],
-      [' "abc', "error: Unterminated string literal", "1.3.14"],
-      [" 1.2.3", "error: Unexpected 1.2.3", "bare"],
-      [" 2024-01-15", "error: Unexpected 2024-01-15", "bare"],
-      [" 127.0.0.1", "error: Unexpected 127.0.0.1", "bare"],
-      [" {a:1}", 'error: Expected string but found "a"', "bare"],
-      [" 1n", "error: Syntax Error", "bare"],
-    ])("%j is read as %s (%s)", (value, output) => {
-      expect(read(value)).toBe(output);
-    });
-
-    // One value for each way that the first byte of a token picks its kind.
+    // One value for each first byte that is read as JSON, and each keyword.
     it.each([
       ["false", "x(false);"],
+      ["true", "x(true);"],
+      ["null", "x(null);"],
       ["undefined", "x(undefined);"],
       ["0", "x(0);"],
+      ["9", "x(9);"],
       ["-1", "x(-1);"],
+      ["- 1", "x(-1);"],
       [".5", "x(0.5);"],
+      ["1e3", "x(1000);"],
+      ["0x10", "x(16);"],
       ['"s"', 'x("s");'],
       ["'s'", 'x("s");'],
-      ['{"a":1}', "x({ a: 1 });"],
+      ["{}", "x({});"],
+      ['{"a":1,}', "x({ a: 1 });"],
       ["[1]", "x([1]);"],
-      ['\\"s\\"', 'x("s");'],
-      ["hello world ", 'x("hello world ");'],
-    ])("%j is the same value behind each kind of whitespace", (value, output) => {
-      const values = [value, ...behind(value)];
-      expect(printed(values)).toEqual(each(values, output));
+      ["[1, 2,]", "x([1, 2]);"],
+    ])("%j with each kind of whitespace around it", (value, output) => {
+      const texts = [
+        value,
+        ...whitespace.map(space => space + value),
+        ...whitespace.map(space => space + value + space),
+        `\n  ${value}\n`,
+      ];
+      expect(Object.fromEntries(texts.map(text => [JSON.stringify(text), print(text)]))).toEqual(
+        Object.fromEntries(texts.map(text => [JSON.stringify(text), output])),
+      );
     });
 
-    // A name with nothing before it is an identifier.
-    it("a name behind each kind of whitespace is a string", () => {
-      for (const name of ["production", "a.b"]) {
-        expect(printed(behind(name))).toEqual(each(behind(name), `x(${JSON.stringify(name)});`));
-      }
+    // Each value beside texts that begin like it. Those are the strings that they are without this rule.
+    it("a text behind whitespace that is not one whole value stays a string", () => {
+      const kept = text => [text, text];
+      const texts = [
+        [" false", false],
+        ["\ttrue\n", true],
+        [" null", null],
+        [" undefined", undefined],
+        ...[" false x", " falsy", " true-ish", " true;", " null,", " undefined x", " false true"].map(kept),
+        [" 1", 1],
+        [" -1", -1],
+        [" .5", 0.5],
+        ...[" 1.2.3", " 2026-11-07", " 127.0.0.1", " 1px", " 10%", " 1/2", " 12abc", " 1n", " 1e", " 0x", " 1..2"].map(
+          kept,
+        ),
+        ...[" 7 days", " 1 2", " 1,2", " 12:30", " 1 // c", " -abc", " -", " ."].map(kept),
+        [' "s"', "s"],
+        ...[' "', ' "unclosed', ' 1"', ' "a" + "b"', ' "a" "b"'].map(kept),
+        [" [1]", [1]],
+        [' {"a":[1]}', { a: [1] }],
+        ['\n{\n  "a": [1]\n}\n', { a: [1] }],
+        ...[" [", " {", " [1", " {a:1}", " [1] x", " {} x", ' {"a":1} {"b":2}'].map(kept),
+        ...[" production", " a.b.c", " NaN", " two words", " http://x/y", " (1)", " a+b", " /* c */ false"].map(kept),
+        ...["\n  key: value\n  other: 1\n", "\n  1. Step one\n  2. Step two\n"].map(kept),
+        ...[" ", "\t", "\n\n"].map(kept),
+        // A backslash is read as it is with nothing before the whitespace.
+        [" \\u0066alse", " false"],
+        [" false\\", " false"],
+        [' \\"s\\"', ' "s"'],
+        // Not whitespace.
+        ...["\u0085false", "\u200bfalse", "\u180efalse"].map(kept),
+      ];
+      expect(texts.map(([text]) => [text, valueOf(text)])).toEqual(texts);
     });
 
-    it("each kind of whitespace alone is an empty string", () => {
-      expect(printed(whitespace)).toEqual(each(whitespace, 'x("");'));
-    });
-
-    it("a character that is not whitespace is part of the value", () => {
-      expect(printed(["\u0085false", "\u200bfalse", "\u180efalse"])).toEqual({
-        '"\u0085false"': 'x("\u0085false");',
-        '"\u200bfalse"': 'x("\u200bfalse");',
-        '"\u180efalse"': 'x("\u180efalse");',
-      });
-    });
-
-    it("an error points into the value as it is written", () => {
-      const error = value => {
-        try {
-          print(value);
-        } catch (e) {
-          return { message: e.message, line: e.position.line, column: e.position.column };
-        }
-      };
-      expect({
-        array: error(" [1"),
-        string: error('\n\n"abc'),
-        escape: error("  a\\x4"),
-        version: error(" 1.2.3"),
-      }).toEqual({
-        array: { message: 'Expected "]" but found end of file', line: 1, column: 3 },
-        string: { message: "Unterminated string literal", line: 3, column: 1 },
-        escape: { message: "Syntax Error", line: 1, column: 3 },
-        version: { message: "Unexpected 1.2.3", line: 1, column: 2 },
-      });
-    });
-
-    // The other doors to the define table.
-    const program = `console.log(OFF, COUNT, NAME, process.env.NODE_ENV);`;
+    // The other doors to the define table. Each gets a value, and three texts that stay strings.
+    const values = [false, 41, " 7 days", " 1.2.3", " production"];
+    const program = `console.log(JSON.stringify([OFF, COUNT, DAYS, VERSION, NAME]));`;
+    const defines = (separator, flag = "--define") =>
+      ["OFF", " false", "COUNT", "\t41", "DAYS", " 7 days", "VERSION", " 1.2.3", "NAME", " production"].flatMap(
+        (text, i, all) => (i % 2 ? [] : [flag, text + separator + all[i + 1]]),
+      );
 
     it("Bun.build({ define })", async () => {
       using dir = tempDir("define-whitespace-api", { "in.js": program });
-      const entrypoints = [join(String(dir), "in.js")];
       const result = await Bun.build({
-        entrypoints,
-        define: {
-          OFF: " false",
-          COUNT: "\t41",
-          NAME: " bare words",
-          // JSON in a template literal starts with a line break.
-          "process.env.NODE_ENV": `
-            "production"
-          `,
-        },
+        entrypoints: [join(String(dir), "in.js")],
+        define: { OFF: " false", COUNT: "\t41", DAYS: " 7 days", VERSION: " 1.2.3", NAME: " production" },
       });
       const output = await result.outputs[0].text();
-      expect(output.slice(output.indexOf("console.log"))).toBe(`console.log(false, 41, "bare words", "production");\n`);
-
-      const errors = await Bun.build({ entrypoints, define: { OFF: " 1.2.3" } }).then(
-        () => [],
-        error =>
-          error.errors.map(({ message, position }) => ({ message, line: position.line, column: position.column })),
+      expect(output.slice(output.indexOf("console.log"))).toBe(
+        `console.log(JSON.stringify([false, 41, " 7 days", " 1.2.3", " production"]));\n`,
       );
-      expect(errors).toEqual([{ message: "Unexpected 1.2.3", line: 1, column: 2 }]);
     });
 
-    // `--define 'KEY: value'` puts a blank before the value.
-    const flags = ["--define", "OFF= false", "-d", "COUNT:\t41", "-d", "NAME: bare words"];
-    const production = ["--define", 'process.env.NODE_ENV: "production"'];
-    const built = `// in.js\nconsole.log(false, 41, "bare words", "production");\n`;
-    const ran = "false 41 bare words production\n";
-    const spawned = async (args, files) => {
-      using dir = tempDir("define-whitespace-cli", { "in.js": program, ...files });
+    it.concurrent.each([
+      ["bun --define K= V", [...defines("="), "in.js"], {}],
+      ["bun -d 'K: V'", [...defines(":", "-d"), "in.js"], {}],
+      [
+        "bunfig.toml [define]",
+        ["in.js"],
+        {
+          "bunfig.toml": `[define]\nOFF = " false"\nCOUNT = "\\t41"\nDAYS = " 7 days"\nVERSION = " 1.2.3"\nNAME = " production"\n`,
+        },
+      ],
+      ["a Worker", [...defines("="), "main.js"], { "main.js": `new Worker(new URL("in.js", import.meta.url).href);` }],
+    ])("%s", async (_, args, files) => {
+      using dir = tempDir("define-whitespace-run", { "in.js": program, ...files });
       await using proc = Bun.spawn({
         cmd: [bunExe(), ...args],
         env: bunEnv,
@@ -3031,40 +2878,56 @@ export const after = { a: 1 };
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr, exitCode };
-    };
-
-    it.concurrent.each([
-      ["bun build --define", ["build", ...flags, ...production, "in.js"], {}, built],
-      ["bun --define", [...flags, ...production, "in.js"], {}, ran],
-      [
-        "bunfig.toml [define]",
-        ["in.js"],
-        {
-          "bunfig.toml": `[define]\nOFF = " false"\nCOUNT = "\\t41"\nNAME = " bare words"\n"process.env.NODE_ENV" = ' "production"'\n`,
-        },
-        ran,
-      ],
-    ])("%s", async (_, args, files, stdout) => {
-      expect(await spawned(args, files)).toEqual({ stdout, stderr: "", exitCode: 0 });
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(values) + "\n", stderr: "", exitCode: 0 });
     });
 
-    // `bun build` prints one more line behind these two.
-    const notJson = `error: Unexpected 1.2.3\n    at defines.json:1:2\n`;
+    it.concurrent("bun build --define", async () => {
+      using dir = tempDir("define-whitespace-build", { "in.js": program });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...defines("="), "in.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: `// in.js\nconsole.log(JSON.stringify([false, 41, " 7 days", " 1.2.3", " production"]));\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
 
-    it.concurrent.each([
-      ["bun build --define", ["build", "--define", "OFF: 1.2.3", "in.js"], {}, notJson],
-      [
-        "bun --define",
-        ["--define", "OFF=  [1", "in.js"],
-        {},
-        `error: Expected "]" but found end of file\n    at defines.json:1:4\n`,
-      ],
-      ["bunfig.toml [define]", ["in.js"], { "bunfig.toml": `[define]\nOFF = " 1.2.3"\n` }, notJson],
-    ])("%s with a value that is not JSON", async (_, args, files, message) => {
-      const { stdout, stderr, exitCode } = await spawned(args, files);
-      expect(stderr).toContain(message);
-      expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+    // With nothing before it this value is an error too. Without the blank it must not become a string.
+    it.concurrent("a value nested too deep behind whitespace is an error", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const nested = Buffer.alloc(100_000, "[").toString() + Buffer.alloc(100_000, "]").toString();
+            const read = text => {
+              try {
+                new Bun.Transpiler({ define: { K: text } });
+                return "a value";
+              } catch (error) {
+                return error.message;
+              }
+            };
+            console.log(JSON.stringify([read(nested), read(" " + nested)]));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const message = "JSON document is too deeply nested";
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify([message, message]) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 

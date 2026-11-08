@@ -1390,7 +1390,6 @@ struct MiniLog<'a, 's> {
     log: &'a mut Log,
     source: &'s Source<'s>,
     prev_error_loc: Loc,
-    start: usize,
 }
 
 impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
@@ -1405,28 +1404,26 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
         &mut self.prev_error_loc
     }
     fn start(&self) -> usize {
-        self.start
+        0
     }
     fn syntax_err() -> crate::Error {
         crate::Error::SyntaxError
     }
 }
 
-/// Decodes the text of `source` from `start` on. An error points at `start`.
 pub(crate) fn decode_auto_quoted(
     source: &Source,
     log: &mut Log,
     bump: &Bump,
-    start: usize,
+    body: &[u8],
     opts: JSONOptions,
 ) -> crate::Result<E::String> {
     let mut l = MiniLog {
         log,
         source,
         prev_error_loc: Loc::EMPTY,
-        start,
     };
-    let mut body = &source.contents[start..];
+    let mut body = body;
     if opts.ignore_leading_escape_sequences && body.first() == Some(&b'\\') {
         body = &body[1..];
     }

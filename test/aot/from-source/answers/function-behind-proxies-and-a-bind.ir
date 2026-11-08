@@ -1,0 +1,27 @@
+# A closure that has captured something stands behind three proxies, behind a bind, behind both, or behind nothing. Whoever is called, the one function at the end is entered, with what its own closure has captured.
+# The proxies and the bound function hold none of that: each is asked where it is called and hands the call on.
+# In `bindsAndCalls` one body makes the bound function, puts the proxies in front of it and calls what is left, so the callee is a bound function or a proxy there and never a closure.
+# -- source: main.js
+# function makeAdder(base) { return function (x) { return base + x; }; }
+# function behind(target, count) { let chain = target; for (let i = 0; i < count; i = i + 1) chain = new Proxy(chain, {}); return chain; }
+# function bindsAndCalls(adder, count) { let chain = adder.bind(null, 7); for (let i = 0; i < count; i = i + 1) chain = new Proxy(chain, {}); return chain(); }
+# const ten = makeAdder(10), twenty = makeAdder(20);
+# print(behind(ten, 3)(1));
+# print(behind(twenty, 0)(1));
+# const bound = twenty.bind(null, 5);
+# print(behind(bound, 3)());
+# print(behind(bound, 0)());
+# print(behind(ten, 3).bind(null, 2)());
+# print(bindsAndCalls(ten, 0));
+# print(bindsAndCalls(twenty, 3));
+# -- end of source
+# RUN: run-in-shell
+# CHECK: 11
+# CHECK-NEXT: 21
+# CHECK-NEXT: 25
+# CHECK-NEXT: 25
+# CHECK-NEXT: 12
+# CHECK-NEXT: 17
+# CHECK-NEXT: 27
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same

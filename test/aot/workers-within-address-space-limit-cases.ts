@@ -1,5 +1,7 @@
 import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { hasGuardedPages, locksEnvironment } from "./hardened";
+import { without } from "./harness/capabilities";
 import { unsupported } from "./harness/compiler";
 import { run } from "./harness/run";
 import { inTurn } from "./harness/shared-builds";
@@ -61,8 +63,7 @@ if (Bun.isMainThread) {
 }
 `;
 
-const startsWorkersInWorkers = `declare var self: Worker;
-function start(depth: number, report: (line: string) => void) {
+const startsWorkersInWorkers = `function start(depth: number, report: (line: string) => void) {
   if (depth === 4) return report("4");
   const answers: string[] = [];
   for (let i = 0; i < 2; i++) {
@@ -83,8 +84,7 @@ if (Bun.isMainThread) {
 }
 `;
 
-const startsWorkersAgainAndAgain = `import { readFileSync } from "node:fs";
-function describeLargeMaps(): string {
+const startsWorkersAgainAndAgain = `function describeLargeMaps(): string {
   const described: string[] = [];
   for (const line of readFileSync("/proc/self/maps", "utf8").split("\\n")) {
     const [range, , , , , name] = line.split(/ +/);
@@ -153,7 +153,8 @@ const startsWorkerRightAfterTerminating = `if (Bun.isMainThread) {
     workers.shift()!.terminate();
     workers.push(await startAndWait());
   }
-  console.log("at least 8 run:", workers.length >= 8);
+  const atLeast = Number(process.argv[2]);
+  console.log("at least " + atLeast + " run:", workers.length >= atLeast);
   process.exit(0);
 } else {
   setInterval(() => {}, 1000);
@@ -163,8 +164,7 @@ const startsWorkerRightAfterTerminating = `if (Bun.isMainThread) {
 
 // Workers start one by one until the constructor throws. An earlier one is then held up for eight seconds on its way out. One more is constructed meanwhile and terminated at once, then another.
 // No more wait than are ending, so for a third the constructor throws.
-const constructsWorkersWhileAnotherIsHeldUp = `declare var self: Worker;
-const how = process.argv[2];
+const constructsWorkersWhileAnotherIsHeldUp = `const how = process.argv[2];
 if (Bun.isMainThread) {
   const start = async () => {
     const worker = new Worker(new URL(import.meta.url));
@@ -248,20 +248,19 @@ if (Bun.isMainThread) {
 // Starts Workers until the constructor throws three times in a row, then holds one up for two seconds while it ends and constructs another, which waits for that room.
 // When the first closes, its listener constructs Workers until the constructor throws. The waiting Worker can still fit where a new one doesn't, so the program repeats this until it doesn't.
 // Workers start until one does not. Then, forty times, one is terminated and has exited, and Workers start again until one does not.
-const startsNodeWorkersUntilConstructorThrows = `import { Worker, isMainThread, parentPort } from "node:worker_threads";
-if (isMainThread) {
+const startsNodeWorkersUntilConstructorThrows = `if (isMainThread) {
   const start = () =>
-    new Promise<Worker | string>(resolve => {
-      let worker: Worker;
+    new Promise<NodeWorker | string>(resolve => {
+      let worker: NodeWorker;
       try {
-        worker = new Worker(new URL(import.meta.url));
+        worker = new NodeWorker(new URL(import.meta.url));
       } catch (error) {
         return resolve("the constructor threw " + (error as Error).name);
       }
       worker.once("message", () => resolve(worker));
       worker.once("error", (error: Error) => resolve("'error' with " + error.name));
     });
-  const workers: Worker[] = [];
+  const workers: NodeWorker[] = [];
   const outcomes = new Set<string>();
   const fill = async () => {
     for (;;) {
@@ -285,8 +284,7 @@ if (isMainThread) {
 `;
 
 // 48 Workers are constructed one by one, and each that starts stays.
-const startsWorkersThatStay = `import { isMainThread, parentPort } from "node:worker_threads";
-if (isMainThread) {
+const startsWorkersThatStay = `if (isMainThread) {
   let outcomes = "";
   for (let i = 0; i < 48; i++) {
     try {
@@ -306,8 +304,7 @@ if (isMainThread) {
 `;
 
 // Workers start until the constructor throws. One ends, so there is room for about one. The others are terminated in a call that blocks, and another is constructed at once.
-const keepsObjectsInWorkerConstructedWhileOthersEnd = `declare var self: Worker;
-if (Bun.isMainThread) {
+const keepsObjectsInWorkerConstructedWhileOthersEnd = `if (Bun.isMainThread) {
   const hear = (worker: Worker, wanted: string) =>
     new Promise<string>(resolve => {
       worker.onmessage = event => void (String(event.data).startsWith(wanted) && resolve(event.data));
@@ -362,9 +359,7 @@ if (Bun.isMainThread) {
 `;
 
 // Workers start until the constructor throws. One ends and has closed. Another is terminated in a call that blocks it, and a new one is constructed at once.
-const constructsWorkerAfterTerminatingBlockedOne = `import { readFileSync } from "node:fs";
-declare var self: Worker;
-const call = process.argv[2];
+const constructsWorkerAfterTerminatingBlockedOne = `const call = process.argv[2];
 if (Bun.isMainThread) {
   if (call.includes("pipe")) Bun.spawnSync(["mkfifo", "pipe"]);
   const construct = () => new Worker(new URL(import.meta.url), { argv: [call] });
@@ -411,9 +406,7 @@ if (Bun.isMainThread) {
 }
 `;
 
-const takesRoomThatWorkerWaitsFor = `import { Worker as NodeWorker, parentPort } from "node:worker_threads";
-declare var self: Worker;
-const isNode = process.argv[2] === "node";
+const takesRoomThatWorkerWaitsFor = `const isNode = process.argv[2] === "node";
 function construct() {
   let error = "no error";
   let hear = (_: string) => {};
@@ -457,7 +450,7 @@ if (Bun.isMainThread) {
       } catch (error) {
         if (!(error instanceof TypeError)) throw error;
       }
-    });
+    }); // @ts-expect-error
     heldUp.worker.postMessage("block");
     await heldUp.isHeldUp;
     await Bun.sleep(200);
@@ -522,9 +515,7 @@ const constructsWorkersBeforeItHearsThatOthersEnded = `if (Bun.isMainThread) {
 // A thread starts Workers until the constructor throws. One of them is held up for eight seconds on its way out, and more are constructed meanwhile until the constructor throws again: one of them waits.
 // Then the thread ends: the main thread exits, or a Worker is terminated. A Worker that starts after that writes a line.
 // The runs of the program share a folder, so each names its files by the number of its process.
-const endsThreadWhoseWorkerWaits = `import { existsSync, writeFileSync, writeSync } from "node:fs";
-declare var self: Worker;
-const threadEnds = "the-thread-ends-" + process.pid;
+const endsThreadWhoseWorkerWaits = `const threadEnds = "the-thread-ends-" + process.pid;
 const hasStarted = (late: number | string) => "started-" + process.pid + "-" + late;
 const start = async () => {
   const worker = new Worker(new URL(import.meta.url));
@@ -589,6 +580,30 @@ if (!Bun.isMainThread) {
 }
 `;
 
+// The table that finds the Symbol of a key has a power of two of buckets and asks for all of its next size at once.
+const keepsSymbolsWhereTheirTableFindsNoRoom = `const [first, last] = process.argv.slice(2).map(Number);
+const symbols: symbol[] = new Array(last);
+let count = 0;
+while (count < first) symbols[count++] = Symbol();
+// No piece as large as a table of that many Symbols stays free, and there is room for whatever is small.
+const held: ArrayBuffer[] = [];
+for (const megabytes of [64, 32, 16, 8]) {
+  try {
+    for (;;) held.push(new ArrayBuffer(megabytes * 1024 * 1024));
+  } catch {}
+}
+try {
+  while (count < last) symbols[count++] = Symbol();
+  console.log("no error");
+} catch (error) {
+  console.log(error instanceof RangeError, count < last);
+}
+held.length = 0;
+Bun.gc(true);
+while (count < last) symbols[count++] = Symbol();
+console.log(count, symbols[0] !== symbols[last - 1]);
+`;
+
 // More shapes of objects than the table that finds properties by name has rows for at first.
 const readsManyShapesByName = `const objects: any[] = [];
 for (let i = 0; i < 120_000; i++) {
@@ -608,9 +623,38 @@ for (const object of objects) object.value = 1;
 console.log(sum(objects));
 `;
 
+// What a build costs is what its program reaches of Bun's own code, so the programs that import the same are built as one. PROGRAM says which of them runs, in its Workers too.
+const builtAsOne = [
+  {
+    imports: "",
+    programs: [
+      startsWorkers,
+      startsWorkersOneByOne,
+      startsWorkersInWorkers,
+      startsWorkerRightAfterTerminating,
+      constructsWorkersWhileAnotherIsHeldUp,
+      keepsObjectsInWorkerConstructedWhileOthersEnd,
+      constructsWorkersBeforeItHearsThatOthersEnded,
+    ],
+  },
+  {
+    imports: `import { existsSync, readFileSync, writeFileSync, writeSync } from "node:fs";\n`,
+    programs: [startsWorkersAgainAndAgain, constructsWorkerAfterTerminatingBlockedOne, endsThreadWhoseWorkerWaits],
+  },
+  {
+    imports: `import { Worker as NodeWorker, isMainThread, parentPort } from "node:worker_threads";\n`,
+    programs: [startsNodeWorkersUntilConstructorThrows, startsWorkersThatStay, takesRoomThatWorkerWaitsFor],
+  },
+].map(({ imports, programs }) => ({
+  programs,
+  text:
+    `${imports}declare var self: Worker;\n` +
+    programs.map((program, index) => `if (process.env.PROGRAM === "${index}") {\n${program}}\n`).join(""),
+}));
+
 type Run = { limitInKB?: number; env?: Record<string, string> };
 
-const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "" };
+const env = { ...bunEnv, ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }) };
 const folders = new Map<string, Promise<string>>();
 const made: Disposable[] = [];
 afterAll(() => made.forEach(folder => folder[Symbol.dispose]()));
@@ -643,12 +687,15 @@ function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
 const programsThatWait = new Set([constructsWorkersWhileAnotherIsHeldUp, endsThreadWhoseWorkerWaits]);
 
 async function runEach(runs: Run[], program: string, ...args: string[]) {
-  const folder = await built(program);
+  const one = builtAsOne.find(({ programs }) => programs.includes(program));
+  const folder = await built(one?.text ?? program);
+  const which = one ? { PROGRAM: String(one.programs.indexOf(program)) } : {};
   const runProgram = programsThatWait.has(program) ? run : runCommand;
   const results: { stdout: string; stderr: string; exitCode: number | null }[] = [];
   for (const run of runs) {
     const command = run.limitInKB ? `ulimit -v ${run.limitInKB} && exec ./program "$@"` : `exec ./program "$@"`;
-    const start = () => runProgram(["sh", "-c", command, "sh", ...args], String(folder), { ...env, ...run.env });
+    const start = () =>
+      runProgram(["sh", "-c", command, "sh", ...args], String(folder), { ...env, ...run.env, ...which });
     const { stdout, stderr, exitCode } = await (run.limitInKB && run.limitInKB >= 2 * GB ? oneAtATime(start) : start());
     results.push({ stdout, stderr, exitCode });
   }
@@ -668,6 +715,20 @@ async function runWithin(limitInKB: number | undefined, program: string, ...args
 }
 
 const GB = 1024 * 1024;
+
+// A Worker takes 64 to 82 MB of address space where tables cannot grow; the table that starts small waits for a decision.
+// So under guarded pages fewer start within a limit, and the constructor throws for the rest. These numbers may only rise.
+const startAtOnceUnderGuardedPages = new Map([
+  [`8 within ${GB}`, 5],
+  [`32 within ${2 * GB}`, 16],
+]);
+const runOneByOneUnderGuardedPages = new Map([
+  [896 * 1024, 3],
+  [1013 * 1024, 5],
+  [GB, 5],
+  [1130 * 1024, 7],
+]);
+const runOneByOneWithin = (limit: number) => (hasGuardedPages && runOneByOneUnderGuardedPages.get(limit)) || 8;
 
 /** Every `parts`-th case from the `part`-th. */
 export function workersWithinAddressSpaceLimit(part: number, parts: number) {
@@ -690,10 +751,21 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     )(
       "%d start within %d kB",
       async (count, limit) => {
-        expect(await runWithin(limit, startsWorkers, String(count))).toEqual({
-          stdout: `started ${count} refused 0\n`,
+        const atLeast = (hasGuardedPages && startAtOnceUnderGuardedPages.get(`${count} within ${limit}`)) || count;
+        const { stdout, stderr, exitCode } = await runWithin(limit, startsWorkers, String(count));
+        const [, started, refused] = /^started (\d+) refused (\d+)\n$/.exec(stdout) ?? [];
+        expect({
+          stdout,
+          stderr,
+          exitCode,
+          all: Number(started) + Number(refused),
+          enough: Number(started) >= atLeast,
+        }).toEqual({
+          stdout,
           stderr: "",
           exitCode: 0,
+          all: count,
+          enough: true,
         });
       },
       120_000,
@@ -732,7 +804,8 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       async () => {
         const leaf = "3(4,4)";
         const two = (depth: number, inner: string) => `${depth}(${inner},${inner})`;
-        expect(await runWithin(2 * GB, startsWorkersInWorkers)).toEqual({
+        // Thirty in all, and the program waits for every one.
+        expect(await runWithin((hasGuardedPages ? 4 : 2) * GB, startsWorkersInWorkers)).toEqual({
           stdout: two(0, two(1, two(2, leaf))) + "\n",
           stderr: "",
           exitCode: 0,
@@ -756,8 +829,9 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
     inPart(test.skipIf(!isLinux || isASAN))(
       "a Worker starts in the room of Workers that were just terminated",
       async () => {
-        expect(await runWithin(GB, startsWorkerRightAfterTerminating)).toEqual({
-          stdout: "at least 8 run: true\n",
+        const atLeast = runOneByOneWithin(GB);
+        expect(await runWithin(GB, startsWorkerRightAfterTerminating, String(atLeast))).toEqual({
+          stdout: `at least ${atLeast} run: true\n`,
           stderr: "",
           exitCode: 0,
         });
@@ -769,21 +843,29 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       "a Worker starts in the room of Workers that were just terminated within each of 5 limits",
       async () => {
         const limits = Array.from({ length: 5 }, (_, i) => (896 + 117 * i) * 1024);
-        const results = await runWithinEach(limits, startsWorkerRightAfterTerminating);
+        const results: Awaited<ReturnType<typeof runWithin>>[] = [];
+        for (const limit of limits)
+          results.push(await runWithin(limit, startsWorkerRightAfterTerminating, String(runOneByOneWithin(limit))));
         expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
-          limits.map(limit => ({ limit, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
+          limits.map(limit => ({
+            limit,
+            stdout: `at least ${runOneByOneWithin(limit)} run: true\n`,
+            stderr: "",
+            exitCode: 0,
+          })),
         );
       },
       240_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
+    inPart(test.skipIf(!isLinux || isASAN || !without("a locked environment")))(
       "a Worker starts in the room of Workers that were just terminated at 8 of the 128 places where the cells begin",
       async () => {
         const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
         const results = await runEach(
           places.map(place => ({ limitInKB: 1104 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
           startsWorkerRightAfterTerminating,
+          "8",
         );
         expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
           places.map(place => ({ place, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
@@ -916,7 +998,7 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       240_000,
     );
 
-    inPart(test.skipIf(!isLinux || isASAN))(
+    inPart(test.skipIf(!isLinux || isASAN || !without("a locked environment")))(
       "the main thread exits while a Worker of its own waits for room, and that one never starts, where the exit waits for every thread",
       async () => {
         const [result] = await runEach(
@@ -951,6 +1033,30 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
         });
       },
       120_000,
+    );
+
+    test.skipIf(!isLinux || isASAN).each(
+      dealt([
+        // It has grown ahead of need.
+        ["passes a power of two", 1_040_000, 1_060_000, "no error\n1060000 true\n"],
+        // It is time to grow.
+        ["fills three eighths of the buckets", 1_560_000, 1_600_000, "true true\n1600000 true\n"],
+      ] as const),
+    )(
+      "a program goes on where the number of its Symbols %s and their table finds no room to grow",
+      async (_, first, last, stdout) => {
+        const limits = [1280, 1792].map(megabytes => megabytes * 1024);
+        const results = await runWithinEach(
+          limits,
+          keepsSymbolsWhereTheirTableFindsNoRoom,
+          String(first),
+          String(last),
+        );
+        expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
+          limits.map(limit => ({ limit, stdout, stderr: "", exitCode: 0 })),
+        );
+      },
+      240_000,
     );
   });
 }

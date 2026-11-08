@@ -2,10 +2,12 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{JSValue, JsResult};
 
 use super::Expect;
+use super::Received;
 use super::get_signature;
 use super::throw;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_throw_error_matching_snapshot(
         &self,
         this_value: JsWrapper<'_, Self>,
@@ -56,7 +58,7 @@ impl Expect {
 
         let hint = hint_string.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |s| s.to_utf8());
 
-        let Some(value): Option<JSValue> = this.fn_to_err_string_or_undefined(
+        let (Some(thrown), _) = this.get_value_as_to_throw(
             global,
             this.get_value(
                 global,
@@ -75,6 +77,6 @@ impl Expect {
             );
         };
 
-        this.snapshot(global, value, None, hint.slice(), "toThrowErrorMatchingSnapshot")
+        this.snapshot(global, Received::Thrown(thrown), None, hint.slice(), "toThrowErrorMatchingSnapshot")
     }
 }

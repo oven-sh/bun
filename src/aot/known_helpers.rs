@@ -19,9 +19,10 @@ pub use self::quiet::Quiet;
 pub use self::resolve::{
     KnownCallee, PrivateFieldAccess, PrivateFieldCall, PrivateMemberKind, PrivateStateKind,
     PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, resolve_callee,
-    resolve_private_field_call, resolve_reference,
+    resolve_loaded_reference, resolve_private_field_call, resolve_reference,
 };
 
+use crate::builtins::id::BuiltinId;
 use crate::ir::{InParallel, for_each_mut};
 use crate::modules::ModuleGraph;
 use bun_sema::atom::Atom;
@@ -64,7 +65,22 @@ fn reads_private_state(helper: Helper) -> bool {
 }
 
 impl KnownHelpers {
-    pub fn compute(files: &Files<'_>, in_parallel: InParallel<'_>) -> KnownHelpers {
+    pub fn keep_private_states_in_collections(&mut self, replaced: &[u32]) {
+        if private_state::replaces_method_of_collections(replaced) {
+            self.private_states = Vec::new();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compute(files: &Files<'_>, in_parallel: InParallel<'_>) -> KnownHelpers {
+        KnownHelpers::compute_below_added_names(files, &[], in_parallel)
+    }
+
+    pub fn compute_below_added_names(
+        files: &Files<'_>,
+        names_added_to_builtins: &[(BuiltinId, Atom)],
+        in_parallel: InParallel<'_>,
+    ) -> KnownHelpers {
         let mut found: Vec<(FileId, FileHelpers)> = files
             .compiled_files()
             .iter()
@@ -74,7 +90,7 @@ impl KnownHelpers {
         for_each_mut(&mut found, in_parallel, &|(file, helpers)| {
             let is_held_early =
                 || held_early.get_or_init(|| find_files_held_early(files))[file.idx()];
-            *helpers = find::find_in_file(files, *file, &is_held_early);
+            *helpers = find::find_in_file(files, *file, names_added_to_builtins, &is_held_early);
         });
         let file_count = files.modules.len();
         let mut known = KnownHelpers::default();
@@ -142,7 +158,6 @@ impl KnownHelpers {
     fn find_called_symbol(files: &Files<'_>, file: FileId, callee: ExprId) -> Option<SymbolId> {
         let (hir, bound) = (files.hir(file), files.bound(file));
         let mut callee = hir.skip_type_assertions(callee);
-        // `(0, helper)(..)`
         while let ExprKind::Binary {
             op: BinOp::Comma,
             left,
@@ -165,7 +180,6 @@ impl KnownHelpers {
         }
     }
 
-    /// The helper that a callee is whenever the call runs.
     pub fn certain_callee(
         &self,
         files: &Files<'_>,

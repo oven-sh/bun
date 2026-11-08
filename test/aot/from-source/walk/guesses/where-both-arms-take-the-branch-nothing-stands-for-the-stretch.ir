@@ -1,0 +1,23 @@
+# `const math = kit.math; const floor = math.floor; if (math) return floor(2.5) + kit.bias;`: `kit.bias` in the taken target leans on the proof of `kit`, so each arm of the guess ends with the branch of the block: no arm comes through.
+# The branch writes a proof of `math` on its edges, which counts as a mention behind the stretch, and `math` is not live at the targets, so it travels on no edge. The meeting binds nothing where no arm comes through.
+# So `math` stayed bound to the read of a slot that the typed run has built, proven to be Math. The taken target is walked for the closed way too: the call looked back through the read of `floor` and was built as Math.floor, folded.
+# f2 = read
+# -- source: kit.ts
+# class Kit { math = Math; bias = 1; }
+# const kits: Kit[] = [new Kit(), new Kit()];
+# kits.push(JSON.parse('{"math":0,"bias":1}', (key, value) => (key === "math" ? { floor: () => -1 } : value)));
+# function noise(): number { return JSON.parse("0"); }
+# function read(i: number): number {
+#   const kit = kits[i];
+#   const math = kit.math;
+#   const floor = math.floor;
+#   if (math) return floor(2.5) + kit.bias;
+#   return noise() + noise() + noise();
+# }
+# console.log(read(0), read(1), read(2));
+# -- end of source
+# RUN(MEET): walk f2 mechanisms=all
+# REQUIRES(MEET): entries-of-bun
+# MEET-LABEL: code f2:Body
+# MEET: = ShapeTest
+# MEET: = Call {{*}}calleeName="floor"

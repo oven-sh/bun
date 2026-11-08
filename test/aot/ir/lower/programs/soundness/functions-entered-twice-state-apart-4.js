@@ -794,98 +794,73 @@ await (async () => {
 
 // GENERATED: m call C [Symbol.species] make run
 // CHECK-LABEL: function {{*}}name="m"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}, {type=[[f_2]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: [[f_2]], v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Call v1 calleeName="once"
-// CHECK-NEXT: v4 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = ToBoolean v4
-// CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v6):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v7 = Builtin builtin=Object
-// CHECK-NEXT: v8 = Builtin builtin=ObjectValues
-// CHECK-NEXT: v9 = GetEnvironmentField v0 layout=[[L_1]] field=1
-// CHECK-NEXT: v10 = CheckInitialized v9 name="o"
-// CHECK-NEXT: v11 = Call v8, v7, v10 calleeName="Object.values"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|[[f_3]]> flags=[IsExpected]}
-// CHECK-NEXT: v13 = Integer
-// CHECK-NEXT: v14 = ElemGet v12, v13
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v16 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v17 = Integer integer=1
-// CHECK-NEXT: v18 = Sub v16, v17
-// CHECK-NEXT: v19 = Call v15, v12, v18
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b4(v20):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v21 = Undefined
-// CHECK-NEXT: Return v21
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}, {type=anything variableName="all"}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: anything):
+// CHECK-NEXT: v3 = CallDirect v1 function=[[f_2]]
+// CHECK-NEXT: v4 = ToBoolean v2
+// CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b2()
+// CHECK-NEXT: b1(v5):
+// CHECK-NEXT: v6 = Builtin builtin=Object
+// CHECK-NEXT: v7 = Builtin builtin=ObjectValues
+// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_1]]
+// CHECK-NEXT: v9 = CheckInitialized v8 name="o"
+// CHECK-NEXT: v10 = Call v7, v6, v9 calleeName="Object.values"
+// CHECK-NEXT: v11 = Integer
+// CHECK-NEXT: v12 = ElemGet v10, v11
+// CHECK-NEXT: v13 = Integer integer=1
+// CHECK-NEXT: v14 = Sub v2, v13
+// CHECK-NEXT: v15 = Call v12, v10, v14
+// CHECK-NEXT: Jump -> next b2()
+// CHECK-NEXT: b2():
+// CHECK-NEXT: v16 = Undefined
+// CHECK-NEXT: Return v16
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="call"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_4]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[f_3]] flags=[IsExpected]}] results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: undefined|null|[[f_3]]):
 // CHECK-NEXT: v1 = Builtin builtin=Reflect
 // CHECK-NEXT: v2 = Builtin builtin=ReflectApply
 // CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: v4 = Data data=[[d_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v6 = Call v2, v1, v0, v3, v5 calleeName="Reflect.apply"
-// CHECK-NEXT: ReturnCall v6
+// CHECK-NEXT: v4 = Data data=[[d_4]]
+// CHECK-NEXT: v5 = Call v2, v1, v0, v3, v4 calleeName="Reflect.apply"
+// CHECK-NEXT: ReturnCall v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_6]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_6]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
+// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]]}
 // CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.species]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] captures=[{type=[[f_7]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_8]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: [[f_7]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Call v0 calleeName="once"
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] captures=[{type=anything variableName="all"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything):
+// CHECK-NEXT: v1 = CallDirect v0 function=[[f_6]]
 // CHECK-NEXT: v2 = Builtin builtin=Array
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: Return v3
+// CHECK-NEXT: Return v2
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
 // CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_9]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_9]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_9]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
+// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_7]]
+// CHECK-NEXT: v2 = NewObject v1 layout=[[L_7]]
+// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_7]]}
 // CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=env [[L_10]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|[[f_11]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: env [[L_10]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewClosure function=[[f_12]]
-// CHECK-NEXT: v2 = NewClass v1 layout=[[L_13]]
-// CHECK-NEXT: v3 = FinishClass v2 layout=[[L_13]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=function flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = CallDirect v0, v2, v4 function=[[f_14]]
-// CHECK-NEXT: v6 = Convert v3 declared={type=undefined|null|[[f_11]] flags=[IsExpected]}
-// CHECK-NEXT: Return v6
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] captures=[{type=anything variableName="all"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: anything):
+// CHECK-NEXT: v1 = NewClosure function=[[f_8]]
+// CHECK-NEXT: v2 = NewClass v1 layout=[[L_9]]
+// CHECK-NEXT: v3 = FinishClass v2 layout=[[L_9]]
+// CHECK-NEXT: v4 = Convert v3 declared={type=function flags=[IsFromCompiler]}
+// CHECK-NEXT: v5 = CallDirect v0, v2, v4 function=[[f_10]]
+// CHECK-NEXT: Return v3
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=[[f_15]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_16]]] {
-// CHECK-NEXT: b0(v0: [[f_15]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow captures=[{type=[[f_11]] flags=[IsFromCompiler] variableName="tag"}] thisType={type=anything} results=[{type=anything}] {
+// CHECK-NEXT: b0(v0: [[f_11]]):
 // CHECK-NEXT: v1 = NewTemplateObject templateStrings=[{cooked="x" raw="x"}]
 // CHECK-NEXT: v2 = Call v0, -, v1 calleeName="tag"
 // CHECK-NEXT: ReturnCall v2

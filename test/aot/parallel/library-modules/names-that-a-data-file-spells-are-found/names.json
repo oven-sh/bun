@@ -1,0 +1,1 @@
+{ "list": ["node:os", "node:zlib"], "deep": { "one": "tty" } }

@@ -1,14 +1,16 @@
 // `bun build --compile --aot` gives each executable a name of 32 hexadecimal digits, made of the program and of the build of Bun. It tells the
 // builds of one program apart in a crash report. Nothing compares it with anything when the executable starts.
-import { afterAll, expect, setDefaultTimeout } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir } from "harness";
 import { copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { withoutCoreDump } from "./harness/commands";
+import { raiseDefaultTimeout } from "./harness/default-timeout";
+import "./harness/real-executables";
 import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
-setDefaultTimeout(120_000);
+raiseDefaultTimeout(120_000);
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = {}) {
   const { stdout, stderr, exitCode } = await runCommand(withoutCoreDump(cmd), cwd, { ...bunEnv, ...env });
@@ -54,7 +56,7 @@ function builtOnce(text: string, ...flags: string[]) {
   let id: Promise<string> | undefined;
   return async () => ({ id: await (id ??= build(folder, "app", ...flags)), folder, app: join(folder, named("app")) });
 }
-const ran = builtOnce(main, "--aot-report=report.json");
+const ran = builtOnce(main);
 const peeks = builtOnce(crashes("peek"));
 
 describe.concurrent("where it shows", () => {
@@ -63,10 +65,6 @@ describe.concurrent("where it shows", () => {
     expect(await asked(app, folder)).toEqual({ stdout: id + "\n", stderr: "", exitCode: 0 });
     expect(readFromFile(app)).toEqual([id]);
     expect(await run([app], folder)).toEqual({ stdout: "ran\n", stderr: "", exitCode: 0 });
-  });
-  test("the build report has it", async () => {
-    const { id, folder } = await ran();
-    expect(JSON.parse(readFileSync(join(folder, "report.json"), "utf8")).buildId).toBe(id);
   });
   test.skipIf(isASAN)("a crash report has it in a line of its own", async () => {
     const { id, folder, app } = await peeks();

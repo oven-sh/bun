@@ -3,8 +3,8 @@ use bun_lint::prelude::*;
 /// Disallow unnecessary concatenation of literals or template literals.
 pub struct NoUselessConcat;
 
-const UNEXPECTED_CONCAT: Message =
-    Message::new("unexpectedConcat", "Unexpected string concatenation of literals.");
+const UNEXPECTED_CONCAT: &Message =
+    &Message::new("unexpectedConcat", "Unexpected string concatenation of literals.");
 
 /// Returns the operands, if `e` is a `+`.
 fn as_concatenation(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {

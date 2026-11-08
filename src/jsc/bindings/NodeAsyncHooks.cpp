@@ -101,28 +101,25 @@ static void waitForMicrotasksInProgress(VM& vm)
     });
 }
 
-// True: this is called when AsyncLocalStorage or AsyncResource is constructed; in an executable that was compiled ahead of time, when a frame is put in place for the first time.
-// False: only in such an executable, when one of the two is constructed for the first time.
-JSC_DEFINE_HOST_FUNCTION(jsSetAsyncHooksEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+static void waitForEntriesFromBeforeFirstConstructor(VM& vm)
 {
-    ASSERT(callFrame->argumentCount() == 1);
+    ASSERT(!entriesWithoutTracking);
+    entriesWithoutTracking = new EntriesWithoutTracking;
+    entriesWithoutTracking->sinceFirstConstructor = entriesInProgress(vm);
+    waitForMicrotasksInProgress(vm);
+}
+
+void beginTrackingAsyncContexts(JSC::JSGlobalObject* globalObject)
+{
     VM& vm = globalObject->vm();
-    bool isEnabled = callFrame->uncheckedArgument(0).toBoolean(globalObject);
     if (vm.isAsyncContextTrackingEnabled())
-        return JSC::JSValue::encode(JSC::jsUndefined());
-
-    if (!isEnabled) {
-        trackingWaitsForFirstFrame = true;
-        ASSERT(!entriesWithoutTracking);
-        entriesWithoutTracking = new EntriesWithoutTracking;
-        entriesWithoutTracking->sinceFirstConstructor = entriesInProgress(vm);
-        waitForMicrotasksInProgress(vm);
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-
+        return;
     globalObject->setAsyncContextTrackingEnabled(true);
-    if (!trackingWaitsForFirstFrame)
-        return JSC::JSValue::encode(JSC::jsUndefined());
+    if (!trackingWaitsForFirstFrame) {
+        if (vm.hasCompiledCode())
+            waitForEntriesFromBeforeFirstConstructor(vm);
+        return;
+    }
 
     if (!entriesWithoutTracking)
         entriesWithoutTracking = new EntriesWithoutTracking;
@@ -135,6 +132,27 @@ JSC_DEFINE_HOST_FUNCTION(jsSetAsyncHooksEnabled, (JSC::JSGlobalObject * globalOb
         entries.shrink(entries.findIf([&](auto& entry) { return entry.frame == sinceFirstConstructor.first().frame; }));
     entriesWithoutTracking->sinceFirstFrame = WTF::move(entries);
     waitForMicrotasksInProgress(vm);
+}
+
+// True: this is called when AsyncLocalStorage or AsyncResource is constructed; in an executable that was compiled ahead of time, when a frame is put in place for the first time.
+// False: only in such an executable, when one of the two is constructed for the first time.
+JSC_DEFINE_HOST_FUNCTION(jsSetAsyncHooksEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    ASSERT(callFrame->argumentCount() == 1);
+    VM& vm = globalObject->vm();
+    bool isEnabled = callFrame->uncheckedArgument(0).toBoolean(globalObject);
+    if (vm.isAsyncContextTrackingEnabled())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    if (!isEnabled) {
+        if (trackingWaitsForFirstFrame)
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        trackingWaitsForFirstFrame = true;
+        waitForEntriesFromBeforeFirstConstructor(vm);
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    beginTrackingAsyncContexts(globalObject);
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

@@ -10,10 +10,10 @@ pub struct First<const OLD_NAME: bool = false> {
     absolute_first: bool,
 }
 
-const IN_BODY: Message = Message::new("", "Import in body of module; reorder to top.");
-const ABSOLUTE_AFTER_RELATIVE: Message = Message::new("", "Absolute imports should come before relative imports.");
-const FIRST: Message = Message::new("", "Import statements must come first");
-const ABSOLUTE_FIRST: Message = Message::new("", "Relative imports before absolute imports are prohibited");
+const IN_BODY: &Message = &Message::new("", "Import in body of module; reorder to top.");
+const ABSOLUTE_AFTER_RELATIVE: &Message = &Message::new("", "Absolute imports should come before relative imports.");
+const FIRST: &Message = &Message::new("", "Import statements must come first");
+const ABSOLUTE_FIRST: &Message = &Message::new("", "Relative imports before absolute imports are prohibited");
 
 fn is_relative_path(path: &[u8]) -> bool {
     path.starts_with(b"./") || path.starts_with(b"../") || path.starts_with(b"/")

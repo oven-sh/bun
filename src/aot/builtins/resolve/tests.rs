@@ -34,17 +34,23 @@ mod evaluated_text;
 mod exposure;
 mod folding;
 mod imports;
+mod module_cache;
 mod module_objects;
 mod module_values;
 mod parts_of_a_file;
 mod paths;
+mod quiet_calls;
 mod runtime_dialect;
+mod stores_behind_tests;
+mod unknown_keys;
 mod unknown_loads;
+mod written_members;
 
 const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
 
 const MODULES: &[(&str, RuntimeModule)] = &[
     ("bun:jsc", RuntimeModule::BunJsc),
+    ("bun:test", RuntimeModule::BunTest),
     ("bun", RuntimeModule::Bun),
     ("node:fs", RuntimeModule::NodeFs),
     ("node:module", RuntimeModule::NodeModule),
@@ -63,6 +69,9 @@ struct Setup {
     jsx_factory_root: Option<&'static str>,
     emits_decorator_metadata: bool,
     platform: Platforms,
+    replaced: &'static [u32],
+    runs_tests: bool,
+    is_text_asked: bool,
 }
 
 const PROGRAM: Setup = Setup {
@@ -72,14 +81,25 @@ const PROGRAM: Setup = Setup {
     jsx_factory_root: None,
     emits_decorator_metadata: false,
     platform: Platforms::LINUX,
+    replaced: &[],
+    runs_tests: false,
+    is_text_asked: true,
 };
 const SCRIPT: Setup = Setup {
     path: "/project/a.cjs",
     ..PROGRAM
 };
+const TYPED_SCRIPT: Setup = Setup {
+    path: "/project/a.cts",
+    ..PROGRAM
+};
 const RUNTIME: Setup = Setup {
     path: "/$bun/js/node/example.ts",
     dialect: SourceDialect::Runtime,
+    ..PROGRAM
+};
+const TEST_RUN: Setup = Setup {
+    runs_tests: true,
     ..PROGRAM
 };
 
@@ -90,7 +110,6 @@ struct Case<'a, 's> {
     hir: &'a hir::File<'s>,
     bound: &'a Bound<'s>,
     resolved: &'a ResolvedBuiltins,
-    // How many expressions the resolver has kept a state of.
     states: usize,
 }
 
@@ -143,11 +162,10 @@ fn find_target(atoms: &Interner<'_>, specifier: ImportSpecifier) -> Option<Runti
     module.map(|module| module.1)
 }
 
-// The facts of the file change nothing in what is found in a part of it.
 fn assert_same_answers(with_facts: &ResolvedBuiltins, without: &ResolvedBuiltins, source: &str) {
     let describe = |resolved: &ResolvedBuiltins| {
         format!(
-            "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+            "{:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?} {:?}",
             resolved.exprs,
             resolved.expr_bits,
             resolved.exprs_with_side_effects,
@@ -155,20 +173,38 @@ fn assert_same_answers(with_facts: &ResolvedBuiltins, without: &ResolvedBuiltins
             resolved.evaluated_texts,
             resolved.module_object_mentions,
             resolved.stores_with_module_exports,
+            resolved.replaced_members,
+            resolved.opened_holders,
+            resolved.names_added,
+            resolved.spy_calls,
+            resolved.hands_spy_on,
+            resolved.hands_mock_on,
+            resolved.resets_modules,
+            resolved.stores_loader_functions,
             resolved.mentioned,
             resolved.exposed,
             resolved.uses,
             resolved.loads_unknown_modules,
+            resolved.hands_on_loader_of_paths,
         )
     };
     assert_eq!(describe(with_facts), describe(without), "{source}");
+}
+
+fn assert_no_writes_are_found(resolved: &ResolvedBuiltins, source: &str) {
+    let finds_nothing = resolved.replaced_members().is_empty()
+        && resolved.opened_holders().is_empty()
+        && resolved.spy_calls().is_empty()
+        && !resolved.hands_spy_on()
+        && !resolved.hands_mock_on()
+        && !resolved.resets_modules();
+    assert!(finds_nothing, "{source}");
 }
 
 fn with_case<R>(setup: Setup, source: &str, then: impl FnOnce(&Case<'_, '_>) -> R) -> R {
     with_parts(setup, source, None, then)
 }
 
-// `parts`: only the code in these pieces of the source counts. They stand in it in this order, each once.
 fn with_parts<R>(
     setup: Setup,
     source: &str,
@@ -185,7 +221,7 @@ fn with_parts<R>(
         experimental_decorators: setup.emits_decorator_metadata,
         every_file_is_a_module: false,
         reads_jsdoc: true,
-        keeps_function_directives: false,
+        ignores_pure_comments: false,
     };
     let mut hir = parse_for_compile(arena, &parse_options, source.as_bytes(), &atoms);
     hir.text = Cow::Borrowed(source.as_bytes());
@@ -195,12 +231,15 @@ fn with_parts<R>(
         runtime: Some(RuntimeBindOptions {
             jsx_factory_root: jsx_factory_root.map(|root| atoms.intern(root.as_bytes())),
             jsx_fragment_root: None,
+            jsx_paths: [hir.jsx_pragmas.factory, hir.jsx_pragmas.fragment_factory]
+                .map(|written| written.is_some().then_some(written)),
             emits_decorator_metadata: setup.emits_decorator_metadata,
             hoists_top_level_variables: false,
+            object_prototype_takes_names: false,
         }),
         ..BindOptions::default()
     };
-    let declared_module_type = match setup.path.ends_with(".cjs") {
+    let declared_module_type = match setup.path.ends_with(".cjs") || setup.path.ends_with(".cts") {
         true => DeclaredModuleType::CommonJs,
         false => DeclaredModuleType::Unknown,
     };
@@ -210,6 +249,7 @@ fn with_parts<R>(
         is_library: false,
         host_values: &[],
         jsx: JsxMode::Classic,
+        own_name: b"",
     };
     let (bound, analysis) = analyze_file(&mut hir, bind_options, &fold, file, &atoms, arena);
     assert!(
@@ -227,11 +267,16 @@ fn with_parts<R>(
         hir: &hir,
         bound: &bound,
         decisions: &analysis.decisions,
+        atoms: &atoms,
         module_format: analysis.module_format,
         targets: &targets,
         names: &names,
         platform: setup.platform,
         dialect: setup.dialect,
+        replaced: setup.replaced,
+        runs_tests: setup.runs_tests,
+        holds_language: false,
+        is_text_asked: setup.is_text_asked,
     };
     let range_of = |part: &&str| {
         let start = source.find(part).expect("the part stands in the source") as u32;
@@ -265,6 +310,9 @@ fn with_parts<R>(
         }
         Some(_) => resolve_part(ranges_of_parts.as_deref().unwrap_or_default()),
     };
+    if !setup.runs_tests {
+        assert_no_writes_are_found(&resolved, source);
+    }
     then(&Case {
         source,
         atoms: &atoms,
@@ -455,4 +503,47 @@ fn jsc_namespace() -> BuiltinId {
 
 fn jsc_heap_stats() -> BuiltinId {
     find_member(jsc_namespace(), "heapStats").expect("bun:jsc exports heapStats")
+}
+
+#[test]
+fn what_the_run_replaces_is_unlocked_in_every_answer() {
+    let locked = Mutability::AlwaysLocked;
+    let predicted = Mutability::ConstantUnlessWritten;
+    let source = "import jsc from \"bun:jsc\"; jsc; Array.prototype.push; Array.prototype.pop;";
+    with_case(TEST_RUN, source, |case| {
+        let push = case.expr("Array.prototype.push");
+        let answers = || {
+            let steps = case.resolved.global_path(case.hir, case.bound, push);
+            let paths = [
+                case.path_at(push),
+                steps.map(|steps| steps[0]),
+                case.path("jsc"),
+                case.symbol("jsc"),
+            ];
+            paths.map(|path| path.map(|path| path.mutability))
+        };
+        assert_eq!(answers(), [Some(locked); 4]);
+        let mut replaced = [BuiltinId::ArrayPrototypePush, jsc_namespace()];
+        replaced.sort_unstable();
+        let replaced = replaced.iter().map(|member| member.to_wire());
+        case.resolved.unlock(replaced.collect());
+        assert_eq!(answers(), [Some(predicted); 4]);
+        assert_mutability(case, "Array.prototype.pop", locked);
+        assert_mutability(case, "Array.prototype", locked);
+    });
+    let script = Setup {
+        runs_tests: true,
+        ..SCRIPT
+    };
+    with_case(script, "require;", |case| {
+        let answer = || {
+            let variable = bun_sema::bind::CommonJsVariable::Require;
+            let path = case.resolved.commonjs_variable(variable);
+            path.map(|path| path.mutability)
+        };
+        assert_eq!(answer(), Some(locked));
+        let replaced = [BuiltinId::ModuleRequire.to_wire()];
+        case.resolved.unlock(replaced.into());
+        assert_eq!(answer(), Some(predicted));
+    });
 }

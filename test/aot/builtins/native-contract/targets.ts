@@ -46,7 +46,7 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/doConnect|clusterRawBind|sendHelperPrimary|emitHandleIPCMessage/, "it opens a connection or writes to the channel of a parent process"],
   [/^%(Quic\w+|PostgresSQL\w+|MySQL\w+|PostgresBinding|MysqlBinding)%|node_quic_binding|postgres\.bind\.ts|mysql\.bind\.ts/, "it needs a server that the test does not have"],
   [
-    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
+    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|TestEnvironment\.?[Cc]pp|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
     "only the code of Bun and of the engine calls it, and it takes the kinds of its operands on trust",
   ],
   [
@@ -60,9 +60,9 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   ],
 ]);
 
-// Behind such a call others do something else: no connection is secured with ciphers that do not exist, and no request has a head of one byte.
+// Behind such a call others do something else: no connection is secured with ciphers that do not exist, no request has a head of one byte, and what `process` lacks is looked for on an operand of the test.
 // It is among the last calls of its process.
-export const leavesProcessChanged = /setTLSDefaultCiphers|setMaxHTTPHeaderSize/i;
+export const leavesProcessChanged = /setTLSDefaultCiphers|setMaxHTTPHeaderSize|MakeProcessInheritFrom/i;
 
 export function reasonTargetIsSkipped(path: string): string | undefined {
   for (const [pattern, reason] of neverCalledNatives) if (pattern.test(path)) return reason;

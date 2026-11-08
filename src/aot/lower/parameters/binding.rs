@@ -1,12 +1,16 @@
-use bun_sema::bind::{Binding, Bound, CodeUnit, Decl, SymbolId, has_simple_parameter_list};
+use bun_sema::bind::{
+    Binding, Bound, CodeUnit, Decl, ScopeId, SymbolId, has_simple_parameter_list,
+};
 use bun_sema::hir::{self, FnId, FnKind, ParamId, PatId, PatKind};
+use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
 use crate::ir::generated::FunctionFlags;
 use crate::ir::{DeclaredType, ValueId};
-use crate::lower::pattern::{PatternNode, apply_default_with};
-use crate::lower::scope::{BindingForm, BindingRef, ScopeSlot, Storage};
-use crate::lower::{FileLowering, FunctionLowering, convert, scope};
+use crate::lower::captures::Capture;
+use crate::lower::pattern::{DefaultHolder, PatternNode, apply_default_with};
+use crate::lower::scope::{BindingForm, BindingRef, DeadZone, ScopeSlot, Storage};
+use crate::lower::{FileLowering, FunctionLowering, scope};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_parameters(&mut self, source: FnId) {
@@ -39,12 +43,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             }
             initial.reverse();
-            initial.sort_by_key(|entry| entry.0);
+            initial.shared_sort_by_key(|entry| entry.0);
             initial.dedup_by_key(|entry| entry.0);
-            self.allocate_scope(top, &initial);
+            self.allocate_scope_of_function(top, &initial);
         } else {
-            self.allocate_scope(top, &initial);
-            let mut mapped = self.file.parameters_position(source);
+            self.allocate_scope_of_function(top, &initial);
             for (index, parameter) in parameters.iter().enumerate() {
                 let node = hir[parameter];
                 self.set_position(node.pos);
@@ -53,24 +56,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 match hir[node.pat].kind {
                     PatKind::Ident(name) => {
                         let symbol = self.file.bound.declared_symbol(Decl::Param(node.pat));
-                        if !self.is_kept_in_register(Binding::Symbol(symbol)) {
-                            let recorded = self.file.recorded_binding_position(node.pat);
-                            self.builder.record_position(recorded);
-                        }
                         self.initialize_converted_symbol(symbol, name, value);
                     }
                     PatKind::Object(_) | PatKind::Array(_) => {
-                        self.bind_pattern(node.pat, value, None, mapped);
+                        self.bind_pattern(node.pat, value, None);
                     }
                     PatKind::Missing => {}
                 }
-                mapped = match node.default.some() {
-                    Some(default) => self.file.last_mapped_position(default),
-                    None => {
-                        let last = self.file.last_mapped_pattern_position(node.pat);
-                        last.unwrap_or(mapped)
-                    }
-                };
             }
         }
         let bound = self.file.bound;
@@ -81,10 +73,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let name = bound.symbol(copy.variable).name;
             let value = self.get_binding(Binding::Symbol(copy.parameter), name);
             scope::initialize_binding(self, Binding::Symbol(copy.variable), name, value);
-        }
-        let flags = self.builder.function().flags;
-        if flags.contains(FunctionFlags::IS_GENERATOR) {
-            self.builder.begin_code_with_records_of_its_own();
         }
         self.instantiate_functions(top);
         self.list_held_bindings(source);
@@ -98,11 +86,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let top = self.file.bound.fns[source.idx()].scope;
         let symbols = parameter_symbols(self.file.hir, self.file.bound, source);
         let names = symbols.into_iter().map(BindingRef::Symbol);
-        let arguments = BindingRef::Slot(top, ScopeSlot::Arguments);
-        self.coroutine.held = names.chain([arguments]).collect();
+        let slots = [ScopeSlot::This, ScopeSlot::Arguments];
+        let slots = slots.map(|slot| BindingRef::Slot(top, slot));
+        self.coroutine.held = names.chain(slots).collect();
     }
 
-    // What the names of the parameters hold here. A name that closures share lies in an environment.
     pub(in crate::lower) fn get_held_values(&mut self) -> SmallVec<[ValueId; 4]> {
         let mut values: SmallVec<[ValueId; 4]> = SmallVec::new();
         for index in 0..self.coroutine.held.len() {
@@ -120,7 +108,33 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 values.push(value);
             }
         }
+        for index in 0..self.file.scopes.list_registries().len() {
+            let (scope, binding) = self.file.scopes.list_registries()[index];
+            match self.find_holder_of_registry(scope, binding) {
+                Some(value) if !values.contains(&value) => values.push(value),
+                Some(_) | None => {}
+            }
+        }
         values
+    }
+
+    fn find_holder_of_registry(&mut self, scope: ScopeId, binding: BindingRef) -> Option<ValueId> {
+        if let Some(copy) = self.find_captured_value(Capture::Value(binding)) {
+            return Some(copy);
+        }
+        match self.file.scopes.placement(binding)?.storage {
+            Storage::Field { scope, .. } => {
+                let captured = self.find_captured_value(Capture::Environment(scope));
+                let entered = self.scopes.find_environment(scope);
+                (captured.is_some() || entered.is_some()).then(|| self.get_environment(scope))
+            }
+            Storage::Local if self.scopes.is_entered(scope) => {
+                let local = self.scopes.find_local(binding)?;
+                let is_initialized = local.dead_zone != DeadZone::Uninitialized;
+                is_initialized.then(|| self.builder.read_variable(local.variable))
+            }
+            Storage::Local | Storage::Variable(_) => None,
+        }
     }
 }
 
@@ -164,15 +178,13 @@ fn apply_default(
     let hir = lowering.file.hir;
     let node = hir[parameter];
     let target = PatternNode::Binding(node.pat);
-    // The parameter takes `undefined` for an argument that is left out. The binding behind the default does not.
     apply_default_with(
         lowering,
         value,
         node.default,
         target,
+        DefaultHolder::Parameter,
         &mut |lowering, default| {
-            let subject = convert::Int32Subject::Parameter(parameter);
-            lowering.describe_int32_flow(position, subject, Some(node.default));
             let initialized = match hir[node.pat].kind {
                 PatKind::Ident(_) => {
                     let symbol = lowering.file.bound.declared_symbol(Decl::Param(node.pat));
@@ -186,7 +198,6 @@ fn apply_default(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // The source map of Bun's transpiler knows the `(` of a function and the first token of an arrow function.
     pub(in crate::lower) fn parameters_position(&self, function: FnId) -> u32 {
         let node = self.hir[function];
         match node.kind {

@@ -1,0 +1,19 @@
+# the receiver is what a call of a known generator function gives. The body is resumed where the call stands, behind the step's own question whether anything lies on the generator or above it: the written read of next lets it escape, so nothing proves that.
+# no result object is made: the reads of value and done behind the call are answered by what the step has handed back, or made as written off what the call as written has answered
+# f1 = count, f2 = firstTwo
+# -- source: next-written-by-hand-steps-the-generator-where-the-call-stands.ts
+# declare function sink(...values: unknown[]): void;
+# function* count(n: number) { for (let i = 0; i < n; i++) yield i; }
+# function firstTwo(n: number) { const g = count(n); const a = g.next(); const b = g.next(); return [a.value, b.done]; }
+# sink(firstTwo);
+# -- end of source
+# LIBRARY: own
+# RUN: walk f2 mechanisms=none+DirectCalls+BuiltinCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: [[step]]: {{*}} = StepGenerator
+# CHECK: = ResultAt [[step]]
+# RUN(ALL): walk f2 mechanisms=all
+# ALL-LABEL: code f2:Body
+# ALL: = StepGenerator {{*}}check=IsUnmodified 
+# RUN(NONE): walk f2 mechanisms=all
+# NONE-NOT: = NewObject

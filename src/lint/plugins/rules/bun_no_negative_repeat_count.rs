@@ -6,11 +6,11 @@ use smallvec::{SmallVec, smallvec};
 /// Disallow a `String.prototype.repeat()` count that comes from a subtraction and has no lower bound.
 pub struct NoNegativeRepeatCount;
 
-const UNBOUNDED_COUNT: Message = Message::new(
+const UNBOUNDED_COUNT: &Message = &Message::new(
     "unboundedCount",
     "`repeat()` throws a `RangeError` if this count is negative. Give it a lower bound.",
 );
-const CLAMP: Message = Message::new("clamp", "Add a lower bound of zero.");
+const CLAMP: &Message = &Message::new("clamp", "Add a lower bound of zero.");
 
 /// The name of the global `Math` function that `call` calls.
 fn math_function(call: Call<'_>) -> Option<Name<'_>> {

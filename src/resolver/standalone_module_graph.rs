@@ -132,15 +132,37 @@ pub trait StandaloneModuleGraph: Send + Sync {
             self.compiled_program().is_some() && Resolver::import_path_names_directory(specifier);
         let file = match is_embedded && !is_left_to_program {
             true => self.resolve(source_dir, specifier).or_else(|| {
-                // An entry point above the root directory of the build is a file of the graph under `_.._`.
-                self.compiled_program()?;
+                let program = self.compiled_program()?;
                 let public_root = self.base_public_path_with_default_suffix();
-                let path =
-                    crate::compiled_program::join_public_path(public_root, source_dir, specifier)?;
+                let path = program.join_public_path(public_root, source_dir, specifier)?;
                 self.resolve(source_dir, &path)
             }),
             false => None,
         };
+        // `require(__dirname + "/data.json")`: the path is that of the machine that built the program, a second name for a file that
+        // `--asset` gave the executable. So is `createRequire(__filename)("./data.json")`. The disk wins where it has the path.
+        let file = file.or_else(|| {
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+            let program = self.compiled_program().filter(|_| !is_left_to_program)?;
+            let public_root = self.base_public_path_with_default_suffix();
+            let mut buffer = bun_paths::path_buffer_pool::get();
+            let on_build_machine = match bun_paths::is_absolute(specifier) {
+                true => specifier,
+                false if crate::compiled_program::is_relative_specifier(specifier) => {
+                    join_abs_string_buf_checked::<platform::Auto>(
+                        source_dir,
+                        &mut buffer[..],
+                        &[specifier],
+                    )?
+                }
+                false => return None,
+            };
+            let path = program.public_path_of_source(public_root, on_build_machine)?;
+            match bun_sys::exists(on_build_machine) {
+                true => None,
+                false => self.resolve(public_root, &path),
+            }
+        });
         let module = file.map(|name| match self.compiled_entry_point(name) {
             Some(entry_point) => entry_point.module_path,
             None => name,
@@ -148,7 +170,27 @@ pub trait StandaloneModuleGraph: Send + Sync {
         module.or_else(|| {
             let program = self.compiled_program()?;
             let public_root = self.base_public_path_with_default_suffix();
-            program.resolve_module(public_root, source_dir, specifier, is_require, search)
+            let module =
+                program.resolve_module(public_root, source_dir, specifier, is_require, search);
+            let module = module.or_else(|| {
+                program.resolve_module_through_root_folders(
+                    public_root,
+                    source_dir,
+                    specifier,
+                    is_require,
+                    search,
+                )
+            });
+            // `require(__dirname + "/a.js")`: the path is that of the machine that built the program, and the module is in the executable.
+            module.or_else(|| {
+                program.resolve_module_on_disk(
+                    public_root,
+                    source_dir,
+                    specifier,
+                    is_require,
+                    search,
+                )
+            })
         })
     }
     /// `CompiledProgram::resolve_package`.
@@ -163,15 +205,41 @@ pub trait StandaloneModuleGraph: Send + Sync {
             return PackageLookup::Unknown;
         };
         let public_root = self.base_public_path_with_default_suffix();
+        // `createRequire(__filename)("a-package")`
+        let known_to_program = program.public_path_of_source(public_root, source_dir);
+        let source_dir = known_to_program.as_deref().unwrap_or(source_dir);
         program.resolve_package(public_root, source_dir, specifier, is_require, search)
+    }
+    /// `CompiledProgram::root_beside_executable`
+    fn root_beside_executable(&self) -> Option<Vec<u8>> {
+        let program = self.compiled_program()?;
+        if let Some(file) = crate::compiled_program::FILE_IN_PLACE_OF_EXECUTABLE.get() {
+            return program.root_beside_executable(&file.path);
+        }
+        let executable = bun_core::self_exe_path().ok()?;
+        program.root_beside_executable(executable.as_bytes())
+    }
+    fn root_on_disk(&self) -> Option<Vec<u8>> {
+        let program = self.compiled_program()?;
+        if !program.allows_code_from_disk {
+            return None;
+        }
+        if let Some(root) = self.root_beside_executable() {
+            return Some(root);
+        }
+        if !program.knows_root_on_disk() {
+            return None;
+        }
+        program.root_on_disk(crate::fs::FileSystem::get().top_level_dir())
     }
     /// `compiled_program::directories_of_importer`.
     fn directories_of_importer(&self, source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
-        if self.compiled_program().is_none() {
+        let Some(program) = self.compiled_program() else {
             return Vec::new();
-        }
+        };
         let public_root = self.base_public_path_with_default_suffix();
-        crate::compiled_program::directories_of_importer(public_root, source_dir, base)
+        let levels = program.levels_above_root();
+        crate::compiled_program::directories_of_importer(public_root, levels, source_dir, base)
     }
     /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — the
     /// virtual-root prefix used for embedded modules (e.g. `/$bunfs/root/`).

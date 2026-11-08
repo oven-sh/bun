@@ -1,11 +1,11 @@
-mod namespace_members;
-
 use super::*;
 use crate::builtins::BuiltinId;
-use crate::modules::testing::{file_named, symbol_named, with_graph};
+use crate::modules::testing::{
+    file_named, member_named, symbol_named, with_graph, with_test_run_graph,
+};
 use crate::modules::{
-    ExportBinding, ExportLookup, FailureEffect, ModuleFailure, ModuleGraph, SiteAnswer,
-    SyntheticExport, SyntheticExportId,
+    ExportBinding, ExportLookup, FailureEffect, Member, ModuleFailure, ModuleGraph, Shape,
+    SiteAnswer, SyntheticExport, SyntheticExportId, View,
 };
 
 const ELEMENT: &str = "export const element = <div />;";
@@ -18,6 +18,10 @@ struct BoundProgram<'a, 'i, 's> {
 
 fn with_program(files: &[(&str, &str)], check: impl FnOnce(&BoundProgram<'_, '_, '_>)) {
     with_graph(files, |graph, input| check(&BoundProgram { graph, input }));
+}
+
+fn with_test_run(files: &[(&str, &str)], check: impl FnOnce(&BoundProgram<'_, '_, '_>)) {
+    with_test_run_graph(files, |graph, input| check(&BoundProgram { graph, input }));
 }
 
 impl BoundProgram<'_, '_, '_> {
@@ -33,6 +37,7 @@ impl BoundProgram<'_, '_, '_> {
         ModuleRef::External {
             importer: self.file(importer),
             specifier: self.atom(specifier),
+            type_attribute: None,
         }
     }
 
@@ -86,7 +91,6 @@ impl BoundProgram<'_, '_, '_> {
         self.graph.required_names(self.file(file))
     }
 
-    /// `export { name as export_name } from "specifier"` asks for the name.
     fn exported(&self, name: RequiredName, export_name: &str, specifier: &str) -> RequiredName {
         RequiredName {
             asked_by: Some(ExportStatement {
@@ -183,7 +187,6 @@ fn commonjs_names_are_synthetic_exports() {
         assert_eq!(program.synthetic_id("second.js", "x"), x);
         assert_ne!(other, x);
 
-        // The module has no `__esModule`, so its default export is what it exports as a whole, which needs no name.
         let module = program.module("c.cjs");
         assert_eq!(
             program.binding("main.js", "d"),
@@ -879,4 +882,639 @@ fn jsx_import_failure_is_an_import_failure() {
         assert_eq!(specifier, program.atom("react/jsx-dev-runtime"));
         assert!(program.graph.failures().is_empty());
     });
+}
+
+const ES_MODULE: (&str, &str) = ("es.js", "export const x = 1;");
+
+impl BoundProgram<'_, '_, '_> {
+    fn member_bindings(&self, file: &str) -> Vec<ImportBinding> {
+        let file = self.file(file);
+        let exprs = (0..self.input.files.hir(file).exprs.len() as u32).map(ExprId);
+        exprs
+            .filter_map(|expr| self.graph.member_binding(file, expr))
+            .collect()
+    }
+
+    fn member_binding(&self, file: &str, name: &str) -> Option<ImportBinding> {
+        let file = self.file(file);
+        let member = member_named(self.input, file, name);
+        self.graph.member_binding(file, member)
+    }
+
+    fn member(&self, file: &str, name: &str) -> Option<Member> {
+        let file = self.file(file);
+        self.graph
+            .member(file, member_named(self.input, file, name))
+    }
+
+    fn holder(&self, file: &str, name: &str) -> Option<View> {
+        let file = self.file(file);
+        self.graph
+            .holder(file, symbol_named(self.input, file, name))
+    }
+
+    fn variable(&self, module: &str, name: &str) -> SyntheticExportId {
+        let variable = self.graph.variable_of(self.module(module), self.atom(name));
+        variable.expect("no binding asks for the name")
+    }
+
+    fn call_of_require(&self, file: &str) -> ExprId {
+        let sites = self
+            .input
+            .files
+            .analysis(self.file(file))
+            .import_sites
+            .iter();
+        let calls = sites.filter_map(|site| match site.kind {
+            ImportSiteKind::Require(call) => Some(call),
+            _ => None,
+        });
+        let calls: Vec<ExprId> = calls.collect();
+        let [call] = calls[..] else {
+            panic!("the file calls `require` at {calls:?}");
+        };
+        call
+    }
+
+    fn is_variable_replaceable(&self, file: &str, name: &str) -> bool {
+        self.graph.is_replaceable(self.exported_symbol(file, name))
+    }
+
+    fn is_synthetic_export_replaceable(&self, module: &str, name: &str) -> bool {
+        let variable = self.variable(module, name);
+        self.graph.synthetic_export(variable).is_replaceable
+    }
+}
+
+fn assert_no_member_is_bound(files: &[(&str, &str)]) {
+    with_program(files, |program| {
+        let (importer, source) = files[0];
+        let bindings = program.member_bindings(importer);
+        assert!(bindings.is_empty(), "{source}: {bindings:?}");
+        assert!(program.graph.errors().is_empty(), "{source}");
+        assert!(program.required_names(importer).is_empty(), "{source}");
+    });
+}
+
+#[test]
+fn member_is_the_exporters_variable() {
+    let main = "
+        import * as ns from './es.js';
+        import { x } from './es.js';
+        console.log(ns.x, x);
+    ";
+    with_program(&[("main.js", main), ES_MODULE], |program| {
+        let variable = program.exported_variable("es.js", "x");
+        assert_eq!(program.member_bindings("main.js"), [variable]);
+        assert_eq!(program.member_binding("main.js", "x"), Some(variable));
+        assert_eq!(program.binding("main.js", "x"), variable);
+    });
+}
+
+#[test]
+fn member_through_re_exports_is_exporters_variable() {
+    let main = "import * as ns from './barrel.js'; console.log(ns.x, ns.renamed);";
+    let barrel = "export * from './es.js'; export { x as renamed } from './es.js';";
+    let files = [("main.js", main), ("barrel.js", barrel), ES_MODULE];
+    with_program(&files, |program| {
+        let variable = program.exported_variable("es.js", "x");
+        assert_eq!(program.member_bindings("main.js"), [variable, variable]);
+    });
+}
+
+#[test]
+fn bracket_string_is_a_member() {
+    let main = "
+        import * as ns from './es.js';
+        export const read = (key) => [ns['x'], ns[`x`], ns[key]];
+    ";
+    with_program(&[("main.js", main), ES_MODULE], |program| {
+        let variable = program.exported_variable("es.js", "x");
+        assert_eq!(program.member_bindings("main.js"), [variable, variable]);
+    });
+}
+
+#[test]
+fn asserted_namespace_is_followed() {
+    let main = "
+        import * as ns from './es.ts';
+        console.log((ns as any).x, ns!.x, (ns satisfies object).x);
+    ";
+    let files = [("main.ts", main), ("es.ts", "export const x = 1;")];
+    with_program(&files, |program| {
+        let variable = program.exported_variable("es.ts", "x");
+        assert_eq!(program.member_bindings("main.ts"), [variable; 3]);
+    });
+}
+
+#[test]
+fn nested_namespace_is_followed() {
+    let main = "import * as ns from './outer.js'; console.log(ns.inner.x);";
+    let files = [
+        ("main.js", main),
+        ("outer.js", "export * as inner from './es.js';"),
+        ES_MODULE,
+    ];
+    with_program(&files, |program| {
+        let inner = program.namespace("es.js", ImportPhase::Evaluation);
+        assert_eq!(program.member_binding("main.js", "inner"), Some(inner));
+        let variable = program.exported_variable("es.js", "x");
+        assert_eq!(program.member_binding("main.js", "x"), Some(variable));
+        assert_eq!(program.member_bindings("main.js").len(), 2);
+    });
+}
+
+#[test]
+fn nested_deferred_namespace_ends_path() {
+    let main = "import * as ns from './outer.js'; console.log(ns.inner.x);";
+    let outer = "import defer * as inner from './es.js'; export { inner };";
+    let files = [("main.js", main), ("outer.js", outer), ES_MODULE];
+    with_program(&files, |program| {
+        let inner = program.namespace("es.js", ImportPhase::Defer);
+        assert_eq!(program.member_bindings("main.js"), [inner]);
+        assert_eq!(program.member_binding("main.js", "x"), None);
+    });
+}
+
+#[test]
+fn commonjs_member_gets_a_synthetic_export() {
+    let main = "import * as ns from './c.cjs'; console.log(ns.x);";
+    let files = [("main.js", main), ("c.cjs", "exports.x = 1;")];
+    with_program(&files, |program| {
+        let Some(ImportBinding::Synthetic(id)) = program.member_binding("main.js", "x") else {
+            panic!("a member of a CommonJS namespace is a synthetic export");
+        };
+        let expected = SyntheticExport {
+            module: program.module("c.cjs"),
+            name: program.atom("x"),
+            is_known_member: true,
+            is_replaceable: false,
+        };
+        assert_eq!(program.graph.synthetic_exports(), [expected]);
+        assert_eq!(id, SyntheticExportId(0));
+    });
+}
+
+#[test]
+fn imported_name_of_commonjs_module_must_exist() {
+    let main = "
+        import * as ns from './c.cjs';
+        import { x } from './c.cjs';
+        console.log(ns.x, x);
+    ";
+    let files = [("main.js", main), ("c.cjs", "exports.x = 1;")];
+    with_program(&files, |program| {
+        let id = program.synthetic_id("main.js", "x");
+        let member = program.member_binding("main.js", "x");
+        assert_eq!(member, Some(ImportBinding::Synthetic(id)));
+        assert!(!program.graph.synthetic_export(id).is_known_member);
+    });
+}
+
+#[test]
+fn host_value_member_gets_a_synthetic_export() {
+    let main = "import * as ns from 'bun:only-the-host-has-it'; console.log(ns.x);";
+    with_program(&[("main.js", main)], |program| {
+        let Some(ImportBinding::Synthetic(id)) = program.member_binding("main.js", "x") else {
+            panic!("a member of a host value is a synthetic export");
+        };
+        let module = program.external("main.js", "bun:only-the-host-has-it");
+        assert_eq!(program.graph.synthetic_export(id).module, module);
+    });
+}
+
+#[test]
+fn data_module_member_is_variable() {
+    let main = "import * as data from './data.json'; console.log(data.x, data.missing);";
+    let files = [("main.js", main), ("data.json", r#"{ "x": 1 }"#)];
+    with_program(&files, |program| {
+        let entry = program.find_export("data.json", "x");
+        let ExportLookup::Found(ExportBinding::Variable(symbol)) = entry else {
+            panic!("x is exported as {entry:?}");
+        };
+        assert_eq!(
+            program.member_bindings("main.js"),
+            [ImportBinding::Variable(symbol)]
+        );
+        assert!(program.graph.errors().is_empty());
+    });
+}
+
+#[test]
+fn any_other_access_is_left_to_the_namespace_object() {
+    let sources = [
+        "import * as ns from './es.js'; console.log(ns.missing);",
+        "import defer * as ns from './es.js'; console.log(ns.x);",
+        "import * as ns from './es.js'; ns.x = 1; ns.x += 1; ns.x++; for (ns.x of []);",
+        "import * as ns from './es.js'; delete ns.x;",
+        "import * as ns from './es.js'; if (false) console.log(ns.x);",
+        "import * as ns from './es.js'; export const read = (ns) => ns.x;",
+        "import * as ns from './es.js'; const alias = ns; console.log(alias.x);",
+    ];
+    for source in sources {
+        assert_no_member_is_bound(&[("main.js", source), ES_MODULE]);
+    }
+}
+
+#[test]
+fn store_through_type_assertion_is_not_bound() {
+    let main = "import * as ns from './es.ts'; (ns.x as number) = 1; (ns as any).x = 2;";
+    assert_no_member_is_bound(&[("main.ts", main), ("es.ts", "export const x = 1;")]);
+}
+
+#[test]
+fn ambiguous_star_name_is_not_bound() {
+    let main = "
+        import * as compared from './compared.js';
+        import * as ambiguous from './ambiguous.js';
+        console.log(compared.x, ambiguous.x);
+    ";
+    let files = [
+        ("main.js", main),
+        (
+            "compared.js",
+            "export * from './es.js'; export * from './c.cjs';",
+        ),
+        (
+            "ambiguous.js",
+            "export * from './es.js'; export * from './other.js';",
+        ),
+        ES_MODULE,
+        ("other.js", "export const x = 2;"),
+        ("c.cjs", "exports.x = 3;"),
+    ];
+    assert_no_member_is_bound(&files);
+}
+
+#[test]
+fn es_module_marker_is_not_bound() {
+    let main = "import * as ns from './marked.js'; console.log(ns.__esModule);";
+    let files = [
+        ("main.js", main),
+        ("marked.js", "export const __esModule = true;"),
+    ];
+    assert_no_member_is_bound(&files);
+}
+
+#[test]
+fn member_of_uncompiled_code_is_not_bound() {
+    let main = format!("import * as ns from '{UNCOMPILED_MODULE}'; console.log(ns.z);");
+    assert_no_member_is_bound(&[("main.js", main.as_str())]);
+}
+
+#[test]
+fn getter_that_is_not_enumerable_is_hidden_from_the_namespace() {
+    let main = "import * as ns from './outer.cjs'; console.log(ns.x);";
+    let hidden = "var inner_1 = require('./inner.cjs');\n\
+        Object.defineProperty(exports, 'x', { get: function () { return inner_1.x; } });";
+    let listed = hidden.replace("{ get:", "{ enumerable: true, get:");
+    for (outer, is_listed) in [(hidden, false), (listed.as_str(), true)] {
+        let files = [
+            ("main.mjs", main),
+            ("outer.cjs", outer),
+            ("inner.cjs", "exports.x = 1;"),
+        ];
+        with_program(&files, |program| {
+            let member = program.member_binding("main.mjs", "x");
+            assert_eq!(member.is_some(), is_listed, "{outer}");
+            assert!(program.graph.errors().is_empty(), "{outer}");
+        });
+    }
+}
+
+#[test]
+fn member_of_bun_module_is_the_named_import() {
+    let main = "
+        import * as fs from 'node:fs';
+        import defaultExport, { readFileSync } from 'node:fs';
+        console.log(fs.readFileSync, fs.default, readFileSync, defaultExport);
+    ";
+    with_program(&[("main.js", main)], |program| {
+        let namespace = ImportBinding::Namespace {
+            module: ModuleRef::Runtime(RuntimeModule::NodeFs),
+            phase: ImportPhase::Evaluation,
+        };
+        assert_eq!(program.binding("main.js", "fs"), namespace);
+        let member = program.member_binding("main.js", "readFileSync");
+        assert_eq!(member, Some(program.binding("main.js", "readFileSync")));
+        let default_export = ImportBinding::Builtin(table::namespace_of(RuntimeModule::NodeFs));
+        assert_eq!(
+            program.member_binding("main.js", "default"),
+            Some(default_export)
+        );
+        assert_eq!(program.binding("main.js", "defaultExport"), default_export);
+        assert!(program.graph.errors().is_empty());
+    });
+}
+
+#[test]
+fn default_of_bun_module_is_the_own_default_that_its_object_had_at_the_load() {
+    let main = "
+        import * as sqlite from 'bun:sqlite';
+        import Database from 'bun:sqlite';
+        console.log(sqlite.default, Database);
+    ";
+    with_program(&[("main.js", main)], |program| {
+        let own_default = program.captured_export(RuntimeModule::BunSqlite, "default");
+        assert_eq!(
+            program.member_binding("main.js", "default"),
+            Some(own_default)
+        );
+        assert_eq!(program.binding("main.js", "Database"), own_default);
+        assert!(program.graph.errors().is_empty());
+    });
+}
+
+#[test]
+fn default_of_bun_module_is_its_object_where_the_object_has_a_default_too() {
+    let main = "
+        import * as namespace from 'abort-controller';
+        import Controller from 'abort-controller';
+        console.log(namespace.default, Controller);
+    ";
+    with_program(&[("main.js", main)], |program| {
+        let module_object = table::namespace_of(RuntimeModule::AbortController);
+        let default_export = ImportBinding::Builtin(module_object);
+        assert_eq!(
+            program.member_binding("main.js", "default"),
+            Some(default_export)
+        );
+        assert_eq!(program.binding("main.js", "Controller"), default_export);
+        assert!(program.graph.errors().is_empty());
+    });
+}
+
+#[test]
+fn default_that_only_the_namespace_holds_is_captured() {
+    let main = "
+        import * as namespace from 'utf-8-validate';
+        import validate from 'utf-8-validate';
+        console.log(namespace.default, validate);
+    ";
+    with_program(&[("main.js", main)], |program| {
+        let ImportBinding::Synthetic(export) = program.binding("main.js", "validate") else {
+            panic!("the run time captures the export when it links the module");
+        };
+        let captured = ImportBinding::Synthetic(export);
+        assert_eq!(program.member_binding("main.js", "default"), Some(captured));
+        let module = ModuleRef::Runtime(RuntimeModule::Utf8Validate);
+        assert_eq!(program.graph.synthetic_export(export).module, module);
+        assert!(program.graph.errors().is_empty());
+    });
+}
+
+#[test]
+fn missing_member_of_bun_module_is_unbound_and_no_error() {
+    let main = "import * as buffer from 'node:buffer'; console.log(buffer.nope);";
+    let flags = table::module_data(RuntimeModule::NodeBuffer).flags;
+    assert!(flags.contains(table::ModuleFlags::LISTS_ALL_EXPORTS));
+    assert_no_member_is_bound(&[("main.js", main)]);
+}
+
+#[test]
+fn deferred_namespace_of_bun_module_is_not_bound() {
+    let main = "import defer * as fs from 'node:fs'; console.log(fs.readFileSync);";
+    with_program(&[("main.js", main)], |program| {
+        let namespace = ImportBinding::Namespace {
+            module: ModuleRef::Runtime(RuntimeModule::NodeFs),
+            phase: ImportPhase::Defer,
+        };
+        assert_eq!(program.binding("main.js", "fs"), namespace);
+    });
+    assert_no_member_is_bound(&[("main.js", main)]);
+}
+
+#[test]
+fn members_of_a_holder_are_names_of_the_module_that_it_requires() {
+    let main = "const held = require('./c.cjs'); console.log(held.x, held['y']);";
+    let files = [
+        ("main.cjs", main),
+        ("c.cjs", "exports.x = 1; exports.y = 2;"),
+    ];
+    with_program(&files, |program| {
+        let exports = View::Exports(program.module("c.cjs"));
+        assert_eq!(program.holder("main.cjs", "held"), Some(exports));
+        let call = program.call_of_require("main.cjs");
+        let file = program.file("main.cjs");
+        assert!(!program.graph.is_site_read_as_value(file, call));
+        for name in ["x", "y"] {
+            let variable = Member::Variable(program.variable("c.cjs", name));
+            assert_eq!(program.member("main.cjs", name), Some(variable), "{name}");
+        }
+        assert!(program.member_bindings("main.cjs").is_empty());
+    });
+}
+
+#[test]
+fn holder_used_as_a_value_holds_the_exports_object() {
+    let main = "const held = require('./c.cjs'); console.log(held.x, held);";
+    let files = [("main.cjs", main), ("c.cjs", "exports.x = 1;")];
+    with_program(&files, |program| {
+        let file = program.file("main.cjs");
+        let [holder] = program.graph.holders(file) else {
+            panic!("the holders are {:?}", program.graph.holders(file));
+        };
+        assert!(holder.is_needed_as_value);
+        assert_eq!(holder.call, program.call_of_require("main.cjs"));
+        assert_eq!(program.holder("main.cjs", "held"), None);
+        assert!(program.graph.is_site_read_as_value(file, holder.call));
+        assert_eq!(program.graph.shape(program.module("c.cjs")), Shape::Value);
+        assert_eq!(program.member("main.cjs", "x"), Some(Member::OnObject));
+    });
+}
+
+const TYPESCRIPT_IMPORT_HELPERS: &str = r#"var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
+"#;
+
+#[test]
+fn import_helper_of_typescript_leaves_a_holder_only_where_the_module_has_the_marker() {
+    let reads = "const held = __importStar(require('./c.cjs')); console.log(held.x);";
+    let main = format!("{TYPESCRIPT_IMPORT_HELPERS}{reads}");
+    let marked = "Object.defineProperty(exports, '__esModule', { value: true }); exports.x = 1;";
+    with_program(
+        &[("main.cjs", main.as_str()), ("c.cjs", marked)],
+        |program| {
+            let file = program.file("main.cjs");
+            let exports = View::Exports(program.module("c.cjs"));
+            assert_eq!(program.holder("main.cjs", "held"), Some(exports));
+            let call = program.call_of_require("main.cjs");
+            let held = symbol_named(program.input, file, "held");
+            assert_eq!(program.graph.call_of_holder(file, held), Some(call));
+            assert!(!program.graph.is_site_read_as_value(file, call));
+            let x = Member::Variable(program.variable("c.cjs", "x"));
+            assert_eq!(program.member("main.cjs", "x"), Some(x));
+        },
+    );
+    let unmarked = "exports.x = 1;";
+    with_program(
+        &[("main.cjs", main.as_str()), ("c.cjs", unmarked)],
+        |program| {
+            let file = program.file("main.cjs");
+            assert_eq!(program.holder("main.cjs", "held"), None);
+            assert_eq!(program.member("main.cjs", "x"), None);
+            let call = program.call_of_require("main.cjs");
+            assert!(program.graph.is_site_read_as_value(file, call));
+            assert_eq!(program.graph.shape(program.module("c.cjs")), Shape::Value);
+        },
+    );
+}
+
+const TWO_FUNCTIONS: &str = "export function x() {} export function y() {}";
+
+#[test]
+fn spy_on_a_name_of_a_module_replaces_that_export_alone() {
+    let sources = [
+        "import * as ns from './es.js'; spyOn(ns, 'x');",
+        "const held = require('./es.js'); spyOn(held, 'x');",
+    ];
+    for source in sources {
+        let main = format!("import {{ spyOn }} from 'bun:test'; {source}");
+        let files = [("main.test.js", main.as_str()), ("es.js", TWO_FUNCTIONS)];
+        with_test_run(&files, |program| {
+            assert!(program.is_variable_replaceable("es.js", "x"), "{source}");
+            assert!(!program.is_variable_replaceable("es.js", "y"), "{source}");
+        });
+    }
+    let main = "import * as ns from './es.js'; function spyOn() {} spyOn(ns, 'x');";
+    let files = [("main.test.js", main), ("es.js", TWO_FUNCTIONS)];
+    with_test_run(&files, |program| {
+        assert!(!program.is_variable_replaceable("es.js", "x"));
+    });
+}
+
+#[test]
+fn default_of_a_commonjs_file_is_its_copy_where_a_spy_may_reach_it_through_a_namespace() {
+    let user = (
+        "user.js",
+        "import d from './c.cjs'; export const use = () => d.x();",
+    );
+    let file = ("c.cjs", "module.exports = { x() { return 1; } };");
+    let barrel = ("barrel.js", "export { default as renamed } from './c.cjs';");
+    let other = ("other.cjs", "module.exports = { y() { return 2; } };");
+    let head = "import { spyOn } from 'bun:test'; import './user.js';";
+    let run = |text: &str, check: &dyn Fn(&BoundProgram<'_, '_, '_>)| {
+        let main = format!("{head} {text}");
+        let files = [("main.test.js", main.as_str()), user, file, barrel, other];
+        with_test_run(&files, |program| check(program));
+    };
+    let reached = [
+        "import * as ns from './c.cjs'; spyOn(ns, 'default');",
+        "import * as ns from './c.cjs'; for (const name in ns) spyOn(ns, name);",
+        "import * as handed from './barrel.js'; spyOn(handed, 'renamed');",
+        "const ns = await import('./c.cjs'); spyOn(ns, 'default');",
+        "import * as ns from './c.cjs'; const box = { ns }; spyOn(box.ns, ['de', 'fault'].join(''));",
+    ];
+    for text in reached {
+        run(text, &|program| {
+            let export = program.synthetic_export("user.js", "d");
+            assert_eq!(export.module, program.module("c.cjs"), "{text}");
+            assert!(export.is_replaceable, "{text}");
+        });
+    }
+    let left_alone = [
+        "",
+        "const box = { ping() {} }; spyOn(box, ['pi', 'ng'].join(''));",
+        "import * as ns from './other.cjs'; spyOn(ns, 'default');",
+        "const held = require('./c.cjs'); const box = { ping() {} }; spyOn(box, held.x());",
+    ];
+    for text in left_alone {
+        run(text, &|program| {
+            let module = program.module("c.cjs");
+            let whole = ImportBinding::Exports { module };
+            assert_eq!(program.binding("user.js", "d"), whole, "{text}");
+        });
+    }
+}
+
+#[test]
+fn spy_on_a_name_that_the_loader_fills_replaces_that_name_alone() {
+    let main = "
+        import { spyOn } from 'bun:test';
+        import * as ns from './c.cjs';
+        spyOn(ns, 'x');
+        console.log(ns.y);
+    ";
+    let files = [
+        ("main.test.js", main),
+        ("c.cjs", "exports.x = () => 1; exports.y = () => 2;"),
+    ];
+    with_test_run(&files, |program| {
+        assert!(program.is_synthetic_export_replaceable("c.cjs", "x"));
+        assert!(!program.is_synthetic_export_replaceable("c.cjs", "y"));
+    });
+}
+
+#[test]
+fn spy_under_an_unknown_name_replaces_every_export_of_the_module() {
+    let main = "
+        import { spyOn } from 'bun:test';
+        import * as ns from './es.js';
+        import * as commonjs from './c.cjs';
+        import * as other from './other.js';
+        spyOn(ns, String(Math.random()));
+        spyOn(commonjs, String(Math.random()));
+        console.log(commonjs.x, other.z);
+    ";
+    let files = [
+        ("main.test.js", main),
+        ("es.js", TWO_FUNCTIONS),
+        ("c.cjs", "exports.x = () => 1;"),
+        ("other.js", "export function z() {}"),
+    ];
+    with_test_run(&files, |program| {
+        for name in ["x", "y"] {
+            assert!(program.is_variable_replaceable("es.js", name), "{name}");
+        }
+        assert!(program.is_synthetic_export_replaceable("c.cjs", "x"));
+        assert!(!program.is_variable_replaceable("other.js", "z"));
+    });
+}
+
+#[test]
+fn spy_on_an_unknown_object_reaches_a_namespace_used_as_a_value() {
+    let helper = "
+        import { spyOn } from 'bun:test';
+        export function watch(object) { spyOn(object, 'x'); }
+    ";
+    let uses = [
+        ("watch(ns);", true),
+        ("const alias = ns; watch(alias);", true),
+        ("watch({ x() {} }); ns.x();", false),
+    ];
+    for (source, is_used_as_value) in uses {
+        let imports = "import * as ns from './es.js'; import { watch } from './helper.js';";
+        let main = format!("{imports} {source}");
+        let files = [
+            ("main.test.js", main.as_str()),
+            ("helper.js", helper),
+            ("es.js", TWO_FUNCTIONS),
+        ];
+        with_test_run(&files, |program| {
+            let is_replaceable = program.is_variable_replaceable("es.js", "x");
+            assert_eq!(is_replaceable, is_used_as_value, "{source}");
+            assert!(!program.is_variable_replaceable("es.js", "y"), "{source}");
+        });
+    }
 }

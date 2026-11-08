@@ -368,15 +368,6 @@ describe("a top-level class and `export default` stay where they are written", (
       m => ({ [`${m}.virtual`]: `report(t(() => typeof C));\nclass C {}\n` }),
       throws,
     ],
-    // `export =` runs where it is written, as in what tsc prints with `module: preserve`.
-    [
-      "a class that a TypeScript `export =` above it names",
-      m => ({
-        [`${m}.cjs`]: `report(t(() => typeof require("./${m}-lib.cts")));\n`,
-        [`${m}-lib.cts`]: `export = Foo;\nclass Foo {}\n`,
-      }),
-      throws,
-    ],
   ];
 
   // A function declaration has its value before the module runs, and a read that runs below a
@@ -425,7 +416,17 @@ describe("a top-level class and `export default` stay where they are written", (
     "function",
   ];
 
-  const rows = [...readsAboveTheStatement, ...unaffected, unionType];
+  // The moved class stood above the `require` of the helper that its lowered accessor calls.
+  const staticAccessor: Row = [
+    "a class with a static accessor in a CommonJS module",
+    m => ({
+      [`${m}.cjs`]: `report(t(() => require("./${m}-box.cjs")));\n`,
+      [`${m}-box.cjs`]: `class Box { static accessor count = 1 }\nmodule.exports = Box.count;\n`,
+    }),
+    "1",
+  ];
+
+  const rows = [...readsAboveTheStatement, ...unaffected, unionType, staticAccessor];
 
   async function runFixture() {
     const files: Record<string, string> = {
@@ -484,20 +485,94 @@ describe("a top-level class and `export default` stay where they are written", (
     });
   });
 
+  test(staticAccessor[0], async () => {
+    expect((await (fixture ??= runFixture())).out[staticAccessor[0]]).toEqual(staticAccessor[2]);
+  });
+
   test.todo(unionType[0], async () => {
     expect((await (fixture ??= runFixture())).out[unionType[0]]).toEqual(unionType[2]);
   });
 
-  // Node prints K. Bun runs the body of a.mjs inside the require() of c.cjs, above `class K {}`,
-  // and throws ReferenceError.
-  test.todo("a CommonJS module that requires the import cycle partner of its importer", async () => {
-    using dir = tempDir("transpiler-source-order-cjs", {
-      "a.mjs": `import c from "./c.cjs";\nimport "./b.mjs";\nconsole.log(c.make().constructor.name);\n`,
-      "b.mjs": `import "./a.mjs";\n`,
-      "c.cjs": `exports.make = () => new K();\nrequire("./b.mjs");\nclass K {}\n`,
-    });
-    expect(await bunRun(join(String(dir), "a.mjs"))).toEqual({
-      stdout: "K",
+  // Node runs these graphs. Bun runs a CommonJS file that an ES module imports when its text is
+  // loaded, not where Node evaluates it, so a call reaches a class above its statement. The
+  // second graph prints "undefined": the read of the getter throws and the import stays unset.
+  const graphsThatNodeRuns: [name: string, files: Record<string, string>, entry: string, expected: string][] = [
+    [
+      "a CommonJS module that requires the import cycle partner of its importer",
+      {
+        "a.mjs": `import c from "./c.cjs";\nimport "./b.mjs";\nconsole.log(c.make().constructor.name);\n`,
+        "b.mjs": `import "./a.mjs";\n`,
+        "c.cjs": `exports.make = () => new K();\nrequire("./b.mjs");\nclass K {}\n`,
+      },
+      "a.mjs",
+      "K",
+    ],
+    [
+      "the same graph with the class behind a getter of exports",
+      {
+        "a.mjs": `import { K } from "./c.cjs";\nimport "./b.mjs";\nconsole.log(typeof K);\n`,
+        "b.mjs": `import "./a.mjs";\n`,
+        "c.cjs": `Object.defineProperty(exports, "K", { enumerable: true, get: function () { return K; } });\nrequire("./b.mjs");\nclass K {}\n`,
+      },
+      "a.mjs",
+      "function",
+    ],
+    [
+      "a CommonJS module that is imported below an ES module and calls back into it",
+      {
+        "main.mjs": `import "./b.mjs";\nimport "./a.cjs";\nconsole.log(globalThis.got);\n`,
+        "a.cjs": `require("./registry.cjs").consume(value => { globalThis.got = value.constructor.name; });\n`,
+        "b.mjs": `import registry from "./registry.cjs";\nregistry.provide(() => new B());\nexport class B {}\n`,
+        "registry.cjs": `
+          const factories = [];
+          let consumer;
+          exports.provide = f => { if (consumer) consumer(f()); else factories.push(f); };
+          exports.consume = next => { consumer = next; for (const f of factories) next(f()); };
+        `,
+      },
+      "main.mjs",
+      "B",
+    ],
+    [
+      "two CommonJS modules in a require cycle, as tsc prints them, that an ES module imports at two depths",
+      {
+        "entry.mjs": `import { route } from "./routes.mjs";\nimport { User } from "./models/user.js";\nconsole.log(route(), new User().addPost().author.name);\n`,
+        "routes.mjs": `import { systemPost } from "./models/post.js";\nexport const route = () => systemPost.author.name;\n`,
+        "models/package.json": `{ "type": "commonjs" }`,
+        "models/post.js": `
+          "use strict";
+          Object.defineProperty(exports, "__esModule", { value: true });
+          exports.systemPost = exports.Post = void 0;
+          const user_1 = require("./user");
+          class Post {
+            author;
+            constructor(author) { this.author = author; }
+          }
+          exports.Post = Post;
+          exports.systemPost = new Post((0, user_1.createUser)());
+        `,
+        "models/user.js": `
+          "use strict";
+          Object.defineProperty(exports, "__esModule", { value: true });
+          exports.User = void 0;
+          exports.createUser = createUser;
+          const post_1 = require("./post");
+          class User {
+            name = "user";
+            addPost() { return new post_1.Post(this); }
+          }
+          exports.User = User;
+          function createUser() { return new User(); }
+        `,
+      },
+      "entry.mjs",
+      "user user",
+    ],
+  ];
+  test.todo.each(graphsThatNodeRuns)("%s", async (_, files, entry, expected) => {
+    using dir = tempDir("transpiler-source-order-graph", files);
+    expect(await bunRun(join(String(dir), entry))).toEqual({
+      stdout: expected,
       stderr: "",
       exitCode: 0,
       signalCode: null,

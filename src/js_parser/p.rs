@@ -9168,15 +9168,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 total_stmts_count += part.stmts.len();
             }
 
-            let preserve_strict_mode = self.module_scope().strict_mode
-                == js_ast::StrictModeKind::ExplicitStrictMode
-                && !(parts.len() > 0
-                    && parts[0].stmts.len() > 0
-                    && matches!(
-                        &parts[0].stmts[0].data,
-                        js_ast::StmtData::SDirective(directive)
-                            if directive.value.slice() == b"use strict"
-                    ));
+            let preserve_strict_mode =
+                self.module_scope().strict_mode == js_ast::StrictModeKind::ExplicitStrictMode;
 
             total_stmts_count += usize::from(preserve_strict_mode);
 

@@ -554,8 +554,9 @@ describe("_repeat", () => {
       "entry.js": "export default 1;",
       "index.js": `
         let fires = 0;
-        let firesUnderFirstCallback = 0;
+        let firedUnderFirstCallback = false;
         let inFirstCallback = false;
+        let endSetup;
         const t = setTimeout(() => {
           if (++fires === 1) {
             inFirstCallback = true;
@@ -563,14 +564,25 @@ describe("_repeat", () => {
             // Bun.build() runs the event loop in place until the async setup() is done.
             Bun.build({
               entrypoints: [import.meta.dir + "/entry.js"],
-              plugins: [{ name: "wait", setup: () => new Promise(resolve => setTimeout(resolve, 20)) }],
+              plugins: [
+                {
+                  name: "wait",
+                  setup: () =>
+                    new Promise(resolve => {
+                      endSetup = resolve;
+                      // Bounds the wait if the timer never fires under this callback.
+                      setTimeout(resolve, 1000).unref();
+                    }),
+                },
+              ],
             }).catch(() => {});
             inFirstCallback = false;
           } else if (inFirstCallback) {
-            firesUnderFirstCallback++;
+            firedUnderFirstCallback = true;
+            endSetup();
           } else {
             clearInterval(t);
-            console.log(JSON.stringify({ firedUnderFirstCallback: firesUnderFirstCallback > 0 }));
+            console.log(JSON.stringify({ firedUnderFirstCallback }));
           }
         }, 1);
         t._repeat = 1;

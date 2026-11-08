@@ -284,8 +284,7 @@ impl ExecutionSequence {
         false
     }
 
-    /// Whether an error from the active entry can fail this sequence. Once the test has a result that is not a
-    /// failure, `Execution::handle_uncaught_exception` keeps that result when a hook fails.
+    /// Whether an error from the active entry can fail this sequence. A hook cannot change `Pass`, `Todo` or `Skip`.
     pub(crate) fn active_entry_can_fail(&self) -> bool {
         self.active_entry == self.test_entry || self.result == Result::Pending || self.result.is_fail()
     }

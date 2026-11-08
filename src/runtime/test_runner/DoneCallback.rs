@@ -12,8 +12,7 @@ pub(crate) struct DoneCallback {
     pub(crate) r#ref: JsCell<Option<RefPtr<RefData>>>,
     pub(crate) called: Cell<bool>, // = false
     pub(crate) entry: RefDataValue,
-    /// `BunTestRoot::file_generation` at creation. In a later file run, `entry` alone also matches the same preload
-    /// hook, and any entry that got the address of a freed one.
+    /// `BunTestRoot::file_generation` at creation. An entry of a later run of the file can have the same key.
     file_generation: u32,
 }
 

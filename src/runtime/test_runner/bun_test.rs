@@ -991,8 +991,7 @@ impl BunTest {
             let this = strong.get();
             if done.current_sequence(this).is_some_and(|sequence| sequence.active_entry_can_fail()) {
                 this.on_uncaught_exception(global_this, Some(error), false, &done.entry);
-                // Like an uncaught exception, and unlike a throw from the callback: the entry is over whatever
-                // the callback returns, and the count keeps `on_before_exit()` from draining this file's event loop.
+                // As for an uncaught exception: the entry is over, and `on_before_exit()` does not drain this file.
                 this.add_result(done.entry);
                 Self::run_next_tick(&Rc::downgrade(&strong), global_this, done.entry);
                 global_this.bun_vm().as_mut().unhandled_error_counter += 1;

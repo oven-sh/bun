@@ -70,6 +70,37 @@ test("the marker that @testing-library/dom looks for", () => {
   expect(exitCode).toBe(0);
 });
 
+// Compiled code keeps the built-in timer functions on the globals, so the end of a test file finds no fake there.
+test("fake timers that a preload's beforeAll() turns on stay for every test file", async () => {
+  const fires = (name: string) => `
+import { expect, test, vi } from "bun:test";
+test("${name}", () => {
+  const fired = [];
+  setTimeout(() => fired.push("timeout"), 1000);
+  expect([vi.isFakeTimers(), vi.getTimerCount()]).toEqual([true, 1]);
+  vi.advanceTimersByTime(1000);
+  expect(fired).toEqual(["timeout"]);
+});
+`;
+  using dir = tempDir("debug-aot-preload-hook-clock", {
+    "preload.js": `import { beforeAll, vi } from "bun:test"; beforeAll(() => void vi.useFakeTimers({ now: 0 }));`,
+    "a.test.js": fires("a"),
+    "b.test.js": fires("b"),
+    "c.test.js": fires("c"),
+  });
+  const { stderr, exitCode } = await ran(String(dir), [
+    "test",
+    "--debug-aot",
+    "--preload=./preload.js",
+    "./a.test.js",
+    "./b.test.js",
+    "./c.test.js",
+  ]);
+  expect(stderr).toContain("[aot] module: ");
+  expect(stderr).toContain("3 pass");
+  expect(exitCode).toBe(0);
+});
+
 test("mockRestore() puts back a property that a compiled object has outside its layout", async () => {
   using dir = tempDir("debug-aot-restore", {
     "restore.test.js": `

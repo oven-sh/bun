@@ -139,9 +139,11 @@ If a timer callback throws, the function that ran the timer rethrows the error. 
 
 Bun restores the real timers and the real time at the end of each test file.
 
-Fake timers or a system time set by a [preload](/test/configuration#preload-scripts) stay on from file to file. That covers the top level of the preload, and a `beforeAll()` or `aroundAll()` of the preload, which runs once for all files. An `aroundAll()` counts until it calls `runSuite()`. Every file shares that one clock. It keeps the time and the pending timers that the previous file left behind.
+Fake timers or a system time set by a [preload](/test/configuration#preload-scripts) stay on from file to file. That covers the top level of the preload, and a `beforeAll()` or `aroundAll()` of the preload, which runs once for all files. In an `aroundAll()`, it covers the code that runs before the test files start. Every file shares that one clock. It keeps the time and the pending timers that the previous file left behind.
 
 The preload's clock lasts until a test file calls `useFakeTimers()` or `useRealTimers()` itself. The end of that file restores the real clock, and later files don't get the preload's clock back. `setSystemTime()` in a test file does the same to a system time that the preload set. If the preload turned fake timers on, `setSystemTime()` only moves their clock: the fake timers stay on, and later files start at that time.
+
+A `beforeAll()` or `aroundAll()` of the preload runs after the first test file has loaded. Fake timers that it turns on also end with a test file that takes one of the fake functions off its global. A file does that when it assigns another function there and leaves it. A spy or a `vi.stubGlobal()` that the first file makes on that function at its top level has the same effect, because the end of the file undoes it.
 
 With `--isolate` or `--parallel`, the preload's hooks run again for each file, so a clock that they set starts again in each file.
 

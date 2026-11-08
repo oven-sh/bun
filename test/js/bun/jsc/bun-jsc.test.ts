@@ -511,12 +511,15 @@ it("getProtectedObjects returns only objects", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "ok true\n", exitCode: 0 });
 });
 
-it.each(["bun:jsc", "node:v8"])("%s serialize rejects a CryptoKey that is not extractable", async module => {
+it.each([
+  ["bun:jsc", "DataCloneError"],
+  ["node:v8", "Error"],
+])("%s serialize rejects a CryptoKey that is not extractable", async (module, errorName) => {
   // bun:jsc serialize() and node:v8 serialize() each hand the raw
   // structured-clone buffer to the caller from a native entry of their own, so
   // a key imported with extractable: false must not be serializable through
-  // either. Keys marked extractable still serialize, and the non-extractable
-  // key remains usable.
+  // either. Each rejects it with the error of its module. Keys marked
+  // extractable still serialize, and the non-extractable key remains usable.
   const script = `
     import { serialize } from "${module}";
     const secret = "THIS-IS-SECRET-KEY-MATERIAL-32B!";
@@ -533,8 +536,8 @@ it.each(["bun:jsc", "node:v8"])("%s serialize rejects a CryptoKey that is not ex
       const bytes = new Uint8Array(serialize(nonExtractable));
       const text = Array.from(bytes, b => String.fromCharCode(b)).join("");
       outcome = text.includes(secret) ? "serialized with key material" : "serialized without key material";
-    } catch {
-      outcome = "rejected";
+    } catch (error) {
+      outcome = "rejected with " + error.name;
     }
     console.log(outcome);
     // A key the caller marked extractable still serializes.
@@ -558,7 +561,7 @@ it.each(["bun:jsc", "node:v8"])("%s serialize rejects a CryptoKey that is not ex
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("rejected\ntrue\n32\n");
+  expect(stdout).toBe(`rejected with ${errorName}\ntrue\n32\n`);
   expect(exitCode).toBe(0);
 });
 

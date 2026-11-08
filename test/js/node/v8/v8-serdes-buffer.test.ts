@@ -145,13 +145,13 @@ describe("v8.serialize of a value that cannot be cloned", () => {
 
   // node names the value: "#<Object> could not be cloned."
   function expectPlainError(error: any, message: string | RegExp = /could not be cloned\.$/) {
-    expect(Object.getPrototypeOf(error)).toBe(Error.prototype);
     expect({
       name: error.name,
       code: error.code,
+      prototypeIsErrorPrototype: Object.getPrototypeOf(error) === Error.prototype,
       isError: Error.isError(error),
       isNativeError: types.isNativeError(error),
-    }).toEqual({ name: "Error", code: undefined, isError: true, isNativeError: true });
+    }).toEqual({ name: "Error", code: undefined, prototypeIsErrorPrototype: true, isError: true, isNativeError: true });
     expect(error.message).toMatch(message);
   }
 

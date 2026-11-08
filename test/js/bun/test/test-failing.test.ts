@@ -141,7 +141,7 @@ describe.concurrent("test.failing and test.fails", () => {
   });
   const modifiers = ["failing", "fails"];
 
-  test("don't take a matcher that other code calls", async () => {
+  test.serial("don't take a matcher that other code calls", async () => {
     const result = await runTests(`
       expect.extend({ async toBeLater(received, expected) { return { pass: (await received) === expected, message: () => "a custom matcher" }; } });
       const wentOn = [];
@@ -293,7 +293,7 @@ describe.concurrent("test.failing and test.fails", () => {
     });
   });
 
-  test("take a matcher that their own code calls, also after an await", async () => {
+  test.serial("take a matcher that their own code calls, also after an await", async () => {
     // This run never loads node:async_hooks, so nothing but the runner turns async context tracking on.
     const result = await runTests(`
       import { aroundAll, beforeEach } from "bun:test";
@@ -570,22 +570,62 @@ describe.concurrent("test.failing and test.fails", () => {
   test('in a "vitest" file, don\'t take a matcher from the expect of a test that has ended', async () => {
     const result = await run(["test"], {
       "a.test.js": `
-        import { test } from "vitest";
+        import { describe, test } from "vitest";
         const later = (value, ms = 1) => new Promise(resolve => setTimeout(resolve, ms, value));
-        const called = Promise.withResolvers();
-        test("leaves a timer behind", ({ expect }) => {
-          setTimeout(() => {
-            expect(later(1)).resolves.toBe("of an ended test");
-            called.resolve();
-          }, 0);
+        describe("a matcher", () => {
+          const called = Promise.withResolvers();
+          test("leaves a timer behind", ({ expect }) => {
+            setTimeout(() => {
+              expect(later(1)).resolves.toBe("of an ended test");
+              called.resolve();
+            }, 0);
+          });
+          test.fails("runs when the timer fires", () => called.promise);
         });
-        test.fails("runs when the timer fires", () => called.promise);
+        describe("expect.poll() of a test in a concurrent group", () => {
+          const taken = Promise.withResolvers(), called = Promise.withResolvers(), ending = Promise.withResolvers();
+          let polls = 0;
+          test("leaves a promise callback behind", () => {
+            taken.promise.then(expect => {
+              expect.poll(() => ++polls, { timeout: 60_000, interval: 1 }).toBe("of a test that ends before its group");
+              called.resolve();
+            });
+          });
+          describe.concurrent("the group", () => {
+            test.fails("hands out its expect and ends", async ({ expect }) => {
+              taken.resolve(expect);
+              await called.promise;
+              ending.resolve();
+              throw new Error("expected");
+            });
+            test("runs on", async () => {
+              await ending.promise;
+              for (let i = 0; i < 3; i++) await later();
+              const before = polls;
+              for (let i = 0; i < 5; i++) await later();
+              console.log("polls while the group runs on:", polls - before);
+            });
+          });
+        });
       `,
     });
+    expect(result.stdout).toEqual(["polls while the group runs on: 0"]);
     expect(failures(result)).toEqual({
-      results: ["(pass) leaves a timer behind", "(fail) runs when the timer fires"],
-      errors: ['Expected: "of an ended test"', "error: expect(received).toBe(expected)"],
-      betweenTests: 1,
+      results: [
+        "(pass) a matcher > leaves a timer behind",
+        "(fail) a matcher > runs when the timer fires",
+        "(pass) expect.poll() of a test in a concurrent group > leaves a promise callback behind",
+        "(pass) expect.poll() of a test in a concurrent group > the group > hands out its expect and ends",
+        "(pass) expect.poll() of a test in a concurrent group > the group > runs on",
+      ],
+      errors: [
+        'Expected: "of a test that ends before its group"',
+        'Expected: "of an ended test"',
+        "error: Matcher did not succeed in time.",
+        "error: expect(received).toBe(expected)",
+        "error: expect(received).toBe(expected)",
+      ],
+      betweenTests: 2,
       exitCode: 1,
     });
   });
@@ -646,7 +686,8 @@ describe.concurrent("test.failing and test.fails", () => {
   });
 
   // On its own: a debug build takes over a second longer to start with --isolate=modules, and longer beside other runs.
-  test.serial("bun test --isolate=modules: both hold, and their fixtures run in the file's module graph", async () => {
+  // --isolate=modules alone costs a debug build more than a second.
+  test.serial("bun test --isolate=modules: both hold, fixtures in the file's graph", { timeout: 15_000 }, async () => {
     const result = await run(["test", "--isolate=modules", "./a.test.js", "./b.test.js"], {
       "a.test.js": prelude + bothKinds.source,
       "b.test.js": `
@@ -934,6 +975,97 @@ describe.concurrent("test.failing and test.fails", () => {
     `);
     expect(stdout).toEqual(["a test: 0", "a test that has to fail: 50", "the test after it: 0"]);
     expect(exitCode).toBe(0);
+  });
+
+  test("in a concurrent group, don't take a matcher that code of another test or of the file calls", async () => {
+    const result = await run(["test", "./a.test.js", "./b.test.js"], {
+      "a.test.js":
+        prelude +
+        `
+        describe("code of an earlier test", () => {
+          const started = Promise.withResolvers(), called = Promise.withResolvers();
+          test.fails("is left behind", () => {
+            started.promise.then(() => {
+              expect(later(1)).resolves.toBe("of an earlier test");
+              called.resolve();
+            });
+            throw new Error("expected");
+          });
+          describe.concurrent("the group", () => {
+            for (const modifier of ${JSON.stringify(modifiers)}) {
+              test[modifier](modifier + " runs meanwhile", async () => {
+                started.resolve();
+                await called.promise;
+              });
+            }
+          });
+        });
+        describe.concurrent("code of a test of the group that has ended", () => {
+          const ending = Promise.withResolvers(), started = Promise.withResolvers(), called = Promise.withResolvers();
+          test.fails("ends first", async () => {
+            started.promise.then(() => {
+              expect(later(1)).resolves.toBe("of a test that has ended");
+              called.resolve();
+            });
+            ending.resolve();
+            throw new Error("expected");
+          });
+          test.fails("runs on", async () => {
+            await ending.promise;
+            await later();
+            started.resolve();
+            await called.promise;
+          });
+        });
+      `,
+      // The runner sets a file-scoped fixture up inside the first test that uses it, so its callbacks run in the async context of that test.
+      "b.test.js": `
+        import { describe, expect, test as base } from "vitest";
+        const later = (value, ms = 1) => new Promise(resolve => setTimeout(resolve, ms, value));
+        const test = base.extend({
+          ticker: [
+            async ({}, use) => {
+              const calls = [];
+              const interval = setInterval(() => {
+                for (const call of calls.splice(0)) call();
+              }, 1);
+              await use(fn => new Promise(resolve => calls.push(() => resolve(fn()))));
+              clearInterval(interval);
+            },
+            { scope: "file" },
+          ],
+        });
+        describe.concurrent("code of a fixture of the file", () => {
+          const called = Promise.withResolvers();
+          test.fails("is the first test to use the fixture", async ({ ticker }) => {
+            await called.promise;
+          });
+          test("has the fixture call its matcher", async ({ ticker }) => {
+            await ticker(() => void expect(later(1)).resolves.toBe("of a test beside it"));
+            called.resolve();
+          });
+        });
+      `,
+    });
+    const { results, ...rest } = failures(result);
+    expect({ results: results.toSorted(), ...rest }).toEqual({
+      results: [
+        "(pass) code of an earlier test > is left behind",
+        ...modifiers.map(modifier => `(fail) code of an earlier test > the group > ${modifier} runs meanwhile`),
+        "(pass) code of a test of the group that has ended > ends first",
+        "(fail) code of a test of the group that has ended > runs on",
+        "(fail) code of a fixture of the file > is the first test to use the fixture",
+        "(pass) code of a fixture of the file > has the fixture call its matcher",
+      ].toSorted(),
+      errors: [
+        'Expected: "of a test beside it"',
+        'Expected: "of a test that has ended"',
+        'Expected: "of an earlier test"',
+        ...Array.from({ length: 3 }, () => "error: expect(received).toBe(expected)"),
+      ],
+      betweenTests: 3,
+      exitCode: 1,
+    });
   });
 
   test("in a concurrent group, a waiting expect.soft() fails the test that called it", async () => {

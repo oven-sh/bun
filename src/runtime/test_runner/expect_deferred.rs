@@ -132,7 +132,7 @@ impl RunningEntry {
         let mut running = RunningEntry {
             buntest: std::rc::Weak::clone(&parent.buntest_weak),
             entry: match parent.phase {
-                // In a concurrent group only the stack names the caller. Past a test's first await, its matcher is the group's.
+                // In a concurrent group only the stack names the caller: the async context of a running test also reaches callbacks of its siblings.
                 RefDataValue::Execution {
                     group_index,
                     entry_data: None,
@@ -223,7 +223,7 @@ impl RunningEntry {
             || buntest.execution.group_index != group_index
             || bystander
                 .sequence(buntest)
-                .is_none_or(|sequence| sequence.attempt != entry.attempt)
+                .is_none_or(|sequence| sequence.attempt != entry.attempt || sequence.active_entry.is_none())
     }
 
     fn sequence(&self, buntest: &BunTestPtr) -> Option<NonNull<ExecutionSequence>> {

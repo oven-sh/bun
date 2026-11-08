@@ -1,19 +1,24 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 891cda33a3518db2ee872cfa62703f18ae3871083e67f1c5609f4dc0dfa6299e.
+// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
 const EventEmitter = require("node:events");
+const { Stream } = require("node:stream");
 const { Stream: StreamOfLibrary } = require("internal/streams/legacy");
-// As the other text: what a program has stored under `Stream` on node:stream, where node:stream is loaded.
-const Stream: $Node.StreamConstructor = $getByIdDirect(StreamOfLibrary, "Stream") ?? StreamOfLibrary;
 const StreamPrototype = Stream.prototype;
 // A name read from `plainStream` is looked up from Stream.prototype on. No constructor runs: the other text makes no stream here.
 function PlainStream() {}
 $toClass(PlainStream, "PlainStream", StreamOfLibrary);
 if (Stream !== StreamOfLibrary) Object.setPrototypeOf(PlainStream.prototype, StreamPrototype);
 const plainStream: any = new PlainStream();
+// The library's own classes, which stand above the server's socket whatever a program has laid on node:stream.
+const DuplexPrototype = require("internal/streams/duplex").prototype;
+const ReadablePrototype = require("internal/streams/readable").prototype;
 const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require("internal/streams/state");
+// As the streams defined it: the program may have stored another before this file was loaded.
+const duplexResume = streamInternals.readableMethods!.resume;
+const duplexRemoveListener = streamInternals.readableMethods!.removeListener;
 const {
   enqueueTick1,
   queueTick1,
@@ -190,13 +195,6 @@ const enum HeaderBits {
   unusual = date | connection | keep_alive | transfer_encoding | spilled,
 }
 const { FakeSocket } = require("internal/http/FakeSocket");
-// The library's own classes, which stand above the server's socket whatever a program has laid on node:stream. Loaded here, where the other text's
-// FakeSocket loads Duplex: a test that replaced built-in functions sees the same calls.
-const DuplexPrototype = require("internal/streams/duplex").prototype;
-const ReadablePrototype = require("internal/streams/readable").prototype;
-// As the streams defined it: the program may have stored another before this file was loaded.
-const duplexResume = streamInternals.readableMethods!.resume;
-const duplexRemoveListener = streamInternals.readableMethods!.removeListener;
 const NumberIsNaN = Number.isNaN;
 
 const { IncomingMessage } = require("node:_http_incoming");

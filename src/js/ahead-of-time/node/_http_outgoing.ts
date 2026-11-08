@@ -1,14 +1,14 @@
 // What the compiler reads in place of src/js/node/_http_outgoing.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 cc0966d587437dacd954e46c796d8ebc0cc7522b477bce1c3561885b0f86a5d1.
+// Written against that file with the SHA-256 7eb68379dcc85e37da343c90d1da52f21b0bd91937cea041c06b56a6db7551fc.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_outgoing"
 // This is a port of Node.js's lib/_http_outgoing.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js
+const { Stream: streamOfProgram } = require("internal/stream");
 const { Stream } = require("internal/streams/legacy");
-// The other text takes what lies under `Stream` on node:stream when it is loaded, where the program has loaded node:stream. Here the class above OutgoingMessage is written into the compiled program.
-const streamOfProgram = $getByIdDirect(Stream, "Stream") as unknown;
-if (streamOfProgram !== undefined && streamOfProgram !== Stream)
+// The other text takes what lies under `Stream` on node:stream when it is loaded. Here the class above OutgoingMessage is written into the compiled program.
+if (streamOfProgram !== Stream)
   throw new TypeError(
     "stream.Stream was replaced before node:http was loaded. In a compiled executable the classes of node:http extend the one that Bun made: add to stream.Stream.prototype instead, or load node:http first.",
   );

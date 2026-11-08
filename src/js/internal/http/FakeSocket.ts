@@ -1,8 +1,6 @@
 const { kInternalSocketData, serverSymbol } = require("internal/http");
 const { kAutoDestroyed } = require("internal/shared");
-const { Stream } = require("internal/streams/legacy");
-// node:stream is `Stream` with its members: what a program has stored under `Duplex` there, where node:stream is loaded. Else the class loads alone.
-const Duplex: $Node.DuplexConstructor = $getByIdDirect(Stream, "Duplex") ?? require("internal/streams/duplex");
+const { Duplex } = require("internal/stream");
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {

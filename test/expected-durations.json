@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/an-import-call-in-a-compiled-test-run-reads-its-store.test.ts": {
+    "default": 8000,
+    "asan": 32000
+  },
   "aot/a-database-asked-for-by-a-path-made-of-the-own-folder-is-not-refused.test.ts": {
     "default": 60000,
     "asan": 240000

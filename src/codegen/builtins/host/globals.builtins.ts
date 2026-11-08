@@ -2168,7 +2168,7 @@ export default b.declarations(
     ...classesOfViews.map(name => ({
       args: { value: b.instance(name), options: b.any.optional },
       returns: b.instance(name).unaliased,
-      capability: "js",
+      capability: "js" as const,
       throws: true,
       runsOnlyOperandCode: true,
       uses: { value: cloned, options: transferList },

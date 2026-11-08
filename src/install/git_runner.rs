@@ -187,6 +187,10 @@ fn finish_checkout(
         .map_err(|err| ("replacing links", err))
         .and_then(|()| strip_node_modules(&dir).map_err(|err| ("cleaning \"node_modules\"", err)))
         .and_then(|()| {
+            crate::published_files::prune_to_published_files(&dir)
+                .map_err(|err| ("removing unpublished files", err))
+        })
+        .and_then(|()| {
             bun_sys::File::openat(
                 dir.fd(),
                 bun_core::zstr!(".bun-tag"),

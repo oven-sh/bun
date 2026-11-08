@@ -1488,6 +1488,59 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Like npm, which packs a git dependency the way it would for a publish: only what "files" and
+// .npmignore select ends up in node_modules.
+test.concurrent('a git dependency installs only what "files" and .npmignore select', async () => {
+  using dir = tempDir("git-dep-published-files", {});
+  const root = String(dir);
+  const bare = await makeSharedRepo(root, [
+    {
+      branch: "with-files",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "src/index.js", files: ["src"] }),
+        "src/index.js": "export const x = 1;\n",
+        "docs/guide.md": "docs\n",
+        "extras/script.js": "extra\n",
+        "index.test.js": "tests\n",
+        "LICENSE": "license\n",
+        ".npmignore": "docs\n",
+      },
+    },
+    {
+      branch: "with-npmignore",
+      files: {
+        "package.json": JSON.stringify({ name: "demo-lib", version: "1.0.0", main: "src/index.js" }),
+        "src/index.js": "export const x = 1;\n",
+        "src/skip.test.js": "tests\n",
+        "docs/guide.md": "docs\n",
+        "README.md": "readme\n",
+        ".npmignore": "docs\n*.test.js\n",
+      },
+    },
+  ]);
+  const url = `git+${pathToFileURL(bare)}`;
+
+  const results: Record<string, string[]> = {};
+  for (const branch of ["with-files", "with-npmignore"]) {
+    const project = writeProject(join(root, branch), { "demo-lib": `${url}#${branch}` });
+    const cache = join(root, `cache-${branch}`);
+    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+    const installed = join(project, "node_modules", "demo-lib");
+    const fresh = treeOf(installed).filter(path => path !== ".bun-tag");
+
+    // The same files come out of the cache.
+    rmSync(join(project, "node_modules"), { recursive: true });
+    expect((await runInstall(project, cache, {})).exitCode).toBe(0);
+    expect(treeOf(installed).filter(path => path !== ".bun-tag")).toEqual(fresh);
+    results[branch] = fresh;
+  }
+
+  expect(results).toEqual({
+    "with-files": ["LICENSE", "package.json", "src", "src/index.js"],
+    "with-npmignore": ["README.md", "index.js", "package.json", "src", "src/index.js"],
+  });
+});
+
 test.concurrent(
   "a failed prepare script of a git dependency explains that its devDependencies aren't installed",
   async () => {

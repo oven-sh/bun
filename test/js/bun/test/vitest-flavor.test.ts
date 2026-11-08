@@ -2867,7 +2867,7 @@ describe.concurrent("a callback that throws synchronously", () => {
     });
   });
 
-  // Every skip() of a file throws the same error. Outside the callback of its test it can only reach the runner unhandled.
+  // A job, or a call that runs after its test has ended, can only throw that error to the runner unhandled.
   test("what skip() threw is not an error of its test, and not of a test that runs later", async () => {
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `
@@ -2891,6 +2891,20 @@ describe.concurrent("a callback that throws synchronously", () => {
           }
           skip();
         });
+        test("gets a new error from each skip() call", ({ skip }) => {
+          let first;
+          try {
+            skip();
+          } catch (error) {
+            first = error;
+          }
+          try {
+            skip();
+          } catch (error) {
+            console.log("a new error:", error !== first);
+            throw error;
+          }
+        });
         describe.concurrent("in a concurrent group", () => {
           test("is skipped by a job", ({ skip }) => {
             queueMicrotask(() => skip());
@@ -2912,11 +2926,12 @@ describe.concurrent("a callback that throws synchronously", () => {
       `,
     });
     expect({ log, results, errors, exitCode }).toEqual({
-      log: ["a job throws what skip() threw"],
+      log: ["a job throws what skip() threw", "a new error: true"],
       results: [
         "(skip) is skipped by a job",
         "(skip) is skipped by a job and is expected to fail",
         "(skip) skips again after a job got what skip() threw",
+        "(skip) gets a new error from each skip() call",
         "(skip) in a concurrent group > is skipped by a job",
         "(pass) in a concurrent group > waits",
         "(skip) is skipped after a wait by a call that it does not await",

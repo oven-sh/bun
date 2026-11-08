@@ -307,10 +307,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     self.flag_early_error(1097, at, &[keyword]);
                 }
                 None => match element_error {
-                    Some((at, code @ (1009 | 1099))) if is_extends => {
-                        self.flag_early_error(code, at, &[]);
-                    }
-                    Some((at, code)) => self.flag(DiagnosticKind::Grammar, code, at, &[]),
+                    Some((at, code)) => self.flag_early_error(code, at, &[]),
                     None => {}
                 },
             }

@@ -1,8 +1,10 @@
 use core::hash::Hash;
 
 use bun_sema::atom::Atom;
+use bun_sema::bind::SymbolId;
 use bun_sema::fold::{Constant, FoldedValue};
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 
 use super::{CaseTest, Subject};
 use crate::ir::generated::MAX_TRACKED_INTEGER;
@@ -64,8 +66,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         mut rest: &[CaseTest],
         default_target: BlockId,
     ) {
+        let mut objects_met: SmallVec<[SymbolId; 2]> = SmallVec::new();
         while let Some(&first) = rest.first() {
-            let is_constant = |test: &&CaseTest| matches!(test.constant, FoldedValue::Constant(_));
+            if let Some(variable) = first.read_off
+                && !objects_met.contains(&variable)
+            {
+                self.set_position(self.file.hir[first.expression].pos);
+                self.lower_expression_for_effect(first.expression);
+                objects_met.push(variable);
+            }
+            let is_constant = |test: &&CaseTest| {
+                matches!(test.constant, FoldedValue::Constant(_))
+                    && (test.read_off).is_none_or(|variable| objects_met.contains(&variable))
+            };
             let run_length = rest.iter().take_while(is_constant).count();
             if run_length == 0 {
                 self.emit_evaluated_test(&mut subject, first);

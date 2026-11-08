@@ -5,11 +5,16 @@
 %AsyncGeneratorFunction%.prototype : @@toStringTag/c constructor/c prototype/c
 %AsyncIterator%.prototype : @@asyncDispose/wc @@asyncIterator/wc
 %BunRequest%.prototype : @@toStringTag/c clone/wc cookies/a params/a
+%CookieMapIterator%.prototype : @@toStringTag/c next/wc
 %EventEmitter%.prototype : @@toStringTag/c addListener/wc constructor/wc emit/wc eventNames/wc getMaxListeners/wc listenerCount/wc listeners/wc off/wc on/wc once/wc prependListener/wc prependOnceListener/wc rawListeners/wc removeAllListeners/wc removeListener/wc setMaxListeners/wc
 %FFI%.prototype : @@toStringTag/c close/w symbols/a
+%FFICallback%.prototype : close/wc
+%FormDataIterator%.prototype : @@toStringTag/c next/wc
 %Generator%.prototype : @@toStringTag/c constructor/c next/wc return/wc throw/wc
 %GeneratorFunction%.prototype : @@toStringTag/c constructor/c prototype/c
 %HeadersIterator%.prototype : @@toStringTag/c next/wc
+%IntlSegmentIterator%.prototype : @@toStringTag/c next/wc
+%IntlSegments%.prototype : @@iterator/wc containing/wc
 %IteratorHelper%.prototype : @@toStringTag/c next/wc return/wc
 %MapIterator%.prototype : @@toStringTag/c next/wc
 %NodeHTTPResponse%.prototype : @@toStringTag/c abort/w aborted/a bufferedAmount/a cork/w end/w finished/a flags/a flushHeaders/w getBytesWritten/w hasBody/a headersObject/w notifyWhenReadParsed/w onabort/a ondata/a onwritable/a pause/w pauseReads/w ref/w resume/w takeRawHeaders/w takeRequestTrailers/w unref/w upgraded/a write/w writeContinue/w writeHead/w writeHeadAndEnd/w writeInformational/w writeWholeResponse/w
@@ -45,12 +50,18 @@ Blob : length/c name/c prototype/-
 Blob.prototype : @@toStringTag/c arrayBuffer/w bytes/w constructor/wc delete/w exists/w formData/w image/w json/w lastModified/a name/a size/a slice/w stat/w stream/w text/w type/a unlink/w write/w writer/w
 Boolean : length/? name/? prototype/-
 Boolean.prototype : constructor/wc toString/wc valueOf/wc
+BroadcastChannel.prototype open : @@@nodejs.util.inspect.custom/wc
 Buffer : alloc/wc allocUnsafe/wc allocUnsafeSlow/wc byteLength/wc compare/wc concat/wc copyBytesFrom/wc from/wc isBuffer/wc isEncoding/wc length/? name/? poolSize/wc prototype/-
 Buffer.prototype : @@@nodejs.util.inspect.custom/wc @@species/- @@toStringTag/c asciiSlice/wc asciiWrite/wc base64Slice/wc base64Write/wc base64urlSlice/wc base64urlWrite/wc compare/wc constructor/wc copy/wc equals/wc fill/wc hexSlice/wc hexWrite/wc includes/wc indexOf/wc inspect/wc lastIndexOf/wc latin1Slice/wc latin1Write/wc offset/ac parent/ac readBigInt64/wc readBigInt64BE/wc readBigInt64LE/wc readBigUInt64/wc readBigUInt64BE/wc readBigUInt64LE/wc readBigUint64BE/wc readBigUint64LE/wc readDouble/wc readDoubleBE/wc readDoubleLE/wc readFloat/wc readFloatBE/wc readFloatLE/wc readInt16/wc readInt16BE/wc readInt16LE/wc readInt32/wc readInt32BE/wc readInt32LE/wc readInt8/wc readIntBE/wc readIntLE/wc readUInt16BE/wc readUInt16LE/wc readUInt32BE/wc readUInt32LE/wc readUInt8/wc readUIntBE/wc readUIntLE/wc readUint16BE/wc readUint16LE/wc readUint32BE/wc readUint32LE/wc readUint8/wc readUintBE/wc readUintLE/wc slice/wc subarray/wc swap16/wc swap32/wc swap64/wc toJSON/wc toLocaleString/wc toString/wc ucs2Slice/wc ucs2Write/wc utf16leSlice/wc utf16leWrite/wc utf8Slice/wc utf8Write/wc write/wc writeBigInt64BE/wc writeBigInt64LE/wc writeBigUInt64BE/wc writeBigUInt64LE/wc writeBigUint64BE/wc writeBigUint64LE/wc writeDouble/wc writeDoubleBE/wc writeDoubleLE/wc writeFloat/wc writeFloatBE/wc writeFloatLE/wc writeInt16BE/wc writeInt16LE/wc writeInt32BE/wc writeInt32LE/wc writeInt8/wc writeIntBE/wc writeIntLE/wc writeUInt16/wc writeUInt16BE/wc writeUInt16LE/wc writeUInt32/wc writeUInt32BE/wc writeUInt32LE/wc writeUInt8/wc writeUIntBE/wc writeUIntLE/wc writeUint16/wc writeUint16BE/wc writeUint16LE/wc writeUint32/wc writeUint32BE/wc writeUint32LE/wc writeUint8/wc writeUintBE/wc writeUintLE/wc
 Bun.Cookie : from/w length/c name/c parse/w prototype/-
 Bun.CookieMap : length/c name/c prototype/-
+Bun.CookieMap.prototype : @@iterator/wc @@toStringTag/c constructor/wc delete/wc entries/wc forEach/wc get/wc has/wc keys/wc set/wc size/a toJSON/wc toSetCookieHeaders/wc values/wc
+Bun.FFI :
+Bun.FFI.read :
 Bun.WebView : closeAll/wc length/c name/c prototype/-
+ByteLengthQueuingStrategy.prototype open : @@@nodejs.util.inspect.custom/wc
 CompressionStream.prototype open : @@@nodejs.util.inspect.custom/wc
+CountQueuingStrategy.prototype open : @@@nodejs.util.inspect.custom/wc
 DOMException : ABORT_ERR/- DATA_CLONE_ERR/- DOMSTRING_SIZE_ERR/- HIERARCHY_REQUEST_ERR/- INDEX_SIZE_ERR/- INUSE_ATTRIBUTE_ERR/- INVALID_ACCESS_ERR/- INVALID_CHARACTER_ERR/- INVALID_MODIFICATION_ERR/- INVALID_NODE_TYPE_ERR/- INVALID_STATE_ERR/- NAMESPACE_ERR/- NETWORK_ERR/- NOT_FOUND_ERR/- NOT_SUPPORTED_ERR/- NO_DATA_ALLOWED_ERR/- NO_MODIFICATION_ALLOWED_ERR/- QUOTA_EXCEEDED_ERR/- SECURITY_ERR/- SYNTAX_ERR/- TIMEOUT_ERR/- TYPE_MISMATCH_ERR/- URL_MISMATCH_ERR/- VALIDATION_ERR/- WRONG_DOCUMENT_ERR/- length/c name/c prototype/-
 DataView : BYTES_PER_ELEMENT/- length/? name/? prototype/-
 DataView.prototype : @@toStringTag/c buffer/ac byteLength/ac byteOffset/ac constructor/wc getBigInt64/wc getBigUint64/wc getFloat16/wc getFloat32/wc getFloat64/wc getInt16/wc getInt32/wc getInt8/wc getUint16/wc getUint32/wc getUint8/wc setBigInt64/wc setBigUint64/wc setFloat16/wc setFloat32/wc setFloat64/wc setInt16/wc setInt32/wc setInt8/wc setUint16/wc setUint32/wc setUint8/wc
@@ -77,6 +88,7 @@ Float32Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 Float64Array : BYTES_PER_ELEMENT/- length/? name/? prototype/-
 Float64Array.prototype : BYTES_PER_ELEMENT/- constructor/wc
 FormData : from/- length/c name/c prototype/-
+FormData.prototype : @@iterator/wc @@toStringTag/c append/wc constructor/wc delete/wc entries/wc forEach/wc get/wc getAll/wc has/wc keys/wc length/a set/wc toJSON/- values/wc
 Function : length/? name/? prototype/-
 Function.prototype : @@hasInstance/- apply/wc arguments/ac bind/wc call/wc caller/ac constructor/wc length/c name/c toString/wc
 Headers : length/c name/c prototype/-
@@ -119,7 +131,14 @@ Number.prototype : constructor/wc toExponential/wc toFixed/wc toLocaleString/wc 
 Object : assign/wc create/wc defineProperties/wc defineProperty/wc entries/wc freeze/wc fromEntries/wc getOwnPropertyDescriptor/wc getOwnPropertyDescriptors/wc getOwnPropertyNames/wc getOwnPropertySymbols/wc getPrototypeOf/wc groupBy/wc hasOwn/wc is/wc isExtensible/wc isFrozen/wc isSealed/wc keys/wc length/? name/? preventExtensions/wc prototype/- seal/wc setPrototypeOf/wc values/wc
 Object.prototype : __defineGetter__/wc __defineSetter__/wc __lookupGetter__/wc __lookupSetter__/wc __proto__/ac constructor/wc hasOwnProperty/wc isPrototypeOf/wc propertyIsEnumerable/wc toLocaleString/wc toString/wc valueOf/wc
 Performance.prototype : @@toStringTag/c clearMarks/wc clearMeasures/wc clearResourceTimings/wc constructor/wc getEntries/wc getEntriesByName/wc getEntriesByType/wc mark/wc markResourceTiming/wc measure/wc onresourcetimingbufferfull/ac setResourceTimingBufferSize/wc timeOrigin/ac timing/ac toJSON/wc
+PerformanceEntry.prototype : @@@nodejs.util.inspect.custom/wc @@toStringTag/c constructor/wc duration/ac entryType/ac name/ac startTime/ac toJSON/wc
+PerformanceMark.prototype : @@toStringTag/c constructor/wc detail/ac toJSON/wc
+PerformanceMeasure.prototype : @@toStringTag/c constructor/wc detail/ac toJSON/wc
 PerformanceObserver : length/c name/c prototype/- supportedEntryTypes/c
+PerformanceObserver.prototype : @@toStringTag/c constructor/wc disconnect/wc observe/wc takeRecords/wc
+PerformanceObserverEntryList.prototype : @@toStringTag/c constructor/wc getEntries/wc getEntriesByName/wc getEntriesByType/wc
+PerformanceResourceTiming.prototype : @@toStringTag/c connectEnd/ac connectStart/ac constructor/wc decodedBodySize/ac domainLookupEnd/ac domainLookupStart/ac encodedBodySize/ac fetchStart/ac initiatorType/ac nextHopProtocol/ac redirectEnd/ac redirectStart/ac requestStart/ac responseEnd/ac responseStart/ac secureConnectionStart/ac serverTiming/ac toJSON/wc transferSize/ac workerStart/ac
+PerformanceServerTiming.prototype : @@toStringTag/c constructor/wc description/ac duration/ac name/ac toJSON/wc
 PerformanceTiming.prototype : @@toStringTag/c constructor/wc
 Promise : @@species/ac all/wc allSettled/wc any/wc length/? name/? prototype/- race/wc reject/wc resolve/wc try/wc withResolvers/wc
 Promise.prototype : @@toStringTag/c catch/wc constructor/wc finally/wc then/wc
@@ -131,6 +150,8 @@ ReadableStream : from/wc length/c name/c prototype/-
 ReadableStream.prototype open : @@@nodejs.util.inspect.custom/wc
 ReadableStreamBYOBReader.prototype open : @@@nodejs.util.inspect.custom/wc
 ReadableStreamBYOBRequest.prototype open : @@@nodejs.util.inspect.custom/wc
+ReadableStreamDefaultController.prototype open : @@@nodejs.util.inspect.custom/wc
+ReadableStreamDefaultReader.prototype open : @@@nodejs.util.inspect.custom/wc
 ReferenceError : length/? name/? prototype/-
 ReferenceError.prototype : constructor/wc message/wc name/wc
 Reflect : @@toStringTag/c apply/wc construct/wc defineProperty/wc deleteProperty/wc get/wc getOwnPropertyDescriptor/wc getPrototypeOf/wc has/wc isExtensible/wc ownKeys/wc preventExtensions/wc set/wc setPrototypeOf/wc
@@ -173,10 +194,12 @@ Temporal.PlainYearMonth.prototype : @@toStringTag/c add/wc calendarId/ac constru
 Temporal.ZonedDateTime : compare/wc from/wc length/? name/? prototype/-
 Temporal.ZonedDateTime.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc day/ac dayOfWeek/ac dayOfYear/ac daysInMonth/ac daysInWeek/ac daysInYear/ac epochMilliseconds/ac epochNanoseconds/ac equals/wc era/ac eraYear/ac getTimeZoneTransition/wc hour/ac hoursInDay/ac inLeapYear/ac microsecond/ac millisecond/ac minute/ac month/ac monthCode/ac monthsInYear/ac nanosecond/ac offset/ac offsetNanoseconds/ac round/wc second/ac since/wc startOfDay/wc subtract/wc timeZoneId/ac toInstant/wc toJSON/wc toLocaleString/wc toPlainDate/wc toPlainDateTime/wc toPlainTime/wc toString/wc until/wc valueOf/wc weekOfYear/ac with/wc withCalendar/wc withPlainTime/wc withTimeZone/wc year/ac yearOfWeek/ac
 TextDecoder.prototype : @@toStringTag/c constructor/wc decode/w encoding/a fatal/a ignoreBOM/a
+TextDecoderStream.prototype open : @@@nodejs.util.inspect.custom/wc
 TextEncoder.prototype : @@toStringTag/c constructor/wc encode/wc encodeInto/wc encoding/ac
 TextEncoderStream.prototype open : @@@nodejs.util.inspect.custom/wc
 TransformStream : length/c name/c prototype/-
 TransformStream.prototype open : @@@nodejs.util.inspect.custom/wc
+TransformStreamDefaultController.prototype open : @@@nodejs.util.inspect.custom/wc
 TypeError : length/? name/? prototype/-
 TypeError.prototype : constructor/wc message/wc name/wc
 URIError : length/? name/? prototype/-
@@ -201,6 +224,7 @@ WeakSet : length/? name/? prototype/-
 WeakSet.prototype : @@toStringTag/c add/wc constructor/wc delete/wc has/wc
 WebAssembly : @@toStringTag/c CompileError/wc Exception/wc Global/wc Instance/wc JSTag/ac LinkError/wc Memory/wc Module/wc RuntimeError/wc SuspendError/wc Suspending/wc Table/wc Tag/wc compile/wc compileStreaming/wc instantiate/wc instantiateStreaming/wc promising/wc validate/wc
 WebAssembly.CompileError : length/? name/? prototype/-
+WebAssembly.CompileError.prototype : constructor/wc message/wc name/wc
 WebAssembly.Exception : length/? name/? prototype/-
 WebAssembly.Exception.prototype : @@toStringTag/c constructor/wc getArg/wc is/wc stack/ac
 WebAssembly.Global : length/? name/? prototype/-
@@ -208,12 +232,15 @@ WebAssembly.Global.prototype : @@toStringTag/c constructor/wc value/ac valueOf/w
 WebAssembly.Instance : length/? name/? prototype/-
 WebAssembly.Instance.prototype : @@toStringTag/c constructor/wc exports/ac
 WebAssembly.LinkError : length/? name/? prototype/-
+WebAssembly.LinkError.prototype : constructor/wc message/wc name/wc
 WebAssembly.Memory : length/? name/? prototype/-
 WebAssembly.Memory.prototype : @@toStringTag/c buffer/ac constructor/wc grow/wc toFixedLengthBuffer/wc toResizableBuffer/wc
 WebAssembly.Module : customSections/wc exports/wc imports/wc length/? name/? prototype/-
 WebAssembly.Module.prototype : @@toStringTag/c constructor/wc
 WebAssembly.RuntimeError : length/? name/? prototype/-
+WebAssembly.RuntimeError.prototype : constructor/wc message/wc name/wc
 WebAssembly.SuspendError : length/? name/? prototype/-
+WebAssembly.SuspendError.prototype : constructor/wc message/wc name/wc
 WebAssembly.Suspending : length/? name/? prototype/-
 WebAssembly.Suspending.prototype : constructor/wc
 WebAssembly.Table : length/? name/? prototype/-
@@ -223,6 +250,8 @@ WebAssembly.Tag.prototype : @@toStringTag/c constructor/wc
 WebSocket : CLOSED/- CLOSING/- CONNECTING/- OPEN/- length/c name/c prototype/-
 WritableStream : length/c name/c prototype/-
 WritableStream.prototype open : @@@nodejs.util.inspect.custom/wc
+WritableStreamDefaultController.prototype open : @@@nodejs.util.inspect.custom/wc
+WritableStreamDefaultWriter.prototype open : @@@nodejs.util.inspect.custom/wc
 decodeURI : length/? name/?
 decodeURIComponent : length/? name/?
 encodeURI : length/? name/?

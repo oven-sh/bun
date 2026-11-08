@@ -18,7 +18,11 @@
 #include <span>
 #include <string_view>
 #include <wtf/DataLog.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
+#include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
 #if ENABLE(AOT) && OS(LINUX)
@@ -99,7 +103,6 @@ void requireCellCage()
 #endif
 }
 
-// B3 and Air take every knob from the policy of the build. The WebAssembly front end sets this one from the process.
 static constinit std::optional<unsigned> defaultWasmOMGOptimizationLevel;
 
 void saveBackEndOptionDefaults()
@@ -155,16 +158,26 @@ extern "C" void Bun__AOT__takePagesForTablesOfFirstThread()
     JSC::AOT::adoptPagesForNewThread(result.pages);
 }
 
+extern "C" bool mi_on_thread_idle_start(void) noexcept;
+extern "C" void mi_on_thread_idle_end(void) noexcept;
+
+// mimalloc starts the thread that gives freed memory back when a second thread comes or a thread first parks. A compiled program may do neither for as long as it runs.
+extern "C" void Bun__didFinishFirstCollectionOfCompiledProgram()
+{
+    if (mi_on_thread_idle_start())
+        mi_on_thread_idle_end();
+}
+
 extern "C" void Bun__ThreadPool__exitWithoutAnyThread();
 
-extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, BunAOTBytes allImages, const BunAOTImageFile* fileOrNull, const uint8_t identity[16])
+extern "C" JSC::AOT::Wire::ImageVerdict Bun__AOT__useImage(BunAOTBytes image, const BunAOTImageFile* fileOrNull, const uint8_t identity[16])
 {
     if (!JSC::AOT::BuiltinBindings::hasHost())
         Bun__AOT__registerHostBindings();
     std::array<uint8_t, 16> id;
     memcpy(id.data(), identity, id.size());
     auto file = fileOrNull ? std::optional(JSC::AOT::ImageFile { fileOrNull->descriptor, fileOrNull->offset }) : std::nullopt;
-    auto verdict = JSC::AOT::useImage({ image.ptr, image.len }, file, id, { allImages.ptr, allImages.len });
+    auto verdict = JSC::AOT::useImage({ image.ptr, image.len }, file, id);
     if (verdict == JSC::AOT::Wire::ImageVerdict::NeedsCellCage) {
         auto result = JSC::MarkedBlockCage::require();
         RELEASE_ASSERT(!result);
@@ -218,42 +231,72 @@ extern "C" BunAOTBytes Bun__AOT__imageCode()
     return { code.data(), code.size() };
 }
 
-extern "C" void Bun__AOT__setMismatchLog(intptr_t descriptor, bool isJSON)
-{
-    JSC::AOT::setMismatchLog(descriptor, isJSON);
-}
-
-extern "C" void Bun__AOT__setMismatchLogFormat(bool isJSON)
-{
-    JSC::AOT::setMismatchLogFormat(isJSON);
-}
-
 extern "C" void Bun__AOT__recordRefusedChange(const BunString* refusal, const BunString* sourceURL, unsigned line, unsigned column);
 extern "C" void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame*, JSC::JSGlobalObject*, BunString* outSourceURL, unsigned* outLine, unsigned* outColumn);
 
 static void recordRefusedChange(JSC::JSGlobalObject* globalObject, const String& refusal)
 {
     JSC::CallFrame* callFrame = globalObject->vm().topCallFrame;
-    if (!callFrame)
+    // The loader starts a module from no frame, and what is said of a file that runs names no place.
+    bool namesPlace = !refusal.startsWith("Ran from source "_s);
+    if (!callFrame && namesPlace)
         return;
     BunString sourceURL = Bun::BunStringEmpty;
     unsigned line = 0;
     unsigned column = 0;
-    Bun__CallFrame__getCallerSrcLoc(callFrame, globalObject, &sourceURL, &line, &column);
+    if (namesPlace)
+        Bun__CallFrame__getCallerSrcLoc(callFrame, globalObject, &sourceURL, &line, &column);
     BunString text = Bun::toStringRef(refusal);
     Bun__AOT__recordRefusedChange(&text, &sourceURL, line, column);
     text.deref();
     sourceURL.deref();
 }
 
-extern "C" bool Bun__AOT__takesImagesAboveOthers()
+extern "C" void Bun__AOT__recordMissingExport(const BunString* name, const BunString* exporter, const BunString* importer);
+
+static void recordMissingExport(const String& name, const String& exporter, const String& importer)
 {
-    return JSC::AOT::takesImagesAboveOthers();
+    BunString texts[] = { Bun::toStringRef(name), Bun::toStringRef(exporter), Bun::toStringRef(importer) };
+    Bun__AOT__recordMissingExport(&texts[0], &texts[1], &texts[2]);
+    for (BunString& text : texts)
+        text.deref();
 }
+
+static bool listsRefusedChanges;
 
 extern "C" void Bun__AOT__listRefusedChanges()
 {
+    listsRefusedChanges = true;
     JSC::AOT::setRefusedChangeListener(recordRefusedChange);
+    JSC::AOT::setMissingExportListener(recordMissingExport);
+}
+
+extern "C" void Bun__AOT__openNameWithoutImage(uint32_t holder, const uint8_t* name, size_t length)
+{
+    JSC::AOT::openNameWithoutImage(holder, std::span { name, length });
+}
+
+namespace Bun {
+
+void recordRefusedLoad(JSC::JSGlobalObject* globalObject, const String& path)
+{
+    if (listsRefusedChanges)
+        recordRefusedChange(globalObject, makeString("Cannot load '"_s, path, '\''));
+}
+
+void recordFileRunFromSource(JSC::JSGlobalObject* globalObject, const String& path, ASCIILiteral why)
+{
+    if (listsRefusedChanges)
+        recordRefusedChange(globalObject, makeString("Ran from source '"_s, path, "': "_s, why));
+}
+
+bool recordAddonLoadedFromDisk(JSC::JSGlobalObject* globalObject, const String& path)
+{
+    if (listsRefusedChanges)
+        recordRefusedChange(globalObject, makeString("Loaded '"_s, path, '\''));
+    return listsRefusedChanges;
+}
+
 }
 
 extern "C" void Bun__AOT__setVerbose(bool isVerbose)
@@ -286,10 +329,57 @@ extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset)
     return JSC::AOT::imageCodeStart() + offset;
 }
 
+static void appendCompiledFrame(StringBuilder& text, const JSC::AOT::Image& image, const JSC::AOT::TraceFrame& frame)
+{
+    if (image.isObfuscated()) {
+        JSC::LineColumn position = JSC::AOT::obfuscatedPositionOf(frame);
+        text.append("    at "_s, position.line, ':', position.column, '\n');
+        return;
+    }
+    // A built-in function whose steps compiled code runs itself has a number behind the functions of the program. The image holds no name for it.
+    if (JSC::AOT::builtinOfFunctionInFrames(frame.function))
+        return;
+    auto position = JSC::AOT::positionOf(frame);
+    String place = position && position->source ? makeString(JSC::AOT::sourceURLOf(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
+    if (JSC::AOT::FunctionDescription(frame.function).codeType() == JSC::ModuleCode) {
+        text.append("    at "_s, place, '\n');
+        return;
+    }
+    std::optional<uint32_t> writtenName = image.programTables().nameOfFunction(frame.function.index());
+    StringView name = writtenName && image.text().hasText(JSC::AOT::StringID(*writtenName)) ? image.text().view(JSC::AOT::StringID(*writtenName)) : StringView();
+    if (name.isEmpty())
+        name = StringView("<anonymous>"_s);
+    if (place.isEmpty())
+        text.append("    at "_s, name, '\n');
+    else
+        text.append("    at "_s, name, " ("_s, place, ")\n"_s);
+}
+
+// For a process that is crashing, too: it asks no VM.
 extern "C" size_t Bun__AOT__describeAddresses(const size_t* addresses, size_t count, uint8_t* buffer, size_t capacity)
 {
-    String text = JSC::AOT::describeCodeAddresses(std::span { reinterpret_cast<const void* const*>(addresses), count });
-    CString utf8 = text.utf8();
+    const JSC::AOT::Image* image = JSC::AOT::Image::current();
+    if (!image)
+        return 0;
+    StringBuilder text;
+    JSC::AOT::ShownFrameFilter filter;
+    std::span codeAddresses { reinterpret_cast<const void* const*>(addresses), count };
+    for (const void* const& address : codeAddresses) {
+        JSC::AOT::CodeLocation location = image->locate(address);
+        if (location.kind != JSC::AOT::CodeKind::Function)
+            continue;
+        // Where the function has no site for the address, the frame is reported at the start of the function.
+        JSC::AOT::CallSiteRecord site = image->returnSiteInfoAt(location.function, location.offset).site.value_or(JSC::AOT::CallSiteRecord { JSC::CallSiteIndex(0), 0 });
+        // Every address but the first is a return address, so its callee has started. A tail call that was compiled as a plain call hides its caller, as in Error.stack.
+        // forEachShownFrame() assumes that the callee was not entered, and reads nothing from the kind except whether the caller has left.
+        bool calleeWasEntered = &address != codeAddresses.data();
+        if (site.isTailDeleted(calleeWasEntered))
+            site.kind = JSC::AOT::CallSiteKind::InsideCallee;
+        JSC::AOT::forEachShownFrame(JSC::AOT::CompiledFunctionID(location.function), site, filter, [&](const JSC::AOT::TraceFrame& frame) {
+            appendCompiledFrame(text, *image, frame);
+        });
+    }
+    CString utf8 = text.toString().utf8();
     std::u8string_view bytes { utf8.data(), utf8.length() };
     size_t length = bytes.size();
     if (length > capacity) {
@@ -304,7 +394,7 @@ extern "C" size_t Bun__AOT__describeAddresses(const size_t* addresses, size_t co
 #else // ENABLE(AOT)
 
 // ImageVerdict::Unsupported.
-extern "C" uint32_t Bun__AOT__useImage(BunAOTBytes, BunAOTBytes, const BunAOTImageFile*, const uint8_t*) { return 0; }
+extern "C" uint32_t Bun__AOT__useImage(BunAOTBytes, const BunAOTImageFile*, const uint8_t*) { return 0; }
 extern "C" bool Bun__AOT__useNoImageOnThisThread(BunAOTBytes) { return false; }
 extern "C" bool Bun__AOT__admittedCode(BunAOTBytes, uint32_t*) { return false; }
 extern "C" bool Bun__AOT__admitsUnknownJavaScript(BunAOTBytes) { return true; }
@@ -314,20 +404,12 @@ extern "C" void Bun__AOT__takePagesForTablesOfFirstThread() {}
 #if OS(LINUX)
 extern "C" void Bun__askForAddressSpaceToStart() {}
 #endif
-extern "C" void Bun__AOT__setMismatchLog(intptr_t, bool) {}
-extern "C" void Bun__AOT__setMismatchLogFormat(bool) {}
-extern "C" bool Bun__AOT__takesImagesAboveOthers() { return false; }
 extern "C" void Bun__AOT__listRefusedChanges() {}
+extern "C" void Bun__AOT__openNameWithoutImage(uint32_t, const uint8_t*, size_t) {}
 extern "C" void Bun__AOT__setVerbose(bool) {}
 extern "C" int64_t Bun__AOT__offsetInCode(const void*) { return -1; }
 extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void*) { return -1; }
 extern "C" size_t Bun__AOT__addressOfOffsetInCode(size_t offset) { return offset; }
 extern "C" size_t Bun__AOT__describeAddresses(const size_t*, size_t, uint8_t*, size_t) { return 0; }
-
-// JavaScriptCore's aot/runtime/AOTExpectedRows.cpp, where the realm runs no compiled program. src/sql_jsc/shared/RowDecoder.rs decodes the row itself then.
-extern "C" uint32_t JSC__AOT__expectedResultType(JSC::JSGlobalObject*, JSC::EncodedJSValue) { return 0; }
-extern "C" void* JSC__AOT__ObjectBuilderPlan__create(JSC::JSGlobalObject*, uint32_t, const void*, uint32_t) { return nullptr; }
-extern "C" void JSC__AOT__ObjectBuilderPlan__destroy(void*) {}
-extern "C" JSC::EncodedJSValue JSC__AOT__ObjectBuilderPlan__createObject(JSC::JSGlobalObject*, const void*, const void*) { return JSC::JSValue::encode({}); }
 
 #endif // ENABLE(AOT)

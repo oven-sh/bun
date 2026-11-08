@@ -2152,4 +2152,39 @@ describe.concurrent("expect.poll()", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  test("a matcher of the test context's expect.poll() sides with its test, also in concurrent tests", async () => {
+    const { stdout, exitCode } = await run(["test"], {
+      "a.test.js": `
+        import { describe, expect, test } from "vitest";
+        const outcome = error => (error instanceof TypeError ? "TypeError" : "fails");
+        const called = call => { try { call(); return "passes"; } catch (error) { return outcome(error); } };
+        const settle = matcher => matcher.then(() => "passes", outcome);
+        // A TypeError in Vitest. It passes in Jest.
+        const both = async expect => [
+          called(() => expect(undefined).not.toHaveProperty("a")),
+          await settle(expect.poll(() => undefined, { interval: 1, timeout: 50 }).not.toHaveProperty("a")),
+        ];
+        test("serial", async ({ expect: ofContext }) => {
+          console.log("serial test, expect of its context: " + (await both(ofContext)).join(", polled: "));
+        });
+        describe.concurrent("one group", () => {
+          test("first", async ({ expect: ofContext }) => {
+            await 1;
+            console.log("concurrent test, expect of its context: " + (await both(ofContext)).join(", polled: "));
+            // The runner can't tell which of the two tests calls the expect of the module.
+            const [ofModule, polled] = await both(expect);
+            console.log("concurrent test, expect of the module: polled " + (polled === ofModule ? "as called" : "not as called"));
+          });
+          test("second", async () => { await 1; });
+        });
+      `,
+    });
+    expect(stdout).toEqual([
+      "serial test, expect of its context: TypeError, polled: TypeError",
+      "concurrent test, expect of its context: TypeError, polled: TypeError",
+      "concurrent test, expect of the module: polled as called",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });

@@ -6595,6 +6595,8 @@ impl VirtualMachine {
         self.close_test_file_sockets();
         debug_assert!(!self.has_test_file_sockets());
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
+        // What this takes back from the outgoing file can be an input of the resolver, so no answer of that file stays.
+        bun_resolver::resolution_epoch::bump();
 
         // The outgoing file's JS timers would otherwise release their pins only
         // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a

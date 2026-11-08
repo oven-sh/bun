@@ -3908,6 +3908,8 @@ impl<'a> Resolver<'a> {
                     return Err(err);
                 }
             };
+        // The route loaders iterate the `DirEntry.data` map under this lock.
+        let _entries_unlock = rfs!().entries_mutex.lock_guard();
         // SAFETY: `read_directory` returned a live slot in `rfs.entries` (or the
         // threadlocal scratch slot for a missing directory, read before the next call).
         let dir_entries = match unsafe { &*dir_entries_option }.try_entries() {
@@ -3922,8 +3924,6 @@ impl<'a> Resolver<'a> {
                 return Err(err);
             }
         };
-        // The route loaders iterate the `DirEntry.data` map under this lock.
-        let _entries_unlock = rfs!().entries_mutex.lock_guard();
         let cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
 
         // We must initialize it as empty so that the result index is correct.
@@ -3956,6 +3956,9 @@ impl<'a> Resolver<'a> {
             open_dir,
             Some(package_id),
         )?;
+        if dir_entries.fd != open_dir {
+            let _ = bun_sys::close(open_dir);
+        }
         // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.
         Ok(Some(unsafe { DirInfoRef::from_raw(dir_info_ptr) }))
     }

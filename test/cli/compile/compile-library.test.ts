@@ -1032,6 +1032,8 @@ export const record: unknown = {};
 export const kind: unknown = "k";
 export const pair: string[] = ["a"];
 export const grid: string[][] = [["a"]];
+export let size: number = 1;
+export let text: string = "a";
 `,
     "src/index.ts": `import * as ns from "./ns";
 declare function use(...values: unknown[]): void;
@@ -1114,7 +1116,7 @@ export function heads(x: number): number {
     using dir = tempDir("library-typed-file-held-inside", {
       ...library(held),
       "src/index.ts": `import * as ns from "./ns";
-export function inside([[a = ns.value as string] = ns.pair as string[]]: string[][] = ns.grid as string[][]): string {
+export function inside([[a = ns.value as string] = ns.pair]: string[][] = ns.grid as string[][]): string {
   return a;
 }
 `,
@@ -1124,6 +1126,58 @@ export function inside([[a = ns.value as string] = ns.pair as string[]]: string[
     expect(typedFile(dir).match(/^function .*$/gm)).toEqual([
       "function inside([[a = value as string] = pair]: string[][] = grid as string[][]): string {",
     ]);
+  });
+
+  test("a cast is left out where a parameter, a field or a loop holds another expression than the operand", async () => {
+    using dir = tempDir("library-typed-file-held-another", {
+      ...library(held),
+      "src/index.ts": `import * as ns from "./ns";
+export function turned(x: number, p: boolean = "k" === (ns.kind as string)): number {
+  if (null == (ns.value as string)) x++;
+  return p ? x : 0;
+}
+export function folded(x: number): number {
+  while (((ns.size + ns.text) as string) && true) break;
+  return x;
+}
+export class Rows {
+  accessor id = 0;
+  label = ns.pair as string[];
+}
+`,
+    });
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir).match(/^.*(\bp: boolean|if \(|while \(|label = ).*$/gm)).toEqual([
+      'function turned(x: number, p: boolean = kind === "k"): number {',
+      "  if (value == null)",
+      "  while (size + text)",
+      "  label = (__privateAdd(this, _id, 0), pair);",
+    ]);
+  });
+
+  test("--minify-whitespace: a member of a const enum keeps its type after case", async () => {
+    using dir = tempDir(
+      "library-typed-file-case",
+      library({
+        "src/index.ts": `export const enum Level {
+  Low = 1,
+  High = 2,
+}
+export function name(level: Level): string {
+  switch (level) {
+    case Level.Low:
+      return "low";
+    case Level.High:
+      return "high";
+  }
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--minify-whitespace");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir).match(/case [^:]+:/g)).toEqual(["case 1 as Level2.Low:", "case 2 as Level2.High:"]);
   });
 
   test("--minify-whitespace puts each statement of the .aot.ts file on its own line", async () => {

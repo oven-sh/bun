@@ -76,6 +76,15 @@ fn level_of_operator(op: BinOp) -> Level {
     }
 }
 
+fn has_same_operator(kind: ExprKind, other: ExprKind) -> bool {
+    match (kind, other) {
+        (ExprKind::Binary { op, .. }, ExprKind::Binary { op: other, .. }) => op == other,
+        (ExprKind::Unary { op, .. }, ExprKind::Unary { op: other, .. }) => op == other,
+        (ExprKind::Assign { op, .. }, ExprKind::Assign { op: other, .. }) => op == other,
+        _ => true,
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Shape {
     Leaf,
@@ -87,6 +96,20 @@ enum Shape {
     Postfix,
     Binary,
     Conditional,
+}
+
+/// What holds an expression that no expression is the parent of.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+enum Owner {
+    Parameter,
+    PatternProperty,
+    PatternElement,
+    Member,
+    Extends,
+    Test,
+    Update,
+    Subject,
+    Case,
 }
 
 struct CastChain {
@@ -480,10 +503,14 @@ impl<'a, 's> Syntax<'a, 's> {
     }
 
     fn member_key(&self, member: &Member) -> u32 {
-        if self.byte(member.name_pos) != b'[' {
-            return member.name_pos;
+        self.name_key(member.name_pos)
+    }
+
+    fn name_key(&self, name_pos: u32) -> u32 {
+        if self.byte(name_pos) != b'[' {
+            return name_pos;
         }
-        let mut key = self.after_trivia(member.name_pos + 1);
+        let mut key = self.after_trivia(name_pos + 1);
         while let dot = self.after_trivia(self.token_end(key))
             && self.byte(dot) == b'.'
             && self.byte(dot + 1) != b'.'
@@ -1747,6 +1774,58 @@ impl<'a, 's> Syntax<'a, 's> {
                 _ => None,
             });
         initializers.chain(statements)
+    }
+
+    /// Each key is the position of a token of the owner that no other owner of that kind has.
+    fn owned_expressions(&self) -> Vec<((Owner, u32), ExprId)> {
+        let file = self.file;
+        let mut owned = Vec::new();
+        for parameter in file.params.iter() {
+            if let Some(key) = self.first_identifier(parameter.pat) {
+                owned.push(((Owner::Parameter, key), parameter.default));
+            }
+        }
+        for property in file.pat_props.iter() {
+            let key = self.name_key(property.key_pos);
+            owned.push(((Owner::PatternProperty, key), property.default));
+        }
+        for element in file.pat_elems.iter() {
+            // The first identifier of a pattern in a pattern is also the key of an element inside it.
+            if let Some(pattern) = file.pats.get(element.pat.idx())
+                && matches!(pattern.kind, PatKind::Ident(_))
+            {
+                owned.push(((Owner::PatternElement, pattern.pos), element.default));
+            }
+        }
+        for class in file.classes.iter() {
+            owned.push(((Owner::Extends, self.class_body_pos(class)), class.extends));
+        }
+        for member in file.members.iter() {
+            if member.kind == MemberKind::Property {
+                owned.push(((Owner::Member, self.member_key(member)), member.init));
+            }
+        }
+        for statement in file.stmts.iter() {
+            let key = statement.start;
+            match statement.kind {
+                StmtKind::If { test, .. }
+                | StmtKind::While { test, .. }
+                | StmtKind::DoWhile { test, .. } => owned.push(((Owner::Test, key), test)),
+                StmtKind::For { test, update, .. } => {
+                    owned.push(((Owner::Test, key), test));
+                    owned.push(((Owner::Update, key), update));
+                }
+                StmtKind::ForIn { expr, .. }
+                | StmtKind::ForOf { expr, .. }
+                | StmtKind::Switch { expr, .. } => owned.push(((Owner::Subject, key), expr)),
+                _ => {}
+            }
+        }
+        for case in file.cases.iter() {
+            owned.push(((Owner::Case, case.pos), case.test));
+        }
+        owned.retain(|owned| owned.1.is_some());
+        owned
     }
 
     fn value_names(&self) -> impl Iterator<Item = u32> + '_ {
@@ -3247,8 +3326,13 @@ impl<'a> Transfer<'_, 'a, '_> {
 
     fn copy_casts(&mut self) {
         let output_anchored = self.anchored_expressions();
-        let (output, mappings, written, linked) =
-            (self.output, self.mappings, self.modules, self.linked);
+        let (output, mappings, by_original, written, linked) = (
+            self.output,
+            self.mappings,
+            self.by_original,
+            self.modules,
+            self.linked,
+        );
         let (output_file, insertions) = (output.file, &mut self.insertions);
         let output_context = output.context();
         let mut output_expressions: FxHashMap<(Shape, u32, u32), ExprId> = FxHashMap::default();
@@ -3299,6 +3383,44 @@ impl<'a> Transfer<'_, 'a, '_> {
             .filter(|property| property.kind == PropKind::Shorthand)
             .map(|property| property.value)
             .collect();
+        let output_owned = std::cell::OnceCell::new();
+        let output_owned = || {
+            output_owned.get_or_init(|| {
+                let mut owned: FxHashMap<(Owner, u32, u32), ExprId> = FxHashMap::default();
+                for ((owner, key), value) in output.owned_expressions() {
+                    if let Some((source, key)) = mappings.original(key) {
+                        owned.entry((owner, source, key)).or_insert(value);
+                    }
+                }
+                owned
+            })
+        };
+        // The places in the output of what is printed from inside an expression of a source.
+        let printed = |source: u32, expr: &Expr| {
+            let (start, end) = ((source, expr.pos), (source, expr.end));
+            let from = by_original.partition_point(|entry| (entry.0, entry.1) < start);
+            let inside = by_original[from..].iter();
+            inside
+                .take_while(move |entry| (entry.0, entry.1) < end)
+                .map(|entry| entry.2)
+        };
+        // Whether all that is printed from the expression is in `found`, and nothing else is.
+        let is_printed_from = |found: ExprId, source: u32, expr: &Expr| {
+            let (start, end) = output.outer_span(found);
+            // The printer maps a token, then may put a space before it.
+            let start = start - u32::from(start > 0 && output.byte(start - 1) == b' ');
+            let is_inside = |at: u32| start <= at && at < end;
+            // A line that starts without a mapping repeats the last one of the line before it.
+            let is_repeated = |at: u32| at > 0 && output.byte(at - 1) == b'\n';
+            let from = mappings.entries.partition_point(|entry| entry.0 < start);
+            let mut inside = mappings.entries[from..]
+                .iter()
+                .take_while(|entry| entry.0 < end);
+            printed(source, expr).any(is_inside)
+                && printed(source, expr).all(|at| is_inside(at) || is_repeated(at))
+                && inside
+                    .all(|entry| entry.1 == source && expr.pos <= entry.2 && entry.2 < expr.end)
+        };
         for (index, module) in written.iter().enumerate() {
             let Some(module) = module.as_ref().filter(|module| !module.is_unchecked()) else {
                 continue;
@@ -3329,9 +3451,23 @@ impl<'a> Transfer<'_, 'a, '_> {
                     .flatten()
                     .find_map(|key| output_expressions.get(&(shape, index as u32, key)).copied())
             };
+            let find_below = |mut found: ExprId, way: Vec<(ExprId, usize)>, is_exact: bool| {
+                for (parent, place) in way.into_iter().rev() {
+                    let (kind, output_kind) = (syntax.file[parent].kind, output_file[found].kind);
+                    let children = output.children(found);
+                    if std::mem::discriminant(&kind) != std::mem::discriminant(&output_kind)
+                        || children.len() != syntax.children(parent).len()
+                        || is_exact && !has_same_operator(kind, output_kind)
+                    {
+                        return None;
+                    }
+                    found = children[place];
+                }
+                Some(found)
+            };
             let find_via_ancestor = |chain: &CastChain| {
                 let (mut at, mut way) = (chain.outermost, Vec::new());
-                let mut found = loop {
+                let found = loop {
                     if let Some(&found) = anchored
                         .get(&at)
                         .and_then(|&key| output_anchored.get(&(index as u32, key)))
@@ -3348,17 +3484,26 @@ impl<'a> Transfer<'_, 'a, '_> {
                         break found;
                     }
                 };
-                for (parent, place) in way.into_iter().rev() {
-                    let children = output.children(found);
-                    if std::mem::discriminant(&syntax.file[parent].kind)
-                        != std::mem::discriminant(&output_file[found].kind)
-                        || children.len() != syntax.children(parent).len()
-                    {
-                        return None;
+                find_below(found, way, false)
+            };
+            let owned = std::cell::OnceCell::new();
+            let find_via_owner = |chain: &CastChain| {
+                let owned: &FxHashMap<ExprId, (Owner, u32)> = owned.get_or_init(|| {
+                    let owned = syntax.owned_expressions().into_iter();
+                    owned.map(|(key, value)| (value, key)).collect()
+                });
+                let (mut at, mut way) = (chain.outermost, Vec::new());
+                while let Some((parent, place)) = places[at.idx()] {
+                    at = parent;
+                    if syntax.file.type_assertion_operand(parent).is_none() {
+                        way.push((parent, place));
                     }
-                    found = children[place];
                 }
-                Some(found)
+                let &(owner, key) = owned.get(&at)?;
+                let found = *output_owned().get(&(owner, index as u32, key))?;
+                // The build can fold away what is around the operand, and add what no source has.
+                let found = find_below(found, way, true)?;
+                is_printed_from(found, index as u32, &syntax.file[chain.operand]).then_some(found)
             };
             let file = syntax.file;
             let variables = file
@@ -3432,14 +3577,24 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }
                 let source_position = syntax.file[chain.operand].pos;
                 let found = find(chain.operand).or_else(|| find_via_ancestor(&chain));
-                let Some(operand) = found.or_else(|| {
+                let found = found.or_else(|| {
                     [Shape::Leaf, Shape::Prefix].iter().find_map(|&shape| {
                         output_expressions
                             .get(&(shape, index as u32, source_position))
                             .copied()
                             .filter(|&literal| is_literal(literal))
                     })
-                }) else {
+                });
+                // An operand that the build removed is not missed.
+                let is_missed = found.is_none()
+                    && printed(index as u32, &syntax.file[chain.operand])
+                        .next()
+                        .is_some();
+                let found = match is_missed {
+                    true => find_via_owner(&chain),
+                    false => found,
+                };
+                let Some(operand) = found else {
                     continue;
                 };
                 let member = enum_member_cast(chain.operand).filter(|_| is_literal(operand));

@@ -351,8 +351,7 @@ pub struct Scope {
     // evaluated code might reference anything that it has access to.
     pub contains_direct_eval: bool,
 
-    // Set on a "with" scope and every scope that encloses it, for compute_reserved_names_for_scope
-    // and find_symbol.
+    // Set on a "with" scope and every scope that encloses it, for the renamer and find_symbol.
     pub contains_with: bool,
 
     // This is to help forbid "arguments" inside class body scopes

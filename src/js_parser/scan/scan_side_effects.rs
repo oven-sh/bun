@@ -205,8 +205,7 @@ impl SideEffects {
                     Op::Code::UnTypeof => {
                         // "typeof x" must not be transformed into if "x" since doing so could
                         // cause an exception to be thrown. Instead we can just remove it since
-                        // "typeof x" is special-cased in the standard to never throw, unless
-                        // "x" has `must_keep_due_to_with_stmt`.
+                        // "typeof x" is special-cased in the standard to never throw.
                         if let ExprData::EIdentifier(ident) = un.value.data
                             && un
                                 .flags

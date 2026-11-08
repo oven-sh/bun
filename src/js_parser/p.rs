@@ -2778,8 +2778,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let is_var = local.kind == js_ast::LocalKind::KVar;
                         let first = &mut local.decls.slice_mut()[0];
                         if let js_ast::b::B::BIdentifier(id) = first.binding.data {
-                            // A `var` declaration below a "with" statement looks its name up on
-                            // the target before it evaluates the initializer.
+                            // Below "with", a `var` is looked up before its initializer runs.
                             if is_var && self.var_store_asks_with_target(id.r#ref) {
                                 return false;
                             }
@@ -3813,8 +3812,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.has_with_scope = true;
             }
 
-            // Marked up the chain like contains_direct_eval, for compute_reserved_names_for_scope
-            // and find_symbol.
+            // Marked up the chain like contains_direct_eval, for the renamer and find_symbol.
             let mut scope_iter: Option<js_ast::StoreRef<Scope>> = Some(scope);
             while let Some(mut s) = scope_iter {
                 if s.contains_with {

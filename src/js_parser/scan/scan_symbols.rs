@@ -168,19 +168,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 
-    /// True when a store to the `var` `ref_`, which the current scope declares, asks the
-    /// target of a "with" statement for the name.
+    /// True when a store to `ref_`, a `var` of the current scope, asks a "with" target.
     pub(crate) fn var_store_asks_with_target(&self, ref_: Ref) -> bool {
         self.module_scope().contains_with
             && self.lookup_asks_with_target(Some(self.current_scope), ref_)
     }
 
-    /// True when a lookup from the current scope asks the target of a "with" statement.
-    /// `found_in` is the scope that lists the symbol `ref_`, or `None` for a name that no
-    /// scope lists. A `var` is a variable of the nearest scope that stops hoisting, so a
-    /// "with" scope between `found_in` and that scope counts too:
-    ///
-    ///   with (obj) { var foo; foo }
+    /// `found_in` lists `ref_`. A `var` belongs to its function scope, so its walk goes on to there.
     #[cold]
     #[inline(never)]
     fn lookup_asks_with_target(

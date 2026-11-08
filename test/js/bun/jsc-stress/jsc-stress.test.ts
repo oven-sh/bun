@@ -132,6 +132,8 @@ const jsFixtures = [
   "regexp-many-single-character-alternatives.js",
   // Builtins
   "function-prototype-call-not-called-as-a-method.js",
+  // Bytecode generator
+  "derived-constructor-this-initialized-by-another-arrow-function.js",
 ];
 
 const wasmFixtures = [

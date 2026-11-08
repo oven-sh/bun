@@ -671,3 +671,182 @@ test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv i
   expect(child.exitCode).toBe(null);
   webSocket.close();
 });
+
+// An arrow function or eval code of a derived constructor reads `this` from a scope at each use when other code of the
+// constructor can call super(). Its frame has a copy of `this` only after a read, so the debugger reads the scope too.
+// It does the same for the frame of the constructor, which has no copy between that super() and its next use of `this`.
+test("Debugger.paused has `this` of an arrow function after another arrow function of the derived constructor called super()", async () => {
+  using dir = tempDir("inspect-derived-constructor-this", {
+    "entry.js": `
+      class Base {
+        constructor() {
+          this.own = 1;
+        }
+      }
+      class Derived extends Base {
+        constructor() {
+          const initialize = () => {
+            super();
+          };
+          const reader = () => {
+            debugger;
+            initialize();
+            debugger;
+            return this;
+          };
+          const evaluator = () => {
+            eval("debugger;");
+            return this;
+          };
+          reader();
+          evaluator.call({});
+        }
+      }
+      new Derived();
+      // The console text calls super() at these pauses, so each is in a constructor of its own.
+      class ConsoleInArrow extends Base {
+        constructor() {
+          const initialize = () => {
+            super();
+          };
+          const reader = () => {
+            debugger;
+            return [this, initialize][0];
+          };
+          reader();
+        }
+      }
+      new ConsoleInArrow();
+      class ConsoleInEval extends Base {
+        constructor() {
+          const initialize = () => {
+            super();
+          };
+          const evaluator = () => {
+            eval("debugger;");
+            return this;
+          };
+          evaluator.call({});
+        }
+      }
+      new ConsoleInEval();
+      // The frame of the constructor itself, after an arrow function called super() and before the constructor used this.
+      class InConstructor extends Base {
+        constructor() {
+          const initialize = () => {
+            super();
+          };
+          initialize();
+          debugger;
+        }
+      }
+      new InConstructor();
+      setInterval(() => {}, 60_000);
+    `,
+  });
+
+  await using child = spawn({
+    cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  let url: string | undefined;
+  const decoder = new TextDecoder();
+  for await (const chunk of child.stderr as ReadableStream) {
+    stderr += decoder.decode(chunk);
+    url = stderr.match(/(ws:\/\/[^\s]+)/)?.[1];
+    if (url) break;
+  }
+  if (!url) throw new Error(`Unable to find the inspector URL in:\n${stderr}`);
+
+  type Reply = { result?: any; error?: { message: string } };
+  const pending = new Map<number, (reply: Reply) => void>();
+  const pauses: any[] = [];
+  let onPause: (() => void) | undefined;
+  // A crash closes the socket. Reject, so that the test does not wait for a pause that cannot come.
+  const closed = Promise.withResolvers<never>();
+  closed.promise.catch(() => {});
+  const opened = Promise.withResolvers<void>();
+  const webSocket = new WebSocket(url);
+  webSocket.addEventListener("open", () => opened.resolve());
+  webSocket.addEventListener("close", () => closed.reject(new Error("the inspector closed the socket")));
+  webSocket.addEventListener("error", () => closed.reject(new Error("the inspector socket failed")));
+  webSocket.addEventListener("message", ({ data }) => {
+    const message = JSON.parse(data.toString());
+    if (typeof message.id === "number") {
+      pending.get(message.id)?.(message);
+      pending.delete(message.id);
+    } else if (message.method === "Debugger.paused") {
+      pauses.push(message.params);
+      onPause?.();
+    }
+  });
+
+  let nextId = 1;
+  function send(method: string, params: object = {}): Promise<Reply> {
+    const id = nextId++;
+    const { promise, resolve } = Promise.withResolvers<Reply>();
+    pending.set(id, resolve);
+    webSocket.send(JSON.stringify({ id, method, params }));
+    return Promise.race([promise, closed.promise]);
+  }
+  async function nextPause(): Promise<any> {
+    while (!pauses.length) {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      onPause = resolve;
+      await Promise.race([promise, closed.promise]);
+    }
+    return pauses.shift();
+  }
+
+  await Promise.race([opened.promise, closed.promise]);
+  await Promise.all([
+    send("Inspector.enable"),
+    send("Debugger.enable"),
+    send("Debugger.setBreakpointsActive", { active: true }),
+    send("Debugger.setPauseOnDebuggerStatements", { enabled: true }),
+  ]);
+  // The reply comes when the program has run to its first pause.
+  send("Inspector.initialized").catch(() => {});
+
+  const seen: unknown[] = [];
+  // The console text is eval code of the paused frame. Its arrow functions read `this` at each use too.
+  const readOwn = "(() => { try { return this.own; } catch (error) { return error.constructor.name; } })()";
+  const initializeAndReadOwn =
+    "(() => { try { return (initialize(), this.own); } catch (error) { return error.constructor.name; } })()";
+  for (let i = 0; i < 6; i++) {
+    const { callFrames } = await nextPause();
+    const frame = callFrames[0];
+    const evaluated = await send("Debugger.evaluateOnCallFrame", {
+      callFrameId: frame.callFrameId,
+      expression: i === 3 || i === 4 ? `[${readOwn}, ${initializeAndReadOwn}].join()` : readOwn,
+      returnByValue: true,
+    });
+    seen.push({
+      function: frame.functionName,
+      this: frame.this.className ?? frame.this.type,
+      evaluated: evaluated.result?.result?.value,
+    });
+    await send("Debugger.resume");
+  }
+
+  expect(seen).toEqual([
+    // No super() yet.
+    { function: "reader", this: "undefined", evaluated: "ReferenceError" },
+    // initialize() called super(). The frame of reader has not read `this` since.
+    { function: "reader", this: "Derived", evaluated: 1 },
+    // The eval code of evaluator, which was called with another receiver and has not read `this` yet.
+    { function: "eval code", this: "Derived", evaluated: 1 },
+    // Console text that reads `this`, calls super() and reads again: in an arrow function and in eval code of one.
+    { function: "reader", this: "undefined", evaluated: "ReferenceError,1" },
+    { function: "eval code", this: "undefined", evaluated: "ReferenceError,1" },
+    // The constructor has no copy of `this` yet: the super() was in its arrow function.
+    { function: "InConstructor", this: "InConstructor", evaluated: 1 },
+  ]);
+
+  webSocket.close();
+});

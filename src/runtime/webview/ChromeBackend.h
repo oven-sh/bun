@@ -265,9 +265,7 @@ enum class Method : uint8_t {
     UserRaw,
 };
 
-// The selector scripts (this one and kActionabilityIIFE) are function
-// expressions. The call site appends the arguments JSON-escaped, which avoids
-// Chrome's callFunctionOn dance for one string + one number.
+// A function expression, as kActionabilityIIFE: the call site appends the JSON-escaped arguments, which avoids Chrome's callFunctionOn dance.
 //
 // scrollIntoView is page-side atomic — just wait for the element, scroll,
 // return. No coords to parse.

@@ -1,4 +1,7 @@
 // Pages for the tests of click(selector) in webview-chrome.test.ts and webview.test.ts: what makes an element stable.
+// The script under test is kActionabilityIIFE in src/runtime/webview/ActionabilityScript.h. It returns the centre of
+// the element when two looks, in two frames, see the same box, and no animation is about to start. Each row needs one
+// clause of it.
 //
 // click() looks for its element with document.querySelector: once when it is called, then once in every frame. A page
 // that replaces that function acts at exact looks and can count them, so no case depends on how soon a frame comes.
@@ -319,6 +322,8 @@ export const clickSelectorPages: ClickSelectorPage[] = [
     want: "1 click, 12 looks",
   },
   {
+    // A paused animation clock gives every frame the time of the frame before it. Two looks that are 100 ms apart
+    // then count as two frames.
     name: "clicks when every frame carries the same time",
     ...withoutDisplay("1000"),
     selector: "#b",

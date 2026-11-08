@@ -1,6 +1,5 @@
 // `value` is also an accessor of WebAssembly.Global, `day` of Temporal.PlainDate and `region` of Intl.Locale. This program never reads WebAssembly, Temporal or Intl, so it has no such object:
 // each name points to the one class of the program that has the field, and the loops read and write slots.
-// COUNT: arrivals <= 100
 let sink;
 class Item {
   constructor(value) {

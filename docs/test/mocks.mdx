@@ -827,7 +827,7 @@ Module mocks interact with both ESM and CommonJS module caches.
 
 ### Lazy Evaluation
 
-Bun evaluates the mock factory callback only when the module is imported or required.
+Bun calls the mock factory when the module is next imported or required. The exception is a mock call that updates a module that's already loaded (see [Overriding Already Imported Modules](#overriding-already-imported-modules)). Bun then calls the factory at once.
 
 ### Path Resolution
 
@@ -846,7 +846,7 @@ For this reason, use `vi.mock()`, `jest.mock()` or `--preload` for mocks that ne
 
 ### Live Bindings
 
-Mocked ESM modules maintain live bindings, so changing the mock updates all existing imports.
+Importers read a mocked ES module through live bindings. A mock call that updates the loaded module changes what its existing imports read. A later change to the object the factory returned reaches them only if the module was loaded as a mock (see [Getters and Missing Exports](#getters-and-missing-exports)).
 
 ## Advanced Patterns
 

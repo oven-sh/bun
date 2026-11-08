@@ -3013,23 +3013,30 @@ describe.concurrent("a mocked module's exports are read from the object the fact
   // Its importers are linked to the module's own variables, so the exports of the mock are copied into those.
   test("unless the module was imported before it was mocked: the update copies each export into it once", async () => {
     const mockWithGetter = (call: string) => `
-      globalThis.state = { value: "first", reads: 0 };
-      ${call}("./dep", () => ({
-        get flag() {
-          state.reads++;
-          return state.value;
-        },
-        added: "only in the mock",
-      }));
+      globalThis.state = { value: "first", reads: 0, calls: 0 };
+      ${call}("./dep", () => {
+        state.calls++;
+        return (state.exports = {
+          get flag() {
+            state.reads++;
+            return state.value;
+          },
+          added: "only in the mock",
+        });
+      });
     `;
     const updatedInPlace = `
+      // The mock call itself called the factory and read the getter.
+      expect([state.calls, state.reads]).toEqual([1, 1]);
       state.value = "second";
+      state.exports.plain = "changed after the update";
 
-      // The getter ran when the module was updated. The names that the factory left out keep their values.
+      // The module holds copies, so neither change reaches it. The names that the factory left out keep their values.
       expect([flag, ns.flag, def, plain]).toEqual(["first", "first", "real-default", "real-plain"]);
       expect(read()).toEqual(["first", "first", "real-default", "real-plain", "real-fn"]);
+      // A later import() of the module calls neither again.
       expect((await import("./dep")).flag).toBe("first");
-      expect(state.reads).toBe(1);
+      expect([state.calls, state.reads]).toEqual([1, 1]);
 
       // The name that only the factory has isn't added.
       expect(Object.keys(ns)).toEqual(["default", "flag", "fn", "plain"]);

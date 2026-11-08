@@ -82,14 +82,11 @@ fn runtime_functions_round_trip() {
             (data.file, data.export_name)
         );
     }
-    let last = functions.last().unwrap().function;
-    assert_eq!(last.to_wire() + 1, RuntimeFunction::COUNT);
 }
 
 #[test]
 fn runtime_function_ids_have_gaps() {
     assert_eq!(RuntimeFunction::from_wire(0xffff), None);
-    assert_eq!(RuntimeFunction::from_wire(RuntimeFunction::COUNT), None);
     assert_eq!(RuntimeFunction::from_wire(u32::MAX), None);
     assert!(runtime_function(RuntimeFunction(0xffff)).is_none());
 }

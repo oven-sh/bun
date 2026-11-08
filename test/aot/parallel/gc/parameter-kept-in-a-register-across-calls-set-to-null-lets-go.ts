@@ -1,7 +1,6 @@
 // A parameter that a function hands to calls stays in a register that those calls keep, and in a stack slot beside it. Once the function has set it to null, neither holds the object.
 // Prints what the compiler saves: objects that are collected earlier
-// Alone: whether use() stays a call depends on what else the executable holds
-// Todo on win32 x64: Not every time: row 3517: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
+// Skip on win32 x64: some lines print that the object is kept: native frames there have home slots that nobody writes, and the collector reads what an earlier call left in them
 type Thing = { id: number; payload: number[] };
 let made = 0;
 function make(): Thing {

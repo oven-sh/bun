@@ -649,6 +649,9 @@ impl Execution {
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
+            if entry.added_in_phase == AddedInPhase::Preload {
+                bun_jsc::compiled_program::did_run_preloads(VirtualMachine::get().global());
+            }
 
             sequence.executing = false;
             if sequence.maybe_skip {
@@ -1227,6 +1230,9 @@ fn step_sequence_one(
         Execution::on_sequence_started(global_this, sequence);
     }
     Execution::on_entry_started(next_item);
+    if next_item.added_in_phase == AddedInPhase::Preload {
+        bun_jsc::compiled_program::will_run_preloads(global_this);
+    }
 
     if let Some(cb) = next_item.callback.as_ref() {
         group_log::log(format_args!("runSequence queued callback"));

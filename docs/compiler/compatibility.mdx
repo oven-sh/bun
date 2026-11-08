@@ -418,7 +418,7 @@ With that field, a package says that loading its files does nothing except defin
 - With a list, as in `"sideEffects": ["./setup.js"]`, an import of a file on the list stays. The field covers the package's other files.
 - In a TypeScript file, `import { x } from "pure"` and `import * as pure from "pure"` stop the build with `TS7016` if nothing uses the name, the package has no type declarations and `noImplicitAny` is on, as it is by default. `import "pure"` builds.
 - The field in your own `package.json` covers your own files, so `import "./setup.ts"` is removed too.
-- `bun test --aot` removes the same imports, except those that a test file or a preload writes itself. No executable holds those two, so the file that such an import names runs, as under `bun test`.
+- `bun test --aot` removes the same imports, except in a test file or a preload itself. No executable holds those two, so an import that one of them writes runs its file wherever `bun test` runs it. In a TypeScript file, both leave out an import whose names nothing uses as a value.
 - A removed import is still checked. If a file behind it imports a name that doesn't exist, the build stops with `No matching export` (`TS100200`), with `--no-aot` too. `bun run` stops with a `SyntaxError` before the first line.
 - A file that re-exports other files and also does something when it loads is skipped too. `zod@3.25.76` sets its English error messages in such a file, so after `import * as z from "zod/v4"` every message is `Invalid input` in an executable and under `bun test --aot`. `bun run` and `bun test` print the real one. zod 4 lists that file in the field.
 

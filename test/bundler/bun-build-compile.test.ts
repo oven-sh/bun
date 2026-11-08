@@ -698,6 +698,80 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(stats.hot).toBeGreaterThanOrEqual(3);
       }, 60_000);
 
+      // A run that decodes every function the executable has writes no K line: there is no function it did not run.
+      // A function that is in the next build and not in such a file is still one the recorded build did not have,
+      // and what is written in it or around it is placed by its own name. A CommonJS chunk is one function around
+      // the whole program, which any edit renames.
+      test.each<[string, string[], number]>([
+        ["a CommonJS chunk", [], 2],
+        ["a module", ["--format=esm"], 1],
+      ])(
+        "an edit after a run that ran every function, in %s",
+        async (_label, format, renamed) => {
+          const source = (rest: string) => `
+            import { bytecodeOrderStats } from "bun:jsc";
+            function alpha(n) { return n + 1; }
+            function beta(n) { const twice = m => m * 2; return twice(n)${rest}; }
+            console.log(alpha(1), beta(2));
+            if (process.argv.includes("stats")) console.error("stats " + JSON.stringify(bytecodeOrderStats()));
+          `;
+          using dir = tempDir("build-compile-bytecode-order-all-ran", { "app.js": source(" + 0") });
+          const { order, stats } = await roundTrip(String(dir), [...format, "app.js"], "2 4\n", {
+            edit: () => Bun.write(join(String(dir), "app.js"), source(" - 0")),
+            unknown: renamed,
+          });
+          expect(order).not.toMatch(/^K /m);
+          // beta is new, and in a CommonJS chunk the function around the program; alpha and the arrow in beta are
+          // the recorded code.
+          expect(stats).toMatchObject({ unknown: renamed, cold: 0 });
+          expect(stats.hot).toBeGreaterThanOrEqual(2);
+          if (format.length > 0) return;
+
+          // Bun.build's default for bytecode is a CommonJS chunk too.
+          const viaApi = await Bun.build({
+            entrypoints: [join(String(dir), "app.js")],
+            bytecode: true,
+            compile: { outfile: join(String(dir), exe("api")), bytecodeOrder: join(String(dir), "app.order") },
+          });
+          expect(viaApi.success).toBe(true);
+          const ofApi = (await runIn(String(dir), exe("api"), ["stats"])).stats;
+          expect({ hot: ofApi.hot, unknown: ofApi.unknown, cold: ofApi.cold }).toEqual({
+            hot: stats.hot,
+            unknown: stats.unknown,
+            cold: stats.cold,
+          });
+        },
+        60_000,
+      );
+
+      // A program without functions records none. One it gains later is a function the recorded build did not have.
+      test("a function added to a program that had none", async () => {
+        const source = (body: string) => `
+          import { bytecodeOrderStats } from "bun:jsc";
+          ${body}
+          if (process.argv.includes("stats")) console.error("stats " + JSON.stringify(bytecodeOrderStats()));
+        `;
+        using dir = tempDir("build-compile-bytecode-order-no-functions", { "app.js": source(`console.log(3);`) });
+        const args = ["--format=esm", "app.js"];
+        await record(String(dir), args, "3\n");
+        const order = readFileSync(join(String(dir), "app.order"), "utf8");
+        expect({ functions: /^[FK] /m.test(order), modules: /^M /m.test(order) }).toEqual({
+          functions: false,
+          modules: true,
+        });
+        await Bun.write(
+          join(String(dir), "app.js"),
+          source(`function added(n) { return n + 1; }\nconsole.log(added(2));`),
+        );
+        expect(await buildIn(String(dir), [...args, "--bytecode-order=app.order"], exe("ordered"))).toEqual({
+          stderr: "",
+          exitCode: 0,
+        });
+        const ran = await runIn(String(dir), exe("ordered"), ["stats"]);
+        expect({ ...ran, stats: undefined }).toEqual({ stdout: "3\n", stderr: "", stats: undefined, exitCode: 0 });
+        expect(ran.stats).toMatchObject({ hot: 0, unknown: 1, cold: 0 });
+      }, 60_000);
+
       // A module a Bun.ModuleGraph loads is private to the graph: JavaScriptCore decodes its code apart from the code
       // cache, once for each graph.
       test("the modules of a Bun.ModuleGraph are recorded, once", async () => {
@@ -1557,6 +1631,10 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
         expect(other.stderr).toContain("none of the 64 functions the bytecode order files list is in this build");
         expect(other.exitCode).toBe(0);
         expect(await run(exe("other-program"), recordedArgv)).toEqual(plain);
+        // The file lists none of the program's functions, run or not: its build had none of them.
+        const counted = await stats(exe("other-program"), recordedArgv);
+        expect({ hot: counted.hot, cold: counted.cold }).toEqual({ hot: 0, cold: 0 });
+        expect(counted.unknown).toBeGreaterThan(0);
         // The program's own file does not.
         expect(orderedStderr).not.toContain("the bytecode order files list");
       }, 60_000);

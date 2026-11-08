@@ -409,6 +409,38 @@ describe("a let or const that names a function or class", () => {
     });
   });
 
+  // `bun pm diff` compares what the printer prints with syntax minified and no renamer.
+  test("bun pm diff shows a function moved out of its variable as a change", async () => {
+    using dir = tempDir("transpiler-named-by-declaration-diff", {
+      "a/m.js": "export function run(x) {\n  const step = () => x + 1;\n  return step();\n}\n",
+      "b/m.js": "export function run(x) {\n  return (() => x + 1)();\n}\n",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b"],
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const changed = stdout
+      .replace(/\x1b\[[0-9;]*[mK]/g, "")
+      .split("\n")
+      .filter(line => /^ +[\d:]+ │[-+] /.test(line));
+    expect({ changed, stderr, exitCode }).toEqual({
+      changed: [
+        "    2 │-   const step = () => x + 1;",
+        "    3 │-   return step();",
+        "    2 │+   return (() => x + 1)();",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // A fold leaves the function in a declaration that stays, or in a place that names it: the rows give "a", "a", "k" and "sink".
   // https://github.com/oven-sh/bun/pull/42691 and https://github.com/oven-sh/bun/pull/42585 keep such a function away from the name.
   test.todo("a function behind a fold takes no name from where it ends", async () => {

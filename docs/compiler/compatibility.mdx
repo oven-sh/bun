@@ -604,6 +604,7 @@ Few programs notice these.
 | A function declared in a later `case`, called while an earlier `case` runs        | A `ReferenceError`                                                           | It is called, as the language says               |
 | `typeof Later` above a `class Later {}` that stands behind a `return`             | `"undefined"`: the transpiler drops the class                                | A `ReferenceError`, as the language says         |
 | `typeof w` after `class C { [eval("var w = 1")]() {} }`, outside strict mode      | `"number"`: the text runs as the code around the class does                  | `"undefined"`: a class is strict code            |
+| `eval("this.#x_accessor_storage")` in a class with an `accessor #x` field         | The value: the transpiler keeps it in a field of that name                   | A `SyntaxError`, as the language says            |
 
 `Bun.$` is compiled into an executable if your code can reach it: it writes `Bun.$`, reads `Bun[name]`, hands `Bun` on as a value, or reads `globalThis` under a key that is put together while it runs. Asking only whether the name is there, as in `"$" in Bun` or `Object.hasOwn(Bun, "$")`, answers `true` and keeps nothing. Text that the compiler never saw, such as a string handed to `eval`, can still ask for the shell in a program that doesn't use it. Reading `Bun.$` then throws `Bun.$ was not compiled into this executable`. Write `Bun.$` once anywhere in your program to keep it.
 

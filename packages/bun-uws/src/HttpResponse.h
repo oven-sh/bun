@@ -97,18 +97,19 @@ public:
      * any) has completed and all buffered outgoing data has been flushed. */
     bool shouldCloseConnection(HttpResponseData<SSL> *httpResponseData) {
         const uint32_t state = httpResponseData->state;
-        if (state & (HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE | HttpResponseData<SSL>::HTTP_NODE_CLOSE_AFTER_DRAIN)) {
+        if (state & HttpResponseData<SSL>::HTTP_CLOSE_MARKS_ALWAYS) {
             return true;
         }
-        if (!(state & HttpResponseData<SSL>::HTTP_CLOSE_MARKS)) {
+        if (!(state & HttpResponseData<SSL>::HTTP_CLOSE_MARKS_CONDITIONAL)) {
             return false;
         }
         return shouldCloseAfterFinOrWhenIdle(httpResponseData);
     }
 
-    /* The rare part of shouldCloseConnection(), out of line: the peer sent its FIN, or a graceful stop marked the
-     * connection and it is idle now. */
+    /* The rare part of shouldCloseConnection(), out of line: the peer sent its FIN, or the connection has the
+     * close-when-idle mark and is idle now. */
     __attribute__((noinline, cold)) bool shouldCloseAfterFinOrWhenIdle(HttpResponseData<SSL> *httpResponseData) {
+        static_assert(HttpResponseData<SSL>::HTTP_CLOSE_MARKS_CONDITIONAL == (HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN | HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE));
         const uint32_t state = httpResponseData->state;
         return ((state & HttpResponseData<SSL>::HTTP_NODE_RECEIVED_FIN) && httpResponseData->nodeHttpQueuedPipelinedCount == 0)
             || ((state & HttpResponseData<SSL>::HTTP_CLOSE_WHEN_IDLE) && isIdle(false));
@@ -186,22 +187,25 @@ public:
         return true;
     }
 
-    /* Whether this connection is idle: it receives no request, and no response is in flight, queued or unsent.
-     * requestBodyCounts says whether a request body that still arrives behind its response is a request being received.
-     * node:http keeps a bit for the answer. Bun.serve reads the response, the parser and the send buffer here. */
+    /* Whether this connection is idle.
+     * Bun.serve: it has had a request, it receives none now, and no response is in flight or unsent. requestBodyCounts
+     * says whether a request body that still arrives behind its response is a request being received.
+     * node:http: the bit that HttpContext keeps. It does not look at the request that arrives: closeIfIdle() does.
+     * requestBodyCounts has no effect there. */
     __attribute__((noinline, cold)) bool isIdle(bool requestBodyCounts) {
         HttpResponseData<SSL> *data = getHttpResponseData();
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
         if (httpContext->isNodeHttp()) {
-            return data->isIdle;
+            return ((HttpResponseData<SSL, true> *) data)->isIdle;
         }
         /* A request sets HTTP_RESPONSE_PENDING, and its response leaves HTTP_STATUS_CALLED or HTTP_END_CALLED until the next
-         * request: no bit of a response means that the connection has not had a request, and that is not idle. */
+         * request. Without a bit of a response the connection has not had a request: Bun.serve leaves it to its timeout. */
         if ((data->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || !(data->state & ~HttpResponseData<SSL>::HTTP_CONNECTION_SCOPED)) {
             return false;
         }
-        /* onData has not parsed all of this socket's read yet. Its close gate asks again when it has. */
-        if (httpContext->getSocketContextData()->isParsing((us_socket_t *) this)) {
+        /* onData has not parsed all of this socket's read yet: its close gate asks again when it has. This is the test
+         * of uncorkCompletedResponse(), which leaves the gate of a response that ends in that window to onData. */
+        if (httpContext->getSocketContextData()->parsingSocket == (us_socket_t *) this) {
             return false;
         }
         if (data->hasBufferedPartialRequestHeaders() || !Super::hasFullyDrained()) {
@@ -211,7 +215,7 @@ public:
         return !requestBodyCounts || data->isConnectRequest || !data->hasIncompleteRequestBody();
     }
 
-    /* Closes this connection if it is idle (isIdle). Returns whether it closed it. */
+    /* Closes this connection if it is idle. Returns whether it closed it. */
     bool closeIfIdle(bool requestBodyCounts = true) {
         HttpResponseData<SSL> *data = getHttpResponseData();
         bool idle = isIdle(requestBodyCounts);
@@ -410,7 +414,7 @@ public:
         }
     }
 
-    void finishResponseInCorkBuffer(size_t bodyLength) {
+    __attribute__((always_inline)) void finishResponseInCorkBuffer(size_t bodyLength) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
         httpResponseData->offset += bodyLength;

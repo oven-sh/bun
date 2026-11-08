@@ -54,7 +54,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         } else {
             /* A queued pipelined response still owes output on this
              * connection, so it is not idle between the responses. */
-            this->isIdle = nodeHttpQueuedPipelinedCount == 0;
+            static_cast<HttpResponseData<SSL, true> *>(this)->isIdle = nodeHttpQueuedPipelinedCount == 0;
         }
 
         // Ensure we don't call a timeout callback
@@ -151,9 +151,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * has to touch the node-only field. */
         HTTP_NODE_HAS_RESPONSE_TRAILERS = 1 << 16,
         /* Close this connection the next time it is idle (HttpResponse::isIdle).
-         * Set by App::closeIdle(true) on connections that were busy during a
-         * graceful shutdown sweep; the HttpResponse::shouldCloseConnection()
-         * gates act on it once the in-flight work completes. */
+         * Set by App::closeIdle(true), the graceful stop of Bun.serve, on connections
+         * that were busy at the sweep, and by HttpResponse::closeIfIdle() on a
+         * node:http connection whose finished response has unsent bytes. The
+         * HttpResponse::shouldCloseConnection() gates act on it. */
         HTTP_CLOSE_WHEN_IDLE = 1 << 17,
         /* Bun.serve handed this request to user JavaScript. The response is sent
          * when it completes, also on the socket onData is parsing: JavaScript
@@ -183,8 +184,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
             | HTTP_NODE_HALF_CLOSED,
 
         /* The bits that mark a connection to close. HttpResponse::shouldCloseConnection() reads these and no other:
-         * without one of them, no close gate closes the connection. */
-        HTTP_CLOSE_MARKS = HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
+         * without one of them, no close gate closes the connection. The first two close it when the response is out.
+         * The other two need one more condition (HttpResponse::shouldCloseAfterFinOrWhenIdle). */
+        HTTP_CLOSE_MARKS_ALWAYS = HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN,
+        HTTP_CLOSE_MARKS_CONDITIONAL = HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE,
+        HTTP_CLOSE_MARKS = HTTP_CLOSE_MARKS_ALWAYS | HTTP_CLOSE_MARKS_CONDITIONAL,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is
@@ -193,9 +197,6 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * keep-alive socket; only the connection-scoped bits are carried over. */
     void resetResponseState() {
         state = (state & HTTP_CONNECTION_SCOPED) | HTTP_RESPONSE_PENDING;
-        /* A response is in flight again (a new request dispatched, or a queued
-         * pipelined response activated), so the connection is not idle. */
-        this->isIdle = false;
     }
 
     /* Set or clear a flag from a runtime bool. */
@@ -298,6 +299,10 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
     bool headersCompleted = false;
     /* Timeout sweep already reported this message; reset when it completes. */
     bool requestTimeoutReported = false;
+    /* No response is in flight or queued, and no read since then started a request or left a body unfinished.
+     * HttpResponse::closeIfIdle() also looks at the request that arrives. Bun.serve has no such bit:
+     * HttpResponse::isIdle() computes its answer. */
+    bool isIdle = false;
 };
 
 /* Readable name for the IsNodeHttp=true specialization (used by the node:http

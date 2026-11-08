@@ -396,9 +396,9 @@ public:
         }
     }
 
-    /** Closes all connections connected to this server which are idle (HttpResponse::isIdle). Does not close the listen socket.
-     * With closeWhenIdle set (graceful shutdown), a request body that still arrives behind its response does not keep a connection,
-     * and connections that are busy right now are marked to close as soon as their in-flight work completes;
+    /** Closes all connections connected to this server which are idle (HttpResponse::closeIfIdle). Does not close the listen socket.
+     * With closeWhenIdle set (the graceful stop of Bun.serve), a request body that still arrives behind its response does not keep
+     * a connection, and connections that are busy right now are marked to close as soon as their in-flight work completes;
      * upgraded WebSockets and node:http CONNECT/Upgrade tunnels never become idle, so they are left alone either way.
      * Returns the number of connections closed. */
     size_t closeIdle(bool closeWhenIdle = false) {

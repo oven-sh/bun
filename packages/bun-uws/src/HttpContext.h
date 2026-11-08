@@ -176,7 +176,10 @@ private:
 
             /* Call filter */
             httpResponseData->filteredOpen = true;
-            httpResponseData->isIdle = fromSocket(s)->isNodeHttp();
+            /* node:http: a connection that has received nothing is idle (nodejs/node 417aacbc365). */
+            if (fromSocket(s)->isNodeHttp()) {
+                ((HttpResponseData<SSL, true> *) httpResponseData)->isIdle = true;
+            }
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -234,7 +237,9 @@ private:
         if(!SSL) {
             ((AsyncSocketData<SSL> *) us_socket_ext(s))->filteredOpen = true;
             /* node:http: a connection that has received nothing is idle (nodejs/node 417aacbc365). */
-            ((AsyncSocketData<SSL> *) us_socket_ext(s))->isIdle = IsNodeHttp;
+            if constexpr (IsNodeHttp) {
+                ((HttpResponseData<SSL, true> *) us_socket_ext(s))->isIdle = true;
+            }
             for (auto &f : httpContextData->filterHandlers) {
                 f((HttpResponse<SSL> *) s, 1);
             }
@@ -435,10 +440,12 @@ private:
         httpContextData->flags.isParsingHttp = true;
         struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
         httpContextData->parsingSocket = s;
-        /* node:http keeps the idle bit. Bun.serve computes idle where it is read (HttpResponse::isIdle). */
-        const bool wasIdle = IsNodeHttp && httpResponseData->isIdle;
+        /* node:http keeps an idle bit. Bun.serve has none: HttpResponse::isIdle() computes the answer. */
+        bool wasIdle = false;
         if constexpr (IsNodeHttp) {
-            httpResponseData->isIdle = false;
+            auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
+            wasIdle = nodeHttpResponseData->isIdle;
+            nodeHttpResponseData->isIdle = false;
         }
 
         /* node:http compat: maintain the headers/request timeout window (see
@@ -547,7 +554,7 @@ private:
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PIPELINED_DISPATCH;
                 httpResponseData->nodeHttpQueuedPipelinedCount++;
                 /* A connection that owes a queued response is not idle (see markDone). */
-                httpResponseData->isIdle = false;
+                ((HttpResponseData<SSL, true> *) httpResponseData)->isIdle = false;
                 if (((AsyncSocket<SSL> *) s)->getBufferedAmount() > 0) {
                     /* Like Node, the rest of this read is still parsed: the pause holds from the next read. */
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED;
@@ -576,7 +583,10 @@ private:
                 /* Per-response trailer fields must not leak into the next response
                  * on this keep-alive connection (the flag itself was cleared above). */
                 if constexpr (IsNodeHttp) {
-                    ((HttpResponseData<SSL, true> *) httpResponseData)->nodeHttpResponseTrailers.clear();
+                    auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
+                    nodeHttpResponseData->nodeHttpResponseTrailers.clear();
+                    /* A response is in flight again, so the connection is not idle. */
+                    nodeHttpResponseData->isIdle = false;
                 }
             }
 
@@ -660,7 +670,7 @@ private:
                     /* The response ended before this body did: markDone() marked the connection idle, and the read of the rest of the body cleared that. */
                     if (!switchToTunnelAfterThisChunk && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
                         && httpResponseData->nodeHttpQueuedPipelinedCount == 0) {
-                        httpResponseData->isIdle = true;
+                        nodeHttpResponseData->isIdle = true;
                     }
                 }
             }
@@ -833,7 +843,7 @@ private:
             if constexpr (IsNodeHttp) {
                 if (wasIdle && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) && httpResponseData->nodeHttpQueuedPipelinedCount == 0
                     && !httpResponseData->hasIncompleteRequestBody() && !httpResponseData->hasBufferedPartialRequestHeaders()) {
-                    httpResponseData->isIdle = true;
+                    ((HttpResponseData<SSL, true> *) httpResponseData)->isIdle = true;
                 }
             }
 

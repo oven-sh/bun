@@ -163,10 +163,15 @@ for (const [name, inspect] of process.versions.bun
       receivers.push("other");
       return "Legacy<>";
     };
+    // These two constructors have no `prototype` of their own. Each inherits the one of its class.
+    class Wage extends Money {}
+    Wage.prototype.constructor = Object.create(Wage);
+    class Bonus extends Money {}
+    Bonus.prototype.constructor = Object.setPrototypeOf(() => {}, Bonus);
     const money = new Money();
 
     expect(inspect(money)).toBe("Money<150>");
-    for (const prototype of [Money.prototype, Salary.prototype, Legacy.prototype]) {
+    for (const prototype of [Money.prototype, Salary.prototype, Legacy.prototype, Wage.prototype, Bonus.prototype]) {
       inspect(prototype);
       inspect({ nested: prototype });
       inspect([prototype]);

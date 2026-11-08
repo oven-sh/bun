@@ -43,8 +43,8 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
 // Node's formatValue does not call the hook of a prototype object:
 //   ObjectGetOwnPropertyDescriptor(value, 'constructor')?.value?.prototype !== value
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L1150-L1154
-// Node reads `prototype` with a [[Get]]. This reads the own data property, so that no getter
-// and no Proxy trap of the constructor runs.
+// Node reads `prototype` with a [[Get]]. This reads a data property, own or inherited, so that
+// no getter and no Proxy trap of the constructor runs.
 static NEVER_INLINE bool isPrototypeOfItsConstructor(VM& vm, JSGlobalObject* globalObject, JSObject* object)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -62,7 +62,7 @@ static NEVER_INLINE bool isPrototypeOfItsConstructor(VM& vm, JSGlobalObject* glo
         return false;
 
     PropertySlot prototypeSlot(constructor, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    bool hasPrototype = constructor->methodTable()->getOwnPropertySlot(constructor, globalObject, vm.propertyNames->prototype, prototypeSlot);
+    bool hasPrototype = constructor->getNonIndexPropertySlot(globalObject, vm.propertyNames->prototype, prototypeSlot);
     RETURN_IF_EXCEPTION(scope, false);
     if (!hasPrototype || !prototypeSlot.isValue())
         return false;

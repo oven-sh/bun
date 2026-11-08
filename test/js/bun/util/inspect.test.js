@@ -1642,10 +1642,11 @@ describe("[nodejs.util.inspect.custom] of a prototype object is not called", () 
     return object;
   }
   const manyFields = () => Object.fromEntries(Array.from({ length: 200 }, (_, index) => ["field" + index, index]));
+  const manyFieldsPrinted = Array.from({ length: 200 }, (_, index) => `  field${index}: ${index},\n`).join("");
 
   it.each([
     ["a plain object", () => ({ a: 1 }), "Class {\n  a: 1,\n}"],
-    ["an object with 200 fields", manyFields, /^Class \{\n  field0: 0,\n/],
+    ["an object with 200 fields", manyFields, "Class {\n" + manyFieldsPrinted + "}"],
     ["a Buffer", () => Buffer.from("hi"), "Buffer(2) [ 104, 105 ]"],
     ["a Uint16Array", () => new Uint16Array(2), "Uint16Array(2) [ 0, 0 ]"],
     ["an array", () => [1, 2], "[ 1, 2 ]"],
@@ -1658,7 +1659,7 @@ describe("[nodejs.util.inspect.custom] of a prototype object is not called", () 
     // With the hook and no own `constructor`, the value is an instance.
     expect(Bun.inspect(Object.defineProperty(make(), Bun.inspect.custom, { value: hook }))).toBe("from the hook");
     expect(calls).toBe(1);
-    expect(Bun.inspect(prototypeOf(make()))).toMatch(printed);
+    expect(Bun.inspect(prototypeOf(make()))).toBe(printed);
     expect(calls).toBe(1);
   });
 
@@ -1682,28 +1683,54 @@ describe("[nodejs.util.inspect.custom] of a prototype object is not called", () 
     expect(Bun.inspect(returnsItself)).toBe('"s"');
   });
 
-  // Node reads `constructor.prototype` with a [[Get]], so it takes both of these for prototypes.
+  // Node reads `constructor.prototype` with a [[Get]], which also finds a `prototype` that the
+  // constructor inherits.
+  it.each([
+    ["an object that inherits from the class", Class => Object.create(Class)],
+    ["an arrow function that inherits from the class", Class => Object.setPrototypeOf(() => {}, Class)],
+    ["a bound subclass", Class => class extends Class {}.bind(null)],
+  ])("when the constructor is %s", (_, constructorOf) => {
+    calls = 0;
+    class Class {}
+    Object.defineProperty(Class.prototype, Bun.inspect.custom, { value: hook });
+    Class.prototype.constructor = constructorOf(Class);
+    expect(Object.hasOwn(Class.prototype.constructor, "prototype")).toBe(false);
+    expect(Bun.inspect(Class.prototype)).not.toBe("from the hook");
+    expect(calls).toBe(0);
+  });
+
+  // The [[Get]] of Node runs these, so Node takes each of the four objects for a prototype.
   it("and no getter or Proxy trap of the constructor runs to find out", () => {
     let ran = 0;
-    const withGetter = { [Bun.inspect.custom]: hook };
-    withGetter.constructor = {
+    const withGetter = object => ({
       get prototype() {
         ran++;
-        return withGetter;
-      },
-    };
-    const withProxy = { [Bun.inspect.custom]: hook };
-    withProxy.constructor = new Proxy(function () {}, {
-      get(target, key, receiver) {
-        ran++;
-        return key === "prototype" ? withProxy : Reflect.get(target, key, receiver);
-      },
-      getOwnPropertyDescriptor(target, key) {
-        ran++;
-        return Reflect.getOwnPropertyDescriptor(target, key);
+        return object;
       },
     });
-    expect([Bun.inspect(withGetter), Bun.inspect(withProxy), ran]).toEqual(["from the hook", "from the hook", 0]);
+    const proxy = object =>
+      new Proxy(function () {}, {
+        get(target, key, receiver) {
+          ran++;
+          return key === "prototype" ? object : Reflect.get(target, key, receiver);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          ran++;
+          return Reflect.getOwnPropertyDescriptor(target, key);
+        },
+        getPrototypeOf(target) {
+          ran++;
+          return Reflect.getPrototypeOf(target);
+        },
+      });
+    const inherits = constructorOf => object => Object.create(constructorOf(object));
+
+    const printed = [withGetter, proxy, inherits(withGetter), inherits(proxy)].map(constructorOf => {
+      const object = { [Bun.inspect.custom]: hook };
+      object.constructor = constructorOf(object);
+      return Bun.inspect(object);
+    });
+    expect({ printed, ran }).toEqual({ printed: Array(4).fill("from the hook"), ran: 0 });
   });
 
   it("in the message of a matcher", () => {

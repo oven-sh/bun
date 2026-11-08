@@ -254,11 +254,12 @@ console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain());
 `;
   // The parameters of each function, from the second one on where the first one is the compiler's. The first default
   // value of a list is where the `length` of the function ends, and how the compiler prints it is not the subject here.
+  // Nor is the `: any` that the check of the typed files writes behind a parameter that has no type.
   const parametersIn = (typed: string) =>
     Object.fromEntries(
       Array.from(typed.matchAll(/^function (\w+)(?:<[^>]*>)?\((.*)\)(?:: [^{\n]+)? \{$/gm), ([, name, list]) => [
         name,
-        list.replace(/^t0[^,]*, /, ""),
+        list.replace(/^t0[^,]*, /, "").replaceAll("?: any", "?"),
       ]),
     );
   const build = (root: string, options: Partial<Bun.BuildConfig> = {}) =>
@@ -271,6 +272,29 @@ console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain());
       dts: true,
       ...options,
     });
+
+  const parameters = {
+    useState: "initial: T",
+    _temp: "t1?: number",
+    useBoth: "t1?: number",
+    // The type checker says what `step = 2` is.
+    useStep: "t1?: number",
+    // A `?` before a parameter that has to be passed is an error.
+    useRange: "t1: number | undefined, end: number",
+    useFormat: "t1: ((value: number) => string) | undefined, value: number",
+    // The annotation of a pattern is where the pattern is.
+    useName: "t1?, t2?: string",
+    usePoint: "t1?: [number, number]",
+    // `Unit.Px` is `0` in the bundle, and the parameter has the type of the enum.
+    useUnit: expect.stringMatching(/^t1\?: Unit\d*$/),
+    usePadded: expect.stringMatching(/^t1: Unit\d* \| undefined, t2: number \| undefined, text: string$/),
+    useNested: "base: number",
+    pad: "value: any",
+    useStepper: "n: number",
+    useLabel: "label: string, size?: number",
+    // What the compiler leaves as it is written keeps its default values.
+    plain: "first: number = 1, second: number = 2",
+  };
 
   test.each([
     ["a call in the bundle that leaves it out", calls],
@@ -285,28 +309,7 @@ console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain());
     const built = await build(root);
     expect(built.logs).toEqual([]);
     const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
-    expect(parametersIn(typed)).toEqual({
-      useState: "initial: T",
-      _temp: "t1?: number",
-      useBoth: "t1?: number",
-      // The type checker says what `step = 2` is.
-      useStep: "t1?: number",
-      // A `?` before a parameter that has to be passed is an error.
-      useRange: "t1: number | undefined, end: number",
-      useFormat: "t1: ((value: number) => string) | undefined, value: number",
-      // The annotation of a pattern is where the pattern is.
-      useName: "t1?: any, t2?: string",
-      usePoint: "t1?: [number, number]",
-      // `Unit.Px` is `0` in the bundle, and the parameter has the type of the enum.
-      useUnit: expect.stringMatching(/^t1\?: Unit\d*$/),
-      usePadded: expect.stringMatching(/^t1: Unit\d* \| undefined, t2: number \| undefined, text: string$/),
-      useNested: "base: number",
-      pad: "value: any",
-      useStepper: "n: number",
-      useLabel: "label: string, size?: number",
-      // What the compiler leaves as it is written keeps its default values.
-      plain: "first: number = 1, second: number = 2",
-    });
+    expect(parametersIn(typed)).toEqual(parameters);
     // The default value has its type from the annotation.
     expect(typed).toContain("let point: [number, number] = t1 === undefined ? [");
     // Without an annotation, a callback takes the type of its parameter from where it is passed to.
@@ -390,11 +393,7 @@ console.log(usePoint(), usePoint(1, [1, 2]), usePoint(1, [1, 2], 3));
     const built = await build(root, { minify: { syntax: true } });
     expect(built.logs).toEqual([]);
     const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
-    expect(parametersIn(typed)).toMatchObject({
-      useBoth: "t1?: number",
-      useRange: "t1: number | undefined, end: number",
-      useName: "t1?: any, t2?: string",
-    });
+    expect(parametersIn(typed)).toEqual(parameters);
     expect(typed).toContain(", second: number = t1 === void 0 ? 2 : t1,");
   });
 });

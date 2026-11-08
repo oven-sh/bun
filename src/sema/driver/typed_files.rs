@@ -3130,8 +3130,8 @@ enum Unannotated {
 struct MovedDefaults {
     /// [`defaulted_parameters`] of each source that one was looked for in.
     of_sources: FxHashMap<u32, FxHashMap<u32, DefaultedParameter>>,
-    /// By where `copy_slots` wrote, for `copy_casts`, which names the enum of a default value there.
-    unannotated: FxHashMap<u32, Unannotated>,
+    /// By the parameter in its source, with where `copy_slots` wrote: `copy_casts` names the enum of a default value there.
+    unannotated: FxHashMap<(u32, u32), (u32, Unannotated)>,
     /// The annotation of each parameter that has one, for the variable that its default value is now stored to.
     annotations: FxHashMap<(u32, u32), Vec<u8>>,
 }
@@ -3257,7 +3257,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                                 (None, false) => (Unannotated::Optional, b"?".to_vec()),
                             };
                             if module.is_some() {
-                                moved.unannotated.insert(slot.start, written);
+                                moved
+                                    .unannotated
+                                    .insert((source, key), (slot.start, written));
                             }
                             text
                         }
@@ -3666,21 +3668,33 @@ impl<'a> Transfer<'_, 'a, '_> {
                 if let Some(member) = member {
                     suffix.extend_from_slice(&member);
                     level = Level::Compare;
-                    let declared = widened
-                        .get(&chain.outermost)
-                        .and_then(|&(place, key)| output_places.get(&(place, index as u32, key)));
-                    if let (Some(&declared), Some(name)) = (
-                        declared,
-                        linked.enum_names.get(&(index as u32, source_position)),
-                    ) {
-                        let text = match self.moved_defaults.unannotated.get(&declared) {
-                            Some(Unannotated::Typed) => Vec::new(),
-                            Some(Unannotated::Required) => {
-                                [&b": "[..], name, b" | undefined"].concat()
-                            }
-                            Some(Unannotated::Optional) | None => [&b": "[..], name].concat(),
-                        };
-                        insertions.add(declared, Order::Slot, text);
+                    let binding = widened.get(&chain.outermost).copied();
+                    let declared = binding.and_then(|(place, key)| {
+                        output_places.get(&(place, index as u32, key)).copied()
+                    });
+                    // With `--minify-syntax` the variable of a moved default value has a mapping of its own and is
+                    // what `declared` is. The parameter takes the name too.
+                    let moved = binding.and_then(|(_, key)| {
+                        let unannotated = &self.moved_defaults.unannotated;
+                        unannotated.get(&(index as u32, key)).copied()
+                    });
+                    if let Some(name) = linked.enum_names.get(&(index as u32, source_position)) {
+                        if let Some((parameter, written)) = moved {
+                            let text = match written {
+                                Unannotated::Typed => Vec::new(),
+                                Unannotated::Required => {
+                                    [&b": "[..], name, b" | undefined"].concat()
+                                }
+                                Unannotated::Optional => [&b": "[..], name].concat(),
+                            };
+                            insertions.add(parameter, Order::Slot, text);
+                        }
+                        let is_parameter =
+                            |declared: &u32| moved.is_some_and(|it| it.0 == *declared);
+                        if let Some(declared) = declared.filter(|declared| !is_parameter(declared))
+                        {
+                            insertions.add(declared, Order::Slot, [&b": "[..], name].concat());
+                        }
                     }
                 }
                 for &cast in &chain.casts {

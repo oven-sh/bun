@@ -84,9 +84,13 @@ pub fn write_metafile_files(json: &[u8], files: &MetafileFiles<'_>) -> Option<Bo
             }
         },
     };
+    let directory = files.output_directory;
+    // Without an output directory no file is written, and the outputs below would hold copies that nothing reads.
+    if directory.is_empty() {
+        return markdown;
+    }
     // An executable is the only artifact of its build, as without `--aot`.
     let mut artifacts = Vec::new();
-    let directory = files.output_directory;
     if !files.json_path.is_empty() {
         let kind = OutputKind::MetafileJson;
         let _ = write_metafile_output(&mut artifacts, directory, files.json_path, json, kind);

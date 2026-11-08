@@ -2299,14 +2299,14 @@ declare module "bun:test" {
      * Asserts that a value has a property with the
      * expected name, and value if provided.
      *
+     * In a test that uses `test` from `"vitest"`, a Symbol in an array path does not match a symbol key, as in Vitest.
+     *
      * @example
      * expect(new Set()).toHaveProperty("size");
      * expect(new Uint8Array()).toHaveProperty("byteLength", 0);
      * expect({ kitchen: { area: 20 }}).toHaveProperty("kitchen.area", 20);
      * expect({ kitchen: { area: 20 }}).toHaveProperty(["kitchen", "area"], 20);
      * expect({ [Symbol.iterator]: 1 }).toHaveProperty([Symbol.iterator], 1);
-     *
-     * When `expect` comes from `"vitest"`, a Symbol in an array path does not match a symbol key, as in Vitest.
      *
      * @param keyPath the expected property name or path, or an index
      * @param value the expected property value, if provided

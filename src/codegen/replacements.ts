@@ -147,8 +147,8 @@ export function assertNoDestructuredGlobalThis(source: string, file: string) {
   }
 }
 
-// These stand in for an npm package, whose timers are the ones script sees.
-const modulesWithTimersOfScript = ["thirdparty/ws.ts"];
+// thirdparty/ws.ts stands in for an npm package, whose timers are the ones script sees. internal/trace_events.ts wraps what script has put on globalThis and puts the wrapper back there.
+const modulesWithTimersOfScript = ["thirdparty/ws.ts", "internal/trace_events.ts"];
 const readOfGlobalThis = "__nativeFunctionOfGlobalThis_";
 const transpilersThatMarkReads = new Map<string, Bun.Transpiler>();
 

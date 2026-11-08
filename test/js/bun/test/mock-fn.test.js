@@ -2578,12 +2578,15 @@ describe("spyOn", () => {
       } finally {
         delete process.env.PROD;
       }
-      // TZ is an own accessor of process.env while it is not set. The restore deletes it, which puts the zone back.
-      const zone = new Date(0).getTimezoneOffset();
-      const tz = jest.replaceProperty(import.meta.env, "TZ", "Asia/Tokyo");
-      expect(new Date(0).getTimezoneOffset()).toBe(-540);
-      tz.restore();
-      expect([new Date(0).getTimezoneOffset(), process.env.TZ]).toEqual([zone, undefined]);
+      // TZ is an own accessor of process.env while it is not set, unless another file in this process deleted it.
+      // The restore deletes it, which puts the zone back.
+      if (Object.getOwnPropertyDescriptor(process.env, "TZ")) {
+        const zone = new Date(0).getTimezoneOffset();
+        const tz = jest.replaceProperty(import.meta.env, "TZ", "Asia/Tokyo");
+        expect(new Date(0).getTimezoneOffset()).toBe(-540);
+        tz.restore();
+        expect([new Date(0).getTimezoneOffset(), process.env.TZ]).toEqual([zone, undefined]);
+      }
     });
 
     test("through a Proxy", () => {

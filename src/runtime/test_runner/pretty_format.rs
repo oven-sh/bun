@@ -157,7 +157,7 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
-            fmt.budget = Some(budget);
+            fmt.output_length = Some(budget);
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -204,7 +204,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
-        fmt.budget = Some(budget);
+        fmt.output_length = Some(budget);
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -336,7 +336,7 @@ pub(crate) struct Formatter<'a> {
     like_older_bun: Option<&'a core::cell::Cell<bool>>,
     same_as_older_bun: bool,
     /// Only failure messages track it.
-    budget: Option<&'a OutputBudget>,
+    output_length: Option<&'a OutputBudget>,
     ancestors: ObjectList,
     copied: usize,
     print_basic_prototype: bool,
@@ -370,7 +370,7 @@ impl<'a> Formatter<'a> {
             snapshot_format: SnapshotFormat::Bun,
             like_older_bun: None,
             same_as_older_bun: true,
-            budget: None,
+            output_length: None,
             ancestors: ObjectList::default(),
             copied: 0,
             print_basic_prototype: false,
@@ -2563,7 +2563,7 @@ impl<'a> Formatter<'a> {
         global_this: &'a JSGlobalObject,
     ) -> JsResult<()> {
         // A React fiber or `window` would print hundreds of megabytes.
-        if let Some(budget) = self.budget
+        if let Some(budget) = self.output_length
             && budget.length.get() > OUTPUT_BUDGET
             && result.prints_nested_values(value)
         {

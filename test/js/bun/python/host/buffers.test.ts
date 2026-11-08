@@ -974,3 +974,63 @@ def lent_and_handed_on():
     ],
   ],
 );
+
+// A structure can be given its fields until there is an instance of it. What has been found out about its size before code of the program ran is not relied on behind that.
+held(
+  "the size of a type of ctypes, looked at and used",
+  {
+    setup: `
+def a_hook_gives_the_fields(event, method, size):
+    class Structure(ctypes.Structure): pass
+    def action(): Structure._fields_ = [("x", ctypes.c_uint8 * size)]
+    made = with_a_hook(event, action, lambda: getattr(Structure, method)(array(64)))
+    return made if isinstance(made, str) else (ctypes.sizeof(made), set(made.x))
+def a_callback_gives_the_fields():
+    class Base(ctypes.Structure): _fields_ = [("first", ctypes.c_long)]
+    class Result(Base): pass
+    def compare(x, y):
+        if not hasattr(Result, "x"): Result._fields_ = [("x", ctypes.c_uint8 * 4096)]
+        return 0
+    qsort = libc["qsort"]; qsort.restype = Result
+    result = qsort(Small(), 2, 1, Compare(compare))
+    return ctypes.sizeof(result), set(result.x)
+def an_array_of_what_has_no_fields_yet():
+    class Structure(ctypes.Structure): pass
+    Four = Structure * 4
+    Structure._fields_ = [("x", ctypes.c_uint8 * 4096)]
+    m = memoryview(Four())
+    return ctypes.sizeof(Four()), m.shape, m.itemsize, m.nbytes
+def of_another_class():
+    a = (ctypes.c_uint16 * 2)(0x1111, 0x1111)
+    a.__class__ = ctypes.c_uint16 * 4096
+    m = memoryview(a)
+    return m.shape, m.format, m.nbytes, bytes(a), bytes(m[1:])
+`,
+  },
+  [
+    ...["from_buffer", "from_buffer_copy"].flatMap((method): [string, string][] => [
+      [
+        `a_hook_gives_the_fields('ctypes.cdata/buffer', '${method}', 4096)`,
+        "'Buffer size too small (64 instead of at least 4096 bytes)'",
+      ],
+      [`a_hook_gives_the_fields('ctypes.cdata/buffer', '${method}', 8)`, "(8, {17})"],
+    ]),
+    [
+      "a_hook_gives_the_fields('ctypes.cdata', 'from_buffer', 4096)",
+      "'Buffer size too small (64 instead of at least 4096 bytes)'",
+    ],
+    // Foreign functions are not called on Windows yet.
+    ...(isWindows ? [] : ([["a_callback_gives_the_fields()", "(4104, {0})"]] as [string, string][])),
+    // The type has outgrown the instance: the buffer is the bytes of the instance.
+    ["an_array_of_what_has_no_fields_yet()", "(0, (0,), 1, 0)"],
+    ["of_another_class()", "((4,), 'B', 4, b'\\x11\\x11\\x11\\x11', b'\\x11\\x11\\x11')"],
+    [
+      "memoryview((ctypes.c_uint16 * 3 * 2)()).shape, memoryview(Small()).nbytes, memoryview(ctypes.c_long()).shape, memoryview((ctypes.c_uint8 * 0)()).nbytes",
+      "((2, 3), 64, (), 0)",
+    ],
+    [
+      "memoryview((ctypes.c_int * 0 * 2**62)()).shape, memoryview((ctypes.c_int * 0 * 2**40 * 2**40)()).nbytes",
+      "((4611686018427387904, 0), 0)",
+    ],
+  ],
+);

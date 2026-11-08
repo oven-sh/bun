@@ -1,5 +1,6 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { slot } from "./harness/commands";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -1038,13 +1039,18 @@ const said: Record<string, string[]> = {
 };
 
 const env = { ...bunEnv, NO_COLOR: "1", BUN_JSC_crashOnDisallowedVMEntry: "1" };
+// One run with --aot takes minutes on a debug build. There the cases run as ./supported has them: one by one
+// without a sanitizer.
+const declare = isDebug ? test : test.concurrent;
 for (const [name, files] of Object.entries(projects)) {
-  test.concurrent(
+  declare(
     name,
     async () => {
       using dir = tempDir("plugins-are-asked-where-plain-bun-asks", files);
       const ran = async (flags: string[]) => {
-        const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags, "./a.test.js"], String(dir), env);
+        const cmd = [bunExe(), "test", ...flags, "./a.test.js"];
+        // No more runs at once than the machine has processors, however many cases `bun test` starts.
+        const { stdout, stderr, exitCode } = await slot(() => run(cmd, String(dir), env));
         const lines = stdout.split("\n").filter(line => line.startsWith("SAID"));
         return {
           lines: lines.map(line => line.replace(/ ms \d+$/, "")),
@@ -1054,7 +1060,9 @@ for (const [name, files] of Object.entries(projects)) {
         };
       };
       const plain = await ran([]);
-      expect(plain).toEqual({ lines: said[name], exitCode: 0, failure: [] });
+      // The projects take a path apart at "/". Windows writes "\", so what they print there is in no table.
+      const lines = isWindows ? expect.arrayContaining([expect.stringMatching(/^SAID/)]) : said[name];
+      expect(plain).toEqual({ lines, exitCode: 0, failure: [] });
       expect(await ran(["--aot"])).toEqual(plain);
     },
     240_000,

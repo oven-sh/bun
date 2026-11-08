@@ -1,0 +1,19 @@
+status: 0
+script: 2c99721eadcf92a0
+---
+it_waits: status 0
+    ['F begins in MainThread', 'G in T1', 'F ends']
+it_waits_and_the_other_thread_naps: status 0
+    ['F begins in MainThread', 'G in T1', 'F ends']
+it_polls: status 0
+    ['F begins in MainThread', 'G in T1', 'F ends']
+it_spins: status 0
+    ['F begins in MainThread', 'G in T1', 'F ends']
+it_waits_beside_a_thread_that_works: status 0
+    ['F begins in T0', 'G in T1', 'F ends']
+it_reads_a_pipe_beside_a_thread_that_works: status 0
+    ['F begins in T0', 'G in T1', 'F ends']
+two_finalizers_wait: status 0
+    ['F0 begins in T1', 'F0 ends', 'F1 begins in T2', 'F1 ends', 'G0 in T3', 'G1 in T3']
+a_chain_of_finalizers_that_wait: status 0
+    ['F0 begins in T0', 'F1 begins in T1', 'F2 begins in T2', 'F2 ends', 'F1 ends', 'F0 ends']

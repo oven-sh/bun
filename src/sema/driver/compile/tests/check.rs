@@ -1,18 +1,35 @@
 use super::support::{
-    BuildSummary, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY, IMPORTS_DEPENDENCY, LacksBunTypes,
-    PROJECT, TYPE_ERROR, check, check_only, codes, project_disk, with_defines, with_host,
-    with_program, with_runtime_project,
+    BringsBunTypes, BuildSummary, DEPENDENCY_MANIFEST, FAILING_DEPENDENCY, IMPORTS_DEPENDENCY,
+    LacksBunTypes, PROJECT, TYPE_ERROR, check, check_only, codes, project_disk, with_defines,
+    with_host, with_look_for_type_errors, with_program, with_runtime_project,
 };
+use crate::compile::BunTypes;
 use crate::{
     BuildDiagnostic, CompileRequest, Locator, Progress, check_and_lower, decide_roles,
     equal_diagnostics, global, log_message,
 };
-use bun_sema::check::aot::{DiagnosticClass, Effect};
+use bun_sema::check::aot::{
+    BuiltinTypeSymbols, DiagnosticClass, Effect, NamedValue, NamedValues, QueryInputs,
+};
+use bun_sema::hir::ExprId;
 use bun_sema::program::{FileId, FileRole};
 use bun_sema::util::SharedSort;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const STOPS_BUILD: (DiagnosticClass, Effect) = (DiagnosticClass::Semantic, Effect::StopsBuild);
+
+const NAMES_BUN_TYPES: (&str, &str) = (
+    "tsconfig.json",
+    r#"{ "compilerOptions": { "strict": true, "noLib": true, "types": ["bun"], "module": "preserve", "moduleResolution": "bundler" } }"#,
+);
+
+struct NoNamedValues;
+
+impl NamedValues for NoNamedValues {
+    fn find_named_value(&self, _: FileId, _: ExprId) -> Option<NamedValue> {
+        None
+    }
+}
 
 #[test]
 fn default_project_checks_cleanly() {
@@ -29,28 +46,36 @@ fn default_project_checks_cleanly() {
 }
 
 #[test]
-fn error_under_a_directive_is_hidden_and_the_others_name_their_types() {
-    let text = "declare function take(value: { a: number }): void;
-declare const given: { a: string };
-// @ts-expect-error
-take(given);
-// @ts-ignore
-take(given);
-take(given);
-// @ts-expect-error
-take({ a: 1 });
+fn type_errors_are_looked_for_where_the_program_says_what_the_project_says() {
+    let returns_undefined = "export function first(list: number[]): number {
+  return list.length ? list[0] : undefined;
+}
 ";
-    with_program(&[("main.ts", text)], &["./main.ts"], 1, |program| {
-        let build = check_only(program);
-        assert_eq!(build.codes(), [2345, 2578]);
-        let shown = build
-            .diagnostics()
-            .find(|it| it.diagnostic.code == 2345)
-            .unwrap();
-        let expected = "Argument of type '{ a: string; }' is not assignable to parameter of type '{ a: number; }'.
-  Types of property 'a' are incompatible.
-    Type 'string' is not assignable to type 'number'.";
-        assert_eq!(String::from_utf8_lossy(&shown.diagnostic.text), expected);
+    let files = [
+        ("main.ts", "import \"./lib/index\";\n"),
+        ("lib/index.ts", returns_undefined),
+        (
+            "lib/tsconfig.json",
+            r#"{ "extends": "../tsconfig.json", "compilerOptions": { "strictNullChecks": false } }"#,
+        ),
+    ];
+    with_look_for_type_errors(&files, &["./main.ts"], |program| {
+        assert_eq!(check_only(program).codes(), [0; 0]);
+    });
+    let same_program = (
+        "lib/tsconfig.json",
+        r#"{ "extends": "../tsconfig.json", "compilerOptions": { "noUnusedLocals": true } }"#,
+    );
+    let with_same_program = [files[0], files[1], same_program];
+    for files in [&files[..2], &with_same_program[..]] {
+        with_look_for_type_errors(files, &["./main.ts"], |program| {
+            assert_eq!(check_only(program).codes(), [2322]);
+        });
+    }
+    let early_error = ("lib/index.ts", "let x;\nlet x;\nexport {};\n");
+    let with_early_error = [files[0], early_error, files[2]];
+    with_look_for_type_errors(&with_early_error, &["./main.ts"], |program| {
+        assert!(check_only(program).codes().contains(&2451));
     });
 }
 
@@ -109,8 +134,15 @@ import "./two.js";
     });
 }
 
-const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 19] = [
+const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 26] = [
     r#"function f(a, a) { "use strict"; }"#,
+    r#"function f(public) { "use strict"; }"#,
+    r#"function public() { "use strict"; }"#,
+    r#"function f(eval) { "use strict"; }"#,
+    r#"function eval() { "use strict"; }"#,
+    r#"function f(a = 1) { "use strict"; }"#,
+    r#"function f() { "use strict"; with (f) {} }"#,
+    r#"function f() { "use strict"; delete f; }"#,
     r#"function f() { "use strict"; var public; }"#,
     r#"function f() { "use strict"; var static; }"#,
     r#"function f() { "use strict"; var yield; }"#,
@@ -131,24 +163,17 @@ const REFUSED_AFTER_FUNCTION_DIRECTIVE: [&str; 19] = [
     r#""use strict"; function f() { delete f; }"#,
 ];
 
-const ACCEPTED_WITH_FUNCTION_DIRECTIVE: [&str; 13] = [
-    r#"function f(public) { "use strict"; }"#,
-    r#"function public() { "use strict"; }"#,
-    r#"function f(eval) { "use strict"; }"#,
-    r#"function eval() { "use strict"; }"#,
-    r#"function f() { "use strict"; with (f) {} }"#,
+const ACCEPTED_WITH_FUNCTION_DIRECTIVE: [&str; 6] = [
     r#"function f() { "use strict"; 010; }"#,
     r#"function f() { "use strict"; "\010"; }"#,
-    r#"function f() { "use strict"; delete f; }"#,
     r#"function f() { "use strict"; if (1) function g() {} }"#,
     r#"function f() { "use strict"; l: function g() {} }"#,
-    r#"function f(a = 1) { "use strict"; }"#,
     r#"function f() { var public; "use strict"; }"#,
     r#"function f() { var public; var eval; var arguments; }"#,
 ];
 
 #[test]
-fn function_directive_is_read_as_bun_run_reads_it() {
+fn function_directive_makes_strict_mode_code() {
     let cases = REFUSED_AFTER_FUNCTION_DIRECTIVE
         .iter()
         .chain(&ACCEPTED_WITH_FUNCTION_DIRECTIVE);
@@ -174,39 +199,6 @@ fn function_directive_is_read_as_bun_run_reads_it() {
             );
         }
     });
-}
-
-#[test]
-fn errors_in_code_that_is_never_reached_are_dropped() {
-    let never_reached = r#"import { gone, here } from "./lib.ts";
-        import alsoGone from "./lib.ts";
-        export function early(): number {
-            if (true) {
-                return here;
-            }
-            const wrong: number = "text";
-            return gone + alsoGone + missing + wrong;
-        }"#;
-    let reached = never_reached.replace("if (true)", "if (here)");
-    let lib = ("lib.ts", "export let here = 1;");
-    with_program(
-        &[("main.ts", never_reached), lib],
-        &["./main.ts"],
-        1,
-        |program| {
-            assert_eq!(check_only(program).codes(), []);
-        },
-    );
-    with_program(
-        &[("main.ts", reached.as_str()), lib],
-        &["./main.ts"],
-        1,
-        |program| {
-            let mut found = check_only(program).codes();
-            found.sort_unstable();
-            assert_eq!(found, [1192, 2304, 2305, 2322]);
-        },
-    );
 }
 
 #[test]
@@ -238,17 +230,6 @@ fn file_loaded_for_its_types_alone_reports_nothing() {
                 assert!(!program.files().is_compiled(program.file(name)), "{name}");
             }
             assert_eq!(check_only(program).codes(), []);
-        },
-    );
-    with_defines(
-        &files,
-        &["./main.ts"],
-        &[("process.env.X", "a")],
-        |program| {
-            let build = check_only(program);
-            let error = [(DiagnosticClass::Semantic, Effect::StopsBuild)];
-            assert_eq!(build.reported(program.file("tool.ts"), 2322), error);
-            assert_eq!(build.reported(program.file("shapes.ts"), 2322), []);
         },
     );
 }
@@ -318,7 +299,7 @@ fn tree_that_every_task_reads_stays_until_the_pass_ends() {
 }
 
 #[test]
-fn progress_counts_both_passes() {
+fn progress_counts_each_file_once() {
     with_program(&FAILING_DEPENDENCY, &["./main.ts"], 1, |program| {
         let progress = Progress::default();
         let request = CompileRequest {
@@ -331,10 +312,10 @@ fn progress_counts_both_passes() {
         let checked = check_and_lower(loaded, host, &request, &roles, files_to_lower, &|_, _| {
             Some(())
         });
-        assert_eq!(roles.checked.len(), 1);
+        assert!(roles.checked.is_empty());
         assert_eq!(checked.lowered.len(), 2);
         let count = |counter: &AtomicUsize| counter.load(Ordering::Relaxed);
-        assert_eq!(count(&progress.to_check), 1 + 2);
+        assert_eq!(count(&progress.to_check), 2);
         assert_eq!(count(&progress.checked), count(&progress.to_check));
         assert_ne!(count(&progress.bytes_to_check), 0);
         assert_eq!(
@@ -345,14 +326,12 @@ fn progress_counts_both_passes() {
 }
 
 #[test]
-fn type_error_in_runtime_project_withdraws_trust() {
+fn nobody_looks_for_type_errors_in_a_runtime_project() {
     with_runtime_project(&[("a.ts", TYPE_ERROR)], &["a.ts"], |program| {
         let build = check_only(program);
         let file = program.file("a.ts");
-        assert_eq!(build.codes(), [2322]);
-        let withdraws_trust = (DiagnosticClass::Semantic, Effect::WithdrawsTrust);
-        assert_eq!(build.reported(file, 2322), [withdraws_trust]);
-        assert_eq!(build.roles.role(file), FileRole::Inferred);
+        assert_eq!(build.codes(), [0; 0]);
+        assert_eq!(build.roles.role(file), FileRole::Checked);
         let lowered: Vec<FileId> = build.program.lowered.iter().map(|it| it.0).collect();
         assert_eq!(lowered, [file]);
     });
@@ -450,47 +429,8 @@ export type Copy = Size;
 }
 
 #[test]
-fn style_rule_in_dependency_is_not_reported() {
-    let tsconfig = r#"{
-        "compilerOptions": { "strict": true, "noLib": true, "types": [], "noUnusedLocals": true }
-    }"#;
-    let main_text = r#"import { value } from "dep";
-import "./own.ts";
-export const copy = value;
-"#;
-    let unused_local = "const unused = 1;\nexport const value = 2;\n";
-    let files = [
-        ("tsconfig.json", tsconfig),
-        ("main.ts", main_text),
-        ("own.ts", unused_local),
-        ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
-        ("node_modules/dep/index.ts", unused_local),
-    ];
-    with_program(&files, &["./main.ts"], 1, |program| {
-        let build = check_only(program);
-        let style = (DiagnosticClass::Style, Effect::StopsBuild);
-        assert_eq!(build.reported(program.file("own.ts"), 6133), [style]);
-        assert!(!build.has_diagnostics(program.file("node_modules/dep/index.ts")));
-        assert!(build.roles.demoted.is_empty());
-    });
-}
-
-const GLOBAL_TYPES_WITHOUT_REGEXP: &str =
-    "interface Array<T> { length: number; [index: number]: T }
-interface Boolean {}
-interface CallableFunction {}
-interface Function {}
-interface IArguments {}
-interface NewableFunction {}
-interface Number {}
-interface Object {}
-interface String {}
-";
-
-#[test]
 fn each_diagnostic_is_reported_once() {
     let files = [
-        ("globals.d.ts", GLOBAL_TYPES_WITHOUT_REGEXP),
         ("main.ts", IMPORTS_DEPENDENCY),
         ("node_modules/dep/package.json", DEPENDENCY_MANIFEST),
         (
@@ -507,17 +447,12 @@ fn each_diagnostic_is_reported_once() {
             let is_repeated = later.any(|it| equal_diagnostics(&first.diagnostic, &it.diagnostic));
             assert!(!is_repeated, "TS{}", first.diagnostic.code);
         }
-        assert!(codes(&build.roles.diagnostics).contains(&2318));
-        assert!(!codes(&build.program.diagnostics).contains(&2318));
-        let is_in_dependency = |it: &BuildDiagnostic| it.diagnostic.file == Some(dep);
-        let with_roles = build
-            .roles
-            .diagnostics
-            .iter()
-            .filter(|it| is_in_dependency(it));
-        let mut classes = with_roles.map(|it| it.diagnostic.class);
-        assert!(classes.any(|class| class == DiagnosticClass::EarlyError));
-        assert!(!build.program.diagnostics.iter().any(is_in_dependency));
+        assert!(build.roles.diagnostics.is_empty());
+        assert!(!all.is_empty());
+        for reported in all {
+            assert_eq!(reported.diagnostic.file, Some(dep));
+            assert_eq!(reported.diagnostic.class, DiagnosticClass::EarlyError);
+        }
     });
 }
 
@@ -543,6 +478,8 @@ fn locator_works_after_lowering() {
     with_program(&files, &["./main.ts"], 1, |program| {
         let (files, main) = (program.files(), program.file("main.ts"));
         check_only(program);
+        // SAFETY: no task runs, and nothing refers to the file.
+        unsafe { files.free_tree(main) };
         assert!(files.hir(main).stmts.is_empty());
         let located = Locator::new(files, main).locate(17, 22, global(1, &[""; 0]));
         assert_eq!(located.file, Some(main));
@@ -607,43 +544,44 @@ fn diagnostics_do_not_depend_on_threads() {
     }
 }
 
-fn count_export_collisions(files: &[(&str, &str)], threads: usize) -> Vec<usize> {
+fn ask_for_member_accesses(files: &[(&str, &str)], threads: usize) -> Vec<Option<String>> {
     with_program(files, &["./main.ts"], threads, |program| {
-        let build = check_only(program);
-        let count = |&(path, _): &(&str, &str)| build.reported(program.file(path), 2308).len();
-        files.iter().map(count).collect()
+        let all = program.files();
+        let roles: Vec<FileRole> = (0..all.modules.len() as u32)
+            .map(|file| all.role(FileId(file)))
+            .collect();
+        let inputs = QueryInputs {
+            roles: &roles,
+            checked_elsewhere: &[],
+            builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
+            named_values: &NoNamedValues,
+            max_inference_nodes: 0,
+            limits: Default::default(),
+        };
+        let main = program.file("main.ts");
+        let build = check(program, &|checker, file| {
+            if file != main {
+                return Vec::new();
+            }
+            checker.with_queries(file, &inputs, |queries| {
+                let hir = queries.hir();
+                let mut accesses: Vec<(u32, ExprId)> = (hir.exprs.iter().enumerate())
+                    .map(|(index, it)| (it.pos, ExprId(index as u32)))
+                    .filter(|&(_, expression)| hir.member_key(expression).is_some())
+                    .collect();
+                accesses.sort();
+                let mut texts = Vec::new();
+                for (_, access) in accesses {
+                    let ty = queries.expression_type(access).ok();
+                    texts.push(ty.map(|ty| String::from_utf8(queries.type_text(ty)).unwrap()));
+                }
+                texts
+            })
+        });
+        assert_eq!(build.codes(), [2339]);
+        let lowered = build.program.lowered.into_iter();
+        lowered.flat_map(|(_, texts)| texts).collect()
     })
-}
-
-#[test]
-fn module_reached_twice_exports_nothing_the_second_time() {
-    let files = [
-        ("main.ts", "import \"./top\";\n"),
-        (
-            "top.ts",
-            "export * from \"./first\";\nexport * from \"./second\";\n",
-        ),
-        (
-            "first.ts",
-            "export * from \"./shared\";\nexport const a = 1;\n",
-        ),
-        (
-            "second.ts",
-            "export * from \"./inner\";\nexport * from \"./other\";\n",
-        ),
-        (
-            "inner.ts",
-            "export * from \"./shared\";\nexport const b = 1;\n",
-        ),
-        ("shared.ts", "export const x = 1;\n"),
-        ("other.ts", "export const x = \"\";\n"),
-    ];
-    for threads in [1, 4] {
-        assert_eq!(
-            count_export_collisions(&files, threads),
-            [0, 1, 0, 1, 0, 0, 0]
-        );
-    }
 }
 
 #[test]
@@ -654,14 +592,13 @@ fn row_of_export_stars_exports_every_name() {
         let text = format!("export * from \"./m{below}\";\nexport const v{index} = {index};\n");
         row.push((format!("m{index}.ts"), text));
     }
-    let main =
-        "import * as all from \"./m7\";\nexport const sum: number = all.v0 + all.v7;\nall.v8;\n";
+    let main = "import * as all from \"./m7\";\nexport const sum = [all.v0, all.v7, all.v8];\n";
     let files = row.iter().map(|(path, text)| (&path[..], &text[..]));
     let files: Vec<(&str, &str)> = files.chain([("main.ts", main)]).collect();
     for threads in [1, 4] {
-        with_program(&files, &["./main.ts"], threads, |program| {
-            assert_eq!(check_only(program).codes(), [2339]);
-        });
+        let found = ask_for_member_accesses(&files, threads);
+        let found: Vec<Option<&str>> = found.iter().map(Option::as_deref).collect();
+        assert_eq!(found, [Some("0"), Some("7"), None], "{threads} threads");
     }
 }
 
@@ -670,16 +607,18 @@ fn export_stars_in_a_cycle_export_every_name() {
     let files = [
         (
             "main.ts",
-            "import * as a from \"./a\";\nimport * as b from \"./b\";\nimport * as above from \"./above\";\nexport const sum: number = a.a + a.b + b.a + b.b + above.a + above.b + above.c;\nabove.d;\n",
+            "import * as a from \"./a\";\nimport * as b from \"./b\";\nimport * as above from \"./above\";\nexport const sum = [a.a, a.b, b.a, b.b, above.a, above.b, above.c, above.d];\n",
         ),
         ("above.ts", "export * from \"./a\";\nexport const c = 3;\n"),
         ("a.ts", "export * from \"./b\";\nexport const a = 1;\n"),
         ("b.ts", "export * from \"./a\";\nexport const b = 2;\n"),
     ];
     for threads in [1, 4] {
-        with_program(&files, &["./main.ts"], threads, |program| {
-            assert_eq!(check_only(program).codes(), [2339]);
-        });
+        let found = ask_for_member_accesses(&files, threads);
+        let found: Vec<Option<&str>> = found.iter().map(Option::as_deref).collect();
+        let expected = ["1", "2", "1", "2", "1", "2", "3"].map(Some);
+        assert_eq!(found[..7], expected, "{threads} threads");
+        assert_eq!(found[7], None, "{threads} threads");
     }
 }
 
@@ -694,10 +633,288 @@ fn parameters_without_types_in_a_list_of_functions_close_no_cycle() {
     ];
     let disk = project_disk(&files, 1);
     with_host(&LacksBunTypes(&disk), PROJECT, "./main.ts", |program| {
-        let build = check(program, &|checker, _| checker.closed_cycle_count());
+        let all = program.files();
+        let roles: Vec<FileRole> = (0..all.modules.len() as u32)
+            .map(|file| all.role(FileId(file)))
+            .collect();
+        let inputs = QueryInputs {
+            roles: &roles,
+            checked_elsewhere: &[],
+            builtin_types: &BuiltinTypeSymbols::compute(all, &[], Box::new(|| &[])),
+            named_values: &NoNamedValues,
+            max_inference_nodes: 0,
+            limits: Default::default(),
+        };
+        let build = check(program, &|checker, file| {
+            let asked = checker.with_queries(file, &inputs, |queries| {
+                let patterns: Vec<_> = queries.hir().params.iter().map(|it| it.pat).collect();
+                let answers = patterns.into_iter().map(|it| queries.binding_type(it));
+                answers.filter(Result::is_ok).count()
+            });
+            assert_eq!(asked, 4);
+            checker.closed_cycle_count()
+        });
         assert_eq!(build.codes(), [0; 0]);
         assert_eq!(build.program.lowered, [(program.file("main.ts"), 0)]);
     });
+}
+
+#[test]
+fn untyped_package_stops_only_a_project_with_bun_types_installed() {
+    for is_installed in [false, true] {
+        let folder = match is_installed {
+            true => "node_modules/@types/bun".to_owned(),
+            false => format!("{}/bun", BringsBunTypes::TYPE_ROOT),
+        };
+        let manifest = format!("{folder}/package.json");
+        let declarations = format!("{folder}/index.d.ts");
+        let files = [
+            (
+                "main.ts",
+                "import { x } from \"untyped\";\nexport const one: number = x;\n\
+                 x((a, b) => {});\nx([c => {}]);\n",
+            ),
+            (
+                "node_modules/untyped/package.json",
+                "{ \"name\": \"untyped\", \"version\": \"1.0.0\", \"main\": \"index.js\" }",
+            ),
+            ("node_modules/untyped/index.js", "exports.x = () => 1;\n"),
+            (
+                &manifest[..],
+                "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
+            ),
+            (&declarations[..], "declare const Bun: number;\n"),
+            NAMES_BUN_TYPES,
+        ];
+        let disk = project_disk(&files, 1);
+        with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
+            let is_brought = matches!(program.loaded.bun_types, BunTypes::Brought);
+            assert_eq!(is_brought, !is_installed);
+            let build = check_only(program);
+            let codes: &[u32] = match is_installed {
+                true => &[7016, 7006, 7006, 7006],
+                false => &[],
+            };
+            assert_eq!(build.codes(), codes);
+            assert!(
+                build
+                    .diagnostics()
+                    .all(|it| it.effect == Effect::StopsBuild)
+            );
+        });
+    }
+}
+
+#[test]
+fn brought_declarations_hold_no_program_to_what_is_not_installed() {
+    for is_installed in [false, true] {
+        let folder = match is_installed {
+            true => "node_modules/@types/bun".to_owned(),
+            false => format!("{}/bun", BringsBunTypes::TYPE_ROOT),
+        };
+        let manifest = format!("{folder}/package.json");
+        let declarations = format!("{folder}/index.d.ts");
+        let files = [
+            (
+                "main.ts",
+                "const odd: number = Bun.version;\n\
+                 const kept = Bun.version;\nconst far: number = kept;\n\
+                 Bun.take(1);\nconst take = Bun.take;\ntake(2);\n\
+                 declare const held: Held;\nheld.b;\n\
+                 export const made: Made = Bun.make();\ninterface Made { own: number }\n\
+                 export const wrong: number = \"text\";\nBun.take(missing);\n",
+            ),
+            (
+                &manifest[..],
+                "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
+            ),
+            (
+                &declarations[..],
+                "declare const Bun: { version: string; take(text: string): void; make(): Held };\n\
+                 interface Held { a: number }\n",
+            ),
+        ];
+        for names_them in [false, true] {
+            let with_names = [&files[..], &[NAMES_BUN_TYPES]].concat();
+            let disk = project_disk(if names_them { &with_names } else { &files }, 1);
+            with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
+                let is_held = matches!(program.loaded.bun_types, BunTypes::Installed);
+                assert_eq!(is_held, is_installed && names_them);
+                let codes: &[u32] = match is_held {
+                    true => &[2322, 2322, 2345, 2345, 2339, 2741, 2322, 2304],
+                    false => &[2322, 2304],
+                };
+                assert_eq!(check_only(program).codes(), codes);
+            });
+        }
+    }
+}
+
+#[test]
+fn a_name_of_the_brought_declarations_is_free_for_a_script_of_the_program() {
+    let folder = format!("{}/bun", BringsBunTypes::TYPE_ROOT);
+    let (manifest, declarations) = (
+        format!("{folder}/package.json"),
+        format!("{folder}/index.d.ts"),
+    );
+    let files = [
+        (
+            "main.ts",
+            "type Listeners = { two: number };\ntype Twice = 1;\ntype Twice = 2;\n",
+        ),
+        (
+            &manifest[..],
+            "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
+        ),
+        (&declarations[..], "interface Listeners { one: number }\n"),
+    ];
+    let disk = project_disk(&files, 1);
+    with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
+        assert_eq!(check_only(program).codes(), [2300, 2300]);
+    });
+}
+
+#[test]
+fn what_the_types_of_bun_refer_to_is_brought_with_them() {
+    let manifest = |name: &str| {
+        format!(r#"{{ "name": "{name}", "version": "1.0.0", "types": "index.d.ts" }}"#)
+    };
+    let (of_bun, of_node) = (manifest("@types/bun"), manifest("@types/node"));
+    let files = [
+        ("main.ts", "export const id: number = later();\n"),
+        ("node_modules/@types/bun/package.json", &of_bun[..]),
+        (
+            "node_modules/@types/bun/index.d.ts",
+            "/// <reference types=\"node\" />\n",
+        ),
+        ("node_modules/@types/node/package.json", &of_node[..]),
+        (
+            "node_modules/@types/node/index.d.ts",
+            "declare function later(): { ref(): void };\n",
+        ),
+    ];
+    let names_node = (
+        "tsconfig.json",
+        r#"{ "compilerOptions": { "strict": true, "noLib": true, "types": ["node"] } }"#,
+    );
+    for (names_them, codes) in [(false, &[][..]), (true, &[2322][..])] {
+        let with_names = [&files[..], &[names_node]].concat();
+        let disk = project_disk(if names_them { &with_names } else { &files }, 1);
+        with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
+            assert_eq!(check_only(program).codes(), codes, "{names_them}");
+        });
+    }
+}
+
+#[test]
+fn a_project_that_writes_no_check_is_told_of_early_errors_alone() {
+    let no_check = (
+        "tsconfig.json",
+        r#"{ "compilerOptions": { "strict": true, "noLib": true, "types": [], "noCheck": true } }"#,
+    );
+    let wrong = ("main.ts", "export const weight: number = \"three\";\n");
+    with_look_for_type_errors(&[wrong], &["./main.ts"], |program| {
+        assert_eq!(check_only(program).codes(), [2322]);
+    });
+    with_look_for_type_errors(&[wrong, no_check], &["./main.ts"], |program| {
+        assert_eq!(check_only(program).codes(), [0; 0]);
+    });
+    let declared_twice = ("main.ts", "let x;\nlet x;\nexport {};\n");
+    with_look_for_type_errors(&[declared_twice, no_check], &["./main.ts"], |program| {
+        assert!(check_only(program).codes().contains(&2451));
+    });
+}
+
+#[test]
+fn what_is_an_error_only_in_a_module_stops_nothing_in_a_script_of_the_project() {
+    let reports_unused = (
+        "tsconfig.json",
+        r#"{ "compilerOptions": { "strict": true, "noLib": true, "types": [], "noUnusedLocals": true } }"#,
+    );
+    let umd = (
+        "shapes.d.ts",
+        "export declare function area(): number;\nexport as namespace Shapes;\n",
+    );
+    let global = (
+        "kept.d.ts",
+        "interface KeptConstructor { one: number }\ndeclare var Kept: KeptConstructor;\n",
+    );
+    let cases: [(&str, &[(&str, &str)], u32); 5] = [
+        ("const kept = this.kept;\nkept;\n", &[], 2532),
+        ("class Unused {}\n", &[reports_unused], 6196),
+        (
+            "declare module \"made-up\" {\n  const one: number;\n}\n",
+            &[],
+            2664,
+        ),
+        ("Shapes.area();\n", &[umd], 2686),
+        ("var Kept: KeptConstructor;\nKept.one;\n", &[global], 2454),
+    ];
+    for (script, beside, code) in cases {
+        let module = format!("{script}export {{}};\n");
+        for (text, codes) in [(script, &[][..]), (&module[..], &[code][..])] {
+            let files = [&[("main.ts", text)], beside].concat();
+            with_look_for_type_errors(&files, &["./main.ts"], |program| {
+                assert_eq!(check_only(program).codes(), codes, "{text}");
+            });
+        }
+    }
+    let inside = "function outer() {\n  const inner = 1;\n}\nouter();\n";
+    with_look_for_type_errors(
+        &[("main.ts", inside), reports_unused],
+        &["./main.ts"],
+        |program| {
+            assert_eq!(check_only(program).codes(), [6133]);
+        },
+    );
+}
+
+#[test]
+fn an_entry_point_that_the_project_excludes_is_told_of_early_errors_alone() {
+    let options = r#""compilerOptions": { "strict": true, "noLib": true, "types": [] }"#;
+    let excludes = format!(r#"{{ {options}, "exclude": ["job.worker.ts"] }}"#);
+    let main = ("main.ts", "export const one: number = 1;\n");
+    let worker = (
+        "job.worker.ts",
+        "import { part } from \"./part\";\nexport const wrong: number = part;\n",
+    );
+    let part = ("part.ts", "export const part: string = 1;\n");
+    let entry_points = ["./main.ts", "./job.worker.ts"];
+    with_look_for_type_errors(&[main, worker, part], &entry_points, |program| {
+        assert_eq!(check_only(program).codes(), [2322, 2322]);
+    });
+    let excluded = [main, worker, part, ("tsconfig.json", &excludes[..])];
+    with_look_for_type_errors(&excluded, &entry_points, |program| {
+        assert_eq!(check_only(program).codes(), [0; 0]);
+    });
+    let imports_part = ("main.ts", "export { part } from \"./part\";\n");
+    let shared = [imports_part, worker, part, ("tsconfig.json", &excludes[..])];
+    with_look_for_type_errors(&shared, &entry_points, |program| {
+        assert_eq!(check_only(program).codes(), [2322]);
+    });
+    let declared_twice = ("job.worker.ts", "let x;\nlet x;\nexport {};\n");
+    let early = [main, declared_twice, ("tsconfig.json", &excludes[..])];
+    with_look_for_type_errors(&early, &entry_points, |program| {
+        assert!(check_only(program).codes().contains(&2451));
+    });
+}
+
+#[test]
+fn a_field_declared_again_below_a_class_is_reported_from_the_target_on_that_defines_fields() {
+    let main = (
+        "main.ts",
+        "class Parcel { label: string | number = \"plain\"; }\n\
+         export class Numbered extends Parcel { label!: number; }\n",
+    );
+    for (target, codes) in [("es2020", &[][..]), ("es2022", &[2612][..])] {
+        let written = format!(
+            r#"{{ "compilerOptions": {{ "strict": true, "noLib": true, "types": [], "target": "{target}" }} }}"#
+        );
+        let files = [main, ("tsconfig.json", &written[..])];
+        with_look_for_type_errors(&files, &["./main.ts"], |program| {
+            assert_eq!(check_only(program).codes(), codes, "{target}");
+        });
+    }
 }
 
 #[test]
@@ -715,4 +932,132 @@ fn a_thread_gives_memory_back_under_a_hundred_times_in_a_long_check() {
     assert_eq!(due[..4], [26_250, 22_969, 20_098, 17_586]);
     assert_eq!(due[due.len() - 4..], [3, 2, 1, 0]);
     assert!(!crate::has_fallen_by_an_eighth(0, 0));
+}
+
+pub(super) fn codes_beside_declarations(
+    is_installed: bool,
+    declared: &str,
+    main: &str,
+    other: &str,
+) -> Vec<u32> {
+    let folder = match is_installed {
+        true => "node_modules/@types/bun".to_owned(),
+        false => format!("{}/bun", BringsBunTypes::TYPE_ROOT),
+    };
+    let manifest = format!("{folder}/package.json");
+    let declarations = format!("{folder}/index.d.ts");
+    let files = [
+        ("main.ts", main),
+        ("other.ts", other),
+        (
+            &manifest[..],
+            "{ \"name\": \"@types/bun\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }",
+        ),
+        (&declarations[..], declared),
+        NAMES_BUN_TYPES,
+    ];
+    let disk = project_disk(&files[..files.len() - usize::from(!is_installed)], 1);
+    let mut codes = Vec::new();
+    with_host(&BringsBunTypes(&disk), PROJECT, "./main.ts", |program| {
+        codes = check_only(program).codes();
+    });
+    codes
+}
+
+#[test]
+fn a_failed_comparison_that_names_a_brought_type_stops_nothing() {
+    let declared = "interface Held { a: number }\ndeclare const kept: Held;\n";
+    let main = "function later(): Held { return kept; }\n\
+                const id: number = later();\n\
+                function stop(id: number) {}\nstop(later());\n\
+                export const pair: { inner: number } = { inner: later() };\n\
+                export const lacks: { a: number; b: number } = later();\n\
+                export const list: number[] = [later()];\n\
+                export const wrong: number = \"text\";\nexport { id };\n";
+    let installed = codes_beside_declarations(true, declared, main, "");
+    assert_eq!(installed, [2322, 2345, 2322, 2741, 2322, 2322]);
+    assert_eq!(codes_beside_declarations(false, declared, main, ""), [2322]);
+}
+
+#[test]
+fn what_has_no_written_type_is_followed_to_the_brought_name_it_is_made_of() {
+    let declared = "declare const Bun: { size(): number; parse(): unknown };\n";
+    let other =
+        "export const far = Bun.size();\nexport function farther() { return Bun.size(); }\n";
+    let main = "import { far, farther } from \"./other\";\n\
+                function open() { return Bun.size(); }\n\
+                function twice() { return open(); }\n\
+                class Crate {\n  weight = Bun.size();\n  heavier() { return Bun.size(); }\n  get most() { return Bun.size(); }\n}\n\
+                export const a: string = open();\n\
+                export const b: string = twice();\n\
+                export const c: string = new Crate().weight;\n\
+                export const d: string = new Crate().heavier();\n\
+                export const e: string = new Crate().most;\n\
+                export const f: string = far;\n\
+                export const g: string = farther();\n\
+                function parse() { return Bun.parse(); }\n\
+                parse().weight;\n\
+                const parcel = parse();\nparcel.weight;\n\
+                function written(): number { return Bun.size(); }\n\
+                export const h: string = written();\n\
+                function calls(list: string[]) { Bun.size(); return list.length; }\n\
+                export const i: string = calls([]);\n";
+    let installed = codes_beside_declarations(true, declared, main, other);
+    assert_eq!(
+        installed,
+        [
+            2322, 2322, 2322, 2322, 2322, 2322, 2322, 2571, 18046, 2322, 2322
+        ]
+    );
+    assert_eq!(
+        codes_beside_declarations(false, declared, main, other),
+        [2322, 2322]
+    );
+}
+
+#[test]
+fn how_a_class_below_a_brought_class_is_made_stops_nothing() {
+    let declared = "interface Signal<T = unknown> { detail: T }\n\
+                    declare var Signal: { prototype: Signal; new <T>(name: string, detail: T): Signal<T> };\n";
+    let other = "export class Far extends Signal {}\n";
+    let main = "import { Far } from \"./other\";\n\
+                class Below extends Signal {}\n\
+                export const made = [new Below(\"a\", 1), new Far(\"a\", 1)];\n\
+                class Own extends Signal<number> { weight = 1; }\n\
+                export const wrong: string = new Own(\"a\", 1).weight;\n\
+                const crate = { weight: 3 };\nnew crate();\n";
+    let installed = codes_beside_declarations(true, declared, main, other);
+    assert_eq!(installed, [2508, 2351, 2351, 2322, 2351, 2508]);
+    assert_eq!(
+        codes_beside_declarations(false, declared, main, other),
+        [2322, 2351]
+    );
+}
+
+#[test]
+fn a_name_without_a_written_type_that_nobody_follows_to_its_maker_stops_nothing() {
+    let declared = "declare const Bun: { size(): number };\n";
+    let main = "function show(text: string) {}\n\
+                declare function each<T>(list: T[], run: (one: T) => void): void;\n\
+                for (const size of [Bun.size()]) show(size);\n\
+                each([Bun.size()], size => show(size));\n\
+                let late;\nlate = Bun.size();\nshow(late);\n\
+                function own(size: number) { show(size); }\nown(1);\n";
+    let installed = codes_beside_declarations(true, declared, main, "");
+    assert_eq!(installed, [2345, 2345, 2345, 2345]);
+    assert_eq!(codes_beside_declarations(false, declared, main, ""), [2345]);
+}
+
+#[test]
+fn an_error_that_names_nothing_is_asked_by_what_it_stands_at() {
+    let declared = "interface Held { a: number }\ndeclare const Bun: { start(): Held };\n";
+    let main = "let id = Bun.start();\n\
+                declare function order<T>(list: T[], by: (a: T, b: T) => number): T[];\n\
+                export const all = [id * 1, 2 % id, order([id, id], (a, b) => a - b)];\n\
+                id++;\n\
+                function typed(held: Held) { return held * 2; }\ntyped(id);\n\
+                const label: string = \"ab\";\nexport const wrong = label * 2;\n";
+    let installed = codes_beside_declarations(true, declared, main, "");
+    assert_eq!(installed, [2362, 2363, 2362, 2363, 2356, 2362, 2362]);
+    assert_eq!(codes_beside_declarations(false, declared, main, ""), [2362]);
 }

@@ -158,6 +158,23 @@ fn unnamed_use_keeps_only_what_needs_no_name() {
 }
 
 #[test]
+fn use_named_at_run_time_keeps_nothing() {
+    let named_at_run_time = |feature| FeatureUseRecord {
+        kind: FeatureUseKind::NamedAtRunTime,
+        ..use_of(feature)
+    };
+    let records = [
+        named_at_run_time(Feature::RegExp),
+        named_at_run_time(Feature::ShadowRealm),
+        use_of(Feature::ShadowRealm),
+    ];
+    assert_eq!(
+        features_of(&records).features,
+        [used(Feature::ShadowRealm, 2)]
+    );
+}
+
+#[test]
 fn one_named_use_names_the_feature() {
     let records = [
         unnamed_use_of(Feature::ShadowRealm),

@@ -1,0 +1,3 @@
+globalThis.runs = (globalThis.runs ?? 0) + 1;
+exports.value = () => "real";
+exports.kind = "real";

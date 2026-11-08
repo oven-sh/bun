@@ -43,15 +43,16 @@ unsafe extern "C" {
     /// stop at its next page. A no-op on a thread that is not parked. No preconditions.
     pub safe fn mi_on_thread_idle_end();
     pub fn mi_stats_print_out(out: core::option::Option<mi_output_fun>, arg: *mut c_void);
-    pub fn mi_process_info(
-        elapsed_msecs: *mut usize,
-        user_msecs: *mut usize,
-        system_msecs: *mut usize,
-        current_rss: *mut usize,
-        peak_rss: *mut usize,
-        current_commit: *mut usize,
-        peak_commit: *mut usize,
-        page_faults: *mut usize,
+    /// No preconditions; writes a number through each argument that is not `None`.
+    pub safe fn mi_process_info(
+        elapsed_msecs: core::option::Option<&mut usize>,
+        user_msecs: core::option::Option<&mut usize>,
+        system_msecs: core::option::Option<&mut usize>,
+        current_rss: core::option::Option<&mut usize>,
+        peak_rss: core::option::Option<&mut usize>,
+        current_commit: core::option::Option<&mut usize>,
+        peak_commit: core::option::Option<&mut usize>,
+        page_faults: core::option::Option<&mut usize>,
     );
     /// No preconditions; returns null on failure.
     pub safe fn mi_malloc_aligned(size: usize, alignment: usize) -> *mut c_void;
@@ -166,7 +167,6 @@ unsafe extern "C" {
     // `mi_option_*` take only by-value `#[repr(C)]` enum + scalar args and
     // mutate mimalloc-internal global state; no pointer invariants → `safe fn`.
     pub safe fn mi_option_set(option: Option, value: c_long);
-    pub safe fn mi_option_set_default(option: Option, value: c_long);
     pub fn mi_malloc_usable_size(p: *const c_void) -> usize;
     pub fn mi_free_size(p: *mut c_void, size: usize);
     pub fn mi_free_size_aligned(p: *mut c_void, size: usize, alignment: usize);

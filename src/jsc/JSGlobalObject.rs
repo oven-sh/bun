@@ -1117,12 +1117,6 @@ impl JSGlobalObject {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToJSON(self, value))
     }
 
-    pub fn readable_stream_to_json_source(&self, value: JSValue) -> JsResult<JSValue> {
-        crate::call_zero_is_throw(self, || {
-            ZigGlobalObject__readableStreamToJSONSource(self, value)
-        })
-    }
-
     pub fn readable_stream_to_blob(&self, value: JSValue) -> JsResult<JSValue> {
         crate::call_zero_is_throw(self, || ZigGlobalObject__readableStreamToBlob(self, value))
     }
@@ -1137,10 +1131,9 @@ impl JSGlobalObject {
         })
     }
 
-    /// Returns a freshly-created `napi_env` owned by this global, for use by
+    /// Returns a freshly-created `napi_env` on which C++ leaks a ref, for use by
     /// the FFI module. The concrete `NapiEnv` struct lives in `bun_runtime`
-    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped;
-    /// callers in `bun_runtime` cast to `*mut NapiEnv`.
+    /// (which depends on `bun_jsc`), so this returns the raw pointer untyped.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
@@ -1517,10 +1510,6 @@ unsafe extern "C" {
     -> JSValue;
     safe fn ZigGlobalObject__readableStreamToJSON(this: &JSGlobalObject, value: JSValue)
     -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToJSONSource(
-        this: &JSGlobalObject,
-        value: JSValue,
-    ) -> JSValue;
     safe fn ZigGlobalObject__readableStreamToFormData(
         this: &JSGlobalObject,
         value: JSValue,

@@ -29,7 +29,7 @@ use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files};
 use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::SharedSort;
-use bun_sema_driver::host::from_native;
+use bun_sema_driver::host::{from_native, to_native};
 
 fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     for &module in &reached.looked_at {
@@ -118,13 +118,16 @@ fn name_data_files_found_by_patterns(
     view: ProgramView<'_, '_>,
     left_out: &LeftOutCode,
     loaders: &[(Vec<u8>, Loader)],
-) {
+    provider: &dyn SourceProvider,
+) -> Option<Vec<FileId>> {
     let (files, sources) = (view.files(), view.sources);
     let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
     let is_data = |file: FileId| {
         let by_name = loader_by_path(loaders, files.file_name(file), CodeImportKind::Import);
         gives_data(by_name) && gives_data(sources.loader(file))
     };
+    let mut has_found_data = false;
+    let mut found_by_patterns: Vec<FileId> = Vec::new();
     for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
         let Some((answers, _)) = files.answers(file) else {
             continue;
@@ -135,14 +138,20 @@ fn name_data_files_found_by_patterns(
             else {
                 continue;
             };
+            found_by_patterns.extend(found.iter().filter(|&&found| is_kept(found)));
             let data = found
                 .iter()
                 .filter(|&&found| is_kept(found) && is_data(found));
             let mut names: Vec<&[u8]> = data
+                .clone()
                 .map(|&found| sources.module_paths(found).display_path)
                 .collect();
             if names.is_empty() {
                 continue;
+            }
+            has_found_data = true;
+            for &found in data {
+                provider.keep_bytes_of_data_file(to_native(files.module(found).file_name()));
             }
             names.shared_sort_unstable();
             let node = NodeData::Expr(site.specifier_node);
@@ -150,6 +159,29 @@ fn name_data_files_found_by_patterns(
             let code = Code::DataFilesFoundByPattern;
             let note = Diagnostic::new(code, Some(span), &[&names.join(&b", "[..])]);
             diagnostics.add(Some(view), note);
+        }
+    }
+    found_by_patterns.sort_unstable();
+    found_by_patterns.dedup();
+    has_found_data.then_some(found_by_patterns)
+}
+
+fn keep_paths_of_code_that_file_system_sees(
+    view: ProgramView<'_, '_>,
+    graph: &ModuleGraph,
+    left_out: &LeftOutCode,
+    found_by_patterns: &[FileId],
+    provider: &dyn SourceProvider,
+) {
+    let (files, sources) = (view.files(), view.sources);
+    for &file in files.compiled_files() {
+        let is_seen = !sources.is_data(file)
+            && left_out.files.binary_search(&file).is_err()
+            && (graph.kind(file) == ModuleKind::CommonJs
+                || found_by_patterns.binary_search(&file).is_ok());
+        if is_seen {
+            provider
+                .keep_path_of_code_that_file_system_sees(to_native(files.module(file).file_name()));
         }
     }
 }
@@ -563,12 +595,22 @@ impl Build<'_> {
                 warn_where_modules_are_reset(&mut self.diagnostics, view, &left_out);
                 if !self.options.aot.runs_in_place {
                     let loaders = &self.options.load.loaders;
-                    name_data_files_found_by_patterns(
+                    let found_by_patterns = name_data_files_found_by_patterns(
                         &mut self.diagnostics,
                         view,
                         &left_out,
                         loaders,
+                        self.provider,
                     );
+                    if let Some(found_by_patterns) = found_by_patterns {
+                        keep_paths_of_code_that_file_system_sees(
+                            view,
+                            &graph,
+                            &left_out,
+                            &found_by_patterns,
+                            self.provider,
+                        );
+                    }
                     keep_where_parsers_refused_data(view, &left_out, self.provider);
                 }
                 crate::test_run_loads::warn_where_every_file_may_load_again(

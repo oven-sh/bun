@@ -3,7 +3,7 @@
 # -- source: what-operators-on-bits-and-another-such-parameter-bring-round-starts-as-int32.cjs
 # function reach(isFar, length) { let last = 0; let offset = 1; const most = (length - 1) | 0; while (offset < most) { if (isFar(offset)) break; last = offset; offset = (offset * 2 + 1) | 0; if (offset > most) offset = most; } return last * 100 + offset; }
 # const box = {};
-# box['k' + [].length] = [reach, (at) => at > 4, 8];
+# box[String(['k0'])] = [reach, (at) => at > 4, 8];
 # print(box.k0[0](box.k0[1], box.k0[2]));
 # -- end of source
 # STATISTIC: WalksOfLoopsUndone <= 0

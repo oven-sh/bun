@@ -40,4 +40,4 @@
 # CHECK: isLoopHead=true
 # CHECK: = GetArrayElement {{*}}level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN
 # CHECK-LABEL: code f3:Body
-# CHECK-NOT: isInBounds
+# CHECK-NOT: = GetArrayElement {{*}}isInBounds

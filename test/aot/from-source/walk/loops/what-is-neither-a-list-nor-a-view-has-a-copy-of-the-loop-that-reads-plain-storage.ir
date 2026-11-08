@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# "use strict";
+# function sum(like) { let s = 0; for (let j = 0; j < like.length; j++) s += like[j]; return s; }
+# const entry = [sum], like = JSON.parse('{"length":4,"0":3,"1":5,"2":7,"3":9}');
+# console.log(entry[0](like), entry[0]([1, 2]), entry[0](new Uint8Array(3)));
+# -- end of source
+# The loop is told apart in front for lists and for views. What is neither has a copy of its own, walked with guesses open: an ordinary object that keeps its elements as a list does.
+# REQUIRES: entries-of-bun
+# RUN: walk f1 mechanisms=all
+# CHECK: TypeTest {{*}} testedType=Array
+# CHECK: TypeTest {{*}} testedType=Buffer|Uint8Array
+# The length is a name like any other there: its site is asked once, in front of the loop, by a read that runs no code.
+# CHECK: GetValueAtSiteOrAbsent {{*}} key="length"
+# CHECK: TypeTest {{*}} testedType=number
+# CHECK: isLoopHead=true
+# The element is read in line out of plain storage; what is not there is absent, and the turn begins again in the loop as written.
+# CHECK: GetElementInStorageOrAbsent
+# CHECK: TypeTest {{*}} testedType=number

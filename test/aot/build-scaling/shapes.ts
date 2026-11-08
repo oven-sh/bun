@@ -1053,6 +1053,35 @@ export const shapes: Shape[] = [
         `}\nconsole.log(sum);\n`,
     }),
   },
+  // Each read asks a guard of every class of the family, and the list of what is asked was searched from its head for each class: classes x classes for each name. 4,000 classes and 64 names: 15.6 G instructions over 5.9.
+  // With as many names as classes the guards themselves are left, one a class and a name, in the walk and in the image.
+  ...(
+    [
+      ["sixty-four names", "classes", 2000, {}],
+      ["as many names", "classes, and names", 500, { growsSoFar: "3.99 times in GuardsOfClassGuardCounts" }],
+    ] as const
+  ).map(
+    ([names, counted, size, mark]): Shape => ({
+      name: `classes below one base with one object out of sight, a value of the family read under ${names} that nobody declares`,
+      counted,
+      size,
+      entry: "main.js",
+      ...mark,
+      write: size => {
+        const numberOfNames = names === "as many names" ? size : 64;
+        return {
+          "main.js":
+            `class Base { constructor() { this.kind = 0; } }\n` +
+            lines(size, index => `class C${index} extends Base { m${index}() { return ${index}; } }`) +
+            `const list = [${upTo(size, index => `new C${index}()`).join(", ")}];\nglobalThis.kept = list[0];\n` +
+            lines(numberOfNames, index => `function f${index}(x) { return x.z${index} ? 1 : 0; }`) +
+            `let sum = 0;\nfor (const x of list) {\n` +
+            lines(numberOfNames, index => `  sum += f${index}(x);`) +
+            `}\nconsole.log("SAID", sum);\n`,
+        };
+      },
+    }),
+  ),
   // Whether a class at or above the receivers of a read declares the name was asked of every class of the program that declares it: families x classes. 8,000 of each: 2.4 G instructions over 21.9.
   {
     name: "small families, each read under a name that as many other classes declare",
@@ -1070,6 +1099,39 @@ export const shapes: Shape[] = [
         ) +
         lines(size, index => `count += (pick${index}(0).p${index} ? 1 : 0) + (pick${index}(1).q${index} ? 1 : 0) + (pick${index}(0).go ? 1 : 0);`) +
         `console.log(count);\n`,
+    }),
+  },
+  // Literals of one form share a layout, and each accessor laid waits at its one field: to learn whether the field is asked it went through all that wait there already. 4,000 literals: 0.5 G instructions of 3.4.
+  {
+    name: "literals with a getter and a setter of one name, each read",
+    counted: "literals",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function run() {\n  let t = 0;\n` +
+        lines(size, index => `  const o${index} = { get g() { return 1; }, set g(v) {} }; t += o${index}.g;`) +
+        `  return t;\n}\nconsole.log(run());\n`,
+    }),
+  },
+  // One object of the family kept where nobody sees it opens the whole family (whoever holds an heir reaches the base's prototype): every member wakes in every call: classes x names again. 4,000 of each: 91 G instructions, 5,652 MB.
+  {
+    name: "classes below one base, a method of each called on a value of the family, and one object of them is let go",
+    growsSoFar: "3.94 times in FactEdges",
+    counted: "classes, and names",
+    size: 500,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `class Base { tag() { return 0; } }\n` +
+        lines(size, index => `class H${index} extends Base { m${index}() { return ${index}; } }`) +
+        `const all = [\n` +
+        lines(size, index => `  new H${index}(),`) +
+        `];\nglobalThis.kept = all[0];\n` +
+        lines(size, index => `function r${index}(x) { return x.m${index} ? x.m${index}() : 0; }`) +
+        `let sum = 0;\nfor (const x of all.slice(0, 3)) {\n` +
+        lines(size, index => `  sum += r${index}(x);`) +
+        `}\nconsole.log(sum);\n`,
     }),
   },
   // `module.exports = { .. }`: for each key that another file reads, all stores so far were gone through to drop an earlier one of the same name: 16,000 keys took 2.8 G instructions.
@@ -1435,6 +1497,28 @@ export const shapes: Shape[] = [
     write: size => ({
       "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] } }\n`,
       "main.ts": `export function take(list: number[]) {\n  let last = 0;\n  [\n${lines(size, () => "    last,")}  ] = list;\n  return last;\n}\n`,
+    }),
+  },
+  {
+    name: "fields of one class under one constant key, in a check",
+    counted: "fields",
+    size: 16000,
+    entry: "main.js",
+    isCheckedAlone: true,
+    write: size => ({
+      "tsconfig.json": `{ "compilerOptions": { "allowJs": true, "noEmit": true, "types": [], "lib": ["es2022"] } }\n`,
+      "main.js": `const key = "held";\nexport class Holder {\n${lines(size, index => `  [key] = ${index};`)}}\n`,
+    }),
+  },
+  {
+    name: "overloads of one method under a constant key, in a check",
+    counted: "overloads",
+    size: 1000,
+    entry: "main.ts",
+    isCheckedAlone: true,
+    write: size => ({
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] } }\n`,
+      "main.ts": `const key = "take";\nexport class Holder {\n${lines(size, index => `  [key](value: ${index}): void;`)}  [key](value: number) {}\n}\n`,
     }),
   },
   {
@@ -3761,6 +3845,28 @@ export const shapes: Shape[] = [
       "main.js":
         `function* all() {\n  return [${upTo(size, index => `yield ${index}`).join(", ")}];\n}\n` +
         `let count = 0;\nconst steps = all();\nlet step;\nwhile (!(step = steps.next({ count })).done) count++;\nconsole.log(count, step.value.length);\n`,
+    }),
+  },
+  // Every place where a generator is entered again has a stack check, and the last return sites of the unit each searched the list of all those checks.
+  {
+    name: "yields in a row in one generator",
+    counted: "yields",
+    size: 8000,
+    entry: "main.js",
+    write: size => ({
+      "main.js":
+        `function* run() {\n${lines(size, index => `  yield ${index};`)}}\n` +
+        `let sum = 0;\nlet count = 0;\nfor (const value of run()) {\n  sum += value;\n  count++;\n}\nconsole.log(count, sum);\n`,
+    }),
+  },
+  // Each stretch between two suspensions looked for its first suspension from the start of the block.
+  {
+    name: "awaits in a row of one parameter",
+    counted: "awaits",
+    size: 4000,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `async function run(p) {\n  let t = 0;\n${lines(size, () => "  t += await p;")}  return t;\n}\nrun(1).then(t => console.log(t));\n`,
     }),
   },
   {
@@ -7241,6 +7347,30 @@ export {};
         `  return q.z + q.a;\n}\nconsole.log("SAID", run());\n`,
     }),
   },
+  // A helper lays getters off a table, as bundlers write it. What is expected at the reads is found from each target's own readers: once a target, however often it is filled.
+  ...(
+    [
+      ["calls of the helper on one target, a name each", (size: number) => `const ns = {};\n` + lines(size, index => `lay(ns, { a${index}: () => f${index} });`), (index: number) => `ns.a${index}()`],
+      ["targets that the helper fills with a name each", (size: number) => lines(size, index => `const ns${index} = {}; lay(ns${index}, { a${index}: () => f${index} });`), (index: number) => `ns${index}.a${index}()`],
+      ["names of one table that the helper lays on one target", (size: number) => `const ns = {};\nlay(ns, { ${upTo(size, index => `a${index}: () => f${index}`).join(", ")} });\n`, (index: number) => `ns.a${index}()`],
+    ] as const
+  ).map(
+    ([counted, fill, call]): Shape => ({
+      name: `getters that a helper lays off a table, each called in one loop: ${counted}`,
+      counted,
+      size: 1000,
+      entry: "main.js",
+      write: size => ({
+        "main.js":
+          `function lay(target, all) { for (var name in all) Object.defineProperty(target, name, { get: all[name], enumerable: true }); }\n` +
+          lines(size, index => `function f${index}() { return ${index}; }`) +
+          fill(size) +
+          `let sum = 0;\nfor (let turn = 0; turn < 3; turn++) {\n` +
+          lines(size, index => `  sum += ${call(index)};`) +
+          `}\nconsole.log("SAID", sum);\n`,
+      }),
+    }),
+  ),
   // K functions `{ ...state, fK: v }` over one record of K fields: every reducer, only larger. The text is K lines; each copy means K fields. What is asked of the record's layout is to be asked once, and
   // a place to add what it writes itself. The type checker builds the type of each literal property by property, twice: that is what is left in instructions.
   ...(

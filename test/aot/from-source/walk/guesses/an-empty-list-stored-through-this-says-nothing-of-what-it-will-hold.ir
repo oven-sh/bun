@@ -4,7 +4,7 @@
 # -- source: an-empty-list-stored-through-this-says-nothing-of-what-it-will-hold.cjs
 # class Bag { constructor() { this.items = []; } add(item) { this.items.push(item); return this; } longest(count) { const items = this.items; let most = 0; for (let i = 0; i < count; i++) if (items[i].length > most) most = items[i].length; return most; } }
 # const box = {};
-# box['k' + [].length] = [new Bag().add('a').add('bcd').add('ef')];
+# box[String(['k0'])] = [new Bag().add('a').add('bcd').add('ef')];
 # print(box.k0[0].longest(box.k0.length + 2));
 # -- end of source
 # RUN: walk f3 mechanisms=all

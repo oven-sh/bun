@@ -1,0 +1,20 @@
+import { test, vi } from "bun:test";
+const jobs = async n => { for (let job = 0; job < n; job++) await 0; };
+test("t", async () => {
+  const called = Promise.withResolvers(), gate = Promise.withResolvers();
+  let failing;
+  vi.doMock("./x.mjs", () => { called.resolve(); return failing = gate.promise.then(() => { throw new Error("late"); }); });
+  const first = import("./x.mjs").then(it => it.member(), error => error.message);
+  await called.promise;
+  vi.doUnmock("./x.mjs");
+  const second = await import("./x.mjs").then(it => it.member(), error => error.message);
+  gate.resolve();
+  await failing.catch(() => {});
+  const firstWord = await first;
+  await jobs(10);
+  
+  console.log("SAID", firstWord, second, "and now the call that nobody awaits");
+  import("./x.mjs");
+  await new Promise(done => setTimeout(done, 20));
+  console.log("SAID the test went on");
+});

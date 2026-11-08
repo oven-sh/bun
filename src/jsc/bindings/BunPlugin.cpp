@@ -883,6 +883,10 @@ static JSC::JSPromise* importModuleFrom(Zig::GlobalObject* globalObject, const S
     JSC::JSPromise* promise = Bun::testFileModuleLoader(globalObject)->requestImportModule(globalObject, JSC::Identifier::fromString(vm, specifier), JSC::Identifier::fromString(vm, Bun::referrerOfImportCallInCodeThatIsNotCompiled(from)), nullptr, nullptr);
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+#if ENABLE(AOT)
+    if (auto imported = vm.hasCompiledCode() && Bun::isBunTest ? Bun::compiledModuleForPath(specifier) : std::nullopt)
+        JSC::AOT::didCallImportOfHost(globalObject, *imported, promise);
+#endif
     return promise;
 }
 
@@ -4918,9 +4922,18 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             formsWait = true;
             // Under `bun test` an entry registered under several import types is stale (findLoadedESModule()), and the eviction that takes it out takes every failed module out too.
             // What require() alone has loaded is not registered with the loader.
-            if (std::ranges::count_if(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::hasBegunToLoad(globalObject, form) && (JSC::AOT::isHeldForImport(globalObject, form) || JSC::AOT::wasLoadedByImport(globalObject, form)); }) > 1) {
+            // So does the eviction of what an earlier test file or a preload has loaded: see wasLoadedByEarlierTestFile below.
+            bool wasSomeFormLoadedAheadOfThisTestFile = !mock->isFromPreload && (!previous || previous->isFromPreload) && globalObject->onLoadPlugins.testFile > 1
+                && std::ranges::any_of(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::hasBegunToLoad(globalObject, form) && JSC::AOT::wasLoadedAheadOfThisTestFile(globalObject, form); });
+            bool hasStaleEntry = std::ranges::count_if(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::hasBegunToLoad(globalObject, form) && (JSC::AOT::isHeldForImport(globalObject, form) || JSC::AOT::wasLoadedByImport(globalObject, form)); }) > 1;
+            if (wasSomeFormLoadedAheadOfThisTestFile || hasStaleEntry) {
                 forgetFailuresKeptByCompiledProgram(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
+                // That eviction takes the key out unless the mock patches what lies under it: whoever loads a form from here on is this test file.
+                if ((leavesLoadedModuleAlone && (isDoMock || staysTheOriginal)) || hasStaleEntry) {
+                    for (JSC::AOT::ModuleID form : forms)
+                        JSC::AOT::didLeaveLoaderInThisTestFile(globalObject, form);
+                }
             }
         }
     }
@@ -5124,9 +5137,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             forgetFailuresKeptByCompiledProgram(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             // The loader holds no compiled file, but it may hold what it made of the text of a file that imports one: code from disk, or a compiled file that was loaded a second time.
-            if (!previous) {
+            // The pass also takes out whatever failed, so it is made only where `bun test` makes its own, above: an earlier test file loaded the module.
+            if (!previous && plugins.testFile > 1) {
                 ModulesToEvict evict;
                 evict.keepsFailuresOfCompiledProgram = true;
+                evict.onlyImportersFromEarlierTestFiles = true;
                 evict.modules.append(specifier);
                 evictModulesAndTheirImporters(globalObject, WTF::move(evict));
                 RETURN_IF_EXCEPTION(scope, {});
@@ -5358,6 +5373,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
             RELEASE_AND_RETURN(scope, JSValue::encode(importModuleFrom(globalObject, callerPath(vm, callframe), copy)));
         }
     }
+#endif
+#if ENABLE(AOT)
+    std::optional<SetForScope<JSC::CallFrame*>> callAsksLoaderForImport;
+    if (vm.hasCompiledCode() && factoriesInAsyncContext(globalObject).isEmpty())
+        callAsksLoaderForImport.emplace(vm.aotState().frameOfImportThatAsksLoader, vm.topCallFrame);
 #endif
     RELEASE_AND_RETURN(scope, JSValue::encode(importModuleFrom(globalObject, callerPath(vm, callframe), specifier.key)));
 }

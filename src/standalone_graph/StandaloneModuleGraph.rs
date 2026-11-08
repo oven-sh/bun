@@ -238,12 +238,15 @@ impl StandaloneModuleGraph {
 
     pub fn stat(&self, name: &[u8]) -> Option<Stat> {
         if let Some(file) = self.find_ref(name) {
-            return Some(file.stat());
+            let mut stat = file.stat();
+            self.fill_stat_for_file_system_alone(file.name, &mut stat);
+            return Some(stat);
         }
-        if self.find_dir(name) {
-            return Some(dir_stat());
-        }
-        None
+        let mut buffer = bun_paths::path_buffer_pool::get();
+        let key = self.directory_key(name, &mut buffer)?;
+        let mut stat = dir_stat();
+        self.fill_stat_for_file_system_alone(key, &mut stat);
+        Some(stat)
     }
 
     pub(crate) fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {

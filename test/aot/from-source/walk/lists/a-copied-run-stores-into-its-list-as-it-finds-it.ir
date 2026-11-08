@@ -24,14 +24,14 @@
 # PROVEN: = NewArrayLike {{*}}arrayStorage=Double
 # PROVEN-NOT: remembersStorageAtSite
 # PROVEN: = HasArrayStorage {{*}}[isWritable]
-# PROVEN: PutContiguousIndex {{*}}[goesByKindOfStorage]
+# PROVEN: PutContiguousIndex {{*}}[goesByKindOfStorage, isInBounds]
 # RUN(GUESSED): walk f2 mechanisms=all
 # GUESSED-LABEL: code f2:Body
 # GUESSED: = NewArrayLike {{*}}arrayStorage=Double [remembersStorageAtSite]
 # GUESSED-NOT: = TryPutIndex
 # GUESSED: = TryPutByValDirect
 # GUESSED: = HasArrayStorage {{*}}[isWritable]
-# GUESSED: PutContiguousIndex {{*}}[goesByKindOfStorage]
+# GUESSED: PutContiguousIndex {{*}}[goesByKindOfStorage, isInBounds]
 # RUN(UNKNOWN): walk f3 mechanisms=all
 # UNKNOWN-LABEL: code f3:Body
 # UNKNOWN: = NewArrayLike {{*}}remembersStorageAtSite{{*}}takesAnyValueAtFirst

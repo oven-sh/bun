@@ -654,6 +654,16 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionCompiledSourceAfterFailedFactory, (JSC::JSGlo
     return {};
 }
 
+static std::optional<AOT::ModuleID> moduleThatRanBehindKeyOfOriginal(Zig::GlobalObject* globalObject, const String& key)
+{
+    if (!isBunTest || !key.endsWith("?actual"_s))
+        return std::nullopt;
+    auto module = moduleThatAnswersToPath(key.left(key.length() - "?actual"_s.length()));
+    if (!module || !AOT::isESModule(*module) || !AOT::liesUnderKeyOfOriginal(globalObject, *module) || AOT::isEvictedFile(globalObject, *module) || AOT::errorThrownByBodyOfMockedModule(globalObject, *module))
+        return std::nullopt;
+    return module;
+}
+
 JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes)
 {
     auto& vm = getVM(globalObject);
@@ -663,6 +673,14 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
         promise->markAsHandled();
         return promise->rejectWithCaughtException(vm, scope);
     };
+    if (auto itself = attributes ? std::nullopt : moduleThatRanBehindKeyOfOriginal(globalObject, key)) {
+        AbstractModuleRecord* record = AOT::recordOfModuleItself(globalObject, *itself);
+        if (scope.exception()) [[unlikely]]
+            return rejected();
+        JSPromise* source = JSPromise::create(vm, globalObject->promiseStructure());
+        source->fulfill(vm, record);
+        return source;
+    }
     auto module = attributes ? findFormOfModule(globalObject, key, *attributes, FormWithoutAttributes::IsAnotherModule) : compiledModuleForRequest(globalObject, key, false, AOT::LoadByName::Import);
     if (scope.exception()) [[unlikely]]
         return rejected();
@@ -1856,6 +1874,11 @@ static bool givesOriginalBesideMock(JSGlobalObject* globalObject, const String& 
     return keyOfImportByPackage(defaultGlobalObject(globalObject), path, importer, isImport) != path;
 }
 
+static bool isLeftToItselfByMock(JSGlobalObject* globalObject, const String& path, const String& requirer)
+{
+    return keyOfImportByPackage(defaultGlobalObject(globalObject), path, requirer, false) != path;
+}
+
 static std::optional<bool> isInPreload(JSGlobalObject* globalObject)
 {
     if (!isBunTest)
@@ -1997,6 +2020,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &stampOfFile,
     &givesOriginalBesideMock,
     &staysLinkedToFileAheadOfMock,
+    &isLeftToItselfByMock,
     &factoryThatWaits,
     &isInPreload,
     &layMocksAgain,
@@ -2016,7 +2040,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &isPatchedOnceFactorySettles,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 48 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 49 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

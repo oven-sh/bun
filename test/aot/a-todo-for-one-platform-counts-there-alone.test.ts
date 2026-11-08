@@ -54,7 +54,7 @@ test("a todo for one platform counts there alone", async () => {
     "the-line-for-here-goes-first.js": `// Todo: ${oneForTheOther}: some day\n// Todo on ${here}: ${oneForTheOther}: another day\n${wrong}`,
     "skipped-here-and-right.js": `// Skip on ${here}: now one way, now the other\n${right}`,
     "skipped-here-and-wrong.js": `// Skip on ${here}: now one way, now the other\n${wrong}`,
-    "skipped-elsewhere-and-wrong.js": `// Skip on plan9 mips: now one way, now the other\n${wrong}`,
+    "skipped-elsewhere-and-wrong.js": `// Skip on ${process.platform === "win32" ? "linux" : "win32"} x64: now one way, now the other\n${wrong}`,
     "wrong-under-asan.js": `// Todo under ASAN: ${oneForTheOther}: some day\n${wrong}`,
     "right-under-asan.js": `// Todo under ASAN: ${oneForTheOther}: some day\n${right}`,
     "wrong-in-another-line-too.js": `// Todo: ${oneForTheOther}: some day\nconsole.log(true);\nconsole.log(1);\n/* Output:\nfalse\n2\n*/\n`,

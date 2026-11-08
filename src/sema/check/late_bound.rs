@@ -4,6 +4,7 @@
 use super::*;
 use crate::bind::{Decl, SymbolId, flags_of_member, flags_of_property, replaces_value_declaration};
 use crate::program::get_excluded_symbol_flags;
+use std::sync::Arc;
 
 /// An error that `lateBindMember` or `combineSymbolTables` reports.
 #[derive(Clone)]
@@ -25,7 +26,7 @@ struct LateBoundSymbol {
     /// `symbol.Flags`
     flags: SymFlags,
     /// `symbol.Declarations`, the early-bound symbol's first. Skips the declarations of an early-bound alias's target.
-    declarations: Vec<(FileId, Decl)>,
+    declarations: Arc<Vec<(FileId, Decl)>>,
     /// `symbol.ValueDeclaration`
     value_declaration: Option<(FileId, Decl)>,
     /// `getMergedSymbol(symbol).CheckFlags&CheckFlagsLate != 0`. `cloneSymbol` doesn't copy the flag.
@@ -46,6 +47,13 @@ pub(super) struct LateBoundSymbols {
     /// set. Their symbols are in that call's table.
     bound_by_another_call: Vec<(FileId, Decl)>,
     pub(super) conflicts: Vec<LateBoundConflict>,
+}
+
+fn list_of_declarations<'p>(declarations: &Arc<Vec<(FileId, Decl)>>) -> List<'p, (FileId, Decl)> {
+    match declarations[..] {
+        [only] => List::One(only),
+        _ => List::Shared(Arc::clone(declarations)),
+    }
 }
 
 /// `None` if the container has no late-bound members on that side.
@@ -221,12 +229,23 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         file: FileId,
         declaration: Decl,
-        flags_of: impl Fn(Decl) -> SymFlags,
     ) -> SymFlags {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let flags_of = |declaration: Decl| {
+            let symbol = bound.symbol_of_declaration(declaration);
+            if symbol.is_some() {
+                bound.symbol(symbol).flags
+            } else if let Decl::Property(property) = declaration
+                && let Some((includes, _)) = crate::bind::flags_of_property(hir[property].kind)
+            {
+                includes
+            } else {
+                SymFlags::empty()
+            }
+        };
         let unite = |declarations: &mut dyn Iterator<Item = &(FileId, Decl)>| {
             declarations.fold(SymFlags::empty(), |flags, it| flags | flags_of(it.1))
         };
-        let bound = self.bound(file);
         let early = bound.symbol_of_declaration(declaration);
         match self.late_bound_symbol_among(file, declaration, bound, early) {
             Some((late, symbol)) => {
@@ -265,6 +284,19 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub(super) fn first_late_bound_declaration_that(
+        &mut self,
+        file: FileId,
+        declaration: Decl,
+        is_wanted: impl Fn(&Self, (FileId, Decl)) -> bool,
+    ) -> Option<(FileId, Decl)> {
+        let bound = self.bound(file);
+        let early = bound.symbol_of_declaration(declaration);
+        let (late, symbol) = self.late_bound_symbol_among(file, declaration, bound, early)?;
+        let mut declarations = late.symbols[symbol].declarations.iter().copied();
+        declarations.find(|&it| is_wanted(self, it))
+    }
+
     /// `getSymbolOfDeclaration(declaration).Declarations` after resolving its parent's members.
     pub(super) fn declarations_of_member(
         &mut self,
@@ -274,7 +306,7 @@ impl<'p, 's> Checker<'p, 's> {
         let bound = self.bound(file);
         let early = bound.symbol_of_declaration(declaration);
         match self.late_bound_symbol_among(file, declaration, bound, early) {
-            Some((late, symbol)) => List::Own(late.symbols[symbol].declarations.clone()),
+            Some((late, symbol)) => list_of_declarations(&late.symbols[symbol].declarations),
             None => self.declarations_of_early_bound_symbol(file, declaration, early),
         }
     }
@@ -311,7 +343,7 @@ impl<'p, 's> Checker<'p, 's> {
         match self.late_bound_symbol_among(file, first, bound, early) {
             Some((late, symbol)) => {
                 let symbol = &late.symbols[symbol];
-                let declarations = List::Own(symbol.declarations.clone());
+                let declarations = list_of_declarations(&symbol.declarations);
                 (symbol.flags, symbol.value_declaration, declarations)
             }
             None => (
@@ -541,7 +573,7 @@ impl<'p, 's> Checker<'p, 's> {
             if index == late.len() {
                 late.push(LateBoundSymbol {
                     flags: SymFlags::empty(),
-                    declarations: Vec::new(),
+                    declarations: Arc::default(),
                     value_declaration: None,
                     is_late: true,
                     flags_of_declarations: Default::default(),
@@ -551,7 +583,7 @@ impl<'p, 's> Checker<'p, 's> {
             let symbol = &mut late[index];
             if symbol.declarations.is_empty() || !flags.contains(SymFlags::REPLACEABLE_BY_METHOD) {
                 symbol.flags |= flags;
-                symbol.declarations.push((file, declaration));
+                Arc::make_mut(&mut symbol.declarations).push((file, declaration));
             } else {
                 unlisted.push(((file, declaration), index as u32));
             }
@@ -580,7 +612,7 @@ impl<'p, 's> Checker<'p, 's> {
             let not_merged = || {
                 let (early, late) = (
                     files.decls_of(target).into_vec(),
-                    source.declarations.clone(),
+                    source.declarations.to_vec(),
                 );
                 LateBoundConflict::NotMerged(early, late, target_flags | source_flags)
             };
@@ -600,7 +632,7 @@ impl<'p, 's> Checker<'p, 's> {
                     let merged = &mut late[index];
                     merged.is_late = false;
                     merged.flags |= target_flags;
-                    merged.declarations.splice(0..0, files.decls_of(target));
+                    Arc::make_mut(&mut merged.declarations).splice(0..0, files.decls_of(target));
                     let target_value_declaration = files.value_declaration(target);
                     let source_value_declaration =
                         std::mem::replace(&mut merged.value_declaration, target_value_declaration);

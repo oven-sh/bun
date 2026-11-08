@@ -5,7 +5,7 @@
 # -- source: the-default-of-a-store-speaks-for-the-field-where-the-checker-says-nothing.cjs
 # class Bag { constructor(items, marks) { this.items = items || []; this.marks = marks ?? new Map(); this.name = items && 'bag'; } longest(count) { const items = this.items; let most = 0; for (let i = 0; i < count; i++) if (items[i].length > most) most = items[i].length; return most; } seen(count) { const marks = this.marks; let sum = 0; for (let i = 0; i < count; i++) if (marks.has(i)) sum += i; return sum; } }
 # const box = {};
-# box['k' + [].length] = [new Bag(['a', 'bcd', 'ef'], new Map([[1, 1], [2, 2]])), new Bag({ 0: 'ghij', 1: '', 2: 'k' }, new Set([2])), new Bag(['', '', ''])];
+# box[String(['k0'])] = [new Bag(['a', 'bcd', 'ef'], new Map([[1, 1], [2, 2]])), new Bag({ 0: 'ghij', 1: '', 2: 'k' }, new Set([2])), new Bag(['', '', ''])];
 # function turn(at) { const bag = box.k0[at]; return bag.longest(box.k0.length) + ':' + bag.seen(box.k0.length); }
 # print(turn(0), turn(1), turn(2));
 # -- end of source

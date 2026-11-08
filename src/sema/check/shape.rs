@@ -5627,14 +5627,25 @@ impl<'p, 's> Checker<'p, 's> {
             && *rank == 0
             && symbol.is_none()
             && self.can_keep_copies_of_types_by_spread();
-        if copies_right_alone
-            && let Some(&kept) = self.copies_of_types_by_spread.get(&(right, readonly))
+        let kept = match copies_right_alone {
+            true => self
+                .copies_of_types_by_spread
+                .get(&(right, readonly))
+                .copied(),
+            false => None,
+        };
+        if let Some(kept) = kept
+            && !cfg!(debug_assertions)
         {
             *rank += 1;
             return kept;
         }
         let mark = self.mark_of_what_a_copy_by_spread_read();
         let (Some(l), Some(r)) = (members_of(self, left), members_of(self, right)) else {
+            debug_assert!(
+                kept.is_none() || mark != self.mark_of_what_a_copy_by_spread_read(),
+                "the copy of a type by spread was kept, and the members it was made of are not to be had"
+            );
             return TypeId::UNRESOLVED;
         };
         let mut b = Builder::new_in(self.arena);
@@ -5806,6 +5817,11 @@ impl<'p, 's> Checker<'p, 's> {
             symbol.put_on(&mut b.shape);
         }
         let made = self.synth(b.shape);
+        debug_assert!(
+            kept.is_none_or(|kept| kept == made)
+                || mark != self.mark_of_what_a_copy_by_spread_read(),
+            "the copy of a type by spread that was kept is not the one that is made"
+        );
         if copies_right_alone
             && mark == self.mark_of_what_a_copy_by_spread_read()
             && self.can_keep_copies_of_types_by_spread()
@@ -5831,16 +5847,21 @@ impl<'p, 's> Checker<'p, 's> {
             && self.inheriting.is_empty()
             && self.late_binding.is_empty()
             && self.provisional.is_empty()
+            && self.instantiated_symbol_links.is_empty()
+            && self.never_in_progress.is_empty()
             && !self.stack.iter().any(|q| matches!(q, Query::Shape(_)))
     }
 
     /// Unchanged over a computation that made no query and read nothing provisional: members of a type in progress
-    /// are handed out in front of any query, and raise `cycles` and `members_in_place_hits`, not `work`.
-    fn mark_of_what_a_copy_by_spread_read(&self) -> (u64, (u64, u64), u64) {
+    /// are handed out in front of any query, and raise `cycles` and `members_in_place_hits`, not `work`. What is
+    /// answered for the time being without any of the three (the limit of instantiation in its reporting arm among
+    /// them) holds its result back in the task.
+    fn mark_of_what_a_copy_by_spread_read(&self) -> (u64, (u64, u64), u64, u64) {
         (
             self.work,
             self.non_cacheable_mark(),
             self.members_in_place_hits,
+            self.task.held_back(),
         )
     }
 

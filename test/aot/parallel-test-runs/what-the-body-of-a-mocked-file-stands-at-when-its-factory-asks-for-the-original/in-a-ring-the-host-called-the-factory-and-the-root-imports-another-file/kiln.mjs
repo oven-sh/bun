@@ -1,0 +1,12 @@
+import { fetchIt } from "./rack.mjs";
+globalThis.firings = (globalThis.firings || 0) + 1;
+export let glaze = "wet";
+export const look = () => "kiln " + glaze;
+globalThis.lit();
+await globalThis.door;
+const mine = globalThis.shelf;
+fetchIt();
+globalThis.shelf = mine;
+await mine;
+await new Promise(done => setTimeout(done, 20));
+glaze = "dry";

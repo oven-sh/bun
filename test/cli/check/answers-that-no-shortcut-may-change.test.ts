@@ -131,3 +131,15 @@ test.each<[string, (count: number) => string, string[]]>([
     });
   },
 );
+
+test.each([
+  ["a written name stands in front of a constant key", "class C { a() {} [K]() {} }", 2],
+  ["a constant key stands in front of a written name", "class C { [K]() {} a() {} }", 2],
+  ["a written name stands between two constant keys", "class C { [K]() {} a() {} [K]() {} }", 3],
+  ["all three stand under one constant key", "class C { [K]() {} [K]() {} [K]() {} }", 3],
+  ["two are static and two are not", "class C { static [K]() {} [K]() {} static [K]() {} [K]() {} }", 4],
+  ["another key stands between them", "class C { [K]() {} [L]() {} [K]() {} [L]() {} }", 4],
+])("every function with a body under one name is called a duplicate, where %s", async (_, source, count) => {
+  const printed = await check(`export {};\nconst K = "a";\nconst L = "b";\n${source}\n`);
+  expect(printed.match(/error TS2393/g)?.length).toBe(count);
+});

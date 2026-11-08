@@ -182,6 +182,10 @@ pub trait SourceProvider: Sync {
 
     fn keep_where_text_is_refused(&self, _refused: &RefusedText<'_>) {}
 
+    fn keep_bytes_of_data_file(&self, _source_path: &[u8]) {}
+
+    fn keep_path_of_code_that_file_system_sees(&self, _source_path: &[u8]) {}
+
     fn parse_data<'s>(
         &self,
         file: &SourceFile<'_>,

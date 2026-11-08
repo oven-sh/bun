@@ -4,6 +4,7 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
+import { lineThatLeavesOut } from "./harness/lines-that-leave-out";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -121,7 +122,8 @@ test("a line leaves one way uncompared on one platform, and another leaves its b
     ),
     exitCode: 0,
   });
-  expect(await waysUnder("// Skip on plan9 mips under --aot-harden=proof-checks: for the test\n")).toEqual({
+  const elsewhere = process.platform === "win32" ? "linux" : "win32";
+  expect(await waysUnder(`// Skip on ${elsewhere} x64 under --aot-harden=proof-checks: for the test\n`)).toEqual({
     ...inFourWays("3"),
     stderr: expect.stringContaining("left out by a line: 0 not compared | 0 not built\n"),
   });
@@ -135,6 +137,17 @@ test.each([
     "// No build under --aot-testing=FailGuesses:3: for the test\n",
   ],
   ["says no reason", `${skipHere}:\n`],
+  ["says blanks for a reason", `${skipHere}:   \n`],
+  ["names a platform that there is not", "// Skip on plan9 mips under --aot-harden=proof-checks: for the test\n"],
+  [
+    "names the processor by another name",
+    `// Skip on ${process.platform} aarch64 under --aot-harden=proof-checks: for the test\n`,
+  ],
+  [
+    "names the way that goes by the number of CI's build though the program asks for it itself",
+    "// Under: --aot-testing=FailGuesses:3: for the test\n// No build under --aot-testing=FailGuesses:3: for the test\n",
+  ],
+  ["leaves every build behind the first uncompared and says no reason", "// Prints what goes by the copy that runs:\n"],
   ["stands below the head", `\n${skipHere}: for the test\n`],
 ])(
   "a line that %s fails the program",
@@ -147,6 +160,14 @@ test.each([
   },
   120_000,
 );
+
+test("another exit code in a way that is not compared fails it all the same", async () => {
+  const { ways, exitCode } = await waysUnder(
+    "// Prints what goes by the copy that runs: nothing, for the test\n",
+    "process.exit(3);\n",
+  );
+  expect({ way: ways?.["under --aot-erase-types"], exitCode }).toEqual({ way: "fail", exitCode: 1 });
+}, 120_000);
 
 test("a stop in a way that is not compared fails it all the same", async () => {
   const { ways, exitCode } = await waysUnder(
@@ -169,18 +190,38 @@ console.log(tally(given[0]!, given[1]!, given[2]!, given[3]!, given[4]!).join(" 
   expect({ way: ways?.["under --aot-harden=proof-checks"], exitCode }).toEqual({ way: "fail", exitCode: 1 });
 }, 120_000);
 
-test("the lines that leave a way of a stored program out are these, and a new one is written here too", async () => {
+test("the lines by which something of a stored program is not compared or not built are these, and a new one is written here too", async () => {
   const stored = join(import.meta.dir, "parallel");
   const found: string[] = [];
   for await (const file of new Bun.Glob("**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}").scan(stored))
-    for (const [, line] of (await Bun.file(join(stored, file)).text()).matchAll(
-      /^\/\/ ((?:Skip(?: on \w+ \w+)? under(?! ASAN:)|No build under) .*?):/gm,
-    ))
-      found.push(`${file.replaceAll("\\", "/")}: ${line}`);
+    for (const [, what] of (await Bun.file(join(stored, file)).text()).matchAll(lineThatLeavesOut))
+      found.push(`${file.replaceAll("\\", "/")}: ${what}`);
   expect(found.sort()).toEqual([
+    "async/await-direct-call-function-tests-args.ts: Prints what the compiler saves",
+    "async/await-direct-call-untyped-version/main.ts: Prints what the compiler saves",
+    "calls-fast-paths/class-as-value/main.ts: Prints what the compiler saves",
     "cells-lent-to-callees/what-was-lent-is-let-go-on-every-way-into-a-handler.ts: Skip on linux arm64 under --aot-harden=proof-checks",
+    "cells-lent-to-callees/what-was-lent-is-let-go-on-every-way-into-a-handler.ts: Skip under ASAN",
     "cells-lent-to-callees/what-was-lent-is-let-go-where-another-argument-throws.ts: Skip on linux arm64 under --aot-harden=proof-checks",
+    "classes-left-to-their-records/structures-and-prototype-objects-wait-for-the-first-touch.ts: Prints what the compiler saves",
+    "external-data/bun-file-json-parsed-by-type.ts: Prints what the compiler saves",
+    "gc/a-generator-lets-go-of-the-old-value-of-a-variable-assigned-again.mjs: Prints what the compiler saves",
+    "gc/a-generator-lets-go-of-what-lives-only-across-a-yield-on-a-way-not-taken.mjs: Prints what the compiler saves",
+    "gc/a-generator-that-has-ended-lets-go-of-what-it-stored.mjs: Prints what the compiler saves",
+    "gc/argument-that-waited-in-the-caller-is-let-go-by-a-callee-out-of-a-list.ts: Prints what the compiler saves",
+    "gc/argument-that-waited-in-the-caller-is-let-go-by-a-callee-out-of-a-list.ts: Skip on win32 x64",
+    "gc/argument-that-waited-in-the-caller-is-let-go-by-the-callee.ts: Prints what the compiler saves",
+    "gc/argument-that-waited-in-the-caller-is-let-go-by-the-callee.ts: Skip on win32 x64",
+    "gc/generators-stepped-by-a-loop-let-go-beside-another-program/main.ts: Prints what the compiler saves",
+    "gc/object-made-by-a-copied-callee-is-let-go-by-the-callee.ts: Prints what the compiler saves",
+    "gc/object-made-by-a-copied-callee-is-let-go-by-the-callee.ts: Skip on win32 x64",
+    "gc/parameter-kept-in-a-register-across-calls-set-to-null-lets-go.ts: Prints what the compiler saves",
+    "gc/parameter-kept-in-a-register-across-calls-set-to-null-lets-go.ts: Skip on win32 x64",
+    "gc/parameter-set-to-null-lets-go.ts: Prints what the compiler saves",
+    "gc/parameter-that-came-on-the-stack-set-to-null-lets-go.ts: Prints what the compiler saves",
+    "gc/parameter-that-came-on-the-stack-set-to-null-lets-go.ts: Skip on win32 x64",
     "lists-handed-to-apply/a-written-list-of-66000-elements-handed-to-a-function-in-sight.cjs: No build under --aot-harden=proof-checks",
+    "the-frame-does-not-grow-with-the-width-of-a-literal/the-recursion-goes-through-a-getter.ts: Skip under ASAN",
   ]);
 }, 120_000);
 

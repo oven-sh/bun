@@ -9,7 +9,7 @@
 # function Cursor(bytes) { this.bytes = bytes; this.at = 1; this.mark = 0; }
 # Cursor.prototype = { constructor: Cursor, peek() { return this.bytes[this.at]; }, skip: function (by) { this.at += by; return this; } };
 # const box = {};
-# box['k' + [].length] = [new Reader([5, 6, 7]), new Cursor([8, 9, 10]), { bytes: 'xyz', at: 2, next: Reader.prototype.next, peek: Cursor.prototype.peek }];
+# box[String(['k0'])] = [new Reader([5, 6, 7]), new Cursor([8, 9, 10]), { bytes: 'xyz', at: 2, next: Reader.prototype.next, peek: Cursor.prototype.peek }];
 # function turn() { const [reader, cursor, other] = box.k0; return [reader.next(), reader.next(), cursor.skip(1).peek(), other.next(), other.at, other.peek()].join(); }
 # print(turn());
 # -- end of source

@@ -133,11 +133,11 @@ const places: [string, string][] = [
   ["a-constant-of-a-turn", "for (let turn = 0; turn < 2; turn++) {\n  BODY\n}"],
   [
     "a-constant-of-a-turn-of-a-loop-whose-bound-the-run-gives",
-    "const bound = (valueANY)RET => Number(process.argv[9] ?? value);\nfor (let turn = 0; turn < bound(2); turn++) {\n  BODY\n}",
+    "const turns = (valueANY)RET => Number(process.argv[9] ?? value);\nfor (let turn = 0; turn < turns(2); turn++) {\n  BODY\n}",
   ],
   [
     "a-constant-of-a-function-that-such-a-loop-calls",
-    "const bound = (valueANY)RET => Number(process.argv[9] ?? value);\nfunction asks() {\n  BODY\n}\nfor (let turn = 0; turn < bound(3); turn++) asks();",
+    "const turns = (valueANY)RET => Number(process.argv[9] ?? value);\nfunction asks() {\n  BODY\n}\nfor (let turn = 0; turn < turns(3); turn++) asks();",
   ],
 ];
 

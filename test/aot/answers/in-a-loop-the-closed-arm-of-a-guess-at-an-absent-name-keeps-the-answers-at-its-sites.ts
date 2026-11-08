@@ -23,6 +23,6 @@ for (var t = 0; t < 50; t++) sum = (sum + turn(t)) % 1000003;
 report(sum);
 rate = 7;
 report(turn(1));
-fill(shelf, { step: () => rate * 2 });
+fill(shelf, { rate: () => step, step: () => rate * 2 });
 report(turn(2));
 report("end");

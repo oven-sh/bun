@@ -34,6 +34,7 @@ pub use metafile::{MetafileFiles, MetafileOutput, write_metafile, write_metafile
 pub use options::expand_entry_points;
 use options::{OptionsInput, options_from_bundler};
 pub use services::FileFinder;
+pub use services::FilesForFileSystem;
 use services::{BundlerServices, NamesWanted};
 
 pub struct PluginSetup {
@@ -82,6 +83,7 @@ pub struct AotBuild {
     pub further_package_names: Vec<FurtherPackageName>,
     /// `CompiledProgram::refused_data`
     pub refused_data: Vec<u8>,
+    pub files_for_file_system: FilesForFileSystem,
     /// `CompiledProgram::loaders_given_to_build`
     pub loaders_given_to_build: Vec<u8>,
     pub output_files: Vec<OutputFile>,
@@ -201,6 +203,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     };
     let refused_names = services.take_refused_names();
     let refused_data = services.take_refused_data();
+    let files_for_file_system = services.take_files_for_file_system();
     let found_beside_engine = services.take_names_of_packages();
     let embedded = services.shut_down();
     let (package_names, path_aliases) = match &result {
@@ -278,6 +281,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             build.package_names = package_names;
             build.further_package_names = further_package_names;
             build.refused_data = refused_data;
+            build.files_for_file_system = files_for_file_system;
             build.loaders_given_to_build =
                 bun_aot::module_keys::encode_loaders_given_to_build(&options.load.loaders);
             build.path_aliases = path_aliases;

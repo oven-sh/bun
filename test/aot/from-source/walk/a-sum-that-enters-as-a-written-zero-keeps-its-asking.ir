@@ -8,7 +8,7 @@
 # publish(total);
 # -- end of source
 # RUN: compile SumsAskedForNumbersInFrontOfLoops LoopsWalkedAgainWithoutAskingSums mechanisms=all
-# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 2
+# CHECK: statistic SumsAskedForNumbersInFrontOfLoops 3
 # CHECK: statistic LoopsWalkedAgainWithoutAskingSums 0
 # RUN(SHELL): run-in-shell globalThis.publish = (total) => { let asked = 0; const weighs = { valueOf() { asked++; return 5; } }; const holes = [1.5, 2.5, 3.5]; delete holes[1]; const lists = () => [[1.5, 2.5, 3.5], [1, 2, 3], ["a", 2, 3], [1, "b", 3], [1, 2, "c"], [1, weighs, 3], [1, null, 3], [1, undefined, 3], holes, [], [1, 2n, 3], new Float64Array([1.5, 2.5]), "xy"]; let told = ""; for (let turn = 0; turn < 2; turn++) for (const list of lists()) { try { const got = total(list); told += " " + typeof got + ":" + String(got); } catch (e) { told += " " + e.constructor.name; } } print(told + " | " + asked); };
 # SHELL: number:7.5 number:6 string:0a23 string:1b3 string:3c number:9 number:4 number:NaN number:NaN number:0 TypeError number:4 string:0xy number:7.5 number:6 string:0a23 string:1b3 string:3c number:9 number:4 number:NaN number:NaN number:0 TypeError number:4 string:0xy | 2

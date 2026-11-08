@@ -232,6 +232,7 @@ pub(crate) struct BundlerServices {
     refused_names: Guarded<Vec<RefusedName>>,
     /// `CompiledProgram::refused_data`
     refused_data: Guarded<Vec<u8>>,
+    files_for_file_system: Guarded<FilesForFileSystem>,
     names_wanted: NamesWanted,
     names_of_packages: Guarded<NamesOfPackages>,
 }
@@ -275,6 +276,7 @@ impl BundlerServices {
             file_finders: Guarded::new(Vec::new()),
             refused_names: Guarded::new(Vec::new()),
             refused_data: Guarded::new(Vec::new()),
+            files_for_file_system: Guarded::new(FilesForFileSystem::default()),
             names_wanted,
             names_of_packages: Guarded::new(NamesOfPackages::default()),
         }
@@ -292,12 +294,30 @@ impl BundlerServices {
         core::mem::take(&mut *self.refused_data.lock())
     }
 
+    pub(crate) fn take_files_for_file_system(&self) -> FilesForFileSystem {
+        let mut files = core::mem::take(&mut *self.files_for_file_system.lock());
+        for paths in [&mut files.data_found_by_patterns, &mut files.code_seen] {
+            paths.sort_unstable();
+            paths.dedup();
+        }
+        files
+    }
+
     pub(crate) fn shut_down(self) -> Vec<OutputFile> {
         if let Some(plugins) = self.plugins {
             plugins.shut_down();
         }
         self.embedded.into_output_files()
     }
+}
+
+/// Where they lie on the disk of the build, ascending.
+#[derive(Default)]
+pub struct FilesForFileSystem {
+    /// The data files that a path made at run time may name.
+    pub data_found_by_patterns: Vec<Box<[u8]>>,
+    /// The compiled files that `node:fs` finds in the executable. Empty where there is no such data file.
+    pub code_seen: Vec<Box<[u8]>>,
 }
 
 impl SourceProvider for BundlerServices {
@@ -491,6 +511,18 @@ impl SourceProvider for BundlerServices {
         };
         let record = encode_refused_data(refused.path, &record);
         self.refused_data.lock().extend_from_slice(&record);
+    }
+
+    fn keep_bytes_of_data_file(&self, source_path: &[u8]) {
+        let mut files = self.files_for_file_system.lock();
+        files.data_found_by_patterns.push(source_path.into());
+    }
+
+    fn keep_path_of_code_that_file_system_sees(&self, source_path: &[u8]) {
+        self.files_for_file_system
+            .lock()
+            .code_seen
+            .push(source_path.into());
     }
 
     fn parse_data<'s>(

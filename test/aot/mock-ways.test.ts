@@ -10,7 +10,8 @@ import { test } from "./supported";
 // under a new name (r) or a star (t), that ends in a mocked file; the other is a file of its own. The mocked file has the name itself, by a statement or a star from below,
 // or by a star or a statement back into the way, which makes a ring. The mock has the name, lacks it or takes the original. All cases are laid as one project: one plain
 // run and one compiled run. What `bun test` prints is the specification.
-// mock-ways.known.txt holds a line for each chain and each kind of mocked file: a mark for each of the twelve cases of `marked` below, in that order: `.` as `bun test`,
+// Each case says three things, and each is judged by itself: the keys and values of the holder's namespace, whether a spread of it survives, and a named import.
+// mock-ways.known.txt holds a line for each chain and each kind of mocked file: three marks for each of the twelve cases of `marked` below, in that order: `.` as `bun test`,
 // `S` something else is printed in silence, `L` an error is printed or nothing. A mark that changes fails. BUN_AOT_REWRITE_MOCK_WAYS=1 writes the list anew.
 const hopsOfDepth = (depth: number): string[] =>
   depth ? hopsOfDepth(depth - 1).flatMap(hops => ["s", "r", "t"].map(hop => hops + hop)) : [""];
@@ -64,8 +65,9 @@ test("${nameOf(chain, kind, which)}", async () => {
   try {
     const all = await import("../${at}/holder.mjs");
     words.push(Object.keys(all).map(key => key + "=" + tried(() => all[key])).join());
+    words.push(tried(() => ({ ...all }) && "survives"));
   } catch (error) {
-    words.push(error.name);
+    words.push(error.name, error.name);
   }
   try {
     words.push(tried((await import("../${at}/named.mjs")).look));
@@ -98,10 +100,13 @@ test("what each case prints", async () => {
   const found = chains.flatMap(chain =>
     kinds.map(kind => {
       const marks = marked.map(which => {
-        const got = compiled.get(nameOf(chain, kind, which));
-        return got === plain.get(nameOf(chain, kind, which)) ? "." : got && !/Error/.test(got) ? "S" : "L";
+        const got = compiled.get(nameOf(chain, kind, which))?.split(" . ") ?? [];
+        const expected = plain.get(nameOf(chain, kind, which))!.split(" . ");
+        return expected
+          .map((words, at) => (got[at] === words ? "." : got[at] && !/Error/.test(got[at]) ? "S" : "L"))
+          .join("");
       });
-      return `${chain} ${kind}: ${marks.join("")}`;
+      return `${chain} ${kind}: ${marks.join(" ")}`;
     }),
   );
   const known = readFileSync(list, "utf8").split("\n");

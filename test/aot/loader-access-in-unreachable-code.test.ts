@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { sayGoal } from "./harness/goals";
@@ -43,28 +43,53 @@ function builtOnceWith(lib: string) {
   return once;
 }
 
+/** What `--explain=trim` says the program uses, and the features that it says stay, each with why. */
+async function keptWith(lib: string) {
+  using dir = tempDir("doors-and-reach", { "main.mjs": main, "lib.mjs": lib });
+  const explain = [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.mjs"];
+  const { stderr } = await run(explain, String(dir), { ...bunEnv, NO_COLOR: "1" });
+  return [...stderr.matchAll(/^aot: trim: ((?:kept|uses) .+)$/gm)].map(line => line[1]);
+}
+
 async function expectNoGrowth(forms: Record<string, string>, atMost: number, goalNotMet?: string) {
   const plain = await builtOnceWith(double);
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "42\n", exitCode: 0 });
   for (const [name, lib] of Object.entries(forms)) {
     const found = await builtOnceWith(lib);
     if (goalNotMet) sayGoal(goalNotMet, found.size - plain.size, atMost);
+    // Where it grows, the failure says by how much, and which features stay for it and not for the plain program.
+    const bytes = found.size - plain.size;
+    const staysAnyway = bytes > atMost ? await keptWith(double) : [];
+    const stays = bytes > atMost ? (await keptWith(lib)).filter(feature => !staysAnyway.includes(feature)) : [];
     expect({
       name,
       stdout: found.stdout,
       exitCode: found.exitCode,
-      grows: found.size - plain.size > atMost,
+      grows: bytes > atMost && { bytes, atMost, stays },
     }).toEqual({ name, stdout: "42\n", exitCode: 0, grows: false });
   }
 }
 
-test(
-  "a door in a function that nothing reaches brings no built-in module along",
-  // With a door anywhere in the text the executable keeps what compiled code calls for errors that it throws and for modules that are loaded again. That is cut out of Bun's own code by pages,
-  // 64 KB each on arm64 under Linux, where one page more stays or two, each with a header of 64 bytes. A built-in module brings hundreds of KB.
-  () => expectNoGrowth(notReached, (isLinux && isArm64 ? 2 : 1) * 64 * 1024 + 1024),
-  240_000,
-);
+// What is used or stays for the program with the door and not for the plain one. It is asked by name and not by the size of the executable: what stays is cut out of Bun's own code by pages,
+// 64 KB each on arm64 under Linux, so the bytes say how many pages the code of a feature touches, which moves with every change to that code. The names are the same on every platform.
+// TODO: nothing should stay: nothing reaches the function.
+const staysForDoorThatNothingReaches = [
+  "kept what compiled code calls for errors that compiled code makes and throws: used",
+  "kept what compiled code calls for modules that throw, are mocked or are loaded again: used",
+];
+test("a door in a function that nothing reaches brings no built-in module along", async () => {
+  const staysAnyway = await keptWith(double);
+  for (const [name, lib] of Object.entries(notReached)) {
+    const { stdout, exitCode } = await builtOnceWith(lib);
+    const stays = (await keptWith(lib)).filter(line => !staysAnyway.includes(line)).sort();
+    expect({ name, stdout, exitCode, stays }).toEqual({
+      name,
+      stdout: "42\n",
+      exitCode: 0,
+      stays: staysForDoorThatNothingReaches,
+    });
+  }
+}, 240_000);
 
 // A goal that is not met yet: beside a load by a name that nobody reads, reached or not, the tables of the executable list every public module of Bun's own that the standard streams load.
 // Once it is met this test fails: put the form back into the list above.

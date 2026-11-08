@@ -81,9 +81,10 @@
 //                                      exit code than `// Exit code:` says fail it all the same. Everywhere else, and in its other builds, it is held as ever.
 //                                      For a program that asks the collector whether an object is gone
 //   // No build under --aot-harden=proof-checks: <why>   it is not built with those flags. The others are held as ever. For a build that outgrows the machine: <why> says how large it is
-//                                      Both name one of the ways in which every program is built whatever the build of CI, or one of the program's own `// Under:`, stand in
-//                                      the head and say why: a line that does not fails the program. stderr lists what they leave out behind the counts of the builds, and
-//                                      every-stored-program-is-built-once-more-where-guesses-fail.test.ts holds the list of all of them
+//                                      Both name one of the ways in which every program is built whatever the build of CI, or one of the program's own `// Under:`.
+//                                      These two, `// Skip on ..:`, `// Skip under ASAN:` and the two `// Prints what ..:` stand in the head, name a platform that there is
+//                                      and say why: a line that does not fails the program (harness/lines-that-leave-out.ts). stderr lists what they leave out behind the
+//                                      counts of the builds, and every-stored-program-is-built-once-more-where-guesses-fail.test.ts holds the list of all of them
 //   // Under: <flags>: <why>           it is built once more with those flags, and held to the same. A line for each such build
 //   // Prints what the compiler saves: <what>   its output counts cells, promises or the like. What it prints is compared in the first build alone, and not under --more-flags.
 //                                      Every other build is made and run: `ways` says "built and run, not compared" of it, not "pass"
@@ -140,6 +141,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, statfsSync, statSync, w
 import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { measureHere, openInstructionCounter } from "./analysis-scaling/measure-here";
+import { lineThatLeavesOut, whyLineThatLeavesOutIsNotRead } from "./harness/lines-that-leave-out";
 import { runtimeEnvironment } from "./harness/flags";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
 import { ways } from "./harness/ways";
@@ -931,18 +933,15 @@ function read(file: string): Program {
     todoOfBuildWith: flags =>
       lines(`Todo under ${flags.join(" ")}`)[0] ?? (flags.some(isCheck) ? lines("Todo under a check")[0] : undefined),
     skipOfBuildWith: flags => lines(`Skip on ${process.platform} ${process.arch} under ${flags.join(" ")}`)[0],
-    linesThatLeaveOutNotRead: Array.from(
-      text.matchAll(/^\/\/ (?:Skip(?: on \w+ \w+)? under(?! ASAN:)|No build under) (.*?):(?:[ \t]+(.*))?$/gm),
-      ({ 0: line, 1: flags, 2: why, index }) =>
-        index < head.length &&
-        line.startsWith("// Skip under") === false &&
-        why?.trim() &&
-        [...waysBehindTheFirst, whereProofsAreChecked, ...lines("Under").map(said => said.split(": ", 1)[0].split(/\s+/))].some(
-          way => way.join(" ") === flags,
-        )
-          ? []
-          : [line.slice(0, 120)],
-    ).flat(),
+    linesThatLeaveOutNotRead: Array.from(text.matchAll(lineThatLeavesOut), ([line, what, why]) => {
+      const refusal = whyLineThatLeavesOutIsNotRead(
+        what,
+        why,
+        head.split(/\r?\n/).includes(line),
+        [...waysBehindTheFirst, whereProofsAreChecked, ...lines("Under").map(said => said.split(": ", 1)[0].split(/\s+/))].map(way => way.join(" ")),
+      );
+      return refusal ? [`${line.slice(0, 120)}: ${refusal}`] : [];
+    }).flat(),
     isNotBuiltWith: flags => lines(`No build under ${flags.join(" ")}`).length > 0,
     under: lines("Under").map(line => line.split(": ", 1)[0].split(/\s+/).filter(Boolean)),
     statistics: bounds.filter(({ kind }) => kind === "STATISTIC"),
@@ -1234,8 +1233,7 @@ async function run(program: Program): Promise<void> {
     return fail(
       program,
       "read",
-      "not of the form `// Skip on <platform> <arch> under <flags>: <why>` or `// No build under <flags>: <why>` in the head, with the flags of a way of every build: " +
-        program.linesThatLeaveOutNotRead.join("; "),
+      program.linesThatLeaveOutNotRead.join("; "),
     );
   if ("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER" in { ...program.env, ...program.envOfExecutable })
     return fail(program, "read", "no user sets BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: what is run runs without it");
@@ -1562,9 +1560,7 @@ console.error(
   `builds by way: ${Array.from(buildsOfWays, ([way, builds]) => `${way} ${builds}`).join(" | ")}` +
     (takesTheFirstBuildAlone ? " | --no-erased leaves out every build behind the first" : ""),
 );
-const notCompared = all.filter(
-  ({ way, skipOfBuildWith }) => way !== "compiled" && skipOfBuildWith(way.slice("under ".length).split(" ")) !== undefined,
-);
+const notCompared = all.filter(({ way, skip, printsWhatIsSaved }) => skip !== undefined || (way !== "compiled" && printsWhatIsSaved));
 const notBuilt = asWritten.flatMap(program =>
   furtherBuilds({ ...program, isNotBuiltWith: () => false })
     .filter(program.isNotBuiltWith)

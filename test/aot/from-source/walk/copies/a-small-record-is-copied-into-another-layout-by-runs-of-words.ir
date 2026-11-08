@@ -7,6 +7,12 @@
 # CHECK: = NewObject layout=
 # CHECK-NEXT: = TryCopyFields {{*}} sourceLayout=
 # CHECK-NOT: = GetSlot
+# RUN(PROOFS): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# PROOFS: = TryCopyFields {{*}} sourceLayout=
+# PROOFS: = GetSlot {{*}} key="f0"
+# PROOFS: = CheckProof
+# PROOFS: = GetSlot {{*}} key="f2"
+# PROOFS: = CheckProof
 # -- source: main.ts
 # export {};
 # interface State { f0: number; f1: number; f2: number; }

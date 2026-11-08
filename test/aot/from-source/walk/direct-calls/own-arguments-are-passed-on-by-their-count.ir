@@ -1,0 +1,21 @@
+# `function wrap(event) { return holder.target.apply(this, arguments); }`: an arm for each number of arguments that the parameters can hold passes those parameters on: neither the arguments object nor a list is made there.
+# Where more were passed the call takes one new list of the parameters and of what lies behind them. The closed reads in front of the call, which may change shapes, take nothing away: nothing but this code has the list behind the parameters.
+# f1 = wrap
+# -- source: own-arguments-are-passed-on-by-their-count.js
+# var holder = { target: null };
+# function wrap(event) { if (event === "skip") return false; return holder.target.apply(this, arguments); }
+# sink(wrap, holder);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[count]]: int[0, 4294967295] {{*}} = Unbox
+# CHECK: = TypeTest {{*}} testedType=builtin(FunctionPrototypeApply)
+# CHECK: = StrictEq [[count]], {{*}} form=Integers
+# CHECK: = Call {{*}} tail
+# CHECK: = StrictEq [[count]], {{*}} form=Integers
+# CHECK: = Call {{*}} tail
+# CHECK: [[list]]: Array {{*}} = NewArray
+# CHECK: = AppendElements [[list]],
+# CHECK: = CallList {{*}}, [[list]] {{*}} tail
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: = NewArgumentList

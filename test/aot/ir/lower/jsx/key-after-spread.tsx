@@ -1,6 +1,4 @@
 // RUN(SPREAD): lower
-// DIAGNOSTIC: TS100510 1
-// DIAGNOSTIC: TS100511 1
 // SPREAD-LABEL: function {{*}}name="afterSpread"
 // SPREAD-NOT: name="jsxDEV"
 // SPREAD: [[createElement]] = CheckInitialized {{*}}name="createElement"

@@ -1,0 +1,12 @@
+# f1 = factory, f2 = sumInLoop, f3 = once, f4 = Row
+# -- source: in-a-loop-a-read-looks-at-the-slot-where-no-look-at-the-cell-is-to-be-had.ts
+# declare function sink(...values: unknown[]): void;
+# function factory(tag: string) { function Row(this: any, value: number) { if (value > 1) this.mark = value; this.name = tag; } return Row; }
+# function sumInLoop(rows: any[]) { let sum = 0; for (let i = 0; i < rows.length; i++) sum += rows[i].mark; return sum; }
+# function once(row: any) { return row.mark; }
+# sink(factory("a"), factory("b"), sumInLoop, once);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK: = GetSlot {{*}}key="mark" receivers=[L0] level=Expected
+# RUN(ONCE): walk f3 mechanisms=all
+# ONCE: = PropGet {{*}}key="mark"

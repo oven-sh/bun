@@ -144,6 +144,7 @@ fn define_value_from_data<'s>(value: &'s DataValue<'s>) -> DefineValue<'s> {
         DataValue::String(text) => DefineValue::Constant(Constant::String(text)),
         DataValue::BigInt(digits) => DefineValue::Constant(Constant::BigInt(digits)),
         DataValue::Array(_) | DataValue::Object(_) => DefineValue::Data(value),
+        DataValue::Temporal { .. } => unreachable!("only the parser of TOML makes one"),
     }
 }
 

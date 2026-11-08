@@ -78,7 +78,8 @@ const requestRoad: {
   continueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   queueDump?: (request: $Node.IncomingMessage, state: $Node.ReadableState) => void;
   mayDumpInPlace?: (request: $Node.IncomingMessage) => boolean;
-  beginDump?: (request: $Node.IncomingMessage) => void;
+  beginDump?: (request: $Node.IncomingMessage) => boolean;
+  readsUnseen?: (request: $Node.IncomingMessage) => boolean;
   readsDestroyedUnseen?: (socket: $Node.HttpSocket) => boolean;
 } = {};
 const responseRoad: {
@@ -89,16 +90,18 @@ const responseRoad: {
     requestState: $Node.ReadableState | null,
   ) => $Node.HttpExchange;
   storeHeader?: (exchange: $Node.HttpExchange, name: string, value: $Node.HttpHeaderValue) => void;
+  settleLeniency?: (exchange: $Node.HttpExchange, name: string) => void;
   spillHeaders?: (exchange: $Node.HttpExchange) => void;
   spillHeadersReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
+  spillStateReachedThrough?: (receiver: $Node.OutgoingMessage) => void;
   hasHeaderUnderKey?: (
     exchange: $Node.HttpExchange,
     message: $Node.OutgoingMessage,
     key: string,
     bit: number,
   ) => boolean;
-  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[];
-  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined, message: $Node.OutgoingMessage) => unknown[] | undefined;
+  flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[] | null;
+  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined) => unknown[] | null;
   pushRenderedHeader?: (
     flat: unknown[],
     message: $Node.OutgoingMessage,
@@ -108,6 +111,7 @@ const responseRoad: {
   ) => void;
   outgoingSetHeader?: $Node.OutgoingMessage["setHeader"];
   flushSocketHeldChunk?: (socket: object | null | undefined) => void;
+  noChunks?: (string | $Node.HttpChunk | $Node.HttpWriteCallback | null | undefined)[];
 } = {};
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -537,8 +541,8 @@ declare global {
       [kHandle]: NodeHTTPServerSocket | null | undefined;
       [kOnReadParsed]: ((socket: HttpSocket) => void) | undefined;
       [kHandoffResponse]: NodeHTTPResponse | undefined;
-      [kRequest]?: IncomingMessage;
-      [kCloseCallback]?: (this: HttpServerSocket) => void;
+      [kRequest]: IncomingMessage | undefined;
+      [kCloseCallback]: ((this: HttpServerSocket) => void) | undefined;
       [kClosedWithUnsentData]: boolean | undefined;
       readonly [kInternalSocketData]: NodeHTTPResponse | null | undefined;
       readonly [kHasQueuedReads]: boolean;
@@ -572,9 +576,9 @@ declare global {
     interface ServerResponse {
       [kHandle]: NodeHTTPResponse | Http1ResponseHandle | undefined;
       [kPendingCallbacks]: HttpWriteCallback[] | undefined;
-      [fakeSocketSymbol]?: HttpSocket | null;
+      [fakeSocketSymbol]: HttpSocket | null | undefined;
       [headerStateSymbol]: number;
-      [kCloseCallback]?: () => void;
+      [kCloseCallback]: (() => void) | undefined;
     }
 
     interface HttpServer {

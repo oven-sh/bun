@@ -1,0 +1,17 @@
+An async factory that rejects.
+#### a.test.js
+import { vi, mock, test } from 'bun:test';
+let booms = 0;
+const tried = async read => { try { return String(await read()); } catch (e) { return 'threw ' + e.message; } };
+async function look(step) { console.log('SEEN', step, 'import', await tried(async () => (await import('./dep.js')).flag), 'require', await tried(() => import.meta.require('./dep.js').flag), 'user', await tried(async () => (await import('./user.js')).seen())); }
+test('t', async () => {
+  try { vi.doMock('./dep.js', async () => { await 0; throw new Error('late boom ' + ++booms); }); } catch (e) { console.log('SEEN the call 1 threw', e.message); }
+  await look('1');
+  await look('1 again');
+});
+#### dep.js
+console.log('SEEN THE REAL BODY RUNS');
+export const flag = 'real';
+#### user.js
+import { flag } from './dep.js';
+export const seen = () => flag;

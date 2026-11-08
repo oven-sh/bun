@@ -342,7 +342,7 @@ describe("outer describe", () => {
 
 When a test or hook finishes, Bun starts the next hook or test right away. A timer, immediate or I/O callback that is already due doesn't run in between, as in Jest and Vitest. When an uncaught error or a timeout ends a test, such callbacks can run before its `afterEach` hooks.
 
-- **Leftover callbacks.** A callback that is still pending when its test finishes runs during a later hook or test. If the callback throws during a later test, Bun fails that test, not the test that scheduled the callback. During a hook, after the last test, or while several concurrent tests run, Bun reports an ["Unhandled error between tests"](/test/runtime-behavior#unhandled-errors). To keep an error with its test, await or cancel the callback before the test ends.
+- **Leftover callbacks.** A callback that is still pending when its test finishes runs during a later hook or test, or after the last test of the file. If the callback throws during a later test, Bun fails that test, not the test that scheduled the callback. During a hook, after the last test of the file, or while several concurrent tests run, no test fails and Bun reports an ["Unhandled error between tests"](/test/runtime-behavior#unhandled-errors). To keep an error with its test, await or cancel the callback before the test ends.
 - **Concurrent tests.** A [concurrent test](/test#concurrent-test-execution) runs its `afterEach` hooks as soon as it finishes, before the callbacks that resume the other tests of its group. State that `afterEach` clears is gone for the tests that are still running, so give each concurrent test its own state.
 
 ## Error Handling

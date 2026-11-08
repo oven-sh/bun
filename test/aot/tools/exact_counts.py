@@ -4,9 +4,10 @@
 `perf/compare-builds.ts` says that a row got slower. This says where: which compiled function, which stub of the compiler, which C++ function of the runtime.
 
     BUN_JSC_aotMapFilePath=app.map bun build --compile --aot app.ts --outfile app       # the map names the compiled functions and stubs
+    bun build --compile --aot --aot-symbols app.ts --outfile app                        # or the executable names them itself, and --map is left out
 
-    exact_counts.py run    --out app.counts --map app.map [--symbols <bun with symbols>] -- ./app <arguments>
-    exact_counts.py serve  --out app.counts --map app.map [--symbols ..] --request GET:/text [--request POST:/order:@body.json].. [--warm-up 20000] [--requests 4000] -- ./server
+    exact_counts.py run    --out app.counts [--map app.map] [--symbols <bun with symbols>] -- ./app <arguments>
+    exact_counts.py serve  --out app.counts [--map app.map] [--symbols ..] --request GET:/text [--request POST:/order:@body.json].. [--warm-up 20000] [--requests 4000] -- ./server
     exact_counts.py show   app.counts [--top 40] [--per 4000]
     exact_counts.py diff   before.counts after.counts [--top 40] [--per 4000]
 
@@ -18,7 +19,9 @@ Needs Linux x64, valgrind 3.19 or later and binutils. One core executes about 35
 What to know before trusting a number:
   - The counts are within 1% of `perf stat -e instructions:u`. An instruction with a `rep` prefix counts once per round here and once in all on the hardware: a memset of 6 KB is 6,000 "instructions".
   - Two runs of one server differ by about 0.4%: timers fire more often per request, because a request takes longer.
-  - Address space randomization is switched off (`setarch -R`), so that the compiled code runs where the ELF file says and addresses can be matched with the map.
+  - Address space randomization is switched off (`setarch -R`), so that the compiled code runs where the ELF file says and addresses can be matched with the map and the symbols.
+  - Names come from the map, from the executable's own symbols and from --symbols: from all that are there. Where the map and a symbol begin at one address, the map's name stays.
+  - A symbol in the section `.bun` counts as `compiled`, a stub too: only the map tells a stub from a function.
   - The collector runs on the program's own thread (the environment below). Only the first thread is read.
   - A JIT can be counted too (`--smc-check=all` through --valgrind-flag), but its code has no names here.
 """
@@ -103,6 +106,12 @@ def code_base(executable):
     return bases[-1] + (0x555555554000 if is_position_independent and bases[-1] < 0x100000000 else 0), 0x555555554000 if is_position_independent else 0
 
 
+def payload_address(executable):
+    """The address of the section `.bun` in the ELF file. It holds what the build added to the runtime, the image's code with it, and lies above every function of the runtime."""
+    section = re.search(r"\] \.bun +\w+ +([0-9a-f]+)", subprocess.run(["readelf", "-SW", executable], capture_output=True, text=True, check=True).stdout)
+    return int(section.group(1), 16) if section else float("inf")
+
+
 def read_symbols(path, load_address):
     output = subprocess.run(["nm", "-n", "-C", "--defined-only", "-S", path], capture_output=True, text=True).stdout
     symbols = []
@@ -116,8 +125,11 @@ def read_symbols(path, load_address):
 def attribute(raw, executable, map_path, symbols_path):
     by_address, by_library_function, total = read_callgrind(raw)
     base, load_address = code_base(executable)
-    ranges = sorted([(base + start, base + end, kind, name) for start, end, kind, name in (read_map(map_path) if map_path else [])]
-                    + read_symbols(symbols_path or executable, load_address))  # fmt: skip
+    payload = payload_address(executable) + load_address
+    symbols = read_symbols(executable, load_address) + (read_symbols(symbols_path, load_address) if symbols_path else [])
+    named = sorted((start, end, "compiled" if start >= payload else kind, name) for start, end, kind, name in symbols)
+    named += [(base + start, base + end, kind, name) for start, end, kind, name in (read_map(map_path) if map_path else [])]
+    ranges = sorted({r[0]: r for r in named}.values())  # of the names that begin at one address the last stays
     starts = [r[0] for r in ranges]
     counts = collections.Counter()
     for address, count in by_address.items():
@@ -280,7 +292,7 @@ def main():
         command = commands.add_parser(name)
         command.add_argument("--out", required=True)
         command.add_argument("--map")
-        command.add_argument("--symbols", help="a file with the symbols of the runtime: the Bun that built the executable, before it was stripped")
+        command.add_argument("--symbols", help="a file with the symbols of the runtime, read beside the executable's own: the Bun that built the executable, before it was stripped")
         command.add_argument("--valgrind", default="valgrind")
         command.add_argument("--callgrind-control", default="callgrind_control")
         command.add_argument("--valgrind-flag", action="append", default=[])

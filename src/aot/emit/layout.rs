@@ -1,15 +1,17 @@
 #[cfg(test)]
 mod tests;
 
+use std::fmt::Write;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 
 use super::functions;
 use super::output::OutputSlice;
-use super::tables::{RecordTable, create_table_tasks, write_strings};
+use super::tables::{RecordTable, StringsOfTask, create_table_tasks, write_strings};
 use super::{EmitError, ProgramBytes};
 use crate::ir::generated::{Function, Header, MAGIC, ProgramList, SCHEMA_HASH, Section};
-use crate::ir::{InParallel, ListCounts, Program, SectionWriter, StringTable, for_each_mut};
+use crate::ir::{InParallel, ListCounts, Program, SectionWriter, for_each_mut};
+use crate::statistics::{Stage, StepClock};
 
 const HEADER_SIZE_IN_BYTES: usize = Header::WORDS * 4;
 
@@ -21,10 +23,13 @@ pub(super) struct Task<'p, 'o> {
 }
 
 pub(super) enum Source<'p> {
-    Strings(&'p StringTable),
+    Strings(StringsOfTask<'p>),
     Table(Box<dyn RecordTable + 'p>),
-    Functions(Vec<Function>),
     SharedFunctions(Vec<Arc<Function>>),
+}
+
+pub(super) fn measure_tasks(tasks: &mut [Task<'_, '_>], in_parallel: InParallel<'_>) {
+    for_each_mut(tasks, in_parallel, &|task| task.measure());
 }
 
 pub(super) fn emit_program<'p>(
@@ -32,25 +37,40 @@ pub(super) fn emit_program<'p>(
     function_tasks: Vec<Task<'p, '_>>,
     in_parallel: InParallel<'_>,
 ) -> Result<ProgramBytes, EmitError> {
+    let mut steps = StepClock::new(Stage::LinkAndEmit);
     let mut tasks = create_table_tasks(program);
+    measure_tasks(&mut tasks, in_parallel);
     tasks.extend(function_tasks);
-    for_each_mut(&mut tasks, in_parallel, &|task| task.measure());
+    steps.end("emit: measure the tables");
     let totals = set_first_indices(&mut tasks);
     let plan = plan_sections(&totals)?;
     let size_in_bytes = plan.size_in_bytes as usize;
     let mut storage = Vec::<u64>::with_capacity(size_in_bytes / 8);
     let output = OutputSlice::new(uninitialized_bytes(&mut storage, size_in_bytes));
     carve(output, &plan, &mut tasks);
+    steps.end_with(|| describe_sections(&totals));
     for_each_mut(&mut tasks, in_parallel, &|task| task.write());
     assert!(
         tasks.iter().all(Task::is_written),
         "every task has filled the space reserved for it"
     );
     drop(tasks);
+    steps.end("emit: write");
     // SAFETY: the header, the paddings and the outputs of the tasks are all of the first
     // `size_in_bytes` bytes, and each has been written.
     unsafe { storage.set_len(size_in_bytes / 8) };
     Ok(ProgramBytes::new(storage, size_in_bytes))
+}
+
+fn describe_sections(totals: &ListCounts) -> String {
+    let sizes = ProgramList::ALL.map(|list| (byte_count(list, totals[list as usize]), list));
+    let mut sizes: Vec<(usize, ProgramList)> = sizes.into_iter().collect();
+    sizes.sort_by_key(|&(size, _)| core::cmp::Reverse(size));
+    let mut text = String::from("emit: give each task its place; KB of each list:");
+    for (size, list) in sizes.into_iter().filter(|&(size, _)| size >= 1 << 10) {
+        let _ = write!(text, " {} {}", list.name(), size >> 10);
+    }
+    text
 }
 
 impl Task<'_, '_> {
@@ -61,7 +81,6 @@ impl Task<'_, '_> {
                 self.counts[ProgramList::Bytes as usize] = strings.byte_len() as u64;
             }
             Source::Table(table) => table.measure(&mut self.counts),
-            Source::Functions(slice) => functions::measure(slice.iter(), &mut self.counts),
             Source::SharedFunctions(slice) => {
                 functions::measure(slice.iter().map(|function| &**function), &mut self.counts);
             }
@@ -78,7 +97,6 @@ impl Task<'_, '_> {
         match &self.source {
             Source::Strings(strings) => write_strings(strings, &mut sections),
             Source::Table(table) => table.write(&mut sections),
-            Source::Functions(slice) => functions::write(slice.iter(), &mut sections),
             Source::SharedFunctions(slice) => {
                 functions::write(slice.iter().map(|function| &**function), &mut sections);
             }
@@ -105,7 +123,6 @@ impl Task<'_, '_> {
         }
         drop(sections);
         match &mut self.source {
-            Source::Functions(slice) => *slice = Vec::new(),
             Source::SharedFunctions(slice) => *slice = Vec::new(),
             Source::Strings(_) | Source::Table(_) => {}
         }

@@ -47,7 +47,6 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs"
 import path from "path";
 import { builtinFunctionIds, firstBuiltinFunctionId } from "./builtin-function-ids";
 import { sliceSourceCode } from "./builtin-parser";
-import type { SourceMap } from "./bundled-names";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
 import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
@@ -56,6 +55,7 @@ import {
   applyGlobalReplacements,
   assertNoDestructuredGlobalThis,
   assertNoNativeFunctionOfGlobalThis,
+  assertNoStoredFunctionBehindComma,
   define,
   nativeFunctions,
 } from "./replacements";
@@ -94,11 +94,6 @@ interface BundledBuiltin {
   params: string[];
   visibility: string;
   sourceOffset: number;
-  /** What the bundler made, of which `source` is a part with pieces replaced, and its map. */
-  output: string;
-  sourceMap: SourceMap;
-  /** How many functions the file writes in front of it. */
-  numberInFile: number;
 }
 
 function builtinSourceMetadata(source: string): (number | boolean)[] {
@@ -326,6 +321,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
 
   for (const fn of functions) {
     const tmpFile = path.join(TMP_DIR, `${basename}.${fn.name}.ts`);
+    assertNoStoredFunctionBehindComma(fn.source, `${basename}.ts (${fn.name})`);
 
     // not sure if this optimization works properly in jsc builtins
     // const useThis = fn.usesThis;
@@ -354,19 +350,15 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       define,
       target: "bun",
       minify: { syntax: true, whitespace: false, keepNames: true },
-      sourcemap: "external",
     });
     // TODO: Wait a few versions before removing this
     if (!build.success) {
       throw new AggregateError(build.logs, "Failed bundling builtin function " + fn.name + " from " + basename + ".ts");
     }
-    const [made, ...others] = build.outputs.filter(it => it.kind !== "sourcemap");
-    if (others.length !== 0 || !made?.sourcemap) {
-      throw new Error("expected one output and its source map");
+    if (build.outputs.length !== 1) {
+      throw new Error("expected one output");
     }
-    const bundled = await made.text();
-    const sourceMap: SourceMap = await made.sourcemap.json();
-    let output = bundled.replaceAll("// @bun\n", "");
+    let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
     assertNoDestructuredGlobalThis(output, `${basename}.ts (${fn.name})`);
     assertNoNativeFunctionOfGlobalThis(output, `${basename}.ts (${fn.name})`, "js");
     let usesDebug = output.includes("$debug_log");
@@ -401,9 +393,6 @@ $$capture_start$$(${fn.async ? "async " : ""}${
 
       // Not known yet.
       sourceOffset: 0,
-      output: bundled,
-      sourceMap,
-      numberInFile: bundledFunctions.length,
 
       overriddenName: fn.directives.getter
         ? `"get ${fn.name}"_s`
@@ -538,7 +527,7 @@ static JSC::FunctionExecutable* ${linkFromText}(JSC::VM& vm)
 JSC::BuiltinCode ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
 {
 #if ENABLE(AOT)
-    if (JSC::AOT::hasBuiltinFunction(vm, ${idOf(basename, fn.name)}))
+    if (JSC::AOT::Image::isRegistered() && JSC::AOT::hasBuiltinFunction(vm, ${idOf(basename, fn.name)}))
         return { nullptr, ${idOf(basename, fn.name)}, ${linkFromText} };
 #endif
     return { ${linkFromText}(vm), 0 };
@@ -961,5 +950,5 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
   // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
   // same linked blob carries both the builtin function sources and the internal
   // module sources. `privateNames` lists every private name registered by BunBuiltinNames.
-  return { combinedSourceCode, privateNames, files };
+  return { combinedSourceCode, privateNames };
 }

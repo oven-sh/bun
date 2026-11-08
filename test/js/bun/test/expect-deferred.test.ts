@@ -2112,7 +2112,9 @@ describe.concurrent("expect.poll()", () => {
       "a.test.js": `
         import * as bun from "bun:test";
         import * as vitest from "vitest";
-        const outcome = error => (error instanceof TypeError ? "TypeError" : "fails");
+        // "TypeError" is the one that toHaveProperty() throws for undefined in Vitest, and no other.
+        const ofMatcher = error => error instanceof TypeError && error.message.includes("expects to receive a valid object");
+        const outcome = error => (ofMatcher(error) ? "TypeError" : "fails");
         const direct = call => { try { call(); return "passes"; } catch (error) { return outcome(error); } };
         const settle = matcher => matcher.then(() => "passes", outcome);
         for (const [module, { expect, test }] of Object.entries({ vitest, bun })) {
@@ -2157,7 +2159,9 @@ describe.concurrent("expect.poll()", () => {
     const { stdout, exitCode } = await run(["test"], {
       "a.test.js": `
         import { describe, expect, test } from "vitest";
-        const outcome = error => (error instanceof TypeError ? "TypeError" : "fails");
+        // "TypeError" is the one that toHaveProperty() throws for undefined in Vitest, and no other.
+        const ofMatcher = error => error instanceof TypeError && error.message.includes("expects to receive a valid object");
+        const outcome = error => (ofMatcher(error) ? "TypeError" : "fails");
         const called = call => { try { call(); return "passes"; } catch (error) { return outcome(error); } };
         const settle = matcher => matcher.then(() => "passes", outcome);
         // A TypeError in Vitest. It passes in Jest.
@@ -2172,9 +2176,8 @@ describe.concurrent("expect.poll()", () => {
           test("first", async ({ expect: ofContext }) => {
             await 1;
             console.log("concurrent test, expect of its context: " + (await both(ofContext)).join(", polled: "));
-            // The runner can't tell which of the two tests calls the expect of the module.
-            const [ofModule, polled] = await both(expect);
-            console.log("concurrent test, expect of the module: polled " + (polled === ofModule ? "as called" : "not as called"));
+            // The runner can't tell which of the two tests calls the expect of the module, so that one follows Jest.
+            console.log("concurrent test, expect of the module: " + (await both(expect)).join(", polled: "));
           });
           test("second", async () => { await 1; });
         });
@@ -2183,7 +2186,7 @@ describe.concurrent("expect.poll()", () => {
     expect(stdout).toEqual([
       "serial test, expect of its context: TypeError, polled: TypeError",
       "concurrent test, expect of its context: TypeError, polled: TypeError",
-      "concurrent test, expect of the module: polled as called",
+      "concurrent test, expect of the module: passes, polled: passes",
     ]);
     expect(exitCode).toBe(0);
   });

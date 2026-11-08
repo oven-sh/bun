@@ -183,8 +183,8 @@ impl UUID7 {
         Self::init(timestamp, random, TimestampSource::Clock)
     }
 
-    /// A caller-supplied timestamp, encoded verbatim. Calls that repeat a
-    /// timestamp increment a counter, so they stay sortable.
+    /// A caller-supplied timestamp, encoded verbatim. Consecutive calls with
+    /// one timestamp increment a counter. Another timestamp starts a new one.
     pub fn at(timestamp: u64, random: [u8; 10]) -> UUID7 {
         Self::init(timestamp, random, TimestampSource::Explicit)
     }

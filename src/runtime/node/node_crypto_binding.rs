@@ -441,8 +441,9 @@ pub(crate) fn random_uuid_v7(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> 
     // Node reads the primordial DateNow(), which no mock of the time reaches,
     // and keeps no counter and no last timestamp:
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/random.js#L418-L448
-    // The floor of this clock is what an unmocked Date.now() returns, so the
-    // timestamp is never behind a Date.now() that the caller sampled first.
+    // This floor is what an unmocked Date.now() returns, so the timestamp is
+    // never behind a Date.now() that the caller sampled first. The integer
+    // bun_core::time::milli_timestamp() can be 1 ms behind it.
     let now_ms = bun_jsc::cpp::JSMock__getCurrentUnixTimeMs().floor() as u64;
     let mut entropy = [0u8; 10];
     if options.disable_entropy_cache {

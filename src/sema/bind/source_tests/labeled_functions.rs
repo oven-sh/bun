@@ -9,13 +9,13 @@ const STRICT_LABELED_FUNCTIONS: &[&str] = &[
     "class C { m() { { label: function f() {} f; } } }",
     r#""use strict"; function g() { label: function f() {} f; }"#,
     r#""use strict"; label: function f() {} f;"#,
+    r#"function g() { "use strict"; label: function f() {} f; }"#,
 ];
 
 const SLOPPY_LABELED_FUNCTIONS: &[&str] = &[
     "label: function f() {} f;",
     "function g() { label: function f() {} f; }",
     "function g() { outer: inner: function f() {} f; }",
-    r#"function g() { "use strict"; label: function f() {} f; }"#,
 ];
 
 fn only_implicit_block_symbol(s: &Analyzed<'_>) -> SymbolId {

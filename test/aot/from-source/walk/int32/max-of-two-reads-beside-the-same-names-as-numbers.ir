@@ -1,0 +1,13 @@
+# Two types of the file have the same names, so their objects have one layout, whose fields are declared numbers. Read through the type that says int32 the fields are int32s, as arguments of Math.max too: the front end states it behind each read.
+# Once: "Math.max(point.x, point.y) might not be an int32: it is a number".
+# f2 = largest
+# -- source: max-of-two-reads-beside-the-same-names-as-numbers.ts
+# declare function sink(...values: unknown[]): void;
+# interface Point { x: Bun.int32; y: Bun.int32 }
+# type Other = { x: number; y: number };
+# function sum(o: Other): number { return o.x + o.y; }
+# function largest(point: Point): Bun.int32 { return Math.max(point.x, point.y); }
+# sink(sum, largest);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK: code f2:Body

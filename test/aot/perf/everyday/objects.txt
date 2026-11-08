@@ -580,15 +580,17 @@ class Row {
   note?: string;
 }
 const table: any = new Row();
-for (let k = 0; k < 2000; k++) table["k" + k] = k;
+const keys: string[] = [];
+for (let k = 0; k < 2000; k++) keys.push("k" + k);
+for (let k = 0; k < 2000; k++) table[keys[k]] = k;
 function turn(i: number): number {
   const at = i % 4000;
   if (at === 0) {
     delete table.note;
     table.note = "late";
   }
-  if (at < 2000) delete table["k" + at];
-  else table["k" + (at - 2000)] = i;
+  if (at < 2000) delete table[keys[at]];
+  else table[keys[at - 2000]] = i;
   return table.note.length + (i & 1);
 }
 //// many-keys-around-a-field-created-late-are-listed-behind-a-change

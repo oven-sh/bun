@@ -69,17 +69,21 @@ pub(crate) fn warn_about_skipped_typed_files(option: &str, log: &mut bun_ast::Lo
 pub(super) struct NotedModuleTypes(Guarded<Vec<(u32, ModuleTypes)>>);
 
 impl NotedModuleTypes {
-    pub(super) fn note(&self, checker: &mut Checker<'_, '_>, file: FileId) {
-        self.note_if(checker, file, |_| true);
+    /// `notes_parameters`: see [`module_types`].
+    pub(super) fn note(&self, checker: &mut Checker<'_, '_>, file: FileId, notes_parameters: bool) {
+        if let Some(found) = module_types(checker, file, notes_parameters) {
+            self.replace(file, found);
+        }
     }
 
+    // A declaration file has no default values.
     fn note_if(
         &self,
         checker: &mut Checker<'_, '_>,
         file: FileId,
         is_wanted: impl Fn(&ModuleTypes) -> bool,
     ) {
-        if let Some(found) = module_types(checker, file).filter(is_wanted) {
+        if let Some(found) = module_types(checker, file, false).filter(is_wanted) {
             self.replace(file, found);
         }
     }

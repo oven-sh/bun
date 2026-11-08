@@ -179,3 +179,222 @@ export { join };
     );
   });
 });
+
+// The React Compiler prints `function useStep(step = 1) {` as `function useStep(t0) { let step = t0 === undefined ? 1 : t0;`.
+describe("Bun.build({ dts: true, reactCompiler: true }): a parameter whose default value is in the function body", () => {
+  const state = `export function useState<T>(initial: T): [T] {\n  return [initial];\n}\n`;
+  const hooks = `import { useState } from "./state";
+export enum Unit {
+  Px,
+  Em,
+}
+export function useBoth(first: number = 1, second: number = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+export function useStep(first: number = 1, step = 2): number {
+  const [value] = useState(first);
+  return value + step;
+}
+export function useRange(first: number = 1, start: number = 0, end: number): number {
+  const [value] = useState(first);
+  return value + start + end;
+}
+export function useFormat(first: number = 1, format: (value: number) => string = String, value: number): string {
+  const [text] = useState(format(value + first));
+  return text;
+}
+export function useName(first: number = 1, { name }: { name: string } = { name: "x" }, suffix: string = "!"): string {
+  const [value] = useState(name);
+  return value + suffix + first;
+}
+export function usePoint(first: number = 1, point: [number, number] = [0, 0]): [number, number] {
+  const [value] = useState(point);
+  return [value[0] + first, value[1]];
+}
+export function useUnit(first: number = 1, unit = Unit.Px): string {
+  const [value] = useState(first);
+  return value + Unit[unit];
+}
+export function usePadded(first: number = 1, unit = Unit.Em, pad = 2, text: string): string {
+  const [value] = useState(text);
+  return value.padStart(pad + first) + Unit[unit];
+}
+export function useNested(base: number): number {
+  const [value] = useState(base);
+  const add = (first: number = 0, right: number = 1): number => first + right;
+  return add(value);
+}
+function pad(value: string): string;
+function pad(value: number): number;
+function pad(value: any): any {
+  return value;
+}
+type Step = (base: number, scale?: number, by?: number) => number;
+export function useStepper(n: number): Step {
+  const [value] = useState(n);
+  const step: Step = (base, scale = 1, by = value) => {
+    const next: number = pad(by);
+    return base * scale + next;
+  };
+  return step;
+}
+export function useLabel(label: string, size?: number): string {
+  const [value] = useState(label);
+  return value + (size ?? 0);
+}
+export function plain(first: number = 1, second: number = 2): number {
+  return first + second;
+}
+`;
+  // What the sources accept. With these in the bundle, a typed file that asks for more is left out with a warning.
+  const calls = `console.log(useBoth(), useBoth(5), useStep(), useRange(undefined, undefined, 5), useFormat(undefined, undefined, 1));
+console.log(useName(), usePoint(), useUnit(), usePadded(undefined, undefined, undefined, "a"), useNested(1));
+console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain());
+`;
+  // The parameters of each function, from the second one on where the first one is the compiler's. The first default
+  // value of a list is where the `length` of the function ends, and how the compiler prints it is not the subject here.
+  const parametersIn = (typed: string) =>
+    Object.fromEntries(
+      Array.from(typed.matchAll(/^function (\w+)(?:<[^>]*>)?\((.*)\)(?:: [^{\n]+)? \{$/gm), ([, name, list]) => [
+        name,
+        list.replace(/^t0[^,]*, /, ""),
+      ]),
+    );
+  const build = (root: string, options: Partial<Bun.BuildConfig> = {}) =>
+    Bun.build({
+      entrypoints: [join(root, "src/index.tsx")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      target: "bun",
+      reactCompiler: true,
+      dts: true,
+      ...options,
+    });
+
+  test.each([
+    ["a call in the bundle that leaves it out", calls],
+    ["no call in the bundle", ""],
+  ])("can be left out, and keeps its type: %s", async (_, calls) => {
+    using dir = tempDir("build-api-dts-moved-default", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/state.ts": state,
+      "src/index.tsx": hooks + calls,
+    });
+    const root = String(dir);
+    const built = await build(root);
+    expect(built.logs).toEqual([]);
+    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
+    expect(parametersIn(typed)).toEqual({
+      useState: "initial: T",
+      _temp: "t1?: number",
+      useBoth: "t1?: number",
+      // The type checker says what `step = 2` is.
+      useStep: "t1?: number",
+      // A `?` before a parameter that has to be passed is an error.
+      useRange: "t1: number | undefined, end: number",
+      useFormat: "t1: ((value: number) => string) | undefined, value: number",
+      // The annotation of a pattern is where the pattern is.
+      useName: "t1?: any, t2?: string",
+      usePoint: "t1?: [number, number]",
+      // `Unit.Px` is `0` in the bundle, and the parameter has the type of the enum.
+      useUnit: expect.stringMatching(/^t1\?: Unit\d*$/),
+      usePadded: expect.stringMatching(/^t1: Unit\d* \| undefined, t2: number \| undefined, text: string$/),
+      useNested: "base: number",
+      pad: "value: any",
+      useStepper: "n: number",
+      useLabel: "label: string, size?: number",
+      // What the compiler leaves as it is written keeps its default values.
+      plain: "first: number = 1, second: number = 2",
+    });
+    // The default value has its type from the annotation.
+    expect(typed).toContain("let point: [number, number] = t1 === undefined ? [");
+    // Without an annotation, a callback takes the type of its parameter from where it is passed to.
+    expect(typed).toMatch(/let step: Step = \(base, t0[^,]*, t1\?\) => \{/);
+  });
+
+  test("in a module that is not checked", async () => {
+    using dir = tempDir("build-api-dts-moved-default-unchecked", {
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(project["tsconfig.json"]).compilerOptions, allowJs: true, jsx: "react-jsx" },
+      }),
+      "package.json": JSON.stringify({ name: "hooks", compilerOptions: { strict: true, jsx: "react-jsx" } }),
+      "src/state.ts": state,
+      "src/index.tsx": `export { useLoose } from "./loose";\nexport { plainJs, useJs } from "./hooks.js";\n`,
+      "src/loose.tsx": `// @ts-nocheck
+import { useState } from "./state";
+export function useLoose(first: number = 1, second: number = 2, third = 3) {
+  const [value] = useState(first);
+  return value + second + third;
+}
+`,
+      "src/hooks.js": `import { useState } from "./state";
+export function useJs(first = 1, { second } = { second: 2 }, third = 3) {
+  const [value] = useState(first);
+  return value + second + third;
+}
+export function plainJs(first, second) {
+  return first + second;
+}
+`,
+    });
+    const root = String(dir);
+    const built = await build(root);
+    expect(built.logs).toEqual([]);
+    expect(parametersIn(readFileSync(join(root, "out/index.aot.ts"), "utf8"))).toEqual({
+      useState: "initial: T",
+      useLoose: "t1?, t2?",
+      useJs: "t1?, t2?",
+      plainJs: "first, second",
+    });
+  });
+
+  test("in the output for a browser, which keeps what a function computes from one call to the next", async () => {
+    using dir = tempDir("build-api-dts-moved-default-client", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/index.tsx": `import { useState } from "react";
+export function usePoint(first: number = 1, point: [number, number] = [0, 0], scale = 2): number {
+  const [value] = useState(point);
+  return (value[0] + value[1]) * scale + first;
+}
+console.log(usePoint(), usePoint(1, [1, 2]), usePoint(1, [1, 2], 3));
+`,
+      "node_modules/react/package.json": JSON.stringify({
+        name: "react",
+        version: "19.0.0",
+        exports: {
+          ".": { types: "./index.d.ts", default: "./index.js" },
+          "./compiler-runtime": { types: "./compiler-runtime.d.ts", default: "./compiler-runtime.js" },
+        },
+      }),
+      "node_modules/react/index.js": `export const useState = initial => [initial];\n`,
+      "node_modules/react/index.d.ts": `export declare function useState<T>(initial: T): [T];\n`,
+      "node_modules/react/compiler-runtime.js": `export const c = size => new Array(size);\n`,
+      "node_modules/react/compiler-runtime.d.ts": `export declare function c(size: number): any[];\n`,
+    });
+    const root = String(dir);
+    const built = await build(root, { target: "browser", external: ["react", "react/*"] });
+    expect(built.logs).toEqual([]);
+    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
+    expect(typed).toContain(`import { c as _c } from "react/compiler-runtime";`);
+    expect(parametersIn(typed)).toEqual({ usePoint: "t1?: [number, number], t2?: number" });
+  });
+
+  test("with minify.syntax, which puts the variables of a function into one statement", async () => {
+    using dir = tempDir("build-api-dts-moved-default-minify", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/state.ts": state,
+      "src/index.tsx": hooks + calls,
+    });
+    const root = String(dir);
+    const built = await build(root, { minify: { syntax: true } });
+    expect(built.logs).toEqual([]);
+    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
+    expect(parametersIn(typed)).toMatchObject({
+      useBoth: "t1?: number",
+      useRange: "t1: number | undefined, end: number",
+      useName: "t1?: any, t2?: string",
+    });
+    expect(typed).toContain(", second: number = t1 === void 0 ? 2 : t1,");
+  });
+});

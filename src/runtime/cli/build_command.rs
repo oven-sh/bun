@@ -224,6 +224,7 @@ impl BuildCommand {
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
+                react_compiler: ctx.bundler_options.react_compiler,
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
             };

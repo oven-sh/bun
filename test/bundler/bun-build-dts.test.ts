@@ -134,6 +134,59 @@ export function join(first: string, second: string): string {
     expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).not.toContain("__DEV__");
   });
 
+  // The React Compiler prints `(first = 1)` as `(t0) { let first = t0 === undefined ? 1 : t0`.
+  const hooks = {
+    "tsconfig.json": project["tsconfig.json"],
+    "package.json": project["package.json"],
+    "src/state.ts": `export function useState<T>(initial: T): [T] {\n  return [initial];\n}\n`,
+    "src/index.tsx": `import { useState } from "./state";
+export function useBoth(first: number = 1, second: number = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+export function useRange(first: number = 1, start = 0, end: number): number {
+  const [value] = useState(first);
+  return value + start + end;
+}
+`,
+  };
+  const hookFlags = ["--outdir", "out", "--dts", "--react-compiler", "--target=bun"];
+
+  test("--react-compiler: a parameter whose default value is in the function body can be left out", async () => {
+    using dir = tempDir("build-dts-react-compiler", {
+      ...hooks,
+      "src/index.tsx": hooks["src/index.tsx"] + `console.log(useBoth(), useBoth(5), useBoth(5, 6));\n`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.tsx", ...hookFlags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const read = (name: string) => readFileSync(join(String(dir), "out", name), "utf8");
+    expect(read("index.d.ts")).toContain("export declare function useBoth(first?: number, second?: number): number;");
+    expect(read("index.aot.ts")).toContain("t1?: number): number {\n");
+    expect(read("index.aot.ts")).toContain("  let second: number = t1 === undefined ? 2 : t1;\n");
+    expect(read("index.aot.ts")).toContain("t1: number | undefined, end: number): number {\n");
+  });
+
+  test("--react-compiler: such a parameter still takes no other type", async () => {
+    using dir = tempDir("build-dts-react-compiler-callers", {
+      ...hooks,
+      "uses.ts": `import { useBoth, useRange } from "./out/index.aot";
+export const sums: number[] = [useBoth(), useBoth(1), useBoth(1, 2), useRange(undefined, undefined, 1), useRange(1, 2, 3)];
+// @ts-expect-error
+useBoth("1");
+// @ts-expect-error
+useBoth(1, "2");
+// @ts-expect-error
+useRange(1, 2);
+// @ts-expect-error
+useRange(1, "0", 1);
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.tsx", ...hookFlags);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    // An error, and one that is expected and missing, is a line of the output.
+    expect(await bun(String(dir), "check", "--no-pretty", "uses.ts")).toMatchObject({ stdout: "", exitCode: 0 });
+  });
+
   test("a build without it writes what it always did", async () => {
     using dir = tempDir("build-without-dts", project);
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out");

@@ -706,6 +706,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         tsconfig,
         conditions,
         loaders,
+        react_compiler: _,
         entry_points,
         sources,
     } = checked;

@@ -950,6 +950,30 @@ export function literal(which: "plain" | "loud"): { done: true } {
 `,
   };
 
+  test("--react-compiler: a parameter whose default value is in the function body can be left out", async () => {
+    using dir = tempDir(
+      "library-typed-file-react-compiler",
+      library({
+        "src/state.ts": `export function useState<T>(initial: T): [T] {\n  return [initial];\n}\n`,
+        "src/index.tsx": `import { useState } from "./state";
+export function useBoth(first: number = 1, second: number = 2): number {
+  const [value] = useState(first);
+  return value + second;
+}
+export const sums: number[] = [useBoth(), useBoth(5), useBoth(5, 6)];
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.tsx", "--react-compiler");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain("t1?: number): number {\n");
+    // A package whose .aot.ts files are left out has no "aot" condition.
+    expect(json(join(String(dir), "dist/package.json")).exports).toEqual({
+      ".": conditions("index"),
+      "./package.json": "./package.json",
+    });
+  });
+
   test.each([["--minify-syntax"], ["--minify-whitespace"], ["--minify-syntax", "--minify-whitespace"]])(
     "%s %s keeps the .aot.ts file",
     async (...flags) => {

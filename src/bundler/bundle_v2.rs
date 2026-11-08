@@ -2562,6 +2562,7 @@ pub mod bv2_impl {
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
+                react_compiler: self.transpiler.options.react_compiler.is_enabled(),
                 entry_points: &mut entry_points,
                 sources: &mut sources,
             };

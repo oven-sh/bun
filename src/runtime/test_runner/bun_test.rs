@@ -1595,6 +1595,15 @@ impl BunTest {
         if is_of_entry
             && exception.is_some_and(|exception| self.unclaimed.was_reported(user_data, exception))
         {
+            // The report is left out. That the test left a rejection unhandled stays in its JUnit failure.
+            if self.is_reporting_uncaught
+                && handle_status == HandleUncaughtExceptionResult::ShowHandledError
+                && let Some((sequence, _)) =
+                    self.execution.get_current_and_valid_execution_sequence(user_data)
+                && let Some(failure) = &mut sequence.failure
+            {
+                failure.uncaught = true;
+            }
             return;
         }
 

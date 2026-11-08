@@ -1056,6 +1056,63 @@ describe("CLI argument error messages", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/21406
+describe.concurrent("--outfile with --outdir", () => {
+  const sources: Record<string, string> = {
+    "index.ts": "console.log(1);",
+    "index.html": "<!doctype html><title>page</title>",
+  };
+
+  // `""` in a command line is an empty argument. `written` lists every file that is new or no longer holds its source.
+  async function bun(commandLine: string) {
+    using dir = tempDir("build-outfile-outdir", sources);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...commandLine.split(" ").map(arg => (arg === '""' ? "" : arg))],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const written = [...new Bun.Glob("**/*").scanSync({ cwd: String(dir) })]
+      .map(file => file.replaceAll("\\", "/"))
+      .filter(
+        file => !Object.hasOwn(sources, file) || fs.readFileSync(join(String(dir), file), "utf8") !== sources[file],
+      )
+      .sort();
+    return { stdout, stderr, exitCode, written };
+  }
+
+  test.each([
+    ['build index.ts --outfile x.js --outdir ""', "x.js"],
+    ["build index.ts --outfile x.js --outdir=", "x.js"],
+    ['build --compile --target=browser index.html --outfile x.html --outdir ""', "x.html"],
+    ['build index.ts --outfile "" --outdir out', "out/index.js"],
+  ])("bun %s writes %s", async (commandLine, file) => {
+    const { stderr, exitCode, written } = await bun(commandLine);
+    expect({ stderr, exitCode, written }).toEqual({ stderr: "", exitCode: 0, written: [file] });
+  });
+
+  // The name that --compile refuses shows that it read --outfile, without the cost of a compile.
+  test('bun build --compile index.ts --outfile bun --outdir "" reads --outfile', async () => {
+    expect(await bun('build --compile index.ts --outfile bun --outdir ""')).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("cannot use --compile with an output file named 'bun'"),
+      exitCode: 1,
+      written: [],
+    });
+  });
+
+  test("bun build index.ts --outfile= --outdir= prints the bundle", async () => {
+    expect(await bun("build index.ts --outfile= --outdir=")).toEqual({
+      stdout: expect.stringContaining("console.log(1);"),
+      stderr: "",
+      exitCode: 0,
+      written: [],
+    });
+  });
+});
+
 describe.concurrent("modules that fail to print", () => {
   // A TOML dotted header builds an object nested arbitrarily deep without
   // recursing in the parser, so the printer's recursion guard is the first

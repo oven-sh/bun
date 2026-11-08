@@ -2994,14 +2994,12 @@ fn parse_build_command_options(
         ctx.bundler_options.windows.copyright = Some(copyright.into());
     }
 
-    if let Some(outdir) = args.option(b"--outdir") {
-        if !outdir.is_empty() {
-            ctx.bundler_options.outdir = outdir.into();
-        }
-    } else if let Some(outfile) = args.option(b"--outfile") {
-        if !outfile.is_empty() {
-            ctx.bundler_options.outfile = outfile.into();
-        }
+    let outdir = args.option(b"--outdir").filter(|path| !path.is_empty());
+    let outfile = args.option(b"--outfile").filter(|path| !path.is_empty());
+    if let Some(outdir) = outdir {
+        ctx.bundler_options.outdir = outdir.into();
+    } else if let Some(outfile) = outfile {
+        ctx.bundler_options.outfile = outfile.into();
     }
 
     if let Some(metafile) = args.option(b"--metafile") {

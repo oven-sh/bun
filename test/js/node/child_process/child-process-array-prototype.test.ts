@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
@@ -267,6 +267,12 @@ describe("what a script stored on Array.prototype", () => {
     `,
   };
 
+  // A fixture that waits for a child that nothing can reach waits for good. Its test times out, and this ends the fixture.
+  const running = new Set<Bun.Subprocess>();
+  afterAll(() => {
+    for (const proc of running) proc.kill();
+  });
+
   async function run(...args: string[]) {
     using dir = tempDir("child-process-array-prototype", files);
     await using proc = Bun.spawn({
@@ -276,7 +282,9 @@ describe("what a script stored on Array.prototype", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
+    running.add(proc);
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    running.delete(proc);
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
   const ranToItsEnd = { stderr: "", exitCode: 0, signalCode: null };

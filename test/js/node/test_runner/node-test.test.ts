@@ -325,7 +325,7 @@ describe("node:test", () => {
     });
   });
 
-  test("should give every --retry attempt of a test its own state", async () => {
+  test.concurrent("should give every --retry attempt of a test its own state", async () => {
     const { lines, verdicts, exitCode } = observed(await runTests(["32-retry.js"], {}, ["--retry", "1"]));
     expect(lines).toEqual([
       "subtests: attempt 1 child runs=1",
@@ -352,19 +352,22 @@ describe("node:test", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("should keep the t.after hooks and the mock reset of an attempt that bun:test's own timeout ended", async () => {
-    const args = ["--retry", "1", "--timeout", "1"];
-    const { lines, verdicts, exitCode } = observed(await runTests(["34-retry-after-timeout.js"], {}, args));
-    expect(lines).toEqual([
-      "t.after of attempt 1",
-      "t.after of attempt 2",
-      "next: method=real setTimeout is real=true",
-    ]);
-    expect(verdicts).toEqual(["(fail) its first attempt hangs (attempt 2)", "(pass) next"]);
-    expect(exitCode).toBe(1);
-  });
+  test.concurrent(
+    "should keep the t.after hooks and the mock reset of an attempt that bun:test's own timeout ended",
+    async () => {
+      const args = ["--retry", "1", "--timeout", "1"];
+      const { lines, verdicts, exitCode } = observed(await runTests(["34-retry-after-timeout.js"], {}, args));
+      expect(lines).toEqual([
+        "t.after of attempt 1",
+        "t.after of attempt 2",
+        "next: method=real setTimeout is real=true",
+      ]);
+      expect(verdicts).toEqual(["(fail) its first attempt hangs (attempt 2)", "(pass) next"]);
+      expect(exitCode).toBe(1);
+    },
+  );
 
-  test("should report the declared todo for a --retry attempt of a run() child", async () => {
+  test.concurrent("should report the declared todo for a --retry attempt of a run() child", async () => {
     const events = await run({
       files: [join(import.meta.dirname, "fixtures", "33-retry-todo.js")],
       argv: ["--retry", "1"],

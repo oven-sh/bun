@@ -9,7 +9,8 @@ struct Found {
     test_runner: Option<RuntimeModule>,
     jest: Option<BuiltinId>,
     plugin: Option<BuiltinId>,
-    expect: Option<BuiltinId>,
+    /// `expect` of "bun:test", and the function of its own that "vitest" exports.
+    expects: [Option<BuiltinId>; 2],
 }
 
 fn found() -> &'static Found {
@@ -20,15 +21,15 @@ fn found() -> &'static Found {
             Some(canonical_id(member))
         };
         let test_runner = module_by_specifier(b"bun:test");
-        let export_of_runner = |name: &[u8]| {
-            let export = own_member(namespace_of(test_runner?), find_name(name)?)?;
+        let expect_of = |module: Option<RuntimeModule>| {
+            let export = own_member(namespace_of(module?), find_name(b"expect")?)?;
             Some(canonical_id(export))
         };
         Found {
             test_runner,
             jest: member_of_bun(b"jest"),
             plugin: member_of_bun(b"plugin"),
-            expect: export_of_runner(b"expect"),
+            expects: [expect_of(test_runner), expect_of(module_by_specifier(b"bun:test/vitest"))],
         }
     })
 }
@@ -52,7 +53,7 @@ pub fn returns_test_runner(id: BuiltinId) -> bool {
 pub fn is_of_expect(id: BuiltinId) -> bool {
     let mut holder = Some(id);
     while let Some(held) = holder {
-        if Some(canonical_id(held)) == found().expect {
+        if found().expects.contains(&Some(canonical_id(held))) {
             return true;
         }
         holder = entry(held).holder;

@@ -267,6 +267,7 @@ fn differs_by_flavor(name: &str) -> bool {
             | "aroundEach"
             | "aroundAll"
             | "vi"
+            | "expect"
     )
 }
 
@@ -1333,6 +1334,11 @@ mod tests {
                 "lib.js",
                 "vi;",
                 "(%loaded-by-worker ? vi : (%loaded-below-vitest ? %vitest:vi : %test:vi))",
+            ),
+            (
+                "lib.js",
+                "expect;",
+                "(%loaded-by-worker ? expect : (%loaded-below-vitest ? %vitest:expect : %test:expect))",
             ),
             (
                 "lib.js",

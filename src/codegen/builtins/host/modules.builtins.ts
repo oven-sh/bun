@@ -216,6 +216,15 @@ const expects = {
   uses: { value: keptForMatchers, message: [b.retained] },
   implementation: b.generic,
 } satisfies b.FunctionField;
+// expect.poll(): the object keeps the function for its matchers, which call it. Expect::poll_in() in src/runtime/test_runner/expect.rs.
+const polls = {
+  args: { fn: b.any.optional, options: b.any.optional },
+  returns: b.instance("Expect").fresh,
+  capability: "js",
+  throws: true,
+  uses: { fn: [b.retained], options: [b.retained] },
+  implementation: b.generic,
+} satisfies b.FunctionField;
 
 // The matcher that it answers keeps the pattern, and wherever a comparison meets the matcher the pattern goes to Bun__deepMatch().
 const answersMatcherOfPattern = {
@@ -527,7 +536,7 @@ export default b.declarations(
   }),
   // One object under two names: Bun__Jest__createTestModuleObject() in src/runtime/test_runner/jest.rs.
   b.same("bun:test/vitest.vitest", "bun:test/vitest.vi"),
-  // The export is the constructor of the class: create_test_module() and create_mock_objects() in src/runtime/test_runner/jest.rs.
+  // The export of "bun:test" is the constructor of the class: create_mock_objects() in src/runtime/test_runner/jest.rs.
   b.callOfConstructor("%Expect%", expects),
   b.fn("%Expect%.objectContaining", answersMatcherOfPattern),
   b.method("%ExpectStatic%.prototype.objectContaining", answersMatcherOfPattern),
@@ -551,7 +560,11 @@ export default b.declarations(
     ),
   ),
   b.same("bun:test.expect", "%Expect%"),
-  b.same("bun:test/vitest.expect", "%Expect%"),
+  // "vitest" exports a function of its own, with the constructor as its prototype: Expect::create_of_vitest() in src/runtime/test_runner/expect.rs.
+  b.fn("bun:test/vitest.expect", expects),
+  b.inherits("bun:test/vitest.expect", "%Expect%"),
+  b.fn("bun:test/vitest.expect.soft", expects),
+  b.fn("bun:test/vitest.expect.poll", polls),
   b.fn("bun:test.setSystemTime", b.otherwise),
   b.namespace("bun:test.mock", { module: b.otherwise, restore: b.otherwise, clearAllMocks: b.otherwise }),
   b.fn("bun:test.mock", b.otherwise),

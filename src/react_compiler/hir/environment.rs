@@ -78,6 +78,10 @@ pub struct Environment {
     pub instrument_gating_name: Option<StoreStr>,
     pub hook_guard_name: Option<StoreStr>,
 
+    /// [`Host::jsx_classic_factory_root`](crate::program::Host::jsx_classic_factory_root), once lowering has
+    /// seen a call of the factory.
+    pub(crate) jsx_factory_root: Option<StoreStr>,
+
     // Renames: tracks variable renames from lowering (original_name → new_name)
     // keyed by binding declaration position, for applying back to the Babel AST.
     pub renames: HirVec<BindingRename>,
@@ -201,6 +205,7 @@ impl Environment {
             instrument_fn_name: None,
             instrument_gating_name: None,
             hook_guard_name: None,
+            jsx_factory_root: None,
             renames: AstAlloc::vec(),
             binding_names: HashMap::default(),
             reference_node_ids: HashSet::default(),

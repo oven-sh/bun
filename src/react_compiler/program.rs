@@ -127,6 +127,12 @@ pub trait Host {
     /// resolved from the current scope the way the visit pass resolves it.
     fn jsx_classic_factory(&mut self, loc: Loc) -> Expr;
 
+    /// The first identifier of that factory: `React`, `h`. Codegen prints the factory with no instruction
+    /// for it, so RenameVariables needs the name. A host that prints nothing has none.
+    fn jsx_classic_factory_root(&self) -> Option<&[u8]> {
+        None
+    }
+
     /// A new symbol for a module-level name, such as an outlined function.
     fn new_generated(&mut self, name: &[u8]) -> Ref;
 

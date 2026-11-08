@@ -2299,7 +2299,10 @@ declare module "bun:test" {
      * Asserts that a value has a property with the
      * expected name, and value if provided.
      *
-     * In a test that uses `test` from `"vitest"`, a Symbol in an array path does not match a symbol key, as in Vitest.
+     * These tests keep Vitest's result, where a Symbol in an array path does not match a symbol key:
+     * - A test registered through `"vitest"`. Its `test` is imported from `"vitest"`, or is the global `test` in a file
+     *   that gets its globals from `"vitest"`, such as a file that imports from `"vitest"`.
+     * - A `test.for()` test and a test from `test.extend()`, whichever module their `test` comes from.
      *
      * @example
      * expect(new Set()).toHaveProperty("size");

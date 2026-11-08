@@ -43,11 +43,11 @@ microsoft/TypeScript 5237fd46890956e4bb8177a1a05dcd69e4166560. A sync with an ol
 
 When `bun check` widens an object literal, it makes each `name?: undefined` property for a name that only a sibling
 has from that sibling, as TypeScript 7.1 does (microsoft/TypeScript#64728). 7.0 makes one per name and per checker,
-from the first literal that needs it, so its `readonly` and its declaration depend on which files share a checker. One
-test shows the difference: `objectLiteralNormalization.js` and `objectLiteralNormalization.types` are those of
-microsoft/TypeScript 5237fd46890956e4bb8177a1a05dcd69e4166560, and `objectLiteralNormalization.symbols` is that of
-typescript-go 2bd066d87f5bafd315be9f40889d0a60b9e58e0b with the six lines of that change applied to it (that version
-repeats a declaration that a later one lists once). A sync with an older version brings the old ones back.
+from the sibling of the first literal that needs it, so its `readonly` and its declaration depend on which files share
+a checker. One test shows the difference: `objectLiteralNormalization.js` and `objectLiteralNormalization.types` are
+those of microsoft/TypeScript 5237fd46890956e4bb8177a1a05dcd69e4166560, and `objectLiteralNormalization.symbols` is
+that of typescript-go 2bd066d87f5bafd315be9f40889d0a60b9e58e0b with the six lines of that change applied to it (that
+version repeats a declaration that a later one lists once). A sync with an older version brings the old ones back.
 
 At 100 nested comparisons `bun check` assumes that the two types are related, as TypeScript 7.1 does. 7.0 gives up
 there and reports TS2321, and what it caches then depends on which comparison came first. One test shows the

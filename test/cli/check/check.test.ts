@@ -1224,8 +1224,8 @@ module.exports = Base;
 
   // Widening `{ kind: "b" }` next to `{ kind: "a", reason: "x" }` gives it a `reason?: undefined` property. TypeScript
   // 7.1 makes it from the sibling, so it's `readonly` in an `as const` table. Before that, a checker made one per
-  // name, from the first table that needed it, so the mutable table in `a.ts` made `reason` writable in `b.ts` if the
-  // two files shared a checker. That depends on the number of threads.
+  // name, from the sibling of the first table that needed it, so the mutable table in `a.ts` made `reason` writable
+  // in `b.ts` if the two files shared a checker. That depends on the number of threads.
   const tables = {
     each:
       `declare function each<T>(rows: readonly T[]): (run: (row: T) => void) => void;\n` +
@@ -1242,6 +1242,14 @@ module.exports = Base;
     using dir = project({ "tables.ts": tables.each + tables.mutable + tables.readonly });
     const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
     expect(stdout).toBe(readonlyReason("tables.ts", 5));
+    expect(exitCode).toBe(1);
+  });
+
+  test("a mutable table keeps a property writable that an `as const` table in the same file widened first", async () => {
+    const assigns = `each([{ kind: "a", reason: "x" }, { kind: "b" }])((row) => {\n  row.reason = undefined;\n});\n`;
+    using dir = project({ "tables.ts": tables.each + tables.readonly + assigns });
+    const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+    expect(stdout).toBe(readonlyReason("tables.ts", 4));
     expect(exitCode).toBe(1);
   });
 
@@ -25101,7 +25109,7 @@ describe.concurrent("--check", () => {
       Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "typescript-go", "bundle.zst"))),
     );
     const entries: [path: string, start: number, length: number][] = [];
-    for (let at = 0; at < bundle.length;) {
+    for (let at = 0; at < bundle.length; ) {
       const end = bundle.indexOf(10, at);
       const [, path, length] = /^=== (.*) (\d+)$/.exec(bundle.toString("latin1", at, end))!;
       entries.push([path, end + 1, +length]);

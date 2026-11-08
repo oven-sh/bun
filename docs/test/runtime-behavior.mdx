@@ -124,7 +124,7 @@ test("test without timeout", async () => {
 }, 0);
 ```
 
-A test without a timeout still fails when nothing left on the event loop could settle it. See [Unsettled Top-Level Await](#unsettled-top-level-await).
+A timeout of 4294967295 ms (about 49.7 days) or more also disables it. A test without a timeout still fails when nothing left on the event loop could settle it. See [Unsettled Top-Level Await](#unsettled-top-level-await).
 
 ## Timers
 

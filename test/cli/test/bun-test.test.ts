@@ -3226,8 +3226,9 @@ describe.concurrent("a test file that can never finish running", () => {
   const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [^[\r\n]+/gm)?.map(line => line.trimEnd());
   // A run with a timer armed for a timeout of Infinity never ends. This kills it before the test that waits for it times
   // out, which would leave it running. ASAN's leak check makes exit slow, and CI gives ASAN tests minutes.
+  const beforeTheTestTimesOut = isASAN && isCI ? 60_000 : 4000;
   const runToItsEnd = (files: Record<string, string>, ...args: string[]) =>
-    runFilesWith({ killedAfterMs: isASAN && isCI ? 60_000 : 4000 }, files, ...args);
+    runFilesWith({ killedAfterMs: beforeTheTestTimesOut }, files, ...args);
 
   test("a timeout of Infinity is no timeout: tests that never settle fail and the run continues", async () => {
     const { stderr, errors, counts, exitCode, signalCode } = await runToItsEnd(
@@ -3286,22 +3287,44 @@ describe.concurrent("a test file that can never finish running", () => {
     });
   });
 
-  // Node.js keeps waiting for such a test. Not beside the others: node:test loads slowly on a debug build.
-  test.serial(
-    "a node:test test with a timeout of Infinity that never settles fails and the run continues",
+  // Node.js waits without end for a test with no timeout, so node:test does not turn Infinity into bun:test's "no
+  // timeout". Not beside the others: node:test loads slowly on a debug build.
+  test.serial.skipIf(isWindows)(
+    "a node:test test with a timeout of Infinity is waited for until a signal settles it",
     async () => {
-      const { stderr, errors, counts, exitCode, signalCode } = await runToItsEnd({
+      using dir = tempDir("bun-test-waits", {
         "a.test.ts": `
-        import { test } from "node:test";
-        test("never settles", { timeout: Infinity }, () => new Promise(() => {}));
-        test("settles", () => {});
-      `,
+          import { test } from "node:test";
+          test("waits for a signal", { timeout: Infinity }, () => {
+            const signalled = new Promise(resolve => process.once("SIGUSR2", resolve));
+            console.log("waiting");
+            return signalled;
+          });
+        `,
       });
-      expect({ results: results(stderr), errors, counts, exitCode, signalCode }).toEqual({
-        results: ["(fail) never settles", "(pass) settles"],
-        errors: neverSettledIn("a.test.ts"),
-        counts: [" 1 pass", " 1 fail"],
-        exitCode: 1,
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: beforeTheTestTimesOut,
+        killSignal: "SIGKILL",
+      });
+      const stderr = proc.stderr.text();
+      const decoder = new TextDecoder();
+      let stdout = "";
+      let isSignalled = false;
+      for await (const chunk of proc.stdout) {
+        stdout += decoder.decode(chunk, { stream: true });
+        if (!isSignalled && stdout.includes("waiting")) {
+          isSignalled = true;
+          proc.kill("SIGUSR2");
+        }
+      }
+      expect({ results: results(await stderr), exitCode: await proc.exited, signalCode: proc.signalCode }).toEqual({
+        results: ["(pass) waits for a signal"],
+        exitCode: 0,
         signalCode: null,
       });
     },

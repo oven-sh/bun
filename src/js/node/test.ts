@@ -2539,8 +2539,8 @@ function bunTestOptions(options: TestOptions) {
   // about timeouts that extend past its 5s default.
   const { timeout } = options;
   if (timeout === Infinity) {
-    // Overrides bun:test's default. Node waits for a test that nothing can settle, and `bun test` fails it.
-    return { timeout };
+    // Node waits without end. bun:test gets the longest timeout, because it fails a stuck test that has none.
+    return { timeout: kTimeoutMax };
   }
   if (typeof timeout === "number" && Number.isFinite(timeout)) {
     // Keep bun:test's watchdog at or above both the node-style timeout and

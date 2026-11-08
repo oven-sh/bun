@@ -110,8 +110,8 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) failure_skip_to: usize,
     /// Like `ExecutionSequence::pending_matchers`, for matchers whose calling sequence isn't known.
     pub(crate) pending_matchers: u32,
-    /// A test of the group ran with no timeout, so `pending_matchers` has no deadline.
-    pub(crate) ran_test_with_no_timeout: bool,
+    /// A test with no timeout was running when one of `pending_matchers` was called, so they have no deadline.
+    pub(crate) pending_matchers_have_no_deadline: bool,
 }
 
 impl ConcurrentGroup {
@@ -124,7 +124,7 @@ impl ConcurrentGroup {
             failure_skip_to: next_index,
             next_sequence_index: 0,
             pending_matchers: 0,
-            ran_test_with_no_timeout: false,
+            pending_matchers_have_no_deadline: false,
         }
     }
 
@@ -218,6 +218,14 @@ impl ExecutionSequence {
     fn waits_for_matchers(&mut self) -> bool {
         self.callback_done = self.pending_matchers > 0 && !self.maybe_skip;
         self.callback_done
+    }
+
+    /// The callback of its test has started, and the test has not ended.
+    pub(crate) fn runs_test_with_no_timeout(&self) -> bool {
+        self.executing
+            && self.active_entry == self.test_entry
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
+            && self.test_entry.is_some_and(|entry| unsafe { entry.as_ref() }.timeout == 0)
     }
 
     fn entry_mode(&self) -> ScopeMode {
@@ -1034,7 +1042,7 @@ fn step_group(
         let group = unsafe { &mut *group_ptr.as_ptr() };
         if group.pending_matchers > 0 {
             // Any test in the group may have called them, so wait until the latest test deadline.
-            let timeout = if group.ran_test_with_no_timeout {
+            let timeout = if group.pending_matchers_have_no_deadline {
                 Timespec::EPOCH
             } else {
                 this.sequences[group.sequence_start..group.sequence_end]
@@ -1343,10 +1351,6 @@ fn step_sequence_one(
             args
         };
 
-        if next_item.timeout == 0 && sequence.test_entry == Some(next_item_ptr) {
-            // SAFETY: group points into this.groups (disjoint from this.sequences).
-            unsafe { (*group.as_ptr()).ran_test_with_no_timeout = true };
-        }
         // The callback re-enters and reaches the sequence on its own, so no `&mut` is held across it.
         let sequence_ptr = NonNull::from(sequence);
         global_this.bun_vm().as_mut().is_running_vitest_entry = next_item.calling.is_vitest();

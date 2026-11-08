@@ -191,6 +191,14 @@ impl RunningEntry {
             .is_some_and(|buntest| self.pending_matchers(&buntest).is_some())
     }
 
+    /// The concurrent group that holds the call, when no sequence of it does.
+    fn group_index(&self) -> Option<usize> {
+        match self.entry {
+            RefDataValue::Execution { group_index, entry_data: None } => Some(group_index),
+            _ => None,
+        }
+    }
+
     /// Checks the clock directly, because the runner only notices a timeout after the microtask queue drains.
     fn has_timed_out(&self) -> bool {
         let Some(buntest) = self.buntest.upgrade() else {
@@ -216,6 +224,13 @@ impl RunningEntry {
             // SAFETY: as in `pending_matchers`.
             unsafe { *pending_matchers.as_ptr() += 1 };
             self.unclaimed = Some(buntest.get().unclaimed.add(global, deferred));
+            if let Some(group_index) = self.group_index() {
+                let execution = &mut buntest.get().execution;
+                let sequences = execution.groups[group_index].sequences(execution);
+                // Such a test may be the caller, and the deadline of another test must not end its wait.
+                let may_have_no_timeout = sequences.iter().any(ExecutionSequence::runs_test_with_no_timeout);
+                execution.groups[group_index].pending_matchers_have_no_deadline |= may_have_no_timeout;
+            }
         }
         self
     }
@@ -244,6 +259,9 @@ impl RunningEntry {
             *pending_matchers.as_ptr() -= 1;
             *pending_matchers.as_ptr() == 0
         };
+        if let (true, Some(group_index)) = (none_left, self.group_index()) {
+            buntest.get().execution.groups[group_index].pending_matchers_have_no_deadline = false;
+        }
         let next = match self.sequence(&buntest) {
             Some(sequence) => {
                 // SAFETY: as in `pending_matchers`.

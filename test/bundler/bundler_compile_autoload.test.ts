@@ -25,6 +25,7 @@ describe("bundler", () => {
     run: {
       stdout: "listings 0",
       setCwd: true,
+      env: { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
     },
   });
 

@@ -1859,6 +1859,7 @@ impl<'a> Resolver<'a> {
         if self.standalone_module_graph.is_some()
             || !bun_paths::is_absolute(path)
             || strings::index_of_char(path, 0).is_some()
+            || Self::import_path_names_directory(path)
         {
             return ResultUnion::NotFound;
         }
@@ -3900,12 +3901,19 @@ impl<'a> Resolver<'a> {
         };
 
         let dir_entries_option: *const Fs::file_system::real_fs::EntriesOption =
-            rfs!().read_directory(dir_path, Some(open_dir), self.generation, self.store_fd)?;
+            match rfs!().read_directory(dir_path, Some(open_dir), self.generation, self.store_fd) {
+                Ok(read) => read,
+                Err(err) => {
+                    let _ = bun_sys::close(open_dir);
+                    return Err(err);
+                }
+            };
         // SAFETY: `read_directory` returned a live slot in `rfs.entries` (or the
         // threadlocal scratch slot for a missing directory, read before the next call).
         let dir_entries = match unsafe { &*dir_entries_option }.try_entries() {
             Ok(entries) => entries,
             Err(err) => {
+                let _ = bun_sys::close(open_dir);
                 let _ = self.log_mut().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
@@ -5071,9 +5079,8 @@ impl<'a> Resolver<'a> {
                         ),
                     )?;
                     // SAFETY: `put` returned the live slot.
-                    if let Fs::file_system::real_fs::EntriesOption::Entries(entries) =
-                        unsafe { &*read }
-                    {
+                    let read = unsafe { &*read };
+                    if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = read {
                         listing = Some(std::ptr::from_ref(&**entries));
                     }
                 } else if !has_stale_listing {

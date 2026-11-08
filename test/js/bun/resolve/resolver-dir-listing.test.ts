@@ -172,6 +172,7 @@ describe("DirInfo markers without a listing", () => {
     const { stdout, stderr, exitCode } = await run(
       [bunExe(), "-e", "console.log(process.env.FROM_ENV, process.env.FROM_LOCAL, process.env.FROM_PROD)"],
       String(dir),
+      { NODE_ENV: "development", BUN_ENV: undefined },
     );
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1 2 undefined\n", stderr: "", exitCode: 0 });
   });

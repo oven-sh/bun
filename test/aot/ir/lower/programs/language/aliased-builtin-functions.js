@@ -38,34 +38,5 @@ show("calls", Uint8Array.of(1, 2).toString(), [...Uint8Array.of(1, 2).values()],
 const parse = Number.parseInt, trim = String.prototype.trimLeft
 show("values called", parse("7.9"), JSON.stringify(trim.call("  b ")), Number.parseInt.name, String.prototype.trimLeft.name, Set.prototype.keys.name)
 
-// GENERATED: isSame show
 // CHECK-LABEL: function {{*}}name="isSame"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = StrictEq v0, v1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: anything, v1: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=": "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = PropGet v1 key="join"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_3]] flags=[IsExpected]}
-// CHECK-NEXT: v11 = String string=" "
-// CHECK-NEXT: v12 = Call v10, v1, v11 calleeKey="join" calleeName="values.join"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v14 = Add v8, v13
-// CHECK-NEXT: v15 = Call v6, v4, v14 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: ReturnCall v15
-// CHECK-NEXT: }

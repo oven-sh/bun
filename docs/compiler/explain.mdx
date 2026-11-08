@@ -32,38 +32,35 @@ bun compile ./main.ts --explain
 ```
 
 ```txt
-7 | const saved: any = JSON.parse('{ "sku": "B-2", "price": 10 }');
-                            ^
+11 | for (const item of items) total += item.price;
+                                        ^
 note: 1. unknown-object: An object from untyped code is used as this type here, so it can have any shape.
-   at main.ts:7:25
+   at main.ts:11:36
 
 note: 1 of 1 untyped access
-note: 1 untyped operator
-note: about 100% of the time in untyped operations, by how often the compiler expects each to run
-note: types: 'Item'
-note: why (external-data): The value comes from outside the program (JSON.parse, response.json(), structuredClone, a message).
+note: 1 of these runs in a loop
+note: why (loose-type): The value comes from 'any', 'unknown', 'object', '{}', 'Function' or a bare type parameter.
 note: fix: build a new object of this type from it where it enters typed code.
 note: https://bun.com/docs/compiler/explain#unknown-object
 ```
 
-| Line                     | What it tells you                      |
-| ------------------------ | -------------------------------------- |
-| `1. unknown-object`      | The rank and the [cause](#causes)      |
-| `at`                     | Where the untyped value comes from     |
-| `1 of 1 untyped access`  | How many accesses the fix speeds up    |
-| `1 untyped operator`     | Operators on a value of unknown type   |
-| `3 indirect calls`       | Calls where the callee isn't known     |
-| `about 100% of the time` | The estimate the entries are sorted by |
-| `fix this too:`          | Another line that causes the same      |
-| `types:`                 | The types that the cause slows down    |
-| `why`                    | How the value got past TypeScript      |
-| `fix:`                   | What to change                         |
+| Line                        | What it tells you                       |
+| --------------------------- | --------------------------------------- |
+| `1. unknown-object`         | The rank and the [cause](#causes)       |
+| `at`                        | The line that runs slower               |
+| `1 of 1 untyped access`     | How many accesses the fix speeds up     |
+| `1 untyped operator`        | Operators on a value of unknown type    |
+| `3 indirect calls`          | Calls where the callee isn't known      |
+| `1 of these runs in a loop` | How many are in loops, which rank first |
+| `types:`                    | The types that the cause slows down     |
+| `why`                       | How the value got past TypeScript       |
+| `fix:`                      | What to change                          |
 
-The location is where the untyped value starts, not where you use it. If `settings` comes from `JSON.parse` in one file, every read of `settings.panel.size` in any other file counts for that one line.
+The location is the line that uses the untyped value, not the line where the value starts. Here that's the read of `item.price`, and the value comes from the `JSON.parse` four lines above it.
 
-The estimate weighs each slow operation by how often the compiler expects it to run, so five accesses in an inner loop rank above a hundred at startup. It comes from the structure of your program. Nothing is measured.
+Entries whose operations are in loops come first, so five accesses in a loop rank above a hundred at startup. After that, entries are sorted by how many instructions types would save. Nothing is measured. A loop counts if the operation is inside it after inlining, and the count is `inLoops` in JSON.
 
-An access can have more than one cause, so a fix can uncover the next one. When two lines cause the same slow operations independently, for example two loggers that print the same object, the entry is at the first line, says how many of its operations `stay untyped until other entries are fixed too`, and lists the other lines under `fix this too:` (`otherOrigins` in JSON, at most three per operation). `fixedByThisAlone` in JSON counts the operations that fixing the entry's own line is enough for.
+An access can have more than one cause, so a fix can uncover the next one.
 
 The report shows the first 20 entries, and `--explain=json` prints all of them.
 
@@ -90,19 +87,18 @@ Bun counts after optimization, so the total moves when you change code nearby. W
 
 ## Other reports
 
-| Flag                             | Lists                                                                      |
-| -------------------------------- | -------------------------------------------------------------------------- |
-| `--explain=json`                 | Every entry, one JSON object per line                                      |
-| `--explain=guards`               | [Type guards that can fail](/compiler/debugging#find-the-guards-that-fail) |
-| `--explain=trim`                 | [What `--trim` kept, and why](/compiler/size#see-what-the-compiler-found)  |
-| `--explain=missed-optimizations` | Hot calls and loops that weren't optimized                                 |
-| `--explain=allocations`          | Where each object is allocated                                             |
+| Flag                    | Lists                                                                      |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `--explain=json`        | Every entry, one JSON object per line                                      |
+| `--explain=guards`      | [Type guards that can fail](/compiler/debugging#find-the-guards-that-fail) |
+| `--explain=trim`        | [What `--trim` kept, and why](/compiler/size#see-what-the-compiler-found)  |
+| `--explain=allocations` | Where each object is allocated                                             |
 
 You can pass `--explain` more than once. In `Bun.build`, `compile: { aotExplain: ["guards"] }` adds the lines to `result.logs`.
 
 ## Causes
 
-The first line of an entry has one of these codes. The `why` line, if there is one, has a second.
+The first line of an entry has one of these codes. The `why` line, if there is one, has one too.
 
 In the messages, untyped code is code that the compiler can't see: a [module loaded at run time](/compiler/compatibility#dynamic-imports), [code from a string](/compiler/compatibility#code-from-strings), or a native function that Bun has no description of. A `.js` file that's compiled with your program isn't untyped code.
 
@@ -125,7 +121,7 @@ const config: Config = JSON.parse(text); // [!code --]
 const config = readConfig(JSON.parse(text)); // [!code ++]
 ```
 
-The reads inside `readConfig` are still lookups, but they run once, at the edge of your program. If a shape check is cheap enough for you, [declare the type where you parse](/compiler/types#declare-the-type-where-you-parse) so that the check passes. The entries below call a function like this one `readItem` or `readOrder`.
+The reads inside `readConfig` are still lookups, but they run once, at the edge of your program. The entries below call a function like this one `readItem` or `readOrder`.
 
 ### external-data
 
@@ -197,58 +193,6 @@ The same as [called-by-unknown-code](#called-by-unknown-code), on a `why` line.
 
 A built-in calls your function, the way `sort` calls its callback, so the arguments aren't proven. There's nothing to fix if the guard passes. It costs a few instructions.
 
-## Objects that change after they're created
-
-Changing one object slows down every access to its type, because any object of the type could be the one that changed.
-
-### property-added
-
-You add a property that the type doesn't declare, as in `(counter as any).label = "visits"`. Declare it in the class or the object type: `label?: string`.
-
-### field-deleted
-
-You delete a required property. Assign `undefined`, or declare the property optional. Deleting an optional property costs nothing.
-
-### computed-key-delete
-
-`delete object[key]` could delete any field. Keep data with computed keys in a `Map`, or delete a constant key.
-
-### computed-key-store
-
-`object[key] = value` could write any field. Use a `Map` or a `Record` type for data with computed keys.
-
-### store-through-unknown-object
-
-A store through an untyped object, such as `target.count = 0` where `target` is `any`, could write this field. Give `target` its type.
-
-### wrong-type-stored
-
-A field gets a value of another type, as in `(counter as any).count = "none"`. Store a value of the declared type, or widen the field to `number | string`.
-
-### property-redefined
-
-`Object.defineProperty` turns a property into something else, such as a getter. Declare the field, getter or setter in the class or the object literal.
-
-### frozen
-
-You call `Object.freeze`, `Object.seal` or `Object.preventExtensions` on an object that already exists. Freeze it where you create it, as in `Object.freeze({ host, port })`, or freeze a copy.
-
-### prototype-changed
-
-`Object.setPrototypeOf` changes the object's prototype. Create the object with the prototype it needs.
-
-### method-shadowed
-
-Assigning `counter.reset = ...` on an instance hides the method of the class. Declare `reset` as a field in the class.
-
-### lookup-may-change
-
-A method is replaced after the class is defined, as in `Counter.prototype.reset = ...`, so calls to it can't be resolved at build time. Put the final version in the class.
-
-### object-changed
-
-A `delete`, `Object.defineProperty`, `Object.setPrototypeOf` or `Object.freeze` changes an object of this type. The first line of the entry says which one.
-
 ## Classes
 
 ### builtin-base
@@ -315,23 +259,13 @@ A direct `eval()` in this scope can reassign the variable. Use `(0, eval)(code)`
 
 ## Limits of the compiler
 
-### limit-reached
-
-The analysis hit a compiler limit and gave up. The `limit` line of the entry names it. Split the function or the type to get under it.
-
-The report ends with every limit the build hit. `left nothing untyped` means that no access, call or operator is slower because of that limit.
-
 ### lost-track
 
 The compiler stopped tracking the objects that reach this access. Give the value a declared type, or split the function.
 
 ### analysis-disabled
 
-The build used `--aot-disable`, which is an option for working on the compiler. Build without it.
-
-### missed-optimization
-
-The compiler proved the types and still emitted the slow path. That isn't a problem in your code. Please [report it](https://github.com/oven-sh/bun/issues) and include the entry.
+Part of the analysis was left out of the build. No `bun compile` option does that, only tools for working on the compiler. Please [report it](https://github.com/oven-sh/bun/issues) and include the entry.
 
 ### unknown
 

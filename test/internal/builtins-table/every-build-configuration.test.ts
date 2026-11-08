@@ -1,11 +1,11 @@
 import { expect, test } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunExe, isASAN, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 import { run } from "../../aot/harness/run";
-import { engineDirectory, engineFiles as generated } from "./engine-files.ts";
+import { engineDirectory, engineFiles as generated, generatorEnv } from "./engine-files.ts";
 
 const bunRoot = resolve(import.meta.dir, "..", "..", "..");
 const schemas = globAllSources().bindgen;
@@ -25,6 +25,7 @@ async function generate(typesOnly: readonly string[]) {
       `--types-only=${typesOnly.join(",")}`,
     ],
     bunRoot,
+    generatorEnv,
   );
   return {
     errors: stderr.split("\n").filter(line => line !== "" && !line.startsWith("builtins table:")),
@@ -46,7 +47,7 @@ test.skipIf(generated === undefined).each([
     const { errors, exitCode } = (await configurations())[configuration];
     expect({ errors, exitCode }).toEqual({ errors: [], exitCode: 0 });
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );
 
 test.skipIf(generated === undefined)(
@@ -56,5 +57,5 @@ test.skipIf(generated === undefined)(
     expect(withAssertions.ids).not.toBe("");
     expect(withAssertions.ids === withoutAssertions.ids).toBe(true);
   },
-  120_000,
+  isASAN ? 300_000 : 120_000,
 );

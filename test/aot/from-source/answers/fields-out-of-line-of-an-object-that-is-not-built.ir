@@ -1,0 +1,13 @@
+# -- source: fields-out-of-line.ts
+# declare function report(value: unknown): void;
+# class Exchange {
+#   a: number | string; b: number | string; c: number | string; d: number | string;
+#   e: number | string; f: number | string; g: number | string; h: number | string;
+#   constructor() { this.a = 0; this.b = 0; this.c = 0; this.d = 0; this.e = 0; this.f = 0; this.g = 0; this.h = 0; }
+# }
+# function make() { report(new Exchange()); }
+# make();
+# -- end of source
+# RUN(SHELL): run-in-shell globalThis.report = made => print(Object.keys(made).join(), Object.values(made).join());
+# SHELL: a,b,c,d,e,f,g,h 0,0,0,0,0,0,0,0
+# SHELL-NEXT: exited with 0

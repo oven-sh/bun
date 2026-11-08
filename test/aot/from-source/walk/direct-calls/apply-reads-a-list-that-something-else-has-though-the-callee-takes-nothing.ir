@@ -1,0 +1,40 @@
+# `tick.apply(null, list)`: apply reads every element of the list in front of the call, whatever the callee takes. A read out of a list that something else has may run a getter:
+# so the call stays the call with the list, whose stub reads it, though `tick` has no parameter. Entered directly, with the list left unread, no getter ran: 300 calls and 0 reads for 300 and 300.
+# a rest parameter and a literal that nothing else has are as they were made: no read out of them runs code, and `tick` is entered directly as ever.
+# f1 = tick, f2 = ofListThatCame, f3 = ofListThatWasHandedOut, f4 = byReflect, f5 = ofRestParameter, f6 = ofLiteral
+# -- source: apply-reads-a-list-that-something-else-has-though-the-callee-takes-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# let calls = 0;
+# function tick(): void { calls++; }
+# function ofListThatCame(list: number[]): void { tick.apply(null, list as []); }
+# function ofListThatWasHandedOut(n: number): void { const list = [n, 2]; sink(list); tick.apply(null, list as []); }
+# function byReflect(list: number[]): void { Reflect.apply(tick, null, list); }
+# function ofRestParameter(...rest: number[]): void { tick.apply(null, rest as []); } // @ts-expect-error
+# function ofLiteral(n: number): void { tick.apply(null, [n, 2] as []); }
+# const kept: number[] = [1, 2, 3];
+# sink(kept);
+# ofListThatCame(kept);
+# ofListThatWasHandedOut(1);
+# byReflect(kept);
+# ofRestParameter(1, 2, 3);
+# ofLiteral(1);
+# sink(calls);
+# -- end of source
+# RUN: walk f2 f3 f4 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = CallList
+# CHECK-LABEL: code f3:Body
+# CHECK: = CallList
+# CHECK-LABEL: code f4:Body
+# CHECK: = CallList
+# RUN(NEVER): walk f2 f3 f4 mechanisms=all
+# NEVER-NOT: = CallDirect
+# with escape analysis withheld nothing is known to be as it was made, so the rest parameter and the literal are read by the stub too
+# RUN(WITHHELD): walk f2 f3 f4 f5 f6 mechanisms=all-EscapeAnalysis
+# WITHHELD-NOT: = CallDirect
+# RUN(FRESH): walk f5 f6 mechanisms=all-Inlining
+# FRESH-LABEL: code f5:Body
+# FRESH: = CallDirect function=f1
+# FRESH-LABEL: code f6:Body
+# FRESH: = CallDirect function=f1
+# FRESH-NOT: CallList

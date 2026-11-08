@@ -680,9 +680,9 @@ describe.concurrent(
   },
 );
 
-// `bun build` infers that a spread argument takes from an iterator, and that a regular expression literal and
-// `new String()` are objects. The two tools don't, and report no store in taken-from.jsx and made-primitive.jsx.
-// One at a time: side by side, a debug build needs most of the time limit for each of the two.
+// `bun build` infers that an array pattern and a spread argument take from an iterator, and that a regular expression
+// literal and `new String()` are objects. The two tools don't, and report no store in taken-from.jsx and
+// made-primitive.jsx. One at a time: side by side, a debug build needs most of the time limit for each of the two.
 describe("bun lint: what only `bun build` infers isn't reported", () => {
   // A tagged template is a call of its tag to oxlint too: all but the tag with two parameters are reported.
   test(`as oxlint ${expected.oxlint}, to which a tagged template is a call`, async () => {

@@ -1573,6 +1573,251 @@ describe("bundler", () => {
     });
   }
 
+  // An array pattern takes from an iterator, as a spread does, so it is in the memo block of the iterator that it
+  // takes from. Each component renders three times on one memo cache, the third time with another `n`, and has to
+  // render what the plain build renders.
+  const arrayPatternOutput = `
+    AcrossAHook a1 a1 a2 [2]
+    AcrossAnEarlyReturn a1 a1 none [7]
+    AcrossJsx a1 a1 a2 [8]
+    ArrayLiteralPattern 3 3 5 [5]
+    ArrayValues a a a [4]
+    Assignment a a a [4]
+    AssignmentInAnExpression a a a [4]
+    CallbackParameter a1 a1 a2 [7]
+    Closure a1 a1 a2 [4]
+    Default a a a [4]
+    Entries a a a [4]
+    EntriesOfAnObject a1 a1 a2 [4]
+    EntriesThenMap a11,b21 a11,b21 a12,b22 [9]
+    ForOfHead a1 a1 a2 [5]
+    Generator a a a [4]
+    InAnArrayPattern a a a [4]
+    InAnObjectPattern a a a [4]
+    IteratorHelper a a a [4]
+    JoinOfTwoIterators a a 1 [5]
+    Keys a a a [4]
+    MatchAll a a a [4]
+    MemoOverAnEntry a11,b21 a11,b21 a12,b22
+    OwnArray a a a [4]
+    OwnMap a a a [4]
+    OwnSet a a a [4]
+    PropsPattern ab1 ab1 ab2 [2]
+    SetValues a a a [4]
+    StatePair 1 1 2 [2]
+    SymbolIterator a a a [4]
+    TagResult 2 2 3 [3]
+    ThroughALocal a a a [4]
+    TwoPatterns ab ab ab [5]
+    UnusedRest a a a [4]
+    Values 1 1 1 [4]
+    makeNested a a a [4]
+  `;
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/ArrayPatternTakesFromAnIteratorOfItsRender-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": entryThatRenders(`[{ text: "ab", n: 1 }, { text: "ab", n: 1 }, { text: "ab", n: 2 }]`),
+        "/forms.jsx": /* jsx */ `
+          import { useMemo, useState } from "react";
+
+          function* letters(list) {
+            yield* list;
+          }
+          function* numbers() {
+            yield 1;
+            yield 2;
+          }
+          const count = () => numbers();
+          const describe = entry => ({ size: entry[1].length });
+
+          // An array pattern over an iterator that the component makes.
+          export function Keys({ map }) {
+            const [first] = map.keys();
+            return <b>{first}</b>;
+          }
+          export function Values({ map }) {
+            const [first] = map.values();
+            return <b>{first}</b>;
+          }
+          export function SetValues({ set }) {
+            const [first] = set.values();
+            return <b>{first}</b>;
+          }
+          export function ArrayValues({ list }) {
+            const [first] = list.values();
+            return <b>{first}</b>;
+          }
+          export function Entries({ map }) {
+            const [[first]] = map.entries();
+            return <b>{first}</b>;
+          }
+          export function MatchAll({ text }) {
+            const [[first]] = text.matchAll(/[a-z]/g);
+            return <b>{first}</b>;
+          }
+          export function SymbolIterator({ map }) {
+            const [[first]] = map[Symbol.iterator]();
+            return <b>{first}</b>;
+          }
+          export function Generator({ list }) {
+            const [first] = letters(list);
+            return <b>{first}</b>;
+          }
+          export function IteratorHelper({ list }) {
+            const [first] = list.values().map(it => it);
+            return <b>{first}</b>;
+          }
+          export function TagResult({ n }) {
+            const [first] = count\`x\`;
+            return <b>{first + n}</b>;
+          }
+          export function OwnMap({ map }) {
+            const own = new Map(map);
+            const [first] = own.keys();
+            return <b>{first}</b>;
+          }
+          export function OwnSet({ list }) {
+            const own = new Set(list);
+            const [first] = own.values();
+            return <b>{first}</b>;
+          }
+          export function OwnArray({ list }) {
+            const own = [...list];
+            const [first] = own.values();
+            return <b>{first}</b>;
+          }
+          export function UnusedRest({ map }) {
+            const [first, ...rest] = map.keys();
+            return <b>{first}</b>;
+          }
+          export function Default({ map }) {
+            const [first = "none"] = map.keys();
+            return <b>{first}</b>;
+          }
+          export function Assignment({ map }) {
+            let first;
+            [first] = map.keys();
+            return <b>{first}</b>;
+          }
+          export function AssignmentInAnExpression({ map }) {
+            let first;
+            void ([first] = map.keys());
+            return <b>{first}</b>;
+          }
+          export function ThroughALocal({ map }) {
+            const it = map.keys();
+            const [first] = it;
+            return <b>{first}</b>;
+          }
+          // The second pattern goes on where the first one stopped, in the same render.
+          export function TwoPatterns({ map }) {
+            const it = map.keys();
+            const [first] = it;
+            const [second] = it;
+            return <b>{first + second}</b>;
+          }
+          export function InAnObjectPattern({ map }) {
+            const {
+              keys: [first],
+            } = { keys: map.keys() };
+            return <b>{first}</b>;
+          }
+          export function InAnArrayPattern({ map }) {
+            const [[first]] = [map.keys()];
+            return <b>{first}</b>;
+          }
+          export function makeNested() {
+            function Nested({ map }) {
+              const [first] = map.keys();
+              return <b>{first}</b>;
+            }
+            return Nested;
+          }
+          // The third render has another \`n\` and an iterator of the same \`map\`.
+          export function ForOfHead({ map, n }) {
+            const found = [];
+            for (const [first] of [map.keys()]) found.push(first + n);
+            return <b>{found.join()}</b>;
+          }
+          export function CallbackParameter({ map, n }) {
+            const found = [map.keys()].map(([first]) => first + n);
+            return <b>{found.join()}</b>;
+          }
+          export function Closure({ map, n }) {
+            const it = map.keys();
+            const take = () => {
+              const [first] = it;
+              return first;
+            };
+            return <b>{take() + n}</b>;
+          }
+          // What stands between the iterator and the pattern: a hook call (no memo block has one, so nothing is kept),
+          // an early return that the third render takes, JSX, and a join of two iterators.
+          export function AcrossAHook({ map, n }) {
+            const it = map.keys();
+            useState(0);
+            const [first] = it;
+            return <b>{first + n}</b>;
+          }
+          export function AcrossAnEarlyReturn({ map, n }) {
+            const it = map.keys();
+            if (n === 2) return <b>none</b>;
+            const [first] = it;
+            return <b>{first + n}</b>;
+          }
+          export function AcrossJsx({ map, n }) {
+            const it = map.keys();
+            const label = <i>{n}</i>;
+            const [first] = it;
+            return <b>{first + label.children}</b>;
+          }
+          export function JoinOfTwoIterators({ map, n }) {
+            const it = n === 2 ? map.values() : map.keys();
+            const [first] = it;
+            return <b>{first}</b>;
+          }
+
+          // No iterator is in these. What they render and how many memo slots they have stays as it was.
+          export function StatePair({ n }) {
+            const [count, setCount] = useState(n);
+            return <b title={typeof setCount}>{count}</b>;
+          }
+          export function PropsPattern({ list, n }) {
+            const [first, second] = list;
+            return <b>{first + second + n}</b>;
+          }
+          export function ArrayLiteralPattern({ n }) {
+            const [first, second] = [n, n + 1];
+            return <b>{first + second}</b>;
+          }
+          export function EntriesOfAnObject({ n }) {
+            const rows = Object.entries({ a: n }).map(([key, value]) => key + value);
+            return <b>{rows.join()}</b>;
+          }
+          // No iterator is in these either, and they pay: a callback that takes its parameter apart counts as a change of
+          // the array, so \`entries\` and \`rows\` share one memo block. With a \`useMemo\` over what the array holds the component
+          // is not compiled.
+          export function EntriesThenMap({ groups, n }) {
+            const entries = Object.entries(groups);
+            const rows = entries.map(([key, items]) => key + items.length + n);
+            return <b title={entries.length}>{rows.join()}</b>;
+          }
+          export function MemoOverAnEntry({ groups, n }) {
+            const entries = Object.entries(groups);
+            const found = entries.find(entry => entry[0] === "b");
+            const details = useMemo(() => describe(found), [found]);
+            return <b title={details.size}>{entries.map(([key, items]) => key + items.length + n).join()}</b>;
+          }
+        `,
+        ...reactWithAFiberForEachComponent,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: { stdout: reactCompiler ? arrayPatternOutput : asPlain(arrayPatternOutput) },
+    });
+  }
+
   // The compiler takes it that nothing changes a local after a function over it went to JSX or to a hook
   // (`enable_transitively_freeze_function_expressions`). These components do: each pushes onto `list` after `onClick`
   // has it. When the function can change what it captures, JSX freezes `list` with it, the push after that is not
@@ -1586,6 +1831,8 @@ describe("bundler", () => {
       MethodCall 0/3 0/3 0/3
       NewString 4/3 4/3 4/3
       OnlyReads 0/3 0/3 0/3
+      Pattern 0/3 0/3 0/3
+      PatternThroughAHook 0/3 0/3 0/3
       RegExpLiteral 0/3 0/3 0/3
       SpreadArgument 1/3 1/3 1/3
       TagResult 4/3 4/3 4/3
@@ -1595,6 +1842,8 @@ describe("bundler", () => {
       MethodCall 0/3 0/4 0/5 [4]
       NewString 4/3 4/4 4/5 [5]
       OnlyReads 0/3 0/3 0/3 [4]
+      Pattern 0/3 0/4 0/5 [4]
+      PatternThroughAHook 0/3 0/4 0/5 [6]
       RegExpLiteral 0/3 0/4 0/5 [7]
       SpreadArgument 1/3 1/4 1/5 [4]
       TagResult 4/3 4/4 4/5 [5]
@@ -1611,6 +1860,26 @@ describe("bundler", () => {
           const useEvent = handler => handler;
           const useNames = it => [...it].join("");
 
+          export function Pattern({ n }) {
+            const list = makeList(n);
+            const onClick = () => {
+              const [first] = list;
+              return first + "/" + list.length;
+            };
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
+          export function PatternThroughAHook({ n }) {
+            const list = makeList(n);
+            const onClick = useEvent(() => {
+              const [first] = list;
+              return first + "/" + list.length;
+            });
+            const button = <button onClick={onClick} />;
+            list.push(9);
+            return button;
+          }
           export function SpreadArgument({ n }) {
             const list = makeList(n);
             const onClick = () => {

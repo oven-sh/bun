@@ -39,6 +39,7 @@ use crate::hir::InstructionKind;
 use crate::hir::InstructionValue;
 use crate::hir::MutationReason;
 use crate::hir::ParamPattern;
+use crate::hir::Pattern;
 use crate::hir::Place;
 use crate::hir::PlaceOrSpread;
 use crate::hir::PlaceOrSpreadOrHole;
@@ -2676,6 +2677,14 @@ fn compute_signature_for_instruction(
             value: dest_value,
             ..
         } => {
+            // Not in upstream: an array pattern takes from an iterator, as the spread of an `ArrayExpression` does.
+            if env.config.array_patterns_run_iterators && matches!(dl.pattern, Pattern::Array(_)) {
+                let ty =
+                    &env.types[env.identifiers[dest_value.identifier.0 as usize].type_.0 as usize];
+                if let Some(mutate_iter) = conditionally_mutate_iterator(dest_value, ty) {
+                    effects.push(mutate_iter);
+                }
+            }
             for pat_item in each_pattern_items(&dl.pattern) {
                 match pat_item {
                     PatternItem::Place(place) => {

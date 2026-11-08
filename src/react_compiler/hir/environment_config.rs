@@ -122,6 +122,9 @@ pub struct EnvironmentConfig {
     /// it makes a primitive and calls nothing. It was a call there in 19.1.0, it is one in oxc, and react/react#37506
     /// makes it one again. Unlike `tagged_templates_are_always_called`, a memo block can still hold it.
     pub tagged_templates_have_the_effects_of_a_call: bool,
+    /// An array pattern takes from the iterator that it is given, as a spread in an array does, so it is in the memo
+    /// block of an iterator that the render made. To every version of upstream it only reads its operand.
+    pub array_patterns_run_iterators: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -183,6 +186,7 @@ impl Default for EnvironmentConfig {
             spread_arguments_run_iterators: true,
             objects_are_not_primitives: true,
             tagged_templates_have_the_effects_of_a_call: true,
+            array_patterns_run_iterators: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

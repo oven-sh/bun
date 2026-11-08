@@ -407,10 +407,21 @@ function NotNull(props: Props) {
 `;
 
 /**
- * `bun build` infers what upstream's compiler doesn't: a spread argument takes from an iterator. The closure would
- * then change `pair`, JSX would freeze it, and the store after that would be reported.
+ * `bun build` infers what upstream's compiler doesn't: an array pattern and a spread argument take from an iterator.
+ * Each closure would then change `pair`, JSX would freeze it, and the store after that would be reported.
  */
-const takenFrom = `function SpreadArgumentInAClosure(props) {
+const takenFrom = `function PatternInAClosure(props) {
+  const pair = makePair(props.a);
+  const sum = () => {
+    const [x, y] = pair;
+    return x + y;
+  };
+  const button = <Button onClick={sum} />;
+  pair[2] = 1;
+  return button;
+}
+
+function SpreadArgumentInAClosure(props) {
   const pair = makePair(props.a);
   const count = () => {
     const seen = new Set();

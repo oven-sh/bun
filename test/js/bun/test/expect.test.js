@@ -4047,6 +4047,24 @@ describe("expect()", () => {
         ]);
         expect(pattern.a).toBe(number);
 
+        // A matcher that the tag or an own `constructor` matched stands in for it, so neither of the two names the object.
+        const string = expect.any(String);
+        const last = Symbol("zz");
+        const markedOf = (/** @type {object} */ received, /** @type {object} */ expected) =>
+          marked(failureOf(() => expect(received).toMatchObject(expected)));
+        expect(
+          markedOf({ [Symbol.toStringTag]: "Foo", [last]: 1 }, { [Symbol.toStringTag]: string, [last]: 2 }),
+        ).toEqual(["-   [Symbol(zz)]: 2,", "+   [Symbol(zz)]: 1,", "- Expected  - 1", "+ Received  + 1"]);
+        expect(
+          markedOf({ c: { [Symbol.toStringTag]: "Foo", a: 1 }, w: 1 }, { c: { [Symbol.toStringTag]: string }, w: 2 }),
+        ).toEqual(['+     "a": 1,', '-   "w": 2,', '+   "w": 1,', "- Expected  - 1", "+ Received  + 2"]);
+        expect(markedOf({ constructor: Tagged, w: 1 }, { constructor: expect.any(Function), w: 2 })).toEqual([
+          '-   "w": 2,',
+          '+   "w": 1,',
+          "- Expected  - 1",
+          "+ Received  + 1",
+        ]);
+
         const { Database } = require("bun:sqlite");
         using database = new Database(":memory:");
         const statement = database.query("select 1 as a");

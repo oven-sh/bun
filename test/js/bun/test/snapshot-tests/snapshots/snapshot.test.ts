@@ -2659,6 +2659,12 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       "ErrorEvent": `ErrorEvent {\n  type: "error",\n  error: Any<Error>\n}`,
       "class with a private tag": `T \nTagged {\n  "a": Any<Number>,\n  "b": 2,\n}\n`,
       "own getter": `\n{\n  "a": Any<Number>,\n  "total": [native code],\n}\n`,
+      "own tag": `\n{\n  [Symbol(Symbol.toStringTag)]: Any<String>,\n  "a": 1,\n}\n`,
+      "own tag of an object in an object": `\n{\n  "c": {\n    [Symbol(Symbol.toStringTag)]: Any<String>,\n    "a": 1,\n  },\n}\n`,
+      "own constructor": `{}`,
+      "own constructor and another property": `\n{\n  "a": 1,\n}\n`,
+      "own tag and an own getter": `\n{\n  [Symbol(Symbol.toStringTag)]: Any<String>,\n  "total": [native code],\n}\n`,
+      "own constructor and an own getter": `\n{\n  "total": [native code],\n}\n`,
     };
     const older =
       headers.bun +
@@ -2692,6 +2698,12 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
             expect(withGetter()).toMatchSnapshot({ a: number });
             expect(withGetter()).toMatchInlineSnapshot({ a: number }, \`${printed["own getter"]}\`);
           });
+          test("own tag", () => { expect({ [Symbol.toStringTag]: "Foo", a: 1 }).toMatchSnapshot({ [Symbol.toStringTag]: string }); });
+          test("own tag of an object in an object", () => { expect({ c: { [Symbol.toStringTag]: "Foo", a: 1 } }).toMatchSnapshot({ c: { [Symbol.toStringTag]: string } }); });
+          test("own constructor", () => { expect({ constructor: Tagged }).toMatchSnapshot({ constructor: expect.any(Function) }); });
+          test("own constructor and another property", () => { expect({ constructor: Tagged, a: 1 }).toMatchSnapshot({ constructor: expect.any(Function) }); });
+          test("own tag and an own getter", () => { expect({ [Symbol.toStringTag]: "Foo", get total() { return 2; } }).toMatchSnapshot({ [Symbol.toStringTag]: string }); });
+          test("own constructor and an own getter", () => { expect({ constructor: Tagged, get total() { return 2; } }).toMatchSnapshot({ constructor: expect.any(Function) }); });
         `,
       "__snapshots__/a.test.js.snap": older,
     });

@@ -914,9 +914,11 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<()> {
+        // Still the place of `value`: `for_each_row` has only handed the place of the first property to the print that comes next.
+        let place = self.formatter.place.current();
         if !value.js_type().is_function() {
             let mut writer = WrappedWriter::new(self.writer);
-            let name_str = value.get_name_property(global_this)?;
+            let name_str = place.name_property(value, global_this)?;
             if !name_str.is_empty() && !name_str.eq_ascii(b"Object") {
                 writer.print(format_args!("{} ", name_str));
             } else {
@@ -935,7 +937,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if self.formatter.indent == 0 {
             let _ = self.writer.write_all(b"\n");
         }
-        let classname = value.get_class_name(global_this)?;
+        let classname = place.class_name(value, global_this)?;
         if !classname.is_empty() && !classname.eq_ascii(b"Object") {
             let _ = self.writer.write_fmt(format_args!("{} ", classname));
         }
@@ -2446,7 +2448,7 @@ impl<'a> Formatter<'a> {
                     self.same_as_older_bun &= result?;
 
                     if iter_i == 0 {
-                        let object_name = value.get_class_name(self.global_this)?;
+                        let object_name = place.class_name(value, self.global_this)?;
 
                         if !object_name.eq_ascii(b"Object") {
                             writer.print(format_args!("{} {{}}", object_name));

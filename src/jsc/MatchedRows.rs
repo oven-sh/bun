@@ -143,6 +143,40 @@ impl MatchedPlace {
         }
     }
 
+    /// `object.get_name_property` for the object of this place, or for any value if this place is none. A row that the place has for `Symbol.toStringTag` stands in for the tag, which is not read: a row is a matcher or an object, so it is no name.
+    #[inline]
+    pub fn name_property(
+        self,
+        object: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<bun_core::String> {
+        if self.is_none() {
+            return object.get_name_property(global);
+        }
+        let (rows, place) = self.cell_and_handle();
+        // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
+        crate::call_check_slow(global, || unsafe {
+            JSC__JSValue__getNamePropertyWithRows(object, global, rows, place)
+        })
+    }
+
+    /// `object.get_class_name` for the object of this place, or for any value if this place is none. The rows that the place has for `constructor` and for `Symbol.toStringTag` stand in for those two properties, which are not read.
+    #[inline]
+    pub fn class_name(
+        self,
+        object: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<bun_core::String> {
+        if self.is_none() {
+            return object.get_class_name(global);
+        }
+        let (rows, place) = self.cell_and_handle();
+        // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
+        crate::call_check_slow(global, || unsafe {
+            JSC__JSValue__getClassNameWithRows(object, global, rows, place)
+        })
+    }
+
     /// The rows cell and the handle of this place, which must not be none. The handle is not checked against the cell: C++ answers for any number.
     #[inline(always)]
     fn cell_and_handle(self) -> (JSValue, PlaceHandle) {
@@ -227,4 +261,17 @@ unsafe extern "C" {
         index: u32,
         child: &mut PlaceHandle,
     ) -> JSValue;
+    // Not safe: `rows` has to be the cell of a `jest_deep_match` call, as for the walkers with rows that `JSValue.rs` declares. Both can throw, and the caller owns what they return.
+    fn JSC__JSValue__getNamePropertyWithRows(
+        this: JSValue,
+        global: &JSGlobalObject,
+        rows: JSValue,
+        place: PlaceHandle,
+    ) -> bun_core::String;
+    fn JSC__JSValue__getClassNameWithRows(
+        this: JSValue,
+        global: &JSGlobalObject,
+        rows: JSValue,
+        place: PlaceHandle,
+    ) -> bun_core::String;
 }

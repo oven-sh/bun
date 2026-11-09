@@ -3964,10 +3964,10 @@ declare module "bun" {
      * With `aot`: let a dynamic `import()` or `require()` load code that isn't in the executable
      * from disk when the program runs, such as a plugin or a config file. Bun interprets that code.
      *
-     * Without it, the executable only runs code that was compiled into it, and such a load throws.
-     * The option keeps Bun's transpiler and the source code of Bun's built-in modules in the
-     * executable, and the compiler can prove less about the program, so the executable is larger
-     * and can run slower.
+     * Without it, the executable only runs code that was compiled into it, and such a load throws,
+     * unless the executable is built with `inspector`. The option keeps Bun's transpiler and the
+     * source code of Bun's built-in modules in the executable, and the compiler can prove less
+     * about the program, so the executable is larger and can run slower.
      *
      * Equivalent CLI flag: `--aot-allow-code-from-disk`
      *

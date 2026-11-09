@@ -2174,6 +2174,17 @@ pub(crate) type ForEachPropertyCallback = extern "C" fn(
     is_private_symbol: bool,
 );
 
+/// `ForEachPropertyCallback` for the walkers with rows: `child_place` is the place of `value` in the matched rows, or 0 if it has none.
+pub type ForEachPropertyWithRowsCallback = extern "C" fn(
+    global: &JSGlobalObject,
+    ctx: *mut c_void,
+    key: &bun_core::EncodedSlice,
+    value: JSValue,
+    is_symbol: bool,
+    is_private_symbol: bool,
+    child_place: u32,
+);
+
 /// `JSValue.StringFormatter` — `Display` adapter that
 /// coerces the value via `toBunString` at format time.
 pub struct StringFormatter<'a> {
@@ -2535,6 +2546,66 @@ impl JSValue {
         }
         crate::top_scope!(scope, global);
         JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
+        scope.return_if_exception()
+    }
+    /// `for_each_property_ordered_calling_getters` for the object at `place`: a matched row is passed in place of its property, which is not read. SAFETY: `rows` is the matched rows cell of a `jest_deep_match` call and `place` is one of its places.
+    #[inline(always)]
+    pub unsafe fn for_each_property_ordered_calling_getters_with_rows(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyWithRowsCallback,
+        rows: JSValue,
+        place: u32,
+    ) -> JsResult<bool> {
+        unsafe extern "C" {
+            fn JSC__JSValue__forEachPropertyOrderedCallingGettersWithRows(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyWithRowsCallback,
+                rows: JSValue,
+                place: u32,
+            ) -> bool;
+        }
+        debug_assert!(rows.is_cell() && place != 0);
+        crate::top_scope!(scope, global);
+        // SAFETY: the caller vouches for `rows` and `place`; the rest is the contract of `JSC__JSValue__forEachProperty` above.
+        let is_same = unsafe {
+            JSC__JSValue__forEachPropertyOrderedCallingGettersWithRows(
+                self, global, ctx, callback, rows, place,
+            )
+        };
+        scope.return_if_exception().map(|()| is_same)
+    }
+    /// `for_each_property_ordered_with_non_enumerable` for the object at `place`, with its matched rows. SAFETY: as for `for_each_property_ordered_calling_getters_with_rows`.
+    #[inline(always)]
+    pub unsafe fn for_each_property_ordered_with_non_enumerable_with_rows(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyWithRowsCallback,
+        rows: JSValue,
+        place: u32,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            fn JSC__JSValue__forEachPropertyOrderedWithNonEnumerableWithRows(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyWithRowsCallback,
+                rows: JSValue,
+                place: u32,
+            );
+        }
+        debug_assert!(rows.is_cell() && place != 0);
+        crate::top_scope!(scope, global);
+        // SAFETY: the caller vouches for `rows` and `place`; the rest is the contract of `JSC__JSValue__forEachProperty` above.
+        unsafe {
+            JSC__JSValue__forEachPropertyOrderedWithNonEnumerableWithRows(
+                self, global, ctx, callback, rows, place,
+            );
+        }
         scope.return_if_exception()
     }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via

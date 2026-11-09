@@ -3,7 +3,6 @@ import { bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync, realpathSync, statSync, utimesSync } from "node:fs";
 import { join, relative } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
-import { blankComments } from "../../src/codegen/comments";
 import {
   type EngineFunctions,
   findModuleHeldInPart,
@@ -15,6 +14,7 @@ import {
   specifierOf,
   typesOnlySchemas,
 } from "../../src/codegen/builtins-manifest-model";
+import { blankComments } from "../../src/codegen/comments";
 import { run } from "../aot/harness/run";
 
 const root = join(import.meta.dir, "..", "..");

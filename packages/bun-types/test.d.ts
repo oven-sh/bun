@@ -107,7 +107,8 @@ declare module "bun:test" {
    * - `Intl.DateTimeFormat().format()`
    *
    * The real time is restored when the test file ends, unless a preload set the time at its top level, or in a
-   * `beforeAll()` or `aroundAll()` of the preload that runs once for all test files.
+   * `beforeAll()` or `aroundAll()` of the preload that runs once for all test files. The other hooks of such a
+   * preload then set the time for the preload too.
    *
    * @param now The time to set the system time to. If omitted, the system time is reset
    * @since v0.6.13
@@ -259,7 +260,8 @@ declare module "bun:test" {
      * The real timers are restored when the test file ends, unless a preload made this call at its top level. Fake
      * timers from a `beforeAll()` or `aroundAll()` of a preload that runs once for all test files stay on too, as
      * long as, at the end of each test file, each fake function is on its global and what it replaced is not a spy
-     * that the file restored.
+     * that the file restored. The same goes for the other hooks of a preload that turned fake timers on in one of
+     * these three places.
      */
     function useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof jest;
     /**
@@ -522,7 +524,8 @@ declare module "bun:test" {
      * The real timers are restored when the test file ends, unless a preload made this call at its top level. Fake
      * timers from a `beforeAll()` or `aroundAll()` of a preload that runs once for all test files stay on too, as
      * long as, at the end of each test file, each fake function is on its global and what it replaced is not a spy
-     * that the file restored.
+     * that the file restored. The same goes for the other hooks of a preload that turned fake timers on in one of
+     * these three places.
      */
     useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof vi;
     /**

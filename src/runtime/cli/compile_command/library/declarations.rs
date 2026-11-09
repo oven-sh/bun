@@ -6,7 +6,7 @@ use bun_sema::util::SharedSort;
 use bun_sema_driver::declaration_imports::name_imported_files;
 
 use super::typed_files::is_typed_file;
-use crate::cli::check_command::DeclarationFile;
+use crate::cli::check_command::{DeclarationFile, Declarations, JsonDeclarationFile, Unwritable};
 
 const DECLARATION_EXTENSIONS: [(&[u8], &[u8]); 8] = [
     (b".tsx", b".d.ts"),
@@ -20,21 +20,63 @@ const DECLARATION_EXTENSIONS: [(&[u8], &[u8]); 8] = [
 ];
 
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct OutsideRootDirectory {
-    source: Vec<u8>,
-    root_directory: Vec<u8>,
+pub(crate) enum UnwrittenDeclaration {
+    OutsideRootDirectory {
+        source: Vec<u8>,
+        root_directory: Vec<u8>,
+    },
+    /// The declaration file of `importer` imports the JSON module `source`.
+    Json {
+        source: Vec<u8>,
+        importer: Vec<u8>,
+        why: Unwritable,
+    },
 }
 
-impl OutsideRootDirectory {
+impl UnwrittenDeclaration {
     pub(crate) fn write_message(&self, out: &mut Vec<u8>) {
-        let parts: [&[u8]; 5] = [
-            b"cannot write a declaration file for ",
-            &self.source,
-            b" because it is outside the root directory ",
-            &self.root_directory,
-            b". Pass --root to change it",
-        ];
-        out.extend_from_slice(&parts.concat());
+        fn under(config: &[u8]) -> &[u8] {
+            match config.is_empty() {
+                true => b"the default options",
+                false => config,
+            }
+        }
+        let mut write = |parts: &[&[u8]]| out.extend_from_slice(&parts.concat());
+        match self {
+            Self::OutsideRootDirectory {
+                source,
+                root_directory,
+            } => write(&[
+                b"cannot write a declaration file for ",
+                source,
+                b" because it is outside the root directory ",
+                root_directory,
+                b". Pass --root to change it",
+            ]),
+            Self::Json {
+                source,
+                importer,
+                why,
+            } => {
+                write(&[b"cannot write a declaration file for ", source]);
+                match why {
+                    Unwritable::TooLong => {
+                        write(&[b" because its type is too long to write (TS7056)"]);
+                    }
+                    Unwritable::TwoTypes(first, second) => write(&[
+                        b" because it has one type under ",
+                        under(first),
+                        b" and another under ",
+                        under(second),
+                    ]),
+                }
+                write(&[
+                    b". The declaration file of ",
+                    importer,
+                    b" imports it. Give the exports of that file types that do not refer to the JSON file",
+                ]);
+            }
+        }
     }
 }
 
@@ -43,37 +85,76 @@ pub(crate) fn is_declaration_file(file: &OutputFile) -> bool {
 }
 
 pub(crate) fn add_declaration_files(
-    declarations: Vec<DeclarationFile>,
+    declarations: Declarations,
     root_directory: &[u8],
     is_bundled: bool,
     output_files: &mut Vec<OutputFile>,
-) -> Result<(), OutsideRootDirectory> {
+) -> Result<(), UnwrittenDeclaration> {
     // Without bundling, only the entry points are written.
     let has_javascript =
         |source: &[u8]| is_bundled || output_files.iter().any(|file| file.src_path.text == source);
-    let mut placed: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-    for declaration in declarations {
+    let mut placed: Vec<(Vec<u8>, DeclarationFile)> = Vec::new();
+    for declaration in declarations.files {
         if !has_javascript(&declaration.source) {
             continue;
         }
         let Some(path) = declaration_path(root_directory, &declaration.source) else {
-            return Err(OutsideRootDirectory {
+            return Err(UnwrittenDeclaration::OutsideRootDirectory {
                 source: declaration.source,
                 root_directory: root_directory.to_vec(),
             });
         };
-        placed.push((path, declaration.text));
+        placed.push((path, declaration));
     }
     let mut written: Vec<&[u8]> = placed.iter().map(|(path, _)| &path[..]).collect();
     written.shared_sort_unstable();
     let is_written = |path: &[u8]| written.binary_search(&path).is_ok();
-    let mut added: Vec<OutputFile> = (placed.iter())
-        .map(|(path, text)| {
-            declaration_output_file(path.clone(), name_imported_files(path, text, &is_written))
-        })
+    // Without bundling, the JavaScript imports the JSON file, and so do the declaration files.
+    let json = declarations.json.into_iter().filter(|_| is_bundled);
+    // No place for a JSON module that is not below the root directory, or whose place a source has: `data.json.cts`.
+    let json: Vec<(Vec<u8>, JsonDeclarationFile)> = json
+        .filter_map(|json| Some((json_declaration_path(root_directory, &json.source)?, json)))
+        .filter(|(path, _)| !is_written(path))
         .collect();
+    // For each JSON module, the first written declaration file that imports it.
+    let mut importers: Vec<Option<&[u8]>> = vec![None; json.len()];
+    let mut added: Vec<OutputFile> = Vec::with_capacity(placed.len());
+    for (path, declaration) in &placed {
+        let source = &declaration.source;
+        let names = |(of_json, json): &(Vec<u8>, JsonDeclarationFile), path: &[u8]| {
+            of_json == path && json.named_by.contains(source)
+        };
+        let is_written = |path: &[u8]| is_written(path) || json.iter().any(|it| names(it, path));
+        let mut note = |imported: &[u8]| {
+            if let Some(at) = json.iter().position(|it| names(it, imported)) {
+                importers[at].get_or_insert(source);
+            }
+        };
+        let text = name_imported_files(path, &declaration.text, &is_written, &mut note);
+        added.push(declaration_output_file(path.clone(), text));
+    }
+    for ((path, json), importer) in json.into_iter().zip(importers) {
+        let Some(importer) = importer else {
+            continue;
+        };
+        match json.text {
+            Ok(text) => added.push(declaration_output_file(path, text)),
+            Err(why) => {
+                return Err(UnwrittenDeclaration::Json {
+                    source: json.source,
+                    importer: importer.to_vec(),
+                    why,
+                });
+            }
+        }
+    }
     output_files.append(&mut added);
     Ok(())
+}
+
+/// Where the one of `data.json.cts` would be: `export =` is an error in a `.d.ts` file of a `"type": "module"` package.
+fn json_declaration_path(root_directory: &[u8], source: &[u8]) -> Option<Vec<u8>> {
+    declaration_path(root_directory, &[source, b".cts"].concat())
 }
 
 pub(super) fn declaration_path(root_directory: &[u8], source: &[u8]) -> Option<Vec<u8>> {

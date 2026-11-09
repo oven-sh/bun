@@ -173,6 +173,121 @@ export { join };
     expect(readFileSync(join(root, "b/out/index.d.ts"), "utf8")).toBe("export declare const other: number;\n");
   });
 
+  // With the libraries of "es5" alone, a build spends its time on the sources.
+  const compilerOptions = { ...JSON.parse(project["tsconfig.json"]).compilerOptions, lib: ["es5"] };
+  const withJson = {
+    "tsconfig.json": JSON.stringify({ compilerOptions }),
+    "package.json": JSON.stringify({ name: "greeter", compilerOptions: { strict: true, lib: ["es5"] } }),
+    "src/data.json": `{ "name": "x", "size": 3 }\n`,
+    "src/index.ts": `import data from "./data.json";
+export function get(): typeof data {
+  return data;
+}
+`,
+  };
+  /** The text of each declaration file in `outputs`, by file name. */
+  const declarationsOf = async (outputs: Bun.BuildArtifact[]) =>
+    Object.fromEntries(
+      await Promise.all(
+        outputs
+          .filter(output => /\.d\.[cm]?ts$/.test(output.path))
+          .map(async output => [output.path.replaceAll("\\", "/").split("/").at(-1), await output.text()]),
+      ),
+    );
+
+  test("a JSON file that a declaration file imports gets a declaration file", async () => {
+    using dir = tempDir("build-api-dts-json", withJson);
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    expect(described(root, built.outputs)).toEqual([
+      ["/out/data.json.d.cts", "asset", "ts"],
+      ["/out/index.aot.ts", "asset", "ts"],
+      ["/out/index.d.ts", "asset", "ts"],
+      ["/out/index.js", "entry-point", "ts"],
+    ]);
+    for (const output of built.outputs) expect(await output.text()).toBe(readFileSync(output.path, "utf8"));
+    expect(await declarationsOf(built.outputs)).toEqual({
+      "data.json.d.cts": `declare const _exports: {
+    name: string;
+    size: number;
+};
+export = _exports;
+`,
+      "index.d.ts": `import data from "./data.json.cjs";\nexport declare function get(): typeof data;\n`,
+    });
+  });
+
+  test("without outdir, and with JSON files from `files`: each has the type of the text in `files`", async () => {
+    using dir = tempDir("build-api-dts-json-files", {
+      ...withJson,
+      // Without outdir no package.json says which libraries the .aot.ts file is checked with: the default ones.
+      "tsconfig.json": project["tsconfig.json"],
+      "src/index.ts": `import data from "./data.json";
+import memory from "./memory.json";
+export function get(): typeof data {
+  return data;
+}
+export function getMemory(): typeof memory {
+  return memory;
+}
+`,
+    });
+    const root = String(dir);
+    const before = filesIn(root);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+      files: {
+        [join(root, "src/data.json")]: `{ "replaced": true }`,
+        [join(root, "src/memory.json")]: `[1, "two"]`,
+      },
+    });
+    expect(built.logs).toEqual([]);
+    expect(await declarationsOf(built.outputs)).toEqual({
+      "data.json.d.cts": `declare const _exports: {
+    replaced: boolean;
+};
+export = _exports;
+`,
+      "memory.json.d.cts": `declare const _exports: (string | number)[];\nexport = _exports;\n`,
+      "index.d.ts": `import data from "./data.json.cjs";
+import memory from "./memory.json.cjs";
+export declare function get(): typeof data;
+export declare function getMemory(): typeof memory;
+`,
+    });
+    expect(filesIn(root)).toEqual(before);
+  });
+
+  test("a JSON file whose type is too long to write fails the build", async () => {
+    // Each object of an array gets every key of the others as an optional one: 20 x 20 keys of 4,000 characters.
+    const key = Buffer.alloc(4000, "k").toString();
+    const rows = Array.from({ length: 20 }, (_, row) => ({ [key + row]: row }));
+    using dir = tempDir("build-api-dts-json-long", { ...withJson, "src/data.json": JSON.stringify(rows) });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+      throw: false,
+    });
+    expect(built.success).toBe(false);
+    expect(built.logs.map(log => [log.level, log.message])).toEqual([
+      [
+        "error",
+        `cannot write a declaration file for ${join(root, "src/data.json")} because its type is too long to write (TS7056). The declaration file of ${join(root, "src/index.ts")} imports it. Give the exports of that file types that do not refer to the JSON file`,
+      ],
+    ]);
+  });
+
   test("cannot be used with compile", () => {
     expect(() => Bun.build({ entrypoints: ["./index.ts"], compile: true, dts: true })).toThrow(
       "dts cannot be used with compile",

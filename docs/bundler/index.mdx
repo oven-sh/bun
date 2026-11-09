@@ -1346,6 +1346,7 @@ Point `"types"` in your `package.json` at `index.d.ts`, and the `"aot"` conditio
 - **The CLI needs `--outdir`.** `Bun.build()` without `outdir` writes nothing and returns the files in `outputs`. They have `kind: "asset"`.
 - **`dts` can't be used with `compile`.**
 - **A JavaScript entry point gets a `.d.ts` file only.** Bun infers it from the code and its JSDoc comments.
+- **A JSON file gets a declaration file if a `.d.ts` file imports it by a relative path.** The bundle holds the JSON value, so `outdir` has no `data.json`. For an export such as `get(): typeof data`, Bun writes `data.json.d.cts` with the type of the whole value, so it names every key of the file, and the import becomes `"./data.json.cjs"`. A JSON file outside [`root`](#root) keeps its import. So does every JSON file with `--no-bundle`, where the JavaScript imports the file too.
 - **Some options leave out `index.aot.ts`.** With `--minify-identifiers` (which `--minify` includes), `--no-bundle`, `--sourcemap=inline` or a `--format` other than `esm`, Bun writes the `.d.ts` files and warns about the rest.
 
 ```txt

@@ -11,6 +11,7 @@ use bun_sema_driver::typed_files::{ModuleTypes, tsconfig_of_package};
 use bun_sema_driver::{Category, PlanOptions, Report, Request, ScriptKind, format};
 use bun_threading::Guarded;
 
+use super::json_declarations::{JsonDeclarationFile, NotedJsonModules};
 use super::typed_files::NotedModuleTypes;
 use super::{
     Entries, Paths, already_read, has_types_with, log_data_of, request, script_kind_of,
@@ -26,13 +27,22 @@ pub(crate) struct DeclarationFile {
     pub(crate) text: Vec<u8>,
 }
 
+pub(crate) struct Declarations {
+    pub(crate) files: Vec<DeclarationFile>,
+    pub(crate) json: Vec<JsonDeclarationFile>,
+}
+
 // `BundleOptions::type_check` only answers whether the build goes on, so what it emits waits here.
 static EMITTED_FILES: Guarded<Vec<DeclarationFile>> = Guarded::new(Vec::new());
+static EMITTED_JSON_FILES: Guarded<Vec<JsonDeclarationFile>> = Guarded::new(Vec::new());
 
 static MODULE_TYPES: Guarded<Vec<ModuleTypes>> = Guarded::new(Vec::new());
 
-pub(crate) fn take_declaration_files() -> Vec<DeclarationFile> {
-    std::mem::take(&mut *EMITTED_FILES.lock())
+pub(crate) fn take_declaration_files() -> Declarations {
+    Declarations {
+        files: std::mem::take(&mut *EMITTED_FILES.lock()),
+        json: std::mem::take(&mut *EMITTED_JSON_FILES.lock()),
+    }
 }
 
 pub(crate) fn take_module_types() -> Vec<ModuleTypes> {
@@ -81,9 +91,11 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
     let emitted: Guarded<BTreeMap<Vec<u8>, Vec<u8>>> = Guarded::new(BTreeMap::new());
     // A task of the checker can run again: the last time counts.
     let module_types = NotedModuleTypes::default();
+    let json_modules = NotedJsonModules::default();
     let emit = |checker: &mut Checker<'_, '_>, file: FileId| {
         module_types.note(checker, file);
         let text = checker.emit_declaration_file(file);
+        json_modules.note(checker, file, text.as_deref());
         let source = checker.p.files.module(file).file_name();
         let mut emitted = emitted.lock();
         match text {
@@ -140,6 +152,7 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &mut bun_as
             text,
         })
         .collect();
+    *EMITTED_JSON_FILES.lock() = json_modules.take();
     true
 }
 

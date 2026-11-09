@@ -60,6 +60,7 @@ mod grammarchecks;
 mod infer;
 mod instantiate;
 pub mod jsdoc;
+mod json_module_declaration;
 mod jsx;
 mod late_bound;
 mod links;

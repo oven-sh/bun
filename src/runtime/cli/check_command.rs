@@ -22,12 +22,16 @@ use core::time::Duration;
 mod compile_check;
 #[path = "check_command/declarations.rs"]
 mod declarations;
+#[path = "check_command/json_declarations.rs"]
+mod json_declarations;
 #[path = "check_command/typed_files.rs"]
 mod typed_files;
 
 pub(crate) use declarations::{
-    DeclarationFile, check_and_emit_declarations, take_declaration_files, take_module_types,
+    DeclarationFile, Declarations, check_and_emit_declarations, take_declaration_files,
+    take_module_types,
 };
+pub(crate) use json_declarations::{JsonDeclarationFile, Unwritable};
 pub(crate) use typed_files::{
     CompilerOptions, TypedFilesRequest, WrittenJavaScript, typed_files_for_build,
     warn_about_skipped_typed_files, warn_unless_package_states,

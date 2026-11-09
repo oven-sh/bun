@@ -34,6 +34,10 @@ const tsconfig = JSON.stringify({
   },
 });
 
+/** The libraries of "es5" are a fraction of those of "esnext": a check that needs no more spends its time on the sources. */
+const tsconfigWithLibraries = (...lib: string[]) =>
+  JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, lib } });
+
 const sources = {
   "tsconfig.json": tsconfig,
   "src/index.ts": `import { area } from "./area";
@@ -581,6 +585,42 @@ describe.concurrent("bun compile --library", () => {
     expect(built.exitCode).toBe(1);
     expect(existsSync(join(String(dir), "dist"))).toBe(false);
   });
+
+  test("a type that names the package.json of the sources does not become the type of the one in dist", async () => {
+    using dir = tempDir("library-own-package-json", {
+      "tsconfig.json": tsconfigWithLibraries("es5"),
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", license: "MIT", scripts: { build: "x" } }),
+      "index.ts": `import manifest from "./package.json";
+export function scripts(): typeof manifest.scripts {
+  return manifest.scripts;
+}
+`,
+    });
+    const built = await bun(String(dir), "compile", "--library");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    const dist = join(String(dir), "dist");
+    expect(json(join(dist, "package.json")).scripts).toBeUndefined();
+    expect(json(join(dist, "package.json")).files).toEqual([
+      "index.aot.ts",
+      "index.d.ts",
+      "index.js",
+      "package.json.d.cts",
+    ]);
+    expect(readFileSync(join(dist, "index.d.ts"), "utf8")).toBe(
+      `import manifest from "./package.json.cjs";\nexport declare function scripts(): typeof manifest.scripts;\n`,
+    );
+    expect(readFileSync(join(dist, "package.json.d.cts"), "utf8")).toBe(`declare const _exports: {
+    name: string;
+    version: string;
+    license: string;
+    scripts: {
+        build: string;
+    };
+};
+export = _exports;
+`);
+  });
 });
 
 describe.concurrent("the .aot.ts file that bun compile --library writes", () => {
@@ -1123,6 +1163,77 @@ console.log(new Canvas().add(square).add(square).total(), double(2));
       expect({ said: (stdout + stderr).match(/TS\d+/g), exitCode }).toEqual({ said: null, exitCode: 0 });
     }
     // tsc runs twice.
+  }, 60_000);
+
+  test("a type that names a JSON file is the type of the JSON file for bun check and for tsc", async () => {
+    const options = JSON.parse(tsconfigWithLibraries("es5")).compilerOptions;
+    const consumer = (compilerOptions: object) =>
+      JSON.stringify({ compilerOptions: { ...options, ...compilerOptions } });
+    using dir = tempDir("library-json-checked", {
+      "library/tsconfig.json": consumer({}),
+      "library/package.json": JSON.stringify({ name: "@acme/data", version: "1.0.0" }),
+      "library/src/data.json": `{ "name": "x", "size": 3 }\n`,
+      "library/src/list.json": `[1, 2, 3]\n`,
+      "library/src/index.ts": `import data from "./data.json" with { type: "json" };
+import list from "./list.json";
+export function get(): typeof data {
+  return data;
+}
+export function getList(): typeof import("./list.json") {
+  return list;
+}
+export { size } from "./data.json";
+`,
+      "app/package.json": JSON.stringify({ name: "app", type: "module", dependencies: { "@acme/data": "1.0.0" } }),
+      "app/bundler.json": consumer({}),
+      "app/nodenext.json": consumer({ module: "nodenext", moduleResolution: "nodenext" }),
+      "app/node16.json": consumer({ module: "node16", moduleResolution: "node16" }),
+      "app/without-json.json": consumer({ resolveJsonModule: false }),
+      "app/app.ts": `import { get, getList, size } from "@acme/data";
+import { get as getCommonJs, getList as getListCommonJs } from "@acme/data-commonjs";
+export const name: string = get().name;
+export const count: number = size;
+export const first: number = getList()[0] + getListCommonJs()[0];
+export const wrong: string = get().size;
+export const missing = get().none;
+export const wrongToo: string = getCommonJs().size;
+export const wrongFirst: string = getList()[0];
+`,
+    });
+    const library = join(String(dir), "library");
+    const built = await bun(
+      library,
+      "compile",
+      "--library",
+      "src/index.ts",
+      "--outdir",
+      "../app/node_modules/@acme/data",
+    );
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    const app = join(String(dir), "app");
+    // The same declaration files in a CommonJS package, where an import of a JSON file is checked by other rules.
+    const installed = join(app, "node_modules/@acme/data");
+    cpSync(installed, installed + "-commonjs", { recursive: true });
+    const manifest = { ...json(join(installed, "package.json")), name: "@acme/data-commonjs", type: "commonjs" };
+    writeFileSync(join(installed + "-commonjs", "package.json"), JSON.stringify(manifest));
+    const tsc = require.resolve("typescript/bin/tsc");
+    const runs = [
+      ["check", "-p", "bundler.json"],
+      ["check", "-p", "nodenext.json"],
+      ["check", "-p", "node16.json"],
+      ["check", "-p", "without-json.json"],
+      [tsc, "-p", "nodenext.json"],
+    ];
+    const said = await Promise.all(
+      runs.map(async run => {
+        const { stdout, stderr } = await bun(app, ...run);
+        return (stdout + stderr).match(/TS\d+/g);
+      }),
+    );
+    // Only the four wrong lines of app.ts.
+    expect(said).toEqual(runs.map(() => ["TS2322", "TS2339", "TS2322", "TS2322"]));
+    // tsc runs once.
   }, 60_000);
 
   test("runs in Bun, and in Node.js where it is installed", async () => {

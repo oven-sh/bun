@@ -13,6 +13,7 @@ mod left_out_bodies;
 mod listed_members;
 mod load;
 mod load_task;
+mod named_json_modules;
 mod queue;
 mod relation_budget;
 mod roles;

@@ -1,0 +1,87 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`a module namespace with an export that is not set yet in a snapshot file 1`] = `
+{
+  "hoisted": [Function],
+  "later": undefined,
+}
+`;
+
+exports[`a module namespace with an export that is not set yet in a snapshot file 2`] = `
+{
+  "namespace": {
+    "hoisted": [Function],
+    "later": undefined,
+  },
+}
+`;
+
+exports[`a module namespace with an export that is not set yet in a snapshot file 3`] = `
+[
+  {
+    "hoisted": [Function],
+    "later": undefined,
+  },
+  Map {
+    "key" => {
+      "hoisted": [Function],
+      "later": undefined,
+    },
+  },
+]
+`;
+
+exports[`a module namespace with an export that is not set yet through the printer of a serializer 1`] = `
+Wrapped({
+  "hoisted": [Function],
+  "later": undefined,
+})
+`;
+
+exports[`a module namespace with an export that is not set yet through the printer of a serializer 2`] = `
+WrappedTheOlderWay({
+  "hoisted": [Function],
+  "later": undefined,
+})
+`;
+
+exports[`a module namespace with an export that is not set yet through the printer of a serializer 3`] = `
+{
+  "list": [
+    Wrapped({
+      "namespace": {
+        "hoisted": [Function],
+        "later": undefined,
+      },
+    }),
+  ],
+}
+`;
+
+exports[`a module namespace with an export that is not set yet under the names that the printer reads 1`] = `
+{
+  "$$typeof": undefined,
+  "_isMockFunction": undefined,
+  "asymmetricMatch": undefined,
+  "constructor": undefined,
+  "nodeType": undefined,
+  "toJSON": undefined,
+}
+`;
+
+exports[`a module namespace with an export that is not set yet with property matchers 1`] = `
+{
+  "id": Any<Number>,
+  "namespace": {
+    "hoisted": [Function],
+    "later": undefined,
+  },
+}
+`;
+
+exports[`a module namespace with an export that is not set yet with property matchers 2`] = `
+{
+  "hoisted": Any<Function>,
+  "later": undefined,
+}
+`;

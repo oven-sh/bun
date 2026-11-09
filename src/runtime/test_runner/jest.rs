@@ -1030,7 +1030,7 @@ fn get_vitest_attribute(global: &JSGlobalObject, source: JSValue, path: &[u8], d
             None => (path, None),
         };
         rest = after;
-        // `new Object(result)[key]`
+        // `new Object(result)[key]`, read as `pretty_format::member` reads.
         let holder = if result.is_null() { JSValue::create_empty_object(global, 0) } else { result };
         result = pretty_format::member_by_value(global, holder, bun_string_jsc::create_utf8_for_js(global, key)?)?;
         if result.is_undefined() {

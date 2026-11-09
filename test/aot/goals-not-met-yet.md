@@ -2,7 +2,7 @@
 
 This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of the marks in the tree. Do not edit it: change the mark and run the tool.
 
-4 wrong answers in 3 files stand under a mark. They are no goals, and are not counted among them.
+5 wrong answers in 4 files stand under a mark. They are no goals, and are not counted among them.
 
 236 goals in 134 files: 170 on what a program reaches of the library and what --trim keeps, 15 on how a build grows with its program, 51 on other things.
 
@@ -21,6 +21,7 @@ known to fail, so the run stays green; it turns red once the compiled run says t
 
 | file | case | plain | compiled |
 |---|---|---|---|
+| test/aot/a-snapshot-of-a-module-namespace-with-an-export-that-is-not-set-yet.test.ts | the namespace of a compiled module is printed as bun test prints it | `bun test` prints undefined for the export | under `bun test --aot` the matcher throws the ReferenceError |
 | test/aot/mock-file-url.test.ts | the other spelling of the file is left alone: one-importer | `bun test` leaves it alone | under `bun test --aot` it gets the mock too |
 | test/aot/mock-file-url.test.ts | the other spelling of the file is left alone: two-importers | `bun test` leaves it alone | under `bun test --aot` it gets the mock too |
 | test/aot/modules-in-a-test-run.test.ts | a file that fails when it is linked to a compiled file: each file in its own realm (declared `todo`: it is never run) | `bun test --isolate` makes it a BuildMessage | under `bun test --aot --isolate` the error of a file whose import does not parse is a SyntaxError |

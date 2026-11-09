@@ -222,6 +222,47 @@ console.log(useIt(), useIt(1, null), useIt(1, Unit.Em), only(null), paint("blue"
     );
   });
 
+  // A constant that only a type names is not in the bundle. The typed file declares it with what the type checker says.
+  test("a constant that only a type names is declared with a type that names nothing", async () => {
+    using dir = tempDir("build-api-dts-constants", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/flag.ts": `type Flag = true | false;
+declare const stored: Flag;
+export const on = stored;
+`,
+      "src/index.ts": `import { on } from "./flag";
+type Flag = "yes" | "no";
+const big = 1e999;
+const small = -1e999;
+const word = "a";
+export type On = typeof on;
+export type Sizes = [typeof big, typeof small, typeof word];
+export function pick(flag: Flag): On {
+  return flag === "yes";
+}
+export function sizes(): Sizes {
+  return [1e999, -1e999, "a"];
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: join(root, "out"),
+      tsconfig: join(root, "tsconfig.json"),
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = readFileSync(join(root, "out/index.aot.ts"), "utf8");
+    // `Flag` of the other file is `boolean`, and no type is `Infinity`.
+    expect(typed.match(/^declare const .*$/gm)?.sort()).toEqual([
+      "declare const big: number;",
+      "declare const on: boolean;",
+      "declare const small: number;",
+      `declare const word: "a";`,
+    ]);
+  });
+
   test("two builds at once keep their files apart", async () => {
     using dir = tempDir("build-api-dts-twice", {
       ...Object.fromEntries(Object.entries(project).map(([path, text]) => ["a/" + path, text])),
@@ -338,6 +379,14 @@ export function useMeasured(first = 1, unit = 2): number {
   const [value] = useState(first);
   return (value + 1) as typeof unit;
 }
+type Flag = true | false;
+function stored(): Flag {
+  return true;
+}
+export function useNoted(first = 1, flag = stored()): number {
+  const [value] = useState(first);
+  return flag ? value : 0;
+}
 export function useReturned(first = 1, value: number | undefined = undefined): typeof value {
   const [seen] = useState(first);
   return seen > 1 ? value : undefined;
@@ -385,6 +434,7 @@ console.log(useName(), usePoint(), useUnit(), usePadded(undefined, undefined, un
 console.log(useStepper(2)(1), useStepper(2)(1, 2, 3), useLabel("a"), plain(), useCast(), useCast(1, null, "blue"));
 console.log(useCell(), useCell(1, null), useCell(1, Unit.Em), useParse(undefined, undefined, "1"), useTyped());
 console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2), useMeasured(), useReturned());
+console.log(useNoted(), useNoted(1, false));
 `;
   // The parameters of each function, from the second one on where the first one is the compiler's. The first default
   // value of a list is where the `length` of the function ends, and how the compiler prints it is not the subject here.
@@ -435,6 +485,9 @@ console.log(useQueried(), useQueried(1, "a", same), useSigned(), useSigned(1, 2)
     useSigned: "t1?: (typeof t0 & ({} | null)), t2?: typeof same, t3?: (typeof t2<number> & ({} | null))",
     useMeasured: "t1?: number",
     useReturned: "t1?: number | undefined",
+    // The type checker says `Flag` for it, which is a name that another type of the bundle can have too.
+    useNoted: "t1?: boolean",
+    stored: "",
     same: "value: T",
     // Its `switch` has a `case` for each value only if `unit` has its type.
     useCell: expect.stringMatching(/^t1\?: Unit\d* \| null$/),

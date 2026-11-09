@@ -3,8 +3,8 @@ use bun_ast::op::Level;
 use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
-    Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
-    TypeFormatFlags,
+    Child, LiteralValue, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable,
+    TypeFlags, TypeFormatFlags,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
@@ -4671,6 +4671,27 @@ fn target_of_declaration(
     })
 }
 
+/// The text of `ty` where it names nothing: a keyword, or a literal that is no member of an enum.
+fn text_that_names_nothing(services: &mut Services<'_, '_, '_>, ty: TypeId) -> Option<Box<[u8]>> {
+    if services.type_flags(ty).contains(TypeFlags::ENUM_LITERAL) {
+        return None;
+    }
+    Some(match services.intrinsic_name(ty) {
+        // The name of a type that does not resolve is behind these two.
+        Some("error" | "intrinsic") => return None,
+        // `boolean` also where the source has an alias of `true | false`, which the printer names.
+        Some(keyword) => keyword.as_bytes().into(),
+        // `Infinity` is a value and no type.
+        None => match services.literal_value(ty)? {
+            LiteralValue::Number(value) if !value.is_finite() => b"number"[..].into(),
+            _ => {
+                let format = TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION;
+                services.type_to_string(ty, None, format).into()
+            }
+        },
+    })
+}
+
 /// `notes_parameters`: the build can move a default value into the function body, as the React Compiler does.
 pub fn module_types(
     checker: &mut Checker<'_, '_>,
@@ -4815,10 +4836,6 @@ pub fn module_types(
                 );
             }
         }
-        let names_nothing = TypeFlags::STRING_LITERAL
-            | TypeFlags::NUMBER_LITERAL
-            | TypeFlags::BIG_INT_LITERAL
-            | TypeFlags::INTRINSIC;
         let mut constants = Vec::new();
         let lists = hir.ids(hir.body).filter_map(|id| match hir[id].kind {
             StmtKind::Var(declarations) => Some(declarations),
@@ -4841,17 +4858,8 @@ pub fn module_types(
             let flags = services.type_flags(ty);
             if flags.contains(TypeFlags::UNIQUE_ES_SYMBOL) {
                 constants.push((hir[declaration.pat].pos, b"unique symbol"[..].into()));
-            } else if flags.intersects(names_nothing) && !flags.contains(TypeFlags::ENUM_LITERAL) {
-                constants.push((
-                    hir[declaration.pat].pos,
-                    services
-                        .type_to_string(
-                            ty,
-                            None,
-                            TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION,
-                        )
-                        .into(),
-                ));
+            } else if let Some(text) = text_that_names_nothing(services, ty) {
+                constants.push((hir[declaration.pat].pos, text));
             }
         }
         let mut parameters = Vec::new();
@@ -4882,11 +4890,8 @@ pub fn module_types(
             {
                 asserted_parameters.push(hir[parameter.pat].pos);
             }
-            let flags = services.type_flags(ty);
-            if flags.intersects(names_nothing) && !flags.contains(TypeFlags::ENUM_LITERAL) {
-                let format = TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION;
-                let text = services.type_to_string(ty, None, format);
-                parameters.push((hir[parameter.pat].pos, text.into()));
+            if let Some(text) = text_that_names_nothing(services, ty) {
+                parameters.push((hir[parameter.pat].pos, text));
             }
         }
         let mut functions_returning_undefined = Vec::new();

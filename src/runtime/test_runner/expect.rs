@@ -1277,7 +1277,7 @@ impl Expect {
                         || JestPrettyFormat::did_older_bun_print(global_this, value, saved, MatchedRows::default())?);
                 };
                 let mut printed: Vec<u8> = Vec::new();
-                JestPrettyFormat::print_snapshot(global_this, value, property_matchers, &mut printed, format, MatchedRows::default())?;
+                JestPrettyFormat::print_snapshot(global_this, value, property_matchers, MatchedRows::default(), &mut printed, format)?;
                 Ok(printed == saved)
             })();
             match is_it {
@@ -1324,7 +1324,7 @@ impl Expect {
             rows = matched_rows;
         }
 
-        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, value, property_matchers, pretty_value, format, rows)?;
+        let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, value, property_matchers, rows, pretty_value, format)?;
         Ok((rows, same_as_older_bun))
     }
 
@@ -2645,9 +2645,9 @@ impl ExpectCustomAsymmetricMatcher {
                 global_this,
                 this_value,
                 None,
+                MatchedRows::default(),
                 &mut printed,
                 SnapshotFormat::Vitest,
-                MatchedRows::default(),
             ) {
                 return Self::maybe_clear(global_this, e, dont_throw);
             }

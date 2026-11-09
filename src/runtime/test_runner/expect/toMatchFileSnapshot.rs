@@ -62,7 +62,7 @@ impl Expect {
         if value.is_string_literal() {
             received.extend_from_slice(value.to_js_string_view(global)?.to_utf8().slice());
         } else {
-            JestPrettyFormat::print_snapshot(global, value, None, &mut received, Format::Vitest, MatchedRows::default())?;
+            JestPrettyFormat::print_snapshot(global, value, None, MatchedRows::default(), &mut received, Format::Vitest)?;
             if received.len() > 2 && received.starts_with(b"\n") && received.ends_with(b"\n") {
                 received.pop();
                 received.remove(0);

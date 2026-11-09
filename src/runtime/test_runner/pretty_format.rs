@@ -2609,6 +2609,7 @@ impl<'a> Formatter<'a> {
         printed
     }
 
+    /// The body of [`Self::format`], which restores the caller's place on every return from here. Inlined: a frame of its own would add to each nesting level.
     #[inline(always)]
     fn format_entered<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
@@ -3628,9 +3629,9 @@ impl JestPrettyFormat {
         global: &JSGlobalObject,
         value: JSValue,
         property_matchers: Option<JSValue>,
+        rows: MatchedRows,
         out: &mut Vec<u8>,
         format: SnapshotFormat,
-        rows: MatchedRows,
     ) -> JsResult<bool> {
         let mut formatter = Formatter::new(global);
         formatter.snapshot_format = format;

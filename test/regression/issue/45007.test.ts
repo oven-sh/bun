@@ -51,6 +51,19 @@ test.each([
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true number\n", stderr: "", exitCode: 0 });
 });
 
+test.each([
+  ["array destructuring", "[e] = [1]"],
+  ["object destructuring", "({ a: e } = { a: 1 })"],
+])("executed %s write to a const throws TypeError at runtime", async (_name, stmt) => {
+  const { stdout, stderr, exitCode } = await run(
+    {
+      "index.js": `const e = 1;\ntry { ${stmt} } catch (err) { console.log(err instanceof TypeError, e) }\n`,
+    },
+    "index.js",
+  );
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true 1\n", stderr: "", exitCode: 0 });
+});
+
 // The exact shape Turbopack (Next.js 16.4, module fragments / tree shaking) emits, minified: every
 // export of a module factory gets a live-binding getter and setter, `e.s([name, () => v, e => v = e])`,
 // and for a `const` the setter assigns to a constant. It is never called, so the chunk must load.

@@ -1,9 +1,9 @@
 // RUN: link
 // CHECK: layout [[whole]] {{*}}fields=[{key="run" declared={type=undefined|null|[[first]]|[[second]] flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="size" declared={type=number} flags=[IsRequired]}, {key="skipped" declared={type=number} flags=[IsRequired]}]
 // CHECK: layout [[rest]] fields=[{key="run" declared={type=undefined|null|[[first]]|[[second]] flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="size" declared={type=number} flags=[IsRequired]}]
-// CHECK: function {{*}}name="one" {{*}}parameters=[{type=undefined|null|[[whole]] site=w{{*}}}] results=[{type=undefined|null|[[rest]] site=w{{*}}}]
+// CHECK: function {{*}}name="one" {{*}}parameters=[{type=undefined|null|[[whole]] flags={{*}}}] results=[{type=anything}]
 // CHECK: = NewObject layout=[[rest]] @
-// CHECK: function {{*}}name="two" {{*}}parameters=[{type=undefined|null|[[whole]] site=w{{*}}}] results=[{type=undefined|null|[[rest]] site=w{{*}}}]
+// CHECK: function {{*}}name="two" {{*}}parameters=[{type=undefined|null|[[whole]] flags={{*}}}] results=[{type=anything}]
 // CHECK: = NewObject layout=[[rest]] @
 
 // The layout of a plain object belongs to no file. Each file that names it defines it with the types that the file knows: here the type of `run` is

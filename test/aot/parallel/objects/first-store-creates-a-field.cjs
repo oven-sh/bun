@@ -115,3 +115,90 @@ class Listener { onData = () => "data " + this.n; onEnd; constructor(n, end) { t
 for (const end of [first, second, undefined, third, makers(3)]) { const l = new Listener(2, end); out.push("listener " + l.onData() + " " + (l.onEnd ? l.onEnd() : l.onEnd) + " " + Object.keys(l).join()); }
 
 console.log(out.join("\n"));
+/* Output:
+late tag:"a":wec
+late x:1:wec tag:"b":wec
+late y:true:wec x:2:wec tag:"c":wec
+late z:null:wec tag:"d":wec
+late twice s:1:wec tag:"f":wec
+frozen sloppy -> {"x":1}
+frozen strict threw TypeError: Attempting to define property on object that is not extensible.
+sealed strict threw TypeError: Attempting to define property on object that is not extensible.
+not extensible strict threw TypeError: Attempting to define property on object that is not extensible.
+not extensible sloppy -> {"q":2}
+setter above -> own from getter setter j
+getter only strict threw TypeError: Attempted to assign to readonly property.
+getter only sloppy -> a
+read-only above strict threw TypeError: Attempted to assign to readonly property.
+read-only above sloppy -> r fixed
+field over setter tag:"m":wec other:fn:wec
+field over setter -> 1
+field over read-only r:1:wec tag:"n":wec
+before change first:"x":wec added:"p":wec
+after setter first:"x":wec
+setter j,late setter q
+after delete first:"x":wec added:"p":wec
+below proxy b:1:wec added:"p":wec
+set b,set added
+order a,b,c base:0:wec a:"one":wec b:fn:wec c:map:wec
+order c,b,a base:0:wec c:map:wec b:fn:wec a:"one":wec
+order b,1,a 1:"index":wec base:0:wec b:fn:wec a:"one":wec
+order a,b,-a,a base:0:wec b:fn:wec a:"one":wec
+order c,-a,a,1,b 1:"index":wec base:0:wec c:map:wec a:"one":wec b:fn:wec
+symbols p:1:wec Symbol(s):"p":wec Symbol(Symbol.toStringTag):"T":wec
+symbols p:1:wec q:2:wec Symbol(s):"q":wec Symbol(Symbol.toStringTag):"T":wec
+retype n:1:wec kind:"p":wec
+retype n:2:wec kind:5:wec
+retype n:3:wec kind:null:wec
+retype n:4:wec kind:undefined:wec
+retype n:5:wec kind:{"deep":"q"}:wec
+other new.target one:"p":wec two:fn:wec three:map:wec four:undefined:wec five:undefined:wec
+true false
+stamped literal had:1:wec stamp:"q":wec fn:fn:wec
+stamped frozen threw TypeError: Attempting to define property on object that is not extensible.
+stamped twice had:2:wec stamp:"q":wec fn:fn:wec
+stamped twice -> ok
+stamped with a read-only stamp threw TypeError: Attempting to change configurable attribute of unconfigurable property.
+stamped proxy -> stamp:value,writable,enumerable,configurable fn:value,writable,enumerable,configurable
+undefined
+p
+prototype base:1:wec tag:"p":wec
+number sloppy -> 5
+number strict threw TypeError: Attempted to assign to readonly property.
+string strict threw TypeError: Attempted to assign to readonly property.
+null threw TypeError
+undefined threw TypeError
+moved kind:5:wec n:1:wec after:"p":wec more:map:wec
+moved kind:{"deep":1}:wec n:2:wec after:"p":wec more:map:wec
+not moved kind:"q":wec n:3:wec after:"p":wec more:map:wec
+moved, deleted n:4:wec kind:"p":wec after:"p":wec more:fn:wec
+moved, deleted n:5:wec kind:"p":wec after:"p":wec more:fn:wec
+redefined kind:"q":w-c n:6:wec after:"q":wec more:map:wec
+redefined n:7:wec kind:"q":w-c after:"q":wec more:map:wec
+moved in constructor kind:1:wec after:"q":wec more:fn:wec last:"p":wec
+moved in constructor kind:"q":wec after:"q":wec more:fn:wec last:"p":wec
+moved in constructor kind:null:wec after:"q":wec more:fn:wec last:"p":wec
+handler true id,handler first
+handler true id,handler second
+handler true id,handler first
+handler true id,handler third
+handler true id,handler with property
+handler true id,handler made 1
+handler true id,handler made 2
+handler true id,handler static
+handler true id,handler method
+handler true id,handler third
+handler true id,handler -Infinity
+handler true id,handler [object Promise]
+handler true id,handler [object Generator]
+handler true id,handler function
+handler true id,handler first
+handler true id,handler object
+handler true id,handler object
+handler true id,handler string
+listener data 2 first onData,onEnd,n
+listener data 2 second onData,onEnd,n
+listener data 2 undefined onData,onEnd,n
+listener data 2 third onData,onEnd,n
+listener data 2 made 3 onData,onEnd,n
+*/

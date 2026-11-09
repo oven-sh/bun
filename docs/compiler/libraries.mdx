@@ -14,7 +14,6 @@ Most of these [change a built-in object](/compiler/compatibility#built-in-object
 | Package               | Use instead                                   |
 | --------------------- | --------------------------------------------- |
 | `core-js` 2           | `core-js` 3                                   |
-| `sass`                | Compile your stylesheets before the build     |
 | `asciidoctor` 2 and 3 | `asciidoctor` 4                               |
 | `zone.js`             | Zoneless change detection in Angular          |
 | `chai.should()`       | `expect` or `assert`                          |
@@ -25,7 +24,7 @@ Most of these [change a built-in object](/compiler/compatibility#built-in-object
 | `private`             | `recast` 0.20.4 or Babel 7, which dropped it  |
 
 - The `/auto` and `shim()` entry points of `array.prototype.map`, `set.prototype.union`, `string.prototype.matchall` and similar packages replace a method. Call what the package exports instead, as in `map(list, f)`.
-- Remove `es5-shim`, `es6-shim`, `url-polyfill`, `harmony-reflect` and `promise/polyfill`. Bun has what they add.
+- Remove `es5-shim`, `es6-shim` and `harmony-reflect`. Bun has what they add.
 - `collections` and `prototype` replace functions of `Object`, and have no replacement.
 - `@js-temporal/polyfill` works if you leave out the `Date.prototype.toTemporalInstant = ...` line from its README.
 - `next` works. It logs a line that begins with `Failed to install` when it starts.
@@ -81,7 +80,7 @@ Most packages ship JavaScript and `.d.ts` files, so the types inside their funct
 - Put `"aot"` first. The first condition that matches wins.
 - Nothing compares the two files, so generate both from the same sources. The file can also be your source, as in `"aot": "./src/index.ts"`.
 - Bun checks and compiles the file under the `"compilerOptions"` in your `package.json`, or as `strict` if there are none. The `tsconfig.json` of the program that installs your package doesn't apply.
-- If the file has a type error in that program, the build warns and compiles your package without its types. A syntax error or a missing file stops the build.
+- The build of a program looks for type errors in the program's own files, not in your package. Run `bun check` before you publish. A syntax error or a missing file stops the build.
 
 `bun compile --library` writes all of it into `dist`, with a `package.json` that has the condition.
 

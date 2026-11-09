@@ -3,7 +3,7 @@ use super::queue::{ROLE_ROUNDS, run_queue};
 use super::{
     BuildDiagnostic, CompileRequest, Demotion, DemotionCause, FileWork, LoadedProgram, RoleDecision,
 };
-use bun_sema::check::aot::{DiagnosticClass, Effect};
+use bun_sema::check::aot::Effect;
 use bun_sema::program::{FileId, FileRole, Files};
 use bun_sema::resolve::Host;
 use bun_sema::util::SharedSort;
@@ -24,7 +24,7 @@ pub fn decide_roles<'s>(
     let mut candidates: Vec<FileId> = files_to_lower
         .iter()
         .copied()
-        .filter(|&file| can_lose_trust(loaded.origin(file), roles[file.idx()]))
+        .filter(|&file| can_lose_trust(loaded.origin(file)))
         .filter(|&file| {
             !request
                 .left_out_bodies
@@ -50,22 +50,23 @@ pub fn decide_roles<'s>(
         request,
         candidates.clone(),
         &FileWork {
-            requested: &|file| requested_diagnostics(loaded.origin(file), files.role(file)),
+            requested: &|file| requested_diagnostics(loaded.origin(file), false),
             after_file: None,
             after_commit: &|_| {},
-            beside_file: None,
             frees_tree: &|_| false,
             is_last_pass: &|| false,
+            note_cycles_entered: None,
+            cycles_entered_before: &Default::default,
             first_round: ROLE_ROUNDS,
             left_out_bodies: request.left_out_bodies,
         },
     );
     let mut diagnostics = loaded.program_origins().apply_effects(report.diagnostics);
-    for demotion in find_files_without_trust(&diagnostics) {
+    for demotion in find_files_with_early_errors(&diagnostics) {
         roles[demotion.file.idx()] = FileRole::Inferred;
         demoted.push(demotion);
     }
-    diagnostics.retain(|reported| demotion_cause_of(reported) != Some(DemotionCause::EarlyError));
+    diagnostics.retain(|reported| !withdraws_trust(reported));
     demoted.shared_sort_by_key(|demotion| demotion.file);
     candidates.shared_sort_unstable();
     RoleDecision {
@@ -91,7 +92,7 @@ pub fn keep_verified_roles(loaded: &LoadedProgram<'_>, files_to_lower: &[FileId]
     let mut checked: Vec<FileId> = files_to_lower
         .iter()
         .copied()
-        .filter(|&file| can_lose_trust(loaded.origin(file), roles[file.idx()]))
+        .filter(|&file| roles[file.idx()] == FileRole::Checked)
         .collect();
     checked.shared_sort_unstable();
     RoleDecision {
@@ -105,26 +106,22 @@ pub fn keep_verified_roles(loaded: &LoadedProgram<'_>, files_to_lower: &[FileId]
     }
 }
 
-fn demotion_cause_of(reported: &BuildDiagnostic) -> Option<DemotionCause> {
+fn withdraws_trust(reported: &BuildDiagnostic) -> bool {
     match reported.effect {
-        Effect::WithdrawsTrust => {}
-        Effect::StopsBuild | Effect::Warns | Effect::Dropped | Effect::InternalError => {
-            return None;
-        }
+        Effect::WithdrawsTrust => true,
+        Effect::StopsBuild | Effect::Warns | Effect::Dropped | Effect::InternalError => false,
     }
-    Some(match reported.diagnostic.class {
-        DiagnosticClass::EarlyError => DemotionCause::EarlyError,
-        _ => DemotionCause::TypeError,
-    })
 }
 
-fn find_files_without_trust(diagnostics: &[BuildDiagnostic]) -> Vec<Demotion> {
+fn find_files_with_early_errors(diagnostics: &[BuildDiagnostic]) -> Vec<Demotion> {
     let mut demotions: Vec<Demotion> = diagnostics
         .iter()
+        .filter(|reported| withdraws_trust(reported))
         .filter_map(|reported| {
-            let cause = demotion_cause_of(reported)?;
-            let file = reported.diagnostic.file?;
-            Some(Demotion { file, cause })
+            Some(Demotion {
+                file: reported.diagnostic.file?,
+                cause: DemotionCause::EarlyError,
+            })
         })
         .collect();
     demotions.shared_sort_by_key(|demotion| demotion.file);
@@ -136,7 +133,11 @@ fn find_unverified_files(files: &Files<'_>) -> Vec<Demotion> {
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
     file_ids
         .filter(|&file| files.role(file) == FileRole::Checked)
-        .filter(|&file| files.hir(file).check_directive == Some(false))
+        .filter(|&file| {
+            let is_aot_source = || files.compiled(file).is_some_and(|it| it.is_aot_source);
+            files.hir(file).check_directive == Some(false)
+                || (files.needs_another_program(file) && !is_aot_source())
+        })
         .map(|file| Demotion {
             file,
             cause: DemotionCause::UnverifiedTypes,

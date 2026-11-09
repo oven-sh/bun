@@ -1066,5 +1066,5 @@ describe("XML.stringify", () => {
     let node: any = { name: "a", children: ["x"] };
     for (let i = 0; i < depth; i++) node = { name: "a", children: [node] };
     expect(() => XML.stringify(node)).toThrow(RangeError);
-  });
+  }, 30_000); // a debug build needs over 10 s for the two million allocations
 });

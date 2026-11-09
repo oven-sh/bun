@@ -332,7 +332,6 @@ pub(crate) fn scan_imports_and_exports(
                                 .flags
                                 .contains(ImportRecordFlags::CONTAINS_DEFAULT_ALIAS))
                             && !other_flags.contains(AstFlags::HAS_LAZY_EXPORT)
-                            && !other_flags.contains(AstFlags::FORCE_CJS_TO_ESM)
                             && col_ref!(exports_kind)[other_file] == ExportsKind::None
                         {
                             col!(exports_kind)[other_file] = ExportsKind::Cjs;

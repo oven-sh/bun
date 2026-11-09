@@ -390,6 +390,22 @@ describe.concurrent("`import` rules give each importer the parse error of its ow
       `without/b.mjs 1:8 import/default No default export found in imported module "../shared.js".`,
     ]);
   });
+
+  // Both importers read ES2017. A `/* eslint-env */` comment in the imported file raises the edition only where the
+  // config gets it from an `env`, because `parserOptions.ecmaVersion` wins over every environment.
+  test.each(sides)("an ESLint 8 config's `env` and a comment decide the edition (%s first)", async (first, second) => {
+    const files = {
+      ".eslintrc.json": `{ "root": true, "plugins": ["import"], "rules": { "import/default": "error" } }`,
+      "with/.eslintrc.json": `{ "parserOptions": { "ecmaVersion": 2017, "sourceType": "module" } }`,
+      "without/.eslintrc.json": `{ "env": { "es2017": true }, "parserOptions": { "sourceType": "module" } }`,
+      "shared.js": "/* eslint-env es2020 */\nconst a = null ?? 1;\nexport default a;\n",
+      "with/a.mjs": importer,
+      "without/b.mjs": importer,
+    };
+    expect(await lintImporters(files, first, second)).toEqual([
+      `with/a.mjs 1:20 import/default Parse errors in imported module '../shared.js': Unexpected token ? (2:17)`,
+    ]);
+  });
 });
 
 describe.concurrent("rules that sort", () => {

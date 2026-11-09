@@ -728,8 +728,13 @@ impl LanguageOptions {
         let flags = (flags.iter().enumerate()).fold(0u32, |bits, (index, flag)| {
             bits | (u32::from(*flag) << index)
         });
+        // Only espree's emulation reads the settings of an ESLint 8 config.
+        let eslint_8_identity = match parser {
+            Parser::Espree => eslint_8.as_deref().map_or(0, Eslint8::identity),
+            Parser::TypeScript | Parser::Other => 0,
+        };
         ParseIdentity {
-            eslint_8: eslint_8.as_deref().map_or(0, Eslint8::identity),
+            eslint_8: eslint_8_identity,
             without_module_syntax: (without_module_syntax.as_deref())
                 .map_or(0, |it| bun_wyhash::hash(it.parse_identity().bytes())),
             ecma_version: *ecma_version,

@@ -1922,7 +1922,20 @@ fn type_of(value: &Json) -> &'static [u8] {
     }
 }
 
+/// The keys of `parserOptions` that [`edition_of`] reads, and their values, for [`Eslint8::hash_identity`].
+fn write_edition_inputs(options: &Json, out: &mut Vec<u8>) {
+    for key in [&b"ecmaVersion"[..], b"sourceType", b"allowReserved"] {
+        if let Some(value) = options.get(key) {
+            out.extend_from_slice(key);
+            out.push(0);
+            value.stringify(out);
+            out.push(0);
+        }
+    }
+}
+
 /// espree 9's `normalizeOptions`: the `ecmaVersion` passed to acorn, which is 3 or 5 to 15. `Err` holds what it throws.
+/// [`write_edition_inputs`] lists the keys it reads.
 fn edition_of(options: &Json) -> Result<u32, Vec<u8>> {
     let version = match options.get(b"ecmaVersion") {
         None => 5.0,
@@ -2041,18 +2054,33 @@ impl Eslint8 {
         self.identity
     }
 
-    /// Computes [`Eslint8::identity`] from the fields it reads.
+    /// Computes [`Eslint8::identity`]. An environment without parser options can't change the edition, on or off,
+    /// and neither can a parser option that [`edition_of`] doesn't read.
     fn hash_identity(&self) -> u64 {
         let mut bytes = Vec::new();
-        for (name, is_on) in &self.env {
+        let mut write = |name: &[u8], is_on: Option<bool>, options: &Json| {
+            let mut inputs = Vec::new();
+            write_edition_inputs(options, &mut inputs);
+            if inputs.is_empty() {
+                return;
+            }
             bytes.extend_from_slice(name);
             bytes.push(0);
-            bytes.push(u8::from(*is_on));
+            bytes.push(is_on.map_or(2, u8::from));
+            bytes.append(&mut inputs);
+        };
+        for (name, is_on) in &self.env {
+            if let Some(options) = self.environment_parser_options(name) {
+                write(name, Some(*is_on), &options);
+            }
         }
-        bytes.push(0);
-        self.environments.stringify(&mut bytes);
-        bytes.push(0);
-        self.parser_options.stringify(&mut bytes);
+        // A comment can name a plugin environment that `env` doesn't.
+        for (name, environment) in self.environments.as_object().unwrap_or_default() {
+            if let Some(options) = environment.get(b"parserOptions") {
+                write(name, None, options);
+            }
+        }
+        write(b"", None, &self.parser_options);
         bytes.push(u8::from(self.is_espree));
         bun_wyhash::hash(&bytes)
     }

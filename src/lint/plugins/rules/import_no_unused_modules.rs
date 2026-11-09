@@ -4,7 +4,7 @@ use crate::import_package_path::read_pkg_up;
 use crate::import_resolve::Resolvers;
 use crate::import_settings::Settings;
 use bun_core::strings;
-use bun_lint::language::Parser;
+use bun_lint::language::ParseIdentity;
 use bun_lint::modules::Modules;
 use bun_lint::paths;
 use bun_lint::prelude::*;
@@ -54,12 +54,7 @@ type Exports = FxHashMap<Box<[u8]>, bool>;
 struct Context {
     settings: Arc<Json>,
     parser_options: Json,
-    parser: Parser,
-    source_type: SourceType,
-    ecma_version: u32,
-    jsx: bool,
-    experimental_decorators: bool,
-    is_eslint_8: bool,
+    identity: ParseIdentity,
 }
 
 /// The state upstream keeps across files. Upstream updates it with every file it lints, for editors. This doesn't.
@@ -88,22 +83,12 @@ impl Context {
         Context {
             settings: Arc::clone(&language.settings),
             parser_options: language.parser_options.clone(),
-            parser: language.parser,
-            source_type: language.source_type,
-            ecma_version: language.ecma_version,
-            jsx: language.jsx,
-            experimental_decorators: language.experimental_decorators,
-            is_eslint_8: language.eslint_8.is_some(),
+            identity: language.parse_identity(),
         }
     }
 
     fn matches_language(&self, language: &LanguageOptions) -> bool {
-        self.parser == language.parser
-            && self.source_type == language.source_type
-            && self.ecma_version == language.ecma_version
-            && self.jsx == language.jsx
-            && self.experimental_decorators == language.experimental_decorators
-            && self.is_eslint_8 == language.eslint_8.is_some()
+        self.identity == language.parse_identity()
             && self.settings == language.settings
             && self.parser_options == language.parser_options
     }

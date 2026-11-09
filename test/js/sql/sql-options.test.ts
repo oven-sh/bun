@@ -1024,6 +1024,19 @@ describe("a query keeps its state in private fields", () => {
     expect(prototype.simple.call(object)).toBe(object);
   });
 
+  test("a revoked Proxy of a query gives no access to the query", async () => {
+    await using sql = new SQL(":memory:");
+    const query = sql`select 1 as x`;
+    const prototype = Object.getPrototypeOf(query);
+    const { proxy, revoke } = Proxy.revocable(query, {});
+    revoke();
+    expect(() => prototype.cancel.call(proxy)).toThrow(TypeError);
+    expect(() => prototype.simple.call(proxy)).toThrow(TypeError);
+    expect(() => Object.getOwnPropertyDescriptor(prototype, "cancelled")!.get!.call(proxy)).toThrow(TypeError);
+    expect(query.cancelled).toBe(false);
+    expect(await query).toEqual([{ x: 1 }]);
+  });
+
   test.each(wrappers)("%s has the status of the query, and cancels it", async (_, wrap) => {
     await using sql = new SQL(":memory:");
     const query = sql`select 1 as x`;

@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
-import { renameSync } from "node:fs";
+import { readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { compileCommand, withThreads } from "./harness/flags";
 import { run } from "./harness/run";
@@ -205,14 +205,19 @@ ${head(`{ ask } from "./ask.mjs"`)}test("the Workers answer", async () => {
 ${atTheConstructor}});
 `,
     };
+    const workerFiles = ways.map((_, index) => `src/w${index + 1}.mjs`);
     const see = async (flags: string[], env: Record<string, string>) => {
       using dir = tempDir("aot-workers-named-through-the-library", files);
       const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), { ...bunEnv, ...env });
-      return { seen: seenIn(stdout), stderr: exitCode ? stderr : "", exitCode };
+      const onDisk = workerFiles.map(file => readFileSync(join(String(dir), file), "utf8"));
+      return { seen: seenIn(stdout), onDisk, stderr: exitCode ? stderr : "", exitCode };
     };
-    const plain = await see([], {});
-    expect(plain).toEqual({ seen: answers, stderr: "", exitCode: 0 });
-    expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1" })).toEqual(plain);
+    const asWritten = workerFiles.map(file => project[file]);
+    expect(await see([], {})).toEqual({ seen: answers, onDisk: asWritten, stderr: "", exitCode: 0 });
+    // The run did write over each file, so a Worker that answers as before started from what the build read.
+    const writtenOver = workerFiles.map(() => `postMessage("from disk");\n`);
+    const compiled = await see(["--aot"], { WRITES_OVER_WORKERS: "1" });
+    expect(compiled).toEqual({ seen: answers, onDisk: writtenOver, stderr: "", exitCode: 0 });
   },
 );
 

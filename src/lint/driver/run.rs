@@ -1105,8 +1105,14 @@ impl Run<'_> {
             loader.name(paths::dirname(&path));
             let config = match loader.for_directory(paths::dirname(&path)) {
                 Ok(loaded) if loaded.flavor == Flavor::Oxlint => {
-                    let printed = loaded.config.oxlint_print_config();
-                    crate::print_config::write_indented(&mut self.out.stdout, &printed, 0);
+                    let argument = paths::from_native(file);
+                    let file = (!file.is_empty()).then_some((&argument[..], &path[..]));
+                    match loader.oxlint_print_config_of(&loaded, file) {
+                        Some(printed) => {
+                            crate::print_config::write_indented(&mut self.out.stdout, &printed, 0)
+                        }
+                        None => self.out.stdout.extend_from_slice(b"undefined"),
+                    }
                     self.out.stdout.push(b'\n');
                     return self.out;
                 }

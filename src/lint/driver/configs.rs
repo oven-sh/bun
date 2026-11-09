@@ -2874,6 +2874,23 @@ impl<'l> Loader<'l> {
         (loaded.config).get_with_frameworks(self.linter.registry(), path, detected)
     }
 
+    /// What `--print-config` prints with an oxlint config, for `file` (as given, and resolved) or without one. `None`
+    /// if the file isn't linted.
+    pub(crate) fn oxlint_print_config_of(
+        &self,
+        loaded: &Loaded,
+        file: Option<(&[u8], &[u8])>,
+    ) -> Option<Json> {
+        let Some((argument, path)) = file else {
+            return Some(loaded.config.oxlint_print_config());
+        };
+        if self.ignores_named_file(argument, path, loaded) {
+            return None;
+        }
+        let detected = self.detect_frameworks(loaded, paths::dirname(path));
+        (loaded.config).oxlint_print_config_for(self.linter.registry(), path, detected)
+    }
+
     /// True if the type-aware rules run on a file whose configuration is `config`, which comes from `loaded`.
     pub(crate) fn wants_types(&self, loaded: &Loaded, config: &ResolvedConfig) -> bool {
         // With no config file and no flag, the rules decide. A rule that only uses types when they're available isn't a

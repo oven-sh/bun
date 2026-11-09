@@ -1082,7 +1082,7 @@ impl Reader<'_> {
             prefers_typescript_rules: self.prefers_typescript_rules,
             has_every_rule: self.has_every_rule,
             oxlintrc_options: Vec::new(),
-            oxlint_print_config: Vec::new(),
+            oxlint_dump: super::rc::Dump::default(),
             notes: self.notes,
             advice: self.advice,
             unknown_rules: self.unknown_rules,

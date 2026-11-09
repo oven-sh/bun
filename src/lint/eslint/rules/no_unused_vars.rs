@@ -1137,6 +1137,7 @@ impl NoUnusedVars {
         if is_marked_as_used
             || is_used_variable(variable)
             || is_exported(def)
+            || symbol.is_template_reachable()
             || self.ignore_using_declarations && uses_explicit_resource_management(def)
             || self.has_rest_spread_sibling(variable)
         {

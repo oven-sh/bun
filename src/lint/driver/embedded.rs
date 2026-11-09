@@ -3,7 +3,7 @@
 //! Scripts are found the way oxlint finds them, by searching the text. Only the scripts themselves are parsed. Each one
 //! is a separate program that can't see the file's other scripts or its template.
 
-use crate::lint::{Context, RuleFilter};
+use crate::lint::{Context, EmbeddedScript, RuleFilter};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::fix::Fix;
@@ -39,6 +39,8 @@ struct Script {
     start: usize,
     end: usize,
     kind: ScriptKind,
+    /// Vue's `<script setup>`, whose top-level bindings the template can read and assign.
+    is_setup: bool,
 }
 
 const SCRIPT_START: &[u8] = b"<script";
@@ -162,7 +164,12 @@ fn vue_lang(content: &[u8]) -> &[u8] {
 /// The script from `start`, just after the tag, to the next `</script>`. Also returns where the search continues.
 fn until_end(text: &[u8], start: usize, kind: ScriptKind) -> Option<(Script, usize)> {
     let end = start + strings::index_of(&text[start..], SCRIPT_END)?;
-    let script = Script { start, end, kind };
+    let script = Script {
+        start,
+        end,
+        kind,
+        is_setup: false,
+    };
     Some((script, end + SCRIPT_END.len()))
 }
 
@@ -177,7 +184,9 @@ fn vue_script(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
     }
     let tag = closing_angle(text, at)?;
     let kind = kind_of(vue_lang(&text[at..at + tag]))?;
-    until_end(text, at + tag + 1, kind)
+    let (mut script, after) = until_end(text, at + tag + 1, kind)?;
+    script.is_setup = attribute(&text[at..at + tag], b"setup").is_some();
+    Some((script, after))
 }
 
 /// `SveltePartialLoader::parse_script`
@@ -221,6 +230,7 @@ fn frontmatter(text: &[u8]) -> Option<Script> {
         start: start + 3,
         end: next_fence()?,
         kind: ScriptKind::Ts,
+        is_setup: false,
     })
 }
 
@@ -260,6 +270,7 @@ fn astro_scripts(text: &[u8]) -> Vec<Script> {
                     start,
                     end: start,
                     kind: ScriptKind::Ts,
+                    is_setup: false,
                 }
             }
             _ => match until_end(text, start, ScriptKind::Ts) {
@@ -293,19 +304,19 @@ fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
     }
 }
 
-/// The `should_run` of the oxlint 1.80 rules that check for these file extensions. There's no way to tell what the
-/// template uses or assigns to, and `$:` is Svelte syntax. Each rule was tried.
+/// Which rules run on a script. The scripts are parsed without their template, so a rule that needs to know what the
+/// template uses or assigns to can't run as it is. oxlint 1.87 turns `no-unused-vars` and `prefer-const` off for the
+/// whole file. Here they run, and skip the bindings the template can reach themselves (`File::is_template_reachable`):
+/// the rest of a script has nothing the template can see. The other rules are off as in oxlint. `$:` is Svelte syntax.
 fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
     let RuleId::Known(meta) = rule else {
         return true;
     };
     let is_off = match (meta.plugin, meta.name) {
-        (Plugin::Eslint | Plugin::TypeScript, "no-unused-vars")
-        | (Plugin::TypeScript, "consistent-type-imports") => true,
+        (Plugin::Eslint | Plugin::TypeScript, "no-unused-vars") => framework == Framework::Astro,
+        (Plugin::TypeScript, "consistent-type-imports") => true,
         (Plugin::Eslint, "no-unused-labels") => framework == Framework::Svelte,
-        (Plugin::Eslint, "prefer-const") | (Plugin::ReactHooks, "rules-of-hooks") => {
-            framework != Framework::Astro
-        }
+        (Plugin::ReactHooks, "rules-of-hooks") => framework != Framework::Astro,
         _ => false,
     };
     !is_off && oxlint_runs_on(meta, is_typescript)
@@ -400,6 +411,13 @@ impl Context<'_, '_> {
     ) -> LintResult {
         let mut all = LintResult::default();
         let scripts = scripts_of(framework, text);
+        // The top-level bindings of every `<script>` of a Vue file with a `<script setup>`, and of both scripts of a
+        // Svelte file, are in scope in the template. Astro's frontmatter is too, but its rules are oxlint's.
+        let is_template_reachable = match framework {
+            Framework::Vue => scripts.iter().any(|it| it.is_setup),
+            Framework::Svelte => true,
+            Framework::Astro => false,
+        };
         for (index, &script) in scripts.iter().enumerate() {
             let is_typescript = matches!(script.kind, ScriptKind::Ts | ScriptKind::Tsx);
             let filter = |rule: &RuleId, severity: Severity| {
@@ -407,7 +425,11 @@ impl Context<'_, '_> {
                     && outer.is_none_or(|outer| outer(rule, severity))
             };
             let code = &text[script.start..script.end];
-            let how = (script.kind, index > 0);
+            let how = EmbeddedScript {
+                kind: script.kind,
+                is_later_script: index > 0,
+                is_template_reachable,
+            };
             let mut result = self.verify_script(path, code, config, how, &filter);
             if result.thrown.is_some() {
                 return result;

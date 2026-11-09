@@ -299,8 +299,9 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
 }
 
 /// oxlint 1.87's fix. There's none if a variable is referenced outside the declaration's parent. The keyword is `const`
-/// if nothing is assigned later and every variable has an initializer. The fix replaces the whole declaration, so that
-/// no other fix changes it in the same pass.
+/// if nothing is assigned later and every variable has an initializer. Unlike oxlint, a variable that the template of
+/// a `.vue` or `.svelte` file can assign keeps `let`. The fix replaces the whole declaration, so that no other fix
+/// changes it in the same pass.
 fn fix_as_oxlint<'a>(
     fixer: Fixer<'a>,
     statement: Stmt<'a>,
@@ -331,10 +332,19 @@ fn fix_as_oxlint<'a>(
             return None;
         }
     }
-    let is_let = declarations
-        .iter()
-        .any(|it| it.init().is_none() || oxlint_is_written_to(it.pat()));
     let (file, span) = (fixer.file(), statement.span_without_export());
+    let is_template_reachable = |pat: Pat<'a>| {
+        let mut found = false;
+        if file.is_template_reachable() {
+            pat.for_each_binding(&mut |pat| {
+                found |= pat.symbol().is_some_and(Symbol::is_template_reachable);
+            });
+        }
+        found
+    };
+    let is_let = declarations.iter().any(|it| {
+        it.init().is_none() || oxlint_is_written_to(it.pat()) || is_template_reachable(it.pat())
+    });
     let before = file.slice(Span::before(span.start, var));
     let after = file.slice(Span::after(var, span.end));
     let keyword: &[u8] = if is_let { b"let" } else { b"const" };

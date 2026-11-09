@@ -265,6 +265,7 @@ pub struct File<'a> {
     pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
     pub(crate) inferred_globals: OnceCell<Option<crate::linter::globals::ProgramGlobals<'a>>>,
     is_later_script: Cell<bool>,
+    is_template_reachable: Cell<bool>,
     /// [`File::in_language`]
     parsed: Option<(&'a crate::languages::Parsed, crate::source::LineBreaks)>,
     language: &'a LanguageOptions,
@@ -341,6 +342,7 @@ impl<'a> File<'a> {
             inferred_from: Cell::new(None),
             inferred_globals: OnceCell::new(),
             is_later_script: Cell::new(false),
+            is_template_reachable: Cell::new(false),
             parsed: None,
             path,
         }
@@ -377,6 +379,19 @@ impl<'a> File<'a> {
 
     pub fn set_later_script(&self, is_later: bool) {
         self.is_later_script.set(is_later);
+    }
+
+    /// True for a script whose top-level bindings are in scope in the file's template, which isn't parsed: every
+    /// `<script>` of a `.vue` file that has a `<script setup>`, and every `<script>` of a `.svelte` file. The template
+    /// can read and assign those bindings, so no rule can tell whether one is used or reassigned. See
+    /// [`Symbol::is_template_reachable`](crate::semantic::Symbol::is_template_reachable).
+    #[inline]
+    pub fn is_template_reachable(&self) -> bool {
+        self.is_template_reachable.get()
+    }
+
+    pub fn set_template_reachable(&self, is_reachable: bool) {
+        self.is_template_reachable.set(is_reachable);
     }
 
     /// For a `hir` that doesn't store its text.

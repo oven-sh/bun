@@ -370,6 +370,18 @@ impl<'a> Symbol<'a> {
             .is_some_and(|it| it.flags & variables::VALUE != 0)
     }
 
+    /// True if the file's template can read and assign this variable, which the linter can't see: a value declared
+    /// at the top level of a [template-reachable](File::is_template_reachable) script. A type, and an import that's
+    /// only a type, can't be used in a template.
+    pub fn is_template_reachable(self) -> bool {
+        self.file.is_template_reachable()
+            && self.is_value_variable()
+            && self.scope() == self.file.top_level_scope()
+            && self
+                .declarations()
+                .any(|it| !crate::utils::ts_utils::is_type_import(it))
+    }
+
     /// typescript-eslint's `variable.isTypeVariable`: an interface, a type alias, a type
     /// parameter, a class, an enum and its members, a namespace, an import.
     pub fn is_type_variable(self) -> bool {

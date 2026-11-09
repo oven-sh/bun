@@ -20,9 +20,11 @@ enum Rule {
     UndecidedTest,
 }
 
+type Parts = SmallVec<[(TreeNode, Rule); 8]>;
+
 #[derive(Default)]
 struct Removal {
-    parts: Vec<(TreeNode, Rule)>,
+    parts: Parts,
     depends_on_module_format: bool,
     is_of_build: bool,
 }
@@ -85,11 +87,7 @@ impl Folder<'_, '_> {
         true
     }
 
-    fn push_parts_of_statement(
-        &self,
-        statement: StmtId,
-        parts: &mut Vec<(TreeNode, Rule)>,
-    ) -> bool {
+    fn push_parts_of_statement(&self, statement: StmtId, parts: &mut Parts) -> bool {
         let unused = Rule::UnusedValue;
         match self.hir[statement].kind {
             StmtKind::Empty | StmtKind::Interface(_) | StmtKind::TypeAlias(_) => true,
@@ -298,11 +296,7 @@ impl Folder<'_, '_> {
     }
 
     /// What `class_can_be_removed_if_unused` of the parser asks: what a class runs where it is written.
-    fn push_parts_of_unused_class(
-        &self,
-        class: ClassId,
-        parts: &mut Vec<(TreeNode, Rule)>,
-    ) -> bool {
+    fn push_parts_of_unused_class(&self, class: ClassId, parts: &mut Parts) -> bool {
         let hir = self.hir;
         let class = &hir[class];
         let has_decorator = |modifiers: Span<ModifierId>| {

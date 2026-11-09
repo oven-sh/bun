@@ -1,4 +1,4 @@
-// What stands in place of an operator that plain Bun decides takes the name of the variable, as it does under plain Bun.
+// What the transpiler puts in place of an operator that it decides takes the name of the variable.
 const chosen = true ? function () {} : 0;
 const both = 1 && function () {};
 const either = 0 || function () {};

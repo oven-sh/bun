@@ -402,6 +402,7 @@ Use these specifiers in a `test.each` or `describe.each` title:
 | `%f`       | Floating point (`parseFloat`)       |
 | `%j`       | JSON                                |
 | `%o`, `%O` | Object                              |
+| `%c`       | Nothing. The value is skipped       |
 | `%#`       | Index of the test case              |
 | `%$`       | Number of the test case (index + 1) |
 | `%%`       | Single percent sign (%)             |
@@ -446,11 +447,12 @@ Bun formats a `test.for` or `describe.for` title the way Vitest does. The main d
 | -------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------- |
 | `%p`                                               | pretty-format                 | not a specifier: it stays `%p` and takes no value                             |
 | `%%`                                               | `%`                           | `%`, a space and the next value                                               |
-| A specifier with no value left                     | left as is                    | `undefined`, or `NaN` for `%d`, `%i` and `%f`                                 |
+| A specifier with no value left                     | left as is                    | `undefined`, `NaN` for `%d`, `%i` and `%f`, nothing for `%c`                  |
 | An object or array for `%s`, `%o`, `%O` or `$name` | `{ n: "x" }`, `[ 1, 2 ]`      | `{ n: 'x' }`, cut short at about 40 characters. `%s` prints an array as `1,2` |
 | A string of more than 40 characters for `$name`    | printed in full               | cut to 40 characters, with `…` at the end                                     |
-| `$name`, and the row has no `name` property        | left as is                    | `undefined`                                                                   |
-| `$#`                                               | the test case's index         | left as is. Use `%#`                                                          |
+| `$name`, and the object row has no `name` property | left as is                    | `undefined`                                                                   |
+| `$name.`, with a period right after the name       | the value, then the period    | `undefined`. The period counts as part of the name                            |
+| `$#` with an object row                            | the test case's index         | left as is. Use `%#`                                                          |
 | `$0`, `$1` with an array row                       | left as is                    | the row's first and second value                                              |
 | A row that is `null`                               | one value: `%s` prints `null` | no value: `%s` prints `undefined`                                             |
 
@@ -458,7 +460,7 @@ An object or array that is cut short shows how many entries it leaves out. With 
 
 In a `test.for` title, write a single `%` to print a percent sign, as in `100% of %i`. A `%` that isn't part of a specifier is printed as is.
 
-`test.each` and `describe.each` from `"vitest"` print what the `test.for` column shows. The exception is the last row: for them, a `null` row is one value.
+Two more kinds of title print what the `test.for` column shows: `test.each` and `describe.each` from `"vitest"`, and `test.each` on an [extended](#fixtures) `test` from any module. The exception is the last row: for them, a `null` row is one value.
 
 ## Fixtures
 
@@ -489,6 +491,7 @@ test("responds", async ({ url }) => {
 - Fixtures are torn down in reverse order, after the `afterEach` hooks. A fixture that an `aroundEach` hook destructures is torn down after the hook finishes.
 - A fixture that isn't a function is passed as is.
 - You can call `test.extend()` on an extended `test`. A fixture that replaces one with the same name can destructure the one it replaces.
+- Titles of `test.each` and `test.for` on the extended `test` follow the [Vitest title format](#vitest-title-format), even when `test` comes from `"bun:test"`.
 
 | Option                             | Description                                                                                              |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -520,7 +523,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | --------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
 | Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                                    |
 | `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                          |
-| `test.each` and `describe.each` titles                    | [Bun's format](#format-specifiers)   | [Vitest's format](#vitest-title-format)                              |
+| `test.each` and `describe.each` titles                    | [Bun's, unless extended](#fixtures)  | [Vitest's format](#vitest-title-format)                              |
 | `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                        |
 | `afterEach` and `afterAll` hooks in the same scope        | run in registration order            | run in reverse registration order                                    |
 | Function returned by `beforeEach` or `beforeAll`          | ignored                              | runs after the matching `afterEach` / `afterAll` hooks               |

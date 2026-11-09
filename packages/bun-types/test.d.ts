@@ -780,8 +780,8 @@ declare module "bun:test" {
      * Like `each()`, but an array row is passed as one argument instead of being spread.
      *
      * The title is formatted the way Vitest formats it, not the way `each()` does. For example, `%p` isn't a
-     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when the
-     * row has no `name`.
+     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when an
+     * object row has no `name`.
      *
      * @see https://bun.com/docs/test/writing-tests#vitest-title-format
      */
@@ -1201,8 +1201,8 @@ declare module "bun:test" {
      * and the second argument is the {@link TestContext}.
      *
      * The title is formatted the way Vitest formats it, not the way `each()` does. For example, `%p` isn't a
-     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when the
-     * row has no `name`.
+     * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when an
+     * object row has no `name`.
      *
      * @example
      * ```ts
@@ -1436,7 +1436,10 @@ declare module "bun:test" {
     failingIf(condition: boolean): TestWithContext<Context, Row>;
     concurrentIf(condition: boolean): TestWithContext<Context, Row>;
     serialIf(condition: boolean): TestWithContext<Context, Row>;
-    /** Each row is spread over the callback's parameters, so the callback doesn't receive the context. */
+    /**
+     * Each row is spread over the callback's parameters, so the callback doesn't receive the context.
+     * The title is formatted the way Vitest formats it, as for {@link Test.for}.
+     */
     each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): TestOfRows<T>;
     each<T extends readonly unknown[]>(table: readonly T[]): TestOfRows<T>;
     each<const T>(table: readonly T[]): TestOfRows<[row: T]>;

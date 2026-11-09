@@ -1149,6 +1149,61 @@ console.log("survived", require("./late.js"));`,
     expect(dn).toBe(path.dirname(filename));
   });
 
+  // Node calls the wrapper with `module.exports` as `this`.
+  test("Module.prototype._compile binds top-level this to module.exports", () => {
+    const module = new Module("this-is-exports");
+    module._compile(
+      "this.viaThis = 1; exports.same = [this === exports, this === module.exports, this === module, this === globalThis];",
+      "/file/this-is-exports.js",
+    );
+    expect(module.exports).toEqual({ viaThis: 1, same: [true, true, false, false] });
+  });
+
+  // A require hook that sends a file through Bun.Transpiler keeps a top-level `this`,
+  // so the value `_compile` binds is what the file sees.
+  test("a require.extensions hook through Bun.Transpiler keeps what a file puts on this", async () => {
+    using dir = tempDir("compile-hook-this", {
+      "hook.cjs": /* js */ `
+        const fs = require("node:fs");
+        require.extensions[".zzx"] = (module, file) => {
+          const text = new Bun.Transpiler({ loader: "js" }).transformSync(fs.readFileSync(file, "utf8"));
+          module._compile(text, file);
+        };
+        console.log(
+          JSON.stringify(require("./lib.zzx")),
+          JSON.stringify(require("./umd.zzx")),
+          JSON.stringify(require("./amd.zzx")),
+        );
+      `,
+      "lib.zzx": "this.x = 1;\nexports.y = 2;\n",
+      "umd.zzx": /* js */ `
+        (function (root, factory) {
+          root.Lib = factory();
+        })(this, function () {
+          return { v: 1 };
+        });
+      `,
+      "amd.zzx": /* js */ `
+        (function (root, factory) {
+          if (typeof define === "function" && define.amd) define([], factory);
+          else root.Lib = factory();
+        })(this, function () {
+          return { v: 1 };
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "hook.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('{"x":1,"y":2} {"Lib":{"v":1}} {"Lib":{"v":1}}\n');
+    expect(exitCode).toBe(0);
+  });
+
   test("Module._extensions", () => {
     expect(".js" in Module._extensions).toBeTrue();
     expect(".json" in Module._extensions).toBeTrue();

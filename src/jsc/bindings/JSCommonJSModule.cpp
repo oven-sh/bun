@@ -360,11 +360,11 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     // Clear the source code as early as possible.
     code = {};
 
-    // Call the CommonJS module wrapper function.
+    // Call the CommonJS module wrapper function with `module.exports` as `this`, as Node does.
     //
-    //    fn(exports, require, module, __filename, __dirname) { /* code */ }(exports, require, module, __filename, __dirname)
+    //    fn(exports, require, module, __filename, __dirname) { /* code */ }.call(exports, exports, require, module, __filename, __dirname)
     //
-    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, moduleObject, args);
+    JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, exports, args);
     RETURN_IF_EXCEPTION(scope, false);
 
     if (auto* wrapper = graph && !sharedWrapper ? dynamicDowncast<JSFunction>(fn) : nullptr; wrapper && !wrapper->isHostFunction() && wrapper->scope() == graph->overlay()) {

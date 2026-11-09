@@ -4,6 +4,7 @@
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include "headers.h"
+#include <JavaScriptCore/ExceptionHelpers.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -167,9 +168,15 @@ JSC::Structure* createMatchedRowsStructure(JSC::VM& vm, JSC::JSGlobalObject* glo
 
 JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& state, JSC::JSValue root, JSC::JSValue rootPattern)
 {
-    // Most walks record no matched matcher, and then there is nothing to show. A record that ran out of memory lacks values.
-    if (!state.recordedMatcher || state.recorded.hasOverflowed())
+    // Most walks record no matched matcher, and then there is nothing to show.
+    if (!state.recordedMatcher)
         return {};
+    // A record that ran out of memory lacks values.
+    if (state.recorded.hasOverflowed()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
 
     using PlaceKey = std::pair<JSC::JSCell*, JSC::JSCell*>;
     constexpr unsigned none = std::numeric_limits<unsigned>::max();
@@ -187,6 +194,9 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
     WTF::Vector<unsigned, 32> handleOf(WTF::FillWith {}, numbers.size(), 0u);
     WTF::Vector<unsigned, 32> childOf(WTF::FillWith {}, records, none);
     for (size_t i = 0; i < records; i++) {
+        // A record under a private name can never be a row, so it keeps no place.
+        if (state.recordedNames[i].isPrivateName())
+            continue;
         if (isMatcher(i)) {
             handleOf[holderOf[i]] = 1;
             continue;
@@ -228,7 +238,7 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
         if (!place || (!isMatcher(i) && (childOf[i] == none || !handleOf[childOf[i]])))
             continue;
         auto& name = state.recordedNames[i];
-        // The printer lists no private names.
+        // The printer lists no private names, and other rows can keep the place of a matcher under one.
         if (name.isPrivateName())
             continue;
         pending.append(Pending { place, JSC::parseIndex(name).value_or(JestMatchedRows::notAnIndex), name.impl(), static_cast<unsigned>(i) });

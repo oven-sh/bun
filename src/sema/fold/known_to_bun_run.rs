@@ -8,6 +8,7 @@ use crate::bind::{CommonJsVariable, Parent};
 use crate::hir::{BinOp, ExprId, ExprKind, MemberKey, UnOp};
 use crate::import_sites::is_free_common_js;
 use crate::util::PositionSet;
+use smallvec::{SmallVec, smallvec};
 
 fn is_logical(op: BinOp) -> bool {
     matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
@@ -42,6 +43,13 @@ fn is_computed_only_among_constants(op: BinOp) -> bool {
         | BinOp::Nullish
         | BinOp::Comma => false,
     }
+}
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum TextShape {
+    Known,
+    Template,
+    Neither,
 }
 
 #[derive(Copy, Clone)]
@@ -233,6 +241,107 @@ impl<'s> Folder<'_, 's> {
                 Some(written) => e = written,
                 None => return false,
             }
+        }
+    }
+
+    /// `!import.meta.main` is a node of its own to the parser under minify syntax, and so is that under any number of `!`.
+    fn is_main_of_import_meta_under_not(&self, e: ExprId) -> bool {
+        let hir = self.hir;
+        let mut e = self.as_written(e);
+        while let ExprKind::Unary {
+            op: UnOp::Not,
+            operand,
+        } = hir[e].kind
+        {
+            e = self.as_written(operand);
+        }
+        matches!(hir.member_key(e), Some((object, MemberKey::Name(known::main)))
+            if matches!(hir[self.as_written(object)].kind, ExprKind::ImportMeta))
+    }
+
+    /// Whether `known_primitive` of the parser says that `e` is a boolean.
+    pub(super) fn is_boolean_by_shape(&self, e: ExprId) -> bool {
+        let hir = self.hir;
+        let mut pending: SmallVec<[ExprId; 4]> = smallvec![e];
+        while let Some(e) = pending.pop() {
+            let e = self.seen_by_bun_run(e);
+            match self.folded(e).value {
+                Value::Known(value) if self.is_literal_to_bun_run(e) => {
+                    match self.evaluator.to_constant(value) {
+                        Constant::Boolean(_) => continue,
+                        _ => return false,
+                    }
+                }
+                _ => {}
+            }
+            match hir[e].kind {
+                ExprKind::True | ExprKind::False => {}
+                ExprKind::Unary {
+                    op: UnOp::Not | UnOp::Delete,
+                    ..
+                } => {}
+                ExprKind::Binary { op, left, right } => match op {
+                    BinOp::EqEq
+                    | BinOp::NotEq
+                    | BinOp::EqEqEq
+                    | BinOp::NotEqEq
+                    | BinOp::Lt
+                    | BinOp::Le
+                    | BinOp::Gt
+                    | BinOp::Ge
+                    | BinOp::In
+                    | BinOp::Instanceof => {}
+                    BinOp::And | BinOp::Or => pending.extend([left, right]),
+                    BinOp::Comma => pending.push(right),
+                    _ => return false,
+                },
+                ExprKind::Assign {
+                    op: None, value, ..
+                } => pending.push(value),
+                ExprKind::Cond { branches, .. } => {
+                    let branches = hir.branches(branches);
+                    pending.extend([branches.yes, branches.no]);
+                }
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    /// What `fold_string_addition` of the parser has of `e`: a text that it knows, a template that it joins such texts to, or
+    /// neither.
+    fn find_text_shape(&self, e: ExprId) -> TextShape {
+        let hir = self.hir;
+        let e = self.seen_by_bun_run(e);
+        let is_ascii = |text: Atom| self.atoms.bytes(text).is_ascii();
+        if let Value::Known(value) = self.folded(e).value
+            && self.is_literal_to_bun_run(e)
+        {
+            return match self.evaluator.to_constant(value) {
+                Constant::BigInt(_) => TextShape::Neither,
+                Constant::String(text) if !is_ascii(text) => TextShape::Neither,
+                _ => TextShape::Known,
+            };
+        }
+        match hir[e].kind {
+            ExprKind::Template { exprs } if !exprs.is_empty() => {
+                match hir.ids(hir.template_texts(exprs)).all(is_ascii) {
+                    true => TextShape::Template,
+                    false => TextShape::Neither,
+                }
+            }
+            ExprKind::Binary {
+                op: BinOp::Add,
+                left,
+                right,
+            } if self.computes_with_constants(e) => {
+                match (self.find_text_shape(left), self.find_text_shape(right)) {
+                    (TextShape::Template, TextShape::Template | TextShape::Known)
+                    | (TextShape::Known, TextShape::Template) => TextShape::Template,
+                    _ => TextShape::Neither,
+                }
+            }
+            _ => TextShape::Neither,
         }
     }
 
@@ -446,6 +555,12 @@ impl<'s> Folder<'_, 's> {
                 | ExprKind::Array(_)
                 | ExprKind::BigInt(_) => Some(false),
                 ExprKind::New(_) => self.is_truthy_in_bun_run(e).map(|_| false),
+                ExprKind::Unary {
+                    op: UnOp::Not,
+                    operand,
+                } if self.minifies_syntax() && self.is_main_of_import_meta_under_not(operand) => {
+                    None
+                }
                 ExprKind::Unary { op, .. } => Some(op == UnOp::Void),
                 ExprKind::Binary {
                     op: BinOp::Comma,
@@ -454,6 +569,11 @@ impl<'s> Folder<'_, 's> {
                 } => {
                     e = right;
                     continue;
+                }
+                ExprKind::Binary { op: BinOp::Add, .. }
+                    if self.find_text_shape(e) == TextShape::Template =>
+                {
+                    None
                 }
                 ExprKind::Binary { .. } => Some(false),
                 ExprKind::Assign { op: Some(op), .. } => (!is_logical(op)).then_some(false),

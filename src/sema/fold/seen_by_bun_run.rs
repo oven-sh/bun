@@ -54,7 +54,8 @@ impl Folder<'_, '_> {
             | ExprKind::Index { .. }
             | ExprKind::Binary { .. }
             | ExprKind::Cond { .. }
-            | ExprKind::New(_) => self.seen_by_bun_run.0.get(&e),
+            | ExprKind::New(_)
+            | ExprKind::Unary { .. } => self.seen_by_bun_run.0.get(&e),
             _ => None,
         }
     }

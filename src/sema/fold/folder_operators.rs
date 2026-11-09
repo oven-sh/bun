@@ -20,6 +20,16 @@ impl<'s> Folder<'_, 's> {
         let kind = hir[e].kind;
         match kind {
             ExprKind::Unary { op, operand } => {
+                if op == UnOp::Not
+                    && let ExprKind::Unary {
+                        op: UnOp::Not,
+                        operand: inner,
+                    } = hir[self.as_written(operand)].kind
+                {
+                    self.note_operand_in_place(e, inner, |folder| {
+                        folder.minifies_syntax() && folder.is_boolean_by_shape(inner)
+                    });
+                }
                 let folded = self.fold_unary(op, operand);
                 if op == UnOp::Typeof && matches!(folded.value, Value::Unknown) {
                     self.conditions.insert(e, true);
@@ -301,8 +311,9 @@ impl<'s> Folder<'_, 's> {
             LogicalOperator::And => self.condition(left).map(|is_truthy| !is_truthy),
             LogicalOperator::Or => self.condition(left),
             LogicalOperator::Nullish => {
-                let is_nullish = self.is_nullish(left);
-                let is_nullish = is_nullish.or_else(|| self.is_nullish_in_bun_run(left));
+                let is_nullish = self.is_nullish(left).or_else(|| {
+                    self.holds_under_minify_syntax(|folder| folder.is_nullish_in_bun_run(left))
+                });
                 is_nullish.map(|is_nullish| !is_nullish)
             }
         };

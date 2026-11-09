@@ -266,14 +266,13 @@ impl Folder<'_, '_> {
     fn put_in_place(&mut self, read: Read, member: ExprId) -> Folded {
         let hir = self.hir;
         let Read { access, index, .. } = read;
-        let is_put_by_parser = match hir[self.as_written(member)].kind {
-            ExprKind::Spread(_) => return Folded::UNKNOWN,
-            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain == Chain::No,
-            ExprKind::Call(call) => hir[call].chain == Chain::No,
-            _ => true,
-        };
+        if let ExprKind::Spread(_) = hir[member].kind {
+            return Folded::UNKNOWN;
+        }
+        let is_put_by_parser =
+            |folder: &Self| !folder.is_link_of_kept_chain(folder.seen_by_bun_run(member));
         let is_in_place = |folder: &Self| {
-            is_put_by_parser
+            is_put_by_parser(folder)
                 && !read.is_kept_by_its_form
                 && folder.minifies_syntax()
                 && index.is_none_or(|index| folder.is_folded_by_bun_run(index))

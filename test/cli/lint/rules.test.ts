@@ -129,6 +129,7 @@ test.concurrent("a JSX spread that acorn-jsx doesn't parse is a parse error, wor
     ["5.jsx", "export const a = (b, c, d) => <a {...(b, c)} e={c, d}>{b, c}{[...d]}</a>;"],
     // acorn reports an error in the expression before it gets to the comma.
     ["6.jsx", "export const a = (b, c) => <a {...{ b = 1 }, c} />;", `1:39 ${shorthand}`, true],
+    ["7.jsx", "export const a = (b, c, d) => <a {...b, c, d} />;", `1:39 ${comma}`],
     ["es2015-0.jsx", "module.exports = function (b) { return <a {...b} />; };"],
     // In a script, `<!--` starts a comment.
     ["es2015-1.jsx", "module.exports = function (b) { return <a>{<!-- b\n...b}</a>; };", `2:1 ${child}`],

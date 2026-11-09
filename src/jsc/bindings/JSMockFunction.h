@@ -25,14 +25,9 @@ JSC::JSValue mockObject(Zig::GlobalObject*, JSC::JSValue exports, bool spy, bool
 // `key` is null unless there are module mocks.
 void didStartDynamicImport(Zig::GlobalObject*, JSC::JSPromise* import, const String& key);
 
-// What vi.stubGlobal() and vi.unstubAllGlobals() call. An entry of JSMockModule::stubbedGlobals is the property descriptor from before the first stub of the
-// name, as an object that also has the value that the last stub put. For a name that did not exist, the entry is that value.
-// The entry for a first stub that puts `value`. `descriptor` is null if the global does not exist.
-JSC::JSValue entryOfStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor* descriptor, JSC::JSValue value);
-// A later stub of `name` put `value`.
-void didStubAgain(Zig::GlobalObject*, JSC::JSMap* stubs, JSC::JSValue name, JSC::JSValue value);
-// The descriptor object of an entry, or null if the global did not exist.
-JSC::JSObject* descriptorOfStub(JSC::VM&, JSC::JSValue entry);
+// What vi.stubGlobal() and vi.unstubAllGlobals() call.
+// The first stub of the global `name` is about to replace `descriptor`. A spy in it then has to say what it replaced after its own restore too.
+void willReplaceForStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor& descriptor);
 // vi.unstubAllGlobals() is about to put `descriptor` back on the global `name`. True if a spy in it was restored since, and what the global has without that spy is there now.
 bool putBackForStub(Zig::GlobalObject*, const JSC::Identifier& name, const JSC::PropertyDescriptor& descriptor);
 
@@ -71,7 +66,9 @@ public:
     // Mocks whose implementation or mock name may differ from what mockReset() gives them.
     JSC::WriteBarrier<JSC::Unknown> configuredMocks;
 
-    // JSMaps from name to original value for `vi.stubEnv()` / `vi.stubGlobal()`, created on first use. For a global, see entryOfStub().
+    // JSMaps from name to original value for `vi.stubEnv()` / `vi.stubGlobal()`, created on first use.
+    // For a global, the value is an InternalFieldTuple: the property descriptor from before the first stub of the name, as an object,
+    // or undefined if the global did not exist. Then the value that the last stub of the name put.
     JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;
     JSC::WriteBarrier<JSC::Unknown> stubbedGlobals;
     // JSMaps from name to stub for what a preload stubbed. Reapplied when a test file ends, so the next one starts with them.

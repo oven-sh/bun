@@ -1287,40 +1287,11 @@ static bool mayHaveSpy(const PropertyDescriptor& descriptor)
     return descriptor.value().isCell() && descriptor.value().asCell()->type() == InternalFunctionType;
 }
 
-JSObject* descriptorOfStub(VM& vm, JSValue entry)
-{
-    auto* descriptor = entry.getObject();
-    return descriptor && descriptor->getDirect(vm, WebCore::builtinNames(vm).writtenPrivateName()) ? descriptor : nullptr;
-}
-
-static JSValue putByStub(VM& vm, JSValue entry)
-{
-    auto* descriptor = descriptorOfStub(vm, entry);
-    return descriptor ? descriptor->getDirect(vm, WebCore::builtinNames(vm).writtenPrivateName()) : entry;
-}
-
-static void didPutStub(Zig::GlobalObject* globalObject, JSMap* stubs, JSValue name, JSValue entry, JSValue value)
+// What the stub with this entry of JSMockModule::stubbedGlobals replaced. Reads the object that constructObjectFromPropertyDescriptor() made, so no script runs.
+static SlotContent replacedByStub(Zig::GlobalObject* globalObject, InternalFieldTuple* entry)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (auto* descriptor = descriptorOfStub(vm, entry))
-        descriptor->putDirect(vm, WebCore::builtinNames(vm).writtenPrivateName(), value);
-    else
-        JSC__JSMap__set(stubs, globalObject, JSValue::encode(name), JSValue::encode(value));
-}
-
-void didStubAgain(Zig::GlobalObject* globalObject, JSMap* stubs, JSValue name, JSValue value)
-{
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    JSValue entry = stubs->get(globalObject, name);
-    RETURN_IF_EXCEPTION(scope, );
-    RELEASE_AND_RETURN(scope, didPutStub(globalObject, stubs, name, entry, value));
-}
-
-// What the stub with this entry replaced. Reads the object that constructObjectFromPropertyDescriptor() made, so no script runs.
-static SlotContent replacedByStub(Zig::GlobalObject* globalObject, JSValue entry)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto* descriptor = descriptorOfStub(vm, entry);
+    auto* descriptor = entry->getInternalField(0).getObject();
     if (!descriptor)
         return {};
     // The attribute that a property has if this field of its descriptor is not true.
@@ -1336,24 +1307,18 @@ static SlotContent replacedByStub(Zig::GlobalObject* globalObject, JSValue entry
     return { descriptor->getDirect(vm, vm.propertyNames->value), attributes | unless(vm.propertyNames->writable, PropertyAttribute::ReadOnly) };
 }
 
-// The entry of the stub of the global `key`, or empty.
-static JSValue stubOf(Zig::GlobalObject* globalObject, const Identifier& key)
+// The entry of the stub of the global `key`, or null.
+static InternalFieldTuple* stubOf(Zig::GlobalObject* globalObject, const Identifier& key)
 {
     auto& vm = JSC::getVM(globalObject);
     JSValue stubs = globalObject->mockModule.stubbedGlobals.get();
     if (!stubs)
-        return {};
+        return nullptr;
     // The key is a string or a symbol, so the map runs no script for it.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* map = uncheckedDowncast<JSMap>(stubs);
-    JSValue name = identifierToJSValue(vm, key);
-    bool isStubbed = map->has(globalObject, name);
+    JSValue entry = uncheckedDowncast<JSMap>(stubs)->get(globalObject, identifierToJSValue(vm, key));
     scope.assertNoException();
-    if (!isStubbed)
-        return {};
-    JSValue entry = map->get(globalObject, name);
-    scope.assertNoException();
-    return entry;
+    return dynamicDowncast<InternalFieldTuple>(entry);
 }
 
 // A spy or a fake timer that replaces what a stub put keeps this link: the map that vi.unstubAllGlobals() drops, and the entry of the stub.
@@ -1362,8 +1327,8 @@ static bool isGone(Zig::GlobalObject* globalObject, const Identifier& key, Inter
 {
     if (globalObject->mockModule.stubbedGlobals.get() == link->getInternalField(0))
         return false;
-    JSValue entry = stubOf(globalObject, key);
-    return !entry || putByStub(JSC::getVM(globalObject), entry) != value;
+    auto* entry = stubOf(globalObject, key);
+    return !entry || entry->getInternalField(1) != value;
 }
 
 // A spy, a stub or a fake timer on `target[key]` has `content` as what it replaced, and is about to put it back. `link` is set if a stub had put `content` there.
@@ -1375,7 +1340,7 @@ static SlotContent whatStandsFor(Zig::GlobalObject* globalObject, JSObject* targ
     SlotContent under = content;
     while (true) {
         if (link && isGone(globalObject, key, link, content.storage)) {
-            under = content = replacedByStub(globalObject, link->getInternalField(1));
+            under = content = replacedByStub(globalObject, uncheckedDowncast<InternalFieldTuple>(link->getInternalField(1)));
             link = nullptr;
             continue;
         }
@@ -1406,8 +1371,8 @@ static InternalFieldTuple* cover(Zig::GlobalObject* globalObject, JSObject* targ
     hasSpy = spies[0] || spies[1];
     if (target != globalObject || !content.storage)
         return nullptr;
-    JSValue entry = stubOf(globalObject, key);
-    if (!entry || putByStub(vm, entry) != content.storage)
+    auto* entry = stubOf(globalObject, key);
+    if (!entry || entry->getInternalField(1) != content.storage)
         return nullptr;
     auto* link = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
     link->putInternalField(vm, 0, globalObject->mockModule.stubbedGlobals.get());
@@ -1420,30 +1385,17 @@ static InternalFieldTuple* cover(Zig::GlobalObject* globalObject, JSObject* targ
 static NEVER_INLINE void putBack(JSGlobalObject* lexicalGlobalObject, JSObject* target, const Identifier& key, SlotContent content, InternalFieldTuple* link, bool isOpaque)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     SlotContent toPut = whatStandsFor(globalObject, target, key, content, link);
-    JSValue stubs = globalObject->mockModule.stubbedGlobals.get();
-    if (link && stubs == link->getInternalField(0)) {
-        didPutStub(globalObject, uncheckedDowncast<JSMap>(stubs), identifierToJSValue(JSC::getVM(globalObject), key), link->getInternalField(1), toPut.storage);
-        scope.assertNoException();
-    }
-    RELEASE_AND_RETURN(scope, putContent(lexicalGlobalObject, target, key, toPut, isOpaque));
+    if (link && globalObject->mockModule.stubbedGlobals.get() == link->getInternalField(0))
+        uncheckedDowncast<InternalFieldTuple>(link->getInternalField(1))->putInternalField(JSC::getVM(globalObject), 1, toPut.storage);
+    putContent(lexicalGlobalObject, target, key, toPut, isOpaque);
 }
 
-JSValue entryOfStub(Zig::GlobalObject* globalObject, const Identifier& key, const PropertyDescriptor* descriptor, JSValue value)
+void willReplaceForStub(Zig::GlobalObject* globalObject, const Identifier& key, const PropertyDescriptor& descriptor)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!descriptor)
-        return value;
-    JSObject* entry = constructObjectFromPropertyDescriptor(globalObject, *descriptor);
-    RETURN_IF_EXCEPTION(scope, {});
-    entry->setPrototypeDirect(vm, jsNull());
-    entry->putDirect(vm, WebCore::builtinNames(vm).writtenPrivateName(), value);
     bool hasSpy;
-    if (mayHaveSpy(*descriptor))
-        cover(globalObject, globalObject, key, contentOfDescriptor(globalObject, *descriptor), hasSpy);
-    return entry;
+    if (mayHaveSpy(descriptor))
+        cover(globalObject, globalObject, key, contentOfDescriptor(globalObject, descriptor), hasSpy);
 }
 
 bool putBackForStub(Zig::GlobalObject* globalObject, const Identifier& key, const PropertyDescriptor& descriptor)

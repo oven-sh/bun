@@ -3920,13 +3920,28 @@ describe.concurrent("an .oxlintrc.json", () => {
   test("a disable comment for a rule that doesn't run on the file is unused, like oxlint", async () => {
     const { problems } = await lint(
       {
-        ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-unused-vars": "error" } }),
-        "a.vue": "<script>\n// eslint-disable-next-line no-unused-vars\nconst a = 1;\n</script>\n",
+        ".oxlintrc.json": JSON.stringify({
+          categories: { correctness: "off" },
+          rules: { "no-unused-vars": "error", "typescript/consistent-type-imports": "error" },
+        }),
+        "a.vue": "<script>\n// eslint-disable-next-line typescript/consistent-type-imports\nexport const a = 1;\n</script>\n",
         "a.js": "// eslint-disable-next-line no-unused-vars\nconst a = 1;\n",
       },
       [".", "--report-unused-disable-directives"],
     );
     expect(problems).toEqual(["a.vue:2:1 -"]);
+  });
+
+  // oxlint skips `no-unused-vars` in .vue files, so there the comment is unused for it.
+  test("a disable comment for no-unused-vars in a .vue file is used", async () => {
+    const { problems } = await lint(
+      {
+        ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-unused-vars": "error" } }),
+        "a.vue": "<script>\n// eslint-disable-next-line no-unused-vars\nconst a = 1;\n</script>\n",
+      },
+      [".", "--report-unused-disable-directives"],
+    );
+    expect(problems).toEqual([]);
   });
 
   // Every row is what oxlint 1.87 prints. Without --type-aware it acts as if type-aware rules didn't exist.

@@ -4384,6 +4384,102 @@ describe("expect()", () => {
           }),
         ).toEqual(['+   "e": <NoName id="x" />,']);
       });
+
+      test("prints the object that the comparison read where a matcher under a private name matched", () => {
+        const number = expect.any(Number);
+        // A pattern that is an instance of the class has the private fields too, so the matcher meets `#value`.
+        class Tagged {
+          #value;
+          #tag = "T";
+          constructor(/** @type {unknown} */ value, read = 0) {
+            this.#value = value;
+            if (read) this.read = read;
+          }
+          get [Symbol.toStringTag]() {
+            return this.#tag;
+          }
+        }
+        let reads = 0;
+        const received = Object.freeze({
+          get made() {
+            return new Tagged(1, ++reads);
+          },
+          wrong: 1,
+        });
+        // No private field is listed, so no matcher shows. What is printed is the object that the getter
+        // returned for the comparison, and its class reads `#tag` from it.
+        expect(
+          failureOf(() => expect(received).toMatchObject({ made: new Tagged(number), wrong: 2 })).split("\n"),
+        ).toEqual([
+          "expect(received).toMatchObject(expected)",
+          "",
+          "  {",
+          '-   "made": Tagged {},',
+          '-   "wrong": 2,',
+          '+   "made": T Tagged {',
+          '+     "read": 1,',
+          "+   },",
+          '+   "wrong": 1,',
+          "  }",
+          "",
+          "- Expected  - 2",
+          "+ Received  + 4",
+          "",
+        ]);
+        expect(reads).toBe(1);
+
+        // The same where a private field holds the object whose property matched.
+        class Box {
+          #inner;
+          constructor(/** @type {object} */ inner, read = 0) {
+            this.#inner = inner;
+            if (read) this.read = read;
+          }
+        }
+        reads = 0;
+        const boxed = Object.freeze({
+          get box() {
+            return new Box({ id: 1 }, ++reads);
+          },
+          wrong: 1,
+        });
+        expect(
+          marked(failureOf(() => expect(boxed).toMatchObject({ box: new Box({ id: number }), wrong: 2 }))),
+        ).toEqual([
+          '-   "box": Box {},',
+          '-   "wrong": 2,',
+          '+   "box": Box {',
+          '+     "read": 1,',
+          "+   },",
+          '+   "wrong": 1,',
+          "- Expected  - 2",
+          "+ Received  + 4",
+        ]);
+        expect(reads).toBe(1);
+
+        // With the public property in the pattern as well, the object is the same lines on both sides.
+        class Private {
+          #x;
+          constructor(/** @type {unknown} */ x, /** @type {number} */ n) {
+            this.#x = x;
+            this.n = n;
+          }
+        }
+        reads = 0;
+        const counted = Object.freeze({
+          get a() {
+            return new Private(1, ++reads);
+          },
+          n: 1,
+        });
+        expect(marked(failureOf(() => expect(counted).toMatchObject({ a: new Private(number, 1), n: 2 })))).toEqual([
+          '-   "n": 2,',
+          '+   "n": 1,',
+          "- Expected  - 1",
+          "+ Received  + 1",
+        ]);
+        expect(reads).toBe(1);
+      });
     }
     test("with expect matcher", () => {
       const f = Symbol.for("foo");

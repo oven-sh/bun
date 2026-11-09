@@ -194,9 +194,6 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
     WTF::Vector<unsigned, 32> handleOf(WTF::FillWith {}, numbers.size(), 0u);
     WTF::Vector<unsigned, 32> childOf(WTF::FillWith {}, records, none);
     for (size_t i = 0; i < records; i++) {
-        // A record under a private name can never be a row, so it keeps no place.
-        if (state.recordedNames[i].isPrivateName())
-            continue;
         if (isMatcher(i)) {
             handleOf[holderOf[i]] = 1;
             continue;
@@ -238,7 +235,7 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
         if (!place || (!isMatcher(i) && (childOf[i] == none || !handleOf[childOf[i]])))
             continue;
         auto& name = state.recordedNames[i];
-        // The printer lists no private names, and other rows can keep the place of a matcher under one.
+        // The printer lists no private names. The place of a record under one is kept all the same: the row that leads to that place has the object that the walk read, and a getter may return another one.
         if (name.isPrivateName())
             continue;
         pending.append(Pending { place, JSC::parseIndex(name).value_or(JestMatchedRows::notAnIndex), name.impl(), static_cast<unsigned>(i) });
@@ -257,6 +254,9 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
         if (isLastOfName)
             pending[rowCount++] = pending[i];
     }
+    // The printer reaches every row through the rows of the root, which sort first. The root has none if only private names lead on from it, and then there is nothing to show.
+    if (!rowCount || pending[0].place != JestMatchedRows::rootPlace)
+        return {};
 
     // `state.recorded` roots every value until the cell holds it.
     auto& vm = JSC::getVM(globalObject);
@@ -324,8 +324,8 @@ JSC::JSObject* JestMatchedRows::mergedOf(JSC::JSGlobalObject* globalObject, uint
         return merged;
     JSC::JSObject* holder = found.holder.get();
     JSC::JSObject* object = holder;
-    // A function is offered as it is, which is what jest-snapshot's merge of the property matchers does with one.
-    if (!holder->isCallable()) {
+    // A function is offered as it is, which is what jest-snapshot's merge of the property matchers does with one. So is an object without a row, whose matchers are all under private names: nothing stands in for a property of it, and a serializer that goes by its class still claims it.
+    if (!holder->isCallable() && found.rowCount) {
         if (dynamicDowncast<JSC::JSArray>(holder)) {
             object = JSC::constructEmptyArray(globalObject, nullptr);
             RETURN_IF_EXCEPTION(scope, nullptr);
@@ -429,7 +429,7 @@ extern "C" JSC::EncodedJSValue Bun__JestMatchedRows__getIndex(JSC::EncodedJSValu
     return JSC::JSValue::encode(row.value);
 }
 
-// What snapshot serializers are offered in place of the object of `place`, built once for the place. It reads the properties of the matched objects that have no row, which runs their getters, and what those throw does not fail it. Undefined if there is no such place.
+// What snapshot serializers are offered in place of the object of `place`, built once for the place. For each object that has a row, it reads the properties that have none, which runs their getters, and what those throw does not fail it. Undefined if there is no such place.
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__JestMatchedRows__forSerializers(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue rows, uint32_t place)
 {
     auto* cell = Bun::JestMatchedRows::from(rows);

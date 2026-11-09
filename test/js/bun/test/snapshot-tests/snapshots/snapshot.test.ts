@@ -2387,6 +2387,87 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("is offered an object as it is where the property matchers that matched are all under private names", async () => {
+    const unclaimed = `\n{\n  "a": Private {\n    "n": 1,\n  },\n  "n": 1,\n}\n`;
+    const printed = [`\n{\n  "n": 1,\n  "secret": Secret(S, read 1),\n}\n`, `Secret(S, read 1)`, unclaimed];
+    const counted = `
+      class Private {
+        #x;
+        constructor(x, n) {
+          this.#x = x;
+          this.n = n;
+        }
+      }
+      // The getter returns a new object each time, and its n says which of them is printed.
+      let reads = 0;
+      const counted = x => ({
+        get a() {
+          return new Private(x, ++reads);
+        },
+        n: 1,
+      });
+    `;
+    using dir = tempDir("snapshot-serializer-private", {
+      "a.test.js": `
+          // Only an instance has #tag, so the getter throws a TypeError for any other object that has the prototype.
+          class Secret {
+            #value;
+            #tag = "S";
+            constructor(value, read) {
+              this.#value = value;
+              this.read = read;
+            }
+            get tag() {
+              return this.#tag;
+            }
+          }
+          ${counted}
+          const number = expect.any(Number);
+          expect.addSnapshotSerializer({
+            test: value => value instanceof Secret,
+            serialize: value => "Secret(" + value.tag + ", read " + value.read + ")",
+          });
+          test("t", () => {
+            for (const value of [1, 2]) {
+              const made = [];
+              const received = {
+                get secret() {
+                  made.push(new Secret(value, made.length + 1));
+                  return made.at(-1);
+                },
+                n: 1,
+              };
+              // No plain object can have the matcher in place of #value. The serializer gets the object that was compared.
+              expect(received).toMatchSnapshot({ secret: new Secret(number, 1) });
+              expect(made).toHaveLength(1);
+              expect(new Secret(value, 1)).toMatchSnapshot(new Secret(number, 1));
+              // An object that the serializer is not for prints as it does without a serializer.
+              reads = 0;
+              expect(counted(value)).toMatchSnapshot({ a: new Private(number, 1) });
+              expect(reads).toBe(1);
+            }
+          });
+        `,
+      "b.test.js": `
+          ${counted}
+          test("t", () => {
+            for (const value of [1, 2]) {
+              reads = 0;
+              expect(counted(value)).toMatchSnapshot({ a: new Private(expect.any(Number), 1) });
+              expect(reads).toBe(1);
+            }
+          });
+        `,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
+    expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
+    // Each text is there twice, once for each value that the matcher matched.
+    const entries = (texts: string[]) => texts.map((text, i) => `\nexports[\`t ${i + 1}\`] = \`${text}\`;\n`).join("");
+    expect(snap(dir)).toBe(headers.bun + entries([...printed, ...printed]));
+    expect(snap(dir, "b.test.js")).toBe(headers.bun + entries([unclaimed, unclaimed]));
+    expect(exitCode).toBe(0);
+  });
+
   test.each(isolationFlags)(
     "lasts until the end of its test file, and for every file when a preload script adds it %j",
     async args => {

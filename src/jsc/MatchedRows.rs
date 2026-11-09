@@ -101,7 +101,7 @@ impl MatchedPlace {
         (!value.is_empty()).then_some((value, place))
     }
 
-    /// What snapshot serializers are offered in place of the object of this place, which must not be none: a plain object, or an array for an array, that has the object's own enumerable properties in their order, with each row in place of its property. A function is offered as it is. The rows cell keeps what it builds, so a place is built once. A property whose getter throws is left out.
+    /// What snapshot serializers are offered in place of the object of this place, which must not be none: a plain object, or an array for an array, that has the object's own enumerable properties in their order, with each row in place of its property. A function is offered as it is, and so is an object that has no row because its matchers are all under private names. The rows cell keeps what it builds, so a place is built once. A property whose getter throws is left out.
     pub fn for_serializers(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let (rows, place) = self.cell_and_handle();
         crate::cpp::Bun__JestMatchedRows__forSerializers(global, rows, place)

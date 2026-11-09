@@ -260,15 +260,10 @@ VersionSqlite3::~VersionSqlite3()
     closeHandle();
 }
 
-// Shared with node:sqlite's termination path (Bun__closeAllNodeSqliteDatabasesForTermination):
-// with unfinalized statements close_v2 only zombifies the connection and
-// defers the WAL checkpoint to a finalize that never comes, so flush the WAL
-// into the main database file explicitly. Zero busy_timeout first — TRUNCATE
-// waits on readers via the connection's busy-handler, so a large user-set
-// timeout plus a cross-process reader would stall process.exit(); with a
-// zero handler TRUNCATE degrades to a passive checkpoint immediately.
-// A read-only schema's checkpoint holds the WAL write lock (other processes see SQLITE_BUSY)
-// until its first write fails, so skip it. Read-only is per schema, not per connection.
+// Shared with node:sqlite's termination path. With unfinalized statements close_v2 only
+// zombifies the connection and never checkpoints, so flush the WAL here. A zero busy_timeout
+// keeps TRUNCATE from waiting on cross-process readers. Read-only schemas are skipped: their
+// checkpoint would hold the WAL write lock until its first write fails.
 extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
 {
     sqlite3_busy_timeout(db, 0);

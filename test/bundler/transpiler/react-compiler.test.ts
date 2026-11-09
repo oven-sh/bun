@@ -4377,15 +4377,17 @@ describe("bundler", () => {
   // threw `ReferenceError: _temp is not defined`. They are declared in the list of the statement that holds the
   // component, once for all calls of the component. A component in a head that declares a name gets them in its own
   // body, at each call. So does one in a block that holds a direct `eval`, in front of it or behind it: that block keeps
-  // its function declarations, and `Leaf` of the two `case` forms is called with no statement of its `case` run.
+  // its function declarations, and `Leaf` of the two `case` forms is called with no statement of its `case` run. A
+  // longer name such as `evaluate` is no `eval`: the block of the last file gets them once.
   const nestedComponentForms = {
     "/entry.js": /* js */ `
       import { sizes } from "react/compiler-runtime";
       import * as forms from "./forms";
       import * as typed from "./forms-typed";
       import * as withEval from "./forms-with-eval";
+      import * as withLongerNames from "./forms-with-longer-names";
       const lines = [];
-      const all = { ...forms, ...typed, ...withEval };
+      const all = { ...forms, ...typed, ...withEval, ...withLongerNames };
       for (const [name, form] of Object.entries(all).sort(([a], [b]) => (a < b ? -1 : 1))) {
         try {
           const Leaf = form("red");
@@ -4703,11 +4705,23 @@ describe("bundler", () => {
         }
       }
     `,
+    "/forms-with-longer-names.jsx": /* jsx */ `
+      const x0 = "!";
+      const retrieval = 1, evaluate = 2, $eval = 3, _eval = 4, x2eval = 5, eval2 = 6, eval_ = 7, eval$ = 8;
+      export function blockBesideLongerNames(k) {
+        {
+          const Leaf = ({ x }) => <i x={x} on={() => k + x0} at={() => x0} />,
+            other = () => retrieval + evaluate + $eval + _eval + x2eval + eval2 + eval_ + eval$;
+          return Leaf;
+        }
+      }
+    `,
     ...reactWithMemo,
   };
   const nestedComponentsInAList = [
     "arrowWithNoBlock",
     "assignments",
+    "blockBesideLongerNames",
     "blockOfTheModule",
     "calledFunction",
     "caseTest",

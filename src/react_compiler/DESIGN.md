@@ -146,9 +146,10 @@ reach it and where it can reach those variables:
   keeps a function declaration as written, which is a `var` too where the code
   is not strict, and a `let` in a `case` is not set when another `case` calls
   the function. A direct `eval` marks its scope only when it is visited, so
-  the parser looks for the word. Also when it is an async or generator function
-  declaration in a block, which a block always keeps. It is then a new function
-  at each call.
+  the parser looks for the word in the text of the file: a comment that has it
+  counts, a longer name such as `evaluate` does not. Also when it is an async
+  or generator function declaration in a block, which a block always keeps. It
+  is then a new function at each call.
   With no renamer, no local of the compiled function takes a name that a scope
   around it declares.
 

@@ -205,6 +205,22 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 }
 
+/// Whether `eval` stands in `source` as a name of its own. In `evaluate` and `retrieval` it is a part of a longer name.
+fn has_the_word_eval(source: &[u8]) -> bool {
+    // A byte that is not ASCII is no part of a name here: it can be the end of a space, such as U+00A0.
+    let is_of_a_name = |byte: &u8| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'$';
+    let mut searched = 0;
+    while let Some(found) = bun_core::strings::index_of(&source[searched..], b"eval") {
+        let start = searched + found;
+        searched = start + b"eval".len();
+        let before = start.checked_sub(1).and_then(|at| source.get(at));
+        if !before.is_some_and(is_of_a_name) && !source.get(searched).is_some_and(is_of_a_name) {
+            return true;
+        }
+    }
+    false
+}
+
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
     /// `current_scope` is the body of the function being compiled, and its parent holds the arguments.
     fn scope_around_compiled_function(&self) -> Option<js_ast::StoreRef<js_ast::Scope>> {
@@ -258,7 +274,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
             return true;
         }
         if self.react_compiler_source_has_eval.is_none() {
-            let has_eval = bun_core::strings::contains(&self.source.contents, b"eval");
+            let has_eval = has_the_word_eval(&self.source.contents);
             self.react_compiler_source_has_eval = Some(has_eval);
         }
         self.react_compiler_source_has_eval == Some(true)

@@ -470,6 +470,18 @@ fn node_env_and_stated_jsx_development_go_before_tsconfig() {
                     !node_env_chose && stated.is_none(),
                     "{node_env:?} {production} {stated:?}"
                 );
+                for merged in [true, false] {
+                    options.jsx.development = merged;
+                    options.keep_stated_jsx_development();
+                    let expected = match stated {
+                        Some(stated) if !node_env_chose => stated,
+                        _ => merged,
+                    };
+                    assert_eq!(
+                        options.jsx.development, expected,
+                        "{node_env:?} {production} {stated:?} {merged}"
+                    );
+                }
             }
         }
     }
@@ -477,6 +489,9 @@ fn node_env_and_stated_jsx_development_go_before_tsconfig() {
     options.production = false;
     options.transform_options = Arc::new(api::TransformOptions::default());
     assert!(!options.leaves_jsx_development_to_tsconfig());
+    options.jsx.development = false;
+    options.keep_stated_jsx_development();
+    assert!(!options.jsx.development);
 }
 
 #[test]

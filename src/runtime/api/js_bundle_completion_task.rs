@@ -1245,6 +1245,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.configure_linker();
         transpiler.configure_defines()?;
+        transpiler.options.keep_stated_jsx_development();
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {

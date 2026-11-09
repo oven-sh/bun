@@ -557,6 +557,7 @@ impl BuildCommand {
         }
 
         this_transpiler.configure_defines()?;
+        this_transpiler.options.keep_stated_jsx_development();
         this_transpiler.configure_linker();
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.

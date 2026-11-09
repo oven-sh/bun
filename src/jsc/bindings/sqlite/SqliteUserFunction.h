@@ -94,12 +94,10 @@ inline bool sqliteCommitsWhenFinalized(sqlite3_stmt* stmt)
 }
 
 // JS can't run during GC or at process exit, and the cells a callback reads can be dead. While this is set, a user
-// function fails, the authorizer denies, the update hook isn't called and the progress handler lets the statement go
-// on. They check it before anything else.
+// function fails, the authorizer denies, and the update hook and progress handler aren't called.
 inline thread_local bool sqliteScriptIsForbidden = false;
 
-// A reset or finalize commits what a run of the statement wrote, and its result code reaches no caller who could act
-// on it. The progress handler is not called while one runs: a stop then would roll the write back in silence.
+// A reset or finalize commits what an earlier run wrote, and its result code reaches no caller: not for the handler to stop.
 inline thread_local bool sqliteProgressHandlerIsOff = false;
 
 inline void sqliteFinalize(sqlite3_stmt* stmt, bool mayCallScript)

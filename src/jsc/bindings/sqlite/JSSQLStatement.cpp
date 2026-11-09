@@ -205,8 +205,7 @@ public:
     bool inCallback = false;
     // True if the connection has ever had an update hook.
     bool hasUpdateHook = false;
-    // The statement that a call on the connection is stepping (StatementRun, runStatements). Null while SQLite runs
-    // one of its own: a prepare, db.serialize(), the init of an extension, a finalize.
+    // The statement that a call steps. Null while SQLite runs one of its own (a prepare, an extension's init).
     struct Running {
         sqlite3_stmt* stmt = nullptr;
         bool transactionControl = false;
@@ -1924,23 +1923,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetUpdateHookFunction, (JSC::JSGlobalObje
     return JSValue::encode(jsUndefined());
 }
 
-// SQLite calls this about every n virtual machine instructions of a statement of the connection, from sqlite3_step()
-// and from sqlite3_prepare() when it compiles a complex statement. What runs the statement keeps the cell alive.
-// Non-zero stops the statement: it fails with SQLITE_INTERRUPT, and the call that runs it throws. An exception the
-// handler throws stays pending, and the call throws that instead (throwStepError, runStatements, prepare).
+// About every n VM instructions of a statement, from sqlite3_step() and sqlite3_prepare(). Non-zero stops the statement
+// with SQLITE_INTERRUPT. An exception the handler throws stays pending, and the call that runs the statement throws it.
 static int callProgressHandler(void* cell)
 {
-    // At GC or exit time there is no call to throw to, and a rollback then would lose a write. A reset or finalize
-    // commits what an earlier run wrote, and db.serialize() runs a statement of its own: neither is the handler's.
     if (Bun::sqliteScriptIsForbidden || Bun::sqliteProgressHandlerIsOff) [[unlikely]]
         return 0;
     auto* database = static_cast<JSSQLDatabase*>(cell);
     JSObject* handler = database->m_progressHandler.get();
     if (!handler) [[unlikely]]
         return 0;
-    // Not for a BEGIN, COMMIT or ROLLBACK of db.transaction(): a handler that stays truthy would leave the transaction
-    // open and hide what ended it. Not once the statement has halted either: SQLite checks once more on its way out,
-    // after it committed the write, and an interrupt then would report a committed write as stopped.
+    // Not for the statements of db.transaction(), and not for the check SQLite makes once the statement has halted
+    // and committed: an interrupt then would report a committed write as stopped.
     const auto& running = database->record().running;
     if (running.stmt && (running.transactionControl || !sqlite3_stmt_busy(running.stmt)))
         return 0;
@@ -1986,8 +1980,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetProgressHandlerFunction, (JSC::JSGloba
     }
 
     JSObject* handler = value.getObject();
-    // After close(false) the statements of db.prepare() still run, and still call the handler. It can be removed,
-    // not set: versionDB->db stays open until they drain.
+    // After close(false) the statements of db.prepare() still run and call the handler: it can be removed, not set.
     sqlite3* db = handler ? versionDB->handle() : versionDB->db;
     if (!db) [[unlikely]] {
         if (!handler) {

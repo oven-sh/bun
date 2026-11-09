@@ -57,9 +57,23 @@ fn has_lone_surrogate(source: &[u8]) -> bool {
     is_after_high
 }
 
+/// See [`Checks::record_owner`].
+enum RecordOwner {
+    /// acorn throws once it has read to this offset, and the token after it.
+    ReadTo(u32),
+    /// The literal is parsed with no record. acorn reports the offending token itself.
+    None,
+    /// The literal is the left operand of an operator inside a list that shares the record. acorn ends the expression
+    /// at the literal, and the list doesn't expect the token at this offset.
+    Unexpected(u32),
+}
+
 impl<'a> Checks<'a, '_> {
     pub(super) fn early_errors(&mut self) {
         self.decorators();
+        // Before `assignment_targets`: acorn's `parseMaybeUnary` stops at a literal with a shorthand default, and never
+        // sees the `++` after it.
+        self.object_literals();
         self.assignment_targets();
         self.rest_elements();
         self.declarations();
@@ -80,7 +94,6 @@ impl<'a> Checks<'a, '_> {
         self.switches_and_throws();
         self.awaits();
         self.arrows();
-        self.object_literals();
         self.string_module_names();
         self.async_before_of();
         if self.is_babel {
@@ -477,7 +490,8 @@ impl<'a> Checks<'a, '_> {
             }) == Some(true);
             match arrow.filter(|_| is_parameter && it.default().is_some()) {
                 Some(arrow) => {
-                    let noticed = arrow.arrow_span().map_or(raw.end, |it| it.start);
+                    // acorn converts the parameters after it has read the `=>`.
+                    let noticed = arrow.arrow_span().map_or(raw.end, |it| it.end);
                     self.when_read_to(noticed, |checks| {
                         checks.fail(
                             pat.span().start,
@@ -1040,17 +1054,18 @@ impl<'a> Checks<'a, '_> {
                 self.oxc_regular_expression_errors(it.span(), pattern, flags);
                 continue;
             }
+            let token = it.span().start;
             let is_valid = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
             if !flags.iter().all(is_valid) {
-                self.fail(at, "Invalid regular expression flag");
+                self.tokenizer_error(token, at, "Invalid regular expression flag");
             } else if flags
                 .iter()
                 .enumerate()
                 .any(|(i, flag)| flags[i + 1..].iter().any(|it| it == flag))
             {
-                self.fail(at, "Duplicate regular expression flag");
+                self.tokenizer_error(token, at, "Duplicate regular expression flag");
             } else if strings::contains_char(flags, b'u') && strings::contains_char(flags, b'v') {
-                self.fail(at, "Invalid regular expression flag");
+                self.tokenizer_error(token, at, "Invalid regular expression flag");
             } else if let Err(error) = regex::validate_pattern(
                 pattern,
                 regex::Mode::from_flags(flags),
@@ -1072,7 +1087,7 @@ impl<'a> Checks<'a, '_> {
                     reason.as_bytes(),
                 ]
                 .concat();
-                self.fail(at, message);
+                self.tokenizer_error(token, at, message);
             }
         }
     }
@@ -1649,16 +1664,7 @@ impl<'a> Checks<'a, '_> {
                     _ => self.unexpected(name.start()),
                 }
             } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
-                // acorn notices it at the end of the outermost class.
-                let mut inside = Node::Expr(it);
-                let outermost = (self.tops.outward(Node::Expr(it)))
-                    .filter(|&outer| {
-                        let from = std::mem::replace(&mut inside, outer);
-                        // For oxc, a class's `extends` expression and decorators are outside the class.
-                        matches!(outer, Node::Class(_))
-                            && (!is_oxc || matches!(from, Node::Member(_)))
-                    })
-                    .last();
+                let outermost = self.outermost_class_body(Node::Expr(it));
                 if self.is_oxc && outermost.is_none() {
                     let message = [
                         b"Private identifier '",
@@ -1674,10 +1680,7 @@ impl<'a> Checks<'a, '_> {
                     self.report(error.help(help));
                     continue;
                 }
-                let noticed = outermost.map_or(0, |it| it.span().end);
-                self.when_read_to(noticed, |checks| {
-                    checks.fail(name.start(), undeclared(name.bytes()))
-                });
+                self.undeclared_private_name(outermost, name.start(), undeclared(name.bytes()));
             }
         }
         for it in self.exprs_of(ExprTag::PrivateIdentifier) {
@@ -1694,12 +1697,8 @@ impl<'a> Checks<'a, '_> {
             if !is_left_of_in {
                 self.unexpected(it.span().start);
             } else if !is_declared(&mut self.tops, Node::Expr(it), name.bytes()) {
-                let mut inside = Node::Expr(it);
-                let is_in_class_body = self.tops.outward(Node::Expr(it)).any(|outer| {
-                    let from = std::mem::replace(&mut inside, outer);
-                    matches!(outer, Node::Class(_)) && matches!(from, Node::Member(_))
-                });
-                if is_oxc && !is_in_class_body {
+                let outermost = self.outermost_class_body(Node::Expr(it));
+                if is_oxc && outermost.is_none() {
                     let message = [
                         b"Private identifier '",
                         name.bytes(),
@@ -1714,9 +1713,30 @@ impl<'a> Checks<'a, '_> {
                     self.report(error.help(help));
                     continue;
                 }
-                self.fail(it.span().start, undeclared(name.bytes()));
+                self.undeclared_private_name(outermost, it.span().start, undeclared(name.bytes()));
             }
         }
+    }
+
+    /// The outermost class whose body contains `node`. A class's `extends` expression isn't in its body: acorn parses
+    /// it before it enters the body, and so does oxc.
+    fn outermost_class_body(&mut self, node: Node<'a>) -> Option<Class<'a>> {
+        let mut inside = node;
+        let classes = self.tops.outward(node).filter_map(|outer| {
+            let from = std::mem::replace(&mut inside, outer);
+            match (outer, from) {
+                (Node::Class(class), Node::Member(_)) => Some(class),
+                _ => None,
+            }
+        });
+        classes.last()
+    }
+
+    /// acorn's error for a private name that no enclosing class declares. acorn collects the names a class body uses,
+    /// and when it leaves the body it hands the undeclared ones to the enclosing class body, or throws if there is none.
+    fn undeclared_private_name(&mut self, outermost: Option<Class<'a>>, at: u32, message: Vec<u8>) {
+        let noticed = outermost.map_or(0, |it| it.span().end);
+        self.when_read_to(noticed, |checks| checks.fail(at, message));
     }
 
     /// For oxc: "Did you mean '#a'?", if a class enclosing `node` declares a private name similar to `name`. On a tie,
@@ -1743,6 +1763,190 @@ impl<'a> Checks<'a, '_> {
             Some(it) => format!("Did you mean '{}'?", bstr::BStr::new(it)),
             None => String::new(),
         }
+    }
+
+    /// How acorn reports what `parseObj` records in `refDestructuringErrors` for the literal `object`: a shorthand
+    /// default or a second `__proto__`. acorn passes the record down through array elements, object property values
+    /// and spreads, call arguments, and the items of a parenthesized sequence or a `for` statement's head.
+    /// `checkExpressionErrors` throws the error when the expression that created the record is complete. Babel has no
+    /// such record and reports at once.
+    fn record_owner(&self, object: Expr<'a>) -> RecordOwner {
+        if self.is_babel {
+            return RecordOwner::ReadTo(object.outer_span().end);
+        }
+        if Self::has_no_record(object) {
+            return RecordOwner::None;
+        }
+        let mut node = object;
+        loop {
+            if node.is_parenthesized() {
+                return RecordOwner::ReadTo(node.outer_span().end);
+            }
+            // Inside an operand with no record, the literal's own `parseMaybeAssign` creates one.
+            if node != object && Self::has_no_record(node) {
+                return RecordOwner::ReadTo(object.span().end);
+            }
+            let parent = match node.parent() {
+                Node::Expr(parent) => parent,
+                Node::Prop(prop) if Self::is_property_value(prop, node) => {
+                    let Node::Expr(outer) = prop.parent() else {
+                        return RecordOwner::ReadTo(node.span().end);
+                    };
+                    node = outer;
+                    continue;
+                }
+                _ => return RecordOwner::ReadTo(node.span().end),
+            };
+            match parent.kind() {
+                ExprKind::Array(_) => node = parent,
+                ExprKind::Spread(_) if Self::passes_record_to_spread(parent) => node = parent,
+                ExprKind::Call(call) if call.callee() != node => {
+                    return RecordOwner::ReadTo(parent.span().end);
+                }
+                ExprKind::Binary {
+                    op: BinOp::Comma, ..
+                } => {
+                    let top = Self::top_of_sequence(parent);
+                    return RecordOwner::ReadTo(match top.parent() {
+                        _ if top.is_parenthesized() => top.outer_span().end,
+                        Node::Stmt(stmt) if Self::is_for_init(stmt, top) => top.span().end,
+                        _ => node.span().end,
+                    });
+                }
+                // `parseExprSubscripts` checks the record after the whole chain.
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == node => {
+                    return self.subscript_chain_owner(object, node, parent);
+                }
+                ExprKind::Call(call) | ExprKind::TaggedTemplate(call) if call.callee() == node => {
+                    return self.subscript_chain_owner(object, node, parent);
+                }
+                // `parseExprOps` stops at the operand once the record has an error. The expression that owns the
+                // record then throws, unless it's a list that expects a `,` or its closing token first.
+                ExprKind::Binary { left, .. } if left == node => {
+                    return self.after_left_operand(node, parent);
+                }
+                ExprKind::Cond { test, .. } if test == node => {
+                    return self.after_left_operand(node, parent);
+                }
+                ExprKind::Unary { .. } => return self.after_left_operand(node, parent),
+                _ => return RecordOwner::ReadTo(node.span().end),
+            }
+        }
+    }
+
+    /// True if acorn parses `expr` with no record: `parseMaybeUnary`, `parseAwait`, `parseExprOp`, `parseNew` and
+    /// `parseClassSuper` pass none for an operand.
+    fn has_no_record(expr: Expr<'a>) -> bool {
+        match expr.parent() {
+            _ if expr.is_parenthesized() => false,
+            Node::Class(_) => true,
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Unary { op, .. } => !matches!(op, UnOp::PostInc | UnOp::PostDec),
+                ExprKind::Await(_) => true,
+                ExprKind::New(call) => call.callee() == expr,
+                ExprKind::Binary { op, right, .. } => op != BinOp::Comma && right == expr,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    /// `operand` is the left operand of `operator`, which acorn doesn't read as part of the expression.
+    fn after_left_operand(&self, operand: Expr<'a>, operator: Expr<'a>) -> RecordOwner {
+        match Self::is_list_item(operator) {
+            true => RecordOwner::Unexpected(skip_trivia(self.file.text(), operand.span().end)),
+            false => RecordOwner::ReadTo(operand.span().end),
+        }
+    }
+
+    /// For the literal `object` in `node`, whose subscript chain starts at `first`: the end of the chain. `new` parses
+    /// its callee with no record, so inside one, the literal's own `parseMaybeAssign` creates the record.
+    fn subscript_chain_owner(
+        &self,
+        object: Expr<'a>,
+        node: Expr<'a>,
+        first: Expr<'a>,
+    ) -> RecordOwner {
+        let mut top = first;
+        loop {
+            let Node::Expr(parent) = top.parent() else {
+                break;
+            };
+            let continues = match parent.kind() {
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == top,
+                ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => call.callee() == top,
+                ExprKind::New(call) if call.callee() == top => {
+                    return match node == object {
+                        true => RecordOwner::None,
+                        false => RecordOwner::ReadTo(object.span().end),
+                    };
+                }
+                _ => false,
+            };
+            if !continues || top.is_parenthesized() {
+                break;
+            }
+            top = parent;
+        }
+        RecordOwner::ReadTo(top.span().end)
+    }
+
+    /// True if `expr` is an item of a list that shares its record with it and expects a `,` or its closing token
+    /// after it: an array, an object, a call's arguments or a parenthesized sequence.
+    fn is_list_item(expr: Expr<'a>) -> bool {
+        if expr.is_parenthesized() {
+            return true;
+        }
+        let parent = match expr.parent() {
+            Node::Expr(parent) => parent,
+            Node::Prop(prop) => return Self::is_property_value(prop, expr),
+            _ => return false,
+        };
+        match parent.kind() {
+            ExprKind::Array(_) => true,
+            ExprKind::Spread(_) => Self::passes_record_to_spread(parent),
+            ExprKind::Call(call) => call.callee() != expr,
+            ExprKind::Binary {
+                op: BinOp::Comma, ..
+            } => Self::top_of_sequence(parent).is_parenthesized(),
+            _ => false,
+        }
+    }
+
+    /// `parseExprList` passes its record to a spread in an array or a call. `new` and JSX don't have one.
+    fn passes_record_to_spread(spread: Expr<'a>) -> bool {
+        matches!(spread.parent(), Node::Expr(outer)
+            if matches!(outer.kind(), ExprKind::Array(_) | ExprKind::Call(_)))
+    }
+
+    /// True if `expr` is the value of `prop` in an object literal, or spread into it.
+    fn is_property_value(prop: Prop<'a>, expr: Expr<'a>) -> bool {
+        !prop.is_jsx_attribute()
+            && matches!(prop.kind(), PropKind::Init | PropKind::Spread)
+            && prop.value() == Some(expr)
+    }
+
+    /// The outermost comma expression of the sequence that `comma` is part of.
+    fn top_of_sequence(mut comma: Expr<'a>) -> Expr<'a> {
+        while let Node::Expr(parent) = comma.parent()
+            && matches!(
+                parent.kind(),
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    ..
+                }
+            )
+            && !comma.is_parenthesized()
+        {
+            comma = parent;
+        }
+        comma
+    }
+
+    /// True if `expr` is the initializer in the head of the `for` statement `stmt`.
+    fn is_for_init(stmt: Stmt<'a>, expr: Expr<'a>) -> bool {
+        matches!(stmt.kind(), StmtKind::For { init: Some(init), .. }
+            if matches!(init.kind(), StmtKind::Expr(it) if it == expr))
     }
 
     /// `parseClass`, `parseClassElement`
@@ -1791,10 +1995,17 @@ impl<'a> Checks<'a, '_> {
                         _ => {}
                     }
                     if has_constructor && !is_oxc {
-                        self.fail(
-                            member.span().start,
-                            "Duplicate constructor in the same class",
-                        );
+                        // acorn reports it once it has parsed the whole member. Babel reports it at the key.
+                        let noticed = match self.is_babel {
+                            true => member.span().start,
+                            false => member.span().end,
+                        };
+                        self.when_read_to(noticed, |checks| {
+                            checks.fail(
+                                member.span().start,
+                                "Duplicate constructor in the same class",
+                            )
+                        });
                     }
                     has_constructor = true;
                 }
@@ -1839,7 +2050,9 @@ impl<'a> Checks<'a, '_> {
                                 b"' has already been declared",
                             ]
                             .concat();
-                            self.fail(key.span(file).start, message);
+                            self.when_read_to(member.span().end, |checks| {
+                                checks.fail(key.span(file).start, message)
+                            });
                         }
                     }
                 }
@@ -2006,6 +2219,8 @@ impl<'a> Checks<'a, '_> {
             let key = crate::span::Span::new(at, at + name.len() as u32);
             SyntaxError::oxc_error(key, message.concat()).stage(Stage::Parser)
         };
+        // `checkExpressionErrors` throws a shorthand default before a second `__proto__` recorded with it.
+        let mut proto_errors: SmallVec<[(RecordOwner, u32); 2]> = SmallVec::new();
         for (i, raw) in file.hir.props.iter().enumerate() {
             let is_default = raw.kind == PropKind::Shorthand
                 && matches!(
@@ -2054,9 +2269,14 @@ impl<'a> Checks<'a, '_> {
                 let equals = skip_trivia(file.text(), target.span().end);
                 let message =
                     "Shorthand property assignments are valid only in destructuring patterns";
-                self.when_read_to(object.outer_span().end, |checks| {
-                    checks.fail(equals, message)
-                });
+                match self.record_owner(object) {
+                    // With no record, `parseObj` reads the key as the whole property.
+                    RecordOwner::None => self.unexpected(equals),
+                    RecordOwner::Unexpected(at) => self.unexpected(at),
+                    RecordOwner::ReadTo(noticed) => {
+                        self.when_read_to(noticed, |checks| checks.fail(equals, message));
+                    }
+                }
             }
             let is_proto = |it: Prop<'a>| {
                 it.kind() == PropKind::Init
@@ -2079,9 +2299,18 @@ impl<'a> Checks<'a, '_> {
                     let error = self.redeclared("Identifier", b"__proto__", first, again);
                     self.report(error);
                 } else if first.is_some() {
-                    self.when_read_to(object.outer_span().end, |checks| {
-                        checks.fail(raw.pos, "Redefinition of __proto__ property")
-                    });
+                    proto_errors.push((self.record_owner(object), raw.pos));
+                }
+            }
+        }
+        for (owner, key) in proto_errors {
+            let message = "Redefinition of __proto__ property";
+            match owner {
+                // With no record, `checkPropClash` throws at the key.
+                RecordOwner::None => self.fail(key, message),
+                RecordOwner::Unexpected(at) => self.unexpected(at),
+                RecordOwner::ReadTo(noticed) => {
+                    self.when_read_to(noticed, |checks| checks.fail(key, message));
                 }
             }
         }

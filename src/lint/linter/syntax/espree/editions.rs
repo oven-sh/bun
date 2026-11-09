@@ -373,7 +373,7 @@ impl<'a> Checks<'a, '_> {
                 };
                 let span = key.span(file);
                 if key.is_private() {
-                    self.fail(span.start, "Unexpected character '#'");
+                    self.tokenizer_error(span.start, span.start, "Unexpected character '#'");
                 }
                 // acorn expects a method's parameters after the key.
                 if member.kind() == MemberKind::Property {
@@ -528,11 +528,12 @@ impl<'a> Checks<'a, '_> {
                 if it.is_private_member()
                     && let Some(name) = it.member_name_start()
                 {
-                    self.fail(name, "Unexpected character '#'");
+                    self.tokenizer_error(name, name, "Unexpected character '#'");
                 }
             }
             for it in self.exprs_of(ExprTag::PrivateIdentifier) {
-                self.fail(it.span().start, "Unexpected character '#'");
+                let at = it.span().start;
+                self.tokenizer_error(at, at, "Unexpected character '#'");
             }
         }
         if file.language().source_type == SourceType::Module {
@@ -563,13 +564,15 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         for it in file.exprs_of_kind(ExprTag::Template) {
-            self.fail(it.span().start, "Unexpected character '`'");
+            let at = it.span().start;
+            self.tokenizer_error(at, at, "Unexpected character '`'");
         }
         for it in self.exprs_of(ExprTag::TaggedTemplate) {
             if let ExprKind::TaggedTemplate(call) = it.kind()
                 && let Some(template) = call.template()
             {
-                self.fail(template.span().start, "Unexpected character '`'");
+                let at = template.span().start;
+                self.tokenizer_error(at, at, "Unexpected character '`'");
             }
         }
         for it in file.exprs_of_kind(ExprTag::Spread) {
@@ -647,7 +650,7 @@ impl<'a> Checks<'a, '_> {
                 };
                 if let Some(end) = end {
                     let message = "Identifier directly after number";
-                    self.fail(it.span().start + end as u32, message);
+                    self.tokenizer_error(it.span().start, it.span().start + end as u32, message);
                 }
             }
         }
@@ -687,7 +690,7 @@ impl<'a> Checks<'a, '_> {
             };
             let (pattern, flags, at) = (literal.pattern(), literal.flags(), it.span().start + 1);
             if flags.iter().any(|flag| since(*flag) > edition) {
-                self.fail(at, "Invalid regular expression flag");
+                self.tokenizer_error(it.span().start, at, "Invalid regular expression flag");
             } else if let Err(error) = regex::validate_pattern(
                 pattern,
                 regex::Mode::from_flags(flags),
@@ -701,7 +704,7 @@ impl<'a> Checks<'a, '_> {
                     error.reason().as_bytes(),
                 ]
                 .concat();
-                self.fail(at, message);
+                self.tokenizer_error(it.span().start, at, message);
             }
         }
     }

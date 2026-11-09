@@ -1211,6 +1211,108 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
+  // Each file has two syntax errors. The expected error is the one ESLint 10.12.0 reports, with espree. acorn throws
+  // at the first error it meets: it reads one token ahead, and it checks some rules only once it has parsed the whole
+  // node, so the error that comes first in the text doesn't always come first.
+  test("reports the same error as espree when a file has several", async () => {
+    const cases: [code: string, error: string][] = [
+      // A `try` without `catch` or `finally` is noticed after its block.
+      ["try { x = 08; }", "1:11: Parsing error: Invalid number"],
+      ["try {} 08", "1:8: Parsing error: Invalid number"],
+      ["try {} @", "1:8: Parsing error: Unexpected character '@'"],
+      ["try {} }", "1:1: Parsing error: Missing catch or finally clause"],
+      // `{ a = 1 }` is noticed at the end of the expression that owns acorn's `refDestructuringErrors`.
+      ["var x = [{ b = 1 }, 08];", "1:21: Parsing error: Invalid number"],
+      ["var x = { a: { b = 1 }, c: 08 };", "1:28: Parsing error: Invalid number"],
+      ["var x = ({ b = 1 }, 08);", "1:21: Parsing error: Invalid number"],
+      ["f({ b = 1 }, 08);", "1:14: Parsing error: Invalid number"],
+      ["var x = [{ b = 1 }][08];", "1:21: Parsing error: Invalid number"],
+      ["var x = [{ b = 1 }] 08", "1:21: Parsing error: Invalid number"],
+      [
+        "var x = [{ b = 1 }]; 08;",
+        "1:14: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      ["var x = [{ b = 1 } + 1];", "1:20: Parsing error: Unexpected token +"],
+      ["var x = !{ b = 1 };", "1:14: Parsing error: Unexpected token ="],
+      ["var x = a + { b = 1 };", "1:17: Parsing error: Unexpected token ="],
+      [
+        "var x = new X({ b = 1 }, 08);",
+        "1:19: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      ["for ({ b = 1 }, 08; ;) {}", "1:17: Parsing error: Invalid number"],
+      ["var x = [{ __proto__: 1, __proto__: 2 }, 08];", "1:42: Parsing error: Invalid number"],
+      [
+        "var x = { __proto__: 1, __proto__: 2, b = 1 };",
+        "1:41: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      ["var x = !{ __proto__: 1, __proto__: 2 }; 08", "1:26: Parsing error: Redefinition of __proto__ property"],
+      // Duplicate parameters are checked after an expression body and before a block body.
+      ["var f = (a, a) => 08;", "1:19: Parsing error: Invalid number"],
+      ["var f = (a, a) => a + 08", "1:23: Parsing error: Invalid number"],
+      ["var f = (a, a) => { 08 }", "1:13: Parsing error: Argument name clash"],
+      ["var f = (a, a) => a; 08", "1:13: Parsing error: Argument name clash"],
+      ["([...a = 1]) => 08", "1:17: Parsing error: Invalid number"],
+      // A class member is checked once it has been parsed.
+      ["class A { constructor() {} constructor() { 08; } }", "1:44: Parsing error: Invalid number"],
+      ["class A { constructor() {} constructor() {} 08 }", "1:45: Parsing error: Invalid number"],
+      [
+        "class A { constructor() {} constructor() {} } 08",
+        "1:28: Parsing error: Duplicate constructor in the same class",
+      ],
+      ["class A { #x; #x = 08; }", "1:20: Parsing error: Invalid number"],
+      ["class A { #x; get #x() { return 08 } }", "1:33: Parsing error: Invalid number"],
+      ["class A { #x; #x } 08", "1:15: Parsing error: Identifier '#x' has already been declared"],
+      // An undeclared private name is noticed at the end of the outermost class body around it. A class in an
+      // `extends` clause isn't in the body of the class it extends.
+      [
+        "class A extends (class B { m() { this.#x } }) { n() { return 08; } }",
+        "1:39: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
+      [
+        "class A { m() { class B extends (class C { n() { this.#x } }) {} 08 } }",
+        "1:66: Parsing error: Invalid number",
+      ],
+      ["class A { m() { #x in this } n() { 08 } }", "1:36: Parsing error: Invalid number"],
+      // acorn has read the token after the class before it checks the class's private names.
+      ["class A { m() { this.#x } } 08;", "1:29: Parsing error: Invalid number"],
+      ['class A { m() { this.#x } } "\\8"', "1:31: Parsing error: Invalid escape sequence"],
+      ["class A { m() { this.#x } } /a/x", "1:30: Parsing error: Invalid regular expression flag"],
+      [
+        "class A { m() { this.#x } } }",
+        "1:22: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
+    ];
+    // In a script, `08` is only an error in strict code, so the file still parses.
+    const scripts: [code: string, error: string][] = [
+      ['function f() { "use strict"; let a; let a\n08 }', "2:1: Parsing error: Invalid number"],
+      ['function f() { "use strict"; let a; let a\n}', "1:41: Parsing error: Identifier 'a' has already been declared"],
+    ];
+    const name = (i: number, extension: string) => `b${String(i).padStart(2, "0")}.${extension}`;
+    const files = Object.fromEntries([
+      ...cases.map(([code], i) => [name(i, "js"), code + "\n"]),
+      ...scripts.map(([code], i) => [name(i, "cjs"), code + "\n"]),
+    ]);
+    const settings = `export default [{ files: ["**/*.js", "**/*.cjs"], rules: {} }];`;
+    const { stdout, exitCode } = await lint({ "eslint.config.js": settings, ...files }, [
+      "-f",
+      "unix",
+      ...Object.keys(files),
+    ]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.includes("Parsing error"))
+        .map(line => line.replace(/^.*\/(b\d\d\.c?js):/, "$1:").replace(" [Error]", ""))
+        .sort(),
+    ).toEqual(
+      [
+        ...cases.map(([, error], i) => `${name(i, "js")}:${error}`),
+        ...scripts.map(([, error], i) => `${name(i, "cjs")}:${error}`),
+      ].sort(),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // Each position is what ESLint 10.12.0 reports.
   describe("no-useless-assignment matches ESLint", () => {
     const positions = async (lines: string[]) => {

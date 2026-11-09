@@ -15,7 +15,8 @@ pub(super) mod editions;
 
 use super::{Stage, SyntaxError};
 use crate::ast::{
-    Expr, ExprTag, File, Func, Handle, Node, Param, Pat, PatTag, Stmt, StmtKind, StmtTag, VarKind,
+    Expr, ExprTag, File, FnBody, Func, Handle, Node, Param, Pat, PatTag, Stmt, StmtKind, StmtTag,
+    VarKind,
 };
 use crate::language::SourceType;
 use crate::semantic::{Declaration, Scope, ScopeKind};
@@ -37,11 +38,12 @@ struct Checks<'a, 'c> {
     /// If set, used instead of the file's index of expressions by kind.
     candidates: Option<&'c Candidates>,
     tops: Tops<'a>,
-    /// The first error so far, and how far acorn has read when it throws it.
-    first: Option<(u32, SyntaxError)>,
+    /// The first error so far, and where acorn is when it throws it: the token it has read to, and the phase.
+    first: Option<((u32, Phase), SyntaxError)>,
     /// All the errors. Only used for oxc, which continues after an error.
     all: Vec<SyntaxError>,
-    /// acorn notices the error currently being checked only once it has read this far.
+    /// acorn notices the error currently being checked only once it has read this far: the start of a token, or the
+    /// end of a node, after which it has also read the token that follows. See [`Checks::when_read_to`].
     noticed: u32,
     /// True if the tree is complete because the parser reported nothing.
     is_whole: bool,
@@ -54,6 +56,16 @@ struct Checks<'a, 'c> {
     only_parser: bool,
     /// Set for oxfmt, which tells oxc's parser not to parse regular expressions.
     is_oxfmt: bool,
+}
+
+/// What acorn is doing with a token when it throws an error. acorn reads one token ahead. For the token at an offset,
+/// it first tokenizes it, then runs the checks it deferred to the end of the node before it, then parses it. Two errors
+/// thrown at the same offset are ordered by their phase.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Phase {
+    Tokenizer,
+    Deferred,
+    Parser,
 }
 
 /// Prefixes of the acorn messages for errors that Babel also has, that Babel either doesn't recover from or Prettier
@@ -673,13 +685,32 @@ impl<'a, 'c> Checks<'a, 'c> {
             .chain(found.iter().map(move |it| Expr::from_raw(file, it.1)))
     }
 
-    /// Records an error at `at`. If acorn would notice two errors at the same offset, the one recorded first wins.
+    /// Records an error at `at`, which acorn's parser throws when it reaches the token there, or when it has read to
+    /// [`Checks::noticed`]. If acorn would throw two errors at the same token in the same phase, the one recorded first
+    /// wins.
     fn fail(&mut self, at: u32, message: impl Into<Vec<u8>>) {
         self.fail_for(Span::new(at, 0), message.into());
     }
 
     /// Like [`Checks::fail`], for an error that oxc labels up to `label.end`. See [`SyntaxError::end`].
     fn fail_for(&mut self, label: Span, message: Vec<u8>) {
+        let at = label.start;
+        let rank = match self.noticed > at {
+            // A node's end is followed by trivia. acorn has read the token after it.
+            true => (skip_trivia(self.file.text(), self.noticed), Phase::Deferred),
+            false => (at, Phase::Parser),
+        };
+        self.record(rank, label, message);
+    }
+
+    /// Records an error that acorn's tokenizer throws while it reads the token that starts at `token`. `at` is where
+    /// acorn reports it, which can be inside the token. The tokenizer reads a token before the parser looks at it, and
+    /// before the checks that the parser deferred to the end of the node before it.
+    fn tokenizer_error(&mut self, token: u32, at: u32, message: impl Into<Vec<u8>>) {
+        self.record((token, Phase::Tokenizer), Span::new(at, 0), message.into());
+    }
+
+    fn record(&mut self, rank: (u32, Phase), label: Span, message: Vec<u8>) {
         let Span { start: at, end } = label;
         if self.is_babel && !(REJECTED_BY_BABEL.iter()).any(|it| message.starts_with(it.as_bytes()))
         {
@@ -693,15 +724,14 @@ impl<'a, 'c> Checks<'a, 'c> {
                 ..SyntaxError::default()
             });
         }
-        let noticed = self.noticed.max(at);
-        if self.first.as_ref().is_none_or(|it| noticed < it.0) {
+        if self.first.as_ref().is_none_or(|it| rank < it.0) {
             let error = SyntaxError {
                 at,
                 end,
                 message,
                 ..SyntaxError::default()
             };
-            self.first = Some((noticed, error));
+            self.first = Some((rank, error));
         }
     }
 
@@ -730,7 +760,8 @@ impl<'a, 'c> Checks<'a, 'c> {
     }
 
     /// Runs `check`, whose errors acorn notices only once it has read up to `noticed`. For example, it parses all of
-    /// `[a, b()]` before it sees the `=` that makes it a pattern.
+    /// `[a, b()]` before it sees the `=` that makes it a pattern. `noticed` is the start of that token, or the end of a
+    /// node: acorn has then already read the token after the node, and a tokenizer error there comes first.
     fn when_read_to(&mut self, noticed: u32, check: impl FnOnce(&mut Self)) {
         let before = std::mem::replace(&mut self.noticed, noticed);
         check(self);
@@ -842,31 +873,49 @@ impl<'a, 'c> Checks<'a, 'c> {
                 {
                     token = self.after_token(token);
                 }
-                self.fail(token.min(at), "Unterminated string constant");
+                let token = token.min(at);
+                self.tokenizer_error(token, token, "Unterminated string constant");
             }
             1010 => {
                 let closed = strings::last_index_of(text, b"*/").map_or(0, |it| it + 2);
                 let start =
                     strings::index_of(&text[closed..], b"/*").map_or(at as usize, |it| closed + it);
-                self.fail(start as u32, "Unterminated comment");
+                self.tokenizer_error(start as u32, start as u32, "Unterminated comment");
             }
             1160 => self.unterminated_template(at),
             // After the `/`.
-            1161 => self.fail(at + 1, "Unterminated regular expression"),
-            1121 | 1489 => self.fail(at, "Invalid number"),
-            1487 => self.fail(at, "Octal literal in strict mode"),
-            1488 => self.fail(at + 1, "Invalid escape sequence"),
+            1161 => self.tokenizer_error(at, at + 1, "Unterminated regular expression"),
+            1121 | 1489 => self.tokenizer_error(at, at, "Invalid number"),
+            // An escape inside a string, which acorn rejects when it reads the string.
+            1487 => self.tokenizer_error(
+                self.token_containing(at),
+                at,
+                "Octal literal in strict mode",
+            ),
+            1488 => {
+                self.tokenizer_error(self.token_containing(at), at + 1, "Invalid escape sequence")
+            }
             1127 | 18026 => self.unexpected_character(at),
-            1351 => self.fail(at, "Identifier directly after number"),
-            1381 => self.fail(
+            1351 => self.tokenizer_error(
+                self.number_before(at),
+                at,
+                "Identifier directly after number",
+            ),
+            1381 => self.tokenizer_error(
+                at,
                 at,
                 "Unexpected token `}`. Did you mean `&rbrace;` or `{\"}\"}`?",
             ),
-            1382 => self.fail(
+            1382 => self.tokenizer_error(
+                at,
                 at,
                 "Unexpected token `>`. Did you mean `&gt;` or `{\">\"}`?",
             ),
-            6189 => self.fail(at, "Numeric separator must be exactly one underscore"),
+            6189 => self.tokenizer_error(
+                self.number_before(at),
+                at,
+                "Numeric separator must be exactly one underscore",
+            ),
             6188 => {
                 let before = text.get(..at as usize).unwrap_or_default();
                 let digits = before
@@ -884,7 +933,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                     }
                     _ => "Numeric separator is not allowed at the last of digits",
                 };
-                self.fail(at, message);
+                self.tokenizer_error(self.number_before(at), at, message);
             }
             // TypeScript reports the word that nothing can follow. acorn reports the token after it.
             1434 | 1435 => self.unexpected(self.after_token(at)),
@@ -895,17 +944,19 @@ impl<'a, 'c> Checks<'a, 'c> {
                 [b"Unexpected keyword '", self.token_at(at), b"'"].concat(),
             ),
             1472 => {
-                let is_before =
-                    |it: &&hir::Stmt| matches!(it.kind, hir::StmtKind::Try { .. }) && it.start < at;
-                let start = self
-                    .file
-                    .hir
-                    .stmts
-                    .iter()
-                    .filter(is_before)
-                    .map(|it| it.start)
-                    .max();
-                self.fail(start.unwrap_or(at), "Missing catch or finally clause");
+                let last_try = (self.file.stmts_of_kind(StmtTag::Try))
+                    .filter(|it| it.span().start < at)
+                    .max_by_key(|it| it.span().start);
+                let message = "Missing catch or finally clause";
+                match last_try.map(|it| (it, it.kind())) {
+                    // acorn parses the block, then finds neither `catch` nor `finally` after it.
+                    Some((it, StmtKind::Try { block, .. })) => {
+                        self.when_read_to(block.span().end, |checks| {
+                            checks.fail(it.span().start, message)
+                        });
+                    }
+                    _ => self.fail(at, message),
+                }
             }
             _ => {
                 let at = skip_trivia(text, at);
@@ -959,15 +1010,16 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// TypeScript's parser treats `@` as the start of a decorator and fails later, but acorn can't tokenize it. This
-    /// tokenizes the text before `limit` without context, which is good enough to locate the error.
+    /// TypeScript's parser treats `@` as the start of a decorator and fails later, or at it, but acorn can't tokenize
+    /// it. This tokenizes the text up to `limit` without context, which is good enough to locate the error.
     fn at_sign_before(&mut self, limit: u32) {
         let text = self.file.text();
-        if !strings::contains_char(text.get(..limit as usize).unwrap_or(text), b'@') {
+        let until = (limit as usize).saturating_add(1).min(text.len());
+        if !strings::contains_char(&text[..until], b'@') {
             return;
         }
         let mut at = skip_trivia(text, 0);
-        while at < limit {
+        while at <= limit {
             match self.token_at(at) {
                 [] => break,
                 [b'@', ..] => return self.unexpected_character(at),
@@ -1015,8 +1067,8 @@ impl<'a, 'c> Checks<'a, 'c> {
             None => template.pos + 1,
         };
         match piece >= len {
-            true => self.fail(len, "Unterminated template literal"),
-            false => self.fail(piece, "Unterminated template"),
+            true => self.tokenizer_error(len, len, "Unterminated template literal"),
+            false => self.tokenizer_error(piece, piece, "Unterminated template"),
         }
     }
 
@@ -1036,12 +1088,18 @@ impl<'a, 'c> Checks<'a, 'c> {
 
     /// acorn's tokenizer error for the character at `at`, which can't start a token.
     fn unexpected_character(&mut self, at: u32) {
+        let token = at;
         let (at, rest) = match self.text_from(at) {
             [b'\\', b'u', ..] if self.is_unicode_escape(at) => {
-                return self.fail(at, "Invalid Unicode escape");
+                return self.tokenizer_error(token, at, "Invalid Unicode escape");
             }
-            [b'\\', b'u', ..] => return self.fail(at + 2, "Bad character escape sequence"),
-            [b'\\', ..] => return self.fail(at + 1, "Expecting Unicode escape sequence \\uXXXX"),
+            [b'\\', b'u', ..] => {
+                return self.tokenizer_error(token, at + 2, "Bad character escape sequence");
+            }
+            [b'\\', ..] => {
+                let message = "Expecting Unicode escape sequence \\uXXXX";
+                return self.tokenizer_error(token, at + 1, message);
+            }
             // acorn tries to read a private name.
             [b'#', rest @ ..] => (at + 1, rest),
             rest => (at, rest),
@@ -1051,7 +1109,8 @@ impl<'a, 'c> Checks<'a, 'c> {
             .next()
             .and_then(|it| it.valid().chars().next())
             .map_or(1, char::len_utf8);
-        self.fail(
+        self.tokenizer_error(
+            token,
             at,
             [
                 b"Unexpected character '",
@@ -1060,6 +1119,25 @@ impl<'a, 'c> Checks<'a, 'c> {
             ]
             .concat(),
         );
+    }
+
+    /// The start of the token that contains `at`, for an error inside a string or a template.
+    fn token_containing(&self, at: u32) -> u32 {
+        (self.file.token_containing(at)).map_or(at, |it| it.span().start)
+    }
+
+    /// The start of the number that ends at or continues through `at`.
+    fn number_before(&self, at: u32) -> u32 {
+        let text = self.file.text();
+        let mut start = at as usize;
+        while start > 0
+            && text
+                .get(start - 1)
+                .is_some_and(|&it| is_identifier_byte(it) || it == b'.')
+        {
+            start -= 1;
+        }
+        start as u32
     }
 
     // ───────────────────────────── TypeScript in JavaScript ─────────────────────────────
@@ -1570,8 +1648,13 @@ impl<'a, 'c> Checks<'a, 'c> {
                 && matches!(raw.kind, FnKind::Decl | FnKind::Expr)
                 && !self.is_strict(Node::Func(func));
             if !allows && func.is_in_tree() {
-                let body = func.body_span().map_or(at, |it| it.start);
-                self.when_read_to(body, |checks| checks.fail(at, "Argument name clash"));
+                // acorn checks the parameters before a block body and after an expression body.
+                let noticed = match func.body() {
+                    FnBody::Block(_) => func.body_span().map_or(at, |it| it.start),
+                    FnBody::Expr(body) => body.outer_span().end,
+                    FnBody::None => at,
+                };
+                self.when_read_to(noticed, |checks| checks.fail(at, "Argument name clash"));
             }
         }
     }
@@ -1620,15 +1703,10 @@ impl<'a, 'c> Checks<'a, 'c> {
     }
 
     fn already_declared(&mut self, at: u32) {
-        self.fail(
-            at,
-            [
-                b"Identifier '",
-                self.token_at(at),
-                b"' has already been declared",
-            ]
-            .concat(),
-        );
+        let name = self.token_at(at);
+        let message = [b"Identifier '", name, b"' has already been declared"].concat();
+        // acorn declares the name once it has read it, and the token after it.
+        self.when_read_to(at + name.len() as u32, |checks| checks.fail(at, message));
     }
 
     /// Checks the declarations of one name in `scope`, in source order.

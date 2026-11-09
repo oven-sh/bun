@@ -19,6 +19,7 @@ use bun_jsc::{
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
+    safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
     // A spy or a `vi.stubGlobal()` value that a fake replaces can be undone while the clock is on. See `FakeTimers::retractable`.
     /// The value that a fake for `owner[name]` replaces: what script reads there, or what an uninstalled fake that is there stands for.
     /// Sets `entry` if a spy or a stub can take that value off the property while the clock is on. Empty if a getter threw.
@@ -905,6 +906,11 @@ impl FakeTimers {
         }
         let has_retractable = !deactivated.retractable.is_empty();
         for Replaced { api, original, .. } in deactivated.replaced {
+            // Restored while the clock was faked, it has already put back what it replaced.
+            if matches!(api, Api::Date | Api::Performance) && JSMock__isRestoredSpy(original.get())
+            {
+                continue;
+            }
             if has_retractable && Self::put_back_retractable(global, api, &deactivated.retractable)
             {
                 continue;

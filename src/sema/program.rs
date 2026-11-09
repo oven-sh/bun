@@ -5996,11 +5996,17 @@ impl<'s> Files<'s> {
         // `singleThreadedWorkGroup.fns`: the tasks that `filesParser.start` has queued, each with
         // the `depth` it was called with. The task that's queued last runs first. With several
         // threads tsgo runs them in any order.
+        // A root that a compile loads only because it may be evaluated is no text of the program's own. It begins where a file
+        // of a package does, so that what the program also loads has the depth that it has without this root.
+        let is_evaluated_text = |file: FileId| {
+            let name = all_found.files[file.idx()].path.pretty;
+            compile.is_some_and(|compile| compile.host.is_evaluated_text(name))
+        };
         let mut queued: Vec<(SubTask, u32)> = (starts[libs_end..roots_end].iter())
             .chain(&starts[..libs_end])
             .map(|&file| SubTask {
                 file,
-                increases_depth: false,
+                increases_depth: is_evaluated_text(file),
                 is_elided_on_depth: false,
                 package: None,
             })

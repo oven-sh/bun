@@ -14,7 +14,6 @@ use bun_resolve_builtins::Alias;
 use bun_sema::atom::Interner;
 use bun_sema::hir::{self, ExprId, NodeData};
 use bun_sema::hir_from_data::{DataValue, FOLDER_OF_DATABASE, HostValue};
-use bun_sema::module_format::DeclaredModuleType;
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{HostLoader, HostModuleId};
 use bun_sema::resolve::{
@@ -44,7 +43,7 @@ use crate::load::contents::worker_entries::{
     find_way_named_as_in_executable,
 };
 use crate::load::contents::{ScanInput, scan_file};
-use crate::load::data_modules::{create_module_without_text, parse_data_module};
+use crate::load::data_modules::parse_data_module;
 use crate::load::disk_delegation::{
     delegate_host_services_to_disk, delegate_runtime_config_parsers_to_disk,
 };
@@ -69,7 +68,7 @@ use crate::load::plugin_modules::{DeferredReads, ModuleText, PluginModules, Plug
 use crate::load::react_compiler::{self, ReactCompiler};
 use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::runtime_types;
-use crate::load::source_provider::{SourceFile, SourceProvider};
+use crate::load::source_provider::{SourceFile, SourceProvider, is_short_blank_text};
 use crate::load::sources::{
     FileWithQuery, JSON_PARSE_ERROR_FOR_BLANK_TEXT, ParsedSource, PluginModuleName, SourceKind,
     parsed_source_mut,
@@ -175,6 +174,7 @@ pub(crate) struct LoadHost<'a> {
     resolves_whose_folders_bring_nothing: Guarded<FxHashSet<ResolveWhoseFoldersBringNothing>>,
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
+    files_of_packages_that_worker_may_start: Guarded<Vec<Vec<u8>>>,
     may_store_path_of_main_module: AtomicBool,
     has_file_that_asks_for_what_unseen_code_finds: AtomicBool,
     levels_above_root: AtomicUsize,
@@ -343,6 +343,11 @@ impl<'a> LoadHost<'a> {
         *self.found_entry_point_paths.lock() = paths;
     }
 
+    pub(crate) fn note_files_of_packages_that_worker_may_start(&self, files: &[Vec<u8>]) {
+        *self.files_of_packages_that_worker_may_start.lock() =
+            collect_entry_point_paths(self.disk, self.input.options, files);
+    }
+
     pub(crate) fn into_leftovers(self) -> Box<dyn Send> {
         self.plugins.into_leftovers()
     }
@@ -392,6 +397,7 @@ impl<'a> LoadHost<'a> {
             resolves_whose_folders_bring_nothing: Guarded::new(FxHashSet::default()),
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
+            files_of_packages_that_worker_may_start: Guarded::new(Vec::new()),
             may_store_path_of_main_module: AtomicBool::new(false),
             levels_above_root: AtomicUsize::new(0),
             levels_of_texts: Guarded::new(FxHashMap::default()),
@@ -1060,6 +1066,10 @@ impl LoadHost<'_> {
 impl CodeHost for LoadHost<'_> {
     delegate_runtime_config_parsers_to_disk!(disk);
 
+    fn is_evaluated_text(&self, path: &[u8]) -> bool {
+        self.is_among(&self.files_of_packages_that_worker_may_start.lock(), path)
+    }
+
     fn resolve_code(&self, request: &CodeRequest<'_>) -> HostResolution {
         let is_import = match request.kind {
             CodeImportKind::EntryPoint => false,
@@ -1525,34 +1535,23 @@ impl CodeHost for LoadHost<'_> {
         let is_named_as_code =
             !is_from_plugin && script_kind_of(self.default_loader(path)).is_some();
         let parse_data = |loader: Loader, plugin_module: Option<PluginModuleName>| {
+            let reads_raw_bytes = crate::load::loaders::reads_raw_bytes;
+            let is_decoded = !is_from_plugin
+                && !is_background_read
+                && reads_raw_bytes(loader)
+                && !reads_raw_bytes(self.default_loader(path));
+            let file = self.modules_with_queries.file_behind(path);
+            let bytes = is_decoded
+                .then(|| self.plugins.read_file(file, loader))
+                .flatten();
             let source = SourceFile {
                 path: self.plugins.provider_path(path),
-                contents: text,
+                contents: bytes.as_deref().unwrap_or(text),
                 loader,
             };
             let said_of_text = LoadMessages::default();
             let (provider, messages) = (self.input.provider, &said_of_text);
-            let is_given_to_no_parser = !load.runs_tests
-                && !self.input.options.aot.runs_in_place
-                && !is_from_plugin
-                && matches!(
-                    loader,
-                    Loader::Json
-                        | Loader::Jsonc
-                        | Loader::Json5
-                        | Loader::Toml
-                        | Loader::Yaml
-                        | Loader::Md
-                )
-                && is_all_whitespace(text);
-            let parsed = match is_given_to_no_parser {
-                true => create_module_without_text(
-                    request.package_module_type == DeclaredModuleType::Esm,
-                    arena,
-                    atoms,
-                ),
-                false => parse_data_module(provider, messages, &source, arena, atoms),
-            };
+            let parsed = parse_data_module(provider, messages, &source, arena, atoms);
             let is_refused_under_type =
                 parsed.failure.is_some() && !is_from_plugin && loader != self.default_loader(path);
             if !is_refused_under_type && (!is_named_as_code || parsed.failure.is_none()) {
@@ -1580,14 +1579,18 @@ impl CodeHost for LoadHost<'_> {
                 self.refuse_file(what, path);
             }
             let is_blank_json_of_executable = loader == Loader::Json
-                && self.default_loader(path) == Loader::Json
                 && !load.runs_tests
                 && !self.input.options.aot.runs_in_place
                 && !is_from_plugin
                 && is_all_whitespace(text);
             let is_refused_by_json_parse = is_blank_json_of_executable
                 || load.runs_tests && loader == Loader::Json && !is_taken_by_json_parse(text);
-            if !is_refused_by_json_parse {
+            let is_empty_markdown_of_executable = loader == Loader::Md
+                && !load.runs_tests
+                && !self.input.options.aot.runs_in_place
+                && !is_from_plugin
+                && is_short_blank_text(text);
+            if !is_refused_by_json_parse && !is_empty_markdown_of_executable {
                 let mut parsed = parse_data(loader, plugin_module);
                 let source = parsed_source_mut(&mut parsed.payload);
                 let is_read_by_nobody_later =
@@ -1641,7 +1644,7 @@ impl CodeHost for LoadHost<'_> {
                 host_values: &[],
                 payload: Some(Box::new(ParsedSource {
                     plugin_module,
-                    parse_failure: Some(failure.to_vec()),
+                    parse_failure: is_refused_by_json_parse.then(|| failure.to_vec()),
                     refused_at: is_blank_json_of_executable
                         .then(|| (Loader::Json, bun_ast::Location::default())),
                     byte_count: text.len(),

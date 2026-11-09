@@ -142,6 +142,7 @@ struct FoundSoFar {
     reach_in_front_of_drop: Vec<Vec<u8>>,
     entry_points: Vec<(Vec<u8>, FoundEntryPoint)>,
     merely_guessed: FxHashSet<Vec<u8>>,
+    named_for_more_than_a_worker_that_may_start: FxHashSet<Vec<u8>>,
     names_written: Vec<EntryPointPaths>,
 }
 
@@ -405,6 +406,18 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         to_path(path, self.is_case_sensitive).into_owned()
     }
 
+    fn note_files_that_worker_may_start(&self, found: &FoundSoFar) {
+        let named_for_more = &found.named_for_more_than_a_worker_that_may_start;
+        let may_start: Vec<Vec<u8>> = (found.entry_points.iter())
+            .filter(|it| it.1.because == FoundBecause::MayStartWorker)
+            .filter(|it| !named_for_more.contains(&it.0))
+            .map(|it| &it.1.source_path)
+            .filter(|path| is_in_node_modules(path))
+            .cloned()
+            .collect();
+        (self.input.host).note_files_of_packages_that_worker_may_start(&may_start);
+    }
+
     fn collect_mentions(&self, code: &dyn CodeView<'_>, found: &FoundSoFar) -> Vec<Mention> {
         let mut mentions = Vec::new();
         let mut names_worker_constructor = false;
@@ -516,7 +529,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 names_worker_constructor |= contents.names_worker_constructor;
                 starts_out_of_sight |=
                     contents.starts_worker_out_of_sight || contents.hands_worker_constructor_on;
-                if source.loader == Loader::File && !is_in_node_modules(code.file_name(file)) {
+                if source.loader == Loader::File {
                     embedded.push(file);
                 }
                 starts.extend(contents.worker_starts.iter().map(|start| (file, start)));
@@ -1232,6 +1245,10 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             };
             for path in paths {
                 keys_of_answer.push(self.key_of(&path));
+                if because != FoundBecause::MayStartWorker {
+                    let named = &mut found.named_for_more_than_a_worker_that_may_start;
+                    named.insert(self.key_of(&path));
+                }
                 if known.contains(&self.key_of(&path)) {
                     if because == FoundBecause::StartsWorker {
                         count_as_sure(&mut found.entry_points, &self.key_of(&path));
@@ -1276,6 +1293,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             }
         }
         if further.is_empty() && found.merely_guessed.len() == guessed_before {
+            self.note_files_that_worker_may_start(found);
             return EntryPointsFound {
                 paths: Vec::new(),
                 dropped: Vec::new(),
@@ -1297,6 +1315,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             .cloned()
             .collect();
         self.input.host.begin_at(&source_paths);
+        self.note_files_that_worker_may_start(found);
         EntryPointsFound {
             paths,
             dropped: Vec::new(),

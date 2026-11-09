@@ -38,9 +38,11 @@ pub enum CodeAnswer<'s> {
     HostModule(HostModuleId),
     External { specifier: Atom, kind: ExternalKind },
     Erased,
-    Computed(ComputedTargets<'s>),
+    Computed(&'s ComputedTargets<'s>),
     NotFound(CodeFailure),
 }
+
+const _: () = assert!(size_of::<CodeAnswer<'static>>() == 16);
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ComputedTarget {

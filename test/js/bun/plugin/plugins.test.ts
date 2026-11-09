@@ -5128,3 +5128,45 @@ console.log("== a CommonJS module"); await import("enter-cjs");
   expect(told.map(line => line.split(" | ").slice(2).join(" "))).toEqual(Array(told.length).fill("virtual undefined"));
   expect({ told: told.length, stderr, exitCode }).toEqual({ told: 14, stderr: "", exitCode: 0 });
 });
+
+it.each([[[]], [["--isolate"]], [["--isolate=modules"]]])(
+  "a required CommonJS module in a namespace is told as the importer: bun test %p",
+  async flags => {
+    using dir = tempDir("plugin-required-module-of-a-namespace-in-a-test-run", {
+      "kept.cjs": `exports.here = 1;`,
+      "a.test.js": `
+      import { plugin } from "bun";
+      import { test } from "bun:test";
+      test("is told", async () => {
+        plugin({
+          name: "is told",
+          setup(build) {
+            build.onResolve({ filter: /^enter$/ }, () => ({ path: "cjs", namespace: "virtual" }));
+            build.onLoad({ filter: /./, namespace: "virtual" }, () => ({
+              contents: 'exports.loading = import("made-up-call");',
+              loader: "js",
+            }));
+            build.onResolve({ filter: /^made-up-/ }, args => {
+              console.log("SAID", args.kind, args.namespace, args.resolveDir);
+              return { path: import.meta.dir + "/kept.cjs" };
+            });
+          },
+        });
+        await require("enter").loading;
+      });
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...flags, "./a.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ said: stdout.split("\n").filter(line => line.startsWith("SAID")), exitCode }).toEqual({
+      said: ["SAID dynamic-import virtual undefined"],
+      exitCode: 0,
+    });
+  },
+);

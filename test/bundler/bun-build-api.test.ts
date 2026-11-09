@@ -2549,6 +2549,40 @@ test("sourcemap sourcesContent is valid JSON when source contains C0 control cha
   expect(parsed.sourcesContent[0]).toBe(source);
 });
 
+test("Bun.build sees a file that was written after an earlier build listed the folder", async () => {
+  using dir = tempDir("build-sees-a-new-file", {
+    "first.js": `import "./held.js";`,
+    "held.js": ``,
+    "second.js": `import value from "./late.js"; console.log(value);`,
+  });
+  const listed = Promise.withResolvers<void>();
+  const written = Promise.withResolvers<void>();
+  const first = Bun.build({
+    entrypoints: [join(String(dir), "first.js")],
+    plugins: [
+      {
+        name: "hold",
+        setup(build) {
+          build.onLoad({ filter: /held\.js$/ }, async () => {
+            listed.resolve();
+            await written.promise;
+            return { contents: "", loader: "js" };
+          });
+        },
+      },
+    ],
+  });
+  await listed.promise;
+  writeFileSync(join(String(dir), "late.js"), "export default 1;");
+  // Queued while the first build still runs.
+  const second = Bun.build({ entrypoints: [join(String(dir), "second.js")], throw: false });
+  written.resolve();
+  expect((await first).success).toBe(true);
+  const { logs, success } = await second;
+  expect(logs.map(String)).toEqual([]);
+  expect(success).toBe(true);
+});
+
 // Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
 // own tasks, so any unrelated pool work extended the build by its full duration — a
 // node:fs read parked on a FIFO nobody writes made every later build hang forever.

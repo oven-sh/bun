@@ -2253,6 +2253,7 @@ struct Walk<'a, 's> {
     followed_imports: SharedSet<(FileId, HandedOn)>,
     names_looked_for: SharedSet<(FileId, Atom)>,
     names_read_from_objects: SharedSet<(FileId, Atom)>,
+    names_asked_of_stars: SharedSet<(FileId, Atom)>,
     bound_variables: SharedSet<Sym>,
     reached_bindings: ShardedMap<Sym, bool>,
     keeps_every_module_object: AtomicBool,
@@ -2349,6 +2350,7 @@ impl<'a, 's> Walk<'a, 's> {
             followed_imports: SharedSet::default(),
             names_looked_for: SharedSet::default(),
             names_read_from_objects: SharedSet::default(),
+            names_asked_of_stars: SharedSet::default(),
             bound_variables: SharedSet::default(),
             reached_bindings: ShardedMap::default(),
             keeps_every_module_object: AtomicBool::new(false),
@@ -3209,6 +3211,18 @@ impl Reacher<'_, '_, '_> {
         }
         match (walk.input.graph).find_export(module, name, &walk.input.files.atoms) {
             ExportLookup::Found(binding) => {
+                if let (ExportBinding::Synthetic(copy), ModuleRef::File(file)) = (binding, module)
+                    && walk.input.graph.commonjs().may_stay_empty(copy)
+                    && let Some(units) = &walk.files[file.idx()]
+                    && !units.star_targets.is_empty()
+                    && walk.names_asked_of_stars.insert((file, name))
+                {
+                    self.evaluate(module);
+                    for &target in &units.star_targets {
+                        self.evaluate(ModuleRef::File(target));
+                        self.reach_export(ModuleRef::File(target), name);
+                    }
+                }
                 self.reach_exporter(module, binding);
                 self.reach_export_binding(binding)
             }

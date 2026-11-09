@@ -674,7 +674,7 @@ fn candidates_of_each_site_are_a_range() {
         };
         let fs = HostModuleId(RuntimeModule::NodeFs.registry_id());
         let host_modules = [fs, HostModuleId(u32::MAX)];
-        let first = CodeAnswer::Computed(ComputedTargets::Modules {
+        let first = ComputedTargets::Modules {
             files: &[FileId(5), FileId(7)],
             host_modules: &host_modules,
             spellings: &[
@@ -682,18 +682,18 @@ fn candidates_of_each_site_are_a_range() {
                 (Atom(2), ComputedTarget::HostModule(HostModuleId(u32::MAX))),
                 (Atom(3), ComputedTarget::HostModule(fs)),
             ],
-        });
-        let second = CodeAnswer::Computed(ComputedTargets::Modules {
+        };
+        let second = ComputedTargets::Modules {
             files: &[FileId(5)],
             host_modules: &[],
             spellings: &[(Atom(1), ComputedTarget::File(FileId(5)))],
-        });
+        };
         assert_eq!(
-            scanner.scan_site(0, site, first),
+            scanner.scan_site(0, site, CodeAnswer::Computed(&first)),
             ScannedSite::Candidates(0..2)
         );
         assert_eq!(
-            scanner.scan_site(1, site, second),
+            scanner.scan_site(1, site, CodeAnswer::Computed(&second)),
             ScannedSite::Candidates(2..3)
         );
         let expected = [
@@ -1011,6 +1011,31 @@ fn star_over_a_file_mentioned_above_other_stars_bears_its_place() {
                 (file(first), true),
                 (file(second), true)
             ]
+        );
+    }
+}
+
+#[test]
+fn constant_name_at_require_made_of_handed_url_has_one_answer() {
+    let main = "import { createRequire } from 'node:module';
+        function probe(url) {
+            const load = createRequire(url);
+            try { load('./gauge.json'); } catch {}
+        }
+        probe(import.meta.url);";
+    for code in ["gauge.json.cjs", "gauge.json/index.js"] {
+        with_program(
+            &[("main.mjs", main), (code, "module.exports = {};")],
+            |program| {
+                let [failure] = program.graph.failures() else {
+                    panic!("the failures are {:?}", program.graph.failures());
+                };
+                let ModuleFailureKind::Unresolved { specifier, .. } = failure.kind else {
+                    panic!("the failure is {:?}", failure.kind);
+                };
+                assert_eq!(program.text_of(specifier), "./gauge.json", "{code}");
+                assert_eq!(failure.effect(), FailureEffect::ThrowsAtSite);
+            },
         );
     }
 }

@@ -309,7 +309,6 @@ fn accept_tree<'s, 'r>(
     } = context;
     let path = key.path;
     let request = CodeParseRequest {
-        package_module_type: context.resolver.package_module_type(path),
         path,
         loader: key.loader,
         options: parse_options_of(context, path, settings),

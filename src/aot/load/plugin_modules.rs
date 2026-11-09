@@ -416,7 +416,7 @@ impl<'a> PluginModules<'a> {
         text.map_or(ModuleText::Missing, ModuleText::Text)
     }
 
-    fn read_file(&self, path: &[u8], loader: Loader) -> Option<Cow<'static, [u8]>> {
+    pub(crate) fn read_file(&self, path: &[u8], loader: Loader) -> Option<Cow<'static, [u8]>> {
         if self.virtual_module(path).is_some() {
             return None;
         }

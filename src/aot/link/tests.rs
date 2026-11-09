@@ -271,7 +271,7 @@ fn name_records_of_every_file(unit: &mut TestUnit, files: [FileId; 3]) {
         builder.prop_get(read, private_key, false, false);
         builder.new_object(layouts[next], &[], None, &[]);
         builder.data(data);
-        builder.record_require(modules[next], modules[own]);
+        builder.record_require(modules[next], modules[own], false);
         builder.direct_eval(scope, text, read, None, &[]);
     });
     unit.define_body(|builder| {

@@ -6079,11 +6079,7 @@ impl VirtualMachine {
         }
 
         if let Some(query) = query_string {
-            // Return the fragment as written: `#x`, not the key's `?#x`.
-            *query = bun_core::String::clone_utf8(match result.query_string {
-                [b'?', fragment @ ..] if fragment.first() == Some(&b'#') => fragment,
-                written => written,
-            });
+            *query = bun_core::String::clone_utf8(result.query_string);
         }
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))

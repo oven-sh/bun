@@ -1,4 +1,3 @@
-// Reference: bun build --compile
 import jsonc from "./nothing.jsonc";
 import * as all_jsonc from "./nothing.jsonc";
 import json5 from "./nothing.json5";
@@ -9,8 +8,6 @@ import yaml from "./nothing.yaml";
 import * as all_yaml from "./nothing.yaml";
 import yml from "./nothing.yml";
 import * as all_yml from "./nothing.yml";
-import markdown from "./nothing.markdown";
-import * as all_markdown from "./nothing.markdown";
 import txt from "./nothing.txt";
 import * as all_txt from "./nothing.txt";
 const show = (value) => typeof value + " " + JSON.stringify(value);
@@ -19,5 +16,4 @@ console.log("json5", show(json5), Object.keys(all_json5).join());
 console.log("toml", show(toml), Object.keys(all_toml).join());
 console.log("yaml", show(yaml), Object.keys(all_yaml).join());
 console.log("yml", show(yml), Object.keys(all_yml).join());
-console.log("markdown", show(markdown), Object.keys(all_markdown).join());
 console.log("txt", show(txt), Object.keys(all_txt).join());

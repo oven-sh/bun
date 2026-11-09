@@ -1346,6 +1346,21 @@ static Vector<JSObject*, 2> factoriesInAsyncContext(Zig::GlobalObject* globalObj
 }
 
 #if ENABLE(AOT)
+// The context in which callFactory() called the factory of `mock`: the frames of the factories that it was called from stay.
+static JSValue asyncContextAroundFactoryOf(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto& names = WebCore::builtinNames(vm);
+    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    for (JSObject* frame = context.getObject(); frame;) {
+        JSValue previous = frame->getDirect(vm, names.prevPublicName());
+        if (frame->getDirect(vm, names.storagePublicName()) == JSValue(mock))
+            return previous ? previous : jsUndefined();
+        frame = previous ? previous.getObject() : nullptr;
+    }
+    return context;
+}
+
 static bool isInNodeModules(const String& path);
 
 static bool isOneInstanceWithItsOriginal(const JSModuleMock* mock, const String& specifier)
@@ -1633,7 +1648,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockImportOriginal, (JSC::JSGlobalObjec
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     auto* mock = toModuleMock(lexicalGlobalObject, scope, callframe->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
+#if ENABLE(AOT)
+    // Under `bun test` the loader's jobs run the bodies of the original's graph, outside the factory's frame. Compiled bodies run inside this call.
+    auto* asyncContext = defaultGlobalObject(lexicalGlobalObject)->m_asyncContextData.get();
+    JSValue contextOfFactory = asyncContext->getInternalField(0);
+    if (JSC::getVM(lexicalGlobalObject).hasCompiledCode())
+        asyncContext->putInternalField(JSC::getVM(lexicalGlobalObject), 0, asyncContextAroundFactoryOf(defaultGlobalObject(lexicalGlobalObject), mock));
+#endif
     JSC::JSPromise* original = importOriginalModule(defaultGlobalObject(lexicalGlobalObject), mock);
+#if ENABLE(AOT)
+    asyncContext->putInternalField(JSC::getVM(lexicalGlobalObject), 0, contextOfFactory);
+#endif
     RETURN_IF_EXCEPTION(scope, {});
 #if ENABLE(AOT)
     mock->originalThatFactoryAskedFor.setMayBeNull(JSC::getVM(lexicalGlobalObject), mock, original);
@@ -4463,8 +4488,8 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     if (JSC::Exception* thrown = scope.exception()) [[unlikely]] {
         // The next load asks the mock again.
         waiting.append({ module.index(), JSC::Strong<JSC::JSObject> { vm, mock } });
-        // The load that `bun test` leaves behind such a require() fails with the factory, and nobody hears it.
-        if (comesToFetchInFlight && !vm.isTerminationException(thrown) && scope.tryClearException()) {
+        // The load that `bun test` leaves behind such an ask, by require() or import(), fails with the factory, and nobody hears it.
+        if (comesToFetchInFlight && !JSC::AOT::isAskedByLoadThatRequireLeft(globalObject, module) && !vm.isTerminationException(thrown) && scope.tryClearException()) {
             JSC::JSPromise::rejectedPromise(globalObject, thrown->value())->performPromiseThen(vm, globalObject, JSC::jsUndefined(), JSC::jsUndefined(), JSC::JSPromise::create(vm, globalObject->promiseStructure()));
             throwException(globalObject, scope, thrown);
         }
@@ -4564,6 +4589,8 @@ static bool waitsForMockOf(Zig::GlobalObject* globalObject, JSModuleMock* runnin
     Vector<JSObject*, 4> seen;
     if (callers.containsIf([&](JSObject* caller) { return factoryWaitsForFactory(globalObject, running, caller, seen); }))
         return false;
+    if (asked && isPatchedInPlaceOver(running, *asked) && !callers.contains(running))
+        return true;
     if (fileThatWroteImport) {
         if (*asked && running->compiledModuleThatNeverRan && asked->index() != *running->compiledModuleThatNeverRan && JSC::AOT::loadLeadsTo(globalObject, *asked, JSC::AOT::ModuleID(*running->compiledModuleThatNeverRan))) {
             // The load comes to the mocked module by statements, through a file that the running factory has imported: that file was linked with the original.
@@ -4584,7 +4611,7 @@ static bool waitsForMockOf(Zig::GlobalObject* globalObject, JSModuleMock* runnin
         }
         if (mayWait.contains(running))
             return false;
-        if (entry && !isPatchedInPlaceOver(running, *asked) && (entry->compiledImportChain.get(fileThatWroteImport->index()) || entry->importChain.contains(JSC::AOT::pathOfFileOfModule(*fileThatWroteImport))))
+        if (entry && (entry->compiledImportChain.get(fileThatWroteImport->index()) || entry->importChain.contains(JSC::AOT::pathOfFileOfModule(*fileThatWroteImport))))
             return false;
         if (!isWrittenIn(running, *fileThatWroteImport))
             return true;
@@ -6268,7 +6295,7 @@ static bool isGoneWhileLoadsWaitForFactory(Zig::GlobalObject* globalObject, JSMo
         return false;
     auto* later = registeredModuleMock(globalObject, specifier);
     bool isWaitedForByImporter = globalObject->onLoadPlugins.factoriesOfCompiledMocks.containsIf([&](const auto& factory) { return factory.mock.get() == mock && factory.isWaitedForByImporter; });
-    if (later && ((mock->state == JSModuleMock::State::Settled && !isWaitedForByImporter && JSC::AOT::isImportHeld(globalObject, JSC::AOT::ModuleID(*mock->compiledModuleThatNeverRan))) || !globalObject->onLoadPlugins.compiledMocksToRun.containsIf([&](const auto& waiting) { return waiting.second.get() == later; })))
+    if (later && ((mock->state == JSModuleMock::State::Settled && !isWaitedForByImporter && JSC::AOT::isImportHeld(globalObject, JSC::AOT::ModuleID(*mock->compiledModuleThatNeverRan))) || (later->calledAt && later->factory.get() != mock->factory.get()) || !globalObject->onLoadPlugins.compiledMocksToRun.containsIf([&](const auto& waiting) { return waiting.second.get() == later; })))
         return false;
     return globalObject->onLoadPlugins.factoriesOfCompiledMocks.containsIf([&](const auto& factory) { return factory.mock.get() == mock && (factory.isWaitedFor || !factory.wasStartedByRequire); });
 }
@@ -7398,7 +7425,7 @@ extern "C" bool Bun__isKeyOfLoadedModule(Zig::GlobalObject* globalObject, const 
     String string = key->toWTFString();
     if (Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, string)))
         return true;
-    return globalObject->requireMap()->has(globalObject, jsString(vm, string));
+    return Bun::testFileRequireMap(globalObject)->has(globalObject, jsString(vm, string));
 }
 
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject* globalObject)

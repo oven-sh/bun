@@ -68,31 +68,6 @@ pub(crate) fn parse_data_module<'s>(
     }
 }
 
-pub(crate) fn create_module_without_text<'s>(
-    is_in_es_package: bool,
-    arena: &'s Arena,
-    atoms: &Interner<'s>,
-) -> ParsedDataModule<'s> {
-    let module = match is_in_es_package {
-        true => DataModule::Value {
-            default: &DataValue::Undefined,
-            exports_keys: false,
-        },
-        false => DataModule::Value {
-            default: &DataValue::Object(&[]),
-            exports_keys: true,
-        },
-    };
-    let DataModuleTree { file, host_values } = module_from_data(&module, atoms, arena);
-    ParsedDataModule {
-        hir: file,
-        host_values,
-        web_assembly: None,
-        failure: None,
-        failed_at: None,
-    }
-}
-
 pub(crate) fn parse_json<'s>(
     text: &[u8],
     arena: &'s Arena,

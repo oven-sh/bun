@@ -2712,6 +2712,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-check-of-closure-resolves-the-calls-that-it-tells.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-default-of-a-mocked-built-in-module-is-the-mocks.test.ts": {
     "default": 1300,
     "asan": 5200
@@ -3113,6 +3117,10 @@
     "asan": 240000
   },
   "aot/what-is-bound-as-this-of-a-function-that-never-looks-at-it-goes-nowhere.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/what-is-compiled-only-because-a-worker-may-start-it-stops-no-build.test.ts": {
     "default": 60000,
     "asan": 240000
   },

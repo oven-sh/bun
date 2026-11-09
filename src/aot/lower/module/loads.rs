@@ -93,6 +93,7 @@ struct PlannedSite {
     target: ModuleRef,
     is_bare: bool,
     records: bool,
+    is_by_made_require: bool,
     yields_value: bool,
 }
 
@@ -120,7 +121,11 @@ impl AnsweredSite<'_> {
     }
 }
 
-fn create_plan(site: Option<Site>, yields_value: impl FnOnce() -> bool) -> Option<PlannedSite> {
+fn create_plan(
+    site: Option<Site>,
+    is_by_made_require: bool,
+    yields_value: impl FnOnce() -> bool,
+) -> Option<PlannedSite> {
     match site? {
         Site::Evaluate {
             target,
@@ -130,6 +135,7 @@ fn create_plan(site: Option<Site>, yields_value: impl FnOnce() -> bool) -> Optio
             target,
             is_bare,
             records,
+            is_by_made_require,
             yields_value: yields_value(),
         }),
         Site::AsToday => None,
@@ -605,6 +611,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             (Some(_), CalleeTest::IsFilled) => CalleeTest::IsTruthy,
             _ => test_of_value,
         };
+        let is_by_made_require = matches!(
+            own_require,
+            Some(
+                OwnRequire::Made
+                    | OwnRequire::MadeForPath(_)
+                    | OwnRequire::MadeForChoice(_)
+                    | OwnRequire::MadeInOtherFile(_)
+            )
+        );
         let operation = find_operation(&site, answer, given.len())?;
         let is_left_to_loader = matches!(answer, SiteAnswer::Module(ModuleRef::External { .. }));
         if matches!(
@@ -626,9 +641,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             specifier: site.specifier,
             specifier_node: site.specifier_node,
             answer,
-            plan: create_plan(modules.stored_site(self.file.file, call), || {
-                modules.is_site_read_as_value(self.file.file, call)
-            }),
+            plan: create_plan(
+                modules.stored_site(self.file.file, call),
+                is_by_made_require,
+                || modules.is_site_read_as_value(self.file.file, call),
+            ),
             resolved_from,
             looks_in_cache: !matches!(site.kind, ImportSiteKind::GetBuiltinModule(_)),
             is_read_by_transpiler: matches!(site.kind, ImportSiteKind::Require(_))
@@ -1263,7 +1280,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             specifier: site.specifier,
             specifier_node: site.specifier_node,
             answer: modules.site_answer(own_file, kind),
-            plan: create_plan(modules.site_at(own_file, kind), || {
+            plan: create_plan(modules.site_at(own_file, kind), false, || {
                 modules.holder(own_file, name).is_none()
             }),
             resolved_from: None,
@@ -1440,7 +1457,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
     fn try_lower_inner_module_call(&mut self, call: ExprId) -> Option<ValueId> {
         let (modules, file) = (self.file.inputs.modules, self.file.file);
-        let plan = create_plan(modules.stored_site(file, call), || {
+        let plan = create_plan(modules.stored_site(file, call), false, || {
             modules.is_site_read_as_value(file, call)
         })?;
         self.set_position(self.file.hir[call].pos);
@@ -1451,14 +1468,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let module = self.file.fragment.declare_module(plan.target);
         let referrer = self.current_module_id();
         if plan.records {
-            self.builder.record_require(module, referrer);
+            self.builder
+                .record_require(module, referrer, plan.is_by_made_require);
         }
         let is_bare = plan.is_bare && self.is_module_body() && self.handler().is_none();
         let is_call_of_require = matches!(plan.target, ModuleRef::File(_) | ModuleRef::Runtime(_));
         self.builder
             .evaluate_module(module, referrer, is_bare, is_call_of_require);
         if plan.records {
-            self.builder.record_require(module, referrer);
+            self.builder
+                .record_require(module, referrer, plan.is_by_made_require);
         }
         if !plan.yields_value {
             return self.builder.boolean(true);
@@ -1596,6 +1615,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             target: module,
             is_bare: false,
             records: true,
+            is_by_made_require: false,
             yields_value: true,
         })
     }

@@ -4,7 +4,7 @@ use bstr::BStr;
 use bun_alloc::Arena;
 use bun_aot::diagnostic_codes::Code;
 use bun_aot::diagnostics::log_diagnostic;
-use bun_aot::load::source_provider::{DataFailure, SourceFile};
+use bun_aot::load::source_provider::{DataFailure, SourceFile, is_short_blank_text};
 use bun_ast::{Expr, Loader, Loc, Log, Source};
 use bun_core::strings;
 use bun_sema::atom::Interner;
@@ -131,7 +131,7 @@ fn parse_structured<'s>(
     atoms: &Interner<'s>,
     log: &mut Log,
 ) -> Result<DataModule<'s>, DataFailure> {
-    let default: &'s DataValue<'s> = if strings::is_all_whitespace(source.contents()) {
+    let default: &'s DataValue<'s> = if is_short_blank_text(source.contents()) {
         arena.alloc(DataValue::Object(&[]))
     } else {
         parse_structured_value(format, source, arena, atoms, log)?
@@ -412,8 +412,8 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    fn empty_and_blank_files_are_empty_objects() {
-        for contents in [&b""[..], &b" \n\t"[..]] {
+    fn empty_and_short_blank_files_are_empty_objects() {
+        for contents in [&b""[..], &b" \n\r"[..], &[b' '; 32][..]] {
             for loader in [
                 Loader::Json,
                 Loader::Jsonc,
@@ -430,6 +430,16 @@ mod tests {
                     assert_eq!(outcome.result.unwrap(), module);
                 });
             }
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn blank_file_with_a_tab_or_of_33_bytes_goes_to_its_parser() {
+        for contents in [&b" \n\t"[..], &[b' '; 33][..]] {
+            load(Loader::Json, contents, |outcome| {
+                assert!(matches!(outcome.result, Err(DataFailure::InvalidText)));
+            });
         }
     }
 

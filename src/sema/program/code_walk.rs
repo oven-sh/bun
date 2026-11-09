@@ -280,7 +280,12 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             }
             import_what_is_required(self, &mut state);
             let mut files = order_files(self, &mut state);
-            compute_package_depths(&mut files.entries, &files.entry_points, &files.steps);
+            compute_package_depths(
+                self.host,
+                &mut files.entries,
+                &files.entry_points,
+                &files.steps,
+            );
             copy_to_session(self, &mut files.entries, &files.parsed);
             ordered = Some(files);
         };
@@ -2222,15 +2227,21 @@ fn order_files<'s, 'r>(
 }
 
 fn compute_package_depths(
+    host: &dyn CodeHost,
     entries: &mut [CodeEntry<'_, '_>],
     entry_points: &[u32],
     steps: &[Vec<bool>],
 ) {
     let mut queue: VecDeque<(u32, u32)> = VecDeque::new();
     for &entry_point in entry_points {
-        let depth = &mut entries[entry_point as usize].package_depth;
-        if std::mem::replace(depth, 0) != 0 {
-            queue.push_back((entry_point, 0));
+        let entry = &mut entries[entry_point as usize];
+        let depth = u32::from(host.is_evaluated_text(entry.key.path));
+        if depth < entry.package_depth {
+            entry.package_depth = depth;
+            match depth {
+                0 => queue.push_front((entry_point, depth)),
+                _ => queue.push_back((entry_point, depth)),
+            }
         }
     }
     while let Some((index, depth)) = queue.pop_front() {

@@ -8,7 +8,9 @@ use bun_sema::check::Requested;
 use bun_sema::check::aot::{DiagnosticClass, DiagnosticSubject, Effect, FileOrigin, effect_of};
 use bun_sema::hir::FileKind;
 use bun_sema::import_sites::ImportSpecifier;
-use bun_sema::program::{CodeAnswer, FileId, FileRole, Files, ReadingNoTrees, Sym};
+use bun_sema::program::{
+    CodeAnswer, ComputedTargets, FileId, FileRole, Files, ReadingNoTrees, Sym,
+};
 use bun_sema::resolve::{CodeHost, Host, is_relative, join};
 
 pub(super) fn compute_origins(
@@ -17,9 +19,49 @@ pub(super) fn compute_origins(
     project_origin: FileOrigin,
 ) -> Vec<FileOrigin> {
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
-    file_ids
-        .map(|file| origin_of(files, host, file, project_origin))
-        .collect()
+    let mut origins: Vec<FileOrigin> = file_ids
+        .map(|file| origin_of(files, host, file, project_origin, false))
+        .collect();
+    let is_text = |file: &FileId| origins[file.idx()] == FileOrigin::EvaluatedText;
+    let texts: Vec<FileId> = (files.compiled_files().iter().copied())
+        .filter(is_text)
+        .collect();
+    if texts.is_empty() {
+        return origins;
+    }
+    let entry_points = files.entry_points().iter().copied();
+    let entry_points: Vec<FileId> = entry_points.filter(|file| !is_text(file)).collect();
+    let is_loaded_by_program = find_files_loaded_from(files, entry_points);
+    let is_loaded_by_texts = find_files_loaded_from(files, texts);
+    for &file in files.compiled_files() {
+        let at = file.idx();
+        origins[at] = match (is_loaded_by_program[at], is_loaded_by_texts[at]) {
+            (true, true) => origin_of(files, host, file, project_origin, true),
+            (false, true) => FileOrigin::EvaluatedText,
+            (_, false) => continue,
+        };
+    }
+    origins
+}
+
+fn find_files_loaded_from(files: &Files<'_>, mut left: Vec<FileId>) -> Vec<bool> {
+    let mut is_loaded = vec![false; files.modules.len()];
+    while let Some(file) = left.pop() {
+        if std::mem::replace(&mut is_loaded[file.idx()], true) {
+            continue;
+        }
+        let answers = files.compiled(file).map_or(&[][..], |it| it.code_answers);
+        for answer in answers {
+            match *answer {
+                CodeAnswer::File(target) => left.push(target),
+                CodeAnswer::Computed(ComputedTargets::Modules { files, .. }) => {
+                    left.extend_from_slice(files);
+                }
+                _ => {}
+            }
+        }
+    }
+    is_loaded
 }
 
 fn origin_of(
@@ -27,6 +69,7 @@ fn origin_of(
     host: &dyn CodeHost,
     file: FileId,
     project_origin: FileOrigin,
+    is_loaded_by_program_and_text: bool,
 ) -> FileOrigin {
     match project_origin {
         FileOrigin::Runtime => return FileOrigin::Runtime,
@@ -39,7 +82,9 @@ fn origin_of(
         | FileOrigin::Declarations
         | FileOrigin::EvaluatedText => {}
     }
-    if files.is_compiled(file) && host.is_evaluated_text(files.module(file).file_name()) {
+    let name = files.module(file).file_name();
+    let is_text = || files.is_compiled(file) && host.is_evaluated_text(name);
+    if !is_loaded_by_program_and_text && is_text() {
         return FileOrigin::EvaluatedText;
     }
     let is_dependency = files.module(file).is_from_external_library

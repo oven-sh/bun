@@ -216,7 +216,6 @@ impl<'s> Fixture<'_, 's> {
     fn parse_text(&self, path: &[u8], loader: HostLoader, text: &[u8]) -> ParsedCode<'s> {
         let settings = default_settings();
         let request = CodeParseRequest {
-            package_module_type: DeclaredModuleType::Unknown,
             path,
             loader,
             options: ParseOptions::default(),

@@ -276,6 +276,17 @@ test("a fragment is resolved to what is written", () => {
   expect(import.meta.resolveSync("./import-query-fixture.ts#x")).toBe(resolvedPath + "#x");
 });
 
+test("a written `?#x` comes back as written, and require() loads the file", () => {
+  using dir = tempDir("require-empty-query-and-fragment", { "a.cjs": `module.exports = "a.cjs";` });
+  const resolved = require.resolve(`${dir}/a.cjs`);
+  for (const suffix of ["?#x", "?#"]) {
+    expect(require(`${dir}/a.cjs${suffix}`)).toBe("a.cjs");
+    expect(require.resolve(`${dir}/a.cjs${suffix}`)).toBe(resolved + suffix);
+    expect(require(require.resolve(`${dir}/a.cjs${suffix}`))).toBe("a.cjs");
+    expect(Bun.resolveSync(`${dir}/a.cjs${suffix}`, import.meta.dir)).toBe(resolved + suffix);
+  }
+});
+
 test("a file whose name holds a # is found before the # is taken for a fragment", async () => {
   using dir = tempDir("import-fragment", {
     "a#x.mjs": `export default "a#x.mjs";`,
@@ -285,7 +296,7 @@ test("a file whose name holds a # is found before the # is taken for a fragment"
   expect((await import(`${dir}/a#x.mjs`)).default).toBe("a#x.mjs");
   expect((await import(`${dir}/b.mjs#x.mjs`)).default).toBe("b.mjs");
   expect((await import(`${dir}/c#d/e.mjs#f`)).default).toBe("c#d/e.mjs");
-  expect(() => require(`${dir}/b.mjs#x.mjs`)).toThrow();
+  expect(() => require(`${dir}/b.mjs#x.mjs`)).toThrow(expect.objectContaining({ code: "MODULE_NOT_FOUND" }));
 });
 
 // A `data:` URL has no file name, so a "." in the module's text isn't the start of an extension.

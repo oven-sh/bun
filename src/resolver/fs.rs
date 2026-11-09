@@ -676,6 +676,7 @@ pub fn read_file_contents_in_arena(
     file: &bun_sys::File,
     path: &[u8],
     arena: &bun_alloc::Arena,
+    keeps_byte_order_mark: bool,
 ) -> crate::CrateResult<(core::ptr::NonNull<u8>, usize)> {
     let _ = path;
     crate::fs::FileSystem::set_max_fd(file.handle().native());
@@ -692,7 +693,12 @@ pub fn read_file_contents_in_arena(
         // `finish_arena_contents` writes the trailing NUL at `[read_count]`.
         let buf = arena_alloc_uninit_bytes(arena, read_count + 1);
         buf[..read_count].copy_from_slice(&initial_buf[..read_count]);
-        return Ok(finish_arena_contents(arena, buf, read_count));
+        return Ok(finish_arena_contents(
+            arena,
+            buf,
+            read_count,
+            keeps_byte_order_mark,
+        ));
     }
     let initial_len = read_count;
 
@@ -727,7 +733,12 @@ pub fn read_file_contents_in_arena(
     let total = read_count + initial_len;
     debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
-    Ok(finish_arena_contents(arena, buf, total))
+    Ok(finish_arena_contents(
+        arena,
+        buf,
+        total,
+        keeps_byte_order_mark,
+    ))
 }
 
 /// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill),
@@ -757,8 +768,9 @@ fn finish_arena_contents(
     arena: &bun_alloc::Arena,
     buf: &mut [u8],
     mut total: usize,
+    keeps_byte_order_mark: bool,
 ) -> (core::ptr::NonNull<u8>, usize) {
-    if let Some(bom) = BOM::detect(&buf[..total]) {
+    if let Some(bom) = BOM::detect(&buf[..total]).filter(|_| !keeps_byte_order_mark) {
         debug!("Convert {} BOM", bom.tag_name());
         match bom {
             BOM::Utf8 => {

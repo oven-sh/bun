@@ -1590,17 +1590,20 @@ impl ModuleGraph {
             if let Some((_, prefix)) = data_prefixes.next_if(|(entry, _)| *entry == file) {
                 requests.extend(prefix.into_iter().map(ModuleRequest::hoisted_import));
             }
-            requests.extend(
-                self.requests(file)
-                    .iter()
-                    .map(|&written| match written.kind {
-                        ModuleRequestKind::Import => ModuleRequest {
-                            target: self.face(written.target).unwrap_or(written.target),
-                            ..written
-                        },
-                        ModuleRequestKind::Require => written,
-                    }),
-            );
+            let written = self.requests(file);
+            let has_face = |request: &ModuleRequest| {
+                request.kind == ModuleRequestKind::Import && self.face(request.target).is_some()
+            };
+            if requests.len() == start && !written.iter().any(has_face) {
+                continue;
+            }
+            requests.extend(written.iter().map(|&written| match written.kind {
+                ModuleRequestKind::Import => ModuleRequest {
+                    target: self.face(written.target).unwrap_or(written.target),
+                    ..written
+                },
+                ModuleRequestKind::Require => written,
+            }));
             ranges.insert(module, start as u32..requests.len() as u32);
         }
         for &face in self.record_files() {

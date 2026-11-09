@@ -370,7 +370,6 @@ pub struct LoaderRequest<'a> {
 
 #[derive(Copy, Clone)]
 pub struct CodeParseRequest<'a> {
-    pub package_module_type: DeclaredModuleType,
     pub path: &'a [u8],
     pub loader: HostLoader,
     pub options: ParseOptions,

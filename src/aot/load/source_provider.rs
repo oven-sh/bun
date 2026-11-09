@@ -215,6 +215,10 @@ pub trait SourceProvider: Sync {
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed>;
 }
 
+pub fn is_short_blank_text(text: &[u8]) -> bool {
+    text.len() < 33 && text.iter().all(|byte| matches!(byte, b'\n' | b'\r' | b' '))
+}
+
 pub fn apply_jsx_settings(pragma: &mut jsx::Pragma, settings: &JsxSettings) {
     let members = |path: &[Vec<u8>]| -> Box<[Box<[u8]>]> {
         path.iter().map(|member| Box::from(&member[..])).collect()

@@ -206,6 +206,7 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
     fn may_fail_where_loaded(&self, file: FileId) -> bool {
         let runs_tests = self.inputs.options.runs_tests;
         may_fail_where_loaded(self.keys.project, runs_tests, self.keys.graph, file)
+            || self.loaded.view().origin(file) == FileOrigin::EvaluatedText
     }
 
     fn cannot_be_lowered(&self, checker: &Checker<'_, '_>, file: FileId) -> bool {
@@ -239,7 +240,10 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
             let locator = TextLocator::new(files.module(file).file_name(), &hir.text[..]);
             with_position(sentence, locator.line_and_column(offset))
         };
-        if let Some(first) = syntax_errors_of(hir).next() {
+        let is_no_javascript =
+            |it: &&bun_sema::hir::Diagnostic| it.kind == bun_sema::hir::DiagnosticKind::Js;
+        let of_parser = syntax_errors_of(hir).next();
+        if let Some(first) = of_parser.or_else(|| hir.diagnostics.iter().find(is_no_javascript)) {
             let (_, template) = messages::message(first.code)?;
             let mut sentence = Vec::new();
             messages::format(&mut sentence, template, &first.args);
@@ -325,6 +329,7 @@ impl Build<'_> {
             let graph = &bound.projects.get(id).graph;
             let mut files_to_lower = find_files_to_lower(all_compiled_files, &roles, |file| {
                 may_fail_where_loaded(id, runs_tests, graph, file)
+                    || project.loaded.origin(file) == FileOrigin::EvaluatedText
             });
             files_to_lower.retain(|&file| {
                 left_out.files.binary_search(&file).is_err() || graph.is_placeholder(file)
@@ -763,6 +768,7 @@ impl Build<'_> {
             let file = demotion.file;
             if roles.has_early_error(file)
                 && !may_fail_where_loaded(project, runs_tests, &bound_project.graph, file)
+                && loaded_project.loaded.origin(file) != FileOrigin::EvaluatedText
             {
                 file_inputs[file.idx()] = None;
             }

@@ -110,10 +110,39 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) failure_skip_to: usize,
     /// Like `ExecutionSequence::pending_matchers`, for matchers whose calling sequence isn't known.
     pub(crate) pending_matchers: u32,
+    flavors: Flavors,
+    /// Whether tests or hooks of Vitest run at once with ones of Jest. Then `VirtualMachine::is_running_vitest_entry`,
+    /// which the entry that started last sets, doesn't tell whose rules the running code follows. See
+    /// `VirtualMachine::sequences_run_vitest_entry`.
+    has_both_flavors: bool,
+}
+
+/// Whose rules the tests and hooks of a concurrent sequence or group follow. One without a callback doesn't count.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Flavors {
+    jest: bool,
+    vitest: bool,
+}
+
+impl Flavors {
+    #[inline]
+    pub(crate) fn add(&mut self, entry: &ExecutionEntry) {
+        if entry.callback.is_none() {
+            return;
+        }
+        match entry.flavor {
+            Flavor::Jest => self.jest = true,
+            Flavor::Vitest => self.vitest = true,
+        }
+    }
+
+    fn are_both(self) -> bool {
+        self.jest && self.vitest
+    }
 }
 
 impl ConcurrentGroup {
-    pub(crate) fn init(sequence_start: usize, sequence_end: usize, next_index: usize) -> ConcurrentGroup {
+    pub(crate) fn init(sequence_start: usize, sequence_end: usize, next_index: usize, flavors: Flavors) -> ConcurrentGroup {
         ConcurrentGroup {
             sequence_start,
             sequence_end,
@@ -122,15 +151,20 @@ impl ConcurrentGroup {
             failure_skip_to: next_index,
             next_sequence_index: 0,
             pending_matchers: 0,
+            flavors,
+            has_both_flavors: flavors.are_both() && sequence_end - sequence_start > 1,
         }
     }
 
-    pub(crate) fn try_extend(&mut self, next_sequence_start: usize, next_sequence_end: usize) -> bool {
+    pub(crate) fn try_extend(&mut self, next_sequence_start: usize, next_sequence_end: usize, flavors: Flavors) -> bool {
         if self.sequence_end != next_sequence_start {
             return false;
         }
         self.sequence_end = next_sequence_end;
         self.remaining_incomplete_entries = self.sequence_end - self.sequence_start;
+        self.flavors.jest |= flavors.jest;
+        self.flavors.vitest |= flavors.vitest;
+        self.has_both_flavors = self.flavors.are_both();
         true
     }
 
@@ -725,12 +759,25 @@ impl Execution {
         }
     }
 
-    fn on_group_started(global_this: &JSGlobalObject) {
+    fn on_group_started(global_this: &JSGlobalObject, group: &ConcurrentGroup) {
         // SAFETY: bun_vm() returns the live per-thread VM.
-        global_this.bun_vm().as_mut().auto_killer.enable();
+        let vm = global_this.bun_vm().as_mut();
+        vm.auto_killer.enable();
+        if group.has_both_flavors {
+            bun_jsc::cpp::Bun__TestSequenceContext__begin(global_this);
+            vm.sequences_run_vitest_entry = Some(vec![None; group.sequence_end - group.sequence_start].into_boxed_slice());
+        }
+    }
+
+    /// Code that a group leaves behind follows the entry that started last, like any code outside such a group.
+    pub(crate) fn end_sequence_contexts(global_this: &JSGlobalObject) {
+        if global_this.bun_vm().as_mut().sequences_run_vitest_entry.take().is_some() {
+            bun_jsc::cpp::Bun__TestSequenceContext__end(global_this);
+        }
     }
 
     fn on_group_completed(global_this: &JSGlobalObject) {
+        Execution::end_sequence_contexts(global_this);
         // SAFETY: bun_vm() returns the live per-thread VM.
         let vm = global_this.bun_vm().as_mut();
         // Under --isolate the swap between files kills and clears the tracked set.
@@ -1008,7 +1055,7 @@ fn step_group(
             return Ok(ExpectDeferred::step_file_end(buntest_strong, global_this, now));
         };
         if !group.executing {
-            Execution::on_group_started(global_this);
+            Execution::on_group_started(global_this, group);
             group.executing = true;
         }
         // Raw, so that it does not alias the `&mut Execution` that step_group_one re-derives.
@@ -1134,6 +1181,22 @@ fn report_around_timeout(
     Ok(())
 }
 
+/// In a group with both flavors: notes the flavor of the entry that a sequence runs from now on, and returns
+/// `callback` to call in a frame that names the sequence.
+#[cold]
+fn in_sequence_context(global_this: &JSGlobalObject, sequence_index: usize, is_vitest: bool, callback: JSValue) -> JSValue {
+    let vm = global_this.bun_vm();
+    let (Some(of_sequences), Ok(index)) = (vm.as_mut().sequences_run_vitest_entry.as_deref_mut(), i32::try_from(sequence_index)) else {
+        debug_assert!(false); // `on_group_started` made it, and the group still runs.
+        return callback;
+    };
+    of_sequences[sequence_index] = Some(is_vitest);
+    // The frame goes on top of the context that `run_test_callback` calls a callback with none of its own in.
+    let file_context = vm.test_isolation_state.file_context;
+    let _entered = (file_context != bun_jsc::ContextId::NONE).then(|| vm.enter_context(file_context));
+    bun_jsc::cpp::Bun__TestSequenceContext__bind(global_this, index, callback)
+}
+
 enum AdvanceSequenceStatus {
     /// the entire sequence is completed.
     Done,
@@ -1220,6 +1283,12 @@ fn step_sequence_one(
         // 1. It ran out of entries (normal completion)
         // 2. All retry/repeat attempts have been exhausted
         group_log::log(format_args!("runOne: no more entries; sequence complete."));
+        // SAFETY: group points into this.groups; read-only.
+        if unsafe { group.as_ref() }.has_both_flavors
+            && let Some(of_sequences) = global_this.bun_vm().as_mut().sequences_run_vitest_entry.as_deref_mut()
+        {
+            of_sequences[sequence_index] = None;
+        }
         return Ok(Some(AdvanceSequenceStatus::Done));
     };
     // SAFETY: arena-owned entry
@@ -1314,6 +1383,12 @@ fn step_sequence_one(
         if let Some(captured) = test_context_around::captured_async_context(context, scope) {
             callback = test_context_around::in_async_context(global_this, captured, callback)?;
         }
+        let is_vitest = next_item.flavor == Flavor::Vitest;
+        // SAFETY: group points into this.groups; read-only.
+        let has_both_flavors = unsafe { group.as_ref() }.has_both_flavors;
+        if has_both_flavors {
+            callback = in_sequence_context(global_this, sequence_index, is_vitest, callback);
+        }
         let set_up_args: [JSValue; 4];
         let args = if let Some((around, AroundPhase::SetUp)) = next_item.around {
             let suite = match (args.get(1), scope) {
@@ -1328,6 +1403,10 @@ fn step_sequence_one(
                 suite,
             ];
             callback = AroundHook::set_up_function(global_this);
+            if has_both_flavors {
+                // It calls `then()` of what the hook returns.
+                callback = in_sequence_context(global_this, sequence_index, is_vitest, callback);
+            }
             &set_up_args[..]
         } else {
             args
@@ -1335,7 +1414,7 @@ fn step_sequence_one(
 
         // The callback re-enters and reaches the sequence on its own, so no `&mut` is held across it.
         let sequence_ptr = NonNull::from(sequence);
-        global_this.bun_vm().as_mut().is_running_vitest_entry = next_item.flavor == Flavor::Vitest;
+        global_this.bun_vm().as_mut().is_running_vitest_entry = is_vitest;
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,

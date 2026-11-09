@@ -125,14 +125,16 @@ public:
 
 void initJSModuleGraphClassStructure(JSC::LazyClassStructure::Initializer&);
 JSC::Structure* createModuleGraphFrameStructure(JSC::VM&, JSC::JSGlobalObject*);
-// A frame of the async context on top of `previous`. `storage` is not an AsyncLocalStorage, so no getStore() finds it.
-JSC::JSObject* createAsyncContextFrame(Zig::GlobalObject*, JSC::JSObject* storage, JSC::JSValue previous);
+// A frame of the async context on top of `previous` that binds `storage` to `value`. `storage` is not an AsyncLocalStorage, so no getStore() finds it.
+JSC::JSObject* createAsyncContextFrame(Zig::GlobalObject*, JSC::JSObject* storage, JSC::JSValue previous, JSC::JSValue value = JSC::jsUndefined());
 
 // ── Which graph ──────────────────────────────────────────────────────────────────────
 // The graph `loader` is the loader of; null for the global object's own.
 JSModuleGraph* moduleGraphOfLoader(JSC::JSGlobalObject*, JSC::JSModuleLoader*);
-// promiseRejectionTracker: the graph whose onError a promise rejected now is reported to, or null.
-JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject*);
+// promiseRejectionTracker: whose rejection a promise rejected now is. The graph whose onError it is reported to. With no
+// such graph, under `bun test`, a boolean if the async context tells whether Vitest's rules apply to the code that
+// rejects it (TestSequenceContext.cpp). Otherwise empty.
+JSC::JSValue rejectionOwner(Zig::GlobalObject*);
 // The innermost graph that the current async context is inside of; null in the host's.
 JSModuleGraph* currentModuleGraph(Zig::GlobalObject*);
 // The graph of the module that `function` was defined in, or null if it isn't in a graph.

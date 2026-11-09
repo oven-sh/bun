@@ -35,6 +35,8 @@
 #include <JavaScriptCore/WeakGCMapInlines.h>
 #include <wtf/text/StringBuilder.h>
 
+extern "C" JSC::EncodedJSValue Bun__VM__sequenceRunsVitestEntry(void* bunVM, JSC::JSGlobalObject*);
+
 namespace Bun {
 using namespace JSC;
 
@@ -188,10 +190,13 @@ static JSModuleGraph* graphGivenErrorsOf(JSModuleGraph* graph)
 }
 
 // An error belongs to the graph whose context it happened in: the one that is current when the
-// promise is rejected.
-JSModuleGraph* moduleGraphRejecting(Zig::GlobalObject* globalObject)
+// promise is rejected. With no such graph, `bun test` says whether Vitest's rules apply to the
+// code that rejects it, where only the context tells (TestSequenceContext.cpp). Otherwise empty.
+NEVER_INLINE JSValue rejectionOwner(Zig::GlobalObject* globalObject)
 {
-    return graphGivenErrorsOf(currentModuleGraph(globalObject));
+    if (auto* graph = graphGivenErrorsOf(currentModuleGraph(globalObject)))
+        return graph;
+    return globalObject->m_testSequenceKey ? JSValue::decode(Bun__VM__sequenceRunsVitestEntry(globalObject->bunVM(), globalObject)) : JSValue();
 }
 
 // ─── onError ─────────────────────────────────────────────────────────────────────────
@@ -229,11 +234,11 @@ static bool deliverToOnError(Zig::GlobalObject* globalObject, JSModuleGraph* gra
 // `Bun.cron()` tick's, a module's that failed to load): whose it is, as the tracker would decide now.
 extern "C" EncodedJSValue Bun__ModuleGraph__rejecting(JSGlobalObject* lexicalGlobalObject)
 {
-    JSModuleGraph* graph = moduleGraphRejecting(defaultGlobalObject(lexicalGlobalObject));
-    return JSValue::encode(graph ? JSValue(graph) : jsNull());
+    JSValue owner = rejectionOwner(defaultGlobalObject(lexicalGlobalObject));
+    return JSValue::encode(owner ? owner : jsNull());
 }
 
-// VirtualMachine::unhandled_rejection, first: `owner` is what moduleGraphRejecting decided
+// VirtualMachine::unhandled_rejection, first: `owner` is what rejectionOwner decided
 // when the promise was rejected. Returns whether a graph's onError took it.
 extern "C" bool Bun__ModuleGraph__handleUnhandledRejection(JSGlobalObject* lexicalGlobalObject, EncodedJSValue reason, EncodedJSValue owner)
 {
@@ -366,12 +371,12 @@ Structure* createModuleGraphFrameStructure(VM& vm, JSGlobalObject* globalObject)
     return structure;
 }
 
-JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSObject* storage, JSValue previous)
+JSObject* createAsyncContextFrame(Zig::GlobalObject* globalObject, JSObject* storage, JSValue previous, JSValue value)
 {
     VM& vm = globalObject->vm();
     JSObject* frame = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
     frame->putDirectOffset(vm, FrameStorage, storage);
-    frame->putDirectOffset(vm, FrameValue, jsUndefined());
+    frame->putDirectOffset(vm, FrameValue, value);
     frame->putDirectOffset(vm, FramePrev, previous);
     // What disable()d AsyncLocalStorages the frame below masks, frames above it mask too.
     JSValue masked = previous.isObject() ? asObject(previous)->getDirect(vm, WebCore::builtinNames(vm).maskedPublicName()) : JSValue();

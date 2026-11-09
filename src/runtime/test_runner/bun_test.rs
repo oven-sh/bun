@@ -673,6 +673,8 @@ impl BunTestRoot {
             active.get().reporter = None;
         }
         self.active_file = None; // drops the Rc (deinit)
+        // A file that the runner gave up never completed its group.
+        Execution::Execution::end_sequence_contexts(VirtualMachine::get().global());
     }
 
     pub(crate) fn get_active_file_unless_in_preload(&mut self, vm: &VirtualMachine) -> Option<&mut BunTest> {
@@ -1386,7 +1388,7 @@ impl BunTest {
                 args_slice,
                 move || drop(on_stack),
             )
-            .and_then(|returned| Self::promise_of_thenable(global_this, returned))
+            .and_then(|returned| Self::promise_of_thenable(global_this, cfg_callback, returned))
         {
             Ok(v) => v,
             Err(_) => {
@@ -1518,13 +1520,20 @@ impl BunTest {
     }
 
     /// A promise that follows `returned` if it's a thenable other than a promise. Otherwise `returned`.
-    fn promise_of_thenable(global_this: &JSGlobalObject, returned: JSValue) -> JsResult<JSValue> {
+    /// `callback` is what returned it.
+    fn promise_of_thenable(global_this: &JSGlobalObject, callback: JSValue, returned: JSValue) -> JsResult<JSValue> {
         if !returned.is_object() || returned.as_promise().is_some() {
             return Ok(returned);
         }
         // Reads `then` once. Only a value without a callable `then` fulfills the promise right away.
         let promise = bun_jsc::JSPromise::create(global_this);
-        promise.resolve(global_this, returned)?;
+        let vm = global_this.bun_vm();
+        if vm.sequences_run_vitest_entry.is_some() && !vm.reports_to_nobody() {
+            // `then()` is code of the entry, so the job that calls it runs in the frame of the entry's sequence.
+            bun_jsc::cpp::Bun__TestSequenceContext__follow(global_this, callback, promise.to_js(), returned)?;
+        } else {
+            promise.resolve(global_this, returned)?;
+        }
         Ok(if promise.status() == PromiseStatus::Fulfilled { returned } else { promise.to_js() })
     }
 

@@ -5,7 +5,7 @@ use core::ptr::NonNull;
 use bun_jsc::JsResult;
 
 use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Flavor, Only, TestScheduleEntry};
-use super::execution::{ConcurrentGroup, ExecutionSequence};
+use super::execution::{ConcurrentGroup, ExecutionSequence, Flavors};
 
 pub(crate) struct Order {
     pub(crate) groups: Vec<ConcurrentGroup>,
@@ -72,7 +72,7 @@ impl Order {
             let sequences_end = self.sequences.len();
             let failure_skip_to = self.groups.len() + 1;
             self.groups
-                .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // add a new concurrentgroup to order
+                .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to, Flavors::default())); // add a new concurrentgroup to order
             self.previous_group_was_concurrent = false;
         }
         let end = self.groups.len();
@@ -255,6 +255,7 @@ impl Order {
         // set skip_to values
         let mut index = list.first;
         let mut failure_skip_past: Option<*mut ExecutionEntry> = Some(current.as_ptr());
+        let mut flavors = Flavors::default();
         while let Some(entry_ptr) = index {
             // SAFETY: list contains valid ExecutionEntry nodes linked via `next`.
             unsafe {
@@ -266,6 +267,10 @@ impl Order {
                 };
                 if Some(entry_ptr) == failure_skip_past {
                     failure_skip_past = None;
+                }
+                // Only a group of more than one sequence asks, and only a concurrent one is extended.
+                if concurrent {
+                    flavors.add(&*entry_ptr);
                 }
                 index = (*entry_ptr).next;
             }
@@ -280,7 +285,7 @@ impl Order {
             repeat_count,
         )); // add sequence to concurrentgroup
         let sequences_end = self.sequences.len();
-        self.append_or_extend_concurrent_group(concurrent, sequences_start, sequences_end)?; // add or extend the concurrent group
+        self.append_or_extend_concurrent_group(concurrent, sequences_start, sequences_end, flavors)?; // add or extend the concurrent group
         Ok(())
     }
 
@@ -289,6 +294,7 @@ impl Order {
         concurrent: bool,
         sequences_start: usize,
         sequences_end: usize,
+        flavors: Flavors,
     ) -> JsResult<()> {
         // We capture the old value first, then assign immediately so it applies on every exit path.
         let prev_was_concurrent = self.previous_group_was_concurrent;
@@ -298,14 +304,14 @@ impl Order {
             let previous_group = self.groups.last_mut().expect("non-empty");
             if prev_was_concurrent {
                 // extend the previous group to include this sequence
-                if previous_group.try_extend(sequences_start, sequences_end) {
+                if previous_group.try_extend(sequences_start, sequences_end, flavors) {
                     return Ok(());
                 }
             }
         }
         let failure_skip_to = self.groups.len() + 1;
         self.groups
-            .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
+            .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to, flavors)); // otherwise, add a new concurrentgroup to order
         Ok(())
     }
 }

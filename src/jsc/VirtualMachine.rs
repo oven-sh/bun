@@ -350,9 +350,15 @@ pub struct VirtualMachine {
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
     pub unhandled_error_counter: usize,
-    /// `bun test`: what is running is a test or a hook of Vitest's. There, an error that a `process` listener takes is
-    /// not the runner's, and arrays of different lengths are never equal.
+    /// `bun test`: the test or hook that started last is one of Vitest's. There, an error that a `process` listener takes is
+    /// not the runner's, and arrays of different lengths are never equal. Readers ask `runs_vitest_entry`.
     pub is_running_vitest_entry: bool,
+    /// `bun test`: set while a concurrent group runs that has tests or hooks of both Vitest and Jest. Its sequences
+    /// run at once (a sequence is one test with its hooks), so `is_running_vitest_entry` doesn't tell whose code runs.
+    /// This has `is_running_vitest_entry` for each sequence, of the entry that it runs: `None` before its first entry
+    /// and after its last, because what a sequence leaves behind is like code from outside the group. Each test and
+    /// hook of the group runs in an async-context frame that names its sequence (TestSequenceContext.cpp).
+    pub sequences_run_vitest_entry: Option<Box<[Option<bool>]>>,
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
     /// so observers can read name/message/stack without re-running the
@@ -509,7 +515,8 @@ unsafe extern "C" {
         exception: JSValue,
     ) -> bool;
     /// The `Bun.ModuleGraph` a promise rejected now is reported to (its context is current and it, or
-    /// a graph that made it, has an `onError`), or null.
+    /// a graph that made it, has an `onError`). With no such graph, under `bun test`, what
+    /// `sequence_runs_vitest_entry` says now, as a boolean. Otherwise null.
     safe fn Bun__ModuleGraph__rejecting(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__ModuleGraph__handleUnhandledRejection(
         global: &JSGlobalObject,
@@ -2247,7 +2254,7 @@ impl VirtualMachine {
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
             // What a listener throws comes back here, and is the runner's.
-            if self.is_running_vitest_entry && !self.is_handling_uncaught_exception {
+            if !self.is_handling_uncaught_exception && self.runs_vitest_entry(global_object, err) {
                 self.is_handling_uncaught_exception = true;
                 let handled = Bun__handleUncaughtException(
                     global_object,
@@ -4718,7 +4725,8 @@ impl VirtualMachine {
     }
 
     /// `owner`: the `Bun.ModuleGraph` in whose context the promise was rejected (its `onError`
-    /// takes it), or null. The tracker queue reports after the fact, so it decided when it happened.
+    /// takes it), under `bun test` what `sequence_runs_vitest_entry` said then, or null. The
+    /// tracker queue reports after the fact, so it decided when it happened.
     pub fn unhandled_rejection_owned(
         &mut self,
         global_object: &JSGlobalObject,
@@ -4741,7 +4749,12 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
-            if self.is_running_vitest_entry
+            let runs_vitest_entry = if owner.is_boolean() {
+                owner.as_boolean()
+            } else {
+                self.is_running_vitest_entry
+            };
+            if runs_vitest_entry
                 && Bun__handleUnhandledRejection(global_object, reason, promise) > 0
             {
                 let _ = self.event_loop_mut().drain_microtasks();
@@ -6157,7 +6170,40 @@ impl VirtualMachine {
 
     #[unsafe(export_name = "Bun__VM__isRunningVitestEntry")]
     pub extern "C" fn is_running_vitest_entry(&self) -> bool {
+        // Nearly always just the flag: a tail call keeps that path free of a frame.
+        if self.sequences_run_vitest_entry.is_some() {
+            return self.running_code_is_of_vitest_entry();
+        }
         self.is_running_vitest_entry
+    }
+
+    #[cold]
+    #[inline(never)]
+    extern "C" fn running_code_is_of_vitest_entry(&self) -> bool {
+        self.runs_vitest_entry(self.global(), JSValue::ZERO)
+    }
+
+    /// `bun test`: whether Vitest's rules apply, where they differ from Jest's: to `thrown`, an uncaught error, or
+    /// (empty) to the code that runs now.
+    fn runs_vitest_entry(&self, global: &JSGlobalObject, thrown: JSValue) -> bool {
+        self.sequence_runs_vitest_entry(global, thrown)
+            .unwrap_or(self.is_running_vitest_entry)
+    }
+
+    /// In a concurrent group with both flavors: `is_running_vitest_entry` of the sequence that `thrown` comes from, or
+    /// (empty) whose code runs now. `None` outside such a group, and for code that no running sequence started.
+    fn sequence_runs_vitest_entry(&self, global: &JSGlobalObject, thrown: JSValue) -> Option<bool> {
+        let of_sequences = self.sequences_run_vitest_entry.as_deref()?;
+        let sequence = crate::cpp::Bun__TestSequenceContext__find(global, thrown);
+        *of_sequences.get(usize::try_from(sequence).ok()?)?
+    }
+
+    /// promiseRejectionTracker: `sequence_runs_vitest_entry` for the code that rejects a promise now, as a boolean or
+    /// empty. The sequence can run another entry, and the group can be over, when the rejection is reported.
+    #[unsafe(export_name = "Bun__VM__sequenceRunsVitestEntry")]
+    pub extern "C" fn sequence_runs_vitest_entry_now(&self, global: &JSGlobalObject) -> JSValue {
+        self.sequence_runs_vitest_entry(global, JSValue::ZERO)
+            .map_or(JSValue::ZERO, JSValue::js_boolean)
     }
 
     #[unsafe(export_name = "Bun__VM__hasGlobalsOfVitest")]

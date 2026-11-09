@@ -441,6 +441,9 @@ public:
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
+    /* bun test: set while a concurrent group runs whose sequences their async context tells apart */        \
+    /* (TestSequenceContext.cpp). */                                                                         \
+    V(public, WriteBarrier<JSObject>, m_testSequenceKey)                                                     \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -719,7 +722,8 @@ private:
 
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it
-    // happened: a Bun.ModuleGraph, or null for the global object's own code.
+    // happened: a Bun.ModuleGraph, a boolean (bun test, see Bun::rejectionOwner), or
+    // null for the global object's own code.
     // Guarded by cellLock() (visited on the GC thread).
     Bun::RejectedPromiseQueue m_aboutToBeNotifiedRejectedPromises;
 };

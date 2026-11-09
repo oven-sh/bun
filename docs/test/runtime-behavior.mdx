@@ -210,6 +210,8 @@ process.on("unhandledRejection", (reason, promise) => {
 
 While a test or hook imported from `"vitest"` runs, an error that nothing handles goes to these listeners first. If there is a listener for it, the error doesn't fail the test, as in Vitest. While a test or hook from `bun:test` or `@jest/globals` runs, the error fails the test and the listeners aren't called, as in Jest.
 
+[Concurrent tests](/test#concurrent-test-execution) run at the same time, each with its own `beforeEach` and `afterEach` hooks. When they come from both modules, the test that the code belongs to decides: its test callback or the hook that runs for it at that moment. Bun finds that test through the async context, which is what `AsyncLocalStorage` follows. Other code goes by the test or hook that started last: code that a test left behind when it and its hooks ended, and code with no async context of a test. The second is the case for an error from `promise.then(onFulfilled)` or `Promise.all()`, and for a promise that Bun rejects, such as a `fetch()` that isn't awaited. Import the tests and hooks of a file from one module to give the whole file one rule.
+
 ## CLI Flags Integration
 
 Several Bun CLI flags also work with `bun test`:

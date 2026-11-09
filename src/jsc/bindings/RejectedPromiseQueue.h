@@ -16,7 +16,7 @@ namespace Bun {
 // Zig::GlobalObject::m_aboutToBeNotifiedRejectedPromises. Only the JS thread writes, under owner->cellLock(); the GC thread visits.
 class RejectedPromiseQueue {
 public:
-    void append(JSC::VM&, JSC::JSCell* owner, JSC::JSPromise*, JSC::JSObject* rejectionOwner);
+    void append(JSC::VM&, JSC::JSCell* owner, JSC::JSPromise*, JSC::JSValue rejectionOwner);
     // The promise got its first handler. True if markReported() saw it: it is owed 'rejectionHandled'.
     bool didHandle(JSC::JSCell* owner, JSC::JSPromise*);
     // Move every entry that still has no handler out (index-aligned; jsNull() owner for the global object's) and clear.
@@ -33,7 +33,7 @@ public:
 private:
     struct Entry {
         JSC::WriteBarrier<JSC::Unknown> promise; // JSPromise
-        JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph or null
+        JSC::WriteBarrier<JSC::Unknown> rejectionOwner; // JSModuleGraph, a boolean (bun test), or null
     };
     static bool isHandled(const Entry& entry) { return static_cast<JSC::JSPromise*>(entry.promise.get().asCell())->isHandled(); }
     bool wasReported(JSC::JSPromise*);
@@ -47,14 +47,14 @@ private:
 };
 
 // Inlined into promiseRejectionTracker, their one caller.
-ALWAYS_INLINE void RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSObject* rejectionOwner)
+ALWAYS_INLINE void RejectedPromiseQueue::append(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, JSC::JSValue rejectionOwner)
 {
     WTF::Locker locker { owner->cellLock() };
     if (m_entries.size() == m_entries.capacity()) [[unlikely]]
         makeRoom();
     m_entries.unsafeAppendWithoutCapacityCheck(Entry {});
     m_entries.last().promise.set(vm, owner, promise);
-    m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? JSC::JSValue(rejectionOwner) : JSC::jsNull());
+    m_entries.last().rejectionOwner.set(vm, owner, rejectionOwner ? rejectionOwner : JSC::jsNull());
 }
 
 ALWAYS_INLINE bool RejectedPromiseQueue::didHandle(JSC::JSCell* owner, JSC::JSPromise* promise)

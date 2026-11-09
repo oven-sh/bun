@@ -63,9 +63,10 @@ class Frame {
 // Only run during debug
 function assertValidFrame(frame: unknown): boolean {
   for (var f = frame, n = 0; f !== undefined; f = (f as Frame).prev, n++) {
-    // A Bun.ModuleGraph's context is a frame whose storage is the graph, and a module mock's
-    // factory runs in one whose storage is the mock: made in ModuleGraph.cpp (null prototype),
-    // or a copy of one made here.
+    // A Bun.ModuleGraph's context is a frame whose storage is the graph, a module mock's
+    // factory runs in one whose storage is the mock, and a test or hook of `bun test` can run in
+    // one whose storage is the key of its concurrent group: made in ModuleGraph.cpp (null
+    // prototype), or a copy of one made here.
     $assert(
       f instanceof Frame || Object.getPrototypeOf(f) === null,
       "AsyncContextData must be a Frame chain or undefined, got",
@@ -73,7 +74,7 @@ function assertValidFrame(frame: unknown): boolean {
     );
     $assert(
       $isObject((f as Frame).storage),
-      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, a module mock, or (leaving a graph's context) the global object",
+      "Frame.storage must be an AsyncLocalStorage, a ModuleGraph, a module mock, the key of a concurrent group of tests, or (leaving a graph's context) the global object",
     );
     $assert((f as Frame).masked === undefined || $isJSArray((f as Frame).masked), "Frame.masked must be an array");
     $assert(n < 10000, "AsyncContextData chain is unreasonably long (cycle?)");

@@ -721,8 +721,6 @@ fn clonefile_force(
     let mut name_buf = [0u8; 64];
     let name = paths::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
         .map_err(|_| name_too_long())?;
-    // The temporary name is short and independent of the basename of `dest`,
-    // so a 255 byte basename does not push it past NAME_MAX.
     let dir = bun_core::dirname(dest.as_bytes()).unwrap_or(b"");
     let sep: &[u8] = if dir.is_empty() || dir.ends_with(b"/") {
         b""

@@ -1762,11 +1762,7 @@ describe("HTMLRewriter", () => {
     expect(await res.text()).toBe("test");
   });
 
-  // The documented contract (docs/runtime/html-rewriter.mdx "Text vs. HTML
-  // content", ContentOptions.html in packages/bun-types/html-rewriter.d.ts):
-  // text insertion escapes <, > and & in every element, <script> and <style>
-  // included, as Cloudflare Workers does. A browser does not decode entities
-  // there, so the documented route for script/style source is { html: true }.
+  // Pins docs/runtime/html-rewriter.mdx "Text vs. HTML content" and the ContentOptions.html JSDoc.
   it("escapes text content inside <script> and <style> too; { html: true } is the documented route", () => {
     const insert = (selector, input, fn) =>
       new HTMLRewriter()
@@ -1794,9 +1790,7 @@ describe("HTMLRewriter", () => {
       "<style>ul>li{color:red} b{}</style>",
     );
 
-    // Text mode escapes the string, not the page. A bare "<" that the page has right
-    // before the string stays as it is, and a browser reads the two as one tag. The
-    // docs say so, and say to start the string with a space for such a page.
+    // A browser reads a bare "<" of the page and the text written right after it as one tag.
     const attrs = "img src=x onerror=run() ";
     expect({
       bareLt: insert("a", "<a><</a>", el => el.append(attrs)),
@@ -1810,38 +1804,36 @@ describe("HTMLRewriter", () => {
       beforeElement: "<p>a<img src=x onerror=run() <b>x</b></p>",
     });
 
-    // The recipes from the docs, as the docs write them.
     const HTML_NS = "http://www.w3.org/1999/xhtml";
     const SVG_NS = "http://www.w3.org/2000/svg";
     const seen = [];
 
-    // JSON: one handler for an HTML <script> and for a <script> inside <svg>.
+    // The JSON recipe of the docs, on an HTML <script> and on one inside <svg>.
     const config = { html: "</script><script>alert(1)</script><!--", amp: "&lt;&amp;", n: 1 };
     const inHtml = String.raw`{"html":"\u003c/script>\u003cscript>alert(1)\u003c/script>\u003c!--","amp":"&lt;&amp;","n":1}`;
     const inSvg = String.raw`{"html":"\u003c/script&gt;\u003cscript&gt;alert(1)\u003c/script&gt;\u003c!--","amp":"&amp;lt;&amp;amp;","n":1}`;
-    expect(
-      insert(
-        'script[type="application/json"]',
-        '<script type="application/json"></script><svg><script type="application/json"></script></svg><p>n</p>',
-        el => {
-          seen.push(el.namespaceURI);
-          const json = JSON.stringify(config).replaceAll("<", "\\u003c");
-          el.setInnerContent(json, { html: el.namespaceURI === HTML_NS });
-        },
-      ),
-    ).toBe(
+    const jsonOut = insert(
+      'script[type="application/json"]',
+      '<script type="application/json"></script><svg><script type="application/json"></script></svg><p>n</p>',
+      el => {
+        seen.push(el.namespaceURI);
+        const json = JSON.stringify(config).replaceAll("<", "\\u003c");
+        el.setInnerContent(json, { html: el.namespaceURI === HTML_NS });
+      },
+    );
+    expect(jsonOut).toBe(
       `<script type="application/json">${inHtml}</script>` +
         `<svg><script type="application/json">${inSvg}</script></svg><p>n</p>`,
     );
-    // An HTML <script> hands its text to the reader as is. Inside <svg> the parser
-    // first decodes character references, here the three entities that Bun wrote.
-    // The replace() stands in for that step. Both readers get the value back.
-    const decoded = inSvg.replace(/&(lt|gt|amp);/g, (_, name) => ({ lt: "<", gt: ">", amp: "&" })[name]);
-    expect([JSON.parse(inHtml), JSON.parse(decoded)]).toEqual([config, config]);
+    // bun:test has no HTML parser: decode() stands in for what a browser does to the text inside <svg>.
+    const decode = text => text.replace(/&(lt|gt|amp);/g, (_, name) => ({ lt: "<", gt: ">", amp: "&" })[name]);
+    const [htmlText, svgText] = Array.from(
+      jsonOut.matchAll(/<script type="application\/json">(.*?)<\/script>/g),
+      match => match[1],
+    );
+    expect([JSON.parse(htmlText), JSON.parse(decode(svgText))]).toEqual([config, config]);
 
-    // CSS: a tag selector also matches <svg><style>, whose contents are markup to
-    // the HTML parser (entities are decoded, tags are live). The recipe keeps the
-    // default escaping there and keys on namespaceURI.
+    // The CSS recipe of the docs. "style" also matches <svg><style>, whose contents are markup to the parser.
     const styleRecipe = css => el => {
       seen.push(el.namespaceURI);
       if (el.namespaceURI !== HTML_NS) {
@@ -1859,11 +1851,7 @@ describe("HTMLRewriter", () => {
     expect(() => insert("style", page, styleRecipe("a{}</STYLE ><img src=x>"))).toThrow("CSS must not contain </style");
     expect(seen).toEqual([HTML_NS, SVG_NS, SVG_NS, HTML_NS, SVG_NS, HTML_NS]);
 
-    // With { html: true } a string lands right next to what is already there: the
-    // element's own text, or another inserted string. A check of the string alone
-    // misses a sequence that forms at that joint: "b{}</sty" and "le><p>" each pass
-    // /<\/style/i. This is a matter of position, so it holds for every insertion
-    // inside the element. setInnerContent leaves no joint.
+    // With { html: true }, "</style" can form where a string meets existing text or another inserted string.
     const [head, tail] = ["b{}</sty", "le><p>"];
     const existing = "<style>a{}</sty</style>";
     expect({
@@ -1871,8 +1859,7 @@ describe("HTMLRewriter", () => {
         el.append(head, { html: true });
         el.append(tail, { html: true });
       }),
-      // prepend puts a later call first. These two calls form the sequence, although
-      // their join in call order ("le><p>b{}</sty") has none.
+      // prepend puts a later call first: the join in call order, "le><p>b{}</sty", has no "</style".
       twoPrepends: insert("style", "<style>a{}</style>", el => {
         el.prepend(tail, { html: true });
         el.prepend(head, { html: true });

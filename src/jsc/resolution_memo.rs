@@ -45,9 +45,31 @@ pub(crate) fn into_string(answer: bun_core::WTFString) -> String {
     String::adopt_wtf_impl(answer.into_raw())
 }
 
-/// Another reference to the string of an answer.
-#[inline]
-pub(crate) fn retain(answer: &bun_core::WTFStringImplStruct) -> bun_core::WTFString {
-    // SAFETY: `answer` is a live impl, and the new ref keeps it alive.
-    unsafe { bun_core::WTFString::clone_from_raw(core::ptr::from_ref(answer).cast_mut()) }
+/// The string of an answer without a reference of its own, for the memo to compare with the one it has or to share.
+pub(crate) struct Borrowed<'a>(
+    core::mem::ManuallyDrop<bun_core::WTFString>,
+    core::marker::PhantomData<&'a bun_core::WTFStringImplStruct>,
+);
+
+impl<'a> Borrowed<'a> {
+    #[inline]
+    pub(crate) fn new(answer: &'a bun_core::WTFStringImplStruct) -> Self {
+        let answer = core::ptr::from_ref(answer).cast_mut();
+        // SAFETY: a live impl for `'a`. `adopt` takes over a reference, which `ManuallyDrop` never gives up: it stays
+        // the caller's.
+        let answer = unsafe { bun_core::WTFString::adopt(answer) };
+        Self(
+            core::mem::ManuallyDrop::new(answer),
+            core::marker::PhantomData,
+        )
+    }
+}
+
+impl core::ops::Deref for Borrowed<'_> {
+    type Target = bun_core::WTFString;
+
+    #[inline]
+    fn deref(&self) -> &bun_core::WTFString {
+        &self.0
+    }
 }

@@ -6101,7 +6101,7 @@ impl VirtualMachine {
 
     /// `resolve_without_on_resolve` for a pair whose answer the memo keeps or checks: the second resolution of a pair,
     /// one whose entry is from before the epoch moved, and in builds with assertions every resolution.
-    #[inline(never)]
+    #[inline]
     fn resolve_for_memo<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         keys: (
@@ -6269,7 +6269,7 @@ impl VirtualMachine {
         };
         let path = match path.as_wtf_impl() {
             Some(path) if self.is_resolution_to_remember(facts, specifier, has_entry) => {
-                crate::resolution_memo::retain(path)
+                crate::resolution_memo::Borrowed::new(path)
             }
             _ => return self.resolution_memo.answers.refuse(slot),
         };
@@ -6305,7 +6305,10 @@ impl VirtualMachine {
         {
             return;
         }
-        let Some(answer) = path.as_wtf_impl().map(crate::resolution_memo::retain) else {
+        let Some(answer) = path
+            .as_wtf_impl()
+            .map(crate::resolution_memo::Borrowed::new)
+        else {
             return;
         };
         let last_answers = self.resolution_memo.last_answers.get_or_insert_default();

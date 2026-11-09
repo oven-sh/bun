@@ -70,8 +70,8 @@ function parseSpecFile(path: string): SpecExample[] {
 
 const markdown = Bun.markdown;
 
-function renderMarkdown(md: string, flags?: string[]): string {
-  const options: Record<string, any> = {};
+function renderMarkdown(md: string, flags?: string[], frontmatter?: boolean): string {
+  const options: Record<string, any> = { frontmatter };
   if (flags && flags.length > 0) {
     for (const flag of flags) {
       // Strip --f prefix, replace - with _
@@ -245,6 +245,15 @@ const specFiles = [
   { name: "Regressions", file: "regressions.txt" },
 ];
 
+// A document can start with front matter, which is skipped unless `frontmatter` is false. These examples of the
+// CommonMark spec start with what is front matter by that rule, so they render as the spec says only without it.
+const startsWithFrontMatter = new Map([
+  // Example 96: the first three lines are not a thematic break and a heading.
+  ["---\nFoo\n---\nBar\n---\nBaz", "<h2>Bar</h2>\n<p>Baz</p>\n"],
+  // Example 98: not two thematic breaks.
+  ["---\n---", ""],
+]);
+
 for (const { name, file } of specFiles) {
   const specPath = join(SPEC_DIR, file);
   let examples: SpecExample[];
@@ -258,10 +267,19 @@ for (const { name, file } of specFiles) {
   describe(name, () => {
     for (let i = 0; i < examples.length; i++) {
       const ex = examples[i];
+      const flags = ex.flags.length > 0 ? ex.flags : undefined;
       test(`example ${i + 1} (line ${ex.line}): ${ex.section}`, () => {
-        const actual = renderMarkdown(ex.markdown, ex.flags.length > 0 ? ex.flags : undefined);
+        const actual = renderMarkdown(ex.markdown, flags, false);
         expect(normalizeHtml(actual)).toBe(normalizeHtml(ex.expected));
+        // The default is the same, unless the example starts with front matter.
+        expect(renderMarkdown(ex.markdown, flags)).toBe(startsWithFrontMatter.get(ex.markdown) ?? actual);
       });
     }
   });
 }
+
+test("two examples of the CommonMark spec start with front matter", () => {
+  const examples = parseSpecFile(join(SPEC_DIR, "spec.txt"));
+  const lines = examples.filter(ex => startsWithFrontMatter.has(ex.markdown)).map(ex => ex.line);
+  expect(lines).toEqual([1568, 1597]);
+});

@@ -81,32 +81,6 @@ pub struct Extensions {
     pub front_matter: Option<u8>,
 }
 
-/// The start and end of the front matter's content in `text`, and the end of its closing fence.
-fn front_matter_between(text: &[u8], marker: u8) -> Option<(usize, usize, usize)> {
-    let line_end = |from: usize| {
-        let rest = text.get(from..).unwrap_or_default();
-        from + bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())
-    };
-    let is_fence = |line: &[u8]| {
-        line.len() >= 3
-            && line[..3].iter().all(|&byte| byte == marker)
-            && line[3..].iter().all(|byte| matches!(byte, b' ' | b'\t'))
-    };
-    let first_end = line_end(0);
-    if !is_fence(&text[..first_end]) {
-        return None;
-    }
-    let mut start = first_end + 1;
-    while start <= text.len() {
-        let end = line_end(start);
-        if is_fence(&text[start..end]) {
-            return Some((first_end + 1, (start - 1).max(first_end + 1), end));
-        }
-        start = end + 1;
-    }
-    None
-}
-
 /// The text in the form that the parser expects: every line break is `\n` and every NUL is U+FFFD.
 #[derive(Default)]
 struct NormalizedText {
@@ -175,16 +149,26 @@ pub fn parse_to_mdast(text: &[u8], with: Extensions, tree: &mut ast::Tree) -> Op
     };
     let read: &[u8] = if is_changed { &as_read.bytes } else { text };
 
-    let front_matter = (with.front_matter).and_then(|marker| front_matter_between(read, marker));
+    let front_matter = (with.front_matter).and_then(|marker| {
+        let rule = bun_md::front_matter::Rule {
+            markers: &[marker],
+            blank_first_line: true,
+            carriage_returns: false,
+            yaml_end: false,
+        };
+        bun_md::front_matter::detect(read, rule)
+    });
     let syntax = parse::Syntax::CommonMark {
         gfm: with.gfm,
         math: with.math,
     };
-    let root = parse::parse_lines(read, tree, syntax, front_matter.map_or(0, |it| it.2 + 1))?;
-    if let Some((start, end, fence_end)) = front_matter {
-        let node = tree.add(ast::Kind::FrontMatter, 0, fence_end as u32);
+    let root = parse::parse_lines(read, tree, syntax, front_matter.map_or(0, |it| it.end))?;
+    if let Some(block) = front_matter {
+        let node = tree.add(ast::Kind::FrontMatter, 0, block.fence_end as u32);
         if let Some(node) = tree.get_mut(node) {
-            node.value = ast::Str::source(start as u32, end as u32);
+            // Without the line break before the closing fence.
+            let (start, end) = block.content;
+            node.value = ast::Str::source(start as u32, end.saturating_sub(1).max(start) as u32);
         }
         tree.prepend(root, node);
     }

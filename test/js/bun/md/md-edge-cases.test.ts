@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -1825,6 +1826,28 @@ describe.concurrent("importing .md modules", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("front matter is not part of the HTML", async () => {
+    using dir = tempDir("md-import-front-matter", {
+      "post.md": "---\ntitle: Hello\n---\n# Heading\n",
+      "only.md": "+++\ntitle = 'Hello'\n+++\n",
+      "entry.ts": `
+        import post from "./post.md";
+        import only from "./only.md";
+        console.log(JSON.stringify([post, only]));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["<h1>Heading</h1>\n", ""]);
+    expect(exitCode).toBe(0);
+  });
+
   test("empty .md file produces a module with no default export", async () => {
     using dir = tempDir("md-import-empty", {
       "empty.md": "",
@@ -2173,3 +2196,438 @@ test("a line does not look through the block quotes and list items that are open
   expect(Number(stdout)).toBeLessThan(15);
   expect(exitCode).toBe(0);
 }, 90_000);
+
+// ============================================================================
+// Front matter: the metadata between two `---` (YAML) or `+++` (TOML) lines
+// that a document starts with.
+// ============================================================================
+
+describe("front matter", () => {
+  const { frontmatter } = Markdown;
+  type Input = string | NodeJS.TypedArray | DataView | ArrayBufferLike;
+
+  // A heading, code whose language is read at its offset in the document, and a link that a definition resolves.
+  const body = "# Heading\n\n```js\ncode\n```\n\n[ref] and *text*\n\n[ref]: /url\n";
+  const callbacks = Object.fromEntries(
+    ["heading", "paragraph", "code", "hr", "link", "emphasis"].map(name => [
+      name,
+      (children: string, meta?: unknown) => `<${name} ${JSON.stringify(meta)}>${children}</${name}>`,
+    ]),
+  );
+  const renderers: [name: string, rendered: (input: Input, frontmatter?: boolean) => string][] = [
+    ["html()", (input, frontmatter) => Markdown.html(input, { frontmatter })],
+    ["render()", (input, frontmatter) => Markdown.render(input, callbacks, { frontmatter })],
+    ["react()", (input, frontmatter) => JSON.stringify(Markdown.react(input, undefined, { frontmatter }))],
+    ["ansi()", (input, frontmatter) => Markdown.ansi(input, { colors: false, frontmatter })],
+  ];
+
+  // The same characters in 16-bit storage.
+  const wide = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");
+
+  // What a document can start with that is front matter, and its data: `undefined` if it is not a mapping.
+  const blocks: [name: string, block: string, data: Record<string, unknown> | undefined][] = [
+    ["YAML between `---` lines", "---\ntitle: x\n---\n", { title: "x" }],
+    ["TOML between `+++` lines", "+++\ntitle = 'x'\n+++\n", { title: "x" }],
+    ["lines that end with CRLF", "---\r\ntitle: x\r\n---\r\n", { title: "x" }],
+    ["lines that end with CR", "---\rtitle: x\r---\r", { title: "x" }],
+    ["a byte order mark before the block", "\uFEFF---\ntitle: x\n---\n", { title: "x" }],
+    ["fences with nothing between them", "---\n---\n", {}],
+    ["fences with a comment between them", "+++\n# comment\n+++\n", {}],
+    ["spaces and tabs behind the fences", "---  \ntitle: x\n---\t \n", { title: "x" }],
+    ["a blank line in the metadata", "---\ntitle: x\n\nmore: y\n---\n", { title: "x", more: "y" }],
+    ["an indented `---` in the metadata", "---\ntext: |\n  ---\n---\n", { text: "---\n" }],
+    ["YAML that `...` ends", "---\ntitle: x\n...\n", { title: "x" }],
+    ["YAML that `...` ends, with nothing in it", "---\r\n... \r\n", {}],
+    ["metadata that is not YAML", "---\ntitle: [broken\n---\n", undefined],
+    ["metadata that is a scalar", "---\nFoo\n---\n", undefined],
+  ];
+
+  // What a document can start with that is Markdown.
+  const starts: [name: string, start: string][] = [
+    ["four dashes", "----\ntitle: x\n----\n"],
+    ["an indented opening fence", " ---\ntitle: x\n---\n"],
+    ["an indented closing fence", "---\ntitle: x\n ---\n"],
+    ["a blank line behind the opening fence", "---\n\ntitle: x\n---\n"],
+    ["a line of blanks behind the opening fence", "---\n \t\ntitle: x\n---\n"],
+    ["`...` in the place of the closing `+++`", "+++\ntitle = 'x'\n...\n"],
+    ["four dots in the place of the closing fence", "---\ntitle: x\n....\n"],
+    ["a language behind the opening fence", "---yaml\ntitle: x\n---\n"],
+    ["text behind the closing fence", "---\ntitle: x\n--- #\n"],
+    ["an opening fence that nothing closes", "---\ntitle: x\n"],
+    ["an opening fence and nothing else", "---\n"],
+    ["a closing fence of the other kind", "+++\ntitle = 'x'\n---\n"],
+    ["a line before the opening fence", "\n---\ntitle: x\n---\n"],
+    ["a JSON object without fences", '{"title": "x"}\n'],
+  ];
+
+  // The Markdown of every example of the spec files in this directory.
+  const examples = Array.from(new Bun.Glob("*.txt").scanSync(import.meta.dir)).sort();
+  const exampleStart = Buffer.alloc(32, "`").toString() + " example";
+  const exampleTexts = examples.flatMap(name => {
+    const lines = readFileSync(join(import.meta.dir, name), "utf8").split(/\r?\n/);
+    const texts: string[] = [];
+    for (let start = 0; start < lines.length; start++) {
+      if (!lines[start].startsWith(exampleStart)) continue;
+      const end = lines.indexOf(".", start);
+      if (end === -1) break;
+      const markdown = lines.slice(start + 1, end).join("\n");
+      texts.push(markdown.replaceAll("\u2192", "\t") + "\n");
+      start = end;
+    }
+    return texts;
+  });
+
+  test("the spec files have their examples", () => {
+    expect(examples.length).toBe(12);
+    expect(exampleTexts.length).toBe(827);
+  });
+
+  describe.each(renderers)("%s", (name, rendered) => {
+    const withoutBlock = rendered(body, false);
+    // render() and react() run JavaScript for each node: every seventh example is enough for them.
+    const texts = exampleTexts.filter((_, index) => name === "html()" || name === "ansi()" || index % 7 === 0);
+
+    test.each(blocks)("skips %s", (_, block) => {
+      expect(rendered(block + body)).toBe(withoutBlock);
+      expect(rendered(block + body, true)).toBe(withoutBlock);
+      expect(rendered(wide(block + body))).toBe(withoutBlock);
+      expect(rendered(Buffer.from(block + body))).toBe(withoutBlock);
+      expect(rendered(block + body, false)).not.toBe(withoutBlock);
+    });
+
+    test.each(blocks)("skips %s before each example of the spec files", (_, block) => {
+      const different = texts.filter(text => rendered(block + text) !== rendered(text, false));
+      expect(different).toEqual([]);
+    });
+
+    test.each(starts)("renders %s", (_, start) => {
+      const withStart = rendered(start + body, false);
+      expect(withStart).not.toBe(withoutBlock);
+      expect(rendered(start + body)).toBe(withStart);
+      expect(rendered(wide(start + body))).toBe(withStart);
+      expect(rendered(Buffer.from(start + body))).toBe(withStart);
+    });
+
+    test("skips a byte order mark behind the block, as it does at the start of a document", () => {
+      expect(rendered("\uFEFF" + body)).toBe(withoutBlock);
+      expect(rendered("---\ntitle: x\n---\n\uFEFF" + body)).toBe(withoutBlock);
+    });
+
+    test("skips a byte order mark at the start of a document with frontmatter: false too", () => {
+      expect(rendered("\uFEFF" + body, false)).toBe(withoutBlock);
+      expect(rendered(Buffer.from("\uFEFF" + body), false)).toBe(withoutBlock);
+      const document = "---\ntitle: x\n---\n" + body;
+      expect(rendered("\uFEFF" + document, false)).toBe(rendered(document, false));
+    });
+
+    test("a byte order mark before each example of the spec files changes nothing", () => {
+      const different = texts.filter(
+        text =>
+          rendered("\uFEFF" + text) !== rendered(text) || rendered("\uFEFF" + text, false) !== rendered(text, false),
+      );
+      expect(different).toEqual([]);
+    });
+
+    test.each([false, null, 0])("with frontmatter: %p the block is Markdown", off => {
+      const document = "---\ntitle: x\n---\n" + body;
+      expect(rendered(document, off as boolean)).not.toBe(withoutBlock);
+      expect(rendered(document, off as boolean)).toBe(rendered(document, false));
+    });
+
+    test("a `...` line ends a `---` block before a later `---` line", () => {
+      const rest = "more: y\n---\n" + body;
+      expect(rendered("---\ntitle: x\n...\n" + rest)).toBe(rendered(rest, false));
+    });
+
+    test("renders `content` as the document, given `frontmatter: false`", () => {
+      // What is behind the block can start with a block too.
+      const document = "---\ntitle: x\n---\n---\nmore: y\n---\n" + body;
+      const { content } = frontmatter(document);
+      expect(content).toBe("---\nmore: y\n---\n" + body);
+      expect(rendered(content, false)).toBe(rendered(document));
+      expect(rendered(content)).toBe(withoutBlock);
+    });
+
+    // The input is a whole document. Who renders a part of one, as it is typed or streamed, passes `frontmatter: false`.
+    test("an input that grows past a second `---` line loses what is before that line", () => {
+      const shown = "---\nHello there\n\nMore text";
+      const grown = shown + "\n\n---\n\nNext section";
+      expect(rendered(shown)).toBe(rendered(shown, false));
+      expect(rendered(grown)).toBe(rendered("\nNext section", false));
+      expect(rendered(grown, false)).not.toBe(rendered(grown));
+    });
+  });
+
+  test("html() renders the block as CommonMark says only with frontmatter: false", () => {
+    const document = "---\ntitle: Hello\n---\n# Heading\n";
+    expect(Markdown.html(document)).toBe("<h1>Heading</h1>\n");
+    expect(Markdown.html(document, { frontmatter: false })).toBe("<hr />\n<h2>title: Hello</h2>\n<h1>Heading</h1>\n");
+    expect(Markdown.html("---\ntitle: Hello\n---")).toBe("");
+  });
+
+  test("the closing fence is the next `---` line, also one in fenced code", () => {
+    const document = "---\ntext\n\n```yaml\n---\nkind: Pod\n```\n";
+    expect(Markdown.html(document)).toBe("<p>kind: Pod</p>\n<pre><code></code></pre>\n");
+    expect(Markdown.html(document, { frontmatter: false })).toBe(
+      '<hr />\n<p>text</p>\n<pre><code class="language-yaml">---\nkind: Pod\n</code></pre>\n',
+    );
+  });
+
+  test("the language of fenced code is read behind a byte order mark and behind the block", () => {
+    const language = (input: Input, frontmatter?: boolean) =>
+      Markdown.render(input, { code: (_, meta) => String(meta?.language) }, { frontmatter });
+    expect(language("\uFEFF```js\ncode\n```\n")).toBe("js");
+    expect(language("\uFEFF```js\ncode\n```\n", false)).toBe("js");
+    expect(language(Buffer.from("\uFEFF```js\ncode\n```\n"))).toBe("js");
+    expect(language("---\ntitle: x\n---\n```js\ncode\n```\n")).toBe("js");
+    expect(language("\uFEFF---\ntitle: x\n---\n\uFEFF```js\ncode\n```\n")).toBe("js");
+    // A fence without a language has no `meta`, and react() gives the language as a prop.
+    expect(Markdown.render("\uFEFF```\ncode\n```\n", { code: (_, meta) => String(meta) })).toBe("undefined");
+    const pre = (Markdown.react("\uFEFF```js\ncode\n```\n") as any).props.children[0];
+    expect({ type: pre.type, language: pre.props.language }).toEqual({ type: "pre", language: "js" });
+    // ansi() colors the code by its language.
+    const colored = Markdown.ansi("```js\nlet a = 1;\n```\n");
+    expect(colored).not.toBe(Markdown.ansi("```\nlet a = 1;\n```\n"));
+    expect(Markdown.ansi("\uFEFF```js\nlet a = 1;\n```\n")).toBe(colored);
+    expect(Markdown.ansi("---\ntitle: x\n---\n```js\nlet a = 1;\n```\n")).toBe(colored);
+  });
+
+  test("the block does not add to what reference links may expand to", () => {
+    // Each link resolves to 1000 bytes, and all of them to at most 16 times the length of the document.
+    const document = `[a]: /${Buffer.alloc(1000, "u").toString()}\n\n${Buffer.alloc(200, "[a] ").toString()}\n`;
+    const block = `---\n${Buffer.alloc(2000, "k: v\n").toString()}---\n`;
+    const links = (html: string) => html.split("<a ").length - 1;
+    expect(links(Markdown.html(document))).toBe(19);
+    expect(links(Markdown.html(block + document))).toBe(19);
+    expect(links(Markdown.html(block + document, { frontmatter: false }))).toBe(50);
+  });
+
+  // spec.txt starts as Pandoc writes metadata: `---`, YAML, `...`. Its next `---` line is 874 lines further down.
+  test("the CommonMark spec.txt keeps all that is behind its `...` line", () => {
+    const spec = readFileSync(join(import.meta.dir, "spec.txt"), "utf8");
+    const { data, content } = frontmatter(spec);
+    expect(data).toEqual({
+      title: "CommonMark Spec",
+      author: "John MacFarlane",
+      version: "0.31.2",
+      date: "2024-01-28",
+      license: "[CC-BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/)",
+    });
+    expect(content.slice(0, 16)).toBe("\n# Introduction\n");
+    expect(spec.lastIndexOf(content)).toBe(spec.length - content.length);
+    const html = Markdown.html(spec);
+    expect(html).toBe(Markdown.html(content, { frontmatter: false }));
+    const headings = (html: string) => [html.split("<h1>").length - 1, html.split("<h2>").length - 1];
+    expect(headings(html)).toEqual(headings(Markdown.html(spec, { frontmatter: false })));
+    expect(headings(html)).toEqual([7, 34]);
+  });
+
+  describe("frontmatter()", () => {
+    const thrownBy = (run: () => unknown) => {
+      try {
+        run();
+      } catch (error) {
+        return `${(error as Error).name}: ${(error as Error).message}`;
+      }
+    };
+
+    test("the 16-bit inputs of these tests are in 16-bit storage, also after a call", () => {
+      const input = wide("---\n---");
+      expect(frontmatter(input)).toEqual({ data: {}, content: "" });
+      expect(jscDescribe(input)).toContain("8Bit:(0)");
+      expect(jscDescribe("---\n---")).toContain("8Bit:(1)");
+    });
+
+    test.each(blocks.filter(([, , data]) => data !== undefined))("reads %s", (_, block, data = {}) => {
+      expect(frontmatter(block + body)).toEqual({ data, content: body });
+      expect(frontmatter(wide(block + body))).toEqual({ data, content: body });
+      expect(frontmatter(Buffer.from(block + body))).toEqual({ data, content: body });
+    });
+
+    test.each(starts)("finds none in %s", (_, start) => {
+      expect(frontmatter(start + body)).toEqual({ data: null, content: start + body });
+      expect(frontmatter(wide(start + body))).toEqual({ data: null, content: start + body });
+      expect(frontmatter(Buffer.from(start + body))).toEqual({ data: null, content: start + body });
+    });
+
+    test("data is null without a block, and {} for a block with nothing in it", () => {
+      expect(frontmatter("")).toEqual({ data: null, content: "" });
+      expect(frontmatter("# Heading\n")).toEqual({ data: null, content: "# Heading\n" });
+      // `content` is then the input, with its byte order mark.
+      expect(frontmatter("\uFEFF# Heading\n")).toEqual({ data: null, content: "\uFEFF# Heading\n" });
+      expect(frontmatter(Buffer.from("\uFEFF# Heading\n"))).toEqual({ data: null, content: "\uFEFF# Heading\n" });
+      expect(frontmatter("---\n---")).toEqual({ data: {}, content: "" });
+      expect(frontmatter("---\n~\n---\nbody")).toEqual({ data: {}, content: "body" });
+      expect(Object.keys(frontmatter(""))).toEqual(["data", "content"]);
+    });
+
+    test("the closing fence can be the end of the document", () => {
+      expect(frontmatter("---\ntitle: x\n---")).toEqual({ data: { title: "x" }, content: "" });
+      expect(frontmatter("---\ntitle: x\n---\r")).toEqual({ data: { title: "x" }, content: "" });
+      expect(frontmatter("---\ntitle: x\n...")).toEqual({ data: { title: "x" }, content: "" });
+    });
+
+    test("a `...` line ends a `---` block before a later `---` line", () => {
+      expect(frontmatter("---\ntitle: x\n...\nmore: y\n---\nrest")).toEqual({
+        data: { title: "x" },
+        content: "more: y\n---\nrest",
+      });
+    });
+
+    test("a byte order mark behind the block is the start of the content", () => {
+      expect(frontmatter("---\ntitle: x\n---\n\uFEFFbody")).toEqual({ data: { title: "x" }, content: "\uFEFFbody" });
+    });
+
+    test("a JSON object between `---` lines is read as YAML, to what JSON.parse gives", () => {
+      const json = '{"k":1,"a":{"b":[1,2,3],"c":"x y"},"s":"\\u00e9}","n":1e3,"t":true,"z":null,"k":2}';
+      expect(frontmatter(`---\n${json}\n---\nbody`)).toEqual({ data: JSON.parse(json), content: "body" });
+    });
+
+    test("aliases are resolved", () => {
+      expect(frontmatter("---\nbase: &b\n  x: 1\nref: *b\n---\n").data).toEqual({ base: { x: 1 }, ref: { x: 1 } });
+    });
+
+    test("a date is a string in YAML and a Temporal.PlainDate in TOML", () => {
+      expect(frontmatter("---\ndate: 2024-01-31\n---\n").data).toEqual({ date: "2024-01-31" });
+      const { date } = frontmatter("+++\ndate = 2024-01-31\n+++\n").data as { date: Temporal.PlainDate };
+      expect(date).toBeInstanceOf(Temporal.PlainDate);
+      expect(String(date)).toBe("2024-01-31");
+    });
+
+    test("strings of 8-bit and of 16-bit characters and bytes are read alike", () => {
+      const latin1 = "---\ntitle: caf\u00e9\n---\nna\u00efve\n";
+      const read = { data: { title: "caf\u00e9" }, content: "na\u00efve\n" };
+      expect(frontmatter(latin1)).toEqual(read);
+      expect(frontmatter(wide(latin1))).toEqual(read);
+      expect(frontmatter(Buffer.from(latin1))).toEqual(read);
+
+      const utf16 = "---\ntitle: caf\u00e9 \u2713 \u{1F600}\n---\nbody \u2713\n";
+      const readWide = { data: { title: "caf\u00e9 \u2713 \u{1F600}" }, content: "body \u2713\n" };
+      expect(frontmatter(utf16)).toEqual(readWide);
+      expect(frontmatter("\uFEFF" + utf16)).toEqual(readWide);
+      const bytes = new TextEncoder().encode(utf16);
+      for (const input of [bytes, new DataView(bytes.buffer), bytes.buffer, new String(utf16) as string]) {
+        expect(frontmatter(input)).toEqual(readWide);
+      }
+      const shared = new Uint8Array(new SharedArrayBuffer(bytes.length));
+      shared.set(bytes);
+      expect(frontmatter(shared)).toEqual(readWide);
+    });
+
+    test("a string that is a rope or a part of another string", () => {
+      const text = Buffer.alloc(64, "a").toString();
+      const read = { data: { title: text }, content: text };
+      const document = "---\ntitle: " + text + "\n---\n" + text;
+      expect(jscDescribe(document)).toContain("(rope)");
+      expect(frontmatter(document)).toEqual(read);
+      // A part of a string of 8-bit and of 16-bit characters.
+      for (const padding of ["padding ", "\u2713adding "]) {
+        const whole = padding + document + padding;
+        // Reading a character makes one string of the three.
+        expect(whole.charCodeAt(8)).toBe(0x2d);
+        const part = whole.slice(8, -8);
+        expect(jscDescribe(part)).toContain("(rope)");
+        expect(frontmatter(part)).toEqual(read);
+      }
+    });
+
+    test("metadata that is a scalar or a sequence throws", () => {
+      for (const metadata of ["Foo", "title Hello", "42", "- a\n- b"]) {
+        expect(thrownBy(() => frontmatter(`---\n${metadata}\n---\nbody`))).toBe(
+          "SyntaxError: YAML front matter must be a mapping",
+        );
+      }
+    });
+
+    test("metadata that does not parse throws what Bun.YAML.parse and Bun.TOML.parse throw for it", () => {
+      expect(thrownBy(() => frontmatter("---\ntitle: [broken\n---\nbody"))).toBe(
+        "SyntaxError: YAML Parse error: Unexpected token",
+      );
+      expect(thrownBy(() => frontmatter("+++\na = 1\n= broken\n+++\nbody"))).toBe(
+        "SyntaxError: TOML Parse error: Expected a key but found '='",
+      );
+      const texts: [fence: string, parse: (text: string) => unknown, metadata: string][] = [
+        ["---", Bun.YAML.parse, "title: [broken\n"],
+        ["---", Bun.YAML.parse, "a: 1\nb: } c\n"],
+        ["---", Bun.YAML.parse, 'a: "open\n'],
+        ["---", Bun.YAML.parse, "a: 1\n\tb: 2\n"],
+        ["+++", Bun.TOML.parse, "= broken\n"],
+        ["+++", Bun.TOML.parse, "a = 'open\n"],
+        ["+++", Bun.TOML.parse, "a = 1\na = 2\n"],
+        ["+++", Bun.TOML.parse, "a = 1\rb = 2\r"],
+      ];
+      for (const [fence, parse, metadata] of texts) {
+        const thrown = thrownBy(() => parse(metadata));
+        expect(thrown).toStartWith("SyntaxError: ");
+        const document = `${fence}\n${metadata}${fence}\nbody`;
+        expect(thrownBy(() => frontmatter(document))).toBe(thrown);
+        expect(thrownBy(() => frontmatter(wide(document)))).toBe(thrown);
+        expect(thrownBy(() => frontmatter(Buffer.from(document)))).toBe(thrown);
+      }
+    });
+
+    test("a key that is a sequence is named once the input has been read", () => {
+      const input = Buffer.from("---\nbefore: a value\n? [a, b]\n: first\nlast: [x, {y: z}]\n---\nbody\n");
+      const { toString } = Array.prototype;
+      let calls = 0;
+      let result;
+      Array.prototype.toString = function () {
+        calls++;
+        input.fill(0x21);
+        return `replaced ${toString.call(this)}`;
+      };
+      try {
+        result = frontmatter(input);
+      } finally {
+        Array.prototype.toString = toString;
+      }
+      expect(calls).toBe(1);
+      expect(Object.entries(result.data as object)).toEqual([
+        ["before", "a value"],
+        ["replaced a,b", "first"],
+        ["last", ["x", { y: "z" }]],
+      ]);
+      expect(result.content).toBe("body\n");
+    });
+
+    test("the values that wait for such a key outlive a collection that the key runs", () => {
+      const keys = Array.from({ length: 8 }, (_, key) => key);
+      // A string behind a key that is a sequence waits too.
+      const metadata = keys
+        .map(key => `? [k${key}, ${key}]\n: {v: [${key}, text ${key}]}\nlater${key}: text ${key}\n`)
+        .join("");
+      const { toString } = Array.prototype;
+      const results: { data: Record<string, unknown>; content: string }[] = [];
+      let collections = 0;
+      Array.prototype.toString = function () {
+        collections++;
+        Bun.gc(true);
+        // These take the place of what the collection freed.
+        for (let i = 0; i < 64; i++) [`filler ${i}`, { i }];
+        return toString.call(this);
+      };
+      try {
+        // The body is long enough for `content` to share the characters of the input, which is garbage after the call.
+        for (let i = 0; i < 6; i++) {
+          results.push(frontmatter(`---\nn: ${i}\n${metadata}---\nthe body of document ${i}\n`) as never);
+        }
+      } finally {
+        Array.prototype.toString = toString;
+      }
+      Bun.gc(true);
+      expect(collections).toBe(6 * keys.length);
+      for (const [i, { data, content }] of results.entries()) {
+        expect(content).toBe(`the body of document ${i}\n`);
+        const waiting = keys.flatMap((key): [string, unknown][] => [
+          [`k${key},${key}`, { v: [key, `text ${key}`] }],
+          [`later${key}`, `text ${key}`],
+        ]);
+        expect(Object.entries(data)).toEqual([["n", i], ...waiting]);
+      }
+    });
+
+    test.each([[undefined], [null], [1], [{}], [[]]])("%p is neither a string nor a buffer", input => {
+      expect(thrownBy(() => frontmatter(input as never))).toBe("TypeError: Expected a string or buffer to parse");
+    });
+  });
+});

@@ -1578,14 +1578,16 @@ declare module "bun" {
   /**
    * Markdown related APIs.
    *
-   * Parses and renders markdown with four output modes:
+   * Parses and renders markdown:
    * - `html()` — render to an HTML string
    * - `ansi()` — render to an ANSI-colored string for terminals
    * - `render()` — render with custom callbacks for each element
    * - `react()` — parse to React-compatible JSX elements
+   * - `frontmatter()` — parse the front matter block of a document
    *
    * Supports GFM extensions (tables, strikethrough, task lists, autolinks) and
    * component overrides to replace default HTML tags with custom components.
+   * The four renderers skip a front matter block at the start of the input.
    *
    * @example
    * ```tsx
@@ -1613,7 +1615,8 @@ declare module "bun" {
     /**
      * Options for configuring the markdown parser.
      *
-     * By default, GFM extensions (tables, strikethrough, task lists) are enabled.
+     * By default, GFM extensions (tables, strikethrough, task lists) are enabled,
+     * and a front matter block at the start of the input is skipped.
      */
     interface Options {
       /** Enable GFM tables. Default: `true`. */
@@ -1645,6 +1648,18 @@ declare module "bun" {
        * HTML tags (e.g. `<script>`, `<style>`, `<iframe>`). Default: `false`.
        */
       tagFilter?: boolean;
+      /**
+       * Skip a front matter block at the very start of the input: the lines
+       * between two `---` lines (YAML) or two `+++` lines (TOML). A `...`
+       * line also ends a `---` block. The block is not parsed. Use
+       * {@link frontmatter} to read it.
+       *
+       * Set to `false` to render the block as CommonMark does. Do that for a
+       * fragment (a chat message, a comment, text rendered again while it
+       * streams in): a fragment that starts with a `---` line loses its first
+       * lines as soon as a later line ends the block. Default: `true`.
+       */
+      frontmatter?: boolean;
       /**
        * Enable autolinks. Pass `true` to enable all autolink types (URL, WWW, email),
        * or an object to enable individually.
@@ -1885,6 +1900,9 @@ declare module "bun" {
     /**
      * Render markdown to an HTML string.
      *
+     * A front matter block at the start of the input is not rendered, unless
+     * `options.frontmatter` is `false`.
+     *
      * @param input The markdown string or buffer to render
      * @param options Parser options
      * @returns An HTML string
@@ -1940,6 +1958,13 @@ declare module "bun" {
        * @default false
        */
       kittyGraphics?: boolean;
+      /**
+       * Skip a front matter block (`---` for YAML, `+++` for TOML) at the
+       * very start of the input. Set to `false` for a fragment, such as a
+       * chat message or text rendered again while it streams in.
+       * @default true
+       */
+      frontmatter?: boolean;
     }
 
     /**
@@ -1947,7 +1972,8 @@ declare module "bun" {
      *
      * Supports headings, lists, tables, inline styles, syntax-highlighted
      * code blocks, links, images, and blockquotes. By default, enables all
-     * GFM extensions plus wikilinks, underline, and LaTeX math.
+     * GFM extensions plus wikilinks, underline, and LaTeX math, and skips a
+     * front matter block at the start of the input.
      *
      * @param input The markdown string or buffer to render
      * @param theme Optional theme overrides
@@ -1987,7 +2013,9 @@ declare module "bun" {
      * metadata, and returns a string. Return `null` or `undefined` to omit
      * an element. If no callback is registered, children pass through unchanged.
      *
-     * Parser options are passed as a separate third argument.
+     * Parser options are passed as a separate third argument. A front matter
+     * block at the start of the input reaches no callback, unless
+     * `options.frontmatter` is `false`.
      *
      * @param input The markdown string to render
      * @param callbacks Callbacks for each element type
@@ -2037,6 +2065,9 @@ declare module "bun" {
      * Uses `Symbol.for('react.transitional.element')` by default (React 19).
      * Pass `reactVersion: 18` for React 18 and older.
      *
+     * A front matter block at the start of the input gives no element, unless
+     * `options.frontmatter` is `false`.
+     *
      * @param input The markdown string or buffer to parse
      * @param components Component overrides keyed by HTML tag name
      * @param options Parser options and element symbol configuration
@@ -2071,6 +2102,54 @@ declare module "bun" {
       components?: ComponentOverrides,
       options?: ReactOptions,
     ): import("./jsx.d.ts").JSX.Element;
+
+    /** The result of {@link frontmatter}. */
+    interface FrontmatterResult {
+      /**
+       * The parsed metadata. `{}` for a block with nothing in it, and `null`
+       * when the input does not start with a front matter block.
+       *
+       * A YAML date is a string (`date: 2024-01-31` gives `"2024-01-31"`). A
+       * TOML date is a `Temporal` object.
+       */
+      data: Record<string, unknown> | null;
+      /** The input without the front matter block. */
+      content: string;
+    }
+
+    /**
+     * Parse the front matter block at the very start of a document.
+     *
+     * The block is the lines between two `---` lines (parsed as YAML, so a
+     * JSON object works too) or two `+++` lines (parsed as TOML). A `...`
+     * line also ends a `---` block. The opening line must be the first line
+     * of the input, and the line after it must not be blank. An input without
+     * such a block gives `data: null` and the input as `content`.
+     *
+     * Throws the `SyntaxError` of `Bun.YAML.parse` or `Bun.TOML.parse` when
+     * the metadata does not parse. Also throws a `SyntaxError` when YAML
+     * metadata is a sequence or a scalar other than `null`:
+     * `---\ntitle Hello\n---` (a missing colon) is a YAML scalar.
+     *
+     * The renderers skip the same block. Pass `{ frontmatter: false }` when
+     * you render `content`, so that a document body that starts with `---`
+     * is not skipped a second time.
+     *
+     * @param input The document, as a string or a buffer of UTF-8
+     * @returns The parsed metadata and the rest of the document
+     *
+     * @example
+     * ```ts
+     * const { data, content } = Bun.markdown.frontmatter("---\ntitle: Hello\n---\n# Heading\n");
+     * data; // { title: "Hello" }
+     * content; // "# Heading\n"
+     *
+     * const html = Bun.markdown.html(content, { frontmatter: false });
+     * ```
+     */
+    export function frontmatter(
+      input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike,
+    ): FrontmatterResult;
   }
 
   /**

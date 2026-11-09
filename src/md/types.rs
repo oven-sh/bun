@@ -331,6 +331,7 @@ pub struct Flags {
     pub(crate) micromark: bool,
     pub(crate) micromark_to_the_letter: bool,
     pub(crate) mdx: bool,
+    pub(crate) frontmatter: bool,
 }
 
 /// Syntax of the consumer's own.

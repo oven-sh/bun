@@ -219,6 +219,7 @@ export default b.declarations(
 
   extendAll(["Color"], "Bun.color"),
   extendAll(["Markdown", "StringHTML"], ...withMembers("Bun.markdown", "ansi", "html", "react", "render")),
+  extendAll(["Markdown", "Yaml", "Toml", "Temporal"], "Bun.markdown.frontmatter"),
   extendAll(["Xml"], "Bun.XML"),
   extendAll(["Json5"], "Bun.JSON5"),
   extendAll(["Jsonc"], "Bun.JSONC"),

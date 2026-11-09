@@ -2337,17 +2337,27 @@ describe.concurrent("bun lint with built-in Markdown", () => {
         "dashes.json.md": '---\n{ "title": "a" }\n---\n\n# b\n',
         "crlf.yaml.md": dashes.replaceAll("\n", "\r\n"),
         "not-first.yaml.md": `\n${dashes}`,
+        // micromark takes a blank line behind the opening fence. `Bun.markdown` does not, and this is not it.
+        "blank.yaml.md": "---\n\ntitle: a\n---\n\n# b\n",
+        // micromark ends a block at the same fence only. `Bun.markdown` also ends a `---` block at `...`.
+        "dots.yaml.md": "---\ntitle: a\n...\n\n# b\n\n# c\n",
+        // Without the option the first three lines are a thematic break and a heading.
+        "heading.md": "---\nb\n---\n\n## b\n",
+        "heading.yaml.md": "---\nb\n---\n\n## b\n",
         "dollars.md": dollars,
         "dollars.math.md": dollars,
       },
       ["-f", "json", "."],
     );
     expect(summary(result.raw)).toMatchInlineSnapshot(`
-        "crlf.yaml.md: 5:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
+        "blank.yaml.md: 6:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
+        crlf.yaml.md: 5:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
         dashes.json.md: 5:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
         dashes.yaml.md: 5:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
         dollars.md: 1:3 markdown/no-missing-label-refs Label reference 'a' not found.
         dollars.md: 4:2 markdown/no-missing-label-refs Label reference 'b' not found.
+        dots.yaml.md: 7:1 markdown/no-multiple-h1 Unexpected additional H1 heading found.
+        heading.md: 5:1 markdown/no-duplicate-headings Duplicate heading "b" found.
         pluses.toml.md: 5:1 markdown/no-multiple-h1 Unexpected additional H1 heading found."
       `);
   });

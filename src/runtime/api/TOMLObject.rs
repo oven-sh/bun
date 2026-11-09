@@ -7,6 +7,15 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, TemporalT
 use bun_parsers::toml::TOML;
 
 pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
+    parse_text(heap, input, |_| Ok(()))
+}
+
+/// The value of the TOML `input`. `check_root` sees the root first. Each caller has its own copy of the parse.
+pub(crate) fn parse_text(
+    heap: &JsHeap<'_>,
+    input: &[u8],
+    check_root: impl FnOnce(&bun_ast::Expr) -> JsResult<()>,
+) -> JsResult<JSValue> {
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are strings, its properties are defined
     // and not set, and a date or a time is `Temporal.*.from` of a primitive string, which looks nothing up. What throws
     // returns without reading `input` again.
@@ -35,6 +44,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
                     )));
                 }
             };
+        check_root(&root)?;
 
         super::expr_to_js(root, global)
     })

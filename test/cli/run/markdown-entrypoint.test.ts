@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDir } from "harness";
 import { join } from "path";
 
-// Tracks exit code from the last runMd() call so individual tests can
+// Tracks the exit code of the runMd() calls of a test (the first that is not 0, if any) so individual tests can
 // assert it after snapshotting stdout (giving a readable diff on failure).
 let lastExitCode: number | null = null;
 
@@ -18,17 +18,16 @@ async function runMd(source: string, env: Record<string, string> = {}) {
   });
   // stderr intentionally not asserted: ASAN builds emit a warning there.
   const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  lastExitCode = exitCode;
+  lastExitCode = lastExitCode || exitCode;
   return stdout;
 }
 
 describe("bun <file.md>", () => {
   afterEach(() => {
-    // Implicit exit-code assertion for every test that relies on runMd().
-    if (lastExitCode !== null) {
-      expect(lastExitCode).toBe(0);
-      lastExitCode = null;
-    }
+    // Implicit exit-code assertion for every test that relies on runMd(). The next test starts without this one's code.
+    const exitCode = lastExitCode;
+    lastExitCode = null;
+    if (exitCode !== null) expect(exitCode).toBe(0);
   });
 
   test("renders headings with underlines", async () => {
@@ -345,6 +344,51 @@ describe("bun <file.md>", () => {
       i = close + 2;
     }
     expect(openers).toBeGreaterThanOrEqual(2);
+  });
+
+  test("skips front matter", async () => {
+    const body = ["# Heading", "", "body", ""].join("\n");
+    const rendered = await runMd(body);
+    expect(await runMd("---\ntitle: Hello\n---\n" + body)).toBe(rendered);
+    expect(await runMd("+++\ntitle = 'Hello'\n+++\n" + body)).toBe(rendered);
+    expect(await runMd("\uFEFF---\r\ntitle: Hello\r\n---\r\n" + body)).toBe(rendered);
+    // A blank line behind the first `---` makes it a thematic break.
+    expect(await runMd("---\n\ntitle: Hello\n---\n" + body)).not.toBe(rendered);
+  });
+
+  test("highlights fenced code behind a byte order mark", async () => {
+    const code = ["```js", "const a = 1;", "```", ""].join("\n");
+    const rendered = await runMd(code);
+    expect(rendered).toContain("\x1b[");
+    expect(await runMd("\uFEFF" + code)).toBe(rendered);
+    expect(await runMd("\uFEFF---\ntitle: Hello\n---\n" + code)).toBe(rendered);
+  });
+
+  test.skipIf(!isPosix)("does not fetch an image that the front matter names", async () => {
+    const requested: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        requested.push(new URL(request.url).pathname);
+        return new Response(Buffer.alloc(16, "z"), { headers: { "content-type": "image/png" } });
+      },
+    });
+    const image = (name: string) => `![${name}](http://127.0.0.1:${server.port}/${name}.png)`;
+    using dir = tempDir("md-front-matter-img-", {
+      "doc.md": `---\ncover: ${image("cover")}\n---\n${image("body")}\n`,
+      "tmp/keep": "",
+    });
+    const tmp = join(String(dir), "tmp");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "./doc.md"],
+      env: { ...bunEnv, FORCE_COLOR: "1", TERM: "xterm-kitty", KITTY_WINDOW_ID: "1", BUN_TMPDIR: tmp, TMPDIR: tmp },
+      cwd: String(dir),
+      terminal: { cols: 80, rows: 24, data() {} },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    expect(requested).toEqual(["/body.png"]);
+    expect(exitCode).toBe(0);
   });
 
   test.skipIf(!isPosix || !(isDebug || isASAN))(

@@ -151,6 +151,21 @@ describe("bundler", async () => {
     });
   }
 
+  // Buffers: `files` strings go through dedent(), which would trim them.
+  itBundled("bun/loader-md-file-without-its-front-matter", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import post from './post.md';
+    import empty from './empty.md';
+    console.write(JSON.stringify([post, empty]));
+  `,
+      "/post.md": Buffer.from("---\ntitle: Hello\n---\n# Heading\n"),
+      "/empty.md": Buffer.from("+++\n+++\n"),
+    },
+    run: { stdout: '["<h1>Heading</h1>\\n",""]' },
+  });
+
   itBundled("bun/loader-text-file", {
     target: "bun",
     outfile: "",

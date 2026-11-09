@@ -225,14 +225,6 @@ pub(crate) fn encode_utf8(codepoint: u32, buf: &mut [u8; 4]) -> u8 {
     bun_core::strings::encode_wtf8_rune(buf, codepoint) as u8
 }
 
-/// Skip UTF-8 BOM if present at the start of the text.
-pub(crate) fn skip_utf8_bom(text: &[u8]) -> &[u8] {
-    if text.len() >= 3 && text[0] == 0xEF && text[1] == 0xBB && text[2] == 0xBF {
-        return &text[3..];
-    }
-    text
-}
-
 /// Case-insensitive ASCII comparison.
 pub use bun_core::strings::eql_case_insensitive_ascii_check_length as ascii_case_eql;
 

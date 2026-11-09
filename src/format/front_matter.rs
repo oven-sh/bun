@@ -1,4 +1,5 @@
 //! Front matter at the start of style sheets, Markdown and HTML: Prettier's `src/main/front-matter/parse.js`.
+//! `Bun.markdown` and `bun lint` find theirs with `bun_md::front_matter`, which has other rules.
 
 /// `---`, a language, lines, `---`. The ranges are offsets into the text that starts with it.
 #[derive(Copy, Clone, Debug)]

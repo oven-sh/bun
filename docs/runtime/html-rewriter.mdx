@@ -341,8 +341,10 @@ rewriter.onDocument({
 
 Every method that inserts content takes a string and an optional `{ html: true }`. The methods are `before`, `after`, `prepend`, `append`, `replace`, `setInnerContent`, and `end.append`.
 
-- Without `{ html: true }`, the string is text. Bun writes `<`, `>` and `&` as `&lt;`, `&gt;` and `&amp;`, so the string cannot add markup to the page.
+- Without `{ html: true }`, the string is text. Bun writes `<`, `>` and `&` as `&lt;`, `&gt;` and `&amp;`, so the string holds no markup.
 - With `{ html: true }`, Bun writes the string as is.
+
+Bun does not change the page text around the string. If the page text ends in a bare `<` right before the string, a browser can read that `<` and the string as one tag. For example, `el.append("img src=x onerror=run() ")` on `<a><</a>` produces `<a><img src=x onerror=run() </a>`, and the browser creates an `<img>` element. A page that writes `<` in its text as `&lt;` does not have this case. For a page that you do not control, start the string with a space, because a `<` before a space is text.
 
 Bun escapes text the same way in every element, and so does Cloudflare Workers. A browser does not decode entities inside these HTML elements: `<script>`, `<style>`, `<xmp>`, `<iframe>`, `<noembed>`, `<noframes>` and `<plaintext>`. Text that you insert there keeps the entities. For example, `el.append("if (a < b) run()")` on a `<script>` produces `if (a &lt; b) run()`, which is a syntax error.
 

@@ -52,13 +52,17 @@ declare namespace HTMLRewriterTypes {
      * If `true`, the content is written as raw HTML.
      *
      * Otherwise (the default) the content is text: `<`, `>` and `&` are
-     * written as `&lt;`, `&gt;` and `&amp;`, so it can never add markup.
-     * This is also the case inside `<script>` and `<style>`, where a browser
-     * does not decode entities. To insert script or style source there, pass
-     * `{ html: true }` and first reject (ASCII case-insensitively) a string
-     * that contains `</style` for a `<style>`, or any of `</script`,
-     * `<script` or `<!--` for a `<script>`. For JSON, write
-     * `JSON.stringify(v).replaceAll("<", "\\u003c")`.
+     * written as `&lt;`, `&gt;` and `&amp;`, so the content holds no markup.
+     * The page around it is not changed. A bare `<` at the end of the page
+     * text right before the content joins with it into a tag, so start
+     * untrusted content with a space if the page can have one there.
+     *
+     * Text is escaped the same way inside `<script>` and `<style>`, where a
+     * browser does not decode entities. To insert script or style source
+     * there, pass `{ html: true }` and first reject (ASCII
+     * case-insensitively) a string that contains `</style` for a `<style>`,
+     * or any of `</script`, `<script` or `<!--` for a `<script>`. For JSON,
+     * write `JSON.stringify(v).replaceAll("<", "\\u003c")`.
      *
      * That check is complete for `setInnerContent`, which replaces the
      * element's text. Every other insertion inside the element can land

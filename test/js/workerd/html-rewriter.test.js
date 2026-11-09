@@ -1794,6 +1794,22 @@ describe("HTMLRewriter", () => {
       "<style>ul>li{color:red} b{}</style>",
     );
 
+    // Text mode escapes the string, not the page. A bare "<" that the page has right
+    // before the string stays as it is, and a browser reads the two as one tag. The
+    // docs say so, and say to start the string with a space for such a page.
+    const attrs = "img src=x onerror=run() ";
+    expect({
+      bareLt: insert("a", "<a><</a>", el => el.append(attrs)),
+      entity: insert("a", "<a>&lt;</a>", el => el.append(attrs)),
+      spaceFirst: insert("a", "<a><</a>", el => el.append(" " + attrs)),
+      beforeElement: insert("b", "<p>a<<b>x</b></p>", el => el.before(attrs)),
+    }).toEqual({
+      bareLt: "<a><img src=x onerror=run() </a>",
+      entity: "<a>&lt;img src=x onerror=run() </a>",
+      spaceFirst: "<a>< img src=x onerror=run() </a>",
+      beforeElement: "<p>a<img src=x onerror=run() <b>x</b></p>",
+    });
+
     // The recipes from the docs, as the docs write them.
     const HTML_NS = "http://www.w3.org/1999/xhtml";
     const SVG_NS = "http://www.w3.org/2000/svg";

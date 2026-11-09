@@ -1130,6 +1130,17 @@ describe.concurrent("vi.setConfig", () => {
           });
           test("late", () => started.resolve());
         `,
+        "a test starts behind the first two, one of which has ended": `
+          const started = gate();
+          test("ended", () => {});
+          test("running", async () => {
+            const fn = vi.fn();
+            fn();
+            await started.promise;
+            calls(fn);
+          });
+          test("third", () => started.resolve());
+        `,
         "a test ahead is retried": `
           const called = gate(), retried = gate();
           let attempts = 0;

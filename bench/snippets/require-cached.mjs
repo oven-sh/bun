@@ -114,7 +114,8 @@ if (workers || !isMainThread) {
     }
   });
 
-  // A lookup that fails makes the resolver read that directory again, and the resolution memo starts over.
+  // A lookup that fails makes the resolver read that directory again. Each pair that the resolution memo keeps then
+  // runs the resolver once more.
   group("failed lookup", () => {
     const missing = () => {
       try {

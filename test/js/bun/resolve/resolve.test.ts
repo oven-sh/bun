@@ -2483,7 +2483,7 @@ describe.concurrent("a repeated resolution", () => {
           out.hooked = repeats(() => require("./hooked.cjs"));
           Module._resolveFilename = resolveFilename;
 
-          // The epoch moves. A pair that had an entry keeps it: the first call checks the answer, the next four get it.
+          // The VM forgets its answers. A pair that had an entry keeps it: the first call checks the answer, the next four get it.
           require.extensions[".custom"] = require.extensions[".js"];
           out.afterChange = repeats(() => require("./child.cjs"));
           delete require.extensions[".custom"];
@@ -2495,7 +2495,8 @@ describe.concurrent("a repeated resolution", () => {
           oneOffs();
           out.oneOffs = resolutionMemoHits() - beforeSecondRound < 10;
 
-          // A failed lookup is not kept. It can make the resolver read the directory again, which empties the memo.
+          // A failed lookup is not kept. It can make the resolver read the directory again, and then no entry answers
+          // before the resolver has run for its pair once more.
           out.missing = hits(() => { try { require.resolve("./missing.cjs"); } catch {} });
           out.afterMissing = repeats(() => require.resolve("./after.cjs"));
           console.log(JSON.stringify(out));

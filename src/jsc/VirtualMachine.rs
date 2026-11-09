@@ -6154,6 +6154,16 @@ impl VirtualMachine {
             return Ok(Ok(answer));
         }
         let Ok(path) = &resolved else {
+            if let Some(watch) = watch {
+                jsc_vm.hold_against_last_answer(
+                    &watch,
+                    reads,
+                    keys,
+                    (kind, epoch),
+                    (specifier, source),
+                    None,
+                );
+            }
             return Ok(resolved);
         };
         let is_from_the_caches = jsc_vm.resolver_reads().cache_misses == reads.cache_misses;
@@ -6166,9 +6176,8 @@ impl VirtualMachine {
                 reads,
                 keys,
                 (kind, epoch),
-                facts,
                 (specifier, source),
-                path,
+                Some((facts, path)),
             );
         }
         Ok(resolved)
@@ -6283,6 +6292,7 @@ impl VirtualMachine {
     /// Builds with assertions: the resolver answers what it answered for the pair before, unless the epoch moved in
     /// between, this VM forgot, or one of the two runs read something from the disk that no cache holds. So a write to
     /// what the resolver reads that moves neither fails here, at the next resolution of a pair from before the write.
+    /// `found`: what the resolver answered, or None if it found nothing.
     #[cold]
     #[inline(never)]
     fn hold_against_last_answer(
@@ -6294,15 +6304,29 @@ impl VirtualMachine {
             &bun_core::WTFStringImplStruct,
         ),
         (kind, epoch): (crate::resolution_memo::Kind, u64),
-        facts: ResolverFacts,
         (specifier, source): (&bun_core::String, &bun_core::String),
-        path: &bun_core::String,
+        found: Option<(ResolverFacts, &bun_core::String)>,
     ) {
         use crate::resolution_memo::Lookup;
-        if self.resolver_reads().unrecorded != reads_before.unrecorded
-            || !watch.is_undisturbed()
-            || !self.is_resolution_to_remember(facts, specifier, false)
-        {
+        if self.resolver_reads().unrecorded != reads_before.unrecorded || !watch.is_undisturbed() {
+            return;
+        }
+        let Some((facts, path)) = found else {
+            let last_answers = self.resolution_memo.last_answers.as_mut();
+            let last = last_answers.and_then(|last_answers| {
+                match last_answers.get(specifier_impl, source_impl, kind, epoch) {
+                    Lookup::Kept(last) => Some(crate::resolution_memo::into_string(last)),
+                    _ => None,
+                }
+            });
+            debug_assert!(
+                last.is_none(),
+                "the resolver finds nothing for \"{specifier}\" from \"{source}\". It answered \"{}\" before, and nothing since then has moved bun_resolver::resolution_epoch or called VirtualMachine::forget_resolutions()",
+                last.as_ref().unwrap_or(&bun_core::String::EMPTY),
+            );
+            return;
+        };
+        if !self.is_resolution_to_remember(facts, specifier, false) {
             return;
         }
         let Some(answer) = path

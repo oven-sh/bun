@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunRun, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir } from "harness";
 import { join } from "path";
 test.concurrent("empty jsonc - package.json", async () => {
   await using dir = tempDir("jsonc", {
@@ -38,6 +38,29 @@ test.concurrent("import anything.jsonc as json", async () => {
   });
   expect(await bunRun(join(dir, "index.ts"))).toSpawn();
 });
+
+// A loader map entry that names "jsonc" used to select the strict "json" loader.
+for (const [surface, args, files] of [
+  ["--loader", ["--loader", ".cfg:jsonc"], {}],
+  ["bunfig [loader]", [], { "bunfig.toml": `[loader]\n".cfg" = "jsonc"\n` }],
+] as const) {
+  test.concurrent(`${surface} maps an extension to the jsonc loader`, async () => {
+    using dir = tempDir("jsonc-loader-map", {
+      ...files,
+      "app.cfg": `// comment\n{"a": 1, "b": 2,}\n`,
+      "entry.mjs": `import config from "./app.cfg"; console.log(JSON.stringify(config));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args, "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: '{"a":1,"b":2}\n', stderr: "", exitCode: 0 });
+  });
+}
 
 test.concurrent("imported JSON strings match JSON.parse exactly (escapes, lone surrogates, non-ASCII)", async () => {
   const json = `{"lone":"\\ud800","pair":"\\ud83d\\ude00","mix":"a\\udfffz","e":"caf\\u00e9\\ud800x","lit":"é🚀","esc\\nkey":"a\\n\\"b\\""}`;

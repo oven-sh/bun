@@ -18,7 +18,6 @@ use crate::ast::{
 use crate::language::{LanguageOptions, SourceType};
 use crate::linter::comment::parse_list_config;
 use crate::linter::directives::Label;
-use crate::options::Json;
 use crate::regex;
 use crate::tokens::skip_trivia;
 use bun_core::strings;
@@ -760,7 +759,7 @@ impl<'a> Checks<'a, '_> {
                 self.unexpected(close);
             }
         }
-        if file.language().parser_options.get(b"allowReserved") == Some(&Json::Bool(true)) {
+        if file.language().allow_reserved {
             return;
         }
         for it in file.exprs_of_kind(ExprTag::Ident) {

@@ -1908,6 +1908,8 @@ pub struct Eslint8 {
     is_espree: bool,
     /// [`Eslint8::edition`] without comments.
     edition: Result<u32, Vec<u8>>,
+    /// [`Eslint8::identity`]
+    identity: u64,
 }
 
 /// `typeof value`
@@ -2031,6 +2033,28 @@ impl Eslint8 {
             [] => self.edition.clone(),
             in_file => edition_of(&self.resolve_parser_options(in_file)),
         }
+    }
+
+    /// A hash of everything that [`Eslint8::edition`] reads, for a cache key. Two configs with equal identities give
+    /// every file the same edition, whatever its `/* eslint-env */` comments say.
+    pub fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    /// Computes [`Eslint8::identity`] from the fields it reads.
+    fn hash_identity(&self) -> u64 {
+        let mut bytes = Vec::new();
+        for (name, is_on) in &self.env {
+            bytes.extend_from_slice(name);
+            bytes.push(0);
+            bytes.push(u8::from(*is_on));
+        }
+        bytes.push(0);
+        self.environments.stringify(&mut bytes);
+        bytes.push(0);
+        self.parser_options.stringify(&mut bytes);
+        bytes.push(u8::from(self.is_espree));
+        bun_wyhash::hash(&bytes)
     }
 
     /// True if the installed typescript-eslint is older than 8, so the built-in rules emulate that version.
@@ -2161,9 +2185,11 @@ pub(super) fn resolve(language_options: &mut Json) -> Result<Eslint8, Vec<u8>> {
         parser_options: (language_options.get(b"parserOptions").cloned()).unwrap_or(Json::Null),
         is_espree: parser.is_none_or(|it| it == b"espree"),
         edition: Ok(5),
+        identity: 0,
     };
     let options = eslint_8.resolve_parser_options(&[]);
     eslint_8.edition = edition_of(&options);
+    eslint_8.identity = eslint_8.hash_identity();
     // `resolveGlobals`. The built-in environments' variables are added where `$env` is read.
     let mut globals = Json::Null;
     for environment in eslint_8.enabled(&[]) {

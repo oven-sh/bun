@@ -161,7 +161,7 @@ struct Caches<'h> {
     /// For [`Modules::record_exports`]. Keyed by the real path, followed by a `\0` for a script that isn't the first in
     /// its file. `None` means the file can't be parsed.
     records: ShardedMap<Vec<u8>, Option<Record>>,
-    /// For [`Modules::facts`]. Keyed by the path and the parse options.
+    /// For [`Modules::facts`]. Keyed by the path and [`LanguageOptions::parse_identity`].
     facts: ShardedMap<Vec<u8>, Option<Box<dyn Any + Send + Sync>>>,
 }
 
@@ -1361,16 +1361,7 @@ impl Modules for Graph<'_> {
         language: &LanguageOptions,
         reader: &Reader,
     ) -> Option<&(dyn Any + Send + Sync)> {
-        let how = [
-            language.parser as u8,
-            language.scope_source_type() as u8,
-            u8::from(language.without_module_syntax.is_some()),
-            u8::from(language.jsx),
-            u8::from(language.experimental_decorators),
-            u8::from(language.eslint_8.is_some()),
-        ];
-        let edition = language.ecma_version.to_le_bytes();
-        let key = [path, &how, &edition].concat();
+        let key = [path, language.parse_identity().bytes()].concat();
         let cached = match self.caches().facts.get_ref(&key[..]) {
             Some(cached) => cached,
             None => {

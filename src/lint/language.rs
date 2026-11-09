@@ -1,5 +1,6 @@
 //! ESLint's `languageOptions` and `settings`: what the config tells the linter about a file's code.
 
+use crate::linter::config::Eslint8;
 use crate::linter::globals::{ConfigGlobals, Tables, environment};
 use crate::options::Json;
 use bun_sema::resolve::{Dialect, ScriptKind};
@@ -188,6 +189,8 @@ pub struct LanguageOptions {
     pub implied_strict: bool,
     /// `parserOptions.ecmaFeatures.jsx`
     pub jsx: bool,
+    /// `parserOptions.allowReserved`: acorn accepts ES3's reserved words as identifiers.
+    pub allow_reserved: bool,
     /// `parserOptions.sourceType`, which is what `@typescript-eslint/parser` reads.
     pub parser_source_type: Option<SourceType>,
     /// `parserOptions.lib`, lowercased: the TypeScript libraries whose declarations are available. `None` if it isn't
@@ -261,6 +264,36 @@ pub struct ParseOptions {
     pub script_kind: Option<ScriptKind>,
     pub experimental_decorators: bool,
     pub every_file_is_a_module: bool,
+}
+
+/// The parts of [`LanguageOptions`] that decide how a file is parsed and which parse error it gets, as the bytes of a
+/// cache key. Two options with equal identities give every file the same tree and the same
+/// [`parse_error`](crate::linter::parse_error). Only [`LanguageOptions::parse_identity`] builds one.
+#[repr(C)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct ParseIdentity {
+    /// [`Eslint8::identity`](crate::linter::config::Eslint8::identity), or 0 without an ESLint 8 config.
+    eslint_8: u64,
+    /// A hash of the identity of [`LanguageOptions::without_module_syntax`], or 0 if it's `None`.
+    without_module_syntax: u64,
+    ecma_version: u32,
+    /// One bit per `bool` field, in the order of `parse_identity`.
+    flags: u32,
+    parser: u8,
+    source_type: u8,
+    /// [`LanguageOptions::parser_source_type`], or `Self::NONE`.
+    parser_source_type: u8,
+    padding: [u8; 5],
+}
+bun_core::impl_no_uninit!(ParseIdentity);
+
+impl ParseIdentity {
+    const NONE: u8 = u8::MAX;
+
+    /// The bytes to put in a cache key.
+    pub fn bytes(&self) -> &[u8] {
+        bun_core::bytes_of(self)
+    }
 }
 
 fn is_truthy(value: Option<&Json>) -> bool {
@@ -467,6 +500,7 @@ impl LanguageOptions {
             global_return: false,
             implied_strict: feature(b"impliedStrict"),
             jsx: feature(b"jsx"),
+            allow_reserved: flag(b"allowReserved"),
             parser_source_type: source_type_of(parser_options.get(b"sourceType")),
             lib: parser_options
                 .get(b"lib")
@@ -633,6 +667,79 @@ impl LanguageOptions {
             every_file_is_a_module: self.scope_source_type() == SourceType::Module,
         }
     }
+
+    /// What decides the tree and the parse error of a file: the inputs of [`LanguageOptions::parse_options`] and of
+    /// everything [`parse_error`](crate::linter::parse_error) reads. Every field is named here, so that a new field
+    /// has to be sorted into the identity or out of it.
+    pub fn parse_identity(&self) -> ParseIdentity {
+        let LanguageOptions {
+            ecma_version,
+            source_type,
+            globals: _,
+            enabled_own_globals: _,
+            shadowed_env_globals: _,
+            envs: _,
+            own_globals: _,
+            parser,
+            is_babel,
+            global_return,
+            implied_strict,
+            jsx,
+            allow_reserved,
+            parser_source_type,
+            lib: _,
+            jsx_pragma: _,
+            jsx_fragment_name: _,
+            emit_decorator_metadata: _,
+            experimental_decorators,
+            isolated_declarations: _,
+            wants_types: _,
+            rejects_what_parser_rejects,
+            is_oxlint,
+            has_no_foreign_config,
+            without_module_syntax,
+            has_oxc_scopes,
+            rules_missing_in_oxlint: _,
+            has_rule_that_requires_types: _,
+            parser_tracks_names,
+            eslint_8,
+            eslint_major: _,
+            without_modules: _,
+            infers_globals: _,
+            parser_options: _,
+            settings: _,
+            config_globals: _,
+        } = self;
+        let flags = [
+            *is_babel,
+            *global_return,
+            *implied_strict,
+            *jsx,
+            *allow_reserved,
+            *experimental_decorators,
+            *rejects_what_parser_rejects,
+            *is_oxlint,
+            *has_no_foreign_config,
+            *has_oxc_scopes,
+            *parser_tracks_names,
+            eslint_8.is_some(),
+            without_module_syntax.is_some(),
+        ];
+        let flags = (flags.iter().enumerate()).fold(0u32, |bits, (index, flag)| {
+            bits | (u32::from(*flag) << index)
+        });
+        ParseIdentity {
+            eslint_8: eslint_8.as_deref().map_or(0, Eslint8::identity),
+            without_module_syntax: (without_module_syntax.as_deref())
+                .map_or(0, |it| bun_wyhash::hash(it.parse_identity().bytes())),
+            ecma_version: *ecma_version,
+            flags,
+            parser: *parser as u8,
+            source_type: *source_type as u8,
+            parser_source_type: parser_source_type.map_or(ParseIdentity::NONE, |it| it as u8),
+            padding: [0; 5],
+        }
+    }
 }
 
 impl Default for LanguageOptions {
@@ -650,6 +757,7 @@ impl Default for LanguageOptions {
             global_return: false,
             implied_strict: false,
             jsx: false,
+            allow_reserved: false,
             parser_source_type: None,
             lib: None,
             jsx_pragma: Some(b"React"[..].into()),

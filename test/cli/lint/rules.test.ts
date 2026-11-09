@@ -297,6 +297,101 @@ describe.concurrent("`import` rules without an ESLint or oxlint config", () => {
   });
 });
 
+// `import` rules parse an imported file once per distinct parse settings of its importers and share the result. An
+// importer must get the parse error of its own settings, whichever importer parsed the file first.
+describe.concurrent("`import` rules give each importer the parse error of its own parser options", () => {
+  /** Returns `path line:column rule message` for each `import/*` report. */
+  async function lintImporters(files: Record<string, string>, first: string, second: string) {
+    // With one thread the files are linted largest first, so the larger importer fills the cache.
+    files[first] += "// This importer is linted first.\n";
+    using dir = tempDir("bun-lint-importers", files);
+    await using proc = spawn({
+      cmd: [bunExe(), "lint", "-f", "json", "--threads", "1", first, second],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (!stdout.startsWith("[")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+    const results: { filePath: string; messages: { ruleId: string | null; line: number; column: number; message: string }[] }[] =
+      JSON.parse(stdout);
+    return results
+      .flatMap(it => it.messages.map(m => ({ ...m, path: relative(String(dir), it.filePath).replaceAll("\\", "/") })))
+      .filter(it => it.ruleId?.startsWith("import/"))
+      .map(it => `${it.path} ${it.line}:${it.column} ${it.ruleId} ${it.message}`)
+      .sort();
+  }
+
+  const importer = `import shared from "../shared.js";\nexport default shared;\n`;
+  /** A flat config whose `with/` and `without/` importers differ only in the given language options. */
+  const eslintConfig = (withOptions: string, withoutOptions: string) =>
+    [
+      `const importPlugin = { meta: { name: "eslint-plugin-import" }, rules: {} };`,
+      `const parser = { meta: { name: "@typescript-eslint/parser", version: "8.0.0" } };`,
+      `export default [`,
+      `  { plugins: { import: importPlugin }, settings: { "import/parsers": { espree: [".js"] } }, rules: { "import/default": "error" } },`,
+      `  { files: ["with/*.mjs"], languageOptions: { parser, ${withOptions} } },`,
+      `  { files: ["without/*.mjs"], languageOptions: { parser${withoutOptions} } },`,
+      `];`,
+      "",
+    ].join("\n");
+
+  const orders = [
+    ["a.mjs", "with-oxlint/b.mjs"],
+    ["with-oxlint/b.mjs", "a.mjs"],
+  ];
+  test.each(orders)("an oxlint config accepts a decorator that espree rejects (%s first)", async (first, second) => {
+    const files = {
+      "bunfig.toml": `[lint.rules]\n"import/default" = "error"\n\n[lint.parserOptions.ecmaFeatures]\njsx = true\n`,
+      "decorated.mjs": "function dec(t) {\n  return t;\n}\n@dec\nclass A {}\nexport default A;\n",
+      "a.mjs": `import A from "./decorated.mjs";\nexport default A;\n`,
+      "with-oxlint/.oxlintrc.json": `{ "plugins": ["import"], "rules": { "import/no-deprecated": "error" } }`,
+      "with-oxlint/b.mjs": `import A from "../decorated.mjs";\nexport default A;\n`,
+    };
+    expect(await lintImporters(files, first, second)).toEqual([
+      `a.mjs 1:15 import/default Parse errors in imported module './decorated.mjs': Unexpected character '@' (4:1)`,
+    ]);
+  });
+
+  const sides = [
+    ["with/a.mjs", "without/b.mjs"],
+    ["without/b.mjs", "with/a.mjs"],
+  ];
+  test.each(sides)("`globalReturn` allows a top-level `return` (%s first)", async (first, second) => {
+    const files = {
+      "package.json": "{}",
+      "eslint.config.mjs": eslintConfig(`parserOptions: { ecmaFeatures: { globalReturn: true } }`, ""),
+      "shared.js": `const a = 1;\nif (a) {\n  return;\n}\nmodule.exports = () => import("./other.js");\n`,
+      "other.js": "export const other = 1;\n",
+      "with/a.mjs": importer,
+      "without/b.mjs": importer,
+    };
+    expect(await lintImporters(files, first, second)).toEqual([
+      `with/a.mjs 1:8 import/default No default export found in imported module "../shared.js".`,
+      `without/b.mjs 1:20 import/default Parse errors in imported module '../shared.js': 'return' outside of function (3:3)`,
+    ]);
+  });
+
+  test.each(sides)("`impliedStrict` rejects a legacy octal literal (%s first)", async (first, second) => {
+    const files = {
+      "package.json": "{}",
+      "eslint.config.mjs": eslintConfig(
+        `sourceType: "script", parserOptions: { ecmaFeatures: { impliedStrict: true } }`,
+        `, sourceType: "script"`,
+      ),
+      "shared.js": `const a = 08;\nmodule.exports = () => import("./other.js?" + a);\n`,
+      "other.js": "export const other = 1;\n",
+      "with/a.mjs": importer,
+      "without/b.mjs": importer,
+    };
+    expect(await lintImporters(files, first, second)).toEqual([
+      `with/a.mjs 1:20 import/default Parse errors in imported module '../shared.js': Invalid number (1:11)`,
+      `without/b.mjs 1:8 import/default No default export found in imported module "../shared.js".`,
+    ]);
+  });
+});
+
 describe.concurrent("rules that sort", () => {
   /**
    * Runs `bun lint -f json` with an oxlint config and returns `file rule` for each report. That format includes each

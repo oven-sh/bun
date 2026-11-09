@@ -2839,7 +2839,8 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
 
   test("--fix fixes the scripts in place", async () => {
     const result = await lint(scripts, ["--fix", "-f", "json"], ["a.vue", "b.svelte", "c.astro", "d.vue"]);
-    // These are the exact bytes oxlint 1.87 writes.
+    // These are the exact bytes oxlint 1.87 writes, except that a top-level `var` in a .vue or .svelte script becomes
+    // `let`, not `const`: the template can assign it.
     expect(result.files).toMatchInlineSnapshot(`
       {
         "a.vue": 
@@ -2849,7 +2850,7 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       </template>
 
       <script lang="ts">
-      const a: number = 1;
+      let a: number = 1;
       debugger;
       export default { name: "a" };
       </script>
@@ -2857,7 +2858,7 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       <script setup lang="ts" generic="T extends Record<string, string>">
       import { ref } from "vue";
       const props = defineProps<{ x: number }>();
-      let msg = ref("é"); const unused = 2;
+      let msg = ref("é"); let unused = 2;
       if (msg.value == "1") undefinedThing();
       // oxlint-disable-next-line no-debugger
       debugger;
@@ -2870,13 +2871,13 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       ,
         "b.svelte": 
       "<script module lang="ts">
-        export const m: number = 1;
+        export let m: number = 1;
       </script>
       <script-like>var no = 1;</script-like>
       <script>
         let count = 0;
         $: doubled = count * 2;
-        const v = 1; debugger;
+        let v = 1; debugger;
       </script>
       <button on:click={() => count == 1}>{doubled}</button>
       "
@@ -2904,6 +2905,54 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
       ,
       }
     `);
+    expect(result.exitCode).toBe(1);
+  });
+
+  // The template assigns `count` and `label`, so `const` would throw `Assignment to constant variable` at runtime. The
+  // script doesn't show that: only a top-level binding can be assigned from the template, and the Astro template can't
+  // assign anything.
+  test("--fix keeps a top-level var of a .vue or .svelte script writable", async () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ rules: { "no-var": "error", "no-unassigned-vars": "error" } }),
+      "TemplateWrites.vue": `<script setup>
+var count = 0;
+var label = "a";
+let dialog;
+function double() { var twice = count * 2; return twice; }
+</script>
+
+<template>
+  <button type="button" @click="count++">{{ count }} {{ label }}</button>
+  <input v-model="label" />
+  <dialog ref="dialog" />
+</template>
+`,
+      "Counter.svelte": `<script>
+  var count = 0;
+  let dialog;
+  function double() { var twice = count * 2; return twice; }
+</script>
+<button on:click={() => count++}>{count}</button>
+<dialog bind:this={dialog} />
+`,
+      "page.astro": `---
+var title = "x";
+let element;
+console.log(element);
+---
+<h1>{title}</h1>
+`,
+    };
+    const result = await lint(files, ["--fix", "-f", "json"], ["TemplateWrites.vue", "Counter.svelte", "page.astro"]);
+    expect(result.files["TemplateWrites.vue"]).toContain(`let count = 0;
+let label = "a";
+let dialog;
+function double() { const twice = count * 2; return twice; }`);
+    expect(result.files["Counter.svelte"]).toContain(`  let count = 0;
+  let dialog;
+  function double() { const twice = count * 2; return twice; }`);
+    expect(result.files["page.astro"]).toContain(`const title = "x";`);
+    expect(diagnostics(result.raw)).toMatchInlineSnapshot(`"page.astro 3:5 eslint(no-unassigned-vars)"`);
     expect(result.exitCode).toBe(1);
   });
 });

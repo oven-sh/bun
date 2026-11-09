@@ -245,6 +245,18 @@ pub(crate) struct Lazy {
     extensions: [OnceCell<Box<dyn std::any::Any>>; 2],
 }
 
+/// A script in a `.vue`, `.svelte` or `.astro` file. oxlint lints each script as a separate program, so the rules see
+/// neither the file's other scripts nor its markup.
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub struct EmbeddedScript {
+    /// True if another script comes before it in the file.
+    pub is_later: bool,
+    /// True if the file's markup can assign the script's top-level bindings, as a Vue template (`v-model="x"`,
+    /// `@click="x++"`) or Svelte markup (`bind:value={x}`) can. None of those assignments is a reference, so a binding
+    /// without a write in the script can still be written.
+    pub markup_assigns_bindings: bool,
+}
+
 /// The file being linted or formatted.
 pub struct File<'a> {
     pub(crate) hir: Hir<'a>,
@@ -264,7 +276,7 @@ pub struct File<'a> {
     pub(crate) package_module: std::cell::OnceCell<std::sync::Arc<[u8]>>,
     pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
     pub(crate) inferred_globals: OnceCell<Option<crate::linter::globals::ProgramGlobals<'a>>>,
-    is_later_script: Cell<bool>,
+    embedded: Cell<EmbeddedScript>,
     /// [`File::in_language`]
     parsed: Option<(&'a crate::languages::Parsed, crate::source::LineBreaks)>,
     language: &'a LanguageOptions,
@@ -340,7 +352,7 @@ impl<'a> File<'a> {
             package_module: std::cell::OnceCell::new(),
             inferred_from: Cell::new(None),
             inferred_globals: OnceCell::new(),
-            is_later_script: Cell::new(false),
+            embedded: Cell::new(EmbeddedScript::default()),
             parsed: None,
             path,
         }
@@ -368,15 +380,21 @@ impl<'a> File<'a> {
         self.parsed.map_or_else(Default::default, |it| it.1)
     }
 
-    /// True for a script in a `.vue`, `.svelte` or `.astro` file that has another script before it. oxlint lints each
-    /// script as a separate program.
+    /// [`EmbeddedScript::is_later`]
     #[inline]
     pub fn is_later_script(&self) -> bool {
-        self.is_later_script.get()
+        self.embedded.get().is_later
     }
 
-    pub fn set_later_script(&self, is_later: bool) {
-        self.is_later_script.set(is_later);
+    /// [`EmbeddedScript::markup_assigns_bindings`]
+    #[inline]
+    pub fn markup_assigns_bindings(&self) -> bool {
+        self.embedded.get().markup_assigns_bindings
+    }
+
+    /// Marks the file as a script in a `.vue`, `.svelte` or `.astro` file.
+    pub fn set_embedded_script(&self, embedded: EmbeddedScript) {
+        self.embedded.set(embedded);
     }
 
     /// For a `hir` that doesn't store its text.

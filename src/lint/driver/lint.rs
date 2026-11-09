@@ -10,7 +10,7 @@ use crate::results::{Counts, FileResult, Linted};
 use crate::run::{Fatal, Timing};
 use crate::{Linter, fs, git, paths};
 use bun_core::strings;
-use bun_lint::ast::File;
+use bun_lint::ast::{EmbeddedScript, File};
 use bun_lint::context::Severity;
 use bun_lint::fix::SuggestionKind;
 use bun_lint::formats::{Formats, Reason};
@@ -130,8 +130,8 @@ struct How<'h> {
     physical_path_len: Option<usize>,
     /// Set if it's a script inside a file: its language, and which rules run.
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
-    /// [`File::is_later_script`]
-    is_later_script: bool,
+    /// Where the script is in the file, if it's one.
+    embedded: EmbeddedScript,
     /// Set if the file isn't JavaScript: the arguments of [`File::in_language`].
     in_language: Option<(&'h [u8], &'h Parsed, LineBreaks)>,
     rules: Which<'h>,
@@ -475,12 +475,12 @@ impl Context<'_, '_> {
         path: &[u8],
         text: &[u8],
         config: &ResolvedConfig,
-        (kind, is_later_script): (ScriptKind, bool),
+        (kind, embedded): (ScriptKind, EmbeddedScript),
         filter: &RuleFilter,
     ) -> LintResult {
         let how = How {
             script: Some((kind, filter)),
-            is_later_script,
+            embedded,
             ..How::default()
         };
         self.verify_as(path, text, config, &how)
@@ -605,7 +605,7 @@ impl Context<'_, '_> {
                 if let Some(inferred) = self.inferred {
                     file.set_inferred_globals(inferred);
                 }
-                file.set_later_script(as_what.is_later_script);
+                file.set_embedded_script(as_what.embedded);
                 then(Some(&file));
             },
         );

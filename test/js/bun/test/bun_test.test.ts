@@ -155,7 +155,7 @@ test("describe/test", async () => {
     (todo) LINE 69
     (todo) failing todo passes
 
-    13 tests failed:
+    5 tests failed:
 
     (fail) test/js/bun/test/bun_test.fixture.ts:81 > actual tests > more functions called after delayed done
     76 | 

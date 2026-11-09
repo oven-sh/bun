@@ -83,7 +83,7 @@ test("dots 2", async () => {
     test/js/bun/test/printing/dots/dots3.fixture.ts:
     (fail) failure
 
-    2 tests failed:
+    1 test failed:
 
     (fail) test/js/bun/test/printing/dots/dots3.fixture.ts:8 > failure
     3 | // unhandled failure. it should print the filename

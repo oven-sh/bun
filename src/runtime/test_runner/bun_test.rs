@@ -602,9 +602,10 @@ impl BunTestRoot {
     /// bail path skips its `scopeguard::defer! { exit_file() }` because
     /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
     /// `hook_scope`, and the `pending_then_refs` Vec.
+    /// Caller flushes the reporter first (`flush_file_block`).
     pub(crate) fn deinit_for_exit(&mut self) {
         if self.active_file.is_some() {
-            self.exit_file();
+            self.detach_active_file();
         }
         self.reset_hook_scope_for_test_isolation();
         // `pending_then_refs` holds the `+1` `RefData` ref taken at
@@ -667,20 +668,36 @@ impl BunTestRoot {
         self.active_file = Some(bun_test);
     }
 
-    pub(crate) fn exit_file(&mut self) {
+    /// Raw `this`: the reporter owns this root (via `jest`), so the flush must
+    /// run while no `&mut BunTestRoot` is live.
+    ///
+    /// # Safety
+    /// `this` is valid; caller holds no reference into the reporter.
+    pub(crate) unsafe fn exit_file(this: *mut Self) {
+        // SAFETY: caller contract; field read through the raw pointer.
+        let reporter = unsafe {
+            (*core::ptr::addr_of!((*this).active_file))
+                .as_ref()
+                .and_then(|active| *core::ptr::addr_of!((*active.as_ptr()).reporter))
+        };
+        if let Some(reporter) = reporter {
+            // Safety net for paths that skip the per-file flush.
+            // SAFETY: reporter outlives every BunTest; no other borrow live.
+            unsafe { (*reporter.as_ptr()).flush_file_block() };
+        }
+        // SAFETY: caller contract; flush done, so no reporter borrow is live.
+        unsafe { (*this).detach_active_file() };
+    }
+
+    /// Callers flush the reporter first; see `exit_file`.
+    fn detach_active_file(&mut self) {
         let _g = group_begin!();
 
         debug_assert!(self.active_file.is_some());
         if let Some(active) = &self.active_file {
             // SAFETY: single-threaded; no other `&mut BunTest` is live during
             // teardown. Write goes through `UnsafeCell` (see `BunTestCell::get`).
-            let active = active.get();
-            if let Some(reporter) = active.reporter {
-                // Safety net for paths that skip the per-file flush.
-                // SAFETY: reporter outlives every BunTest; no other borrow live.
-                unsafe { (*reporter.as_ptr()).flush_file_block() };
-            }
-            active.reporter = None;
+            active.get().reporter = None;
         }
         self.active_file = None; // drops the Rc (deinit)
     }

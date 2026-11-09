@@ -3343,6 +3343,8 @@ pub(crate) struct CommandLineReporter {
     /// `(fail) file:line > scope > name` + diagnostic per failure, printed at
     /// end of run. Unbounded.
     pub(crate) failure_report: Vec<u8>,
+    /// Entries in `failure_report`; heads the report.
+    pub(crate) failure_report_count: u32,
     /// `unhandled_errors_between_tests` when the current file started.
     pub(crate) unhandled_at_file_start: u32,
 
@@ -3524,6 +3526,7 @@ impl CommandLineReporter {
             ParallelRunner::worker_emit_failure_diagnostic(idx, &entry);
         } else {
             self.failure_report.extend_from_slice(&entry);
+            self.failure_report_count += 1;
         }
     }
 
@@ -3538,7 +3541,10 @@ impl CommandLineReporter {
         let _ = writeln!(entry, " {}", bstr::BStr::new(title));
         match self.worker_ipc_file_idx {
             Some(idx) => ParallelRunner::worker_emit_failure_diagnostic(idx, &entry),
-            None => self.failure_report.extend_from_slice(&entry),
+            None => {
+                self.failure_report.extend_from_slice(&entry);
+                self.failure_report_count += 1;
+            }
         }
     }
 
@@ -3624,7 +3630,7 @@ impl CommandLineReporter {
         if self.failure_report.is_empty() {
             return;
         }
-        let fail = self.summary().fail;
+        let fail = core::mem::take(&mut self.failure_report_count);
         pretty_error!(
             "\n<r><d>{} test{} failed:<r>\n",
             fail,
@@ -4196,6 +4202,7 @@ impl CommandLineReporter {
         vm.run_with_api_lock_mut(VirtualMachine::on_exit);
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
+        self.flush_file_block();
         self.jest.bun_test_root.deinit_for_exit();
         // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
         // no concurrent reader exists on this shutdown path.
@@ -4694,6 +4701,7 @@ impl TestCommand {
             },
             pending_diagnostics: Vec::new(),
             failure_report: Vec::new(),
+            failure_report_count: 0,
             unhandled_at_file_start: 0,
             reporters: ReportersConfig::default(),
             timings: if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
@@ -5730,6 +5738,7 @@ impl TestCommand {
         // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
         // before dropping `reporter` so finalizers running inside the GC can't
         // observe a dangling `TestRunner`.
+        reporter.flush_file_block();
         reporter.jest.bun_test_root.deinit_for_exit();
         // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
         // no concurrent reader exists on this shutdown path.
@@ -6277,7 +6286,7 @@ struct EnteredFile<'a> {
 impl Drop for EnteredFile<'_> {
     fn drop(&mut self) {
         // SAFETY: `bun_test_root` belongs to `Jest::runner()`, which lives as long as the process.
-        unsafe { (*self.bun_test_root).exit_file() };
+        unsafe { bun_test::BunTestRoot::exit_file(self.bun_test_root) };
         // A mock.module() patch still pending must not hold up the next file.
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
         bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(self.global, self.next_load_shares_global);

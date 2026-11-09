@@ -1972,7 +1972,7 @@ describe("bun test", () => {
   });
 });
 
-describe("nested describe output", () => {
+describe.concurrent("nested describe output", () => {
   const fixture = `
     import { describe, expect, it } from "bun:test";
     describe("group one", () => {

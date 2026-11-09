@@ -1057,7 +1057,8 @@ impl<'a> Coordinator<'a> {
 
                 w.read_output_written_so_far();
                 self.flush_captured(w);
-                self.flush_block(idx, unhandled > 0);
+                let worker_printed = self.header_printed_by_worker == Some(idx);
+                self.flush_block(idx, unhandled > 0 && !worker_printed);
                 // Serial output names every file, even one with nothing to show.
                 if !self.dots && !self.reporter.reporters.only_failures {
                     self.ensure_header(idx);
@@ -1164,6 +1165,7 @@ impl<'a> Coordinator<'a> {
                 let entry = rd.str();
                 if w.inflight == Some(idx) {
                     self.reporter.failure_report.extend_from_slice(entry);
+                    self.reporter.failure_report_count += 1;
                 }
             }
             frame::Kind::Run | frame::Kind::Shutdown => {}

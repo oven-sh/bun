@@ -64,9 +64,9 @@ pub(crate) struct Coordinator<'a> {
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
     pub(crate) last_header_idx: Option<u32>,
-    /// Buffered blocks of the files in flight, keyed by file index; each is
-    /// rendered whole on the file's `FileDone`.
-    pub(crate) blocks: Vec<(u32, FileBlock)>,
+    /// Buffered blocks of the files in flight, keyed by file index and
+    /// `--rerun-each` run (0 when not rerunning); rendered on the file's `FileDone`.
+    pub(crate) blocks: Vec<(u32, u32, FileBlock)>,
     /// Where the run ends as in one process: the file that the worker has begun. It has printed the header itself.
     pub(crate) header_printed_by_worker: Option<u32>,
     pub frame: Frame,
@@ -334,6 +334,7 @@ impl<'a> Coordinator<'a> {
     fn abort_all(&mut self, signal: i32) {
         abort_handler::uninstall();
         self.end_builds();
+        self.flush_all_blocks();
         let now = bun_core::time::milli_timestamp();
         let workers = &self.workers[..self.spawned_count as usize];
         let running: Vec<(u32, i64)> = workers
@@ -848,50 +849,70 @@ impl<'a> Coordinator<'a> {
         )
     }
 
-    fn block_for(&mut self, file_idx: u32) -> &mut FileBlock {
-        let i = match self.blocks.iter().position(|(idx, _)| *idx == file_idx) {
+    fn block_for(&mut self, file_idx: u32, run: u32) -> &mut FileBlock {
+        let i = match self
+            .blocks
+            .iter()
+            .position(|b| b.0 == file_idx && b.1 == run)
+        {
             Some(i) => i,
             None => {
-                self.blocks.push((file_idx, FileBlock::default()));
+                self.blocks.push((file_idx, run, FileBlock::default()));
                 self.blocks.len() - 1
             }
         };
-        &mut self.blocks[i].1
+        &mut self.blocks[i].2
     }
 
-    /// Render `file_idx`'s buffered block under a `path:` header carrying the
-    /// file's aggregate glyph.
-    fn flush_block(&mut self, file_idx: u32) {
-        let Some(i) = self.blocks.iter().position(|(idx, _)| *idx == file_idx) else {
+    /// Render `file_idx`'s buffered blocks, one per `--rerun-each` run, each
+    /// under a `path:` header carrying its aggregate glyph. `file_error`: the
+    /// file reported an error outside any test.
+    fn flush_block(&mut self, file_idx: u32, file_error: bool) {
+        let mut runs: Vec<(u32, FileBlock)> = Vec::new();
+        let mut i = 0;
+        while i < self.blocks.len() {
+            if self.blocks[i].0 == file_idx {
+                let (_, run, block) = self.blocks.remove(i);
+                runs.push((run, block));
+            } else {
+                i += 1;
+            }
+        }
+        runs.sort_by_key(|(run, _)| *run);
+        let has_rows = runs.iter().any(|(_, block)| !block.is_empty());
+        if !has_rows && !file_error {
             return;
-        };
-        let (_, mut block) = self.blocks.swap_remove(i);
-        if block.is_empty() {
-            return;
+        }
+        if runs.is_empty() {
+            runs.push((0, FileBlock::default()));
         }
         self.break_dots();
         self.end_group();
         self.last_header_idx = Some(file_idx);
-        let glyph = test_command::fmt_status_text_line(
-            block.file_status(),
-            Output::enable_ansi_colors_stderr(),
-        );
         let file_prefix: &[u8] = match Output::is_github_action() {
             true => b"::group::",
             false => b"",
         };
         let mut out: Vec<u8> = Vec::new();
-        let path = self.rel_path(file_idx);
-        test_command::write_file_header(&glyph, file_prefix, path, None, &mut out);
-        block.render_and_clear(&mut out);
+        for (n, (run, mut block)) in runs.into_iter().enumerate() {
+            let glyph = test_command::fmt_status_text_line(
+                block.file_status(file_error),
+                Output::enable_ansi_colors_stderr(),
+            );
+            let prefix = if n == 0 { file_prefix } else { b"" };
+            let path = self.rel_path(file_idx);
+            let run = (run > 0).then_some(run);
+            test_command::write_file_header(&glyph, prefix, path, run, &mut out);
+            block.render_and_clear(&mut out);
+        }
         let _ = Output::error_writer().write_all(&out);
         Output::flush();
     }
 
-    /// Bail/crash paths end without a `FileDone`; show what each file reported.
+    /// Bail/crash/interrupt paths end without a `FileDone`; show what each file reported.
     fn flush_all_blocks(&mut self) {
-        while let Some(&(idx, _)) = self.blocks.first() {
-            self.flush_block(idx);
+        while let Some(&(idx, _, _)) = self.blocks.first() {
+            self.flush_block(idx, false);
         }
     }
 
@@ -983,8 +1004,12 @@ impl<'a> Coordinator<'a> {
                         runner::decode_test_case(&mut frame::Reader { p: rd.p }, b"")
                 {
                     let status = test.status.basic_result();
-                    let block = self.block_for(idx);
-                    block.push(test.scopes.iter().copied(), status, formatted.to_vec());
+                    let block = self.block_for(idx, test.run);
+                    block.push(
+                        test.scopes.iter().map(|s| (s.name, s.id)),
+                        status,
+                        formatted.to_vec(),
+                    );
                     return;
                 }
                 // dots-mode failures print a full line (writeTestStatusLine);
@@ -1032,7 +1057,11 @@ impl<'a> Coordinator<'a> {
 
                 w.read_output_written_so_far();
                 self.flush_captured(w);
-                self.flush_block(idx);
+                self.flush_block(idx, unhandled > 0);
+                // Serial output names every file, even one with nothing to show.
+                if !self.dots && !self.reporter.reporters.only_failures {
+                    self.ensure_header(idx);
+                }
                 if self.last_header_idx == Some(idx) {
                     self.end_group();
                 }
@@ -1396,7 +1425,7 @@ impl<'a> Coordinator<'a> {
     }
 
     fn account_unfinished(&mut self, file_idx: u32, reason: &[u8]) {
-        self.flush_block(file_idx);
+        self.flush_block(file_idx, false);
         self.break_dots();
         bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
@@ -1432,7 +1461,7 @@ impl<'a> Coordinator<'a> {
         dispatched_at: i64,
         detail: core::fmt::Arguments<'_>,
     ) {
-        self.flush_block(file_idx);
+        self.flush_block(file_idx, false);
         self.break_dots();
         bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
@@ -1460,7 +1489,7 @@ impl<'a> Coordinator<'a> {
     /// and the panic's stderr (already flushed via flushCaptured) is the
     /// last meaningful output, not buried under hundreds of later passes.
     fn abort_on_worker_panic(&mut self, file_idx: u32, status: &SpawnStatus) {
-        self.flush_block(file_idx);
+        self.flush_block(file_idx, false);
         self.break_dots();
         let mut buf = [0u8; 32];
         bun_core::pretty_error!(

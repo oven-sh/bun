@@ -15,7 +15,7 @@ pub(crate) enum Kind {
     /// block, the structured result (`runner::encode_test_case`), whose status
     /// and scopes place the line in the block: u32 status, u32 assertions,
     /// u64 elapsed_ns, u32 line, str name, u32 n × {str scope_name,
-    /// u32 scope_line}, u32 has_failure [, str name, str message, str body, u32 uncaught]
+    /// u32 scope_line, u64 scope_id}, u32 run, u32 has_failure [, str name, str message, str body, u32 uncaught]
     TestDone,
     /// 10 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label,
     /// files, shuffled, unhandled; u64 elapsed_ns; 4 × u32, 0 where nobody measures: the megabytes by which the worker grew at most, those of its largest child,

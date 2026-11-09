@@ -36,6 +36,7 @@ pub(crate) fn replay_test_records(coord: &mut Coordinator) {
             let unfinished = TestCaseReport {
                 file: rel,
                 scopes: Vec::new(),
+                run: 0,
                 name,
                 status: TestResult::Fail,
                 assertions: 0,

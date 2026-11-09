@@ -2084,11 +2084,119 @@ describe("nested describe output", () => {
       "nested-output-parallel",
     );
 
-    const block = stderr.slice(stderr.indexOf("(pass) group one"), stderr.indexOf("(pass) top level"));
+    const block = [
+      "(pass) group one",
+      "  (pass) sub A",
+      "    (pass) zero",
+      "    (pass) one",
+      "  (pass) four",
+      "(pass) group two",
+      "  (pass) five",
+      "  (skip) six",
+      "  (todo) seven",
+      "(pass) top level",
+    ].join("\n");
     for (const file of ["a.test.ts", "b.test.ts"]) {
-      expect(stderr).toContain(`(pass) ${file}:\n${block}(pass) top level`);
+      expect(stderr).toContain(`(pass) ${file}:\n${block}`);
     }
     expect(exitCode).toBe(0);
+  });
+
+  test.each([[[]], [["--parallel=2"]]])("same-named sibling describes stay separate %j", async args => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, expect, it } from "bun:test";
+          for (const n of [1, 2]) describe("group", () => { it("t" + n, () => { expect(n).toBe(1); }); });
+        `,
+        "b.test.ts": `import { it } from "bun:test"; it("b", () => {});`,
+      },
+      [...args, "a.test.ts", "b.test.ts"],
+      "nested-output-same-name",
+    );
+
+    expect(stderr).toContain("(fail) a.test.ts:\n(pass) group\n  (pass) t1\n(fail) group\n  (fail) t2\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a failure's header names the test file's line when a helper throws", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "helper.ts": `export function boom() {\n  throw new Error("from helper");\n}\n`,
+        "a.test.ts": `import { it } from "bun:test";\nimport { boom } from "./helper";\nit("t", () => { boom(); });\n`,
+      },
+      ["a.test.ts"],
+      "nested-output-helper-line",
+    );
+
+    expect(stderr).toContain("(fail) a.test.ts:3 > t\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("concurrent failures keep their own diagnostics", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { afterEach, describe, test } from "bun:test";
+          describe("conc", () => {
+            // \`ca\`'s afterEach waits for \`cb\`'s, so \`cb\` completes first.
+            const { promise: gate, resolve } = Promise.withResolvers<void>();
+            let n = 0;
+            afterEach(async () => { if (n++ === 0) await gate; else resolve(); });
+            test.concurrent("ca", async () => { throw new Error("from ca"); });
+            test.concurrent("cb", async () => { await 1; throw new Error("from cb"); });
+          });
+        `,
+      },
+      ["a.test.ts"],
+      "nested-output-concurrent-diagnostics",
+    );
+
+    const report = stderr.slice(stderr.indexOf("2 tests failed:"));
+    for (const name of ["ca", "cb"]) {
+      const section = report.slice(report.indexOf(`> conc > ${name}\n`)).split("(fail) ")[0];
+      expect(section).toContain(`error: from ${name}`);
+    }
+    expect(exitCode).toBe(1);
+  });
+
+  test("an error outside any test fails the file's header", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { afterAll, it } from "bun:test";
+          it("ok", () => {});
+          afterAll(() => { Promise.reject(new Error("late")); });
+        `,
+      },
+      ["a.test.ts"],
+      "nested-output-file-error",
+    );
+
+    expect(stderr).toContain("(fail) a.test.ts:\n(pass) ok\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--parallel names a file with no results and keeps reruns apart", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `import { describe, it } from "bun:test"; describe("d", () => { it("t", () => {}); });`,
+        "empty.test.ts": `export {};`,
+      },
+      ["--parallel=2", "--rerun-each=2", "a.test.ts", "empty.test.ts"],
+      "nested-output-parallel-empty-rerun",
+    );
+
+    expect(stderr).toContain("(pass) a.test.ts: (run #1)\n(pass) d\n  (pass) t\n");
+    expect(stderr).toContain("(pass) a.test.ts: (run #2)\n(pass) d\n  (pass) t\n");
+    expect(stderr).toContain("\nempty.test.ts:\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("flattenNestedTestOutput treats a file path with spaces as a header", () => {
+    expect(flattenNestedTestOutput("(pass) my test.test.ts:\n(pass) t\n(pass) d\n  (pass) u")).toBe(
+      "my test.test.ts:\n(pass) t\n(pass) d > u",
+    );
   });
 
   const failing = (name: string) => `

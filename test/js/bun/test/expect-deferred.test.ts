@@ -21,11 +21,8 @@ async function run(cmd: string[], files: Record<string, string>, written: string
     // A matcher that blocks on a never-settling promise can't be stopped by the child's own test timeout.
     timeout: 60_000,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text().then(flattenNestedTestOutput),
-    proc.exited,
-  ]);
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = flattenNestedTestOutput(rawStderr);
   const results = stderr
     .split("\n")
     .filter(line => /^\((pass|fail|skip|todo)\)/.test(line))
@@ -38,6 +35,7 @@ async function run(cmd: string[], files: Record<string, string>, written: string
   return {
     stdout: stdout.split("\n").filter(line => line && !line.startsWith("bun test v")),
     stderr,
+    rawStderr,
     results,
     report,
     exitCode,
@@ -280,8 +278,28 @@ describe.concurrent(".resolves and .rejects", () => {
         await matcher.catch(() => console.log("handled later: caught"));
       });
     `;
-    const { stdout, stderr, report, exitCode } = await runTests(source);
+    const { stdout, stderr, rawStderr, report, exitCode } = await runTests(source);
     expect(stdout).toEqual(["passes: checked", "handled later: caught"]);
+    // Each batched diagnostic's header, with the errors listed beneath it.
+    const diagnostics = rawStderr
+      .split("\n")
+      .filter(line => /^\(fail\) a\.test\.js:\d+ > |^error: /.test(line))
+      .map(line => line.replace(/^\(fail\) a\.test\.js:\d+ > /, "> "));
+    expect(diagnostics).toMatchInlineSnapshot(`
+      [
+        "> fails",
+        "error: expect(received).toBe(expected)",
+        "> async",
+        "error: expect(received).toBe(expected)",
+        "> done",
+        "error: expect(received).toBe(expected)",
+        "> several",
+        "error: expect(received).toBe(expected)",
+        "error: expect(received).rejects.toBe(expected)",
+        "> handled later",
+        "error: expect(received).toBe(expected)",
+      ]
+    `);
     expect(report).toEqual([
       "(pass) passes",
       "(fail) fails",

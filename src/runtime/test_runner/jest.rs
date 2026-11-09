@@ -84,6 +84,14 @@ impl CurrentFile {
         self.header_pending
     }
 
+    /// 1-based `--rerun-each` run, or 0 when not rerunning.
+    pub(crate) fn run_number(&self) -> u32 {
+        match self.repeat_info.count > 1 {
+            true => self.repeat_info.index + 1,
+            false => 0,
+        }
+    }
+
     pub(crate) fn clear_header_pending(&mut self) {
         self.header_pending = false;
     }

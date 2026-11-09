@@ -2430,6 +2430,8 @@ export function exampleSite(protocol: "https" | "http" = "https") {
  */
 export function flattenNestedTestOutput(output: string): string {
   const glyph = /^((?:  )*)(\((?:pass|fail|skip|todo|pending)\)) (.*)$/;
+  // A test file path, which may contain spaces.
+  const fileHeader = /^\S(?:.*\S)?\.[cm]?[jt]sx?:(?: \(run #\d+\))?$/;
   const lines = output.split("\n");
   const out: string[] = [];
   const scopes: string[] = [];
@@ -2443,7 +2445,7 @@ export function flattenNestedTestOutput(output: string): string {
     // Headers naming a batched failure's file and test, not results.
     if (inReport && m && m[1] === "" && m[2] === "(fail)") continue;
     if (!m) {
-      if (/^\S+:(?: \(run #\d+\))?$/.test(line)) lastHeader = line;
+      if (fileHeader.test(line)) lastHeader = line;
       // `  ^ this test …` explanations are indented with their result line.
       if (lastIndent && line.startsWith(lastIndent + "  ^ ")) line = line.slice(lastIndent.length);
       out.push(line);
@@ -2454,7 +2456,7 @@ export function flattenNestedTestOutput(output: string): string {
     // A file header: `(pass) path:` at depth 0.
     if (
       depth === 0 &&
-      /^\S+:(?: \(run #\d+\))?$/.test(m[3]) &&
+      fileHeader.test(m[3]) &&
       (next || lines[i + 1] === undefined || lines[i + 1] === "")
     ) {
       scopes.length = 0;

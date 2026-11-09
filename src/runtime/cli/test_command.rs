@@ -6,7 +6,7 @@ use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
 use crate::cli::test::timings::Timings;
-use bun_collections::BoundedArray;
+use bun_collections::{BoundedArray, HashMap};
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
@@ -2174,7 +2174,6 @@ enum GroupItem {
 #[derive(Default)]
 struct GroupNode {
     name: Vec<u8>,
-    line: u32,
     /// Tests and sub-describes in first-appearance order.
     items: Vec<GroupItem>,
 }
@@ -2188,6 +2187,8 @@ pub(crate) struct FileBlock {
     /// Node 0 is the file root; children always sit at a higher index than
     /// their parent, which `aggregate` relies on.
     nodes: Vec<GroupNode>,
+    /// `(parent node, scope id)` → child node.
+    children: HashMap<(u32, u64), u32>,
 }
 
 impl FileBlock {
@@ -2195,38 +2196,33 @@ impl FileBlock {
         self.rows.is_empty()
     }
 
-    /// `scopes`: named describes, outermost first, as `(name, line)`.
+    /// `scopes`: named describes, outermost first, as `(name, scope id)`.
     pub(crate) fn push<'s>(
         &mut self,
-        scopes: impl Iterator<Item = (&'s [u8], u32)>,
+        scopes: impl Iterator<Item = (&'s [u8], u64)>,
         status: bun_test::BasicResult,
         body: Vec<u8>,
     ) {
         if self.nodes.is_empty() {
             self.nodes.push(GroupNode::default());
         }
-        let mut cur = 0usize;
-        for (name, line) in scopes.filter(|(n, _)| !n.is_empty()) {
-            let existing = self.nodes[cur].items.iter().find_map(|it| match *it {
-                GroupItem::Group(g)
-                    if self.nodes[g as usize].line == line
-                        && self.nodes[g as usize].name == name =>
-                {
-                    Some(g as usize)
+        let mut cur = 0u32;
+        for (name, id) in scopes.filter(|(n, _)| !n.is_empty()) {
+            cur = match self.children.get(&(cur, id)) {
+                Some(&g) => g,
+                None => {
+                    let g = self.nodes.len() as u32;
+                    self.nodes.push(GroupNode {
+                        name: name.to_vec(),
+                        items: Vec::new(),
+                    });
+                    self.nodes[cur as usize].items.push(GroupItem::Group(g));
+                    self.children.insert((cur, id), g);
+                    g
                 }
-                _ => None,
-            });
-            cur = existing.unwrap_or_else(|| {
-                let g = self.nodes.len();
-                self.nodes.push(GroupNode {
-                    name: name.to_vec(),
-                    line,
-                    items: Vec::new(),
-                });
-                self.nodes[cur].items.push(GroupItem::Group(g as u32));
-                g
-            });
+            };
         }
+        let cur = cur as usize;
         let row = self.rows.len() as u32;
         self.nodes[cur].items.push(GroupItem::Row(row));
         self.rows.push((status, body));
@@ -2245,13 +2241,15 @@ impl FileBlock {
         aggs
     }
 
-    /// Worst-case status of the whole file. Only meaningful when non-empty.
-    pub(crate) fn file_status(&self) -> bun_test::Execution::Result {
-        self.aggregate()
-            .first()
-            .copied()
-            .unwrap_or_default()
-            .worst()
+    /// Worst-case status of the whole file; `file_error` (an error outside any
+    /// test) forces fail. Only meaningful when non-empty or `file_error`.
+    pub(crate) fn file_status(&self, file_error: bool) -> bun_test::Execution::Result {
+        let agg = self.aggregate().first().copied().unwrap_or_default();
+        agg.merge(Agg {
+            fail: file_error,
+            ..Agg::default()
+        })
+        .worst()
     }
 
     /// Render rows and describe headers, then reset for the next file.
@@ -2263,6 +2261,7 @@ impl FileBlock {
         }
         self.rows.clear();
         self.nodes.clear();
+        self.children.clear();
     }
 
     fn render_node(
@@ -2300,8 +2299,18 @@ impl FileBlock {
 }
 
 fn write_indent(writer: &mut impl bun_io::Write, depth: usize) {
-    let n = core::cmp::min(depth * 2, INDENT_SPACES.len());
-    let _ = writer.write_all(&INDENT_SPACES[..n]);
+    let mut n = depth * 2;
+    while n > 0 {
+        let chunk = core::cmp::min(n, INDENT_SPACES.len());
+        let _ = writer.write_all(&INDENT_SPACES[..chunk]);
+        n -= chunk;
+    }
+}
+
+/// Stable for the scope's lifetime, which spans the file's run. Distinguishes
+/// same-named siblings, whose `line_no` is 0 unless JUnit is on.
+fn scope_id(scope: &bun_test::DescribeScope) -> u64 {
+    core::ptr::from_ref(scope) as usize as u64
 }
 
 /// `process.exit()` inside a test never reaches the end of the file or run, so
@@ -2363,12 +2372,22 @@ pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct ReportScope<'a> {
+    pub name: &'a [u8],
+    pub line: u32,
+    /// See `scope_id`.
+    pub id: u64,
+}
+
 /// One finished test as structured reporters see it.
 pub(crate) struct TestCaseReport<'a> {
     /// Relative to the project root.
     pub file: &'a [u8],
-    /// Enclosing named `describe` blocks, outermost first: (name, line).
-    pub scopes: Vec<(&'a [u8], u32)>,
+    /// Enclosing named `describe` blocks, outermost first.
+    pub scopes: Vec<ReportScope<'a>>,
+    /// `--rerun-each` run number (1-based), or 0 when not rerunning.
+    pub run: u32,
     pub name: &'a [u8],
     pub status: bun_test::Execution::Result,
     pub assertions: u32,
@@ -2950,8 +2969,8 @@ impl JunitReporter {
 
         if self.suites == JunitSuites::Flat {
             let mut name: Vec<u8> = Vec::new();
-            for &(scope, _) in &t.scopes {
-                name.extend_from_slice(scope);
+            for scope in &t.scopes {
+                name.extend_from_slice(scope.name);
                 name.extend_from_slice(b" > ");
             }
             name.extend_from_slice(t.name);
@@ -2960,7 +2979,7 @@ impl JunitReporter {
 
         // Only the flat form includes describe blocks with an empty title, like Vitest.
         let mut scopes = t.scopes.clone();
-        scopes.retain(|(name, _)| !name.is_empty());
+        scopes.retain(|s| !s.name.is_empty());
 
         // Keep the longest prefix of open describe suites that matches
         // `scopes`; close the rest, then open what is missing.
@@ -2968,22 +2987,22 @@ impl JunitReporter {
         let keep = open
             .iter()
             .zip(&scopes)
-            .take_while(|(suite, (name, _))| strings::eql(&suite.name, name))
+            .take_while(|(suite, scope)| strings::eql(&suite.name, scope.name))
             .count();
         for _ in keep..open.len() {
             self.end_test_suite(None)?;
         }
-        for &(name, line) in &scopes[keep..] {
-            self.begin_test_suite_with_line(name, line, false)?;
+        for scope in &scopes[keep..] {
+            self.begin_test_suite_with_line(scope.name, scope.line, false)?;
         }
 
         // Innermost scope first, matching what the serial reporter always did.
         let mut class_name: Vec<u8> = Vec::new();
-        for (i, &(name, _)) in scopes.iter().rev().enumerate() {
+        for (i, scope) in scopes.iter().rev().enumerate() {
             if i > 0 {
                 class_name.extend_from_slice(b" > ");
             }
-            class_name.extend_from_slice(name);
+            class_name.extend_from_slice(scope.name);
         }
 
         self.write_test_case(t, t.name, &class_name)
@@ -3311,17 +3330,21 @@ pub(crate) struct CommandLineReporter {
     /// Result lines for the file being reported, rendered as one block when it
     /// finishes. Unused by `--dots`, which streams.
     pub(crate) file_block: FileBlock,
-    /// Diagnostics for the failure currently being reported.
-    /// `begin_diagnostic_capture` points `VirtualMachine::error_writer_override`
-    /// here; `handle_test_completed` moves it into `failure_report`.
-    pub(crate) pending_diagnostic: bun_core::io::VecWriter,
-    /// Throw-site line of the pending diagnostic's first frame, or 0.
-    pub(crate) pending_diagnostic_line: u32,
-    /// JUnit's `Option<TestFailure>` slot for the capture in progress, or null.
-    pending_junit_failure: *mut Option<TestFailure>,
+    /// Sink for one `run_error_handler`; `begin_diagnostic_capture` points
+    /// `VirtualMachine::error_writer_override` here and
+    /// `end_diagnostic_capture` moves the bytes into `pending_diagnostics`.
+    capture_writer: bun_core::io::VecWriter,
+    /// The print callback's state, kept apart from `capture_writer` so the
+    /// callback never borrows the reporter while the writer is in use.
+    capture: DiagnosticCapture,
+    /// Captured diagnostics per execution sequence, held until that test
+    /// completes so concurrent tests keep their own.
+    pending_diagnostics: Vec<PendingDiagnostic>,
     /// `(fail) file:line > scope > name` + diagnostic per failure, printed at
     /// end of run. Unbounded.
     pub(crate) failure_report: Vec<u8>,
+    /// `unhandled_errors_between_tests` when the current file started.
+    pub(crate) unhandled_at_file_start: u32,
 
     pub(crate) reporters: ReportersConfig,
 
@@ -3334,6 +3357,22 @@ pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
     pub(crate) only_failures: bool,
     pub(crate) junit: Option<Box<JunitReporter>>,
+}
+
+struct DiagnosticCapture {
+    /// Throw-site line in the test file, or 0.
+    line: u32,
+    /// JUnit's `Option<TestFailure>` slot for the capture in progress, or null.
+    junit_failure: *mut Option<TestFailure>,
+    /// The test file, relative to the project root as stack frames are.
+    file: Vec<u8>,
+}
+
+struct PendingDiagnostic {
+    /// `ExecutionSequence` address.
+    sequence: usize,
+    line: u32,
+    bytes: Vec<u8>,
 }
 
 impl CommandLineReporter {
@@ -3364,6 +3403,17 @@ impl CommandLineReporter {
     /// Render the finished file's buffered block, led by its `path:` header with
     /// the file's aggregate glyph. Idempotent: also called on bail/exit paths.
     pub(crate) fn flush_file_block(&mut self) {
+        self.render_file_block();
+        // Captured for a test that never completed; its sequence dies with the file.
+        if !self.pending_diagnostics.is_empty() {
+            for pending in core::mem::take(&mut self.pending_diagnostics) {
+                let _ = Output::error_writer().write_all(&pending.bytes);
+            }
+            Output::flush();
+        }
+    }
+
+    fn render_file_block(&mut self) {
         if self.reporters.dots || !self.jest.current_file.header_pending() {
             return;
         }
@@ -3373,10 +3423,15 @@ impl CommandLineReporter {
             return;
         }
         let colors = Output::enable_ansi_colors_stderr();
+        // Errors outside any test (e.g. during file cleanup) fail the file.
+        let file_error = self.jest.unhandled_errors_between_tests > self.unhandled_at_file_start;
         // A file with no results keeps a bare `path:` header.
-        let glyph = match self.file_block.is_empty() {
+        let glyph = match self.file_block.is_empty() && !file_error {
             true => None,
-            false => Some(fmt_status_text_line(self.file_block.file_status(), colors)),
+            false => Some(fmt_status_text_line(
+                self.file_block.file_status(file_error),
+                colors,
+            )),
         };
         let mut out: Vec<u8> = Vec::new();
         self.jest
@@ -3424,14 +3479,23 @@ impl CommandLineReporter {
     fn drain_pending_diagnostic(
         &mut self,
         basic: bun_test::BasicResult,
+        sequence: &bun_test::Execution::ExecutionSequence,
         scopes: &[&bun_test::DescribeScope],
         test_entry: &bun_test::ExecutionEntry,
     ) {
-        let line = core::mem::take(&mut self.pending_diagnostic_line);
-        if self.pending_diagnostic.is_empty() {
+        let key = core::ptr::from_ref(sequence) as usize;
+        let Some(i) = self
+            .pending_diagnostics
+            .iter()
+            .position(|p| p.sequence == key)
+        else {
             return;
-        }
-        let diagnostic = self.pending_diagnostic.take();
+        };
+        let PendingDiagnostic {
+            line,
+            bytes: diagnostic,
+            ..
+        } = self.pending_diagnostics.remove(i);
         if basic != bun_test::BasicResult::Fail {
             // A `.todo` that threw, or a retry that passed: inline, as before.
             self.jest.current_file.print_if_needed();
@@ -3478,40 +3542,79 @@ impl CommandLineReporter {
         }
     }
 
-    /// Point the VM's error output at `pending_diagnostic` for one
-    /// `run_error_handler`. There is one `on_print_error_zig_exception` slot,
-    /// so JUnit's recorder (`junit_failure`, may be null) is forwarded to.
+    /// Point the VM's error output at `capture_writer` for one
+    /// `run_error_handler`. There is one
+    /// `on_print_error_zig_exception` slot, so JUnit's recorder
+    /// (`junit_failure`, may be null) is forwarded to.
     pub(crate) fn begin_diagnostic_capture(
         &mut self,
         vm: &mut VirtualMachine,
         junit_failure: *mut Option<TestFailure>,
     ) {
-        self.pending_junit_failure = junit_failure;
+        self.capture.line = 0;
+        self.capture.junit_failure = junit_failure;
+        self.capture.file.clear();
+        self.capture
+            .file
+            .extend_from_slice(self.jest.current_file.title());
         vm.error_writer_override =
-            core::ptr::NonNull::new(core::ptr::from_mut(self.pending_diagnostic.interface()));
+            core::ptr::NonNull::new(core::ptr::from_mut(self.capture_writer.interface()));
         vm.on_print_error_zig_exception = Some(Self::capture_failure_cb);
-        vm.on_print_error_zig_exception_ctx = core::ptr::from_mut(self).cast();
+        vm.on_print_error_zig_exception_ctx = core::ptr::from_mut(&mut self.capture).cast();
     }
 
-    pub(crate) fn end_diagnostic_capture(&mut self, vm: &mut VirtualMachine) {
-        self.pending_junit_failure = core::ptr::null_mut();
+    pub(crate) fn end_diagnostic_capture(
+        &mut self,
+        vm: &mut VirtualMachine,
+        sequence: *const bun_test::Execution::ExecutionSequence,
+    ) {
         vm.error_writer_override = None;
         vm.on_print_error_zig_exception = None;
         vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+        self.capture.junit_failure = core::ptr::null_mut();
+        let bytes = self.capture_writer.take();
+        if bytes.is_empty() {
+            return;
+        }
+        let key = sequence as usize;
+        let line = self.capture.line;
+        match self
+            .pending_diagnostics
+            .iter_mut()
+            .find(|p| p.sequence == key)
+        {
+            Some(p) => {
+                p.bytes.extend_from_slice(&bytes);
+                if p.line == 0 {
+                    p.line = line;
+                }
+            }
+            None => self.pending_diagnostics.push(PendingDiagnostic {
+                sequence: key,
+                line,
+                bytes,
+            }),
+        }
     }
 
     fn capture_failure_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException<'_>) {
-        // SAFETY: set to `&mut CommandLineReporter` by `begin_diagnostic_capture`
-        // for one `run_error_handler`; single-threaded, no other borrow live.
-        let this = unsafe { &mut *ctx.cast::<CommandLineReporter>() };
-        if this.pending_diagnostic_line == 0
-            && let Some(frame) = exception.stack.frames().first()
-            && frame.position.line.is_valid()
-        {
-            this.pending_diagnostic_line = frame.position.line.one_based() as u32;
+        // SAFETY: set to `&mut self.capture` by `begin_diagnostic_capture` for one
+        // `run_error_handler`; disjoint from `capture_writer`, single-threaded.
+        let capture = unsafe { &mut *ctx.cast::<DiagnosticCapture>() };
+        if capture.line == 0 {
+            let dir = FileSystem::get().top_level_dir();
+            // The first frame may be in a helper the test imported.
+            let frame = exception.stack.frames().iter().find(|frame| {
+                let url = frame.source_url.to_utf8();
+                frame.position.line.is_valid()
+                    && jsc::ZigStackFrame::relative_source_url(dir, url.slice()) == capture.file
+            });
+            if let Some(frame) = frame {
+                capture.line = frame.position.line.one_based() as u32;
+            }
         }
-        if !this.pending_junit_failure.is_null() {
-            TestFailure::record_cb(this.pending_junit_failure.cast(), exception);
+        if !capture.junit_failure.is_null() {
+            TestFailure::record_cb(capture.junit_failure.cast(), exception);
         }
     }
 
@@ -3757,7 +3860,7 @@ impl CommandLineReporter {
         let file = junit_file_name(file);
 
         // Innermost first while walking up; reversed below.
-        let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
+        let mut scopes: Vec<ReportScope<'a>> = Vec::new();
         let mut parent = test_entry.base.parent.map(|p| p.cast_const());
         while let Some(scope) = parent {
             if scopes.len() == 64 {
@@ -3766,7 +3869,11 @@ impl CommandLineReporter {
             // SAFETY: describe scopes outlive the file's test run.
             let scope: &'a bun_test::DescribeScope = unsafe { &*scope };
             if let Some(name) = scope.base.name.as_deref() {
-                scopes.push((name, scope.base.line_no));
+                scopes.push(ReportScope {
+                    name,
+                    line: scope.base.line_no,
+                    id: scope_id(scope),
+                });
             }
             parent = scope.base.parent.map(|p| p.cast_const());
         }
@@ -3775,6 +3882,7 @@ impl CommandLineReporter {
         TestCaseReport {
             file,
             scopes,
+            run: jest::Jest::runner().map_or(0, |r| r.current_file.run_number()),
             name: test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
             status,
             assertions: sequence.expect_call_count,
@@ -3793,6 +3901,7 @@ impl CommandLineReporter {
         let report = TestCaseReport {
             file: junit_file_name(runner.files.items_source()[file_id as usize].path.text),
             scopes: Vec::new(),
+            run: 0,
             name: b"(unhandled error)",
             status: bun_test::Execution::Result::Fail,
             assertions: 0,
@@ -3975,7 +4084,7 @@ impl CommandLineReporter {
         let print_here = |this: &mut CommandLineReporter| match nested {
             true => {
                 let scopes = scopes_stack.as_slice().iter().rev();
-                let scopes = scopes.map(|s| (Self::scope_name(s), s.base.line_no));
+                let scopes = scopes.map(|s| (Self::scope_name(s), scope_id(s)));
                 this.file_block.push(scopes, basic, formatted_line.to_vec());
             }
             false => {
@@ -4013,7 +4122,7 @@ impl CommandLineReporter {
         }
 
         // First point that knows which test the captured diagnostics belong to.
-        this.drain_pending_diagnostic(basic, scopes_stack.as_slice(), test_entry);
+        this.drain_pending_diagnostic(basic, sequence, scopes_stack.as_slice(), test_entry);
 
         use bun_test::Execution::Result as R;
         match sequence.result {
@@ -4577,10 +4686,15 @@ impl TestCommand {
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
             file_block: FileBlock::default(),
-            pending_diagnostic: bun_core::io::VecWriter::new(),
-            pending_diagnostic_line: 0,
-            pending_junit_failure: core::ptr::null_mut(),
+            capture_writer: bun_core::io::VecWriter::new(),
+            capture: DiagnosticCapture {
+                line: 0,
+                junit_failure: core::ptr::null_mut(),
+                file: Vec::new(),
+            },
+            pending_diagnostics: Vec::new(),
             failure_report: Vec::new(),
+            unhandled_at_file_start: 0,
             reporters: ReportersConfig::default(),
             timings: if ctx.test_options.test_worker || ctx.test_options.timings_files.is_empty() {
                 None
@@ -5901,6 +6015,7 @@ impl TestCommand {
                 reporter.worker_ipc_file_idx.is_some() && !reporter.worker_stands_for_one_process,
                 &reporter.reporters,
             );
+            reporter.unhandled_at_file_start = reporter.jest.unhandled_errors_between_tests;
 
             bun_output::scoped_log!(
                 bun_test,
@@ -6056,7 +6171,11 @@ impl TestCommand {
 
             if failed_to_load {
                 reporter.summary().fail += 1;
-                // Its error already printed; a bare header after it would mislead.
+                // Its error already printed; a bare header after it would mislead,
+                // but results it did produce (e.g. a preload hook's) still show.
+                if !reporter.file_block.is_empty() {
+                    reporter.flush_file_block();
+                }
                 reporter.jest.current_file.clear_header_pending();
                 // It has no test to list under "N tests failed:".
                 if !reporter.reporters.dots && !reporter.reporters.only_failures {

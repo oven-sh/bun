@@ -1625,7 +1625,10 @@ impl BunTest {
         };
 
         let mut unhandled_failure: Option<crate::cli::test_command::TestFailure> = None;
-        let mut capture: Option<NonNull<crate::cli::test_command::CommandLineReporter>> = None;
+        let mut capture: Option<(
+            NonNull<crate::cli::test_command::CommandLineReporter>,
+            *const Execution::ExecutionSequence,
+        )> = None;
         let failure_ctx: *mut core::ffi::c_void = 'ctx: {
             let Some(reporter) = self.reporter else {
                 break 'ctx core::ptr::null_mut();
@@ -1641,7 +1644,7 @@ impl BunTest {
                     // Points into `execution.sequences`, a boxed slice that lives until the file is done.
                     Some((sequence, _)) => {
                         // A test's diagnostics are batched until it completes.
-                        capture = Some(reporter);
+                        capture = Some((reporter, core::ptr::from_ref(&*sequence)));
                         match junit {
                             true => (&raw mut sequence.failure).cast(),
                             false => core::ptr::null_mut(),
@@ -1678,7 +1681,7 @@ impl BunTest {
         }
 
         let vm = global_this.bun_vm().as_mut();
-        if let Some(reporter) = capture {
+        if let Some((reporter, _)) = capture {
             // SAFETY: as above; no other borrow of the reporter is live across the print.
             unsafe { &mut *reporter.as_ptr() }.begin_diagnostic_capture(vm, failure_ctx.cast());
         } else if !failure_ctx.is_null() {
@@ -1687,9 +1690,9 @@ impl BunTest {
             vm.on_print_error_zig_exception_ctx = failure_ctx;
         }
         print_error(vm, global_this, exception, None);
-        if let Some(reporter) = capture {
+        if let Some((reporter, sequence)) = capture {
             // SAFETY: as above.
-            unsafe { &mut *reporter.as_ptr() }.end_diagnostic_capture(vm);
+            unsafe { &mut *reporter.as_ptr() }.end_diagnostic_capture(vm, sequence);
         }
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;

@@ -1,0 +1,153 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`mocks in a Map 1`] = `
+Map {
+  "f" => [MockFunction],
+}
+`;
+
+exports[`mocks in an array 1`] = `
+[
+  [MockFunction],
+  [MockFunction x],
+]
+`;
+
+exports[`mocks in an object 1`] = `
+{
+  "onClick": [MockFunction],
+  "onNamed": [MockFunction named],
+  "plain": [Function],
+}
+`;
+
+exports[`mocks jest.fn() 1`] = `[MockFunction]`;
+
+exports[`mocks jest.fn() after mockClear 1`] = `[MockFunction n]`;
+
+exports[`mocks jest.fn() after mockReset 1`] = `[MockFunction]`;
+
+exports[`mocks jest.fn() after mockRestore 1`] = `[MockFunction]`;
+
+exports[`mocks jest.fn() that threw 1`] = `
+[MockFunction] {
+  "calls": [
+    [],
+  ],
+  "results": [
+    {
+      "type": "throw",
+      "value": [Error: x],
+    },
+  ],
+}
+`;
+
+exports[`mocks jest.fn() that was called 1`] = `
+[MockFunction] {
+  "calls": [
+    [
+      1,
+      "two",
+    ],
+    [
+      {
+        "a": 1,
+      },
+    ],
+  ],
+  "results": [
+    {
+      "type": "return",
+      "value": undefined,
+    },
+    {
+      "type": "return",
+      "value": undefined,
+    },
+  ],
+}
+`;
+
+exports[`mocks jest.fn() with empty mockName 1`] = `[MockFunction]`;
+
+exports[`mocks jest.fn() with mockName 1`] = `[MockFunction renamed]`;
+
+exports[`mocks jest.fn() with odd mockName 1`] = `[MockFunction a \`b\` \${c} \\]`;
+
+exports[`mocks jest.fn(arrow) 1`] = `[MockFunction]`;
+
+exports[`mocks jest.fn(class) 1`] = `[MockFunction]`;
+
+exports[`mocks jest.fn(impl) that was called 1`] = `
+[MockFunction] {
+  "calls": [
+    [
+      2,
+    ],
+  ],
+  "results": [
+    {
+      "type": "return",
+      "value": 4,
+    },
+  ],
+}
+`;
+
+exports[`mocks jest.fn(named function) 1`] = `[MockFunction]`;
+
+exports[`mocks jest.spyOn getter 1`] = `[MockFunction]`;
+
+exports[`mocks jest.spyOn method 1`] = `[MockFunction]`;
+
+exports[`mocks jest.spyOn method, live 1`] = `[MockFunction]`;
+
+exports[`mocks jest.spyOn symbol 1`] = `[MockFunction]`;
+
+exports[`mocks jest.spyOn with mockName 1`] = `[MockFunction spy name]`;
+
+exports[`mocks mock.calls 1`] = `
+[
+  [
+    1,
+    "a",
+  ],
+  [],
+]
+`;
+
+exports[`mocks mock.results 1`] = `
+[
+  {
+    "type": "return",
+    "value": "ok",
+  },
+  {
+    "type": "throw",
+    "value": [Error: e],
+  },
+]
+`;
+
+exports[`mocks names 1`] = `
+[
+  "jest.fn()",
+  "jest.fn()",
+  "jest.fn()",
+  "x",
+  "jest.fn()",
+  "jest.fn()",
+  "jest.fn()",
+  "y",
+  "x",
+  "jest.fn()",
+]
+`;
+
+exports[`mocks the object spied on 1`] = `
+{
+  "m": [MockFunction],
+  "n": 1,
+}
+`;

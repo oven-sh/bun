@@ -215,6 +215,27 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
+  test.each([
+    ["a Proxy", () => new Proxy({ name: "value", foo: "bar" }, {})],
+    ["import.meta.env", () => import.meta.env as Record<string, string>],
+  ])("can create CookieMap from an object that lists its properties itself: %s", (_, object) => {
+    const env = process.env;
+    process.env = { name: "value", foo: "bar" };
+    try {
+      const map = new Bun.CookieMap(object());
+      expect([map.get("name"), map.get("foo")]).toEqual(["value", "bar"]);
+    } finally {
+      process.env = env;
+    }
+  });
+
+  test("takes the enumerable properties of an object only", () => {
+    const object = Object.defineProperty({ name: "value" }, "hidden", { value: "x", enumerable: false });
+    expect([...new Bun.CookieMap(object)]).toEqual([["name", "value"]]);
+    expect([...new Bun.CookieMap(new Proxy(object, {}))]).toEqual([["name", "value"]]);
+    expect([...new Bun.CookieMap(new Proxy([], {}))]).toEqual([]);
+  });
+
   test("can create CookieMap from array pairs", () => {
     const map = new Bun.CookieMap([
       ["name", "value"],
@@ -452,6 +473,67 @@ describe("delete with prefixed cookie names", () => {
       "__Host-id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; SameSite=Lax",
       "id=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
     ]);
+  });
+});
+
+describe("subclassing", () => {
+  class SessionCookie extends Bun.Cookie {
+    pair() {
+      return `${this.name}=${this.value}`;
+    }
+  }
+  class Jar extends Bun.CookieMap {
+    names() {
+      return [...this.keys()];
+    }
+  }
+
+  test.each([
+    ["(name, value)", ["id", "1"]],
+    ["(name, value, options)", ["id", "1", { path: "/app" }]],
+    ["(cookieString)", ["id=1; Path=/app"]],
+    ["(options)", [{ name: "id", value: "1", path: "/app" }]],
+  ])("new (class extends Bun.Cookie)%s returns an instance of the subclass", (_overload, args) => {
+    const cookie = new SessionCookie(...(args as any));
+    expect(Object.getPrototypeOf(cookie)).toBe(SessionCookie.prototype);
+    expect(cookie).toBeInstanceOf(Bun.Cookie);
+    expect(cookie.pair()).toBe("id=1");
+    expect(cookie.serialize()).toStartWith("id=1; Path=/");
+  });
+
+  test.each([
+    ["(string)", "a=1; b=2"],
+    ["(object)", { a: "1", b: "2" }],
+    [
+      "(pairs)",
+      [
+        ["a", "1"],
+        ["b", "2"],
+      ],
+    ],
+  ])("new (class extends Bun.CookieMap)%s returns an instance of the subclass", (_overload, init) => {
+    const jar = new Jar(init as any);
+    expect(Object.getPrototypeOf(jar)).toBe(Jar.prototype);
+    expect(jar).toBeInstanceOf(Bun.CookieMap);
+    expect(jar.names()).toEqual(["a", "b"]);
+    jar.set("c", "3");
+    expect(jar.toJSON()).toEqual({ a: "1", b: "2", c: "3" });
+  });
+
+  test("Reflect.construct takes the prototype from newTarget", () => {
+    function NewTarget() {}
+    const cookie = Reflect.construct(Bun.Cookie, ["id", "1"], NewTarget);
+    expect(Object.getPrototypeOf(cookie)).toBe(NewTarget.prototype);
+    expect(Bun.Cookie.prototype.serialize.call(cookie)).toStartWith("id=1;");
+
+    const map = Reflect.construct(Bun.CookieMap, ["a=1"], NewTarget);
+    expect(Object.getPrototypeOf(map)).toBe(NewTarget.prototype);
+    expect(Bun.CookieMap.prototype.get.call(map, "a")).toBe("1");
+  });
+
+  test("the base constructors still return the base prototype", () => {
+    expect(Object.getPrototypeOf(new Bun.Cookie("id", "1"))).toBe(Bun.Cookie.prototype);
+    expect(Object.getPrototypeOf(new Bun.CookieMap("a=1"))).toBe(Bun.CookieMap.prototype);
   });
 });
 

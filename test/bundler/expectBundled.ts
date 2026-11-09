@@ -6,7 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isCI, isDebug, isWindows } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -83,7 +83,7 @@ function errorOrWarnParser(isError = true) {
   const prefix = isError ? "error: " : "warn: ";
   return function (text: string) {
     var i = 0;
-    var list = [];
+    var list: [message: string, fileLine: string][] = [];
     while (i < text.length) {
       let errorLineI = text.indexOf(prefix, i);
       if (errorLineI === -1) {
@@ -136,12 +136,16 @@ const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
 const HIDE_SKIP = process.env.BUN_BUNDLER_TEST_HIDE_SKIP;
 /** Path to the bun. */
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunExe();
+/** Set by test/aot/transpiler-parity.test.ts: a test that runs its outputs is built with `bun build --compile --aot`, one executable per entry point, so what runs is compiled code. Each such test prints `[aot] bundle: <id>` on stderr. */
+const COMPILES_AHEAD_OF_TIME = process.env.BUN_BUNDLER_TEST_AOT;
 export const RUN_UNCHECKED_TESTS = false;
 
 const tempDirectoryTemplate = path.join(realpathSync(tmpdir()), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
 if (!existsSync(path.dirname(tempDirectoryTemplate)))
   mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
 const tempDirectory = mkdtempSync(tempDirectoryTemplate);
+mkdirSync(path.join(tempDirectory, "node_modules", "@types"), { recursive: true });
+symlinkSync(path.join(import.meta.dir, "..", "..", "packages", "bun-types"), path.join(tempDirectory, "node_modules", "@types", "bun"), "junction");
 const testsRan = new Set();
 
 const originalCwd = process.cwd();
@@ -149,7 +153,7 @@ const originalCwd = process.cwd();
 function resolveBackend(opts: BundlerTestInput): "cli" | "api" {
   if (opts.backend) return opts.backend;
   const run = opts.run === true ? {} : opts.run;
-  const hasValidate = !Array.isArray(run) && run?.validate;
+  const hasValidate = !Array.isArray(run) && (run as BundlerTestRunOptions | undefined)?.validate;
   return opts.dotenv ||
     typeof opts.production !== "undefined" ||
     opts.bundling === false ||
@@ -247,7 +251,8 @@ export interface BundlerTestInput {
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
-  loader?: Record<`.${string}`, Loader>;
+  /** Loaders that only esbuild has make the test a todo. "wtf" is for `edgecase/InvalidLoaderSegfault`. */
+  loader?: Record<`.${string}`, Loader | esbuild.Loader | "wtf">;
   mangleProps?: RegExp;
   mangleQuoted?: boolean;
   mainFields?: string[];
@@ -265,12 +270,15 @@ export interface BundlerTestInput {
   modulePreload?: boolean;
   /** `--min-chunk-size` / `minChunkSize`; requires `splitting` */
   minChunkSize?: number;
-  serverComponents?: boolean;
+  /** `false` skips chunk folding (`merge_small_chunks`). Internal to Bun's tests: api backend only. */
+  foldChunks?: boolean;
   reactCompiler?: boolean;
+  reactFastRefresh?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
-  unsupportedJSFeatures?: string[];
+  /** The tests generated from esbuild's suite pass a target name ("es2018") instead of a list of features. */
+  unsupportedJSFeatures?: string[] | string;
   /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
   sourceMap?: "inline" | "external" | "linked" | "none";
@@ -290,7 +298,7 @@ export interface BundlerTestInput {
    *
    * Pass an object mapping filenames to an array of error strings that file should contain.
    */
-  bundleErrors?: true | Record<string, string[]>;
+  bundleErrors?: true | Record<string, readonly string[]>;
   /**
    * Same as bundleErrors except for warnings. Bundle should still succeed.
    */
@@ -479,7 +487,7 @@ function expectBundled(
     );
   }
 
-  var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin());
+  var { expect, it, test } = testForFile(currentFile ?? callerSourceOrigin()!);
   if (!ignoreFilter && FILTER && !filterMatches(id)) return testRef(id, opts);
 
   let {
@@ -534,8 +542,8 @@ function expectBundled(
     root: outbase,
     run,
     runtimeFiles,
-    serverComponents = false,
     reactCompiler = false,
+    reactFastRefresh = false,
     reactCompilerOutputMode,
     skipOnEsbuild,
     snapshotSourceMap,
@@ -544,6 +552,7 @@ function expectBundled(
     splitRequire,
     modulePreload,
     minChunkSize,
+    foldChunks,
     target,
     todo: notImplemented,
     treeShaking,
@@ -577,10 +586,6 @@ function expectBundled(
     ...unknownProps
   } = opts;
 
-  if (serverComponents) {
-    splitting = true;
-  }
-
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
     throw new Error("expectBundled received unexpected options: " + Object.keys(unknownProps).join(", "));
@@ -604,6 +609,24 @@ function expectBundled(
 
   entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
   if (run === true) run = {};
+  if (
+    COMPILES_AHEAD_OF_TIME &&
+    run &&
+    !compile &&
+    !bundleErrors &&
+    !bundleWarnings &&
+    bundling &&
+    !ESBUILD &&
+    format === "esm" &&
+    entryPoints.length === 1 &&
+    (Array.isArray(run) ? run : [run]).every(({ file, bunArgs, runtime }) => !file && !bunArgs && runtime !== "node")
+  ) {
+    compile = { aot: true };
+    target = "bun";
+    // The hook reads the bundle's text, and an executable has none.
+    onAfterBundle = undefined;
+    if (!dryRun) console.error(`[aot] bundle: ${id}`);
+  }
   if (metafile === true) metafile = "/metafile.json";
   if (bundleErrors === true) bundleErrors = {};
   if (bundleWarnings === true) bundleWarnings = {};
@@ -681,6 +704,9 @@ function expectBundled(
   if (ESBUILD && minChunkSize !== undefined) {
     throw new UnsupportedOptionError("minChunkSize not possible in esbuild backend");
   }
+  if (ESBUILD && foldChunks !== undefined) {
+    throw new UnsupportedOptionError("foldChunks not possible in esbuild backend");
+  }
   if (ESBUILD && splitRequire !== undefined) {
     throw new UnsupportedOptionError("splitRequire not possible in esbuild backend");
   }
@@ -692,6 +718,9 @@ function expectBundled(
   }
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new UnsupportedOptionError("allowUnresolved not possible in esbuild backend");
+  }
+  if (ESBUILD && reactFastRefresh) {
+    throw new UnsupportedOptionError("reactFastRefresh not possible in esbuild backend");
   }
   if (dryRun) {
     return testRef(id, opts);
@@ -830,6 +859,9 @@ function expectBundled(
       if (reactCompilerOutputMode) {
         throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
       }
+      if (foldChunks !== undefined) {
+        throw new Error("foldChunks not possible in backend=CLI (API-only option)");
+      }
       const cmd = (
         !ESBUILD
           ? [
@@ -851,6 +883,7 @@ function expectBundled(
                 "--compile-autoload-package-json",
                 "--no-compile-autoload-package-json",
               ),
+              compile && typeof compile === "object" && (compile as any).aot ? "--aot" : [],
               outfile ? `--outfile=${outfile}` : `--outdir=${outdir}`,
               define && Object.entries(define).map(([k, v]) => ["--define", `${k}=${v}`]),
               `--target=${target}`,
@@ -883,8 +916,8 @@ function expectBundled(
               splitRequire === false && `--no-split-require`,
               modulePreload === false && `--no-module-preload`,
               minChunkSize !== undefined && `--min-chunk-size=${minChunkSize}`,
-              serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
+              reactFastRefresh && "--react-fast-refresh",
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,
@@ -1104,7 +1137,7 @@ function expectBundled(
 
           if (expectedErrors) {
             const errorsLeft = [...expectedErrors];
-            let unexpectedErrors = [];
+            let unexpectedErrors: ErrorMeta[] = [];
 
             for (const error of allErrors) {
               const i = errorsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
@@ -1152,7 +1185,7 @@ function expectBundled(
             const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
             return { error, file, line, col };
           })
-          .filter(Boolean);
+          .filter(Boolean) as ErrorMeta[];
         const expectedWarnings = bundleWarnings
           ? Object.entries(bundleWarnings).flatMap(([file, v]) => v.map(error => ({ file, error })))
           : null;
@@ -1178,7 +1211,7 @@ function expectBundled(
           throw new Error("Warnings were thrown while bundling:\n" + allWarnings.map(formatError).join("\n"));
         } else if (expectedWarnings) {
           const warningsLeft = [...expectedWarnings];
-          let unexpectedWarnings = [];
+          let unexpectedWarnings: ErrorMeta[] = [];
 
           for (const error of allWarnings) {
             const i = warningsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
@@ -1215,7 +1248,7 @@ function expectBundled(
             };
           } else if (typeof compile === "string") {
             compile = {
-              target: compile,
+              target: compile as Bun.Build.CompileTarget,
               outfile: outfile,
             };
           } else if (typeof compile === "object") {
@@ -1256,9 +1289,11 @@ function expectBundled(
           splitRequire,
           modulePreload,
           minChunkSize,
+          ...(foldChunks === undefined ? {} : { foldChunksForTesting: foldChunks }),
           target,
           reactCompiler,
           reactCompilerOutputMode,
+          reactFastRefresh,
           bytecode,
           bytecodeDepth,
           publicPath,
@@ -1405,7 +1440,7 @@ for (const [key, blob] of build.outputs) {
 
           if (expectedErrors) {
             const errorsLeft = [...expectedErrors];
-            let unexpectedErrors = [];
+            let unexpectedErrors: ErrorMeta[] = [];
 
             for (const error of allErrors) {
               const i = errorsLeft.findIndex(item => error.file === item.file && error.error.includes(item.error));
@@ -1455,8 +1490,8 @@ for (const [key, blob] of build.outputs) {
     };
     const api = {
       root,
-      outfile: outfileOnDisk!,
-      outdir: outdir!,
+      outfile: outfileOnDisk ?? "",
+      outdir: outdir ?? "",
       join: (...paths: string[]) => path.join(root, ...paths),
       readFile,
       writeFile,
@@ -1474,7 +1509,7 @@ for (const [key, blob] of build.outputs) {
         const fileContents = readFile(file);
         let i = 0;
         const length = fileContents.length;
-        const matches = [];
+        const matches: string[] = [];
         while (i < length) {
           i = fileContents.indexOf(fnName, i);
           if (i === -1) {
@@ -1847,7 +1882,7 @@ for (const [key, blob] of build.outputs) {
           if (run.errorLineMatch) {
             // in order to properly analyze the error, we have to look backwards on stderr. this approach
             // most definitely can be improved but it works fine here.
-            const stack = [];
+            const stack: string[] = [];
             let error;
             const lines = stderr!
               .toUnixString()
@@ -1898,7 +1933,7 @@ for (const [key, blob] of build.outputs) {
         for (let [name, expected, out] of [
           ["stdout", run.stdout, stdout],
           ["stderr", run.stderr, stderr],
-        ].filter(([, v]) => v !== undefined)) {
+        ].filter(([, v]) => v !== undefined) as [name: string, expected: string | RegExp, out: Buffer][]) {
           let result = out!.toUnixString().trim();
 
           // no idea why this logs. ¯\_(ツ)_/¯
@@ -1947,6 +1982,24 @@ for (const [key, blob] of build.outputs) {
   })();
 }
 
+/** An executable has one entry point. */
+function splitByEntryPoint(id: string, opts: BundlerTestInput): [id: string, opts: BundlerTestInput][] | undefined {
+  const { entryPoints = [], run, outdir = "/out" } = opts;
+  if (!COMPILES_AHEAD_OF_TIME || entryPoints.length < 2 || !Array.isArray(run)) return undefined;
+  const parts: [string, BundlerTestInput][] = [];
+  for (const { file, ...rest } of run) {
+    const entryPoint = entryPoints.find(
+      entry => path.posix.join(outdir, path.basename(entry).replace(/\.[jt]sx?$/, ".js")) === file,
+    );
+    if (entryPoint === undefined) return undefined;
+    parts.push([
+      `${id}/${path.basename(entryPoint)}`,
+      { ...opts, entryPoints: [entryPoint], outdir: undefined, outputPaths: undefined, run: rest },
+    ]);
+  }
+  return parts;
+}
+
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(
@@ -1959,8 +2012,13 @@ export function itBundled(
     // @ts-expect-error
     opts._referenceFn = fn;
   }
+  const parts = splitByEntryPoint(id, opts);
+  if (parts) {
+    for (const [partId, partOpts] of parts) itBundled(partId, partOpts);
+    return testRef(id, opts);
+  }
   const ref = testRef(id, opts);
-  const { it } = testForFile(currentFile ?? callerSourceOrigin()) as any;
+  const { it } = testForFile(currentFile ?? callerSourceOrigin()!) as any;
 
   if (FILTER && !filterMatches(id)) {
     return ref;
@@ -1982,7 +2040,7 @@ export function itBundled(
     // cannot run concurrently with other tests. it.serial is a no-op outside
     // of describe.concurrent / --concurrent.
     const testFn = resolveBackend(opts) === "api" ? it.serial : it;
-    const baseTimeout = opts.snapshotSourceMap || opts.compile ? 30_000 : 5_000;
+    const baseTimeout = opts.snapshotSourceMap || opts.compile || COMPILES_AHEAD_OF_TIME ? 30_000 : 5_000;
     testFn(
       id,
       () => expectBundled(id, opts as any),
@@ -1993,11 +2051,11 @@ export function itBundled(
 }
 
 itBundled.only = (id: string, opts: BundlerTestInput) => {
-  const { it } = testForFile(currentFile ?? callerSourceOrigin());
+  const { it } = testForFile(currentFile ?? callerSourceOrigin()!);
 
   it.only(
     id,
-    () => expectBundled(id, opts as any),
+    () => expectBundled(id, opts as any) as Promise<BundlerTestRef>,
     // sourcemap code is slow
     isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
   );
@@ -2007,8 +2065,8 @@ itBundled.skip = (id: string, opts: BundlerTestInput) => {
   if (FILTER && !filterMatches(id)) {
     return testRef(id, opts);
   }
-  const { it } = testForFile(currentFile ?? callerSourceOrigin());
-  if (!HIDE_SKIP) it.skip(id, () => expectBundled(id, opts));
+  const { it } = testForFile(currentFile ?? callerSourceOrigin()!);
+  if (!HIDE_SKIP) it.skip(id, () => expectBundled(id, opts) as Promise<BundlerTestRef>);
   return testRef(id, opts);
 };
 

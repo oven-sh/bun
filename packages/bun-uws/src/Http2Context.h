@@ -91,6 +91,11 @@ static constexpr uint32_t LOCAL_MAX_CONCURRENT_STREAMS = 256;
 /* Same cap as the HTTP/1 parser (UWS_HTTP_MAX_HEADERS_COUNT). */
 static constexpr size_t MAX_HEADER_FIELDS = 200;
 static constexpr unsigned MAX_SETTINGS_PER_FRAME = 32;
+/* ls-hpack refuses to decode a longer name or value. */
+static constexpr size_t MAX_STRING_LENGTH = UINT16_MAX;
+/* ls-hpack is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
+static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(lsxpack_header_t, chain_next_idx) == sizeof(char *) + 24,
+    "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 /* A header block may span this many CONTINUATION frames (the byte cap alone
  * doesn't bound a flood of empty ones). */
 static constexpr unsigned MAX_CONTINUATION_FRAMES = 32;
@@ -295,8 +300,6 @@ struct Http2Response {
     inline bool sendTerminatingChunk(bool closeConnection = false);
 
     bool hasResponded() { return !(data.state & Http2ResponseData::HTTP_RESPONSE_PENDING); }
-    uint64_t getWriteOffset() { return data.offset; }
-    void overrideWriteOffset(uint64_t o) { data.offset = o; }
     size_t getBufferedAmount() { return data.backpressure.length(); }
 
     inline Http2Response *pause();
@@ -304,18 +307,12 @@ struct Http2Response {
     /* The handler started consuming the body: widen this stream's window. */
     inline void growReceiveWindow();
     inline Http2Response *cork(MoveOnlyFunction<void()> &&fn);
-    void uncork() {}
-    bool isCorked() { return false; }
     /* RST_STREAM: the transport-level equivalent of dropping an
      * HTTP/1 socket mid-response. */
     /* RST_STREAM (unless already closed both ways) and retire. */
     inline void close(http2::ErrorCode code = http2::ERR_CANCEL);
-    void *getNativeHandle() { return this; }
-    void *getSocketData() { return data.socketData; }
-    bool isConnectRequest() { return false; }
     inline void setTimeout(uint8_t seconds);
     inline void resetTimeout();
-    void prepareForSendfile() {}
 
     Http2Response *onWritable(void *userData, Http2ResponseData::OnWritableCallback h) {
         data.writableUserData = userData; data.onWritable = h; return this;
@@ -1098,8 +1095,8 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
             p = buf.data() + used;
             end = buf.data() + buf.size();
         }
-        if (h.nameLen > LSXPACK_MAX_STRLEN / 2 || h.valueLen > LSXPACK_MAX_STRLEN / 2) {
-            /* Beyond ls-hpack's 16-bit lengths: literal without indexing, no Huffman. */
+        if (h.nameLen > http2::MAX_STRING_LENGTH / 2 || h.valueLen > http2::MAX_STRING_LENGTH / 2) {
+            /* Literal without indexing, no Huffman. */
             *p++ = 0x00;
             p = http2::hpackEncodeInteger(p, 0x00, 7, h.nameLen);
             memcpy(p, base + h.nameOff, h.nameLen); p += h.nameLen;
@@ -1576,11 +1573,11 @@ inline bool Http2Connection::handleHeaderBlock(uint32_t streamId, uint8_t flags,
     while (p < end) {
         lsxpack_header_t x;
         size_t room = buf.size() - used;
-        lsxpack_header_prepare_decode(&x, buf.data() + used, 0, room > LSXPACK_MAX_STRLEN ? LSXPACK_MAX_STRLEN : room);
+        lsxpack_header_prepare_decode(&x, buf.data() + used, 0, room > http2::MAX_STRING_LENGTH ? http2::MAX_STRING_LENGTH : room);
         int rc = lshpack_dec_decode(&dec, &p, end, &x);
         if (rc == LSHPACK_ERR_MORE_BUF) {
             size_t need = used + x.val_len + 64;
-            if (x.val_len > LSXPACK_MAX_STRLEN || buf.size() >= hardCap || room >= LSXPACK_MAX_STRLEN) {
+            if (x.val_len > http2::MAX_STRING_LENGTH || buf.size() >= hardCap || room >= http2::MAX_STRING_LENGTH) {
                 return connectionError(http2::ERR_ENHANCE_YOUR_CALM);
             }
             buf.resize(std::min(hardCap, std::max(buf.size() * 2, need)));
@@ -1843,7 +1840,6 @@ inline bool Http2Response::sendTerminatingChunk(bool) {
 
 inline bool Http2Response::internalEnd(std::string_view body, uint64_t totalSize, bool optional, bool) {
     if (dead || localClosed) return !optional;
-    data.totalSize = totalSize;
     Http2Connection *c = conn;
 
     if (!(data.state & Http2ResponseData::HTTP_WRITE_CALLED)) {

@@ -67,7 +67,7 @@ struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough, unsign
     if (!fallthrough) {
         loop->num_polls++;
     }
-    return CLEAR_POINTER_TAG(us_malloc(sizeof(struct us_poll_t) + ext_size));
+    return CLEAR_POINTER_TAG(us_xmalloc(sizeof(struct us_poll_t) + ext_size));
 }
 
 /* Todo: this one should be us_internal_poll_free */
@@ -220,7 +220,7 @@ static int bun_kevent64_wait(int kqfd, struct kevent64_s *eventlist, int nevents
 
 /* Loop */
 struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
-    struct us_loop_t *loop = (struct us_loop_t *) us_calloc(1, sizeof(struct us_loop_t) + ext_size);
+    struct us_loop_t *loop = (struct us_loop_t *) us_xcalloc(1, sizeof(struct us_loop_t) + ext_size);
     loop->num_polls = 0;
     /* These could be accessed if we close a poll before starting the loop */
     loop->num_ready_polls = 0;
@@ -374,12 +374,14 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop) {
                  * connect refused), or a read-filter EV_EOF carrying the
                  * socket error in fflags: both are epoll's EPOLLERR. */
                 if (bits.send_eof && !bits.send_eof_err && !bits.eof_err && type == POLL_TYPE_SOCKET &&
-                    ((struct us_socket_t *) poll)->flags.is_paused) {
+                    ((struct us_socket_t *) poll)->flags.is_paused &&
+                    !(((struct us_socket_t *) poll)->hangup_closes_unsent && ((struct us_socket_t *) poll)->flags.last_write_failed)) {
                     /* fflags==0 with reads paused is AF_UNIX's graceful peer
                      * close (TCP only gets SS_CANTSENDMORE from RST, which
                      * carries the error): the receive buffer survives, so
                      * defer like epoll's EPOLLHUP - resume() delivers the
-                     * tail + end instead of an error close discarding it. */
+                     * tail + end instead of an error close discarding it.
+                     * Not when a hangup_closes_unsent socket has bytes unsent. */
                     eof = 1;
                 } else {
                     error = 1;
@@ -470,7 +472,8 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
+extern unsigned int Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns, int * _Nullable released_heap_access);
+extern void Bun__JSC_acquireHeapAccessAfterWait(void * _Nonnull jsc_vm);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -504,15 +507,17 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* `now_ns` is the reading the JS side took to pick `timeout`
      * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
      * if it had none to share. Nothing measures a deadline against it. */
+    int released_heap_access = 0;
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
+        (void) Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns, &released_heap_access);
 
     /* The scavenger sweeps our heaps while we are in the kernel. Must come after
      * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
      * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
-     * With no scavenger to hand off to, fall back to sweeping inline -- but only on a tick that
-     * really parks, and rate-limited, because doing it between ticks is what we are avoiding. */
-    const int handed_off = mi_on_thread_idle_start();
+     * Only on a tick that really parks: there is no time to sweep in a poll that returns at once.
+     * With no scavenger to hand off to, fall back to sweeping inline, rate-limited, because doing
+     * it between ticks is what we are avoiding. */
+    const int handed_off = will_idle_inside_event_loop && mi_on_thread_idle_start();
     if (!handed_off && will_idle_inside_event_loop) {
         static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
         static _Thread_local uint64_t last_idle_sweep_ns = 0;
@@ -541,9 +546,14 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         timeout);
 #endif
 
+    /* Anything that stops a poll from here on scrubs this batch (us_internal_loop_update_pending_ready_polls). */
+    loop->current_ready_poll = 0;
     /* Before anything can allocate again. */
     if (handed_off)
         mi_on_thread_idle_end();
+    /* Before anything touches the JS heap again (this may run a finished collection's epilogue, i.e. destructors). */
+    if (released_heap_access)
+        Bun__JSC_acquireHeapAccessAfterWait(loop->data.jsc_vm);
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);
@@ -653,7 +663,7 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     unsigned int new_size = sizeof(struct us_poll_t) + ext_size;
     if(new_size <= old_size) return p;
 
-    struct us_poll_t *new_p = us_calloc(1, new_size);
+    struct us_poll_t *new_p = us_xcalloc(1, new_size);
     memcpy(new_p, p, old_size);
 
     /* Increment poll count for the new poll - the old poll will be freed separately
@@ -776,6 +786,10 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     us_internal_loop_update_pending_ready_polls(loop, p, 0, old_events, new_events);
 }
 
+void us_internal_poll_close_fd(struct us_poll_t *p) {
+    bsd_close_socket(us_poll_fd(p));
+}
+
 size_t us_internal_accept_poll_event(struct us_poll_t *p) {
 #ifdef LIBUS_USE_EPOLL
     int fd = us_poll_fd(p);
@@ -861,7 +875,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 #define MACHPORT_BUF_LEN 1024
 
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
-    struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
+    struct us_internal_callback_t *cb = us_xcalloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
     cb->cb_expects_the_loop = 1;
     cb->leave_poll_ready = 0;
@@ -874,7 +888,7 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
         loop->num_polls++;
     }
 
-    cb->machport_buf = us_malloc(MACHPORT_BUF_LEN);
+    cb->machport_buf = us_xmalloc(MACHPORT_BUF_LEN);
     mach_port_t self = mach_task_self();
     kern_return_t kr = mach_port_allocate(self, MACH_PORT_RIGHT_RECEIVE, &cb->port);
 
@@ -1000,7 +1014,7 @@ void us_internal_async_wakeup(struct us_internal_async *a) {
 #else
 /* FreeBSD: kqueue async wakeup via EVFILT_USER + NOTE_TRIGGER. */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int fallthrough, unsigned int ext_size) {
-    struct us_internal_callback_t *cb = us_calloc(1, sizeof(struct us_internal_callback_t) + ext_size);
+    struct us_internal_callback_t *cb = us_xcalloc(1, sizeof(struct us_internal_callback_t) + ext_size);
     cb->loop = loop;
     cb->cb_expects_the_loop = 1;
     cb->leave_poll_ready = 0;

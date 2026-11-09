@@ -1,0 +1,9 @@
+const a = <A.
+// 1
+B />;
+
+const b = <A
+// 1
+.B />;
+
+const c = <A /* 1 */ . /* 2 */ B></A.B>;

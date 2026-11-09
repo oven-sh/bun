@@ -1,0 +1,25 @@
+# a field that checked code writes `number` is held to every int32 where the program's own text uses what it reads under the name as only an integer is used: an argument that a row of a text converts to an integer (`pos`, `end`),
+# an operand of a bit operator (`bits`). (The key of an access by key counts too: programs/numbers-held-as-int32/counted-up-past-int32.ts: here it would bring 29,000 lines of the library into the records.) It is a guess inside the written type: every store is tested, and a fraction that arrives takes the field out of its slot.
+# It gives way to what the text stores under the name: a quotient (`weight`), a written number that 32 bits do not hold (`wide`), a written fraction (`half`). And a number that is only computed with (`ratio`) is no integer by anything that is written.
+# -- source: number-that-the-text-reads-as-an-integer-is-held-to-int32.ts
+# declare function sink(...values: unknown[]): void;
+# class Range { pos: number; end: number; bits: number; ratio: number; weight: number; wide: number; half: number; constructor(n: number) { this.pos = n; this.end = n; this.bits = n; this.ratio = n; this.weight = n; this.wide = n; this.half = n; } }
+# function cut(text: string, range: Range) { return text.substring(range.pos, range.end); }
+# function mask(range: Range) { return (range.bits & 1) + (range.weight & 1) + (range.wide & 1) + (range.half & 1); }
+# function scale(range: Range) { return range.ratio * 3 + range.ratio; }
+# function halve(range: Range) { range.weight = range.weight / 2; }
+# function widen(range: Range) { range.wide = 4294967296; }
+# function split(range: Range) { range.half = 0.5; }
+# sink(Range, cut, mask, scale, halve, widen, split);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "pos" source=written type=i32{{*}} int32-by-guess
+# CHECK-NEXT: field {{*}} "end" source=written type=i32{{*}} int32-by-guess
+# CHECK-NEXT: field {{*}} "bits" source=written type=i32{{*}} int32-by-guess
+# CHECK: | int32 by guess 3 |
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: "ratio" source=written type=i32
+# NEVER-NOT: "weight" source=written type=i32
+# NEVER-NOT: "wide" source=written type=i32
+# NEVER-NOT: "half" source=written type=i32
+# NEVER-NOT: differs-from-table

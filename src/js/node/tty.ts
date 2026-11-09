@@ -8,34 +8,79 @@ const {
   isatty,
   getWindowSize: _getWindowSize,
   rawModeStateSize,
+}: {
+  /** The errno, or 0. On Windows, for stdin: `(flag)`. */
+  setRawMode(fdOrFlag: number | boolean | null, flag?: boolean, state?: Uint8Array): number;
+  isatty(fd: unknown): boolean;
+  /** Fills `size` with [columns, rows]. */
+  getWindowSize(fd: number | null, size: number[]): boolean;
+  rawModeStateSize: number;
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
-const fs = require("internal/fs/streams");
 
 // libuv stores the mode and the saved termios on each uv_tty_t, so a stream
 // going back to cooked never disturbs another one on the same terminal. Keep
 // that state per ReadStream rather than per process.
 const kRawModeState = Symbol("rawModeState");
 
-function ReadStream(fd): void {
-  if (!(this instanceof ReadStream)) {
-    return new ReadStream(fd);
+type Environment = Record<string, string | undefined>;
+type DoneCallback = (error?: Error | null) => void;
+
+declare global {
+  namespace $Node {
+    interface TTYReadStream extends ReadStream {
+      isRaw: boolean;
+      isTTY: boolean;
+      /** On `process.stdin`, which is a native readable. */
+      $bunNativePtr?: $Bindgen.FileInternalReadableStreamSource;
+      $start(): void;
+      [kRawModeState]?: Uint8Array;
+      ref(): this;
+      unref(): this;
+      setRawMode(flag: boolean): this;
+    }
+
+    interface TTYWriteStream extends WriteStream {
+      columns: number | undefined;
+      rows: number | undefined;
+      isTTY: boolean;
+      _refreshSize(): void;
+      clearLine(dir: number, cb?: DoneCallback): boolean;
+      clearScreenDown(cb?: DoneCallback): boolean;
+      cursorTo(x: number, y?: number | DoneCallback, cb?: DoneCallback): boolean;
+      getColorDepth(env?: Environment): number;
+      getWindowSize(): [number | undefined, number | undefined];
+      hasColors(count?: number | Environment, env?: Environment): boolean;
+      moveCursor(dx: number, dy: number, cb?: DoneCallback): boolean;
+    }
   }
-  fs.ReadStream.$apply(this, ["", { fd }]);
+}
+
+function ReadStream(this: $Node.TTYReadStream, fd: number | null): void {
+  if (!(this instanceof ReadStream)) {
+    return new ReadStream(fd) as any;
+  }
+  require("internal/fs/streams").ReadStream.$apply(this, ["", { fd }]);
   this.isRaw = false;
   // Only set isTTY to true if the fd is actually a TTY
   this.isTTY = isatty(fd);
 }
-$toClass(ReadStream, "ReadStream", fs.ReadStream);
 
-Object.defineProperty(ReadStream, "prototype", {
+// The class stands below fs.ReadStream, and internal/fs/streams loads node:stream. So it is put there when it is first read.
+function setUpReadStream() {
+  $toClass(ReadStream, "ReadStream", require("internal/fs/streams").ReadStream);
+  Object.defineProperty(ReadStream, "prototype", prototypeOfReadStream);
+  return ReadStream;
+}
+
+const prototypeOfReadStream = {
   get() {
-    const Prototype = Object.create(fs.ReadStream.prototype);
+    const Prototype = Object.create(require("internal/fs/streams").ReadStream.prototype);
 
     // Add ref/unref methods to make tty.ReadStream behave like Node.js
     // where TTY streams have socket-like behavior
-    Prototype.ref = function () {
+    Prototype.ref = function (this: $Node.TTYReadStream) {
       // Get the underlying native stream source if available
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
@@ -44,7 +89,7 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
-    Prototype.unref = function () {
+    Prototype.unref = function (this: $Node.TTYReadStream) {
       // Get the underlying native stream source if available
       const source = this.$bunNativePtr;
       if (source?.updateRef) {
@@ -53,7 +98,7 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
-    Prototype.setRawMode = function (flag) {
+    Prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
       flag = !!flag;
 
       // On windows, this goes through the stream handle itself, as it must call
@@ -102,39 +147,52 @@ Object.defineProperty(ReadStream, "prototype", {
       return this;
     };
 
+    Prototype._destroy = function (this: $Node.TTYReadStream, err: Error | null, cb: DoneCallback) {
+      if (isStdio(this.fd)) return cb(err);
+      require("internal/fs/streams").ReadStream.prototype._destroy.$call(this, err, cb);
+    };
+
     Object.defineProperty(ReadStream, "prototype", { value: Prototype });
 
     return Prototype;
   },
   enumerable: true,
   configurable: true,
-});
+};
 
-function WriteStream(fd): void {
-  if (!(this instanceof WriteStream)) return new WriteStream(fd);
+type Self = $Node.TTYWriteStream;
+function WriteStream(this: Self, fd: number): void {
+  if (!(this instanceof WriteStream)) return new WriteStream(fd) as any;
 
-  const stream = fs.WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
-  stream.columns = undefined;
-  stream.rows = undefined;
-  stream.isTTY = isatty(stream.fd);
+  require("internal/fs/streams").WriteStream.$call(this, null, { fd, $fastPath: true, autoClose: false });
+  this.columns = undefined;
+  this.rows = undefined;
+  this.isTTY = isatty(this.fd);
 
-  if (stream.isTTY) {
+  if (this.isTTY) {
     const windowSizeArray = [0, 0];
     if (_getWindowSize(fd, windowSizeArray) === true) {
-      stream.columns = windowSizeArray[0];
-      stream.rows = windowSizeArray[1];
+      this.columns = windowSizeArray[0];
+      this.rows = windowSizeArray[1];
     }
   }
-
-  return stream;
 }
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    const Prototype = Object.create(require("internal/fs/streams").WriteStream.prototype);
+    Object.defineProperty(WriteStream, "prototype", { value: Prototype });
 
-    WriteStream.prototype._refreshSize = function () {
+    WriteStream.prototype._destroy = function (this: $Node.TTYWriteStream, err: Error | null, cb: DoneCallback) {
+      // Ending a FileSink never closes the stream's fd, so only a stream without one has to skip the close.
+      if (isStdio(this.fd) && !this[require("internal/fs/streams").kWriteStreamFastPath]) {
+        this.fd = null;
+        return cb(err);
+      }
+      require("internal/fs/streams").WriteStream.prototype._destroy.$call(this, err, cb);
+    };
+
+    WriteStream.prototype._refreshSize = function (this: $Node.TTYWriteStream) {
       const oldCols = this.columns;
       const oldRows = this.rows;
       const windowSizeArray = [0, 0];
@@ -147,30 +205,39 @@ Object.defineProperty(WriteStream, "prototype", {
       }
     };
 
-    WriteStream.prototype.clearLine = function (dir, cb) {
-      return require("node:readline").clearLine(this, dir, cb);
+    WriteStream.prototype.clearLine = function (this: $Node.TTYWriteStream, dir: number, cb?: DoneCallback) {
+      return require("internal/readline/callbacks").published.clearLine(this, dir, cb);
     };
 
-    WriteStream.prototype.clearScreenDown = function (cb) {
-      return require("node:readline").clearScreenDown(this, cb);
+    WriteStream.prototype.clearScreenDown = function (this: $Node.TTYWriteStream, cb?: DoneCallback) {
+      return require("internal/readline/callbacks").published.clearScreenDown(this, cb);
     };
 
-    WriteStream.prototype.cursorTo = function (x, y, cb) {
-      return require("node:readline").cursorTo(this, x, y, cb);
+    WriteStream.prototype.cursorTo = function (
+      this: $Node.TTYWriteStream,
+      x: number,
+      y?: number | DoneCallback,
+      cb?: DoneCallback,
+    ) {
+      return require("internal/readline/callbacks").published.cursorTo(this, x, y, cb);
     };
 
     // The `getColorDepth` API got inspired by multiple sources such as
     // https://github.com/chalk/supports-color,
     // https://github.com/isaacs/color-support.
-    WriteStream.prototype.getColorDepth = function (env = process.env) {
+    WriteStream.prototype.getColorDepth = function (env: Environment = process.env) {
       return require("internal/tty").getColorDepth(env);
     };
 
-    WriteStream.prototype.getWindowSize = function () {
+    WriteStream.prototype.getWindowSize = function (this: $Node.TTYWriteStream) {
       return [this.columns, this.rows];
     };
 
-    WriteStream.prototype.hasColors = function (count, env) {
+    WriteStream.prototype.hasColors = function (
+      this: $Node.TTYWriteStream,
+      count?: number | Environment,
+      env?: Environment,
+    ) {
       if (env === undefined && (count === undefined || (typeof count === "object" && count !== null))) {
         env = count;
         count = 16;
@@ -178,11 +245,16 @@ Object.defineProperty(WriteStream, "prototype", {
         validateInteger(count, "count", 2);
       }
 
-      return count <= 2 ** this.getColorDepth(env);
+      return (count as number) <= 2 ** this.getColorDepth(env);
     };
 
-    WriteStream.prototype.moveCursor = function (dx, dy, cb) {
-      return require("node:readline").moveCursor(this, dx, dy, cb);
+    WriteStream.prototype.moveCursor = function (
+      this: $Node.TTYWriteStream,
+      dx: number,
+      dy: number,
+      cb?: DoneCallback,
+    ) {
+      return require("internal/readline/callbacks").published.moveCursor(this, dx, dy, cb);
     };
 
     // Add Symbol.asyncIterator to make tty.WriteStream compatible with code
@@ -195,10 +267,30 @@ Object.defineProperty(WriteStream, "prototype", {
       })();
     };
 
-    return Real;
+    return Prototype;
   },
   enumerable: true,
   configurable: true,
 });
 
-export default { ReadStream, WriteStream, isatty };
+// Node's tty streams wrap a libuv TTY handle, and closing one never closes descriptors 0-2.
+function isStdio(fd: number | null) {
+  return fd != null && fd <= 2;
+}
+
+function materializeReadStream<T>(value: T): T {
+  Reflect.defineProperty(tty, "ReadStream", { value, writable: true, configurable: true });
+  return value;
+}
+
+const tty = {
+  get ReadStream() {
+    return materializeReadStream(setUpReadStream());
+  },
+  set ReadStream(value) {
+    materializeReadStream(value);
+  },
+  WriteStream,
+  isatty,
+};
+export default tty;

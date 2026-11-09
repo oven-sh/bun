@@ -1,0 +1,64 @@
+------------------
+{ printWidth: 40 }
+------------------
+<template>
+  <div>
+    <div>
+      <div>
+        <div>
+          <div class="no-results">
+            {{
+              translate(
+                "modal.noResultsText",
+              )
+            }}
+            "<strong>{{
+              filterText
+            }}</strong
+            >"
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+------------------
+{ printWidth: 80 }
+------------------
+<template>
+  <div>
+    <div>
+      <div>
+        <div>
+          <div class="no-results">
+            {{ translate("modal.noResultsText") }} "<strong>{{
+              filterText
+            }}</strong
+            >"
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<template>
+  <div>
+    <div>
+      <div>
+        <div>
+          <div class="no-results">
+            {{ translate("modal.noResultsText") }} "<strong>{{ filterText }}</strong
+            >"
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+===================== End =====================

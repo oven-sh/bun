@@ -3,36 +3,28 @@ use super::data::Data;
 pub enum ColumnIdentifier {
     Name(Data),
     Index(u32),
-    Duplicate,
+    /// A later column has this name too, so a row object leaves this one out.
+    Duplicate(Data),
 }
 
 impl ColumnIdentifier {
-    pub(crate) fn init(name: Data) -> Result<Self, bun_alloc::AllocError> {
+    pub fn init(name: Data) -> Result<Self, bun_alloc::AllocError> {
+        unsafe extern "C" {
+            fn JSC__parseIndex(name: *const u8, length: usize) -> u32;
+        }
+        const NOT_AN_INDEX: u32 = u32::MAX;
         const U32_MAX_DIGITS: usize = "4294967295".len();
-        let might_be_int = match name.slice().len() {
-            1..=U32_MAX_DIGITS => true,
+        let bytes = name.slice();
+        match bytes.len() {
             0 => return Ok(Self::Name(Data::Empty)),
-            _ => false,
-        };
-        if might_be_int {
-            // Only `'0'..='9'` — not `parse_unsigned`, which skips embedded `_`
-            // separators and would turn a column named `2024_01` into `202401`.
-            // `U32_MAX_DIGITS` caps the length, so `u64` cannot overflow here.
-            let mut int: u64 = 0;
-            let mut all_digits = true;
-            for &byte in name.slice() {
-                match byte {
-                    b'0'..=b'9' => int = int * 10 + (byte - b'0') as u64,
-                    _ => {
-                        all_digits = false;
-                        break;
-                    }
+            1..=U32_MAX_DIGITS if bytes[0].is_ascii_digit() => {
+                // SAFETY: `bytes` is a live slice and the callee only reads `bytes.len()` bytes.
+                let index = unsafe { JSC__parseIndex(bytes.as_ptr(), bytes.len()) };
+                if index != NOT_AN_INDEX {
+                    return Ok(Self::Index(index));
                 }
             }
-            // keep `<` (not ≤): JSC indexed-property bound
-            if all_digits && int < u32::MAX as u64 {
-                return Ok(Self::Index(int as u32));
-            }
+            _ => {}
         }
 
         let owned = name.to_owned()?;

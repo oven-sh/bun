@@ -2186,4 +2186,36 @@ describe("the members of node:stream before node:stream has loaded", () => {
       },
     );
   });
+
+  it.concurrent("node:stream/promises loads after a program deletes the promises of node:stream", async () => {
+    await Promise.all([
+      // Deleted from the `Stream` of node:net, before node:stream has loaded.
+      expectChildToPrint(
+        `
+          const { Socket } = require("node:net");
+          const Stream = Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(Socket)));
+          delete Stream.promises;
+          console.log(JSON.stringify({
+            ofTheModule: Object.keys(require("node:stream/promises")),
+            ofNodeStream: typeof require("node:stream").promises,
+          }));
+        `,
+        { ofTheModule: ["finished", "pipeline"], ofNodeStream: "undefined" },
+      ),
+      // Deleted after node:stream has loaded.
+      expectChildToPrint(
+        `
+          const nodeStream = require("node:stream");
+          const promises = nodeStream.promises;
+          delete nodeStream.promises;
+          console.log(JSON.stringify({
+            isTheSameObject: require("node:stream/promises") === promises,
+            ofTheModule: Object.keys(require("node:stream/promises")),
+            ofNodeStream: typeof nodeStream.promises,
+          }));
+        `,
+        { isTheSameObject: true, ofTheModule: ["finished", "pipeline"], ofNodeStream: "undefined" },
+      ),
+    ]);
+  });
 });

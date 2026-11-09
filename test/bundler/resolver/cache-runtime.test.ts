@@ -487,23 +487,62 @@ describe.concurrent("a file or package created after the resolver read its direc
 });
 
 // A listing read again after a miss is kept at the next miss when the directory is unchanged, which
-// needs its ctime to be more than two seconds old. This test waits for that once.
-test("a kept listing still lets a link be stat'ed again", async () => {
-  using dir = tempDir("runtime-cache-kept-listing", {
-    "node_modules/.keep": "",
-    "main.js": "",
-  });
-  const root = String(dir);
-  const req = createRequire(path.join(root, "main.js"));
-  const target = path.join(root, "store", "linked");
-  symlinkSync(target, path.join(root, "node_modules", "linked"), isWindows ? "junction" : "dir");
-  await Bun.sleep(2200);
+// needs its ctime to be more than two seconds old. These tests wait for that, at the same time.
+describe.concurrent("a listing kept at a later miss", () => {
+  test("still lets a link to a directory be stat'ed again", async () => {
+    using dir = tempDir("runtime-cache-kept-listing", {
+      "node_modules/.keep": "",
+      "main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.js"));
+    const target = path.join(root, "store", "linked");
+    symlinkSync(target, path.join(root, "node_modules", "linked"), isWindows ? "junction" : "dir");
+    await Bun.sleep(2200);
 
-  expect(() => req("linked")).toThrow("Cannot find module 'linked'");
-  expect(() => req("also-missing")).toThrow("Cannot find module 'also-missing'");
-  mkdirSync(target, { recursive: true });
-  writeFileSync(path.join(target, "index.js"), `module.exports = "linked";`);
-  expect(req("linked")).toBe("linked");
+    expect(() => req("linked")).toThrow("Cannot find module 'linked'");
+    expect(() => req("also-missing")).toThrow("Cannot find module 'also-missing'");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(path.join(target, "index.js"), `module.exports = "linked";`);
+    expect(req("linked")).toBe("linked");
+  });
+
+  // A file link needs a privilege on Windows.
+  test.skipIf(isWindows)("still lets a link to a file be stat'ed again", async () => {
+    using dir = tempDir("runtime-cache-kept-listing-file-link", {
+      "node_modules/@pk/a.js": `module.exports = "a";`,
+      "main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.js"));
+    const target = path.join(root, "store", "b.js");
+    symlinkSync(target, path.join(root, "node_modules", "@pk", "b.js"), "file");
+    await Bun.sleep(2200);
+
+    expect(req("@pk/a.js")).toBe("a");
+    expect(() => req("@pk/b.js")).toThrow("Cannot find module '@pk/b.js'");
+    expect(() => req("@pk/c.js")).toThrow("Cannot find module '@pk/c.js'");
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, `module.exports = "b";`);
+    expect(req("@pk/b.js")).toBe("b");
+  });
+
+  test("still sees a node_modules link whose target appeared", async () => {
+    using dir = tempDir("runtime-cache-kept-listing-node-modules-link", {
+      "main.js": "",
+    });
+    const root = String(dir);
+    const req = createRequire(path.join(root, "main.js"));
+    const target = path.join(root, "store", "node_modules");
+    symlinkSync(target, path.join(root, "node_modules"), isWindows ? "junction" : "dir");
+    await Bun.sleep(2200);
+
+    expect(() => req("late-pkg")).toThrow("Cannot find module 'late-pkg'");
+    expect(() => req("also-missing")).toThrow("Cannot find module 'also-missing'");
+    mkdirSync(path.join(target, "late-pkg"), { recursive: true });
+    writeFileSync(path.join(target, "late-pkg", "index.js"), `module.exports = "late";`);
+    expect(req("late-pkg")).toBe("late");
+  });
 });
 
 // The mode of a directory does not hold root back, so under root the program runs as another user.

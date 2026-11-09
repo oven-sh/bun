@@ -2947,25 +2947,36 @@ impl<'a> Resolver<'a> {
         if built_from.is_recorded() && built_from.file_id() != now.file_id() {
             return true;
         }
-        // Nothing added, removed or renamed since the listing the facts derive from was read: they hold. Else stat the names.
-        if !built_from.holds_for(&now) {
-            let kind_of = |this: &mut Self, name: &[u8]| this.stat_in(info.abs_path, name)?.kind();
-            if !info.is_node_modules()
-                && info.has_node_modules()
-                    != (kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir))
-            {
-                return true;
+        // Nothing added, removed or renamed since the listing the facts derive from was read: they
+        // hold, except for a name that is a link, whose kind changes with the directory untouched.
+        let holds = built_from.holds_for(&now);
+        let kind_of = |this: &mut Self, name: &[u8]| -> Option<Option<Fs::EntryKind>> {
+            if holds && !this.listing_entry_is_link(info, name) {
+                return None;
             }
-            if self.opts.load_package_json
-                && info.flags.contains(DirInfo::Flag::HasPackageJsonFile)
-                    != (kind_of(self, b"package.json") == Some(Fs::EntryKind::File))
-            {
-                return true;
-            }
-            if self.opts.load_tsconfig_json {
-                let selected: Option<&[u8]> = [&b"tsconfig.json"[..], &b"jsconfig.json"[..]]
-                    .into_iter()
-                    .find(|name| kind_of(self, name) == Some(Fs::EntryKind::File));
+            Some(this.stat_in(info.abs_path, name).and_then(|id| id.kind()))
+        };
+        if !info.is_node_modules()
+            && let Some(kind) = kind_of(self, b"node_modules")
+            && info.has_node_modules() != (kind == Some(Fs::EntryKind::Dir))
+        {
+            return true;
+        }
+        if self.opts.load_package_json
+            && let Some(kind) = kind_of(self, b"package.json")
+            && info.flags.contains(DirInfo::Flag::HasPackageJsonFile)
+                != (kind == Some(Fs::EntryKind::File))
+        {
+            return true;
+        }
+        if self.opts.load_tsconfig_json {
+            let names: [&[u8]; 2] = [b"tsconfig.json", b"jsconfig.json"];
+            let kinds = names.map(|name| kind_of(self, name));
+            if kinds.iter().any(Option::is_some) {
+                let selected: Option<&[u8]> = names.into_iter().find(|name| {
+                    self.stat_in(info.abs_path, name).and_then(|id| id.kind())
+                        == Some(Fs::EntryKind::File)
+                });
                 if info.flags.contains(DirInfo::Flag::HasTsconfigFile) != selected.is_some() {
                     return true;
                 }
@@ -3002,6 +3013,19 @@ impl<'a> Resolver<'a> {
             }
         }
         false
+    }
+
+    /// The listing entry for `name` is a link, so its kind can change while the directory does not.
+    fn listing_entry_is_link(&self, info: DirInfoRef, name: &[u8]) -> bool {
+        let _lock = self.rfs_ref().entries_mutex.lock_guard();
+        info.get_entries_const()
+            .and_then(|entries| entries.get(name))
+            .is_some_and(|lookup| {
+                lookup
+                    .entry()
+                    .is_link
+                    .load(core::sync::atomic::Ordering::Relaxed)
+            })
     }
 
     /// `stat` of `name` under `dir` (`dir` itself for an empty name), links followed.

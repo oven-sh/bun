@@ -1866,14 +1866,14 @@ pub(crate) mod __gated_printer {
         fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
             // Rust can't pre-count `fmt::Arguments` without formatting,
             // so stream each formatted chunk straight into the writer's
-            // reserved space instead — same zero-heap property without
+            // buffer instead — same zero-heap property without
             // formatting twice.
             struct FmtAdapter<'w, W: WriterTrait> {
                 writer: &'w mut W,
             }
             impl<W: WriterTrait> core::fmt::Write for FmtAdapter<'_, W> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    self.writer.write_reserved(s.as_bytes());
+                    self.writer.print_slice(s.as_bytes());
                     Ok(())
                 }
             }
@@ -6892,7 +6892,7 @@ pub(crate) mod __gated_printer {
                             self.print(b"\\u");
                             let mut tmp = [0u8; 4];
                             let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                            self.writer.write_reserved(&tmp[..len]);
+                            self.print(&tmp[..len]);
                         }
                     }
                     continue;
@@ -6901,7 +6901,7 @@ pub(crate) mod __gated_printer {
                 {
                     let mut tmp = [0u8; 4];
                     let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                    self.writer.write_reserved(&tmp[..len]);
+                    self.print(&tmp[..len]);
                 }
             }
             Ok(())
@@ -7260,8 +7260,7 @@ pub trait WriterContext {
     fn write_all(&mut self, buf: &[u8]);
     fn get_last_byte(&self) -> u8;
     fn get_last_last_byte(&self) -> u8;
-    fn reserve_next(&mut self, count: u64) -> *mut u8;
-    fn advance_by(&mut self, count: u64);
+    fn reserve_next(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn take_buffer(&mut self) -> MutableString;
     fn done(&mut self) {}
@@ -7274,18 +7273,7 @@ pub trait WriterTrait {
     fn prev_prev_char(&self) -> u8;
     fn print_byte(&mut self, b: u8);
     fn print_slice(&mut self, s: &[u8]);
-    fn reserve(&mut self, count: u64) -> *mut u8;
-    fn advance(&mut self, count: u64);
-    /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
-    /// Centralizes the open-coded `reserve + copy_nonoverlapping + advance` triplet
-    #[inline]
-    fn write_reserved(&mut self, bytes: &[u8]) {
-        let ptr = self.reserve(bytes.len() as u64);
-        // SAFETY: `reserve(n)` returns a writable region of >= n bytes owned by the
-        // writer's internal buffer, which is disjoint from caller-provided `bytes`.
-        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
-        self.advance(bytes.len() as u64);
-    }
+    fn reserve(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn done(&mut self);
     fn std_writer(&mut self) -> StdWriterAdapter<'_, Self>
@@ -7332,12 +7320,8 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.get_last_last_byte()
     }
 
-    pub(crate) fn reserve(&mut self, count: u64) -> *mut u8 {
+    pub(crate) fn reserve(&mut self, count: u64) {
         self.ctx.reserve_next(count)
-    }
-
-    pub(crate) fn advance(&mut self, count: u64) {
-        self.ctx.advance_by(count);
     }
 
     #[inline]
@@ -7378,12 +7362,8 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> *mut u8 {
+    fn reserve(&mut self, count: u64) {
         self.reserve(count)
-    }
-    #[inline]
-    fn advance(&mut self, count: u64) {
-        self.advance(count)
     }
     #[inline]
     fn slice(&self) -> &[u8] {
@@ -7422,12 +7402,8 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> *mut u8 {
+    fn reserve(&mut self, count: u64) {
         (**self).reserve(count)
-    }
-    #[inline]
-    fn advance(&mut self, count: u64) {
-        (**self).advance(count)
     }
     #[inline]
     fn slice(&self) -> &[u8] {
@@ -7523,16 +7499,9 @@ impl BufferWriter {
         if len >= 2 { list[len - 2] } else { 0 }
     }
 
-    pub(crate) fn reserve_next(&mut self, count: u64) -> *mut u8 {
+    pub(crate) fn reserve_next(&mut self, count: u64) {
         let n = usize::try_from(count).expect("int cast");
-        // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
-        unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr()
-    }
-
-    pub(crate) fn advance_by(&mut self, count: u64) {
-        let count_usize = usize::try_from(count).expect("int cast");
-        // SAFETY: reserve_next reserved and the caller initialized [len..len+count).
-        unsafe { bun_core::vec::commit_spare(&mut self.buffer.list, count_usize) };
+        self.buffer.list.reserve(n);
     }
 
     pub fn reset(&mut self) {
@@ -7575,12 +7544,8 @@ impl WriterContext for BufferWriter {
         self.get_last_last_byte()
     }
     #[inline]
-    fn reserve_next(&mut self, count: u64) -> *mut u8 {
+    fn reserve_next(&mut self, count: u64) {
         self.reserve_next(count)
-    }
-    #[inline]
-    fn advance_by(&mut self, count: u64) {
-        self.advance_by(count)
     }
     #[inline]
     fn slice(&self) -> &[u8] {

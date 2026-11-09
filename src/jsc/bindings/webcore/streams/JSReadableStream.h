@@ -50,6 +50,8 @@ public:
     ReadableStreamState m_state { ReadableStreamState::Readable };
     // The Bun lazy-start mode; tells materializeIfNeeded() what to do.
     BunStreamMode m_bunMode { BunStreamMode::Default };
+    // Bun: that lazy start failed and its consumer got the error, so cancel() reports the error as already handled.
+    bool m_lazyStartFailed { false };
     // The tag for the ERASED m_controller below. Every switch over it is TOTAL.
     ControllerKind m_controllerKind { ControllerKind::None };
     // [[disturbed]]
@@ -66,8 +68,6 @@ public:
     // Body.textStream(): the native source adapter decodes each chunk as UTF-8
     // text before enqueue.
     bool m_nativeTextMode : 1 { false };
-    // Bun: the lazy start failed and its consumer got the error. cancel() reports that error as already handled.
-    bool m_lazyStartFailed : 1 { false };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).
     JSC::WriteBarrier<JSReadableStreamReaderBase> m_reader;

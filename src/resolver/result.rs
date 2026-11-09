@@ -90,7 +90,7 @@ impl Default for Result<'_> {
 
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
-    pub struct ResultFlags: u8 {
+    pub struct ResultFlags: u16 {
         // Bits 0..=1 encode [`ExternalKind`]; write via `set_external_kind`.
         const IS_EXTERNAL = 1 << 0;
         const REWRITE_IMPORT_PATH = 1 << 1;
@@ -103,6 +103,8 @@ bitflags::bitflags! {
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         /// tsconfig `"useDefineForClassFields": false` was set explicitly.
         const SET_SEMANTICS_FOR_CLASS_FIELDS = 1 << 7;
+        /// Found in a `NODE_PATH` directory that is a `node_modules` folder inside another one. pnpm links the packages that a project does not declare into `node_modules/.pnpm/node_modules`.
+        const IS_FROM_HOIST_FOLDER = 1 << 8;
     }
 }
 
@@ -163,6 +165,14 @@ impl ResultFlags {
     #[inline]
     pub(crate) fn set_is_from_node_path(&mut self, v: bool) {
         self.set(Self::IS_FROM_NODE_PATH, v)
+    }
+    #[inline]
+    pub fn is_from_hoist_folder(self) -> bool {
+        self.contains(Self::IS_FROM_HOIST_FOLDER)
+    }
+    #[inline]
+    pub(crate) fn set_is_from_hoist_folder(&mut self, v: bool) {
+        self.set(Self::IS_FROM_HOIST_FOLDER, v)
     }
     #[inline]
     pub fn emit_decorator_metadata(self) -> bool {
@@ -320,6 +330,7 @@ pub struct MatchResult {
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
     pub(crate) is_from_node_path: bool,
+    pub(crate) is_from_hoist_folder: bool,
     pub(crate) package_json: Option<&'static PackageJSON>,
     pub(crate) dir_info: Option<DirInfoRef>,
     pub(crate) module_type: options::ModuleType,
@@ -334,6 +345,7 @@ impl Default for MatchResult {
             file_fd: FD::INVALID,
             is_node_module: false,
             is_from_node_path: false,
+            is_from_hoist_folder: false,
             package_json: None,
             dir_info: None,
             module_type: options::ModuleType::Unknown,

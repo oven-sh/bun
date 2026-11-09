@@ -30,6 +30,9 @@ test/js/bun/import-attributes/import-attributes.test.ts: suffixes of an import p
 test/js/bun/resolve/import-query.test.ts: dynamic import of a .node addon ignores a query string suffix
 test/js/bun/resolve/import-query.test.ts: require of a .node addon with a query string reaches process.dlopen
 test/js/bun/resolve/import-query.test.ts: static import of a .node addon ignores a query string suffix
+# The build of a compiled test run resolves the imports, with NODE_PATH. A mock whose key is a name does not reach them, and a chai in NODE_PATH comes before the one next to vitest.
+test/js/bun/resolve/resolve.test.ts: NODE_PATH test > bun test > mock.module of a package in the hoist folder of pnpm
+test/js/bun/resolve/resolve.test.ts: NODE_PATH test > bun test > the chai next to vitest comes before a chai that only NODE_PATH has
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `.cjs` specifier does not pick up ["ts","tsx","mts"] files
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `.js` specifier does not pick up ["cts"] files
 test/js/bun/resolve/resolve.test.ts: TypeScript extension rewrite matrix > `.mjs` specifier does not pick up ["ts","tsx","cts"] files

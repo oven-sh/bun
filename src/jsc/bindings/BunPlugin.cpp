@@ -3058,6 +3058,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
     BunString from = Bun::toString(fromString);
     // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
     // while resolving (e.g. by an onResolve plugin) propagates.
+    // Under `bun test` a package that only a hoist folder of NODE_PATH has does not resolve here either: see ResolveMode::ModuleMock.
     auto result = JSValue::decode(Bun__resolveSyncWithSourceIfExists(globalObject, JSValue::encode(specifierString), &from, true));
     RETURN_IF_EXCEPTION(scope, false);
 

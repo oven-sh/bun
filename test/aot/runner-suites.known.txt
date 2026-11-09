@@ -168,6 +168,9 @@ test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name th
 test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by require()
 test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by require.resolve()
 test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > whether or not an onLoad serves it
+# The build of a compiled test run resolves the imports, with NODE_PATH. A mock whose key is a name does not reach them, and a chai in NODE_PATH comes before the one next to vitest.
+test/js/bun/resolve/resolve.test.ts: NODE_PATH test > bun test > mock.module of a package in the hoist folder of pnpm
+test/js/bun/resolve/resolve.test.ts: NODE_PATH test > bun test > the chai next to vitest comes before a chai that only NODE_PATH has
 test/js/bun/resolve/resolve.test.ts: auto-install init failure from an unreadable cwd is a catchable error
 # snapshot.test.ts gives each of these 5 seconds for three child runs: compiled ones keep that on a machine of their own, and not on a busy one or with a sanitizer.
 ~ test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: inline snapshots > #16403

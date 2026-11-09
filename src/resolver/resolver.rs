@@ -2714,6 +2714,9 @@ impl<'a> Resolver<'a> {
                     result.flags.is_from_node_modules() || res.is_node_module,
                 );
                 result.flags.set_is_from_node_path(res.is_from_node_path);
+                result
+                    .flags
+                    .set_is_from_hoist_folder(res.is_from_hoist_folder);
                 result.module_type = res.module_type;
                 // Potentially rewrite the import path if it's external that
                 // was remapped to a different path
@@ -3250,6 +3253,7 @@ impl<'a> Resolver<'a> {
                     .is_success()
                 {
                     out.is_from_node_path = true;
+                    out.is_from_hoist_folder = is_hoist_folder(path);
                     if let Some(d) = self.debug_logs.as_mut() {
                         d.decrease_indent();
                     }
@@ -7184,6 +7188,21 @@ fn is_require(kind: ast::ImportKind) -> bool {
     )
 }
 
+/// Whether `dir` is a `node_modules` folder inside another `node_modules` folder.
+fn is_hoist_folder(mut dir: &[u8]) -> bool {
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    while let [parent @ .., last] = dir
+        && separators.contains(last)
+    {
+        dir = parent;
+    }
+    let Some(parent) = dir.strip_suffix(b"node_modules") else {
+        return false;
+    };
+    parent.last().is_some_and(|last| separators.contains(last))
+        && strings::tokenize_any(parent, separators).any(|folder| folder == b"node_modules")
+}
+
 /// TypeScript matches `./foo.js` with `./foo.ts` (microsoft/TypeScript#4595). This
 /// is esbuild's `rewrittenFileExtensions` table plus Bun's `.js` → `.mts`
 /// (oven-sh/bun#12580). `inside_node_modules` gates only `.mjs` and `.cjs`:
@@ -7284,5 +7303,23 @@ mod tests {
         let other = Resolver::intern_node_path(b"/node-path-tests/c");
         assert_eq!(other.as_bytes(), b"/node-path-tests/c");
         assert!(Resolver::intern_node_path(b"").is_empty());
+    }
+
+    #[test]
+    fn a_hoist_folder_is_a_node_modules_folder_inside_another() {
+        assert!(is_hoist_folder(b"/app/node_modules/.pnpm/node_modules"));
+        assert!(is_hoist_folder(
+            b"/app/node_modules/.pnpm/cross-env@7.0.3/node_modules/"
+        ));
+        assert!(is_hoist_folder(b"node_modules/.pnpm/node_modules"));
+        assert!(!is_hoist_folder(b"/deps/node_modules"));
+        assert!(!is_hoist_folder(b"/deps/node_modules/"));
+        assert!(!is_hoist_folder(b"node_modules"));
+        assert!(!is_hoist_folder(b"/app/node_modules/app/src"));
+        assert!(!is_hoist_folder(
+            b"/app/node_modules/.pnpm/old_node_modules"
+        ));
+        assert!(!is_hoist_folder(b"/app/node_modules_old/node_modules"));
+        assert!(!is_hoist_folder(b""));
     }
 }

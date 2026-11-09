@@ -4269,18 +4269,20 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
+    /// The key of a module mock: as `Esm`, but under `bun test` a package that only a hoist folder of `NODE_PATH` has does not resolve.
+    ModuleMock,
 }
 
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::ModuleMock)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
-            Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::Esm | Self::ModuleMock => bun_ast::ImportKind::Stmt,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
         }
@@ -5484,7 +5486,7 @@ impl VirtualMachine {
         ret: &mut ResolveFunctionResult<'r>,
         specifier: &'r [u8],
         source: &[u8],
-        is_esm: bool,
+        mode: ResolveMode,
         is_a_file_path: bool,
         global_cache: bun_resolver::GlobalCache,
     ) -> crate::CrateResult<()> {
@@ -5556,7 +5558,7 @@ impl VirtualMachine {
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let result: bun_resolver::Result = loop {
-            let import_kind = if is_esm {
+            let import_kind = if mode.is_esm() {
                 bun_ast::ImportKind::Stmt
             } else {
                 bun_ast::ImportKind::Require
@@ -5568,15 +5570,22 @@ impl VirtualMachine {
                 global_cache,
             ) {
                 ResultUnion::Success(r) => {
-                    // The chai that vitest depends on comes before one that only NODE_PATH has.
-                    if r.flags.is_from_node_path()
-                        && let Some(chai) = self.resolve_chai_next_to_vitest(
+                    if r.flags.is_from_node_path() {
+                        // The chai that vitest depends on comes before one that only NODE_PATH has.
+                        if let Some(chai) = self.resolve_chai_next_to_vitest(
                             normalized_specifier,
                             source_to_use,
                             import_kind,
-                        )
-                    {
-                        break chai;
+                        ) {
+                            break chai;
+                        }
+                        // Reported as not found: the mock then keeps its name as the key, and so it replaces every copy of the package.
+                        if mode == ResolveMode::ModuleMock
+                            && r.flags.is_from_hoist_folder()
+                            && self.transpiler.options.rewrite_jest_for_tests
+                        {
+                            return Err(crate::CrateError::ModuleNotFound);
+                        }
                     }
                     break r;
                 }
@@ -5966,7 +5975,7 @@ impl VirtualMachine {
             &mut result,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
-            mode.is_esm(),
+            mode,
             IS_A_FILE_PATH,
             global_cache,
         );

@@ -243,10 +243,7 @@ describe("bundler", async () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
 
-  // `--loader .ext:name` and `Bun.build({ loader: { ".ext": name } })` must
-  // select the named loader. "jsonc" used to degrade to the strict "json"
-  // loader and "sqlite_embedded" to the non-embedding "sqlite" loader on both
-  // surfaces, and `Bun.build` rejected "napi" and "sqlite_embedded" outright.
+  // A loader map entry selects the loader it names, through `--loader` and through `Bun.build`.
   describe("loader map", () => {
     const sqliteFixture = (() => {
       const db = new Database(":memory:");
@@ -283,9 +280,7 @@ describe("bundler", async () => {
           "/data.db": sqliteFixture,
         },
         onAfterBundle(api) {
-          // Embedding copies the database next to the bundle and references the
-          // copy. The plain "sqlite" loader copies nothing and references the
-          // source file by absolute path.
+          // Embedding copies the database next to the bundle, and the bundle references the copy.
           const asset = readdirSync(api.outdir).find(name => /^data-\w+\.db$/.test(name));
           expect(asset).toBeDefined();
           api.expectFile("/out/entry.js").toContain(`"./${asset}"`);

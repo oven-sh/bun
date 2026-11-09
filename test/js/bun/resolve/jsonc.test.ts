@@ -39,7 +39,6 @@ test.concurrent("import anything.jsonc as json", async () => {
   expect(await bunRun(join(dir, "index.ts"))).toSpawn();
 });
 
-// A loader map entry that names "jsonc" used to select the strict "json" loader.
 for (const [surface, args, files] of [
   ["--loader", ["--loader", ".cfg:jsonc"], {}],
   ["bunfig [loader]", [], { "bunfig.toml": `[loader]\n".cfg" = "jsonc"\n` }],

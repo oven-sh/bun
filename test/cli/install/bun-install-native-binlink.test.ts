@@ -118,7 +118,7 @@ describe.concurrent("native binlink optimization", () => {
       await expectPlatformBin();
     });
 
-    test(`a trusted script runs the platform-specific bin with linker ${linker}`, async () => {
+    test(`lifecycle scripts use the platform-specific bin with linker ${linker}`, async () => {
       const { packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker } });
       await mkdir(join(packageDir, "user"));
       await Promise.all([
@@ -141,7 +141,7 @@ describe.concurrent("native binlink optimization", () => {
           }),
         ),
       ]);
-      const tmp = join(packageDir, ".bun-tmp");
+      const tmpDir = join(packageDir, ".bun-tmp");
       await using proc = spawn({
         cmd: [bunExe(), "install"],
         cwd: packageDir,
@@ -151,16 +151,16 @@ describe.concurrent("native binlink optimization", () => {
         env: {
           ...bunEnv,
           BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
-          BUN_TMPDIR: tmp,
-          TMPDIR: tmp,
-          TEMP: tmp,
+          BUN_TMPDIR: tmpDir,
+          TMPDIR: tmpDir,
+          TEMP: tmpDir,
         },
       });
       const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).not.toContain("error:");
-      const user = realpathSync(join(packageDir, "node_modules", "user"));
-      expect(readFileSync(join(user, "out.txt"), "utf8")).toContain("SUCCESS: Using platform-specific bin");
-      expect(existsSync(join(user, "node_modules"))).toBe(false);
+      const userDir = realpathSync(join(packageDir, "node_modules", "user"));
+      expect(readFileSync(join(userDir, "out.txt"), "utf8")).toContain("SUCCESS: Using platform-specific bin");
+      expect(existsSync(join(userDir, "node_modules"))).toBe(false);
       expect(exitCode).toBe(0);
     });
 

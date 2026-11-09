@@ -28,6 +28,7 @@ use crate::windows_shim::BinLinkingShim as WinBinLinkingShim;
 #[cfg(windows)]
 use crate::windows_shim::Shebang as WinShimShebang;
 use crate::{PackageID, PackageManager};
+use bun_resolver::package_json::Package as PackageSpecifier;
 
 bun_output::declare_scope!(BinLinker, hidden);
 
@@ -1967,10 +1968,9 @@ pub(crate) fn link_free_bins(
     }
 }
 
-/// Links the bins of a package's own dependencies into its `node_modules/.bin`, which is the first
-/// directory its scripts search. Only a bin whose name they would find in a package that they don't
-/// depend on is linked.
-pub fn link_own_bins(
+/// Links the bins of a package's dependencies into its own `node_modules/.bin`, which its scripts
+/// search first. Bins that the scripts already find in a dependency or in `PATH` are skipped.
+pub fn link_dependency_bins(
     manager: &PackageManager,
     package_id: PackageID,
     scripts: &crate::lockfile::package::scripts::List,
@@ -1982,41 +1982,38 @@ pub fn link_own_bins(
     {
         return;
     }
-    let cwd = strings::without_trailing_slash(scripts.cwd.as_bytes());
-    let Some(project_len) = project_dir_len(cwd) else {
+    let cwd = scripts.cwd.as_bytes();
+    let dirs = node_modules_dirs(cwd);
+    let Some(own_dir) = dirs.first() else {
         return;
     };
-    let own_node_modules = node_modules_in(cwd);
-    let own_bin_dir = [&own_node_modules[..], &[SEP][..], b".bin"].concat();
-    if is_link(&own_node_modules) || is_link(&own_bin_dir) {
+    let own_bin_dir = [own_dir, &[SEP][..], b".bin"].concat();
+    if is_symlink(own_dir) || is_symlink(&own_bin_dir) {
         return;
     }
-    let system_path = crate::lifecycle_script_runner::path_without_bin_dirs(
-        manager.env().get(b"PATH").unwrap_or(b""),
-    );
+    let env_path =
+        crate::lifecycle_script_runner::strip_bin_dirs(manager.env().get(b"PATH").unwrap_or(b""));
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let mut own_folders: Option<StringHashMap<()>> = None;
+    let mut dependency_names: Option<StringHashMap<()>> = None;
     let mut seen: StringHashMap<()> = StringHashMap::default();
+    let mut which_buf = path::path_buffer_pool::get();
 
-    for (folder, dependency_id) in placed_dependencies(lockfile, package_id) {
+    for (alias, dependency_id) in resolved_dependencies(lockfile, package_id) {
         let bin = pkgs.items_bin()[dependency_id as usize];
+        let meta = &pkgs.items_meta()[dependency_id as usize];
         let options = &manager.options;
-        if bin.tag == Tag::None
-            || pkgs.items_meta()[dependency_id as usize].is_disabled(
-                options.cpu,
-                options.os,
-                options.libc,
-            )
-        {
+        if bin.tag == Tag::None || meta.is_disabled(options.cpu, options.os, options.libc) {
             continue;
         }
-        let Some(node_modules) = find_node_modules_with(cwd, project_len, folder) else {
+        let Some(depth) =
+            (dirs.iter()).position(|dir| sys::exists(&[&dir[..], &[SEP][..], alias].concat()))
+        else {
             continue;
         };
-        let (Ok(target_node_modules_path), Ok(mut node_modules_path), Ok(dir)) = (
-            AbsPath::from(&node_modules),
-            AbsPath::from(&own_node_modules),
-            sys::Dir::open(&node_modules),
+        let (Ok(target_node_modules_path), Ok(mut node_modules_path), Ok(target_dir)) = (
+            AbsPath::from(&dirs[depth]),
+            AbsPath::from(own_dir),
+            sys::Dir::open(&dirs[depth]),
         ) else {
             continue;
         };
@@ -2027,40 +2024,43 @@ pub fn link_own_bins(
             done: false,
             dir_iterator: None,
             package_name: pkgs.items_name()[dependency_id as usize],
-            destination_node_modules: dir.fd(),
+            destination_node_modules: target_dir.fd(),
             buf: path::path_buffer_pool::get(),
             string_buffer: string_buf,
             extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
         };
-        let mut is_contested = false;
+        let mut has_conflict = false;
         while let Ok(Some(name)) = names.next() {
             let name = normalized_bin_name(name);
             let dest = [&own_bin_dir[..], &[SEP][..], name].concat();
             if seen.contains_key(&dest[..]) {
                 continue;
             }
-            let found = (!is_system_command(&system_path, cwd, name))
-                .then(|| find_bin(cwd, &node_modules, name))
-                .flatten();
-            let is_own = found.is_none_or(|target| {
-                let own = own_folders.get_or_insert_with(|| folders_below(lockfile, package_id));
-                own.contains_key(package_folder(&target))
-            });
-            if is_own {
-                let _ = seen.put(&dest, ());
+            let owner = if bun_which::which(&mut which_buf, &env_path, cwd, name).is_some() {
+                None
             } else {
-                is_contested = true;
+                dirs[..=depth].iter().find_map(|dir| bin_owner(dir, name))
+            };
+            let is_conflict = owner.is_some_and(|owner| {
+                !dependency_names
+                    .get_or_insert_with(|| transitive_dependency_names(lockfile, package_id))
+                    .contains_key(&owner[..])
+            });
+            if is_conflict {
+                has_conflict = true;
+            } else {
+                let _ = seen.put(&dest, ());
             }
         }
-        dir.close();
-        if !is_contested {
+        target_dir.close();
+        if !has_conflict {
             continue;
         }
 
         let mut abs_target_buf = path::path_buffer_pool::get();
         let mut abs_dest_buf = path::path_buffer_pool::get();
         let mut rel_buf = path::path_buffer_pool::get();
-        let package_name = strings::StringOrTinyString::init(folder);
+        let package_name = strings::StringOrTinyString::init(alias);
         let mut linker = Linker {
             bin,
             target_node_modules_path: &raw const target_node_modules_path,
@@ -2081,8 +2081,8 @@ pub fn link_own_bins(
         linker.link(false);
         if let Some(err) = linker.err {
             bun_core::warn!(
-                "failed to link {} for the scripts of {}: {}",
-                bun_core::fmt::for_terminal(bstr::BStr::new(folder)),
+                "failed to link {} for {}: {}",
+                bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
                 bun_core::fmt::for_terminal(bstr::BStr::new(&scripts.package_name)),
                 err.name(),
             );
@@ -2090,111 +2090,69 @@ pub fn link_own_bins(
     }
 }
 
-/// The folder name and the package of each resolved dependency of `package_id`.
-fn placed_dependencies(
+fn resolved_dependencies(
     lockfile: &Lockfile,
     package_id: PackageID,
 ) -> impl Iterator<Item = (&[u8], PackageID)> {
     let pkgs = lockfile.packages.slice();
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = pkgs.items_dependencies()[package_id as usize]
         .get(lockfile.buffers.dependencies.as_slice());
     let resolutions =
         pkgs.items_resolutions()[package_id as usize].get(lockfile.buffers.resolutions.as_slice());
     (dependencies.iter().zip(resolutions))
         .filter(|&(_, &id)| (id as usize) < lockfile.packages.len())
-        .map(|(dependency, &id)| {
-            (
-                dependency
-                    .name
-                    .slice(lockfile.buffers.string_bytes.as_slice()),
-                id,
-            )
-        })
+        .map(|(dependency, &id)| (dependency.name.slice(string_buf), id))
 }
 
-/// The folder names of everything that `package_id` depends on.
-fn folders_below(lockfile: &Lockfile, package_id: PackageID) -> StringHashMap<()> {
-    let mut folders: StringHashMap<()> = StringHashMap::default();
+fn transitive_dependency_names(lockfile: &Lockfile, package_id: PackageID) -> StringHashMap<()> {
+    let mut names: StringHashMap<()> = StringHashMap::default();
     let mut visited = vec![false; lockfile.packages.len()];
     visited[package_id as usize] = true;
     let mut stack = vec![package_id];
     while let Some(current) = stack.pop() {
-        for (folder, id) in placed_dependencies(lockfile, current) {
-            let _ = folders.put(folder, ());
+        for (alias, id) in resolved_dependencies(lockfile, current) {
+            let _ = names.put(alias, ());
             if !core::mem::replace(&mut visited[id as usize], true) {
                 stack.push(id);
             }
         }
     }
-    folders
+    names
 }
 
-fn node_modules_in(dir: &[u8]) -> Vec<u8> {
-    let dir = strings::without_trailing_slash(dir);
-    [dir, &[SEP][..], b"node_modules"].concat()
-}
-
-fn is_link(path: &[u8]) -> bool {
-    sys::lstat(&bun_core::ZBox::from_bytes(path))
-        .is_ok_and(|st| sys::kind_from_mode(st.st_mode as sys::Mode) == sys::EntryKind::SymLink)
-}
-
-/// How much of `dir` is the project's directory. A script's working directory can be a real path.
-fn project_dir_len(dir: &[u8]) -> Option<usize> {
+/// The `node_modules` of `cwd` and of each parent directory up to the project's.
+fn node_modules_dirs(cwd: &[u8]) -> Vec<Vec<u8>> {
     let top_level_dir =
         strings::without_trailing_slash(crate::bun_fs::FileSystem::get().top_level_dir());
-    let is_in = |project: &[u8]| {
-        dir.strip_prefix(project)
-            .is_some_and(|rest| rest.first() == Some(&SEP))
-            .then_some(project.len())
-    };
-    is_in(top_level_dir).or_else(|| {
-        let mut buf = path::path_buffer_pool::get();
-        sys::realpath(&bun_core::ZBox::from_bytes(top_level_dir), &mut buf)
-            .ok()
-            .and_then(is_in)
-    })
-}
-
-/// The `node_modules` that a module in `from` finds `folder` in.
-fn find_node_modules_with(from: &[u8], project_len: usize, folder: &[u8]) -> Option<Vec<u8>> {
-    let mut dir = Some(from);
-    while let Some(parent) = dir.filter(|parent| parent.len() >= project_len) {
-        let node_modules = node_modules_in(parent);
-        if sys::exists(&[&node_modules[..], &[SEP][..], folder].concat()) {
-            return Some(node_modules);
+    let mut real_buf = path::path_buffer_pool::get();
+    // On Windows, the cwd of a script is a real path.
+    let real_top_level_dir =
+        sys::realpath(&bun_core::ZBox::from_bytes(top_level_dir), &mut real_buf);
+    let mut dirs = Vec::new();
+    let mut dir = Some(strings::without_trailing_slash(cwd));
+    while let Some(current) = dir {
+        dirs.push([current, &[SEP][..], b"node_modules"].concat());
+        if current == top_level_dir
+            || real_top_level_dir
+                .as_ref()
+                .is_ok_and(|real| current == *real)
+        {
+            return dirs;
         }
-        dir = bun_paths::dirname(parent);
+        dir = bun_paths::dirname(current);
     }
-    None
+    Vec::new()
 }
 
-/// Scripts of a dependency find a system command before a bin in a shared `.bin`.
-fn is_system_command(system_path: &[u8], cwd: &[u8], name: &[u8]) -> bool {
-    let mut buf = path::path_buffer_pool::get();
-    bun_which::which(&mut buf, system_path, cwd, name).is_some()
+fn is_symlink(path: &[u8]) -> bool {
+    crate::isolated_install::installer::is_link(&bun_core::ZBox::from_bytes(path)) == Some(true)
 }
 
-/// The target of the first bin called `name` from `cwd` up to `node_modules`, relative to the
-/// `node_modules` that the bin is in.
-fn find_bin(cwd: &[u8], node_modules: &[u8], name: &[u8]) -> Option<Vec<u8>> {
-    let mut dir = Some(cwd);
-    while let Some(parent) = dir {
-        let candidate = node_modules_in(parent);
-        if let Some(target) = bin_target(&candidate, name) {
-            return Some(target);
-        }
-        if candidate == node_modules {
-            return None;
-        }
-        dir = bun_paths::dirname(parent);
-    }
-    None
-}
-
-/// `None` if the `.bin` of `node_modules` has no `name`. Empty if it leads to no package there.
+/// The name of the package that `name` in `<node_modules>/.bin` links to, `None` if it doesn't
+/// exist. The name is empty if the target is not a package in `node_modules`.
 #[cfg(not(windows))]
-fn bin_target(node_modules: &[u8], name: &[u8]) -> Option<Vec<u8>> {
+fn bin_owner(node_modules: &[u8], name: &[u8]) -> Option<Vec<u8>> {
     let bin_dir = [node_modules, &[SEP][..], b".bin"].concat();
     let dest = bun_core::ZBox::from_bytes([&bin_dir[..], &[SEP][..], name].concat());
     let mut link_buf = path::path_buffer_pool::get();
@@ -2203,46 +2161,36 @@ fn bin_target(node_modules: &[u8], name: &[u8]) -> Option<Vec<u8>> {
         Err(err) if err.get_errno() == sys::Errno::ENOENT => return None,
         Err(_) => return Some(Vec::new()),
     };
-    let mut buf = path::path_buffer_pool::get();
-    let resolved = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
+    let mut target_buf = path::path_buffer_pool::get();
+    let target = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
         &bin_dir,
-        buf.as_mut_slice(),
+        target_buf.as_mut_slice(),
         &[link],
     );
-    let target = resolved
-        .and_then(|resolved| resolved.strip_prefix(node_modules))
-        .and_then(|rest| rest.strip_prefix(&[SEP]));
-    Some(target.unwrap_or(b"").to_vec())
+    let package_name = target
+        .and_then(|target| target.strip_prefix(node_modules)?.strip_prefix(b"/"))
+        .and_then(PackageSpecifier::parse_name);
+    Some(package_name.unwrap_or(b"").to_vec())
 }
 
-/// `None` if the `.bin` of `node_modules` has no `name`. Empty if it leads to no package there. A
-/// `.bunx` file starts with the path of its target, relative to `node_modules`.
+/// The name of the package that `name` in `<node_modules>/.bin` links to, `None` if it doesn't
+/// exist. The name is empty if the target is not a package in `node_modules`.
 #[cfg(windows)]
-fn bin_target(node_modules: &[u8], name: &[u8]) -> Option<Vec<u8>> {
+fn bin_owner(node_modules: &[u8], name: &[u8]) -> Option<Vec<u8>> {
     let dest = [node_modules, b"\\.bin\\", name].concat();
+    // A `.bunx` file starts with the path of its target, relative to `node_modules`.
     let Ok(shim) = sys::File::read_from(Fd::cwd(), &[&dest[..], b".bunx"].concat()) else {
-        let is_taken = [&b""[..], b".exe", b".cmd", b".bat"]
+        let exists = [&b""[..], b".exe", b".cmd", b".bat"]
             .iter()
             .any(|suffix| sys::exists(&[&dest[..], *suffix].concat()));
-        return is_taken.then(Vec::new);
+        return exists.then(Vec::new);
     };
-    let target: Vec<u16> = (shim.chunks_exact(2))
-        .map(|unit| u16::from_le_bytes([unit[0], unit[1]]))
-        .take_while(|&unit| unit != u16::from(b'"') && unit != 0)
-        .collect();
-    Some(strings::to_utf8_alloc(&target))
-}
-
-/// `@scope/name` or `name` of a path that starts with it.
-fn package_folder(target: &[u8]) -> &[u8] {
-    let separators = b"/\\";
-    let Some(first) = strings::index_of_any(target, separators) else {
-        return target;
-    };
-    if !target.starts_with(b"@") {
-        return &target[..first];
-    }
-    let rest = &target[first + 1..];
-    let second = strings::index_of_any(rest, separators).unwrap_or(rest.len());
-    &target[..first + 1 + second]
+    let len = strings::index_of(&shim, b"\"\0").unwrap_or(0);
+    let mut target = strings::to_utf8_alloc_from_le_bytes(&shim[..len]);
+    resolve_path::slashes_to_posix_in_place(&mut target[..]);
+    Some(
+        PackageSpecifier::parse_name(&target)
+            .unwrap_or(b"")
+            .to_vec(),
+    )
 }

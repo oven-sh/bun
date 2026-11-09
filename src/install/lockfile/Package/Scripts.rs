@@ -319,7 +319,7 @@ impl Scripts {
         trusted: bool,
     ) -> Result<Option<List>, crate::Error> {
         let allow_node_gyp = trusted || (!self.has_any() && !self.filled);
-        // `self` can be a row of a bun.lockb, which is not what is installed.
+        // `self` may come from a bun.lockb.
         *self = Scripts::default();
         let list = self.create_from_package_json(
             log,

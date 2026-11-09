@@ -1614,9 +1614,9 @@ async function installStreamPkg(
   return results;
 }
 
-describe.concurrent("the pax size of an entry", () => {
-  // The body of `data` is an entry of its own, which only a reader that takes the size for 0 finds.
-  const withSize = (size: string) => {
+describe.concurrent("pax size", () => {
+  // The body of `data` is itself an entry, found only if the size is read as 0.
+  const buildTarballWithSize = (size: string) => {
     const body = Buffer.concat(tarFile("package/index.js", Buffer.from("second")));
     let record = "";
     for (let len = 0; record.length !== len || len === 0;) {
@@ -1637,19 +1637,19 @@ describe.concurrent("the pax size of an entry", () => {
       ]),
     );
   };
-  const ways = ["libdeflate", "zlib", "buffered", "streaming"] as const;
+  const extractPaths = ["libdeflate", "zlib", "buffered", "streaming"] as const;
 
-  test.each(ways)("can have leading zeros (%s)", async way => {
-    const [{ error, exitCode, files }] = await installStreamPkg(way, withSize("0001024"), { files: true });
+  test.each(extractPaths)("allows leading zeros (%s)", async path => {
+    const [{ error, exitCode, files }] = await installStreamPkg(path, buildTarballWithSize("0001024"), { files: true });
     expect(error).toBeUndefined();
     expect(files).toMatchObject({ "index.js": "first" });
     expect(exitCode).toBe(0);
   });
 
-  test.each(ways.flatMap(way => ["", "0x1", "+1", "0.5", " 1", "1k"].map(size => [size, way] as const)))(
-    "fails the install if it has anything but digits: %j (%s)",
-    async (size, way) => {
-      const [{ error, installed, cached, exitCode }] = await installStreamPkg(way, withSize(size));
+  test.each(extractPaths.flatMap(path => ["", "0x1", "+1", "0.5", " 1", "1k"].map(size => [size, path] as const)))(
+    "rejects %j (%s)",
+    async (size, path) => {
+      const [{ error, installed, cached, exitCode }] = await installStreamPkg(path, buildTarballWithSize(size));
       expect({ error, installed, cached }).toEqual({ error: expect.any(String), installed: false, cached: 0 });
       expect(exitCode).toBe(1);
     },

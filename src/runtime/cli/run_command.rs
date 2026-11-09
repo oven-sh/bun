@@ -222,7 +222,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: single-writer (Once gate), process-lifetime storage,
             // CLI is single-threaded at this point.
             let buf = unsafe { &mut *SHELL_BUF.get() };
-            let path = bun_install::lifecycle_script_runner::path_without_bin_dirs(path);
+            let path = bun_install::lifecycle_script_runner::strip_bin_dirs(path);
             let len = Self::find_shell_impl(&path, cwd, buf)?;
             buf[len] = 0;
             // SAFETY: `buf[len] == 0` written above; SHELL_BUF is `'static`.

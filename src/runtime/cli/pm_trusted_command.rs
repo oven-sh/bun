@@ -532,7 +532,7 @@ impl TrustCommand {
 
                 let output_in_foreground = false;
                 let optional = false;
-                bun_install::bin::link_own_bins(pm, info.package_id, &info.scripts_list);
+                bun_install::bin::link_dependency_bins(pm, info.package_id, &info.scripts_list);
                 pm.spawn_package_lifecycle_scripts(
                     &mut *ctx,
                     info.scripts_list.clone(),

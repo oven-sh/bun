@@ -916,8 +916,7 @@ pub mod fs {
             crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
         }
 
-        /// `is_node_module`, however `node_modules` is spelled, or in a package of the install
-        /// cache.
+        /// Checks for a package in `node_modules` (in any case) or in the install cache.
         pub fn is_dependency(&self) -> bool {
             let mut components = crate::strings::split_any(self.name().dir, b"/\\").peekable();
             while let Some(component) = components.next() {

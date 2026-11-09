@@ -328,6 +328,14 @@ describe.concurrent("--print of a promise that is pending when the event loop dr
     ["by its executor", settlesLate("reject", `"REASON"`)],
     ["from a then() callback", `${settlesLate("resolve", "1")}.then(() => { throw "REASON"; })`],
     ["by a timer that also starts a ref'd timer", settlesLate("reject", `(setTimeout(() => {}, 1), "REASON")`)],
+    // The fs callback is a task. The tick that runs it reports unhandled rejections before it returns.
+    [
+      "by a task",
+      `new Promise((resolve, reject) => {
+        setTimeout(() => require("fs").stat(".", () => reject("REASON")), 1).unref();
+        Bun.sleepSync(10);
+      })`,
+    ],
   ])("rejected late %s: the reason is printed and the exit code is 0", async (_, result) => {
     expect(await print(`${exitListener} ${result}`)).toEqual({
       stdout: "REASON\nexit listener ran\n",

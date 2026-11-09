@@ -1774,6 +1774,8 @@ fn print_eval_result(vm: &mut VirtualMachine) {
             // The loop drained on its own: one more turn runs the unref'd work that is already due.
             if promise.status() == PromiseStatus::Pending && vm.unhandled_error_counter == 0 {
                 took_turn = true;
+                // A rejection in this turn is printed as the result. Marked before the wait: a tick reports an unhandled one before it returns.
+                promise.set_handled(vm.jsc_vm());
                 loop {
                     vm.tick();
                     // A task can settle it in the tick. The poll would then block on other ref'd work.
@@ -1783,10 +1785,6 @@ fn print_eval_result(vm: &mut VirtualMachine) {
                     if promise.status() != PromiseStatus::Pending || !vm.is_event_loop_alive() {
                         break;
                     }
-                }
-                // The reason is printed as the result. Whether this turn ran must not decide the exit code.
-                if promise.status() == PromiseStatus::Rejected {
-                    promise.set_handled(vm.jsc_vm());
                 }
             }
             match promise.status() {

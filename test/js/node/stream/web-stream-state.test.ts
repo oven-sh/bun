@@ -378,4 +378,24 @@ describe.concurrent("a stream that a native consumer takes", () => {
     expect(state(stream)).toEqual(errored);
     expect(await finished(stream).catch(error => error)).toBe(error);
   });
+
+  // An S3 upload reads the stream through a reader. The reader is not acquired when the open fails, so the stream is not locked.
+  test("errors a Bun.file() stream whose file does not open when an S3 upload reads it", async () => {
+    using dir = tempDir("web-stream-state", {});
+    await using endpoint = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    const s3 = new Bun.S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+      endpoint: endpoint.url.href,
+    });
+    const stream = Bun.file(join(dir, "missing")).stream();
+    const error = await s3
+      .file("key.txt")
+      .write(stream)
+      .catch(error => error);
+    expect(error.code).toBe("ENOENT");
+    expect(state(stream)).toEqual({ ...errored, locked: false });
+    expect(await finished(stream).catch(error => error)).toBe(error);
+  });
 });

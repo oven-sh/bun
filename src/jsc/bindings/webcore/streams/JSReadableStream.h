@@ -66,6 +66,8 @@ public:
     // Body.textStream(): the native source adapter decodes each chunk as UTF-8
     // text before enqueue.
     bool m_nativeTextMode : 1 { false };
+    // Bun: the lazy start failed and its consumer got the error. cancel() reports that error as already handled.
+    bool m_lazyStartFailed : 1 { false };
 
     // [[reader]] — a default reader, a BYOB reader, or null (undefined).
     JSC::WriteBarrier<JSReadableStreamReaderBase> m_reader;

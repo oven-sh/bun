@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { exec } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 
 test.concurrent("pipe does the right thing", async () => {
   // Note: Bun.spawnSync uses memfd_create on Linux for pipe, which means we see
@@ -60,6 +61,67 @@ test.concurrent("reading a file stdin to the end leaves fd 0 open", async () => 
   expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "fd 0 kept", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.skipIf(isWindows)(
+  "process.stdin attaches after a Bun.stdin.stream() reader failed to open a directory on fd 0",
+  async () => {
+    // The failed reader leaves the cached Bun.stdin.stream() errored, and an errored stream has no native handle for process.stdin.
+    const script = `
+      const { isErrored } = require("node:stream");
+      let web;
+      try {
+        Bun.stdin.stream().getReader();
+        web = "returned";
+      } catch (e) {
+        web = "threw " + e.code + "/" + e.syscall;
+      }
+      const errored = isErrored(Bun.stdin.stream());
+      // Read only from an errored stream. A stream that the failed open left readable never settles this read.
+      let again = "not read";
+      if (errored) {
+        const reader = Bun.stdin.stream().getReader();
+        again = await reader.read().then(
+          () => "resolved",
+          e => "rejects " + e.code + "/" + e.syscall,
+        );
+        reader.releaseLock();
+      }
+      let attach;
+      try {
+        process.stdin.on("error", () => {});
+        process.stdin.on("data", () => {});
+        attach = "attached";
+      } catch (e) {
+        attach = "threw " + (e.code ?? e.name);
+      }
+      console.log(JSON.stringify({ web, errored, again, attach }));
+    `;
+    using dir = tempDir("stdin-directory", {});
+    const fd = openSync(String(dir), "r");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        stdin: fd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr }).toEqual({
+        stdout: JSON.stringify({
+          web: "threw EISDIR/fstat",
+          errored: true,
+          again: "rejects EISDIR/fstat",
+          attach: "attached",
+        }),
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  },
+);
 
 test.concurrent("stdin with 'readable' event handler should receive data when paused", async () => {
   const proc = Bun.spawn({

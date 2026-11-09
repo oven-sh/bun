@@ -540,6 +540,7 @@ NEVER_INLINE void JSReadableStream::materializeSlow(JSGlobalObject* globalObject
         TRY_CLEAR_EXCEPTION(scope, );
         webStreamControllerError(globalObject, this, exception->value());
         RETURN_IF_EXCEPTION(scope, );
+        m_lazyStartFailed = m_state == ReadableStreamState::Errored;
         // Still thrown: getReader(), tee() and pipeThrough() always threw it, and that throw is how a Bun.serve handler reaches error().
         throwException(globalObject, scope, exception);
     }

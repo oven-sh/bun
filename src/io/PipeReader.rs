@@ -258,11 +258,6 @@ impl PosixBufferedReader {
         )
     }
 
-    /// Ends a reader whose source did not open: no read is issued and the parent is not notified.
-    pub fn end_without_source(&mut self) {
-        self.flags.insert(PosixFlags::IS_DONE);
-    }
-
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self._buffer.capacity()
     }
@@ -1081,11 +1076,6 @@ impl WindowsBufferedReader {
                 | WindowsFlags::RECEIVED_EOF
                 | WindowsFlags::CLOSED_WITHOUT_REPORTING,
         )
-    }
-
-    /// Ends a reader whose source did not open: no read is issued and the parent is not notified.
-    pub fn end_without_source(&mut self) {
-        self.flags.insert(WindowsFlags::IS_DONE);
     }
 
     pub fn from(&mut self, other: &mut WindowsBufferedReader, parent: *mut c_void) {

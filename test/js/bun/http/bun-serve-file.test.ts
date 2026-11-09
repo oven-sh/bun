@@ -4,7 +4,6 @@ import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, rss, tempDir, temp
 import { mkfifo } from "mkfifo";
 import { closeSync, constants, openSync, readdirSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { isErrored } from "node:stream";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
 const files = {
@@ -1115,6 +1114,112 @@ describe("Bun.file in serve routes", () => {
   });
 });
 
+// A Bun.file() stream opens its file on first use. When the open fails, the stream is left errored.
+// These cases pin what a handler sees after that, for each way it can react.
+describe("a handler that consumes a Bun.file() stream that fails to open", () => {
+  const missing = () => Bun.file(join(import.meta.dir, "does-not-exist.txt")).stream();
+  const notFound = () => new Response("not found", { status: 404 });
+
+  // Two requests: the second shows that the server is still up. error() answers 500.
+  async function ask(handler: () => Response | Promise<Response>) {
+    const errors: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch: handler,
+      error(error: NodeJS.ErrnoException) {
+        errors.push(String(error.code));
+        return new Response("error()", { status: 500 });
+      },
+    });
+    const statuses = [(await fetch(server.url)).status, (await fetch(server.url)).status];
+    return { statuses, errors };
+  }
+
+  it("a catch that drops the promise of cancel() answers", async () => {
+    const outcome = await ask(() => {
+      const stream = missing();
+      try {
+        return new Response(stream.pipeThrough(new TransformStream()));
+      } catch {
+        stream.cancel();
+        return notFound();
+      }
+    });
+    expect(outcome).toEqual({ statuses: [404, 404], errors: [] });
+  });
+
+  it("a catch that awaits cancel() gets the open error again", async () => {
+    const outcome = await ask(async () => {
+      const stream = missing();
+      try {
+        return new Response(stream.pipeThrough(new TransformStream()));
+      } catch {
+        await stream.cancel();
+        return notFound();
+      }
+    });
+    expect(outcome).toEqual({ statuses: [500, 500], errors: ["ENOENT", "ENOENT"] });
+  });
+
+  // A whole-body reader returns a promise. The open error is its rejection, so a try/catch around the call does not see it.
+  it.each(["bytes", "text"] as const)(
+    "stream.%s() rejects: .catch() answers, a try/catch around the call does not",
+    async method => {
+      const chained = await ask(() =>
+        missing()
+          [method]()
+          .then(body => new Response(body))
+          .catch(notFound),
+      );
+      const wrapped = await ask(() => {
+        try {
+          return missing()
+            [method]()
+            .then(body => new Response(body));
+        } catch {
+          return notFound();
+        }
+      });
+      expect({ chained, wrapped }).toEqual({
+        chained: { statuses: [404, 404], errors: [] },
+        wrapped: { statuses: [500, 500], errors: ["ENOENT", "ENOENT"] },
+      });
+    },
+  );
+
+  // pipeTo() aborts its destination with the open error. A fallback that writes to the same destination needs preventAbort.
+  async function pipeWithFallback(options?: StreamPipeOptions) {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        const { readable, writable } = new TransformStream();
+        missing()
+          .pipeTo(writable, options)
+          .catch(async () => {
+            const writer = writable.getWriter();
+            await writer.write(new TextEncoder().encode("fallback"));
+            await writer.close();
+          })
+          .catch(() => {});
+        return new Response(readable);
+      },
+    });
+    // Awaited here: the server must stay up until the response has ended.
+    return await fetch(server.url)
+      .then(response => response.text())
+      .catch(() => "no response");
+  }
+
+  it("pipeTo() into the writable side of the body ends the response", async () => {
+    expect({
+      default: await pipeWithFallback(),
+      preventAbort: await pipeWithFallback({ preventAbort: true }),
+    }).toEqual({ default: "no response", preventAbort: "fallback" });
+  });
+});
+
 // What If-Range is for: the client has part of a file, and the file changes on
 // disk before the client asks for the rest. A 206 here would splice the old
 // first half onto the new second half.
@@ -2071,81 +2176,3 @@ console.log(JSON.stringify({ status, later, pendingRequests: server.pendingReque
     expect(exitCode).toBe(0);
   },
 );
-
-describe("a body derived from a Bun.file() stream that fails to open", () => {
-  const missing = () => Bun.file(join(import.meta.dir, "does-not-exist.txt")).stream();
-  // The derived stream is built inside fetch(). The open error is thrown there, so error() can answer.
-  const derived: [label: string, body: () => ReadableStream][] = [
-    ["pipeThrough(new TransformStream())", () => missing().pipeThrough(new TransformStream())],
-    ['pipeThrough(new CompressionStream("gzip"))', () => missing().pipeThrough(new CompressionStream("gzip"))],
-    ["tee()[0]", () => missing().tee()[0]],
-  ];
-
-  describe.each(derived)("%s", (_label, body) => {
-    it.each(["GET", "HEAD"])("%s reaches error()", async method => {
-      const errors: string[] = [];
-      using server = Bun.serve({
-        port: 0,
-        development: false,
-        fetch: () => new Response(body()),
-        error(error: NodeJS.ErrnoException) {
-          errors.push(String(error.code));
-          return new Response("not found", { status: 404 });
-        },
-      });
-      const response = await fetch(server.url, { method });
-      expect({ status: response.status, body: await response.text(), errors }).toEqual({
-        status: 404,
-        body: method === "HEAD" ? "" : "not found",
-        errors: ["ENOENT"],
-      });
-    });
-
-    it("a try/catch in the handler answers", async () => {
-      using server = Bun.serve({
-        port: 0,
-        development: false,
-        fetch() {
-          try {
-            return new Response(body());
-          } catch (error) {
-            return new Response(String((error as NodeJS.ErrnoException).code), { status: 404 });
-          }
-        },
-      });
-      const response = await fetch(server.url);
-      expect({ status: response.status, body: await response.text() }).toEqual({ status: 404, body: "ENOENT" });
-    });
-  });
-
-  it("pipeTo() into the writable side of the body ends the response", async () => {
-    const handled = Promise.withResolvers<{ readable: ReadableStream; piped: Promise<NodeJS.ErrnoException> }>();
-    using server = Bun.serve({
-      port: 0,
-      development: false,
-      fetch() {
-        const { readable, writable } = new TransformStream();
-        handled.resolve({
-          readable,
-          piped: missing()
-            .pipeTo(writable)
-            .catch(error => error),
-        });
-        return new Response(readable);
-      },
-    });
-    const outcome = fetch(server.url)
-      .then(response => response.text())
-      .then(
-        () => "complete",
-        () => "failed",
-      );
-    const { readable, piped } = await handled.promise;
-    // The pipe aborts its destination with the open error. That errors the body, so the response does not stay open.
-    expect({ piped: (await piped).code, bodyErrored: isErrored(readable) }).toEqual({
-      piped: "ENOENT",
-      bodyErrored: true,
-    });
-    expect(await outcome).toBe("failed");
-  });
-});

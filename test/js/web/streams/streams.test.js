@@ -22,7 +22,7 @@ import {
 import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Duplex, PassThrough, Readable, Writable, finished, isErrored, pipeline } from "node:stream";
+import { Duplex, PassThrough, Readable, Writable, finished, isDisturbed, isErrored, pipeline } from "node:stream";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -2324,9 +2324,10 @@ describe("ReadableStream for a File that fails to open", () => {
         thrown = e;
       }
       // Checked before any read: without the fix the stream stays readable and the reads below never settle.
-      expect({ thrown, errored: isErrored(stream), locked: stream.locked }).toEqual({
+      expect({ thrown, errored: isErrored(stream), disturbed: isDisturbed(stream), locked: stream.locked }).toEqual({
         thrown: expected,
         errored: true,
+        disturbed: true,
         locked: false,
       });
 
@@ -2390,6 +2391,53 @@ describe("ReadableStream for a File that fails to open", () => {
           .catch(e => e),
       ).toBe(error);
     });
+
+    it("pipeTo() with preventAbort leaves its destination writable", async () => {
+      const written = [];
+      const aborts = [];
+      const destination = new WritableStream({
+        write(chunk) {
+          written.push(chunk);
+        },
+        abort(reason) {
+          aborts.push(reason);
+        },
+      });
+      const error = await makeStream()
+        .pipeTo(destination, { preventAbort: true })
+        .catch(e => e);
+      expect(error).toEqual(expected);
+      await destination.getWriter().write("footer");
+      expect({ aborts, written }).toEqual({ aborts: [], written: ["footer"] });
+    });
+  });
+
+  // The first consumer already got the error. A cleanup that drops the promise of cancel() must not end the process.
+  it("a dropped cancel() after the failed start is not an unhandled rejection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const stream = Bun.file(${JSON.stringify(missing)}).stream();
+          try {
+            stream.getReader();
+          } catch {
+            stream.cancel();
+          }
+          const text = Bun.file(${JSON.stringify(missing)}).stream();
+          await text.text().catch(() => {});
+          text.cancel();
+          await new Promise(resolve => setImmediate(resolve));
+          console.log("alive");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "alive\n", stderr: "", exitCode: 0 });
   });
 });
 

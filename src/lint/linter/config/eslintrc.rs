@@ -2048,14 +2048,13 @@ impl Eslint8 {
         }
     }
 
-    /// A hash of everything that [`Eslint8::edition`] reads, for a cache key. Two configs with equal identities give
-    /// every file the same edition, whatever its `/* eslint-env */` comments say.
+    /// A hash of what [`Eslint8::edition`] reads, for a cache key.
     pub(crate) fn identity(&self) -> u64 {
         self.identity
     }
 
-    /// Computes [`Eslint8::identity`]. An environment without parser options can't change the edition, on or off,
-    /// and neither can a parser option that [`edition_of`] doesn't read.
+    /// An environment without parser options, on or off, and a parser option that [`edition_of`] doesn't read are
+    /// left out: they can't change the edition.
     fn hash_identity(&self) -> u64 {
         let mut bytes = Vec::new();
         let mut write = |name: &[u8], is_on: Option<bool>, options: &Json| {

@@ -262,8 +262,7 @@ pub trait Modules: Sync {
     fn list_files(&self, patterns: &[&[u8]], extensions: &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>>;
 
     /// The result of `reader.read` on the file at `path`, which is read like [`Modules::read`] and parsed according to
-    /// `language`. It's computed on first use and cached by the path and
-    /// [`LanguageOptions::parse_identity`](crate::language::LanguageOptions::parse_identity).
+    /// `language`. It's computed on first use and cached by the path and the parse identity of `language`.
     /// Every caller must pass the same `reader`. `None` if the file can't be read, `reader.should_parse` returns false,
     /// or the code is nested too deeply. Can be called at any time.
     fn facts(

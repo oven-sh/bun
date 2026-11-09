@@ -194,9 +194,7 @@ public:
     mutable JSC::WriteBarrier<JSC::JSObject> m_duplex;
     mutable JSC::WriteBarrier<JSC::JSObject> m_inactivityTimer;
 
-    /* Queued pipelined responses (see appendPipelinedResponse). m_pipelinedResponsesLock
-     * keeps mutation on the JS thread coherent with the concurrent GC marker walking
-     * the vector in visitChildren. */
+    /* Queued pipelined responses (see appendPipelinedResponse). The concurrent GC marker walks them in visitChildren, so every change holds m_pipelinedResponsesLock. */
     mutable WTF::Vector<JSC::WriteBarrier<JSNodeHTTPResponse>, 2> m_pipelinedResponses;
 
     DECLARE_INFO;

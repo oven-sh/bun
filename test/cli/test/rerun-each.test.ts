@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("--rerun-each should run tests exactly N times", async () => {
@@ -285,4 +285,389 @@ test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
   expect(stdout.match(/Run #\d/g)).toEqual(["Run #1", "Run #2", "Run #3"]);
   expect(stdout + stderr).toMatch(/3 pass/);
   expect(exitCode).toBe(0);
+});
+
+// What a test file imports is loaded once, and the end of each run drops what was registered for the file.
+// So a module whose top level registers something is evaluated again for the next run.
+describe("what a module registers when it is imported exists in every run of the file", () => {
+  async function runTests(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("test-rerun-each-registrant", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: { ...bunEnv, CI: "false" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      log: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")),
+      results: stderr
+        .split("\n")
+        .filter(line => /^\((pass|fail)\)/.test(line))
+        .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+      exitCode,
+    };
+  }
+
+  // The second test fails unless the module's `afterEach` ran after the first.
+  const counts = `
+    test("one", () => { expect(++state.mounted).toBe(1); });
+    test("two", () => { expect(++state.mounted).toBe(1); });
+  `;
+  const hooks = {
+    "helper.js": `
+      import { afterAll, afterEach, beforeAll, beforeEach } from "bun:test";
+      export const state = { mounted: 0 };
+      beforeAll(() => console.log("beforeAll"));
+      beforeEach(() => console.log("beforeEach"));
+      afterEach(() => { state.mounted = 0; });
+      afterAll(() => console.log("afterAll"));
+    `,
+    "a.test.js": `
+      import { expect, test } from "bun:test";
+      import { state } from "./helper.js";
+      ${counts}
+    `,
+  };
+  const everyRun = { results: ["(pass) one", "(pass) two", "(pass) one", "(pass) two"], exitCode: 0 };
+
+  test.each([[[]], [["--isolate"]], [["--isolate=modules"]]])("hooks %j", async flags => {
+    expect(await runTests(hooks, ["a.test.js", "--rerun-each=2", ...flags])).toEqual({
+      log: Array(2).fill(["beforeAll", "beforeEach", "beforeEach", "afterAll"]).flat(),
+      ...everyRun,
+    });
+  });
+
+  test("hooks, --parallel", async () => {
+    const files = { ...hooks, "b.test.js": hooks["a.test.js"] };
+    const { results, exitCode } = await runTests(files, ["--parallel=2", "--rerun-each=2"]);
+    expect({ results: results.sort(), exitCode }).toEqual({
+      results: [...Array(4).fill("(pass) one"), ...Array(4).fill("(pass) two")],
+      exitCode: 0,
+    });
+  });
+
+  test("tests and describe blocks", async () => {
+    const { results, exitCode } = await runTests(
+      {
+        "shared.js": `
+          import { describe, test } from "bun:test";
+          describe("shared", () => { test("in the module", () => {}); });
+        `,
+        "a.test.js": `
+          import { test } from "bun:test";
+          import "./shared.js";
+          test("in the file", () => {});
+        `,
+      },
+      ["a.test.js", "--rerun-each=2"],
+    );
+    expect({ results, exitCode }).toEqual({
+      results: Array(2).fill(["(pass) shared > in the module", "(pass) in the file"]).flat(),
+      exitCode: 0,
+    });
+  });
+
+  test(`a CommonJS package that calls globalThis.afterEach() under globals = "vitest"`, async () => {
+    const { results, exitCode } = await runTests(
+      {
+        "bunfig.toml": `[test]\nglobals = "vitest"\n`,
+        "node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+        "node_modules/pkg/index.js": `
+          const state = { mounted: 0 };
+          if (typeof globalThis.afterEach === "function") globalThis.afterEach(() => { state.mounted = 0; });
+          module.exports = { state };
+        `,
+        "a.test.js": `
+          import { state } from "pkg";
+          ${counts}
+        `,
+      },
+      ["a.test.js", "--rerun-each=2"],
+    );
+    expect({ results, exitCode }).toEqual(everyRun);
+  });
+
+  test("stubs and spies", async () => {
+    const { log, exitCode } = await runTests(
+      {
+        "helper.js": `
+          import { vi } from "vitest";
+          vi.stubGlobal("STUBBED", 1);
+          vi.stubEnv("STUBBED_ENV", "1");
+          export const object = { method() { return "real"; } };
+          vi.spyOn(object, "method").mockReturnValue("spied");
+        `,
+        "a.test.js": `
+          import { test } from "vitest";
+          import { object } from "./helper.js";
+          test("one", () => console.log(globalThis.STUBBED, process.env.STUBBED_ENV, object.method()));
+        `,
+      },
+      ["a.test.js", "--rerun-each=2"],
+    );
+    expect({ log, exitCode }).toEqual({ log: ["1 1 spied", "1 1 spied"], exitCode: 0 });
+  });
+
+  test("vi.setConfig(), fake timers and the system time", async () => {
+    const { log, exitCode } = await runTests(
+      {
+        "helper.js": `
+          import { vi } from "vitest";
+          vi.setConfig({ testTimeout: 1234 });
+          vi.useFakeTimers();
+          vi.setSystemTime(new Date("2020-01-02T03:04:05Z"));
+        `,
+        "a.test.js": `
+          import { test, vi } from "vitest";
+          import "./helper.js";
+          test("one", ({ task }) => console.log(task.timeout, vi.isFakeTimers(), new Date().toISOString()));
+        `,
+      },
+      ["a.test.js", "--rerun-each=2"],
+    );
+    expect({ log, exitCode }).toEqual({ log: Array(2).fill("1234 true 2020-01-02T03:04:05.000Z"), exitCode: 0 });
+  });
+
+  test.each([[[]], [["--isolate"]]])("test.override() %j", async flags => {
+    const { results, exitCode } = await runTests(
+      {
+        "fixtures.ts": `
+          import { test } from "bun:test";
+          export const base = test.extend({ url: "http://localhost" });
+        `,
+        "setup.ts": `
+          import { base } from "./fixtures";
+          export const test = base.override({ url: "http://staging" });
+        `,
+        "a.test.ts": `
+          import { expect } from "bun:test";
+          import { test } from "./setup";
+          test("one", ({ url }) => { expect(url).toBe("http://staging"); });
+        `,
+      },
+      ["a.test.ts", "--rerun-each=2", ...flags],
+    );
+    expect({ results, exitCode }).toEqual({ results: ["(pass) one", "(pass) one"], exitCode: 0 });
+  });
+
+  test("node:test hooks", async () => {
+    const { results, exitCode } = await runTests(
+      {
+        "helper.js": `
+          import { afterEach } from "node:test";
+          export const state = { mounted: 0 };
+          afterEach(() => { state.mounted = 0; });
+        `,
+        "a.test.js": `
+          import assert from "node:assert";
+          import { test } from "node:test";
+          import { state } from "./helper.js";
+          test("one", () => { assert.strictEqual(++state.mounted, 1); });
+          test("two", () => { assert.strictEqual(++state.mounted, 1); });
+        `,
+      },
+      ["a.test.js", "--rerun-each=2"],
+    );
+    expect({ results, exitCode }).toEqual(everyRun);
+  });
+
+  test("a hook registered after a top-level await", async () => {
+    const { results, exitCode } = await runTests(
+      {
+        "helper.js": `
+          import { afterEach } from "bun:test";
+          export const state = { mounted: 0 };
+          await Promise.resolve();
+          afterEach(() => { state.mounted = 0; });
+        `,
+        "a.test.js": hooks["a.test.js"],
+      },
+      ["a.test.js", "--rerun-each=2"],
+    );
+    expect({ results, exitCode }).toEqual(everyRun);
+  });
+
+  test("a module that a describe() callback requires", async () => {
+    const { results, exitCode } = await runTests(
+      {
+        "helper.cjs": `
+          const { afterEach } = require("bun:test");
+          exports.state = { mounted: 0 };
+          afterEach(() => { exports.state.mounted = 0; });
+        `,
+        "a.test.js": `
+          import { describe, expect, test } from "bun:test";
+          describe("block", () => {
+            const { state } = require("./helper.cjs");
+            ${counts}
+          });
+        `,
+      },
+      ["a.test.js", "--rerun-each=2"],
+    );
+    expect({ results, exitCode }).toEqual({
+      results: Array(2).fill(["(pass) block > one", "(pass) block > two"]).flat(),
+      exitCode: 0,
+    });
+  });
+
+  test.each([[[]], [["--isolate"]]])(
+    "only that module and its importers are evaluated again, not what it imports %j",
+    async flags => {
+      const { log, results, exitCode } = await runTests(
+        {
+          "dependency.js": `
+            globalThis.loads ??= { dependency: 0, registrant: 0, wrapper: 0 };
+            loads.dependency++;
+            export const state = { mounted: 0 };
+          `,
+          "registrant.js": `
+            import { afterEach } from "bun:test";
+            import { state } from "./dependency.js";
+            loads.registrant++;
+            afterEach(() => { state.mounted = 0; });
+            export { state };
+          `,
+          "wrapper.js": `
+            export { state } from "./registrant.js";
+            loads.wrapper++;
+          `,
+          "a.test.js": `
+            import { afterAll, expect, test } from "bun:test";
+            import { state } from "./wrapper.js";
+            ${counts}
+            afterAll(() => console.log(JSON.stringify(loads)));
+          `,
+        },
+        ["a.test.js", "--rerun-each=3", ...flags],
+      );
+      expect({ log, results, exitCode }).toEqual({
+        log: [1, 2, 3].map(run => JSON.stringify({ dependency: 1, registrant: run, wrapper: run })),
+        results: Array(3).fill(["(pass) one", "(pass) two"]).flat(),
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("a module whose function the test file calls is evaluated once", async () => {
+    const { log, results, exitCode } = await runTests(
+      {
+        "helper.js": `
+          import { afterEach } from "bun:test";
+          globalThis.helperLoads = (globalThis.helperLoads ?? 0) + 1;
+          export const state = { mounted: 0 };
+          export function useCleanup() { afterEach(() => { state.mounted = 0; }); }
+        `,
+        "a.test.js": `
+          import { afterAll, expect, test } from "bun:test";
+          import { state, useCleanup } from "./helper.js";
+          useCleanup();
+          ${counts}
+          afterAll(() => console.log("helper loads:", helperLoads));
+        `,
+      },
+      ["a.test.js", "--rerun-each=3"],
+    );
+    expect({ log, results, exitCode }).toEqual({
+      log: Array(3).fill("helper loads: 1"),
+      results: Array(3).fill(["(pass) one", "(pass) two"]).flat(),
+      exitCode: 0,
+    });
+  });
+
+  test("a module that is evaluated again adds its equality testers and snapshot serializers once", async () => {
+    const registers = `
+      expect.addEqualityTesters([() => undefined]);
+      expect.addSnapshotSerializer({ test: () => false, serialize: () => "" });
+    `;
+    const { log, exitCode } = await runTests(
+      {
+        "registrant.js": `
+          import { afterEach, expect } from "bun:test";
+          ${registers}
+          afterEach(() => {});
+        `,
+        "mocks.js": `
+          import { expect, mock } from "bun:test";
+          ${registers}
+          mock.module("./mocked.js", () => ({ value: "mocked" }));
+        `,
+        "mocked.js": `export const value = "real";`,
+        "stays.js": `
+          import { expect } from "bun:test";
+          globalThis.staysLoads = (globalThis.staysLoads ?? 0) + 1;
+          ${registers}
+        `,
+        "a.test.js": `
+          import { expect, test } from "bun:test";
+          import "./registrant.js";
+          import "./mocks.js";
+          import "./stays.js";
+          test("one", () => {
+            let testers = -1;
+            expect.extend({ toCountTesters() { testers = this.customTesters.length; return { pass: true, message: () => "" }; } });
+            expect(1).toCountTesters();
+            let serializers = -1;
+            expect.addSnapshotSerializer({
+              test: value => value === "counts",
+              serialize: (value, config) => ((serializers = config.plugins.length - 1), "counted"),
+            });
+            expect("counts").toMatchInlineSnapshot("counted");
+            console.log(JSON.stringify({ testers, serializers, staysLoads }));
+          });
+        `,
+      },
+      ["a.test.js", "--rerun-each=3"],
+    );
+    expect({ log, exitCode }).toEqual({
+      log: Array(3).fill(JSON.stringify({ testers: 3, serializers: 3, staysLoads: 1 })),
+      exitCode: 0,
+    });
+  });
+
+  test("a module that a preload loaded is evaluated once, and its hook runs once per test", async () => {
+    const { log, exitCode } = await runTests(
+      {
+        "helper.js": `
+          import { afterEach } from "bun:test";
+          globalThis.helperLoads = (globalThis.helperLoads ?? 0) + 1;
+          afterEach(() => console.log("afterEach, helper loads:", helperLoads));
+        `,
+        "setup.js": `import "./helper.js";`,
+        "a.test.js": `
+          import { test } from "bun:test";
+          import "./helper.js";
+          test("one", () => {});
+        `,
+      },
+      ["--preload=./setup.js", "a.test.js", "--rerun-each=2"],
+    );
+    expect({ log, exitCode }).toEqual({ log: Array(2).fill("afterEach, helper loads: 1"), exitCode: 0 });
+  });
+
+  test("the next test file still shares the module, and does not get its hook", async () => {
+    const file = (name: string) => `
+      import { test } from "bun:test";
+      import "./helper.js";
+      test("${name}", () => console.log("${name}"));
+    `;
+    const { log, exitCode } = await runTests(
+      {
+        "helper.js": `
+          import { afterEach } from "bun:test";
+          globalThis.helperLoads = (globalThis.helperLoads ?? 0) + 1;
+          afterEach(() => console.log("afterEach, helper loads:", helperLoads));
+        `,
+        "a.test.js": file("a"),
+        "b.test.js": file("b"),
+      },
+      ["a.test.js", "b.test.js", "--rerun-each=2"],
+    );
+    expect({ log, exitCode }).toEqual({
+      log: ["a", "afterEach, helper loads: 1", "a", "afterEach, helper loads: 2", "b", "b"],
+      exitCode: 0,
+    });
+  });
 });

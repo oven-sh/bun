@@ -2828,6 +2828,11 @@ pub(crate) struct ExpectMatcherUtils {
     pub(crate) testers_file: Cell<u32>,
     pub(crate) serializers_of_file: bun_jsc::JsCell<Vec<bool>>,
     pub(crate) serializers_file: Cell<u32>,
+    /// `--rerun-each`: the index of each tester that an imported module added in this run, with the module.
+    /// If the end of the run evicts the module, the next run evaluates it again and it adds the tester again.
+    pub(crate) testers_of_modules: bun_jsc::JsCell<Vec<(usize, bun_core::String)>>,
+    /// The same for serializers, counted from the end of the list, because a new one goes in front.
+    pub(crate) serializers_of_modules: bun_jsc::JsCell<Vec<(usize, bun_core::String)>>,
 }
 
 impl ExpectMatcherUtils {

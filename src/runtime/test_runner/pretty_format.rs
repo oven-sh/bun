@@ -4683,7 +4683,11 @@ impl JestPrettyFormat {
             }
         }
         js_ExpectMatcherUtils::snapshot_serializers_set_cached(utils_value, global, serializers);
+        let from_end = utils.serializers_of_file.get().len();
         utils.serializers_of_file.with_mut(|of_file| of_file.insert(0, is_of_file));
+        if let Some(module) = (!is_of_file).then(|| expect::Expect::module_that_may_run_again(global)).flatten() {
+            utils.serializers_of_modules.with_mut(|of_modules| of_modules.push((from_end, module)));
+        }
         Ok(())
     }
 

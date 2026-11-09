@@ -11,6 +11,8 @@ The `--rerun-each` flag runs every test multiple times. Use it to find flaky or 
 bun test --rerun-each 10
 ```
 
+Each run loads the test file again. What the file imports stays loaded, except a module that registered hooks, tests, stubs, spies or module mocks when it was imported. Bun evaluates that module again for each run. See [Rerun tests](/test#rerun-tests).
+
 ---
 
 See [`bun test`](/test).

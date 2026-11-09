@@ -1,4 +1,5 @@
 use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::virtual_machine::TestOwner;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult};
 
 use super::super::jest::{FileColumns as _, Jest};
@@ -55,6 +56,51 @@ impl Expect {
         utils.serializers_of_file.set(Vec::new());
     }
 
+    /// The module whose top level is running, if `--rerun-each` may evaluate it again for the next run of the test file.
+    #[optimize(size)]
+    pub(crate) fn module_that_may_run_again(global: &JSGlobalObject) -> Option<bun_core::String> {
+        if global.bun_vm().test_owner != TestOwner::FileThatRunsAgain {
+            return None;
+        }
+        let module = bun_jsc::cpp::Bun__TestFile__moduleThatRuns(global);
+        (!module.is_dead()).then_some(module)
+    }
+
+    /// `--rerun-each` has evicted the modules that it evaluates again for the next run of the test file. They add their
+    /// testers and serializers again, so the ones they added in the run that ended go with the test file's own.
+    #[optimize(size)]
+    pub(crate) fn on_run_end(global: &JSGlobalObject, runs_again: bool) {
+        let Some(utils) = ExpectMatcherUtils::singleton(global).as_class_ref::<ExpectMatcherUtils>() else { return };
+        let testers = utils.testers_of_modules.replace(Vec::new());
+        let serializers = utils.serializers_of_modules.replace(Vec::new());
+        if !runs_again {
+            return;
+        }
+        let is_evicted = |module: &bun_core::String| {
+            // SAFETY: the global object and the string outlive the call.
+            !unsafe { bun_jsc::cpp::Bun__TestFile__isModuleLoaded(core::ptr::from_ref(global).cast_mut(), module) }
+        };
+        for (index, module) in testers {
+            if is_evicted(&module) {
+                utils.testers_of_file.with_mut(|of_file| {
+                    if let Some(of_file) = of_file.get_mut(index) {
+                        *of_file = true;
+                    }
+                });
+            }
+        }
+        for (from_end, module) in serializers {
+            if is_evicted(&module) {
+                utils.serializers_of_file.with_mut(|of_file| {
+                    let index = of_file.len().checked_sub(from_end + 1);
+                    if let Some(of_file) = index.and_then(|index| of_file.get_mut(index)) {
+                        *of_file = true;
+                    }
+                });
+            }
+        }
+    }
+
     #[optimize(size)]
     pub(crate) fn is_called_by_test_file(global: &JSGlobalObject) -> bool {
         let Some(runner) = Jest::runner() else { return false };
@@ -88,6 +134,7 @@ impl Expect {
         let registered = count;
 
         let is_of_file = Self::is_called_by_test_file(global);
+        let module = if is_of_file { None } else { Self::module_that_may_run_again(global) };
         let mut iter = testers.array_iterator(global)?;
         'testers: while let Some(tester) = iter.next()? {
             if !tester.is_callable() {
@@ -108,6 +155,9 @@ impl Expect {
                 }
             }
             all.put_index(global, count, tester)?;
+            if let Some(module) = &module {
+                utils.testers_of_modules.with_mut(|of_modules| of_modules.push((count as usize, module.clone())));
+            }
             count += 1;
         }
         if count == registered {

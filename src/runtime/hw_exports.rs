@@ -83,7 +83,7 @@ pub(crate) fn remap_stack_frame_positions(
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm, is_patched)`
 // HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMain, c)
 pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: bool) {
-    if vm.is_in_preload {
+    if vm.is_in_preload() {
         vm.has_patched_run_main = is_patched;
     }
 }

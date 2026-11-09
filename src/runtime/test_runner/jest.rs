@@ -563,7 +563,7 @@ fn loads_compiled_file_below_vitest(vm: &VirtualMachine) -> bool {
     thread_local! {
         static LAST_TEST_FILE: core::cell::RefCell<(Vec<u8>, bool)> = const { core::cell::RefCell::new((Vec::new(), false)) };
     }
-    if vm.has_globals_of_vitest() || vm.is_in_preload {
+    if vm.has_globals_of_vitest() || vm.is_in_preload() {
         return vm.has_globals_of_vitest();
     }
     let Some(main) = vm.main() else {
@@ -583,7 +583,7 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValu
     let global_object = cx.global();
     let vm = global_object.bun_vm();
 
-    if vm.is_in_preload || Jest::runner().is_none() {
+    if vm.is_in_preload() || Jest::runner().is_none() {
         // in preload, no arguments needed
     } else {
         let Some(path) = path else {
@@ -631,9 +631,12 @@ pub(crate) fn file_generation() -> u32 {
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
     // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
     Jest::runner_ptr().map_or(0, |p| unsafe {
-        if VirtualMachine::get().worker_ref().is_none() {
+        let vm = VirtualMachine::get();
+        if vm.worker_ref().is_none() {
             (*p.as_ptr()).node_test_used = true;
         }
+        // What node:test registers belongs to its root, which is new for every load of a test file.
+        super::module_mock::did_register_for_file(vm);
         (*p.as_ptr()).bun_test_root.file_generation
     })
 }

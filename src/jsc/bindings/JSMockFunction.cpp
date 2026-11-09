@@ -49,6 +49,7 @@ BUN_DECLARE_HOST_FUNCTION(JSMock__jsResetAllMocks);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSpyOn);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsMockFn);
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
+extern "C" void Bun__TestFile__didRegister(Zig::GlobalObject*);
 
 #define CHECK_IS_MOCK_FUNCTION(thisValue)                                \
     if (!thisObject) [[unlikely]] {                                      \
@@ -2994,6 +2995,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         throwVMError(lexicalGlobalObject, scope, "Cannot run spyOn from a different global context"_s);
         return {};
     }
+    // The end of the test file uninstalls the spy.
+    Bun__TestFile__didRegister(globalObject);
 
     JSValue objectValue = callframe->argument(0);
     JSValue propertyKeyValue = callframe->argument(1);

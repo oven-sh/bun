@@ -28,7 +28,7 @@ use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, Transpi
 use bun_jsc::resolved_source::Bytecode;
 use bun_jsc::virtual_machine::{
     CancelHotRunTimers, InitOptions, MainEntryPoint, RuntimeHooks,
-    RuntimeState as OpaqueRuntimeState, SweepResult, TimersLeft, VirtualMachine,
+    RuntimeState as OpaqueRuntimeState, SweepResult, TestOwner, TimersLeft, VirtualMachine,
     WorkerExecArgvFlags,
 };
 use bun_jsc::{
@@ -775,8 +775,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // heap-stable so a borrow survives the resolver borrow).
 
     // ── is_in_preload guard ─────────────────────────────────────────────
+    // Every load of a test file comes here, so the owner the runner set for that file is put back.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
-    unsafe { (*vm).is_in_preload = true };
+    let owner_before = unsafe { core::mem::replace(&mut (*vm).test_owner, TestOwner::Preload) };
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     bun_jsc::compiled_program::will_run_preloads(unsafe { &*(*vm).global });
     // Note: copy the raw ptr into a guard-owned local so the defer body
@@ -785,7 +786,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     let vm_for_guard = vm;
     scopeguard::defer! {
         // SAFETY: per fn contract.
-        unsafe { (*vm_for_guard).is_in_preload = false };
+        unsafe { (*vm_for_guard).test_owner = owner_before };
         // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
         bun_jsc::compiled_program::did_run_preloads(unsafe { &*(*vm_for_guard).global });
     }
@@ -825,7 +826,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     let n = unsafe { &*vm }.preload.len();
     for i in 0..n {
         // SAFETY: `i < n`; nothing touches `vm.preload` until the `clear()` after
-        // this loop: the resolver does not, and `reload()` defers while `is_in_preload`.
+        // this loop: the resolver does not, and `reload()` defers while `is_in_preload()`.
         let preload_slice: &[u8] = unsafe { &(&(*vm).preload)[i] };
         // Strip "file://".
         let normalized: &[u8] = preload_slice
@@ -2343,7 +2344,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 main.len() == path.text.len() && main_hash == hash && main == path.text
             });
             // SAFETY: per fn contract.
-            let is_preload = unsafe { (*jsc_vm).is_in_preload && (*jsc_vm).preload_hash == hash };
+            let is_preload = unsafe {
+                (*jsc_vm).test_owner == TestOwner::Preload && (*jsc_vm).preload_hash == hash
+            };
 
             // ── Arena take/give-back ────────────────────────────────────────
             // Reuse the per-VM arena when free; allocate a
@@ -4203,7 +4206,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // SAFETY: per fn contract.
     let is_main = unsafe { &*jsc_vm }.main() == Some(specifier)
         || unsafe {
-            (*jsc_vm).is_in_preload
+            (*jsc_vm).test_owner == TestOwner::Preload
                 && (*jsc_vm).preload_hash == bun_watcher::Watcher::get_hash(specifier)
         };
 
@@ -4672,7 +4675,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         let (has_loaded, is_in_preload, store_enabled) = unsafe {
             (
                 (*jsc_vm).has_loaded,
-                (*jsc_vm).is_in_preload,
+                (*jsc_vm).test_owner == TestOwner::Preload,
                 (*jsc_vm).transpiler_store.enabled,
             )
         };
@@ -4730,7 +4733,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         }
         // SAFETY: per fn contract.
         let (has_loaded, is_in_preload) =
-            unsafe { ((*jsc_vm).has_loaded, (*jsc_vm).is_in_preload) };
+            unsafe { ((*jsc_vm).has_loaded, (*jsc_vm).test_owner == TestOwner::Preload) };
         if has_loaded || is_in_preload {
             // Extensionless files in this context are treated as the JS loader.
             if lr.path.name().ext.is_empty() || lr.path.text.starts_with(b"data:") {

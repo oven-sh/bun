@@ -34,6 +34,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExpObject.h>
 #include <JavaScriptCore/SourceOrigin.h>
+#include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/SymbolTableInlines.h>
@@ -4539,9 +4540,71 @@ static void replaceModuleWithItsExports(Zig::GlobalObject* globalObject, JSC::Ab
         RELEASE_AND_RETURN(scope, loader->provideFetch(globalObject, key, JSC::ScriptFetchParameters::Type::JavaScript, Zig::createObjectModuleSourceCode(vm, exports, key.string())));
 }
 
+// The innermost module whose top level is on the stack, by its key in the registry or the require cache. Null if there is none.
+__attribute__((minsize)) static String moduleWhoseTopLevelRuns(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    String key;
+    JSC::StackVisitor::visit(vm.topCallFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+        JSC::CodeBlock* codeBlock = visitor->codeBlock();
+        // The top level of a module is called by the loader, so it is never inlined.
+        if (!codeBlock || visitor->isInlinedDFGFrame())
+            return WTF::IterationStatus::Continue;
+        if (codeBlock->codeType() == JSC::ModuleCode) {
+            // Interpreter::executeModuleProgram() calls a callee whose scope is the module's environment. A resume after a top-level await does too.
+            auto* callee = visitor->callee().isCell() ? dynamicDowncast<JSC::JSCallee>(visitor->callee().asCell()) : nullptr;
+            if (auto* environment = callee ? dynamicDowncast<JSC::JSModuleEnvironment>(callee->scope()) : nullptr)
+                key = environment->moduleRecord()->moduleKey().string();
+            return WTF::IterationStatus::Done;
+        }
+        // evaluateCommonJSModuleOnce() calls the wrapper of a CommonJS module with the module as `this` and as its third argument.
+        JSC::CallFrame* callFrame = visitor->callFrame();
+        if (codeBlock->codeType() != JSC::FunctionCode || callFrame->argumentCount() < 3)
+            return WTF::IterationStatus::Continue;
+        auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(callFrame->thisValue());
+        if (!commonJSModule || callFrame->uncheckedArgument(2) != JSValue(commonJSModule))
+            return WTF::IterationStatus::Continue;
+        if (JSValue filename = commonJSModule->filename(); filename.isString())
+            key = asString(filename)->tryGetValue().data;
+        return WTF::IterationStatus::Done;
+    });
+    return key;
+}
+
+// `bun test --rerun-each` loads a test file once per run, in one realm, and what the file imports is loaded once. The end of each run
+// drops what was registered for the file: hooks, tests, stubs, spies, fixture overrides. So a module whose top level registered
+// something is evaluated again for the next run, like a module that made a mock. A helper whose function the test file calls
+// isn't noted: the test file's own top level is the innermost, and it makes that call again.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__TestFile__noteRegistrant(Zig::GlobalObject* globalObject)
+{
+    String key = moduleWhoseTopLevelRuns(globalObject);
+    if (!key.isNull())
+        globalObject->onLoadPlugins.modulesThatRegistered.add(key);
+}
+
+// For what outlasts the test file, like an equality tester: the module that adds it now, to ask Bun__TestFile__isModuleLoaded() about when the run ends.
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString Bun__TestFile__moduleThatRuns(Zig::GlobalObject* globalObject)
+{
+    String key = moduleWhoseTopLevelRuns(globalObject);
+    return key.isNull() ? BunString { BunStringTag::Dead } : Bun::toStringRef(key);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__TestFile__isModuleLoaded(Zig::GlobalObject* globalObject, const BunString* key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    String path = key->toWTFString();
+    if (Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, path)))
+        return true;
+    JSValue cached = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(jsString(vm, path))));
+    scope.assertNoExceptionExceptTermination();
+    return cached && !cached.isUndefinedOrNull();
+}
+
 // A test file that mocked modules holds its own copies of their importers, partly in variables that `vi.mock()` made out of its imports.
 // So evict it too, and leave a module with the same exports in its place so that a later import doesn't evaluate the file again.
-extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::GlobalObject* globalObject, const BunString* path)
+// `runsAgain`: --rerun-each loads this test file again now, so the modules whose top level registered something for the run that ended go too.
+extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::GlobalObject* globalObject, const BunString* path, bool runsAgain)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -4550,26 +4613,35 @@ extern "C" __attribute__((minsize)) void JSMock__replaceModuleOfTestFile(Zig::Gl
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
     auto modulesThatMocked = std::exchange(plugins.modulesThatMocked, {});
-    if (modulesThatMocked.isEmpty())
+    auto modulesThatRegistered = std::exchange(plugins.modulesThatRegistered, {});
+    if (!runsAgain)
+        modulesThatRegistered.clear();
+    if (modulesThatMocked.isEmpty() && modulesThatRegistered.isEmpty())
         return;
     String testFile = path->toWTFString();
+    if (!modulesThatMocked.isEmpty()) {
 #if ENABLE(AOT)
-    if (vm.hasCompiledCode())
-        layMocksOfBodiesAgainAtNextLoad(globalObject, modulesThatMocked, testFile);
+        if (vm.hasCompiledCode())
+            layMocksOfBodiesAgainAtNextLoad(globalObject, modulesThatMocked, testFile);
 #endif
-    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, testFile));
-    auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
-    // A module that was compiled ahead of time can't be evicted.
-    if (record && !(record->vm().hasCompiledCode() && JSC::AOT::isCompiledModuleRecord(record)) && record->status() == JSC::CyclicModuleRecord::Status::Evaluated && !record->evaluationError()) {
-        replaceModuleWithItsExports(globalObject, record);
-        if (scope.exception()) [[unlikely]]
-            (void)scope.tryClearException();
+        auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, testFile));
+        auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
+        // A module that was compiled ahead of time can't be evicted.
+        if (record && !(record->vm().hasCompiledCode() && JSC::AOT::isCompiledModuleRecord(record)) && record->status() == JSC::CyclicModuleRecord::Status::Evaluated && !record->evaluationError()) {
+            replaceModuleWithItsExports(globalObject, record);
+            if (scope.exception()) [[unlikely]]
+                (void)scope.tryClearException();
+        }
     }
 
-    // Their mocks are undone, so the next file that imports them has to run them again. Nothing loads a preload's modules again.
+    // Their mocks and registrations are undone, so the next load that imports them has to run them again. Nothing loads a preload's modules again.
     Vector<String> modulesToRunAgain;
     for (auto& key : modulesThatMocked) {
         if (key != testFile && plugins.testFileOfModule.get(key))
+            modulesToRunAgain.append(key);
+    }
+    for (auto& key : modulesThatRegistered) {
+        if (key != testFile && plugins.testFileOfModule.get(key) && !modulesThatMocked.contains(key))
             modulesToRunAgain.append(key);
     }
     evictModulesAndTheirImporters(globalObject, WTF::move(modulesToRunAgain));

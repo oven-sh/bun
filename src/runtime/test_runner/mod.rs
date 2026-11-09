@@ -143,7 +143,7 @@ cfg_jsc! {
     #[path = "environment.rs"]    pub(crate) mod environment;
     #[path = "Execution.rs"]      pub(crate) mod execution;
     #[path = "jest.rs"]           pub(crate) mod jest;
-    #[path = "module_mock.rs"]    mod module_mock;
+    #[path = "module_mock.rs"]    pub(crate) mod module_mock;
     #[path = "Order.rs"]          pub(crate) mod order;
     #[path = "pretty_format.rs"]  pub(crate) mod pretty_format;
     #[path = "ScopeFunctions.rs"] pub(crate) mod scope_functions;

@@ -365,7 +365,7 @@ impl TestFixtures {
             let defined = definitions.len();
             parent_fixtures.definitions.set(definitions);
             js::values_set_cached(parent, global, values);
-            if active_scope.is_null() || global.bun_vm().is_in_preload {
+            if active_scope.is_null() || crate::test_runner::module_mock::registers_for_run(global.bun_vm()) {
                 parent_fixtures.lasting.set(defined);
                 parent_fixtures.registrations.set(registrations);
             } else {

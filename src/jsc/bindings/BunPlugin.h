@@ -140,6 +140,8 @@ public:
         unsigned testFile = 1;
         // The modules that have called mock.module(), vi.mock() and the like since the running test file started.
         WTF::UncheckedKeyHashSet<String> modulesThatMocked = {};
+        // --rerun-each: the modules whose top level registered a hook, a test, a stub or the like for this run of the test file.
+        WTF::UncheckedKeyHashSet<String> modulesThatRegistered = {};
         WTF::UncheckedKeyHashMap<String, unsigned> testFileOfModule = {};
         WTF::ListHashSet<String> modulesToEvictOnceLoaded = {};
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.

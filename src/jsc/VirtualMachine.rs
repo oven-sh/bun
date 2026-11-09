@@ -305,8 +305,8 @@ pub struct VirtualMachine {
     pub(crate) is_from_devserver: bool,
     pub(crate) has_enabled_macro_mode: bool,
 
-    /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
-    pub is_in_preload: bool,
+    /// Who gets what `bun test` code registers now: a hook, a stub, a spy, fake timers.
+    pub test_owner: TestOwner,
     /// `Watcher::get_hash()` of the preload script currently loading.
     pub preload_hash: u32,
     /// True if `load_preloads` kept the preload list for a reload that was deferred while it ran.
@@ -662,6 +662,20 @@ pub extern "C" fn Bun__standalonePrelinkedModuleName(index: u32, out_len: &mut u
 // ──────────────────────────────────────────────────────────────────────────
 // Nested types
 // ──────────────────────────────────────────────────────────────────────────
+
+/// Who gets what `bun test` code registers while it runs.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum TestOwner {
+    /// The running test file. It loses all of it when it ends.
+    #[default]
+    File = 0,
+    /// The whole run: a preload is loading.
+    Preload = 1,
+    /// A test file that `--rerun-each` loads again after this run. What it imports stays loaded, so a module
+    /// whose top level registers something is noted, and it is evaluated again for the next run.
+    FileThatRunsAgain = 2,
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
@@ -4994,7 +5008,7 @@ impl VirtualMachine {
         }
 
         // Reloading while `load_preloads` ticks would clear the list it's iterating.
-        if self.is_in_preload {
+        if self.is_in_preload() {
             self.hot_reload_deferred = true;
             return;
         }
@@ -6142,6 +6156,12 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
+    /// Whether a preload is loading. What it registers for `bun test` applies to every test file.
+    #[inline]
+    pub fn is_in_preload(&self) -> bool {
+        self.test_owner == TestOwner::Preload
+    }
+
     #[unsafe(export_name = "Bun__VM__isMainModule")]
     pub extern "C" fn is_main_module(&self, key: &bun_core::String) -> bool {
         self.main().is_some_and(|main| key.eql_utf8(main))
@@ -6151,7 +6171,7 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__VM__isTestEntryPoint")]
     pub extern "C" fn is_test_entry_point(&self, key: &bun_core::String) -> bool {
         self.is_main_module(key)
-            || (self.is_in_preload
+            || (self.is_in_preload()
                 && self.preload_hash == bun_watcher::Watcher::get_hash(&key.to_utf8()))
     }
 

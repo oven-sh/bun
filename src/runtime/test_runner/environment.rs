@@ -212,7 +212,7 @@ impl Environment {
 }
 
 pub(crate) fn is_in_preload() -> bool {
-    VirtualMachine::get().is_in_preload
+    VirtualMachine::get().is_in_preload()
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

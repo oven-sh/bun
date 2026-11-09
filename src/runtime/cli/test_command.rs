@@ -3885,11 +3885,13 @@ impl TestCommand {
         global: &jsc::JSGlobalObject,
         file_path: &[u8],
         next_load_shares_global: bool,
+        runs_again: bool,
     ) {
         unsafe extern "C" {
             safe fn JSMock__replaceModuleOfTestFile(
                 global: &jsc::JSGlobalObject,
                 path: &bun::String,
+                runs_again: bool,
             );
         }
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
@@ -3914,7 +3916,11 @@ impl TestCommand {
             drop(bun_jsc::cpp::Bun__evictUnfinishedModules(global));
         }
         // Also evict the test file: it holds its own copies of the mock's importers.
-        JSMock__replaceModuleOfTestFile(global, &bun::StringView::from_bytes(file_path));
+        JSMock__replaceModuleOfTestFile(
+            global,
+            &bun::StringView::from_bytes(file_path),
+            runs_again,
+        );
     }
 
     /// Returns a description for the error, and the step's identity so the caller can tell if the runner moved on.
@@ -3983,7 +3989,8 @@ impl TestCommand {
             Environment::of_file(file_path, reporter.jest.test_options.environment);
 
         while repeat_index < repeat_count {
-            // Clear the module cache before re-running (except for the first run)
+            // Load the test file again (except for the first run). What it imports stays loaded,
+            // except the modules that `undo_module_mocks` evicted when the run before this one ended.
             if repeat_index > 0 {
                 vm.clear_entry_point()?;
                 let key = jsc::compiled_program::entry_module_key(file_path);
@@ -4007,6 +4014,12 @@ impl TestCommand {
             let next_load_shares_global = !vm.test_isolation_enabled
                 || vm.test_isolation_state.shares_global
                 || repeat_index + 1 < repeat_count;
+            // What the file imports registers for this run alone, and only the first load evaluates it.
+            // Sinks note those modules while this owner is set, and the end of the run evicts them.
+            let runs_again = repeat_index + 1 < repeat_count;
+            if runs_again {
+                vm.test_owner = jsc::virtual_machine::TestOwner::FileThatRunsAgain;
+            }
             let _entered_file = EnteredFile {
                 bun_test_root: bun_test_root_ptr,
                 global,
@@ -4174,11 +4187,21 @@ impl TestCommand {
                 }
             }
 
+            vm.test_owner = jsc::virtual_machine::TestOwner::File;
             crate::test_runner::vi_utils::on_test_file_end(vm.global(), next_load_shares_global);
             if next_load_shares_global {
                 crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
-            Self::undo_module_mocks(vm, global, file_path, next_load_shares_global);
+            Self::undo_module_mocks(
+                vm,
+                global,
+                file_path,
+                next_load_shares_global,
+                runs_again && !failed_to_load,
+            );
+            if next_load_shares_global {
+                crate::test_runner::Expect::on_run_end(vm.global(), runs_again && !failed_to_load);
+            }
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 
@@ -4254,6 +4277,7 @@ struct EnteredFile<'a> {
 
 impl Drop for EnteredFile<'_> {
     fn drop(&mut self) {
+        self.global.bun_vm().as_mut().test_owner = jsc::virtual_machine::TestOwner::File;
         // SAFETY: `bun_test_root` belongs to `Jest::runner()`, which lives as long as the process.
         unsafe { (*self.bun_test_root).exit_file() };
         // A mock.module() patch still pending must not hold up the next file.

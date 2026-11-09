@@ -241,6 +241,15 @@ Use the `--rerun-each` flag to run each test multiple times. This surfaces flaky
 bun test --rerun-each 100
 ```
 
+Each run loads the test file again, in the same global object. The modules that the file imports stay loaded, with one exception. A module is evaluated again for the next run, together with the modules that import it, if it registered something for the test file when it was imported:
+
+- hooks, tests or `describe` blocks
+- `vi.stubGlobal()` or `vi.stubEnv()` stubs, spies, fake timers or `vi.setConfig()` options
+- `test.override()` values
+- a [module mock](/test/mocks#module-mocks-are-removed-after-each-test-file)
+
+These end with each run, so the module has to register them again. Put setup that can't run twice in a [preload script](/test/lifecycle#global-setup-and-teardown).
+
 ## Randomize test execution order
 
 Use the `--randomize` flag to run tests in a random order. This helps detect tests that depend on shared state or execution order.

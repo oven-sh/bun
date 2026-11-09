@@ -15,7 +15,7 @@
 #include <JavaScriptCore/JSPromiseReaction.h>
 #endif
 
-extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
+extern "C" bool JSMock__registersForPreload(Zig::GlobalObject*);
 extern "C" bool ViUtils__isLoadingPreload(Zig::GlobalObject*);
 
 namespace Bun {
@@ -79,7 +79,7 @@ static void restoreOriginals(Zig::GlobalObject* globalObject, WriteBarrier<Unkno
 
 static void didStub(Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& stubsOfPreload, JSValue key, JSValue stub)
 {
-    if (JSMock__isInPreload(globalObject))
+    if (JSMock__registersForPreload(globalObject))
         JSC__JSMap__set(ensureMap(getVM(globalObject), globalObject, stubsOfPreload), globalObject, JSValue::encode(key), JSValue::encode(stub));
 }
 

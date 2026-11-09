@@ -21,7 +21,7 @@ use crate::ast::{
 use crate::language::SourceType;
 use crate::semantic::{Declaration, Scope, ScopeKind};
 use crate::span::Span;
-use crate::tokens::{skip_trivia, token_len};
+use crate::tokens::{TokenKind, skip_trivia, token_len};
 use crate::types::IdMap;
 use crate::utils::oxlint::{is_script, is_strict_mode, source_type};
 use bun_core::strings;
@@ -42,9 +42,9 @@ struct Checks<'a, 'c> {
     first: Option<((u32, Phase), SyntaxError)>,
     /// All the errors. Only used for oxc, which continues after an error.
     all: Vec<SyntaxError>,
-    /// acorn notices the error currently being checked only once it has read this far: the start of a token, or the
-    /// end of a node, after which it has also read the token that follows. See [`Checks::when_read_to`].
-    noticed: u32,
+    /// If set, acorn notices the error currently being checked only once it has read this far: the start of a token,
+    /// or the end of a node, after which it has also read the token that follows. See [`Checks::when_read_to`].
+    noticed: Option<u32>,
     /// True if the tree is complete because the parser reported nothing.
     is_whole: bool,
     /// Report only what Prettier rejects. See [`babel_rejection`].
@@ -134,7 +134,7 @@ pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxE
         tops: Tops::default(),
         first: None,
         all: Vec::new(),
-        noticed: 0,
+        noticed: None,
         is_whole: true,
         is_babel: false,
         is_oxc: false,
@@ -268,7 +268,7 @@ pub(super) fn babel_rejection<'a>(
         tops: Tops::default(),
         first: None,
         all: Vec::new(),
-        noticed: 0,
+        noticed: None,
         is_whole: true,
         is_babel: true,
         is_oxc: false,
@@ -470,7 +470,7 @@ pub(super) fn first_error<'a>(
         tops: Tops::default(),
         first: None,
         all: Vec::new(),
-        noticed: 0,
+        noticed: None,
         is_whole: parser_error.is_none(),
         is_babel: false,
         is_oxc: false,
@@ -489,8 +489,10 @@ pub(super) fn first_error<'a>(
     checks.strict_mode();
     checks.octals_in_strict_code();
     checks.keywords_as_identifiers();
-    checks.parameters();
     checks.early_errors();
+    // After the early errors: acorn checks the parameters once it has parsed an expression body, and after the `"use
+    // strict"` of a block body.
+    checks.parameters();
     if checks.is_whole {
         checks.redeclarations();
     }
@@ -660,7 +662,7 @@ fn oxc_checks<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) ->
         tops: Tops::default(),
         first: None,
         all: Vec::new(),
-        noticed: 0,
+        noticed: None,
         // Don't use the scopes, which treat every file as a module.
         is_whole: false,
         is_babel: false,
@@ -695,10 +697,13 @@ impl<'a, 'c> Checks<'a, 'c> {
     /// Like [`Checks::fail`], for an error that oxc labels up to `label.end`. See [`SyntaxError::end`].
     fn fail_for(&mut self, label: Span, message: Vec<u8>) {
         let at = label.start;
-        let rank = match self.noticed > at {
+        let rank = match self.noticed {
             // A node's end is followed by trivia. acorn has read the token after it.
-            true => (skip_trivia(self.file.text(), self.noticed), Phase::Deferred),
-            false => (at, Phase::Parser),
+            Some(noticed) => (
+                skip_trivia(self.file.text(), noticed).max(at),
+                Phase::Deferred,
+            ),
+            None => (at, Phase::Parser),
         };
         self.record(rank, label, message);
     }
@@ -763,9 +768,16 @@ impl<'a, 'c> Checks<'a, 'c> {
     /// `[a, b()]` before it sees the `=` that makes it a pattern. `noticed` is the start of that token, or the end of a
     /// node: acorn has then already read the token after the node, and a tokenizer error there comes first.
     fn when_read_to(&mut self, noticed: u32, check: impl FnOnce(&mut Self)) {
-        let before = std::mem::replace(&mut self.noticed, noticed);
+        let before = self.noticed.replace(noticed);
         check(self);
         self.noticed = before;
+    }
+
+    /// Runs `check` for an error about the identifier at `at`. acorn's `parseIdent` reads the token after the
+    /// identifier before it checks the identifier.
+    fn after_identifier(&mut self, at: u32, check: impl FnOnce(&mut Self)) {
+        let end = at + self.token_at(at).len() as u32;
+        self.when_read_to(end, check);
     }
 
     fn text_from(&self, at: u32) -> &'a [u8] {
@@ -815,10 +827,8 @@ impl<'a, 'c> Checks<'a, 'c> {
     }
 
     fn reserved(&mut self, at: u32) {
-        self.fail(
-            at,
-            [b"The keyword '", self.token_at(at), b"' is reserved"].concat(),
-        );
+        let message = [b"The keyword '", self.token_at(at), b"' is reserved"].concat();
+        self.after_identifier(at, |checks| checks.fail(at, message));
     }
 
     /// True if a check for oxc can be skipped because the parser didn't see the `hir::rare` syntax `bit`. The checks
@@ -886,18 +896,12 @@ impl<'a, 'c> Checks<'a, 'c> {
             // After the `/`.
             1161 => self.tokenizer_error(at, at + 1, "Unterminated regular expression"),
             1121 | 1489 => self.tokenizer_error(at, at, "Invalid number"),
-            // An escape inside a string, which acorn rejects when it reads the string.
-            1487 => self.tokenizer_error(
-                self.token_containing(at),
-                at,
-                "Octal literal in strict mode",
-            ),
-            1488 => {
-                self.tokenizer_error(self.token_containing(at), at + 1, "Invalid escape sequence")
-            }
+            1487 => self.invalid_escape(at, at, "Octal literal in strict mode"),
+            1488 => self.invalid_escape(at, at + 1, "Invalid escape sequence"),
             1127 | 18026 => self.unexpected_character(at),
+            // `at` is the identifier after the number.
             1351 => self.tokenizer_error(
-                self.number_before(at),
+                self.token_containing(at.saturating_sub(1)),
                 at,
                 "Identifier directly after number",
             ),
@@ -912,7 +916,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                 "Unexpected token `>`. Did you mean `&gt;` or `{\">\"}`?",
             ),
             6189 => self.tokenizer_error(
-                self.number_before(at),
+                self.token_containing(at),
                 at,
                 "Numeric separator must be exactly one underscore",
             ),
@@ -933,7 +937,7 @@ impl<'a, 'c> Checks<'a, 'c> {
                     }
                     _ => "Numeric separator is not allowed at the last of digits",
                 };
-                self.tokenizer_error(self.number_before(at), at, message);
+                self.tokenizer_error(self.token_containing(at), at, message);
             }
             // TypeScript reports the word that nothing can follow. acorn reports the token after it.
             1434 | 1435 => self.unexpected(self.after_token(at)),
@@ -944,18 +948,23 @@ impl<'a, 'c> Checks<'a, 'c> {
                 [b"Unexpected keyword '", self.token_at(at), b"'"].concat(),
             ),
             1472 => {
-                let last_try = (self.file.stmts_of_kind(StmtTag::Try))
+                // TypeScript reports it at the token after the `try` block.
+                let without_clause = (self.file.stmts_of_kind(StmtTag::Try))
                     .filter(|it| it.span().start < at)
-                    .max_by_key(|it| it.span().start);
+                    .filter_map(|it| match it.kind() {
+                        StmtKind::Try { block, .. } => Some((it, block)),
+                        _ => None,
+                    })
+                    .max_by_key(|(it, block)| {
+                        (skip_trivia(text, block.span().end) == at, it.span().start)
+                    });
                 let message = "Missing catch or finally clause";
-                match last_try.map(|it| (it, it.kind())) {
+                match without_clause {
                     // acorn parses the block, then finds neither `catch` nor `finally` after it.
-                    Some((it, StmtKind::Try { block, .. })) => {
-                        self.when_read_to(block.span().end, |checks| {
-                            checks.fail(it.span().start, message)
-                        });
-                    }
-                    _ => self.fail(at, message),
+                    Some((it, block)) => self.when_read_to(block.span().end, |checks| {
+                        checks.fail(it.span().start, message)
+                    }),
+                    None => self.fail(at, message),
                 }
             }
             _ => {
@@ -1121,23 +1130,21 @@ impl<'a, 'c> Checks<'a, 'c> {
         );
     }
 
-    /// The start of the token that contains `at`, for an error inside a string or a template.
+    /// The start of the token that contains `at`, for an error inside a string or a number.
     fn token_containing(&self, at: u32) -> u32 {
         (self.file.token_containing(at)).map_or(at, |it| it.span().start)
     }
 
-    /// The start of the number that ends at or continues through `at`.
-    fn number_before(&self, at: u32) -> u32 {
-        let text = self.file.text();
-        let mut start = at as usize;
-        while start > 0
-            && text
-                .get(start - 1)
-                .is_some_and(|&it| is_identifier_byte(it) || it == b'.')
-        {
-            start -= 1;
+    /// An invalid escape at `at`, which TypeScript reports inside a string or a template. acorn's tokenizer rejects it
+    /// in a string. In a template it reads the text only after the parser has consumed the backtick, and reports it
+    /// from the parser.
+    fn invalid_escape(&mut self, at: u32, reported: u32, message: &str) {
+        match self.file.token_containing(at) {
+            Some(token) if token.kind() == TokenKind::Template => self.fail(reported, message),
+            token => {
+                self.tokenizer_error(token.map_or(at, |it| it.span().start), reported, message)
+            }
         }
-        start as u32
     }
 
     // ───────────────────────────── TypeScript in JavaScript ─────────────────────────────
@@ -1357,7 +1364,10 @@ impl<'a, 'c> Checks<'a, 'c> {
                 true if self.is_oxc => {
                     self.fail(pos, "Delete of an unqualified identifier in strict mode.")
                 }
-                true => self.fail(it.span().start, "Deleting local variable in strict mode"),
+                // acorn checks the operand once it has parsed it.
+                true => self.when_read_to(it.span().end, |checks| {
+                    checks.fail(it.span().start, "Deleting local variable in strict mode")
+                }),
                 false => {}
             }
         }
@@ -1536,7 +1546,7 @@ impl<'a, 'c> Checks<'a, 'c> {
             self.reserved(at);
             return true;
         };
-        self.fail(at, message);
+        self.after_identifier(at, |checks| checks.fail(at, message));
         true
     }
 
@@ -1575,12 +1585,15 @@ impl<'a, 'c> Checks<'a, 'c> {
         if self.is_reserved(node, at, name) {
             return;
         }
+        // `checkLValSimple`
+        let checked_at = match node {
+            Node::Pat(pat) => self.binding_checked_at(pat),
+            _ => at + self.token_at(at).len() as u32,
+        };
         if name == known::eval || name == known::arguments {
             if self.is_strict(node) {
-                self.fail(
-                    at,
-                    [b"Binding ", self.token_at(at), b" in strict mode"].concat(),
-                );
+                let message = [b"Binding ", self.token_at(at), b" in strict mode"].concat();
+                self.when_read_to(checked_at, |checks| checks.fail(at, message));
             }
         } else if name == known::let_ {
             let is_lexical = match node {
@@ -1600,7 +1613,8 @@ impl<'a, 'c> Checks<'a, 'c> {
                 _ => false,
             };
             if is_lexical {
-                self.fail(at, "let is disallowed as a lexically bound name");
+                let message = "let is disallowed as a lexically bound name";
+                self.when_read_to(checked_at, |checks| checks.fail(at, message));
             }
         }
     }
@@ -1648,15 +1662,39 @@ impl<'a, 'c> Checks<'a, 'c> {
                 && matches!(raw.kind, FnKind::Decl | FnKind::Expr)
                 && !self.is_strict(Node::Func(func));
             if !allows && func.is_in_tree() {
-                // acorn checks the parameters before a block body and after an expression body.
-                let noticed = match func.body() {
-                    FnBody::Block(_) => func.body_span().map_or(at, |it| it.start),
-                    FnBody::Expr(body) => body.outer_span().end,
-                    FnBody::None => at,
-                };
+                let noticed = self.params_checked_at(func).unwrap_or(at);
                 self.when_read_to(noticed, |checks| checks.fail(at, "Argument name clash"));
             }
         }
+    }
+
+    /// Where acorn's `checkParams` runs for `func`: before a block body, after an expression body, and after the `)`
+    /// of a function without a body.
+    fn params_checked_at(&self, func: Func<'a>) -> Option<u32> {
+        Some(match func.body() {
+            FnBody::Block(_) => func.body_span()?.start,
+            FnBody::Expr(body) => body.outer_span().end,
+            FnBody::None => func.close_paren()? + 1,
+        })
+    }
+
+    /// Where acorn checks the name bound by `pat`: once it has read the whole pattern around it, or, for a parameter,
+    /// where it checks the function's parameters. acorn has then also read the token after it.
+    fn binding_checked_at(&self, pat: Pat<'a>) -> u32 {
+        let mut root = Node::Pat(pat);
+        for it in Node::Pat(pat).ancestors() {
+            match it {
+                Node::Pat(_) | Node::PatElem(_) | Node::PatProp(_) => root = it,
+                Node::Param(param) => {
+                    if let Some(at) = param.func().and_then(|func| self.params_checked_at(func)) {
+                        return at;
+                    }
+                    break;
+                }
+                _ => break,
+            }
+        }
+        root.span().end
     }
 
     // ───────────────────────────── `declareName` ─────────────────────────────
@@ -1687,13 +1725,11 @@ impl<'a, 'c> Checks<'a, 'c> {
                     self.declarations_in_one_scope(scope, declarations);
                 }
                 if catch.is_some_and(|it| it.get_name(symbol.name()).is_some())
-                    && let Some(at) = symbol
-                        .declarations()
-                        .filter_map(Declaration::name_span)
-                        .map(|it| it.start)
-                        .min()
+                    && let Some(first) = (symbol.declarations())
+                        .filter_map(|it| Some((it.name_span()?.start, it)))
+                        .min_by_key(|it| it.0)
                 {
-                    self.already_declared(at);
+                    self.already_declared(first.1);
                 }
                 if has_var && is_block {
                     self.var_through(scope, symbol.name(), symbol.declarations());
@@ -1702,11 +1738,18 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    fn already_declared(&mut self, at: u32) {
+    fn already_declared(&mut self, declaration: Declaration<'a>) {
+        let Some(at) = declaration.name_span().map(|it| it.start) else {
+            return;
+        };
         let name = self.token_at(at);
         let message = [b"Identifier '", name, b"' has already been declared"].concat();
-        // acorn declares the name once it has read it, and the token after it.
-        self.when_read_to(at + name.len() as u32, |checks| checks.fail(at, message));
+        // acorn declares a name where it checks the binding, once it has read the token after it.
+        let end = match declaration {
+            Declaration::Var(pat) | Declaration::Param(pat) => self.binding_checked_at(pat),
+            _ => at + name.len() as u32,
+        };
+        self.when_read_to(end, |checks| checks.fail(at, message));
     }
 
     /// Checks the declarations of one name in `scope`, in source order.
@@ -1715,20 +1758,20 @@ impl<'a, 'c> Checks<'a, 'c> {
         scope: Scope<'a>,
         declarations: impl Iterator<Item = Declaration<'a>>,
     ) {
-        let mut sorted: SmallVec<[(u32, Binding); 4]> = declarations
-            .filter_map(|it| Some((it.name_span()?.start, Binding::of(it, scope)?)))
+        let mut sorted: SmallVec<[(u32, Binding, Declaration<'a>); 4]> = declarations
+            .filter_map(|it| Some((it.name_span()?.start, Binding::of(it, scope)?, it)))
             .collect();
         crate::utils::sort::sort_unstable_by_key(&mut sorted, |it| it.0);
         let as_var = Self::treats_functions_as_var(scope);
         let (mut lexical, mut function, mut var) = (false, false, false);
-        for (at, binding) in sorted {
+        for (_, binding, declaration) in sorted {
             let is_redeclared = match binding {
                 Binding::Lexical => lexical || function || var,
                 Binding::Function => lexical || !as_var && var,
                 Binding::Var => lexical || !as_var && function,
             };
             if is_redeclared {
-                return self.already_declared(at);
+                return self.already_declared(declaration);
             }
             match binding {
                 Binding::Lexical => lexical = true,
@@ -1754,25 +1797,22 @@ impl<'a, 'c> Checks<'a, 'c> {
             it.is_catch_parameter()
                 && matches!(it, Declaration::Var(pat) if matches!(pat.parent(), Node::VarDecl(_)))
         };
-        let Some(here) = here
-            .filter(|&it| !is_simple_catch(it))
-            .filter_map(Declaration::name_span)
-            .map(|it| it.start)
-            .min()
-        else {
+        let first = |all: &mut dyn Iterator<Item = Declaration<'a>>| {
+            all.filter_map(|it| Some((it.name_span()?.start, it)))
+                .min_by_key(|it| it.0)
+        };
+        let Some(here) = first(&mut here.filter(|&it| !is_simple_catch(it))) else {
             return;
         };
         let span = scope.span();
-        let vars = hoisted
-            .declarations()
-            .filter(|&it| Binding::of(it, scope) == Some(Binding::Var));
-        let inside = vars
-            .filter_map(Declaration::name_span)
-            .map(|it| it.start)
-            .filter(|&at| span.contains_offset(at))
-            .min();
-        if let Some(var) = inside {
-            self.already_declared(var.max(here));
+        let mut vars = (hoisted.declarations()).filter(|&it| {
+            Binding::of(it, scope) == Some(Binding::Var)
+                && it
+                    .name_span()
+                    .is_some_and(|name| span.contains_offset(name.start))
+        });
+        if let Some(var) = first(&mut vars) {
+            self.already_declared(if var.0 > here.0 { var.1 } else { here.1 });
         }
     }
 }

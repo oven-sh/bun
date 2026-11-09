@@ -64,8 +64,8 @@ enum RecordOwner {
     /// The literal is parsed with no record. acorn reports the offending token itself.
     None,
     /// The literal is the left operand of an operator inside a list that shares the record. acorn ends the expression
-    /// at the literal, and the list doesn't expect the token at this offset.
-    Unexpected(u32),
+    /// at the end of the operand, the first offset, and the list doesn't expect the operator, at the second.
+    Unexpected(u32, u32),
 }
 
 impl<'a> Checks<'a, '_> {
@@ -575,20 +575,17 @@ impl<'a> Checks<'a, '_> {
             {
                 continue;
             }
-            match raw.kind {
-                VarKind::Const => self.unexpected(raw.loc.end),
-                VarKind::Using => {
-                    self.fail(raw.loc.end, "Missing initializer in using declaration")
+            let message = match raw.kind {
+                VarKind::Const => {
+                    self.unexpected(raw.loc.end);
+                    continue;
                 }
-                VarKind::AwaitUsing => self.fail(
-                    raw.loc.end,
-                    "Missing initializer in await using declaration",
-                ),
-                _ => self.fail(
-                    raw.loc.end,
-                    "Complex binding patterns require an initialization value",
-                ),
-            }
+                VarKind::Using => "Missing initializer in using declaration",
+                VarKind::AwaitUsing => "Missing initializer in await using declaration",
+                _ => "Complex binding patterns require an initialization value",
+            };
+            // acorn has read the token after the binding when it looks for the `=`.
+            self.when_read_to(raw.loc.end, |checks| checks.fail(raw.loc.end, message));
         }
         for it in file.stmts_of_kind(StmtTag::Var) {
             let Some(list) = it.as_var() else {
@@ -1035,10 +1032,13 @@ impl<'a> Checks<'a, '_> {
                         .stage(Stage::Parser),
                 );
             } else if !is_allowed && self.source_type() != SourceType::CommonJs {
-                self.fail(
-                    it.span().start,
-                    "'new.target' can only be used in functions and class static block",
-                );
+                // acorn checks it once it has parsed `new.target`.
+                self.when_read_to(it.span().end, |checks| {
+                    checks.fail(
+                        it.span().start,
+                        "'new.target' can only be used in functions and class static block",
+                    )
+                });
             }
         }
     }
@@ -1307,10 +1307,11 @@ impl<'a> Checks<'a, '_> {
         }
         for it in file.stmts_of_kind(StmtTag::Throw) {
             if matches!(it.kind(), StmtKind::Throw(thrown) if thrown.is_missing()) {
-                self.fail(
-                    it.span().start + "throw".len() as u32,
-                    "Illegal newline after throw",
-                );
+                // acorn has read the token on the next line.
+                let end = it.span().start + "throw".len() as u32;
+                self.when_read_to(end, |checks| {
+                    checks.fail(end, "Illegal newline after throw")
+                });
             }
         }
     }
@@ -1680,7 +1681,8 @@ impl<'a> Checks<'a, '_> {
                     self.report(error.help(help));
                     continue;
                 }
-                self.undeclared_private_name(outermost, name.start(), undeclared(name.bytes()));
+                let message = undeclared(name.bytes());
+                self.undeclared_private_name(outermost, it.span(), name.start(), message);
             }
         }
         for it in self.exprs_of(ExprTag::PrivateIdentifier) {
@@ -1713,7 +1715,8 @@ impl<'a> Checks<'a, '_> {
                     self.report(error.help(help));
                     continue;
                 }
-                self.undeclared_private_name(outermost, it.span().start, undeclared(name.bytes()));
+                let message = undeclared(name.bytes());
+                self.undeclared_private_name(outermost, it.span(), it.span().start, message);
             }
         }
     }
@@ -1732,10 +1735,17 @@ impl<'a> Checks<'a, '_> {
         classes.last()
     }
 
-    /// acorn's error for a private name that no enclosing class declares. acorn collects the names a class body uses,
-    /// and when it leaves the body it hands the undeclared ones to the enclosing class body, or throws if there is none.
-    fn undeclared_private_name(&mut self, outermost: Option<Class<'a>>, at: u32, message: Vec<u8>) {
-        let noticed = outermost.map_or(0, |it| it.span().end);
+    /// acorn's error for the private name at `at` in the expression `expr`, which no enclosing class declares. acorn
+    /// collects the names a class body uses, and when it leaves the body it hands the undeclared ones to the enclosing
+    /// class body, or throws if there is none. Outside a class it throws once it has read the name.
+    fn undeclared_private_name(
+        &mut self,
+        outermost: Option<Class<'a>>,
+        expr: crate::span::Span,
+        at: u32,
+        message: Vec<u8>,
+    ) {
+        let noticed = outermost.map_or(expr.end, |it| it.span().end);
         self.when_read_to(noticed, |checks| checks.fail(at, message));
     }
 
@@ -1853,9 +1863,10 @@ impl<'a> Checks<'a, '_> {
 
     /// `operand` is the left operand of `operator`, which acorn doesn't read as part of the expression.
     fn after_left_operand(&self, operand: Expr<'a>, operator: Expr<'a>) -> RecordOwner {
+        let end = operand.span().end;
         match Self::is_list_item(operator) {
-            true => RecordOwner::Unexpected(skip_trivia(self.file.text(), operand.span().end)),
-            false => RecordOwner::ReadTo(operand.span().end),
+            true => RecordOwner::Unexpected(end, skip_trivia(self.file.text(), end)),
+            false => RecordOwner::ReadTo(end),
         }
     }
 
@@ -2149,17 +2160,22 @@ impl<'a> Checks<'a, '_> {
             let start = it.span().start;
             match enclosing {
                 Some(Node::Func(func)) if func.is_async() => {}
+                // acorn reads `await` as an identifier here, and checks it once it has read the next token.
                 Some(Node::Func(func)) if func.kind() == FnKind::StaticBlock => {
-                    self.fail(
-                        start,
-                        "Cannot use await in class static initialization block",
-                    );
+                    self.after_identifier(start, |checks| {
+                        checks.fail(
+                            start,
+                            "Cannot use await in class static initialization block",
+                        )
+                    });
                 }
                 None if is_module => {}
-                _ if is_module => self.fail(
-                    start,
-                    "Cannot use keyword 'await' outside an async function",
-                ),
+                _ if is_module => self.after_identifier(start, |checks| {
+                    checks.fail(
+                        start,
+                        "Cannot use keyword 'await' outside an async function",
+                    )
+                }),
                 // After an identifier, these characters continue the expression.
                 _ if matches!(
                     self.token_at(operand.outer_span().start).first(),
@@ -2220,7 +2236,7 @@ impl<'a> Checks<'a, '_> {
             SyntaxError::oxc_error(key, message.concat()).stage(Stage::Parser)
         };
         // `checkExpressionErrors` throws a shorthand default before a second `__proto__` recorded with it.
-        let mut proto_errors: SmallVec<[(RecordOwner, u32); 2]> = SmallVec::new();
+        let mut proto_errors: SmallVec<[(RecordOwner, u32, u32); 2]> = SmallVec::new();
         for (i, raw) in file.hir.props.iter().enumerate() {
             let is_default = raw.kind == PropKind::Shorthand
                 && matches!(
@@ -2272,7 +2288,9 @@ impl<'a> Checks<'a, '_> {
                 match self.record_owner(object) {
                     // With no record, `parseObj` reads the key as the whole property.
                     RecordOwner::None => self.unexpected(equals),
-                    RecordOwner::Unexpected(at) => self.unexpected(at),
+                    RecordOwner::Unexpected(end, at) => {
+                        self.when_read_to(end, |checks| checks.unexpected(at));
+                    }
                     RecordOwner::ReadTo(noticed) => {
                         self.when_read_to(noticed, |checks| checks.fail(equals, message));
                     }
@@ -2299,16 +2317,20 @@ impl<'a> Checks<'a, '_> {
                     let error = self.redeclared("Identifier", b"__proto__", first, again);
                     self.report(error);
                 } else if first.is_some() {
-                    proto_errors.push((self.record_owner(object), raw.pos));
+                    proto_errors.push((self.record_owner(object), raw.pos, prop.span().end));
                 }
             }
         }
-        for (owner, key) in proto_errors {
+        for (owner, key, property_end) in proto_errors {
             let message = "Redefinition of __proto__ property";
             match owner {
-                // With no record, `checkPropClash` throws at the key.
-                RecordOwner::None => self.fail(key, message),
-                RecordOwner::Unexpected(at) => self.unexpected(at),
+                // With no record, `checkPropClash` throws at the key once the property has been parsed.
+                RecordOwner::None => {
+                    self.when_read_to(property_end, |checks| checks.fail(key, message));
+                }
+                RecordOwner::Unexpected(end, at) => {
+                    self.when_read_to(end, |checks| checks.unexpected(at));
+                }
                 RecordOwner::ReadTo(noticed) => {
                     self.when_read_to(noticed, |checks| checks.fail(key, message));
                 }
@@ -2348,18 +2370,22 @@ impl<'a> Checks<'a, '_> {
         if !self.is_babel && file.language().source_type != SourceType::Module {
             return;
         }
-        let mut exported: Vec<(&'a [u8], u32)> = Vec::new();
+        // Each exported name, where it is, and where acorn checks it: after the `default` keyword, after the name in a
+        // list, or after the whole declaration.
+        let mut exported: Vec<(&'a [u8], u32, u32)> = Vec::new();
         for it in file.body() {
             match it.kind() {
                 StmtKind::ExportDefault(_) => {
-                    exported.push((&b"default"[..], self.after_token(it.span().start)))
+                    let keyword = self.after_token(it.span().start);
+                    exported.push((&b"default"[..], keyword, keyword + "default".len() as u32));
                 }
                 StmtKind::ExportStar {
                     alias: Some(alias), ..
-                } => exported.push((alias.bytes(), alias.start())),
+                } => exported.push((alias.bytes(), alias.start(), alias.span().end)),
                 StmtKind::ExportNamed(export) => {
                     for item in export.items() {
-                        exported.push((item.exported().bytes(), item.exported().start()));
+                        let name = item.exported();
+                        exported.push((name.bytes(), name.start(), name.span().end));
                         let local = item.local();
                         if export.has_from() {
                             continue;
@@ -2381,32 +2407,31 @@ impl<'a> Checks<'a, '_> {
                     }
                 }
                 _ if !it.is_exported() => {}
-                _ if it.is_default_export() => exported.push((
-                    &b"default"[..],
-                    self.after_token(it.export_span().map_or(0, |it| it.start)),
-                )),
+                _ if it.is_default_export() => {
+                    let keyword = self.after_token(it.export_span().map_or(0, |it| it.start));
+                    exported.push((&b"default"[..], keyword, keyword + "default".len() as u32));
+                }
                 StmtKind::Var(list) => {
                     for declaration in list {
                         declaration.pat().for_each_binding(&mut |it| {
                             if let PatKind::Ident(name) = it.kind() {
-                                exported.push((name.bytes(), it.span().start));
+                                exported.push((name.bytes(), it.span().start, it.span().end));
                             }
                         });
                     }
                 }
-                StmtKind::Fn(func) => {
-                    exported.extend(func.name().map(|it| (it.bytes(), it.start())))
-                }
-                StmtKind::Class(class) => {
-                    exported.extend(class.name().map(|it| (it.bytes(), it.start())))
-                }
+                StmtKind::Fn(func) => exported
+                    .extend((func.name()).map(|name| (name.bytes(), name.start(), it.span().end))),
+                StmtKind::Class(class) => exported
+                    .extend((class.name()).map(|name| (name.bytes(), name.start(), it.span().end))),
                 _ => {}
             }
         }
         crate::utils::sort::sort_unstable(&mut exported);
         for (first, second) in exported.iter().zip(exported.iter().skip(1)) {
             if first.0 == second.0 {
-                self.fail(second.1, [b"Duplicate export '", second.0, b"'"].concat());
+                let message = [b"Duplicate export '", second.0, b"'"].concat();
+                self.when_read_to(second.2, |checks| checks.fail(second.1, message));
             }
         }
     }
@@ -2449,14 +2474,14 @@ impl<'a> Checks<'a, '_> {
                 if !has_target && self.is_oxc {
                     self.oxc_jump_error(it, is_break);
                 } else if !has_target {
-                    self.fail(
-                        it.span().start,
-                        if is_break {
-                            "Unsyntactic break"
-                        } else {
-                            "Unsyntactic continue"
-                        },
-                    );
+                    let message = match is_break {
+                        true => "Unsyntactic break",
+                        false => "Unsyntactic continue",
+                    };
+                    // acorn checks the label once it has parsed the statement.
+                    self.when_read_to(it.span().end, |checks| {
+                        checks.fail(it.span().start, message)
+                    });
                 }
             }
         }
@@ -2552,10 +2577,10 @@ impl<'a> Checks<'a, '_> {
                 let error = self.redeclared("Label", label.bytes(), first, again);
                 self.report(error);
             } else {
-                self.fail(
-                    it.span().start,
-                    [b"Label '", label.bytes(), b"' is already declared"].concat(),
-                );
+                let message = [b"Label '", label.bytes(), b"' is already declared"].concat();
+                // acorn checks the label once it has read the `:`.
+                let colon = self.after_token(it.span().start);
+                self.when_read_to(colon + 1, |checks| checks.fail(it.span().start, message));
             }
         }
     }

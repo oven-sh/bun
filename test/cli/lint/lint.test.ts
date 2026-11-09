@@ -1273,10 +1273,60 @@ describe.concurrent("bun lint", () => {
         "1:66: Parsing error: Invalid number",
       ],
       ["class A { m() { #x in this } n() { 08 } }", "1:36: Parsing error: Invalid number"],
+      ["class A { m(a, a) 08; }", "1:19: Parsing error: Invalid number"],
+      ["function f(a, a) 08 {}", "1:18: Parsing error: Invalid number"],
+      ["function f(eval, 08) {}", "1:18: Parsing error: Invalid number"],
+      // A list that shares the record doesn't expect the operator after the literal.
+      ["var x = [{ b = 1 }++];", "1:19: Parsing error: Unexpected token ++"],
+      ["f({ b = 1 }++);", "1:12: Parsing error: Unexpected token ++"],
+      ["var x = [{ b = 1 } ? a : b];", "1:20: Parsing error: Unexpected token ?"],
+      [
+        "var x = { b = 1 }++;",
+        "1:13: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
+      ],
+      ["x = !{ __proto__: 1, __proto__: 08 }", "1:33: Parsing error: Invalid number"],
+      ["x = !{ __proto__: 1, __proto__: 2, 08 }", "1:22: Parsing error: Redefinition of __proto__ property"],
+      // The `try` that lacks a clause is the one whose block ends before the error.
+      ["try { try {} catch {} } 08", "1:25: Parsing error: Invalid number"],
+      ["try { try {} catch {} }", "1:1: Parsing error: Missing catch or finally clause"],
+      // acorn reads the token after an identifier before it checks the identifier.
+      ["this.#x 08", "1:9: Parsing error: Invalid number"],
+      ["this.#x\n}", "1:6: Parsing error: Private field '#x' must be declared in an enclosing class"],
+      ["function f() { await 08 }", "1:22: Parsing error: Invalid number"],
+      ["class A { static { await 08 } }", "1:26: Parsing error: Invalid number"],
+      ["enum 08", "1:6: Parsing error: Invalid number"],
+      ["a: a: 08", "1:7: Parsing error: Invalid number"],
+      ["a: a: }", "1:4: Parsing error: Label 'a' is already declared"],
+      ["break a; 08", "1:10: Parsing error: Invalid number"],
+      ["function f() { delete a\n08 }", "2:1: Parsing error: Invalid number"],
+      ["new.target 08", "1:12: Parsing error: Invalid number"],
+      ["let [a] 08", "1:9: Parsing error: Invalid number"],
+      ["export var a; export var a\n08", "2:1: Parsing error: Invalid number"],
+      // Two checks deferred to one token: acorn's order is the inner node's first.
+      [
+        "var f = (a, a) => class { m() { this.#x } }",
+        "1:38: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
+      [
+        'function f(a, a = 1) { "use strict" }',
+        "1:1: Parsing error: Illegal 'use strict' directive in function with non-simple parameter list",
+      ],
       // acorn has read the token after the class before it checks the class's private names.
       ["class A { m() { this.#x } } 08;", "1:29: Parsing error: Invalid number"],
       ['class A { m() { this.#x } } "\\8"', "1:31: Parsing error: Invalid escape sequence"],
       ["class A { m() { this.#x } } /a/x", "1:30: Parsing error: Invalid regular expression flag"],
+      ["class A { m() { this.#x } } 1_", "1:30: Parsing error: Numeric separator is not allowed at the last of digits"],
+      ["class A { m() { this.#x } } 3in", "1:30: Parsing error: Identifier directly after number"],
+      [
+        "class A { m() { this.#x } } a.3in",
+        "1:22: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
+      ['class A { m() { this.#x } } "\\01"', "1:30: Parsing error: Octal literal in strict mode"],
+      // acorn reads a template's text only after the parser has consumed the backtick.
+      [
+        "class A { m() { this.#x } } `\\01`",
+        "1:22: Parsing error: Private field '#x' must be declared in an enclosing class",
+      ],
       [
         "class A { m() { this.#x } } }",
         "1:22: Parsing error: Private field '#x' must be declared in an enclosing class",
@@ -1286,13 +1336,31 @@ describe.concurrent("bun lint", () => {
     const scripts: [code: string, error: string][] = [
       ['function f() { "use strict"; let a; let a\n08 }', "2:1: Parsing error: Invalid number"],
       ['function f() { "use strict"; let a; let a\n}', "1:41: Parsing error: Identifier 'a' has already been declared"],
+      // A name in a pattern is declared once the whole pattern has been read.
+      ['"use strict"; let [a, a]\n08', "2:1: Parsing error: Invalid number"],
+      ['"use strict"; let [a, a] = x\n08', "1:23: Parsing error: Identifier 'a' has already been declared"],
+      ['"use strict"; try {} catch ([e, e]) { 08 }', "1:33: Parsing error: Identifier 'e' has already been declared"],
+    ];
+    // With an older `ecmaVersion`, newer syntax is a tokenizer error, which comes before a deferred check.
+    const editions: [ecmaVersion: number, code: string, error: string][] = [
+      [2021, "class A { constructor(){} constructor(){} #x }", "1:43: Parsing error: Unexpected character '#'"],
+      [2020, "class A { #x; #x = 1_000 }", "1:11: Parsing error: Unexpected character '#'"],
+      [2020, "try {} 1_000", "1:9: Parsing error: Identifier directly after number"],
+      [2020, "var f = (a, a) => 1_000", "1:20: Parsing error: Identifier directly after number"],
+      [5, "try {} `a`", "1:8: Parsing error: Unexpected character '`'"],
+      [2015, "try {} /a/s", "1:9: Parsing error: Invalid regular expression flag"],
     ];
     const name = (i: number, extension: string) => `b${String(i).padStart(2, "0")}.${extension}`;
     const files = Object.fromEntries([
       ...cases.map(([code], i) => [name(i, "js"), code + "\n"]),
       ...scripts.map(([code], i) => [name(i, "cjs"), code + "\n"]),
+      ...editions.map(([ecmaVersion, code], i) => [`e${ecmaVersion}/${name(i, "js")}`, code + "\n"]),
     ]);
-    const settings = `export default [{ files: ["**/*.js", "**/*.cjs"], rules: {} }];`;
+    const versions = [...new Set(editions.map(([ecmaVersion]) => ecmaVersion))];
+    const settings = `export default [
+      { files: ["*.js", "*.cjs"], rules: {} },
+      ${versions.map(it => `{ files: ["e${it}/*.js"], languageOptions: { ecmaVersion: ${it}, sourceType: "script" } },`).join("\n")}
+    ];`;
     const { stdout, exitCode } = await lint({ "eslint.config.js": settings, ...files }, [
       "-f",
       "unix",
@@ -1302,12 +1370,13 @@ describe.concurrent("bun lint", () => {
       stdout
         .split("\n")
         .filter(line => line.includes("Parsing error"))
-        .map(line => line.replace(/^.*\/(b\d\d\.c?js):/, "$1:").replace(" [Error]", ""))
+        .map(line => line.replace(/^.*?(?=(?:e\d+\/)?b\d\d\.c?js:)/, "").replace(" [Error]", ""))
         .sort(),
     ).toEqual(
       [
         ...cases.map(([, error], i) => `${name(i, "js")}:${error}`),
         ...scripts.map(([, error], i) => `${name(i, "cjs")}:${error}`),
+        ...editions.map(([ecmaVersion, , error], i) => `e${ecmaVersion}/${name(i, "js")}:${error}`),
       ].sort(),
     );
     expect(exitCode).toBe(1);

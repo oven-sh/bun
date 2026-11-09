@@ -371,7 +371,7 @@ test("mock.module", async () => {
 });
 ```
 
-When the factory returns a promise that is still pending, Bun updates the already-imported module once the promise settles. In that case `mock.module()` returns a promise that resolves after the update, and otherwise it returns `undefined`. `await mock.module(...)` inside a test or hook covers both. At the top level of a test file, Bun waits for pending module mocks before it runs the file's tests.
+When the factory returns a promise that is still pending, Bun updates the already-imported module once the promise settles. In that case `mock.module()` returns a promise that resolves after the update, and otherwise it returns `undefined`. `await mock.module(...)` inside a test, a hook or an `async` `describe()` callback covers both. If a `describe()` callback doesn't await the call, the tests can start before Bun updates the module. At the top level of a test file, Bun waits for pending module mocks before it runs the file's tests.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, mock } from "bun:test";

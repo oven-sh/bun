@@ -101,3 +101,36 @@ new ReadableStream({
 expectType(new ReadableStream({ type: "bytes" })).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
 expectType(new ReadableStream<Uint8Array>({ type: "bytes" })).is<ReadableStream<Uint8Array>>();
 expectType(new ReadableStream<string>({} as any)).is<ReadableStream<string>>();
+
+class StringStream extends ReadableStream<string> {}
+class ChunkStream<T> extends ReadableStream<T> {}
+expectType(new StringStream()).extends<ReadableStream<string>>();
+expectType(new ChunkStream<number>()).extends<ReadableStream<number>>();
+
+class LineStream extends ReadableStream<string> {
+  constructor(lines: string[]) {
+    super(
+      {
+        start(controller) {
+          expectType(controller).is<ReadableStreamDefaultController<string>>();
+          for (const line of lines) controller.enqueue(line);
+          // @ts-expect-error - the chunks are strings
+          controller.enqueue(1);
+          controller.close();
+        },
+      },
+      { highWaterMark: 1 },
+    );
+  }
+}
+new LineStream(["a"]);
+
+// A byte source produces `Uint8Array<ArrayBuffer>` chunks. The expected type does not change that.
+// @ts-expect-error
+const byteSourceAsStrings: ReadableStream<string> = new ReadableStream({ type: "bytes" });
+// @ts-expect-error
+const byteSourceAsBuffers: ReadableStream<Buffer> = new ReadableStream({ type: "bytes" });
+// @ts-expect-error
+const byteSourceAsShared: ReadableStream<Uint8Array<SharedArrayBuffer>> = new ReadableStream({ type: "bytes" });
+// An explicit type argument states the chunk type.
+expectType(new ReadableStream<Buffer>({ type: "bytes" })).is<ReadableStream<Buffer>>();

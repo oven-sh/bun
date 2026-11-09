@@ -51,6 +51,24 @@ declare module "bun" {
       readonly buffer: ArrayBuffer;
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Memory/grow) */
       grow(delta: number): number;
+      /**
+       * Returns the memory as a fixed-length buffer, which becomes
+       * {@link buffer}. A resizable buffer of the memory is detached.
+       *
+       * For a shared memory the result is a `SharedArrayBuffer`, as `buffer`
+       * is, and no buffer is detached.
+       */
+      toFixedLengthBuffer(): ArrayBuffer;
+      /**
+       * Returns the memory as a resizable buffer, which becomes {@link buffer}.
+       * The fixed-length buffer of the memory is detached. The resizable buffer
+       * grows with the memory, and its `maxByteLength` is the maximum size of
+       * the memory.
+       *
+       * For a shared memory the result is a growable `SharedArrayBuffer`, and
+       * no buffer is detached.
+       */
+      toResizableBuffer(): ArrayBuffer;
     }
 
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module) */
@@ -94,6 +112,55 @@ declare module "bun" {
     interface WebAssemblyInstantiatedSource {
       instance: Instance;
       module: Module;
+    }
+
+    interface TagType {
+      /** The value types of the values that an exception with this tag carries. */
+      parameters: ValueType[];
+    }
+
+    interface ExceptionOptions {
+      /** Give the exception a `stack` property with a stack trace. Defaults to `false`. */
+      traceStack?: boolean;
+    }
+
+    /**
+     * The type of a WebAssembly exception: the value types of the values that
+     * the exception carries.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Tag)
+     */
+    interface Tag {}
+
+    /**
+     * An exception that WebAssembly code throws to JavaScript, or that
+     * JavaScript throws to WebAssembly code. It is not an instance of `Error`.
+     *
+     * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Exception)
+     */
+    interface Exception {
+      /**
+       * A stack trace, if the exception was created with `traceStack: true`.
+       * Otherwise `undefined`.
+       *
+       * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Exception/stack)
+       */
+      readonly stack: string | undefined;
+      /**
+       * Returns the value at `index` among the values that the exception carries.
+       *
+       * Throws a `TypeError` if `exceptionTag` is not the tag of the exception,
+       * and a `RangeError` if `index` is out of range.
+       *
+       * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Exception/getArg)
+       */
+      getArg(exceptionTag: Tag, index: number): any;
+      /**
+       * Returns `true` if `exceptionTag` is the tag of the exception.
+       *
+       * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Exception/is)
+       */
+      is(exceptionTag: Tag): boolean;
     }
   }
 }
@@ -171,6 +238,35 @@ declare namespace WebAssembly {
       };
     }
   >["Module"];
+
+  interface TagType extends Bun.WebAssembly.TagType {}
+  interface ExceptionOptions extends Bun.WebAssembly.ExceptionOptions {}
+
+  interface Tag extends Bun.WebAssembly.Tag {}
+  var Tag: {
+    prototype: Tag;
+    new (type: TagType): Tag;
+  };
+
+  interface Exception extends Bun.WebAssembly.Exception {}
+  var Exception: {
+    prototype: Exception;
+    /**
+     * @param exceptionTag The tag of the exception. `WebAssembly.JSTag` is not accepted.
+     * @param payload One value for each of the `parameters` of the tag
+     */
+    new (exceptionTag: Tag, payload: any[], options?: ExceptionOptions): Exception;
+  };
+
+  /**
+   * The tag of a value that JavaScript throws. WebAssembly code that imports
+   * this tag can catch such a value as an `externref`.
+   */
+  var JSTag: Tag;
+
+  // `promising`, `Suspending` and `SuspendError` are not declared here. lib.dom does not declare them
+  // yet. If it later gives `Suspending` or `SuspendError` another type than a `var` here has, that
+  // is an error (TS2403).
 
   interface Table extends Bun.WebAssembly.Table {}
   var Table: {

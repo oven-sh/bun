@@ -40,3 +40,25 @@ async () => {
 
   // Additional operations with instance, memory, and table can be performed here
 };
+
+(error: unknown) => {
+  const tagType: WebAssembly.TagType = { parameters: ["i32", "f64"] };
+  const tag: WebAssembly.Tag = new WebAssembly.Tag(tagType);
+  const options: WebAssembly.ExceptionOptions = { traceStack: true };
+  const exception: WebAssembly.Exception = new WebAssembly.Exception(tag, [1, 2.5], options);
+  exception.is(tag) satisfies boolean;
+  exception.getArg(tag, 0);
+  exception.stack satisfies string | undefined;
+  WebAssembly.JSTag satisfies WebAssembly.Tag;
+  tag satisfies Bun.WebAssembly.Tag;
+  exception satisfies Bun.WebAssembly.Exception;
+
+  if (error instanceof WebAssembly.Exception && error.is(WebAssembly.JSTag)) {
+    error.getArg(WebAssembly.JSTag, 0);
+  }
+
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+  memory.toResizableBuffer() satisfies ArrayBuffer;
+  memory.toFixedLengthBuffer() satisfies ArrayBuffer;
+  new WebAssembly.Memory({ initial: 1, maximum: 2, shared: true }).toResizableBuffer();
+};

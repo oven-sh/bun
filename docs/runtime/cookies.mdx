@@ -401,7 +401,7 @@ console.log(new Bun.Cookie(cookie.name, cookie.value).toString()); // "session=s
 
 A parsed cookie always has a `path` (`/` by default) and a `sameSite` (`lax` by default), and Bun drops the attributes that it does not know. So `toString()` can write attributes that differ from the string that was parsed.
 
-`Bun.CookieMap` percent-decodes the values of a `Cookie` request header. So after a client sends this cookie back, `req.cookies.get("session")` is `"s:abc.def/ghi"`.
+`Bun.CookieMap` percent-decodes the values of a `Cookie` request header. So after a client sends this cookie back, `req.cookies.get("session")` is `"s:abc.def/ghi"`. That text can differ from the `value` of the `Cookie` that was set. An escape that is not valid UTF-8 is read as the Unicode replacement character (`\uFFFD`).
 
 #### `Cookie.from(name: string, value: string, options?: CookieInit): Cookie`
 

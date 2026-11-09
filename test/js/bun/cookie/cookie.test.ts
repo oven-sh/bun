@@ -488,6 +488,7 @@ describe("the value of a cookie made from a cookie string", () => {
     "j=%7B%22a%22%3A1%7D",
     "u=%e8%af%bb",
     "x=%fF",
+    "l=caf%E9",
     "tok=YWJj+/==",
     "k=a=b==",
     "p=!#$&'()*+-./:<>?@[]^_`{|}~",

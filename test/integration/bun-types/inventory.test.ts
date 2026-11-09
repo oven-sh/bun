@@ -48,8 +48,9 @@ test.concurrent.skipIf(isDebug)(
   TIMEOUT,
 );
 
+// One preset per run, so that the exit code has one cause.
 test.concurrent.skipIf(isDebug)(
-  "--check fails for a snapshot that differs and for a snapshot that is missing",
+  "--check fails for a snapshot that differs",
   async () => {
     const committed = await Bun.file(join(import.meta.dir, "inventory", "test-globals.txt")).text();
     using dir = tempDir("bun-types-inventory", {
@@ -57,15 +58,27 @@ test.concurrent.skipIf(isDebug)(
     });
     const out = String(dir);
 
-    const { stdout, stderr, exitCode } = await runInventory(
-      ...["--check", "--out", out, "--preset", "test-globals", "--preset", "vitest-globals"],
-    );
+    const { stdout, stderr, exitCode } = await runInventory("--check", "--out", out, "--preset", "test-globals");
 
     const lines = stdout.split("\n");
     expect(stderr).toBe("");
     expect(lines[0]).toBe(`test-globals: differs from ${join(out, "test-globals.txt")}`);
     expect(lines).toContain("-var notInThePackage: never");
-    expect(lines).toContain(`vitest-globals: ${join(out, "vitest-globals.txt")} does not exist`);
+    expect(exitCode).toBe(1);
+  },
+  TIMEOUT,
+);
+
+test.concurrent.skipIf(isDebug)(
+  "--check fails for a snapshot that is missing",
+  async () => {
+    using dir = tempDir("bun-types-inventory", {});
+    const out = String(dir);
+
+    const { stdout, stderr, exitCode } = await runInventory("--check", "--out", out, "--preset", "vitest-globals");
+
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")[0]).toBe(`vitest-globals: ${join(out, "vitest-globals.txt")} does not exist`);
     expect(exitCode).toBe(1);
   },
   TIMEOUT,

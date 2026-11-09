@@ -2880,15 +2880,18 @@ describe.concurrent("a repeated resolution", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("finds a new file once a failed lookup in a Worker made the resolver read the directory again", async () => {
-    const { stdout, stderr, exitCode } = await run({
-      "x.json": `{}`,
-      // The cached listing does not have x.js, so the first lookup of this thread fails and the resolver reads the directory again.
-      "worker.cjs": `
+  // By itself: a build with a sanitizer takes long to start a Worker.
+  test.serial(
+    "finds a new file once a failed lookup in a Worker made the resolver read the directory again",
+    async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "x.json": `{}`,
+        // The cached listing does not have x.js, so the first lookup of this thread fails and the resolver reads the directory again.
+        "worker.cjs": `
         const found = require("node:path").basename(require.resolve("./x.js"));
         require("node:worker_threads").parentPort.postMessage(found);
       `,
-      "main.cjs": `
+        "main.cjs": `
         const fs = require("node:fs");
         const path = require("node:path");
         const { Worker } = require("node:worker_threads");
@@ -2903,11 +2906,12 @@ describe.concurrent("a repeated resolution", () => {
           worker.terminate();
         });
       `,
-    });
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(["x.json", "x.json", "x.json", "x.json", "x.js", "x.js", "x.js"]);
-    expect(exitCode).toBe(0);
-  });
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["x.json", "x.json", "x.json", "x.json", "x.js", "x.js", "x.js"]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("finds a new file once FileSystemRouter.reload() dropped the directory", async () => {
     const { stdout, stderr, exitCode } = await run({
@@ -3290,12 +3294,15 @@ describe.concurrent("a repeated resolution", () => {
     expect(exitCode).toBe(0);
   });
 
-  // By itself: the build takes most of the time that a test has.
-  test.serial("in a compiled executable follows process.chdir()", async () => {
-    using dir = tempDir("repeated-resolution-compile", {
-      "a/package.json": `{ "name": "a" }`,
-      "b/package.json": `{ "name": "b" }`,
-      "main.cjs": `
+  // By itself, and with more time in a debug build: the build copies the runtime into the executable, and a debug
+  // runtime is more than 1 GB. How long the disk takes for that differs by more than 10x from run to run.
+  test.serial(
+    "in a compiled executable follows process.chdir()",
+    async () => {
+      using dir = tempDir("repeated-resolution-compile", {
+        "a/package.json": `{ "name": "a" }`,
+        "b/package.json": `{ "name": "b" }`,
+        "main.cjs": `
         const path = require("node:path");
         // Not a literal: the bundler leaves this require() for run time.
         const specifier = ["./package", "json"].join(".");
@@ -3306,22 +3313,24 @@ describe.concurrent("a repeated resolution", () => {
         }
         console.log(JSON.stringify(out));
       `,
-    });
-    const exe = join(String(dir), isWindows ? "main.exe" : "main");
-    await using build = Bun.spawn({
-      cmd: [bunExe(), "build", "--compile", "main.cjs", "--outfile", exe],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    expect([await build.stderr.text(), await build.exited]).toEqual([expect.any(String), 0]);
-    await using proc = Bun.spawn({ cmd: [exe, String(dir)], env: bunEnv, cwd: String(dir), stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual([true, true, true, true, true]);
-    expect(exitCode).toBe(0);
-  });
+      });
+      const exe = join(String(dir), isWindows ? "main.exe" : "main");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "main.cjs", "--outfile", exe],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      expect([await build.stderr.text(), await build.exited]).toEqual([expect.any(String), 0]);
+      await using proc = Bun.spawn({ cmd: [exe, String(dir)], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([true, true, true, true, true]);
+      expect(exitCode).toBe(0);
+    },
+    isDebug ? 120_000 : undefined,
+  );
 
   test("calls an onResolve plugin that was registered after the first calls", async () => {
     const { stdout, stderr, exitCode } = await run({

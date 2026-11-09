@@ -2106,12 +2106,13 @@ describe("bun update <name> semantics", () => {
         aliased: `npm:no-deps@${range}1.0.0`,
         "we[i]rd": `npm:dep-with-tags@${range}1.0.0`,
         "@x(y)/z": `npm:peer-no-deps@${range}1.0.0`,
+        "x(y)": `npm:vulnerable@${range}1.0.0`,
         "a-dep": `${range}1.0.1`,
       });
       const dir = await stale(aliases(""), aliases("^"));
-      await update(dir, "!{aliased,zzz}", "!we[i]rd", "!@x(y)/*");
+      await update(dir, "!{aliased,zzz}", "!we[i]rd", "!@x(y)/*", "!x(y)");
       await expectInSync(dir, { ...aliases("^"), "a-dep": "^1.0.10" });
-      for (const name of ["no-deps", "dep-with-tags", "peer-no-deps"]) {
+      for (const name of ["no-deps", "dep-with-tags", "peer-no-deps", "vulnerable"]) {
         expect(await lockedVersions(dir, name)).toStrictEqual(["1.0.0"]);
       }
     });
@@ -2153,11 +2154,12 @@ describe("bun update <name> semantics", () => {
     const accepted = (shown: string) => `error: no bun.lock to match "${shown}" against\n    bun install\n`;
 
     it.concurrent.each<[string[], string]>([
-      // An exclusion with one of these bytes outside of a closed group or class can match no package name.
+      // An exclusion with glob syntax that is not complete can match no package name.
       [["!(no-deps|a-dep)"], unexpected("(", "!(no-deps|a-dep)") + LIST_NOTE],
       [["!@(no-deps|a-dep"], unexpected("(", "!@(no-deps|a-dep") + LIST_NOTE],
+      [["!@(@types/no-deps"], unexpected("(", "!@(@types/no-deps") + LIST_NOTE],
       [["!a-@(dep|x"], unexpected("(", "!a-@(dep|x") + LIST_NOTE],
-      [["!a(b)/c"], unexpected("(", "!a(b)/c") + LIST_NOTE],
+      [["!a-dep(x"], unexpected("(", "!a-dep(x") + LIST_NOTE],
       [["!a-dep)"], unexpected(")", "!a-dep)") + LIST_NOTE],
       [["!no-deps,a-dep"], unexpected(",", "!no-deps,a-dep") + LIST_NOTE],
       [["!no-deps|a-dep"], unexpected("|", "!no-deps|a-dep") + LIST_NOTE],
@@ -2173,12 +2175,13 @@ describe("bun update <name> semantics", () => {
       [["!{no-deps@2,a-dep}"], versioned("!{no-deps@2,a-dep}")],
       [["!@types/@(no-deps|is-number)@2"], versioned("!@types/@(no-deps|is-number)@2")],
       [["!@(@types/no-deps|@types/is-number)"], accepted("!@(@types/no-deps|@types/is-number)")],
-      // A scope can hold parentheses.
-      [["!@a(b)/c"], accepted("!@a(b)/c")],
+      // Parentheses that pair up are bytes of a name.
+      [["!x(y)"], accepted("!x(y)")],
       [["!@is-(unknown)/*"], accepted("!@is-(unknown)/*")],
       [["@is-\\(unknown\\)/*"], accepted("@is-\\(unknown\\)/*")],
       // A pattern that selects and matches nothing is an error of its own, so its text is not checked.
       [["{no-deps,a-dep*"], accepted("{no-deps,a-dep*")],
+      [["*,@2"], accepted("*,@2")],
       [["--dev", "no-deps,a-dep"], accepted("no-deps,a-dep")],
       [["!{http://carol:s3cret,@localhost:1/x}"], accepted("!{http://***@localhost:1/x}")],
       // Not a pattern: it has no `!` and no `*`.

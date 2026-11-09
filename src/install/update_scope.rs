@@ -227,22 +227,30 @@ impl<'a> Matcher<'a> {
             _ => {}
         }
         let glob = bun_glob::Prepared::new(text);
-        // A published scope can hold parentheses: `@is-(unknown)/is-array`.
-        let scope_len = match text[0] {
-            b'@' => strings::index_of_char_usize(text, b'/').unwrap_or(0),
-            _ => 0,
-        };
-        let (mut is_text, mut unexpected) = (true, None);
+        let (mut is_text, mut unexpected, mut unpaired) = (true, None, 0_usize);
         for (at, is_literal) in glob.tokens() {
             is_text &= is_literal;
             let is_only_syntax = match text[at] {
+                _ if !is_literal => false,
                 b'{' | b'}' | b'[' | b']' | b'|' | b',' | b'\\' => true,
-                b'(' | b')' => at >= scope_len,
+                // Parentheses that pair up are bytes of a name, as in `@is-(unknown)/is-array`.
+                b'(' => {
+                    unpaired += 1;
+                    at == 0 || matches!(text[at - 1], b'?' | b'*' | b'+' | b'@' | b'!')
+                }
+                b')' if unpaired > 0 => {
+                    unpaired -= 1;
+                    false
+                }
+                b')' => true,
                 _ => false,
             };
-            if is_literal && is_only_syntax {
+            if is_only_syntax {
                 unexpected.get_or_insert(Malformed::Unexpected(text[at]));
             }
+        }
+        if unpaired > 0 {
+            unexpected.get_or_insert(Malformed::Unexpected(b'('));
         }
         match is_text {
             true => (Matcher::Exact(text), unexpected),

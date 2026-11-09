@@ -465,7 +465,9 @@ jest.mock("dep", () => fake); // the library gets the fake too
 
 If the package is already loaded, what imported it keeps the real one, and the next `import()` or `require()` from your own code calls the factory. Modules that an earlier test file loaded are loaded again and get the mock, because in Vitest each file starts with nothing loaded. The real package is never loaded a second time: `vi.importActual()` returns the loaded one, and `vi.doUnmock()` brings it back.
 
-The exception is when one of your own modules imports the package with a static `import` and hasn't finished running. Bun links static imports before it runs the modules (see "Hoisting & Preloading" below), so that module is already linked to the real package, and only an update reaches it. Bun updates the loaded package in place. Every module that imports the package then reads the mock through its imports, including one that has already run and one inside `node_modules`. A value that a module copied out of the package earlier stays the original (see "When to Use Preload" below).
+The exception is when one of your own modules imports the package with a static `import` and hasn't finished running. Bun links static imports before it runs the modules (see "Hoisting & Preloading" below), so that module is already linked to the real package, and only an update reaches it. Bun updates the loaded package in place. Every module that imports the package then reads the mock through its imports, including one that has already run and one inside `node_modules`.
+
+An update in place changes the exports that the package has. It doesn't add an export that only the mock has, and it reads a getter once. A value that a module copied out of the package earlier stays the original (see "When to Use Preload" below).
 
 For example, a test file that uses `bun:test` and has no hoisted call imports `./mocks`, which calls `vi.mock()`, and then `./cart`, which imports the package. `./cart` hasn't run when `./mocks` runs, so Bun updates the package. Bun also updates the package if the test file imports the package itself, because the file hasn't finished running while its imports run.
 
@@ -477,7 +479,7 @@ If no module makes Bun update the package, a module that has already run keeps t
 
 To give such a module the mock, call `vi.mock()` at the top level of the test file or in a `--preload` script. Both calls run before the file's imports. `mock.module()` and `jest.mock()` also update a package that's already loaded.
 
-A `vi.mock()` call that runs while a `--preload` script loads updates a loaded package in place, even if every module that imports the package has finished running. So does a call in a hook that the preload registered, such as `beforeAll()`. A call that a test makes later, through a function that the preload defined, follows the rules above.
+A `vi.mock()` call that runs while a `--preload` script loads updates a loaded package in place, even if every module that imports the package has finished running. So does a call in a `beforeAll()` hook that the preload registered. A call that a test makes later, through a function that the preload defined, follows the rules above.
 
 A mocked builtin such as `node:fs` is mocked for every importer with all of them.
 

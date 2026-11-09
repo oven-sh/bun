@@ -3924,8 +3924,8 @@ describe.concurrent("a rejection left by the callback that settles", () => {
               };
               stat(import.meta.path).then(ended);
               stat(import.meta.path).then(ended);
-              const end = performance.now() + 200;
-              while (performance.now() < end);
+              // Both calls end on the thread pool during this wait. No callback can tell before the event loop runs.
+              Bun.sleepSync(200);
             });
           });
           ${next}
@@ -4087,38 +4087,36 @@ describe.concurrent("a rejection left by the callback that settles", () => {
       },
     );
 
-    // The timer of the runner still has the time limit of the first test, and it fires in this turn. The step that it
-    // queues waits for the task, like the end of the test, and the task comes after the slow callback. It judges the
-    // test by the time at which the runner left the step to it.
+    // The first test runs past its limit on purpose. The timer of the runner is then set for a time that has passed, so
+    // it fires in the first turn of the second test, before the timers of that test. The step that it queues waits for
+    // the task, like the end of the test, and the task comes after the slow callback. It judges the test by the time at
+    // which that timer fired. The limit of the second test is the margin for a loaded machine: the timer has to fire
+    // within 700 ms of the first sleep.
     test("doesn't time out a test that settled in time when a later callback of that turn is slow", async () => {
       const { stderr, errors, exitCode } = await runFiles({
         "a.test.ts": `
           ${imports}
-          function busy(ms) {
-            const end = performance.now() + ms;
-            while (performance.now() < end);
-          }
-          test("arms the timer of the runner", () => {}, 200);
+          test("arms the timer of the runner", () => Bun.sleepSync(5), 1);
           test("settles in time", async () => {
             let rejected;
             await new Promise<void>(resolve => {
-              setTimeout(() => void (rejected = Promise.reject(new Error("handled late"))), 50);
-              setTimeout(resolve, 250);
+              setTimeout(() => void (rejected = Promise.reject(new Error("handled late"))), 5);
+              setTimeout(resolve, 10);
               setTimeout(() => {
                 rejected.catch(() => {});
                 // Past the time limit of this test.
-                busy(900);
-              }, 251);
-              // The timer of the runner and all three timers are due before the event loop runs again.
-              busy(300);
+                Bun.sleepSync(720);
+              }, 15);
+              // All three timers are due before the event loop runs again.
+              Bun.sleepSync(20);
             });
-          }, 1000);
+          }, 720);
         `,
       });
       expect({ results: results(stderr), errors, exitCode }).toEqual({
-        results: ["(pass) arms the timer of the runner", "(pass) settles in time"],
+        results: ["(fail) arms the timer of the runner", "(pass) settles in time"],
         errors: [],
-        exitCode: 0,
+        exitCode: 1,
       });
     });
 
@@ -4241,13 +4239,12 @@ describe.concurrent("a rejection left by the callback that settles", () => {
               setImmediate(() => {
                 rejected.catch(() => {});
                 // Past the time limit of this test, which has not settled.
-                const end = performance.now() + 400;
-                while (performance.now() < end);
+                Bun.sleepSync(60);
                 // It settles in the immediates of the next turn, before the timers of that turn.
                 setImmediate(resolve);
               });
             });
-          }, 300);
+          }, 20);
         `,
       });
       expect({ results: results(stderr), errors, exitCode }).toEqual({
@@ -4255,7 +4252,7 @@ describe.concurrent("a rejection left by the callback that settles", () => {
         errors: [],
         exitCode: 1,
       });
-      expect(stderr).toContain("timed out after 300ms");
+      expect(stderr).toContain("timed out after 20ms");
     });
 
     // The task that takes the step that waited also starts "overruns". That test did not run while the step waited,
@@ -4275,8 +4272,7 @@ describe.concurrent("a rejection left by the callback that settles", () => {
           });
           test("overruns", async () => {
             // Past the time limit of this test before it returns its promise.
-            const end = performance.now() + 60;
-            while (performance.now() < end);
+            Bun.sleepSync(60);
             await new Promise<void>(resolve => setImmediate(resolve));
           }, 20);
         `,
@@ -4307,8 +4303,7 @@ describe.concurrent("a rejection left by the callback that settles", () => {
           });
           test("overruns", async () => {
             // Past the time limit of this test before it returns its promise.
-            const end = performance.now() + 60;
-            while (performance.now() < end);
+            Bun.sleepSync(60);
             await new Promise<void>(resolve => void (release = resolve));
           }, 20);
         `,
@@ -4541,33 +4536,41 @@ describe.concurrent("a rejection left by the callback that settles", () => {
   describe("of a test that still runs isn't reported when a later callback of the same turn handles it", () => {
     const passes = { errors: [], exitCode: 0 };
 
-    // Timers that are due together run with no report in between. The runner's own timer is one of them here: it is
-    // still set for the time limit of the first test, and it queues a step of the runner.
-    test.each([
-      ["timer", 50, 250],
-      ["step", 250, 251],
-    ])("with the runner's %s in between", async (_, rejectsAt, handlesAt) => {
-      const { errors, counts, exitCode } = await runFiles({
+    // Callbacks of one turn run with no report in between. The runner's own timer is one of them here. The first test
+    // runs past its limit on purpose, so that timer is set for a time that has passed. It fires in the first turn of
+    // the second test, before the timers of that test, and it queues a step of the runner.
+    test.each(
+      Object.entries({
+        // An immediate runs before the timers of its turn.
+        "timer": `setImmediate(() => void (rejected = Promise.reject(new Error("handled late"))));`,
+        // This timer runs after the runner's timer, and the step of the runner is due when its callback ends.
+        "step": `setTimeout(() => void (rejected = Promise.reject(new Error("handled late"))), 5);`,
+      }),
+    )("with the runner's %s in between", async (_, rejects) => {
+      const { stderr, errors, exitCode } = await runFiles({
         "a.test.ts": `
           ${imports}
-          test("arms the runner's timer", () => {}, 200);
+          test("arms the timer of the runner", () => Bun.sleepSync(5), 1);
           test("handles it late", async () => {
             let rejected;
             const handled = new Promise<void>(resolve => {
-              setTimeout(() => void (rejected = Promise.reject(new Error("handled late"))), ${rejectsAt});
+              ${rejects}
               setTimeout(() => {
                 rejected.catch(() => {});
                 resolve();
-              }, ${handlesAt});
+              }, 10);
             });
-            // All three timers are due before the event loop runs again, however slow this machine is.
-            const end = performance.now() + 300;
-            while (performance.now() < end);
+            // Every timer of this test is due before the event loop runs again, however slow this machine is.
+            Bun.sleepSync(15);
             await handled;
           });
         `,
       });
-      expect({ errors, counts, exitCode }).toEqual({ ...passes, counts: [" 2 pass", " 0 fail"] });
+      expect({ results: results(stderr), errors, exitCode }).toEqual({
+        results: ["(fail) arms the timer of the runner", "(pass) handles it late"],
+        errors: [],
+        exitCode: 1,
+      });
     });
 
     // The end of a test of a concurrent group is a step of the runner too, while the test that rejected the promise

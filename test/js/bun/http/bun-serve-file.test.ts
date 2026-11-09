@@ -2071,14 +2071,19 @@ console.log(JSON.stringify({ status, later, pendingRequests: server.pendingReque
   },
 );
 
-// A Bun.file() stream opens its file on first use. pipeThrough() and tee() are that first use, inside fetch().
-// So the open error is thrown in the handler, before a response exists: error() or the handler's own catch answers.
+// pipeThrough() and tee() are the first use of the file stream, inside fetch(): the open error is thrown before a response exists.
 describe("a body derived from a Bun.file() stream that fails to open", () => {
-  const missing = () => Bun.file(join(import.meta.dir, "does-not-exist.txt")).stream();
+  const path = join(import.meta.dir, "does-not-exist.txt");
+  const missing = () => Bun.file(path).stream();
   const derived: [label: string, body: () => ReadableStream][] = [
     ["pipeThrough(new TransformStream())", () => missing().pipeThrough(new TransformStream())],
     ['pipeThrough(new CompressionStream("gzip"))', () => missing().pipeThrough(new CompressionStream("gzip"))],
     ["tee()[0]", () => missing().tee()[0]],
+    // What a compression middleware does with a file response.
+    [
+      'new Response(Bun.file(path)).body.pipeThrough(new CompressionStream("gzip"))',
+      () => new Response(Bun.file(path)).body!.pipeThrough(new CompressionStream("gzip")),
+    ],
   ];
 
   describe.each(derived)("%s", (_label, body) => {
@@ -2101,7 +2106,7 @@ describe("a body derived from a Bun.file() stream that fails to open", () => {
       });
     });
 
-    it("a try/catch in the handler answers", async () => {
+    it.each(["GET", "HEAD"])("%s: a try/catch in the handler answers", async method => {
       using server = Bun.serve({
         port: 0,
         development: false,
@@ -2113,8 +2118,11 @@ describe("a body derived from a Bun.file() stream that fails to open", () => {
           }
         },
       });
-      const response = await fetch(server.url);
-      expect({ status: response.status, body: await response.text() }).toEqual({ status: 404, body: "ENOENT" });
+      const response = await fetch(server.url, { method });
+      expect({ status: response.status, body: await response.text() }).toEqual({
+        status: 404,
+        body: method === "HEAD" ? "" : "ENOENT",
+      });
     });
   });
 });

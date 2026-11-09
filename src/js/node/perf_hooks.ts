@@ -1,6 +1,5 @@
 // Hardcoded module "node:perf_hooks"
 const {
-  kNodeEntryTypes,
   NodeEntryObserver,
   enqueueNodeEntry,
   hasObserver,
@@ -12,6 +11,13 @@ const { validateFunction, validateInteger, validateObject } = require("internal/
 const createRecordable = $bindgen("histogram.bind.ts", "createRecordable");
 const createInterval = $bindgen("histogram.bind.ts", "createInterval");
 const isHistogram = $bindgen("histogram.bind.ts", "isHistogram");
+
+/** Entry types routed through the registry of internal/shared instead of the native observer. `supportedEntryTypes` lists the same names. */
+function isNodeEntryType(type: unknown) {
+  return (
+    type === "net" || type === "dns" || type === "http" || type === "http2" || type === "function" || type === "quic"
+  );
+}
 
 const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const kInt64Max = 2n ** 63n - 1n;
@@ -137,7 +143,8 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
 
   /** The native list plus the Node-only types routed through the JS registry. */
   static get supportedEntryTypes() {
-    return [...new Set([...(PerformanceObserver.supportedEntryTypes ?? []), ...kNodeEntryTypes])].sort();
+    const nativeTypes = PerformanceObserver.supportedEntryTypes ?? [];
+    return [...new Set([...nativeTypes, "net", "dns", "http", "http2", "function", "quic"])].sort();
   }
 
   observe(options?: PerformanceObserverInit) {
@@ -154,7 +161,7 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
       }
     }
     if (requested) {
-      const nodeTypes = requested.filter(type => kNodeEntryTypes.has(type));
+      const nodeTypes = requested.filter(type => isNodeEntryType(type));
       let registration = this[kNodeObserver];
       if (nodeTypes.length > 0 && !registration) {
         registration = this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
@@ -171,7 +178,7 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
         }
       }
       if (nodeTypes.length > 0) {
-        const webTypes = requested.filter(type => !kNodeEntryTypes.has(type));
+        const webTypes = requested.filter(type => !isNodeEntryType(type));
         if (webTypes.length === 0) {
           // observe({entryTypes}) replaces the whole observed set: a
           // previously-subscribed web type must stop firing when the new set

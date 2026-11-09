@@ -23,9 +23,7 @@ function getSignals() {
 }
 
 var ArrayPrototypeJoin = Array.prototype.join;
-var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
-var ArrayPrototypeUnshift = Array.prototype.unshift;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeSort = Array.prototype.sort;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
@@ -43,6 +41,49 @@ var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
+
+// By index and with direct writes: script can replace the functions of Array.prototype and the array iterator, or put a setter on an index.
+
+// `list.slice()`
+function copyArray<T>(list: ArrayLike<T>): T[] {
+  const length = list.length;
+  const copy = $newArrayWithSize<T>(length);
+  for (let i = 0; i < length; i++) {
+    const item = list[i];
+    // slice() leaves a hole where the list has one.
+    if (item !== undefined || i in list) $putByValDirect(copy, i, item);
+  }
+  return copy;
+}
+
+// `list.slice(first).join(separator)`
+function joinArray(list: ArrayLike<unknown>, first: number, separator: string): string {
+  let joined = "";
+  for (let i = first; i < list.length; i++) {
+    // join() takes null and undefined as "".
+    const item = list[i] ?? "";
+    // One template is one rope.
+    joined = i === first ? `${item}` : `${joined}${separator}${item}`;
+  }
+  return joined;
+}
+
+// spawnargs is `[argv0, ...args]`, and Bun.spawn() wants the program in cmd[0]. A list of ours (normalizeSpawnArguments) can be the command itself.
+function spawnCommand(file: string, spawnargs: string[], ours: boolean): string[] {
+  if (ours && spawnargs[0] === file) return spawnargs;
+  const length = spawnargs.length;
+  const cmd = $newArrayWithSize<string>(length > 1 ? length : 1);
+  $putByValDirect(cmd, 0, file);
+  for (let i = 1; i < length; i++) $putByValDirect(cmd, i, spawnargs[i]);
+  return cmd;
+}
+
+function includesIpc(stdio: ArrayLike<unknown>): boolean {
+  for (let i = 0; i < stdio.length; i++) {
+    if (stdio[i] === "ipc") return true;
+  }
+  return false;
+}
 
 interface ExecException extends Error {
   cmd?: string;
@@ -306,13 +347,13 @@ function execFile(file, args, options?, callback?: ExecCallback) {
     let stdout;
     let stderr;
     if (encoding || child.stdout?.readableEncoding) {
-      stdout = ArrayPrototypeJoin.$call(_stdout, "");
+      stdout = joinArray(_stdout, 0, "");
     } else {
       stdout = BufferConcat(_stdout as Buffer[]);
     }
 
     if (encoding || child.stderr?.readableEncoding) {
-      stderr = ArrayPrototypeJoin.$call(_stderr, "");
+      stderr = joinArray(_stderr, 0, "");
     } else {
       stderr = BufferConcat(_stderr as Buffer[]);
     }
@@ -460,7 +501,7 @@ const customPromiseExecFunction = (orig: (...args: any[]) => ChildProcess) => {
   return (...args: unknown[]) => {
     const { resolve, reject, promise }: ExecPromiseWithResolvers = Promise.withResolvers();
 
-    promise.child = orig(...args, (err, stdout, stderr) => {
+    $arrayPush(args, (err, stdout, stderr) => {
       if (err !== null) {
         err.stdout = stdout;
         err.stderr = stderr;
@@ -469,6 +510,7 @@ const customPromiseExecFunction = (orig: (...args: any[]) => ChildProcess) => {
         resolve({ stdout, stderr });
       }
     });
+    promise.child = orig.$apply(undefined, args);
 
     return promise;
   };
@@ -575,6 +617,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     }
   }
 
+  const cmd = spawnCommand(options.file, options.args, true);
+
   var error;
   try {
     var {
@@ -590,10 +634,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
       stdout?: Buffer | number | null;
       stderr?: Buffer | number | null;
     } = Bun.spawnSync({
-      // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-      // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-      // so we have to set argv0 to spawnargs[0] and cmd[0] to file
-      cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
+      cmd,
       // The normalized env (kBunEnv) is built from the live process.env when
       // options.env is not given, so runtime mutations of process.env reach
       // the child like in Node.js.
@@ -715,11 +756,14 @@ function execFileSync(file, args, options) {
   let retStderr;
   if (inheritStderr && (retStderr = ret.stderr)) process.stderr.write(retStderr);
 
-  const errArgs = [options.argv0 || file];
-  ArrayPrototypePush.$apply(errArgs, args);
-  const err = checkExecSyncError(ret, errArgs);
-
-  if (err) throw err;
+  // Only a failure needs the arguments, for its message. The option is read at every call, as before.
+  const argv0 = options.argv0;
+  if (ret.error || ret.status !== 0) {
+    const errArgs = [argv0 || file];
+    ArrayPrototypePush.$apply(errArgs, args);
+    const err = checkExecSyncError(ret, errArgs);
+    if (err) throw err;
+  }
 
   return ret.stdout;
 }
@@ -845,7 +889,7 @@ function fork(modulePath, args: string[] | Record<string, unknown> | null = [], 
     // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
     // and stderr from the parent if silent isn't set.
     options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
-  } else if (!ArrayPrototypeIncludes.$call(options.stdio, "ipc")) {
+  } else if (!includesIpc(options.stdio)) {
     throw $ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
   }
 
@@ -889,7 +933,7 @@ function getSignalsToNamesMapping() {
 
 function normalizeExecFileArgs(file, args, options, callback?) {
   if ($isJSArray(args)) {
-    args = ArrayPrototypeSlice.$call(args);
+    args = copyArray(args);
   } else if (args != null && typeof args === "object") {
     callback = options;
     options = args;
@@ -955,18 +999,30 @@ function normalizeSpawnArguments(file, args, options?) {
 
   if (file.length === 0) throw $ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
+  // `args` becomes the child's argv, `[argv0, ...args]`. Slot 0 is set at the end.
   if ($isJSArray(args)) {
-    args = ArrayPrototypeSlice.$call(args);
+    const list = args;
+    const length = list.length;
+    args = $newArrayWithSize(length + 1);
+    let withNull = -1;
+    for (let i = 0; i < length; i++) {
+      const arg = list[i];
+      // slice() leaves a hole where the list has one.
+      if (arg === undefined && !(i in list)) continue;
+      if (withNull === -1 && typeof arg === "string" && StringPrototypeIndexOf.$call(arg, "\u0000") !== -1)
+        withNull = i;
+      $putByValDirect(args, i + 1, arg);
+    }
+    // Node copies the whole list before it checks, so every element is read before this throws.
+    if (withNull !== -1) validateArgumentNullCheck(args[withNull + 1], `args[${withNull}]`);
   } else if (args == null) {
-    args = [];
+    args = $newArrayWithSize(1);
   } else if (typeof args !== "object") {
     throw $ERR_INVALID_ARG_TYPE("args", "object", args);
   } else {
     options = args;
-    args = [];
+    args = $newArrayWithSize(1);
   }
-
-  validateArgumentsNullCheck(args, "args");
 
   if (options === undefined) options = {};
   else validateObject(options, "options");
@@ -1025,23 +1081,23 @@ function normalizeSpawnArguments(file, args, options?) {
   // Handle shell
   if (shell) {
     validateArgumentNullCheck(shell, "options.shell");
-    const command = ArrayPrototypeJoin.$call([file, ...args], " ");
+    const command = args.length > 1 ? `${file} ${joinArray(args, 1, " ")}` : file;
     // Set the shell, switches, and commands.
     if (process.platform === "win32") {
       if (typeof shell === "string") file = shell;
       else file = process.env.comspec || "cmd.exe";
       // '/d /s /c' is used only for cmd.exe.
       if (/^(?:.*\\)?cmd(?:\.exe)?$/i.exec(file) !== null) {
-        args = ["/d", "/s", "/c", `"${command}"`];
+        args = [file, "/d", "/s", "/c", `"${command}"`];
         windowsVerbatimArguments = true;
       } else {
-        args = ["-c", command];
+        args = [file, "-c", command];
       }
     } else {
       if (typeof shell === "string") file = shell;
       else if (process.platform === "android") file = "sh";
       else file = "/bin/sh";
-      args = ["-c", command];
+      args = [file, "-c", command];
     }
   } else if (process.platform === "win32" && /\.(?:cmd|bat)[\s.]*$/i.exec(file) !== null) {
     // CreateProcess routes .bat/.cmd through cmd.exe, which re-parses argv
@@ -1053,11 +1109,7 @@ function normalizeSpawnArguments(file, args, options?) {
   }
 
   // Handle argv0
-  if (typeof argv0 === "string") {
-    ArrayPrototypeUnshift.$call(args, argv0);
-  } else {
-    ArrayPrototypeUnshift.$call(args, file);
-  }
+  $putByValDirect(args, 0, typeof argv0 === "string" ? argv0 : file);
 
   const env = options.env || process.env;
   const bunEnv = {};
@@ -1068,7 +1120,7 @@ function normalizeSpawnArguments(file, args, options?) {
 
   let envKeys: string[] = [];
   for (const key in env) {
-    ArrayPrototypePush.$call(envKeys, key);
+    $arrayPush(envKeys, key);
   }
 
   if (process.platform === "win32") {
@@ -1130,12 +1182,15 @@ function checkExecSyncError(ret: SpawnSyncResult, args: string[] | undefined, cm
   }
   return err;
 }
-function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> | undefined {
+function parseEnvPairs(envPairs: Iterable<string> | undefined): Record<string, string> | undefined {
   if (!envPairs) return undefined;
+  // An array is read by index. Anything else is walked with its own iterator, as before.
+  const pairs = $isJSArray(envPairs) ? envPairs : [...envPairs];
   const resEnv = {};
-  for (const line of envPairs) {
-    const [key, ...value] = line.split("=", 2);
-    resEnv[key] = value.join("=");
+  for (let i = 0; i < pairs.length; i++) {
+    // The value is everything behind the first "=".
+    const parts = pairs[i].split("=");
+    resEnv[parts[0]] = joinArray(parts, 1, "=");
   }
   return resEnv;
 }
@@ -1351,7 +1406,8 @@ class ChildProcess extends EventEmitter {
   #createStdioObject() {
     const opts = this.#stdioOptions;
     const length = opts.length;
-    let result = new Array(length);
+    // A setter on an index of Array.prototype would take an ordinary store into an empty slot.
+    let result = $newArrayWithSize<any>(length);
     for (let i = 0; i < length; i++) {
       const element = opts[i];
 
@@ -1359,21 +1415,21 @@ class ChildProcess extends EventEmitter {
         return undefined;
       }
       if (element !== "pipe" && element !== "socket-fd") {
-        result[i] = null;
+        $putByValDirect(result, i, null);
         continue;
       }
       switch (i) {
         case 0:
-          result[i] = this.stdin;
+          $putByValDirect(result, i, this.stdin);
           continue;
         case 1:
-          result[i] = this.stdout;
+          $putByValDirect(result, i, this.stdout);
           continue;
         case 2:
-          result[i] = this.stderr;
+          $putByValDirect(result, i, this.stderr);
           continue;
         default:
-          result[i] = this.#getBunSpawnIo(i, false);
+          $putByValDirect(result, i, this.#getBunSpawnIo(i, false));
           continue;
       }
     }
@@ -1428,7 +1484,7 @@ class ChildProcess extends EventEmitter {
       }
     }
 
-    const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");
+    const has_ipc = $isJSArray(stdio) && includesIpc(stdio);
 
     const envPairs = options.envPairs;
     // validate options.envPairs but only if has_ipc. for some reason.
@@ -1469,13 +1525,15 @@ class ChildProcess extends EventEmitter {
       return;
     }
 
-    // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-    // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-    // so we have to set argv0 to spawnargs[0] and cmd[0] to file
+    // Only normalizeSpawnArguments() sets kBunEnv, and then the list is its own too.
+    const cmd = spawnCommand(file, spawnargs, options[kBunEnv] !== undefined);
+    let started: $Bindgen.Subprocess | undefined;
+    // Set when this throws after the child started: its exit then reports to nobody.
+    let abandoned = false;
 
     try {
-      this.#handle = Bun.spawn({
-        cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
+      started = this.#handle = Bun.spawn({
+        cmd,
         stdio: bunStdio,
         cwd: options.cwd || undefined,
         env: env,
@@ -1484,6 +1542,7 @@ class ChildProcess extends EventEmitter {
         gid: options.gid,
         cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
+          if (abandoned) return;
           this.#handle = handle as unknown as $Bindgen.Subprocess;
           this.pid = this.#handle!.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
@@ -1534,11 +1593,20 @@ class ChildProcess extends EventEmitter {
       }
 
       if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio!) {
-          item?.ref?.();
-        }
+        const streams = this.stdio!;
+        for (let i = 0; i < streams.length; i++) streams[i]?.ref?.();
       }
     } catch (ex) {
+      if (started !== undefined) {
+        // The child runs, and the caller gets no ChildProcess: nothing could wait for the child or stop it.
+        abandoned = true;
+        try {
+          started.kill("SIGKILL");
+        } catch {
+          // What went wrong above is what the caller gets.
+        }
+        throw ex;
+      }
       const exCode =
         ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? (ex as SystemError).code : undefined;
       if (
@@ -1863,7 +1931,11 @@ function fdToStdioName(fd: number) {
 
 function getBunStdioFromOptions(stdio) {
   const normalizedStdio = normalizeStdio(stdio);
-  if (normalizedStdio.filter(v => v === "ipc").length > 1) throw $ERR_IPC_ONE_PIPE();
+  const length = normalizedStdio.length;
+  let ipcCount = 0;
+  for (let i = 0; i < length; i++) {
+    if (normalizedStdio[i] === "ipc" && ++ipcCount > 1) throw $ERR_IPC_ONE_PIPE();
+  }
   // Node options:
   // pipe: just a pipe
   // ipc = can only be one in array
@@ -1886,7 +1958,11 @@ function getBunStdioFromOptions(stdio) {
   // ignore -> null
   // inherit -> inherit (stdin/stdout/stderr)
   // Stream -> throw err for now
-  const bunStdio = normalizedStdio.map(nodeToBun);
+  const bunStdio = $newArrayWithSize<Bun.Spawn.NodeStdio[number]>(length);
+  for (let i = 0; i < length; i++) {
+    // map() leaves a hole where the list has one.
+    if (i in normalizedStdio) $putByValDirect(bunStdio, i, nodeToBun(normalizedStdio[i], i));
+  }
   return bunStdio;
 }
 

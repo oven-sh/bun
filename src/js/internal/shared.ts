@@ -28,8 +28,9 @@ function throwNotImplemented(feature: string, issue?: number, extra?: string): n
 }
 
 function hideFromStack(...fns: Function[]) {
-  for (const fn of fns) {
-    Object.defineProperty(fn, "name", {
+  // By index: this runs while modules first load, and script can replace the array iterator.
+  for (let i = 0; i < fns.length; i++) {
+    Object.defineProperty(fns[i], "name", {
       value: "::bunternal::",
     });
   }
@@ -254,9 +255,6 @@ function getLazy<T>(initializer: () => T) {
 
 const observerCounts = new Map<string, number>();
 const kObservers = new Set<NodeEntryObserver>();
-
-/** Entry types routed through this JS-side registry instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
 
 function hasObserver(type: string) {
   return (observerCounts.get(type) ?? 0) > 0;
@@ -483,7 +481,6 @@ export default {
   startPerf,
   stopPerf,
   enqueueNodeEntry,
-  kNodeEntryTypes,
   NodeEntryObserver,
   PerformanceNodeEntry,
 

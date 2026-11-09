@@ -976,7 +976,7 @@ impl Expect {
         if !self.flags.get().is_plain() {
             return self.call_modified_matcher(cx, call, &matcher);
         }
-        let pass = Pass::of_matcher(self.flavor.get());
+        let pass = Pass::of_matcher(self.flavor);
         let _entered = pass.enter();
         match matcher(cx) {
             Ok(value) => Ok(value),
@@ -1004,7 +1004,7 @@ impl Expect {
         call: &MatcherCall<'_>,
         matcher: Matcher<'_, 'a>,
     ) -> JsResult<JSValue> {
-        let pass = Pass::of_matcher(self.flavor.get());
+        let pass = Pass::of_matcher(self.flavor);
         let _entered = pass.enter();
         let flags = self.flags.get();
         let result = if flags.promise() != Promise::None {
@@ -1099,7 +1099,7 @@ impl Expect {
         let expect = Expect {
             flags: Cell::new(Flags(self.flags.get().0 & Flags::NOT_MASK)),
             matcher_ran: Cell::new(false),
-            flavor: self.flavor.clone(),
+            flavor: self.flavor,
             parent: None,
             custom_label: self.custom_label.clone(),
         }
@@ -1187,7 +1187,7 @@ impl Expect {
         let copy = Expect {
             flags: Cell::new(self.flags.get()),
             matcher_ran: Cell::new(false),
-            flavor: self.flavor.clone(),
+            flavor: self.flavor,
             parent: self.parent.clone(),
             custom_label: self.custom_label.clone(),
         }

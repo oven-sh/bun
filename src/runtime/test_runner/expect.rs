@@ -45,14 +45,14 @@ pub(crate) mod expect_deferred;
 // To support async tests, we need to track the test ID
 // Every JS-exposed method takes `&self`; the only
 // fields mutated post-construction (`flags`, via the `.not`/`.resolves`/`.rejects`
-// chaining getters, `matcher_ran`, and `flavor`, once) are `Cell`-wrapped. `parent` and `custom_label` are
+// chaining getters, and `matcher_ran`) are `Cell`-wrapped. `parent` and `custom_label` are
 // read-only after `call()` constructs the wrapper.
 pub(crate) struct Expect {
     pub(crate) flags: Cell<Flags>,
     /// A matcher has run since `.not` was last read, so the next `.not` is a new chain on a kept `expect()`, not `.not.not`.
     pub(crate) matcher_ran: Cell<bool>,
-    /// The module of the `expect` function that made it, set before the object is handed out. The `expect` of a test context is Vitest's if its test gets a context.
-    flavor: Cell<Flavor>,
+    /// The module of the `expect` function that made it. The `expect` of a test context is Vitest's if its test gets a context.
+    flavor: Flavor,
     pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
     pub(crate) custom_label: bun_core::String,
 }
@@ -679,7 +679,7 @@ impl Expect {
     /// Whether to side with Vitest where it and Jest disagree.
     #[inline]
     pub(crate) fn is_vitest(&self) -> bool {
-        self.flavor.get() == Flavor::Vitest
+        self.flavor == Flavor::Vitest
     }
 
     /// The module whose rules a comparison follows: that of the `expect()` whose matcher runs, or of the `equals()` that was called. With neither, as for `asymmetricMatch()` called directly, that of the running entry.
@@ -688,7 +688,7 @@ impl Expect {
     }
 
     pub(crate) fn call(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
-        Self::call_in(cx.global(), value.to_js(), message.to_js(), None)
+        Self::call_in(cx.global(), value.to_js(), message.to_js(), None, Flavor::Jest, 0)
     }
 
     pub(crate) fn call_of_vitest(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
@@ -702,12 +702,16 @@ impl Expect {
         Expect__createOfVitest(global, constructor, generated::Bun__Expect__callOfVitest, generated::Bun__Expect__softOfVitest, generated::Bun__Expect__pollOfVitest)
     }
 
-    /// The `expect()` of `"bun:test"`. `state` is the test this `expect()` belongs to (a test context's bound `expect`). `None` means the running test.
+    /// `state` is the test this `expect()` belongs to (a test context's bound `expect`). `None` means the running test.
+    /// Inlined, so that the `expect` of `"bun:test"` has its module and its flags as constants.
+    #[inline(always)]
     fn call_in(
         global_this: &JSGlobalObject,
         value: JSValue,
         message: JSValue,
         state: Option<bun_test::RefDataValue>,
+        flavor: Flavor,
+        flags: u8,
     ) -> JsResult<JSValue> {
 
         let mut custom_label = bun_core::String::EMPTY;
@@ -727,9 +731,9 @@ impl Expect {
         // ownership.
 
         let expect = Expect {
-            flags: Cell::new(Flags::default()),
+            flags: Cell::new(Flags(flags)),
             matcher_ran: Cell::new(false),
-            flavor: Cell::new(Flavor::Jest),
+            flavor,
             custom_label,
             parent: active_execution_entry_ref,
         };
@@ -739,8 +743,7 @@ impl Expect {
         Ok(expect_js_value)
     }
 
-    /// `call_in()` for the `expect` of `flavor`'s module, with `flags` set.
-    #[optimize(size)]
+    /// `call_in()` out of line, for every `expect` but the one of `"bun:test"`.
     pub(crate) fn call_with(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -749,12 +752,7 @@ impl Expect {
         flavor: Flavor,
         flags: u8,
     ) -> JsResult<JSValue> {
-        let expect_js_value = Self::call_in(global_this, value, message, state)?;
-        if let Some(expect) = expect_js_value.as_class_ref::<Expect>() {
-            expect.flavor.set(flavor);
-            expect.update_flags(|f| f.0 |= flags);
-        }
-        Ok(expect_js_value)
+        Self::call_in(global_this, value, message, state, flavor, flags)
     }
 
     pub(crate) fn soft(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
@@ -1842,7 +1840,7 @@ impl Expect {
 
         let args = call.arguments;
         Self::with_matcher_args(value, args.len(), |index| Ok(args[index]), |matcher_args| {
-            Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, matcher_args, expect.flags.get(), expect.flavor.get(), expect.parent.as_ref(), false)
+            Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, matcher_args, expect.flags.get(), expect.flavor, expect.parent.as_ref(), false)
         })?;
 
         Ok(this_value)

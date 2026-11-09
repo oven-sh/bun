@@ -1318,6 +1318,231 @@ describe("bundler", () => {
     },
   });
 
+  // Where such a function is compiled, the read of its name has to be the symbol that the function declares. A symbol
+  // of the compiler's own for it is not bound: the renamer prints it as `Tree3`, which throws, or which is another
+  // `Tree` of the bundle. `memo` and `forwardRef` wrap here as they do in React, so that the name of the `const` is
+  // not the function either.
+  for (const [target, minifyIdentifiers, minifySyntax] of [
+    ["browser", false, false],
+    ["browser", true, false],
+    ["bun", false, true],
+    ["bun", true, true],
+  ] as const) {
+    const tree = /* jsx */ `
+      import { memo } from "react";
+      export const Tree = memo(function Tree({ items }) {
+        return <i kids={[...items].map(n => <Tree key={n} x={n} items={[]} />)} />;
+      });
+    `;
+    const name = `${target}-identifiers=${minifyIdentifiers}-syntax=${minifySyntax}`;
+    itBundled(`react-compiler/FunctionExpressionThatNamesItselfInACallback-${name}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { Tree as A } from "./a";
+          import { Tree as B } from "./b";
+          import { Tree as C } from "./c";
+          import { Tree as Data } from "./data";
+          import Default from "./default";
+          import * as forms from "./forms";
+          import { Tree as ReadsData } from "./reads-data";
+          const { make, sub, ...rest } = forms;
+          const all = { A, B, C, ReadsData, Default, Made: make("made"), ...rest };
+          const inner = it => (typeof it === "function" ? it : inner(it.type ?? it.render));
+          inner(all.Dotted).Sub = sub;
+          const props = { x: 1, items: [1], o: { a: 1 } };
+          const lines = [];
+          for (const [name, component] of Object.entries(all)) {
+            const render = inner(component);
+            globalThis.rendering = render;
+            try {
+              const { base, first, kids: [kid] } = render(props).p;
+              const of = Object.keys(all).find(other => inner(all[other]) === kid.t);
+              const wrapper = Object.keys(all).find(other => all[other] === kid.t);
+              let line = kid.t === sub ? "sub" : kid;
+              if (of) line = "<" + of + " x=" + JSON.stringify(kid.p.x) + ">";
+              else if (wrapper) line = "the wrapper of " + wrapper;
+              lines.push(name + ": " + line + (base ? " beside " + (base === Data) : "") + (first ? " after " + first : ""));
+            } catch (e) {
+              lines.push(name + " threw " + e);
+            }
+          }
+          try {
+            lines.push("NestedSame with no kids: after " + inner(all.NestedSame)({ x: 1, items: [] }).p.first);
+          } catch (e) {
+            lines.push("NestedSame with no kids threw " + e);
+          }
+          console.log(lines.join("\\n"));
+        `,
+        "/forms.jsx": /* jsx */ `
+          import { forwardRef, memo } from "react";
+          export const Tree = memo(function Tree({ x }) {
+            return <i x={x} kids={[0].map(n => <Tree key={n} x={n} />)} />;
+          });
+          export const Outer = memo(function Row({ x }) {
+            return <i x={x} kids={[0].map(n => <Row key={n} x={n} />)} />;
+          });
+          export const Plain = function Inner({ x }) {
+            return <i x={x} kids={[0].map(n => <Inner key={n} x={n} />)} />;
+          };
+          export const Forwarded = forwardRef(function Forwarded({ x }, ref) {
+            return <i x={x} ref={ref} kids={[0].map(n => <Forwarded key={n} x={n} />)} />;
+          });
+          export const Both = memo(forwardRef(function Twice({ x }, ref) {
+            return <i x={x} ref={ref} kids={[0].map(n => <Twice key={n} x={n} />)} />;
+          }));
+          export function make(tag) {
+            return memo(function Made({ x }) {
+              return <i x={x} tag={tag} kids={[0].map(n => <Made key={n} x={n} />)} />;
+            });
+          }
+          export const Keys = memo(function Keys({ o }) {
+            return <i kids={Object.keys(o).map(n => <Keys key={n} x={n} o={{}} />)} />;
+          });
+          export const sub = () => null;
+          export const Dotted = memo(function Dotted({ x }) {
+            return <i x={x} kids={[0].map(n => <Dotted.Sub key={n} x={n} />)} />;
+          });
+          export const TypeOf = memo(function TypeOf({ x }) {
+            return <i x={x} kids={[0].map(() => typeof TypeOf)} />;
+          });
+          export const Member = memo(function Member({ x }) {
+            return <i x={x} kids={[0].map(n => Member.length + n)} />;
+          });
+          // Another binding has the name too: a parameter behind the read, one ahead of it, and a local of a block.
+          export const Shadowed = memo(function Shadowed({ x }) {
+            return <i x={x} kids={[0].map(n => <Shadowed key={n} x={[1].map(Shadowed => Shadowed + n)} />)} />;
+          });
+          export const ShadowedFirst = memo(function ShadowedFirst({ x }) {
+            const first = [x].map(ShadowedFirst => ShadowedFirst + 1);
+            return <i x={x} kids={[0].map(n => <ShadowedFirst key={n} x={first} />)} />;
+          });
+          export const BlockLocal = memo(function BlockLocal({ x }) {
+            let first;
+            {
+              const BlockLocal = [x];
+              BlockLocal.push(x + 1);
+              first = BlockLocal;
+            }
+            return <i x={x} kids={[0].map(n => <BlockLocal key={n} x={first} />)} />;
+          });
+          // The callback is not in the first block of the function.
+          export const Early = memo(function Early({ x }) {
+            if (x < 0) return <b />;
+            return <i x={x} kids={[0].map(n => <Early key={n} x={n} />)} />;
+          });
+          export const InIf = memo(function InIf({ x }) {
+            let kids = null;
+            if (x) kids = [0].map(n => <InIf key={n} x={n} />);
+            return <i x={x} kids={kids} />;
+          });
+          export const Ternary = memo(function Ternary({ x }) {
+            return <i x={x} kids={x ? [0].map(n => <Ternary key={n} x={n} />) : []} />;
+          });
+          export const Deep = memo(function Deep({ x }) {
+            return <i x={x} kids={[0].map(n => [n].map(m => <Deep key={m} x={m} />)[0])} />;
+          });
+          // A function in it has the name too and reads itself. Its name is printed by its text, so lowering must
+          // not give its reads another.
+          export const NestedSame = memo(function NestedSame({ x, items }) {
+            const first = [x].map(function NestedSame(k) { return typeof NestedSame + NestedSame.length + k; });
+            return <i first={first} kids={[...items].map(n => <NestedSame key={n} x={n} items={[]} />)} />;
+          });
+          // Not a component: a hook, and a function that opts in.
+          export const useCell = function Cell({ x }) {
+            return <i x={x} kids={[0].map(n => <Cell key={n} x={n} />)} />;
+          };
+          export const item = function Item({ x }) {
+            "use memo";
+            return <i x={x} kids={[0].map(n => <Item key={n} x={n} />)} />;
+          };
+        `,
+        "/default.jsx": /* jsx */ `
+          import { memo } from "react";
+          export default memo(function Default({ x }) {
+            return <i x={x} kids={[0].map(n => <Default key={n} x={n} />)} />;
+          });
+        `,
+        "/a.jsx": tree,
+        "/b.jsx": tree,
+        "/c.jsx": tree,
+        // The bundler prints the import under the name of the export: `Tree`.
+        "/reads-data.jsx": /* jsx */ `
+          import { memo } from "react";
+          import { Tree as Base } from "./data";
+          export const Tree = memo(function Tree({ items }) {
+            return <i base={Base} kids={[...items].map(n => <Tree key={n} x={n} items={[]} />)} />;
+          });
+        `,
+        "/data.js": `export const Tree = { tag: "data" };`,
+        "/node_modules/react/index.js": /* js */ `
+          exports.memo = type => ({ type });
+          exports.forwardRef = render => ({ render });
+        `,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+        "/node_modules/react/compiler-runtime.js": `
+          const caches = new Map();
+          exports.c = n => {
+            if (!caches.has(globalThis.rendering))
+              caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+            return caches.get(globalThis.rendering);
+          };
+        `,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler: true,
+      target,
+      backend: "cli",
+      minifyIdentifiers,
+      minifySyntax,
+      run: {
+        stdout: `
+          A: <A x=1>
+          B: <B x=1>
+          C: <C x=1>
+          ReadsData: <ReadsData x=1> beside true
+          Default: <Default x=0>
+          Made: <Made x=0>
+          BlockLocal: <BlockLocal x=[1,2]>
+          Both: <Both x=0>
+          Deep: <Deep x=0>
+          Dotted: sub
+          Early: <Early x=0>
+          Forwarded: <Forwarded x=0>
+          InIf: <InIf x=0>
+          Keys: <Keys x="a">
+          Member: 1
+          NestedSame: <NestedSame x=1> after function11
+          Outer: <Outer x=0>
+          Plain: <Plain x=0>
+          Shadowed: <Shadowed x=[1]>
+          ShadowedFirst: <ShadowedFirst x=[2]>
+          Ternary: <Ternary x=0>
+          Tree: <Tree x=0>
+          TypeOf: function
+          item: <item x=0>
+          useCell: <useCell x=0>
+          NestedSame with no kids: after function11
+        `,
+      },
+      onAfterBundle(api) {
+        if (minifyIdentifiers) return;
+        // Compiled: each takes `t0` and destructures it in its body. The bundler numbers a function whose name
+        // another symbol of the file has: `Tree2`.
+        // babel-plugin-react-compiler 1.0.0 leaves `TypeOf` and `Member` as written ("Unsupported declaration type
+        // for hoisting"): there the name is read as a value and not as a tag. The port has no such check.
+        const out = api.readFile("/out.js");
+        expect(out.match(/function Tree\d*\(t0\)/g)).toHaveLength(5);
+        for (const compiled of [
+          ...["Default", "Made", "Twice", "Deep", "Dotted", "Early", "Forwarded", "InIf", "Keys", "Member", "Row"],
+          ...["Inner", "Shadowed", "ShadowedFirst", "BlockLocal", "Ternary", "TypeOf", "NestedSame", "Cell", "Item"],
+        ]) {
+          expect(out).toMatch(new RegExp(`function ${compiled}\\d*\\(t0(, ref)?\\)`));
+        }
+      },
+    });
+  }
+
   // The lexer keeps the place of the flags in 16 bits. From 65,536 on the flags were taken from the wrong place, and the
   // literal came out as a comment.
   itBundled("react-compiler/RegExpWhoseFlagsBeginBehind64KB", {
@@ -4989,6 +5214,64 @@ test("react-compiler compile time is not exponential in the function nesting dep
   // The outermost call is inlined. The other arrows stay, in one memoized scope.
   expect(stdout).toContain("p.a + s");
   expect(stdout).toMatch(/\b_c\(\d+\)/);
+  expect(exitCode).toBe(0);
+});
+
+// `bun test --react-compiler` has no renamer: a symbol is printed under the name it was made with. A read of the name of
+// a function expression was a symbol of the compiler's own, named as lowering named that binding: `Renamed_0`.
+test("react-compiler: a function expression reads its own name under bun test --react-compiler", async () => {
+  using dir = tempDir("react-compiler-own-name", {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      exports: {
+        ".": "./index.js",
+        "./compiler-runtime": "./compiler-runtime.js",
+        "./jsx-runtime": "./jsx.js",
+        "./jsx-dev-runtime": "./jsx.js",
+      },
+    }),
+    "node_modules/react/index.js": `export const memo = type => ({ type });`,
+    "node_modules/react/compiler-runtime.js": `export const c = size => Array(size).fill(Symbol.for("react.memo_cache_sentinel"));`,
+    "node_modules/react/jsx.js": `export const jsxDEV = (type, props) => ({ type, props }), jsx = jsxDEV, jsxs = jsxDEV;`,
+    "Own.jsx": `
+      import { memo } from "react";
+      export const Tree = memo(function Tree({ x }) {
+        return <ul x={x}>{[0].map(n => <Tree key={n} x={n} />)}</ul>;
+      });
+      // A parameter of the name is lowered ahead of the read.
+      export const Renamed = memo(function Renamed({ items }) {
+        const first = items.map(Renamed => Renamed + 1);
+        return <ul first={first}>{[0].map(n => <Renamed key={n} items={[]} />)}</ul>;
+      });
+    `,
+    "own.test.jsx": `
+      import { test } from "bun:test";
+      import * as own from "./Own";
+      test("which read themselves", () => {
+        const read = Object.entries(own).map(([name, { type }]) => {
+          const compiled = /\\$\\[\\d+\\]/.test(String(type)) ? "" : " (not compiled)";
+          try {
+            const [kid] = type({ x: 1, items: [1] }).props.children;
+            return name + compiled + ": " + (kid.type === type ? "itself" : "another");
+          } catch (error) {
+            return name + compiled + ": " + error.message;
+          }
+        });
+        console.log("read: " + read.join(", "));
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--react-compiler", "./own.test.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.match(/read: (.*)/)?.[1] ?? stderr).toBe("Renamed: itself, Tree: itself");
   expect(exitCode).toBe(0);
 });
 

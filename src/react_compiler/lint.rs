@@ -154,7 +154,7 @@ fn run(
     late_passes: LatePasses,
     wants_thrown: bool,
 ) -> Result<(), CompilerError> {
-    let mut hir = lowering::lower(func, None, host, env, import_bindings)?;
+    let (mut hir, _) = lowering::lower(func, None, host, env, import_bindings, None)?;
     pipeline::dump_lowered(&hir, env);
     if env.has_invariant_errors() {
         return Err(env.take_invariant_errors());

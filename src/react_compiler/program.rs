@@ -1397,6 +1397,7 @@ fn compile_pending(
         host,
         FunctionNode::Function(&tmp),
         name,
+        pending.own_name,
         pending.in_react_hoc,
         pending.is_top_level,
     )?;
@@ -1418,6 +1419,7 @@ fn maybe_compile_node(
     host: &mut dyn Host,
     node: FunctionNode<'_>,
     name: Option<&[u8]>,
+    own_name: Option<Ref>,
     in_react_hoc: bool,
     is_top_level: bool,
 ) -> Option<CodegenFunction> {
@@ -1494,6 +1496,7 @@ fn maybe_compile_node(
     match pipeline::compile_fn(
         &node,
         fn_name.as_deref(),
+        own_name,
         host,
         arena,
         fn_type,

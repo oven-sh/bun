@@ -47,6 +47,9 @@ template<> WEBCORE_EXPORT uint32_t convertToInteger<uint32_t>(JSC::JSGlobalObjec
 template<> WEBCORE_EXPORT int64_t convertToInteger<int64_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint64_t convertToInteger<uint64_t>(JSC::JSGlobalObject&, JSC::JSValue);
 
+// `x` truncated, or a TypeError if that is not in the range.
+double enforceRange(JSC::JSGlobalObject&, double x, double minimum, double maximum);
+
 template<typename T> T convertToIntegerEnforceRange(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT int8_t convertToIntegerEnforceRange<int8_t>(JSC::JSGlobalObject&, JSC::JSValue);
 template<> WEBCORE_EXPORT uint8_t convertToIntegerEnforceRange<uint8_t>(JSC::JSGlobalObject&, JSC::JSValue);

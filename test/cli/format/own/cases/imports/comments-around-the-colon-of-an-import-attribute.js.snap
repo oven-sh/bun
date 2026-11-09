@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+import a from "a" with {
+  type /* comment */: "json", // comment
+};
+import b from "b" with {
+  type: "json", // comment
+};
+import c from "c" with { type /* comment */: /* comment */ "json" };
+export * from "f" with {
+  type: "json",
+  g: "h", // comment
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+import a from "a" with {
+  type /* comment */: "json", // comment
+};
+import b from "b" with {
+  type: "json", // comment
+};
+import c from "c" with { type /* comment */: /* comment */ "json" };
+export * from "f" with {
+  type: "json",
+  g: "h", // comment
+};
+
+===================== End =====================

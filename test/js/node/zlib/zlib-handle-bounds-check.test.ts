@@ -466,7 +466,8 @@ describe.concurrent("zlib native handle argument validation", () => {
          catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       ),
     ).toEqual({
-      stdout: 'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer',
+      stdout:
+        'threw ERR_INVALID_ARG_VALUE: The "out" argument must not be backed by a resizable ArrayBuffer or a WebAssembly.Memory',
       exitCode: 0,
     });
   });
@@ -529,5 +530,46 @@ describe.concurrent("zlib native handle argument validation", () => {
          console.log("ok " + zlib.inflateRawSync(out.subarray(0, written)).toString());`,
       ),
     ).toEqual({ stdout: "ok hello world", exitCode: 0 });
+  });
+});
+
+// With ZSTD_c_nbWorkers >= 1, a write posts a job to zstd's worker threads and returns. A frame's first
+// job reads the stream's dictionary. Level 19 keeps the job running after the write callback.
+describe("zstd compressor with workers and a dictionary", () => {
+  const prelude = /* js */ `
+    const zlib = require("node:zlib");
+    const { pbkdf2Sync } = require("node:crypto");
+    const { finished } = require("node:stream/promises");
+    const { ZSTD_c_compressionLevel, ZSTD_c_jobSize, ZSTD_c_nbWorkers, ZSTD_c_overlapLog } = zlib.constants;
+
+    const hex = (seed, length) => Buffer.from(pbkdf2Sync(seed, "", 1, length / 2, "sha256").toString("hex"));
+    // Large enough that the allocator returns the freed dictionary to the OS.
+    const dictionary = hex("dictionary", 192 * 1024);
+    const input = hex("input", 512 * 1024);
+    const stream = zlib
+      .createZstdCompress({
+        dictionary,
+        params: {
+          [ZSTD_c_nbWorkers]: 2,
+          [ZSTD_c_jobSize]: input.length,
+          [ZSTD_c_overlapLog]: 1,
+          [ZSTD_c_compressionLevel]: 19,
+        },
+      })
+      .on("data", () => {});
+    await new Promise(done => stream.write(input, done));
+  `;
+
+  test.each([
+    ["destroy()", `stream.destroy(); console.log("ok");`],
+    ["reset() and the next frame", `stream.reset(); stream.end("x"); await finished(stream); console.log("ok");`],
+  ])("doesn't crash on %s while a job is running", async (_, body) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
   });
 });

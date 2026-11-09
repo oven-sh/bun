@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+# These are supported funding model platforms
+
+open_collective: a # Replace with a single Open Collective username
+
+# github: [ b, c ] # Replace with up to 4 usernames
+# patreon: # Replace with a single Patreon username
+
+# custom: # Replace with a single custom sponsorship URL
+
+-------------------
+{ printWidth: 100 }
+-------------------
+# These are supported funding model platforms
+
+open_collective: a # Replace with a single Open Collective username
+
+# github: [ b, c ] # Replace with up to 4 usernames
+# patreon: # Replace with a single Patreon username
+
+# custom: # Replace with a single custom sponsorship URL
+
+===================== End =====================

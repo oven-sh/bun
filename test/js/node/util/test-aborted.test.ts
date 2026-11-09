@@ -5,14 +5,14 @@ import { expect, test } from "bun:test";
 import { getEventListeners } from "events";
 import { aborted } from "util";
 
-test("aborted works when provided a resource that was already aborted", () => {
+test("aborted works when provided a resource that was already aborted", async () => {
   const ac = new AbortController();
   const abortedPromise = aborted(ac.signal, {});
   ac.abort();
 
   expect(ac.signal.aborted).toBe(true);
   expect(getEventListeners(ac.signal, "abort").length).toBe(0);
-  return expect(abortedPromise).resolves.toBeUndefined();
+  await expect(abortedPromise).resolves.toBeUndefined();
 });
 
 test("aborted resolves even when another listener stopped propagation", async () => {
@@ -44,7 +44,7 @@ test("aborted works when provided a resource that was not already aborted", asyn
   expect(ac.signal.aborted).toBe(true);
   expect(getEventListeners(ac.signal, "abort").length).toBe(0);
   delete globalThis.strong;
-  return expect(abortedPromise).resolves.toBeUndefined();
+  await expect(abortedPromise).resolves.toBeUndefined();
 });
 
 test("aborted with gc cleanup", async () => {
@@ -81,7 +81,7 @@ test("fails with error if not provided abort signal", async () => {
   const invalidSignals = [{}, null, undefined, Symbol(), [], 1, 0, 1n, true, false, "a", () => {}];
 
   for (const sig of invalidSignals) {
-    await expect(() => aborted(sig, {})).toThrow();
+    await expect(() => aborted(sig as any, {})).toThrow();
   }
 });
 
@@ -105,4 +105,19 @@ test("aborted resolves every waiter on the same signal with undefined", async ()
   ac.abort();
   expect(await Promise.all([first, second])).toEqual([undefined, undefined]);
   expect(getEventListeners(ac.signal, "abort")).toHaveLength(0);
+});
+
+test("aborted does not hand its internal settle function to a patched Function.prototype.bind", () => {
+  const originalBind = Function.prototype.bind;
+  const receivers: Function[] = [];
+  Function.prototype.bind = function (this: Function, ...args: any[]) {
+    receivers.push(this);
+    return originalBind.apply(this, args as [any, ...any[]]);
+  };
+  try {
+    aborted(new AbortController().signal, {});
+  } finally {
+    Function.prototype.bind = originalBind;
+  }
+  expect(receivers).toEqual([]);
 });

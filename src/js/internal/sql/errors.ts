@@ -26,24 +26,27 @@ export interface PostgresErrorOptions {
 }
 
 // oxlint-disable-next-line typescript-eslint/no-unsafe-declaration-merging
-interface PostgresError {
-  detail?: string | undefined;
-  hint?: string | undefined;
-  severity?: string | undefined;
-  errno?: string | undefined;
-  position?: string | undefined;
-  internalPosition?: string | undefined;
-  internalQuery?: string | undefined;
-  where?: string | undefined;
-  schema?: string | undefined;
-  table?: string | undefined;
-  column?: string | undefined;
-  dataType?: string | undefined;
-  constraint?: string | undefined;
-  file?: string | undefined;
-  line?: string | undefined;
-  routine?: string | undefined;
-}
+interface PostgresError extends Omit<PostgresErrorOptions, "code"> {}
+
+// in the order they become own properties
+const postgresErrorFields = [
+  "errno",
+  "detail",
+  "hint",
+  "severity",
+  "position",
+  "internalPosition",
+  "internalQuery",
+  "where",
+  "schema",
+  "table",
+  "column",
+  "dataType",
+  "constraint",
+  "file",
+  "line",
+  "routine",
+] as const;
 
 class PostgresError extends SQLError implements Bun.SQL.PostgresError {
   public readonly code: string;
@@ -51,44 +54,16 @@ class PostgresError extends SQLError implements Bun.SQL.PostgresError {
   constructor(message: string, options: PostgresErrorOptions) {
     super(message);
 
-    this.name = "PostgresError";
-    const {
-      code,
-      errno,
-      detail,
-      hint,
-      severity,
-      position,
-      internalPosition,
-      internalQuery,
-      where,
-      schema,
-      table,
-      column,
-      dataType,
-      constraint,
-      file,
-      line,
-      routine,
-    } = options;
-    this.code = code;
+    // JSC's own source position, not PostgreSQL's fields of the same name
+    delete this.line;
+    delete this.column;
 
-    if (errno !== undefined) this.errno = errno;
-    if (detail !== undefined) this.detail = detail;
-    if (hint !== undefined) this.hint = hint;
-    if (severity !== undefined) this.severity = severity;
-    if (position !== undefined) this.position = position;
-    if (internalPosition !== undefined) this.internalPosition = internalPosition;
-    if (internalQuery !== undefined) this.internalQuery = internalQuery;
-    if (where !== undefined) this.where = where;
-    if (schema !== undefined) this.schema = schema;
-    if (table !== undefined) this.table = table;
-    if (column !== undefined) this.column = column;
-    if (dataType !== undefined) this.dataType = dataType;
-    if (constraint !== undefined) this.constraint = constraint;
-    if (file !== undefined) this.file = file;
-    if (line !== undefined) this.line = line;
-    if (routine !== undefined) this.routine = routine;
+    this.name = "PostgresError";
+    this.code = options.code;
+    for (let i = 0; i < postgresErrorFields.length; i++) {
+      const value = options[postgresErrorFields[i]];
+      if (value !== undefined) this[postgresErrorFields[i]] = value;
+    }
   }
 }
 
@@ -99,9 +74,7 @@ export interface SQLiteErrorOptions {
 }
 
 // oxlint-disable-next-line typescript-eslint/no-unsafe-declaration-merging
-interface SQLiteError {
-  byteOffset?: number | undefined;
-}
+interface SQLiteError extends Pick<SQLiteErrorOptions, "byteOffset"> {}
 
 class SQLiteError extends SQLError implements Bun.SQL.SQLiteError {
   public readonly code: string;
@@ -127,10 +100,7 @@ export interface MySQLErrorOptions {
 }
 
 // oxlint-disable-next-line typescript-eslint/no-unsafe-declaration-merging
-interface MySQLError {
-  errno?: number | undefined;
-  sqlState?: string | undefined;
-}
+interface MySQLError extends Omit<MySQLErrorOptions, "code"> {}
 
 class MySQLError extends SQLError implements Bun.SQL.MySQLError {
   public readonly code: string;

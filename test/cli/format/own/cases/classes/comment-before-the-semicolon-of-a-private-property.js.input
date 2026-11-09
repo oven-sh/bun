@@ -1,0 +1,11 @@
+class A {
+  state = 0 /* Initial */;
+  #state = 0 /* Initial */;
+  static #s = 0 /* a */;
+  #t /* a */;
+  #u = a.b /* a */;
+  #v = 0 // a
+  ;
+  #w = 0 /* a */
+  #x = (0 /* a */);
+}

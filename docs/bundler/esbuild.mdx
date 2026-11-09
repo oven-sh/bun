@@ -204,26 +204,12 @@ const myPlugin: BunPlugin = {
     builder.onStart(() => {
       /* called when the bundle starts */
     });
-    builder.onResolve(
-      {
-        /* onResolve.options */
-      },
-      args => {
-        return {
-          /* onResolve.results */
-        };
-      },
-    );
-    builder.onLoad(
-      {
-        /* onLoad.options */
-      },
-      args => {
-        return {
-          /* onLoad.results */
-        };
-      },
-    );
+    builder.onResolve({/* onResolve.options */}, args => {
+      return {/* onResolve.results */};
+    });
+    builder.onLoad({/* onLoad.options */}, args => {
+      return {/* onLoad.results */};
+    });
     builder.onEnd(result => {
       /* called when the bundle is complete */
     });

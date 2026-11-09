@@ -152,15 +152,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
+    auto* structure = structureForNewTarget<DOMException>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = DOMException::create(WTF::move(message), WTF::move(name));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<DOMException>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<DOMException>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<DOMException>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     if (!cause.isEmpty()) {
         jsValue.getObject()->putDirect(vm, vm.propertyNames->cause, cause, JSC::PropertyAttribute::DontEnum | 0);
     }
@@ -236,8 +236,6 @@ void JSDOMException::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, DOMException>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
 JSObject* JSDOMException::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -319,8 +317,6 @@ void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     auto* thisObject = uncheckedDowncast<JSDOMException>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
-    // if (thisObject->scriptExecutionContext())
-    //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 

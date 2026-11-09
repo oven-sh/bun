@@ -1,0 +1,47 @@
+# six closures over one scope and two numbers. A slot that leaves its closure unmade is four bytes wide, and so is the word of the scope: the slots are laid behind the choice of their forms, each by its width:
+# 6 x 4 for the closures, 4 for the scope, 2 x 8 for the numbers, behind 16 bytes of header: 60 bytes, a cell of 64. With each slot alone in eight bytes it was 16 + 8 x 8 = 80.
+# with typed slots withheld the numbers are boxed, eight bytes as well, and the cell has the word of the extra properties at 16: the closures follow from 24 on, four bytes each, and the cell is 80 bytes; with each slot alone in eight bytes it was 96.
+# with the deferral withheld no slot has that form.
+# -- source: closures-that-a-literal-leaves-unmade-take-four-bytes-each.ts
+# declare function sink(...values: unknown[]): void;
+# function makeCounter() {
+#     let total = 1;
+#     return {
+#         add: () => { total += 3; return total; },
+#         double: () => { total *= 2; return total; },
+#         halve: () => { total /= 2; return total; },
+#         read: () => total,
+#         reset: () => { total = 1; return total; },
+#         subtract: () => { total -= 3; return total; },
+#         x: 1.5,
+#         y: 2.5,
+#     };
+# }
+# let sum = 0;
+# for (let i = 0; i < 4; i++) {
+#     const counter = makeCounter();
+#     sum += counter.add() + counter.double() + counter.halve() + counter.read() + counter.reset() + counter.subtract() + counter.x + counter.y;
+# }
+# sink(sum);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: CompiledObject size=64
+# CHECK-NEXT: slot 0 "add" DeferredClosure Inline
+# CHECK-NEXT: slot 1 "double" DeferredClosure Inline
+# CHECK-NEXT: slot 2 "halve" DeferredClosure Inline
+# CHECK-NEXT: slot 3 "read" DeferredClosure Inline
+# CHECK-NEXT: slot 4 "reset" DeferredClosure Inline
+# CHECK-NEXT: slot 5 "subtract" DeferredClosure Inline
+# CHECK-NEXT: slot 6 "x" OptionalDouble Inline
+# CHECK-NEXT: slot 7 "y" OptionalDouble Inline
+# CHECK-NEXT: slot 8 appended Cell32 Inline
+# RUN(BOXED): plan layouts mechanisms=-TypedSlots
+# BOXED: CompiledObject size=80
+# BOXED-NEXT: slot 0 "add" DeferredClosure Inline offset=24
+# BOXED-NEXT: slot 1 "double" DeferredClosure Inline offset=28
+# BOXED: slot 6 "x" JSValue Inline
+# BOXED-NEXT: slot 7 "y" JSValue Inline
+# BOXED-NEXT: slot 8 appended Cell32 Inline
+# BOXED-NEXT: extra-properties Cell32 Inline offset=16
+# RUN(WITHHELD): plan layouts mechanisms=-Deferral
+# WITHHELD-NOT: DeferredClosure

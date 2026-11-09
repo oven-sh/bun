@@ -7,8 +7,8 @@
 // https://github.com/oven-sh/bun/issues/32037
 //
 // The established-connection scenarios run against the real docker-compose
-// postgres/mysql services. The connection-refused scenarios use a real closed
-// port and the synchronous-failure scenario never dials, so those run
+// postgres/mysql/mariadb services. The connection-refused scenarios use a real closed
+// port and the password scenario never dials, so those run
 // everywhere. Each scenario runs in a subprocess because the throwing
 // callback is reported as a process-level uncaughtException.
 //
@@ -18,7 +18,7 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, describeWithContainer, isDockerEnabled, tempDir } from "harness";
+import { bunEnv, bunExe, describeWithContainer, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { closedPort } from "./wire-frames";
@@ -29,6 +29,15 @@ import { closedPort } from "./wire-frames";
 // the subprocess spawn.
 const wireFramesPath = path.join(import.meta.dir, "wire-frames.ts");
 
+const servers = [
+  ["postgres", "postgres_plain", "postgres://bun_sql_test@"],
+  ["mysql", "mysql_plain", "mysql://root@"],
+  ["mariadb", "mariadb_plain", "mysql://root@"],
+] as const;
+
+// Ends a fixture that hangs. The failure then shows where its stdout stopped.
+const fixtureTimeout = 60_000;
+
 async function runFixture(code: string, env: Record<string, string> = {}) {
   using dir = tempDir("sql-throwing-hooks", { "fixture.ts": code });
   await using proc = Bun.spawn({
@@ -36,7 +45,7 @@ async function runFixture(code: string, env: Record<string, string> = {}) {
     env: { ...bunEnv, ...env },
     cwd: String(dir),
     stderr: "pipe",
-    timeout: 60_000,
+    timeout: fixtureTimeout,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
@@ -66,35 +75,9 @@ process.exit(0);
 `;
 }
 
-if (isDockerEnabled()) {
-  describeWithContainer("postgres", { image: "postgres_plain" }, container => {
-    test("a throwing onconnect callback does not leave the pool stuck", async () => {
-      await container.ready;
-      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-      const { stdout, exitCode } = await runFixture(throwingHookFixture("onconnect"), { FIXTURE_URL: url });
-      expect(stdout).toBe('onconnect: null\nuncaught: boom from onconnect\nquery: [{"x":1}]\nended\n');
-      expect(exitCode).toBe(0);
-    });
-
-    test("a throwing onclose callback does not hang sql.end()", async () => {
-      await container.ready;
-      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-      const { stdout, exitCode } = await runFixture(throwingHookFixture("onclose"), { FIXTURE_URL: url });
-      expect(stdout).toBe('query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n');
-      expect(exitCode).toBe(0);
-    });
-
-    // PostgresSQLQuery.do_run refs the connection's poll_ref KeepAlive (a
-    // two-state flag, not a counter). When do_run returns early with a
-    // synchronous error before enqueueing — here a boxed Boolean binding
-    // rejected inside Signature::generate — the poll_ref must not be left
-    // Active, or the event loop stays pinned and the process never exits. The
-    // setImmediate forces do_run onto a later turn so on_data's epilogue
-    // doesn't mask the leak.
-    test("a synchronous do_run failure does not pin the event loop", async () => {
-      await container.ready;
-      const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-      const fixture = /* ts */ `
+// A boxed Boolean is not a valid parameter. No process.exit(): a pinned loop shows as a killed child.
+// The setImmediate puts the query on a later turn than the read that finished the handshake, whose end unpins the loop.
+const synchronousFailureFixture = /* ts */ `
 const sql = new Bun.SQL({
   url: process.env.FIXTURE_URL,
   max: 1,
@@ -107,30 +90,36 @@ await new Promise(r => setImmediate(r));
 const err = await sql\`SELECT \${new Boolean(true)}\`.catch(e => e);
 console.log("rejected:" + (err?.code ?? err?.name ?? String(err)));
 `;
-      const { stdout, stderr, exitCode } = await runFixture(fixture, { FIXTURE_URL: url });
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: "rejected:ERR_INVALID_ARG_TYPE\n",
-        stderr: expect.any(String),
+
+for (const [name, image, scheme] of servers) {
+  describeWithContainer(name, { image, concurrent: true }, container => {
+    const run = async (fixture: string) => {
+      await container.ready;
+      return runFixture(fixture, { FIXTURE_URL: `${scheme}${container.host}:${container.port}/bun_sql_test` });
+    };
+
+    test("a throwing onconnect callback does not leave the pool stuck", async () => {
+      expect(await run(throwingHookFixture("onconnect"))).toEqual({
+        stdout: 'onconnect: null\nuncaught: boom from onconnect\nquery: [{"x":1}]\nended\n',
+        stderr: "",
         exitCode: 0,
       });
     });
-  });
-
-  describeWithContainer("mysql", { image: "mysql_plain" }, container => {
-    test("a throwing onconnect callback does not leave the pool stuck", async () => {
-      await container.ready;
-      const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
-      const { stdout, exitCode } = await runFixture(throwingHookFixture("onconnect"), { FIXTURE_URL: url });
-      expect(stdout).toBe('onconnect: null\nuncaught: boom from onconnect\nquery: [{"x":1}]\nended\n');
-      expect(exitCode).toBe(0);
-    });
 
     test("a throwing onclose callback does not hang sql.end()", async () => {
-      await container.ready;
-      const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
-      const { stdout, exitCode } = await runFixture(throwingHookFixture("onclose"), { FIXTURE_URL: url });
-      expect(stdout).toBe('query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n');
-      expect(exitCode).toBe(0);
+      expect(await run(throwingHookFixture("onclose"))).toEqual({
+        stdout: 'query: [{"x":1}]\nonclose: Connection closed\nuncaught: boom from onclose\nended\n',
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    test("a query that fails synchronously does not pin the event loop", async () => {
+      expect(await run(synchronousFailureFixture)).toEqual({
+        stdout: "rejected:ERR_INVALID_ARG_TYPE\n",
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 }
@@ -180,20 +169,17 @@ for (const [adapter, refusedCode] of [
   test.concurrent(
     `${adapter}: a throwing onclose callback still rejects pending queries when the connection is refused`,
     async () => {
-      const { stdout, exitCode } = await runFixture(refusedConnectionFixture(adapter));
-      expect(stdout).toBe(`onclose: ${refusedCode}\nuncaught: boom from onclose\nquery rejected: ${refusedCode}\n`);
-      expect(exitCode).toBe(0);
+      expect(await runFixture(refusedConnectionFixture(adapter))).toEqual({
+        stdout: `onclose: ${refusedCode}\nuncaught: boom from onclose\nquery rejected: ${refusedCode}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
     },
   );
 }
 
-// When createConnection fails synchronously (here: a password function that
-// throws), onclose used to be invoked while the adapter was still filling
-// this.connections, so pool methods that scan that array (flush, isConnected,
-// close) threw a TypeError on the holes when called from inside the callback.
-// The callback is now deferred until the pool is fully constructed. Nothing
-// is dialed: password() throws before the connection is created.
-test.concurrent("postgres: pool calls from onclose are safe when connecting fails synchronously", async () => {
+// The first query starts the pool: `max` attempts.
+test.concurrent("postgres: pool calls from onclose are safe when the password function throws", async () => {
   const fixture = /* ts */ `
 import { SQL } from "bun";
 process.on("uncaughtException", err => console.log("uncaught:", err.message));
@@ -224,9 +210,11 @@ try {
 }
 process.exit(0);
 `;
-  const { stdout, exitCode } = await runFixture(fixture);
-  expect(stdout).toBe("reentry ok\nreentry ok\nquery rejected: password error\n");
-  expect(exitCode).toBe(0);
+  expect(await runFixture(fixture)).toEqual({
+    stdout: "reentry ok\nreentry ok\nquery rejected: password error\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Fault-injection test: requires a server that refuses / drops / sends malformed
@@ -266,7 +254,7 @@ const sql = new SQL({
 });
 const queryError = sql.unsafe("SELECT 1").catch(err => err);
 await accepted;
-await sql.close({ timeout: "0" });
+await sql.close({ timeout: 0 });
 console.log("closed");
 console.log("query rejected:", (await queryError).code);
 process.exit(0);
@@ -280,9 +268,11 @@ for (const [adapter, closedCode] of [
   test.concurrent(
     `${adapter}: forced close() mid-handshake resolves and skips onclose for the never-connected slot`,
     async () => {
-      const { stdout, exitCode } = await runFixture(forcedCloseFixture(adapter));
-      expect(stdout).toBe(`closed\nquery rejected: ${closedCode}\n`);
-      expect(exitCode).toBe(0);
+      expect(await runFixture(forcedCloseFixture(adapter))).toEqual({
+        stdout: `closed\nquery rejected: ${closedCode}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
     },
   );
 }
@@ -324,52 +314,51 @@ function poolCreatedIn(createdIn: string | undefined, url: string) {
   return { sql, events };
 }
 
-// describeWithContainer skips itself when no postgres service is reachable, so
-// this block needs no isDockerEnabled() guard.
-describeWithContainer("postgres: AsyncLocalStorage", { image: "postgres_plain" }, container => {
-  test("onconnect and onclose observe the store each pool was created in, not the caller's", async () => {
-    await container.ready;
-    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-    const a = poolCreatedIn("created-a", url);
-    const b = poolCreatedIn("created-b", url);
-    try {
-      await als.run("caller", () => Promise.all([a.sql.connect(), b.sql.connect()]));
-    } finally {
-      await als.run("caller", () => Promise.all([a.sql.close(), b.sql.close()]));
-    }
-    expect({ a: a.events, b: b.events }).toStrictEqual({
-      a: [
-        ["onconnect", "created-a"],
-        ["onclose", "created-a"],
-      ],
-      b: [
-        ["onconnect", "created-b"],
-        ["onclose", "created-b"],
-      ],
+for (const [name, image, scheme] of servers) {
+  describeWithContainer(`${name}: AsyncLocalStorage`, { image, concurrent: true }, container => {
+    const url = () => `${scheme}${container.host}:${container.port}/bun_sql_test`;
+
+    test("onconnect and onclose observe the store each pool was created in, not the caller's", async () => {
+      await container.ready;
+      const a = poolCreatedIn("created-a", url());
+      const b = poolCreatedIn("created-b", url());
+      try {
+        await als.run("caller", () => Promise.all([a.sql.connect(), b.sql.connect()]));
+      } finally {
+        await als.run("caller", () => Promise.all([a.sql.close(), b.sql.close()]));
+      }
+      expect({ a: a.events, b: b.events }).toStrictEqual({
+        a: [
+          ["onconnect", "created-a"],
+          ["onclose", "created-a"],
+        ],
+        b: [
+          ["onconnect", "created-b"],
+          ["onclose", "created-b"],
+        ],
+      });
+    });
+
+    test("a pool created outside any store does not inherit the caller's store", async () => {
+      await container.ready;
+      const { sql, events } = poolCreatedIn(undefined, url());
+      try {
+        await als.run("caller", () => sql.connect());
+      } finally {
+        await als.run("caller", () => sql.close());
+      }
+      expect(events).toStrictEqual([
+        ["onconnect", undefined],
+        ["onclose", undefined],
+      ]);
     });
   });
-
-  test("a pool created outside any store does not inherit the caller's store", async () => {
-    await container.ready;
-    const url = `postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`;
-    const { sql, events } = poolCreatedIn(undefined, url);
-    try {
-      await als.run("caller", () => sql.connect());
-    } finally {
-      await als.run("caller", () => sql.close());
-    }
-    expect(events).toStrictEqual([
-      ["onconnect", undefined],
-      ["onclose", undefined],
-    ]);
-  });
-});
+}
 
 // Fault-injection test (a refused connection), see the DO NOT COPY THIS PATTERN
 // note above: anything a real server can produce belongs in describeWithContainer.
 // A refused connection reaches onclose through the connect-failure path rather
-// than through close(), and since nothing has to be listening it also covers
-// the mysql adapter.
+// than through close().
 for (const [adapter, scheme, refusedCode] of [
   ["postgres", "postgres://postgres@127.0.0.1:", "ERR_POSTGRES_CONNECTION_REFUSED"],
   ["mysql", "mysql://root@127.0.0.1:", "ERR_MYSQL_CONNECTION_REFUSED"],

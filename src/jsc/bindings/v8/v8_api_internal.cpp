@@ -36,13 +36,14 @@ uintptr_t* GlobalizeReference(internal::Isolate* i_isolate, uintptr_t address)
 {
     auto* isolate = reinterpret_cast<Isolate*>(i_isolate);
     auto* globalHandles = isolate->globalInternals()->globalHandles();
-    TaggedPointer* newSlot = globalHandles->createHandleFromExistingObject(TaggedPointer::fromRaw(address), isolate);
+    TaggedPointer* newSlot = globalHandles->createHandleFromExistingObject(TaggedPointer::fromRaw(address));
     return newSlot->asRawPtrLocation();
 }
 
 void DisposeGlobal(uintptr_t* location)
 {
-    if (location) weakHandleParameters().remove(location);
+    auto* isolate = Isolate::GetCurrent();
+    if (location && isolate) isolate->globalInternals()->weakHandleParameters().remove(location);
     // TODO free up a slot in the handle scope
     (void)location;
 }

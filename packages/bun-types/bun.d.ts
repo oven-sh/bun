@@ -8391,23 +8391,38 @@ declare module "bun" {
       Err
     > {
       /**
-       * If true, the stdout and stderr pipes don't automatically start reading
-       * data. Reading begins only when you access the `stdout` or `stderr`
-       * properties.
+       * Controls how much of the child's unread output the parent holds in memory.
        *
-       * This can improve performance when you don't need to read output
-       * immediately.
+       * By default (`false`), Bun reads the `stdout` and `stderr` pipes as soon
+       * as the process starts and buffers everything you have not read yet.
+       * The buffer has no bound other than `maxBuffer`, so a child that writes
+       * 1 GiB to a pipe nobody reads grows the parent by 1 GiB. In exchange,
+       * the child never blocks on a write, and `await subprocess.exited`
+       * followed by `subprocess.stdout.text()` works for output of any size.
+       *
+       * If `true`, Bun does not read until you first read from the stream, for
+       * example with `.text()`, `.getReader()` or `for await`. Accessing the
+       * `stdout` property alone does not start it. Until then the output stays
+       * in the operating system's pipe buffer, the child blocks on `write()`
+       * once that buffer is full, and the parent's memory stays flat.
+       *
+       * With `lazy: true`, read the stream before you `await subprocess.exited`.
+       * A child that writes more than the pipe buffer holds cannot exit until
+       * something reads, so awaiting `exited` first waits forever.
        *
        * @default false
        *
        * @example
        * ```ts
        * const subprocess = Bun.spawn({
-       *   cmd: ["echo", "hello"],
-       *   lazy: true, // Don't start reading stdout until accessed
+       *   cmd: ["git", "log"],
+       *   lazy: true, // leave the output in the pipe until it is read
        * });
-       * // stdout reading hasn't started yet
-       * await subprocess.stdout.text(); // Now reading starts
+       * // the child writes only as fast as this loop reads
+       * for await (const chunk of subprocess.stdout) {
+       *   process.stdout.write(chunk);
+       * }
+       * await subprocess.exited;
        * ```
        */
       lazy?: boolean;

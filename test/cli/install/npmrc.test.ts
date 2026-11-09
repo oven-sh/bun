@@ -13,10 +13,10 @@ import {
   tls,
   unprivilegedSpawnOptions,
 } from "harness";
-import { createServer as createTlsServer } from "node:tls";
-import { dirname, join } from "path";
 import { once } from "node:events";
 import { createSecureServer } from "node:http2";
+import { createServer as createTlsServer } from "node:tls";
+import { dirname, join } from "path";
 import { TestRegistry } from "registry";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;

@@ -370,9 +370,8 @@ impl<'a> Symbol<'a> {
             .is_some_and(|it| it.flags & variables::VALUE != 0)
     }
 
-    /// True if the file's template can read and assign this variable, which the linter can't see: a value declared
-    /// at the top level of a [template-reachable](File::is_template_reachable) script. A type, and an import that's
-    /// only a type, can't be used in a template.
+    /// True if the file's template, which isn't parsed, can use this variable: a value at the top level of a script
+    /// that [`File::is_template_reachable`] describes. A template can't use a type.
     pub fn is_template_reachable(self) -> bool {
         self.file.is_template_reachable()
             && self.is_value_variable()

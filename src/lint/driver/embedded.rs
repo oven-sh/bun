@@ -304,10 +304,8 @@ fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
     }
 }
 
-/// Which rules run on a script. The scripts are parsed without their template, so a rule that needs to know what the
-/// template uses or assigns to can't run as it is. oxlint 1.87 turns `no-unused-vars` and `prefer-const` off for the
-/// whole file. Here they run, and skip the bindings the template can reach themselves (`File::is_template_reachable`):
-/// the rest of a script has nothing the template can see. The other rules are off as in oxlint. `$:` is Svelte syntax.
+/// The rules oxlint 1.87 turns off for these files, because the template isn't parsed. Unlike oxlint, `no-unused-vars`
+/// and `prefer-const` run here: they skip the template's bindings themselves. `$:` is Svelte syntax.
 fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
     let RuleId::Known(meta) = rule else {
         return true;
@@ -411,8 +409,7 @@ impl Context<'_, '_> {
     ) -> LintResult {
         let mut all = LintResult::default();
         let scripts = scripts_of(framework, text);
-        // The top-level bindings of every `<script>` of a Vue file with a `<script setup>`, and of both scripts of a
-        // Svelte file, are in scope in the template. Astro's frontmatter is too, but its rules are oxlint's.
+        // Vue's template sees every script's top level if the file has a `<script setup>`. Svelte's always does.
         let is_template_reachable = match framework {
             Framework::Vue => scripts.iter().any(|it| it.is_setup),
             Framework::Svelte => true,

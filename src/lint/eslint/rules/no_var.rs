@@ -299,9 +299,8 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
 }
 
 /// oxlint 1.87's fix. There's none if a variable is referenced outside the declaration's parent. The keyword is `const`
-/// if nothing is assigned later and every variable has an initializer. Unlike oxlint, a variable that the template of
-/// a `.vue` or `.svelte` file can assign keeps `let`. The fix replaces the whole declaration, so that no other fix
-/// changes it in the same pass.
+/// if nothing is assigned later and every variable has an initializer, and, unlike oxlint, if the template can't assign
+/// it. The fix replaces the whole declaration, so that no other fix changes it in the same pass.
 fn fix_as_oxlint<'a>(
     fixer: Fixer<'a>,
     statement: Stmt<'a>,

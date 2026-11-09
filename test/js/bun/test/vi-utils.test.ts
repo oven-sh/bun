@@ -678,10 +678,13 @@ describe("vi.stubGlobal", () => {
             globalThis[name] = () => {};
             const spy = spyOn(globalThis, name);
             vi.stubGlobal(name, "stub");
+            vi.stubGlobal("viUtilsLater", "stub");
             spy.mockRestore();
             Object.defineProperty(globalThis, name, locked);
             expect(() => vi.unstubAllGlobals()).toThrow(TypeError);
             expect(Object.getOwnPropertyDescriptor(globalThis, name)).toEqual(locked);
+            // The stubs after it are undone all the same.
+            expect("viUtilsLater" in globalThis).toBe(false);
           });
           // The restore of a spy asks no attribute, over a stub as with no stub.
           test("a spy over a stub, which the test made non-configurable: its restore still writes", () => {

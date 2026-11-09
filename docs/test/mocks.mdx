@@ -790,7 +790,7 @@ test("lazy import", async () => {
 ```
 
 - Stubs that are still in place are undone when the test file ends. Stubs made by a `--preload` script apply to every file.
-- If a `spyOn()` call installed a spy on a global before you stub it, and you restore the spy before the stub, `vi.unstubAllGlobals()` gives the global what the spy had replaced.
+- If you stub a global that `spyOn()` spies on, and you restore the spy before the stub, `vi.unstubAllGlobals()` gives the global what the spy had replaced. This holds when your code leaves the global alone between `spyOn()` and the stub.
 - `vi.waitFor()` and `vi.waitUntil()` wait in real time. If fake timers are on, they also advance the fake clock by `interval` before each call to the callback.
 
 ### Differences from Vitest
@@ -808,7 +808,7 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
-- `vi.unstubAllGlobals()` doesn't put back a spy that a `spyOn()` call installed on the global, if you restored the spy while the global was stubbed. The global gets what the spy had replaced. Vitest puts the restored spy back.
+- If you stub a global that `spyOn()` spies on and restore the spy while the global is stubbed, `vi.unstubAllGlobals()` gives the global what the spy had replaced. Vitest puts the restored spy back.
 
 ## Implementation Details
 

@@ -322,6 +322,12 @@ pub(crate) struct ConnectConfig {
     address: BunString,
 }
 
+#[derive(Clone, Copy)]
+struct AdoptedFd {
+    fd: i32,
+    shared: bool,
+}
+
 pub(crate) struct UDPSocketConfig {
     pub(crate) hostname: BunString,
     connect: Option<ConnectConfig>,
@@ -330,9 +336,8 @@ pub(crate) struct UDPSocketConfig {
     /// Adopt this already-created (and usually bound) socket descriptor
     /// instead of creating a new one. Used by node:dgram for
     /// `socket.bind({ fd })` and cluster-shared sockets.
-    fd: Option<i32>,
+    fd: Option<AdoptedFd>,
     pub(crate) binary_type: BinaryType,
-    pub(crate) shared_fd: bool,
 }
 
 impl Default for UDPSocketConfig {
@@ -344,7 +349,6 @@ impl Default for UDPSocketConfig {
             flags: 0,
             fd: None,
             binary_type: BinaryType::Buffer,
-            shared_fd: false,
         }
     }
 }
@@ -416,8 +420,10 @@ impl UDPSocketConfig {
             hostname,
             port,
             flags,
-            fd,
-            shared_fd,
+            fd: fd.map(|fd| AdoptedFd {
+                fd,
+                shared: shared_fd,
+            }),
             ..Default::default()
         };
 
@@ -646,7 +652,7 @@ impl UDPSocket {
         // libuv's uv_udp_open) instead of double-owning it.
         #[cfg(not(windows))]
         let reservation = match config.fd {
-            Some(fd) => match dgram_begin_adoption(fd) {
+            Some(AdoptedFd { fd, .. }) => match dgram_begin_adoption(fd) {
                 Some(previous) => Some((fd, previous)),
                 None => {
                     return Err(cx.global().throw_value(
@@ -661,7 +667,7 @@ impl UDPSocket {
             None => None,
         };
 
-        let created = if let Some(fd) = config.fd {
+        let created = if let Some(AdoptedFd { fd, shared }) = config.fd {
             uws::udp::Socket::create_from_fd(
                 this.loop_,
                 on_data,
@@ -669,7 +675,7 @@ impl UDPSocket {
                 on_close,
                 on_recv_error,
                 fd,
-                config.shared_fd,
+                shared,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )

@@ -28,7 +28,14 @@ const recordedLabels: Record<string, string[]> = JSON.parse(readFileSync(labelsP
 const expected: Record<string, string[]> = oxlint && names.length === 0 ? {} : recorded;
 const expectedLabels: Record<string, string[]> = oxlint && names.length === 0 ? {} : recordedLabels;
 /** `1.92.0` of `Version: 1.92.0`. */
-const oxlintVersion = oxlint && spawnSync(oxlint, ["--version"], { encoding: "utf8" }).stdout.trim().split(" ").pop();
+const oxlintVersion = oxlint && versionOf(oxlint);
+
+function versionOf(command: string): string {
+  const { stdout, status, error } = spawnSync(command, ["--version"], { encoding: "utf8" });
+  const version = stdout?.trim().split(" ").pop();
+  if (error || status !== 0 || !version) throw new Error(`${command} --version: ${error?.message ?? stdout}`);
+  return version;
+}
 
 /**
  * `reports` has `file:line:column+length rule` for each diagnostic, at its first label, which is where oxlint prints
@@ -103,9 +110,12 @@ for (const project of projects) {
       symlinkSync(join(cwd, target), join(cwd, path), "junction");
     }
     if (oxlint && (project.oxlint ?? OXLINT_VERSION) !== oxlintVersion) {
-      console.log(`${project.name}: recorded with oxlint ${project.oxlint ?? OXLINT_VERSION}, kept`);
+      const version = project.oxlint ?? OXLINT_VERSION;
       const labels = recordedLabels[project.name];
-      expected[project.name] = recorded[project.name] ?? [];
+      const reports = recorded[project.name];
+      if (!reports) throw new Error(`${project.name} has no recording: record it with oxlint ${version}`);
+      console.log(`${project.name}: recorded with oxlint ${version}, kept`);
+      expected[project.name] = reports;
       delete expectedLabels[project.name];
       if (labels) expectedLabels[project.name] = labels;
     } else if (oxlint) {

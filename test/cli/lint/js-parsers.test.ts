@@ -2912,11 +2912,16 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
 
   // The issue's fixtures. ESLint with vue-eslint-parser reports these five, plus four on App.vue's top level that it
   // knows the template doesn't use. Without the template, nothing the template could use is reported.
-  test("no-unused-vars and prefer-const run in .vue and .svelte files except on the template's bindings", async () => {
+  test("the rules that depend on the template run in .vue and .svelte files except on its bindings", async () => {
     const files = {
       ".oxlintrc.json": JSON.stringify({
         categories: { correctness: "off" },
-        rules: { "no-unused-vars": "error", "prefer-const": "error" },
+        rules: {
+          "no-unused-vars": "error",
+          "prefer-const": "error",
+          "no-unassigned-vars": "error",
+          "no-useless-assignment": "error",
+        },
       }),
       "App.vue": `<script setup>
 import { computed, ref } from "vue";
@@ -2963,16 +2968,94 @@ export default {
   <p>{{ value }}</p>
 </template>
 `,
-      // A type can't be used in a template. An unused `import type` is reported, and so is an `interface`.
+      // A template in TypeScript can use a type, as in `(count as Ref<number>)`, so top-level types are skipped too.
       "Types.vue": `<script setup lang="ts">
 import type { Ref } from "vue";
 import { type ComputedRef, ref } from "vue";
-interface Unused {}
+interface Shape {}
 const count = ref(0);
+function f() {
+  type Local = 1;
+  const unused = 1;
+}
 </script>
 
 <template>
-  <p>{{ count }}</p>
+  <p @click="f()">{{ (count as Ref<number>).value }}</p>
+</template>
+`,
+      "Types.svelte": `<script lang="ts" generics="T extends { text: string }">
+  import type { Snippet } from "svelte";
+  interface Row {
+    item: T;
+  }
+  let { items, row }: { items: T[]; row: Snippet<[Row]> } = $props();
+  function label() {
+    type Unused = string;
+    let same = 1;
+    return same;
+  }
+</script>
+{#each items as item}{@render row({ item })}{/each}
+{label()}
+`,
+      // oxlint reports `b` of `let b = 0; b ||= 2;` where ESLint does not. It is also skipped at the top level.
+      "Candidates.vue": `<script setup lang="ts">
+let open = false;
+open ||= true;
+function f() {
+  let inner = 0;
+  inner ||= 1;
+}
+</script>
+
+<template>
+  <button @click="open = !open">{{ f() }}</button>
+</template>
+`,
+      // The template can assign a binding, and read it after the script's last assignment.
+      "Assigned.vue": `<script setup>
+let el;
+let title = "a";
+console.log(title);
+title = "b";
+function f() {
+  let local;
+  let t = "a";
+  console.log(t);
+  t = "b";
+  return local;
+}
+</script>
+
+<template>
+  <p ref="el" @click="f()">{{ title }}</p>
+</template>
+`,
+      "Dialog.svelte": `<script>
+  let dialog;
+  function open() {
+    let pending;
+    dialog.showModal();
+    return pending;
+  }
+</script>
+<dialog bind:this={dialog}></dialog>
+<button on:click={open}>Open</button>
+`,
+      // oxlint, and bun lint, skip a `<script` that a line break follows. Its `setup` still counts.
+      "Wrapped.vue": `<script>
+let fromPlain = 1;
+</script>
+<script
+  setup
+  lang="ts"
+>
+let fromSetup = 2;
+</script>
+
+<template>
+  <p @click="fromPlain++">{{ fromSetup }}</p>
 </template>
 `,
       "Both.vue": `<script>
@@ -3002,16 +3085,22 @@ let fromSetup = 2;
     };
     const result = await lint(files, ["-f", "json"]);
     expect(diagnostics(result.raw)).toMatchInlineSnapshot(`
-      "Counter.svelte 7:11 eslint(no-unused-vars)
+      "Assigned.vue 10:3 eslint(no-useless-assignment)
+      Assigned.vue 7:7 eslint(no-unassigned-vars)
+      Candidates.vue 5:7 eslint(no-unused-vars)
+      Candidates.vue 6:3 eslint(no-useless-assignment)
+      Counter.svelte 7:11 eslint(no-unused-vars)
       Counter.svelte 8:9 eslint(prefer-const)
+      Dialog.svelte 4:9 eslint(no-unassigned-vars)
       Inner.vue 5:9 eslint(no-unused-vars)
       Inner.vue 6:7 eslint(prefer-const)
       Plain.vue 2:7 eslint(no-unused-vars)
       Plain.vue 3:5 eslint(prefer-const)
       Plain.vue 6:11 eslint(no-unused-vars)
-      Types.vue 2:15 eslint(no-unused-vars)
-      Types.vue 3:15 eslint(no-unused-vars)
-      Types.vue 4:11 eslint(no-unused-vars)"
+      Types.svelte 8:10 eslint(no-unused-vars)
+      Types.svelte 9:9 eslint(prefer-const)
+      Types.vue 7:8 eslint(no-unused-vars)
+      Types.vue 8:9 eslint(no-unused-vars)"
     `);
     expect(result.exitCode).toBe(1);
   });

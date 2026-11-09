@@ -39,8 +39,6 @@ struct Script {
     start: usize,
     end: usize,
     kind: ScriptKind,
-    /// Vue's `<script setup>`, whose top-level bindings the template can read and assign.
-    is_setup: bool,
 }
 
 const SCRIPT_START: &[u8] = b"<script";
@@ -164,12 +162,7 @@ fn vue_lang(content: &[u8]) -> &[u8] {
 /// The script from `start`, just after the tag, to the next `</script>`. Also returns where the search continues.
 fn until_end(text: &[u8], start: usize, kind: ScriptKind) -> Option<(Script, usize)> {
     let end = start + strings::index_of(&text[start..], SCRIPT_END)?;
-    let script = Script {
-        start,
-        end,
-        kind,
-        is_setup: false,
-    };
+    let script = Script { start, end, kind };
     Some((script, end + SCRIPT_END.len()))
 }
 
@@ -184,9 +177,27 @@ fn vue_script(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
     }
     let tag = closing_angle(text, at)?;
     let kind = kind_of(vue_lang(&text[at..at + tag]))?;
-    let (mut script, after) = until_end(text, at + tag + 1, kind)?;
-    script.is_setup = attribute(&text[at..at + tag], b"setup").is_some();
-    Some((script, after))
+    until_end(text, at + tag + 1, kind)
+}
+
+/// True if a Vue file has a `<script setup>`. Unlike [`vue_script`], this finds a tag that a line break follows, as
+/// `bun fmt` writes a long one, and one in a language that isn't linted: the template sees their bindings all the same.
+fn vue_has_setup(text: &[u8]) -> bool {
+    let mut at = 0;
+    while let Some(after_name) = script_start(text, at) {
+        at = after_name;
+        if !text.get(at).is_some_and(|&it| is_space(it) || it == b'>') {
+            continue;
+        }
+        let Some(tag) = closing_angle(text, at) else {
+            return false;
+        };
+        if attribute(&text[at..at + tag], b"setup").is_some() {
+            return true;
+        }
+        at += tag + 1;
+    }
+    false
 }
 
 /// `SveltePartialLoader::parse_script`
@@ -230,7 +241,6 @@ fn frontmatter(text: &[u8]) -> Option<Script> {
         start: start + 3,
         end: next_fence()?,
         kind: ScriptKind::Ts,
-        is_setup: false,
     })
 }
 
@@ -270,7 +280,6 @@ fn astro_scripts(text: &[u8]) -> Vec<Script> {
                     start,
                     end: start,
                     kind: ScriptKind::Ts,
-                    is_setup: false,
                 }
             }
             _ => match until_end(text, start, ScriptKind::Ts) {
@@ -304,8 +313,10 @@ fn scripts_of(framework: Framework, text: &[u8]) -> Vec<Script> {
     }
 }
 
-/// The rules oxlint 1.87 turns off for these files, because the template isn't parsed. Unlike oxlint, `no-unused-vars`
-/// and `prefer-const` run here: they skip the template's bindings themselves. `$:` is Svelte syntax.
+/// The rules oxlint 1.87 turns off for these files, because the template isn't parsed. Unlike oxlint, `no-unused-vars`,
+/// `prefer-const` and `no-unassigned-vars` run in Vue and Svelte files: they skip the template's bindings themselves
+/// (`Symbol::is_template_reachable`). Astro keeps oxlint's rules, as its template reads the frontmatter but can't
+/// assign to it. `$:` is Svelte syntax.
 fn runs(framework: Framework, is_typescript: bool, rule: &RuleId) -> bool {
     let RuleId::Known(meta) = rule else {
         return true;
@@ -411,7 +422,7 @@ impl Context<'_, '_> {
         let scripts = scripts_of(framework, text);
         // Vue's template sees every script's top level if the file has a `<script setup>`. Svelte's always does.
         let is_template_reachable = match framework {
-            Framework::Vue => scripts.iter().any(|it| it.is_setup),
+            Framework::Vue => vue_has_setup(text),
             Framework::Svelte => true,
             Framework::Astro => false,
         };

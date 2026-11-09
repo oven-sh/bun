@@ -18,7 +18,7 @@ A variable that's declared without a value and assigned exactly once, in the sam
 
 `--fix` changes `let` to `const` when every variable in the declaration has an initial value and can be `const`. It leaves an `export let` inside a `namespace` alone, because any file can assign to it as `Config.verbose = true`. `--fix-dangerously` changes that one too.
 
-In a `.vue` or `.svelte` file, a top-level binding that the template can assign, as `@click="count++"` or `bind:value` does, isn't reported: the template isn't read. In a Vue file that's every `<script>` if the file has a `<script setup>`, and in a Svelte file both scripts. Everything inside a function is checked as usual. oxlint skips these files entirely.
+With an oxlint config, the scripts of `.vue` and `.svelte` files are linted, but not their templates, which can assign a binding with `@click="count++"` or `bind:value`. So at the top level of a script that the template can use, nothing is reported: every `<script>` of a Vue file that has a `<script setup>`, and both scripts of a Svelte file. Everything inside a function is checked as usual. oxlint skips these files entirely.
 
 This rule is on by default in TypeScript files.
 

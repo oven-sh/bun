@@ -1444,6 +1444,7 @@ impl NoUselessAssignment {
     fn check_variable<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
         if !variable.has_writes()
             || !variable.has_reads()
+            || variable.is_template_reachable()
             || oxlint_skips(variable)
             || oxlint_treats_as_exported(variable, &mut cx.state.exported)
         {

@@ -370,15 +370,10 @@ impl<'a> Symbol<'a> {
             .is_some_and(|it| it.flags & variables::VALUE != 0)
     }
 
-    /// True if the file's template, which isn't parsed, can use this variable: a value at the top level of a script
-    /// that [`File::is_template_reachable`] describes. A template can't use a type.
+    /// True if the file's template, which isn't parsed, can use this variable: it's declared at the top level of a
+    /// script that [`File::is_template_reachable`] describes. A template in TypeScript can use a type too.
     pub fn is_template_reachable(self) -> bool {
-        self.file.is_template_reachable()
-            && self.is_value_variable()
-            && self.scope() == self.file.top_level_scope()
-            && self
-                .declarations()
-                .any(|it| !crate::utils::ts_utils::is_type_import(it))
+        self.file.is_template_reachable() && self.scope() == self.file.top_level_scope()
     }
 
     /// typescript-eslint's `variable.isTypeVariable`: an interface, a type alias, a type

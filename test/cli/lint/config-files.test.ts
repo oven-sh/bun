@@ -3933,16 +3933,29 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(problems).toEqual(["a.vue:2:1 -"]);
   });
 
-  // oxlint skips `no-unused-vars` in .vue files, so there the comment is unused for it.
-  test("a disable comment for no-unused-vars in a .vue file is used", async () => {
+  // oxlint skips `no-unused-vars` in .vue files, so for it every such comment is unused. Here the rule runs, and skips
+  // the bindings that the template can use: the comment above one of those is unused too, for another reason.
+  test("a disable comment for no-unused-vars in a .vue file is used unless the template can use the binding", async () => {
     const { problems } = await lint(
       {
         ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-unused-vars": "error" } }),
         "a.vue": "<script>\n// eslint-disable-next-line no-unused-vars\nconst a = 1;\n</script>\n",
+        "setup.vue": [
+          "<script setup>",
+          "// eslint-disable-next-line no-unused-vars",
+          "const a = 1;",
+          "function f() {",
+          "  // eslint-disable-next-line no-unused-vars",
+          "  const b = 1;",
+          "}",
+          "</script>",
+          "<template>{{ f() }}</template>",
+          "",
+        ].join("\n"),
       },
       [".", "--report-unused-disable-directives"],
     );
-    expect(problems).toEqual([]);
+    expect(problems).toEqual(["setup.vue:2:1 -"]);
   });
 
   // Every row is what oxlint 1.87 prints. Without --type-aware it acts as if type-aware rules didn't exist.

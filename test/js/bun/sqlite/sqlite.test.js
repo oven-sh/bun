@@ -6383,16 +6383,18 @@ describe("db.onInsert, db.onUpdate and db.onDelete", () => {
     });
 
     it("is committed when it's collected, and doesn't call a progress handler that would stop it", () => {
-      using db = new Database(":memory:");
+      using dir = tempDir("sqlite-collected-insert-progress", {});
+      const file = path.join(String(dir), "x.sqlite");
+      using db = new Database(file);
       db.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
       (() => void db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next())();
       let calls = 0;
       db.progressHandler(() => (calls++, true), 1);
       Bun.gc(true);
       expect(calls).toBe(0);
-      db.progressHandler(null);
-      expect(db.inTransaction).toBe(false);
-      expect(db.query("SELECT count(*) AS n FROM ft").get()).toEqual({ n: 1 });
+      // Another connection sees the row only once the INSERT is committed.
+      using other = new Database(file, { readonly: true });
+      expect(other.query("SELECT count(*) AS n FROM ft").get()).toEqual({ n: 1 });
     });
 
     it.each([

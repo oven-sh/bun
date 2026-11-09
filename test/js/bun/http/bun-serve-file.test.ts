@@ -2070,3 +2070,51 @@ console.log(JSON.stringify({ status, later, pendingRequests: server.pendingReque
     expect(exitCode).toBe(0);
   },
 );
+
+// A Bun.file() stream opens its file on first use. pipeThrough() and tee() are that first use, inside fetch().
+// So the open error is thrown in the handler, before a response exists: error() or the handler's own catch answers.
+describe("a body derived from a Bun.file() stream that fails to open", () => {
+  const missing = () => Bun.file(join(import.meta.dir, "does-not-exist.txt")).stream();
+  const derived: [label: string, body: () => ReadableStream][] = [
+    ["pipeThrough(new TransformStream())", () => missing().pipeThrough(new TransformStream())],
+    ['pipeThrough(new CompressionStream("gzip"))', () => missing().pipeThrough(new CompressionStream("gzip"))],
+    ["tee()[0]", () => missing().tee()[0]],
+  ];
+
+  describe.each(derived)("%s", (_label, body) => {
+    it.each(["GET", "HEAD"])("%s reaches error()", async method => {
+      const errors: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch: () => new Response(body()),
+        error(error: NodeJS.ErrnoException) {
+          errors.push(String(error.code));
+          return new Response("not found", { status: 404 });
+        },
+      });
+      const response = await fetch(server.url, { method });
+      expect({ status: response.status, body: await response.text(), errors }).toEqual({
+        status: 404,
+        body: method === "HEAD" ? "" : "not found",
+        errors: ["ENOENT"],
+      });
+    });
+
+    it("a try/catch in the handler answers", async () => {
+      using server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch() {
+          try {
+            return new Response(body());
+          } catch (error) {
+            return new Response(String((error as NodeJS.ErrnoException).code), { status: 404 });
+          }
+        },
+      });
+      const response = await fetch(server.url);
+      expect({ status: response.status, body: await response.text() }).toEqual({ status: 404, body: "ENOENT" });
+    });
+  });
+});

@@ -215,7 +215,7 @@ fn path_that_is_spelled_in_part_marks_the_files_that_fit() {
 
 #[test]
 fn file_leaves_by_its_key() {
-    let uses: [(&str, &[&str], bool); 11] = [
+    let uses: [(&str, &[&str], bool); 17] = [
         (
             r#"delete require.cache[require.resolve("./a.cjs")];"#,
             &["a.cjs"],
@@ -262,6 +262,37 @@ fn file_leaves_by_its_key() {
             "delete require.cache[require.resolve(process.argv[2])];",
             &[],
             true,
+        ),
+        // What a resolver answers for a name without an ending, handed on through one more function: the files whose names go on from it.
+        (
+            r#"delete require.cache[require("node:path").normalize(require.resolve("./a"))];"#,
+            &["a.cjs", "a.test.js"],
+            false,
+        ),
+        (
+            r#"const { fileURLToPath, pathToFileURL } = require("node:url"); delete require.cache[fileURLToPath(pathToFileURL(require.resolve("./a")))];"#,
+            &["a.cjs", "a.test.js"],
+            false,
+        ),
+        (
+            r#"delete require.cache[Bun.fileURLToPath(Bun.pathToFileURL(require.resolve("./a")))];"#,
+            &["a.cjs", "a.test.js"],
+            false,
+        ),
+        (
+            r#"delete require.cache[require("node:path").normalize(require.resolve("./uses"))];"#,
+            &["uses.cjs"],
+            false,
+        ),
+        (
+            r#"delete require.cache[require("node:path").normalize(require.resolve("./a.cjs"))];"#,
+            &["a.cjs"],
+            false,
+        ),
+        (
+            r#"delete require.cache[require("node:path").normalize(require.resolve("./b"))];"#,
+            &[],
+            false,
         ),
     ];
     for (statement, taken_out, is_every_file) in uses {

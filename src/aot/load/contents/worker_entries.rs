@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use bun_ast::Loader;
 use bun_core::fmt::hex_byte_lower;
 use bun_core::strings;
-use bun_sema::atom::{Atom, known};
+use bun_sema::atom::{Atom, KNOWN_TEXTS, known};
 use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue, ends_in_name_with_extension};
 use bun_sema::hir::{
@@ -14,7 +14,8 @@ use bun_sema::hir::{
     PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{
-    ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, ResolvedForm, is_exported,
+    ENCODERS, Encoder, FILE_CALLS, FileCall, ImportSiteKind, ImportSpecifier, ResolvedForm,
+    is_exported,
 };
 use bun_sema::program::HostModuleId;
 use bun_sema::resolve::{
@@ -73,6 +74,15 @@ struct WorkerBuiltins {
     raw_text_maker: Option<BuiltinId>,
     paths: Option<RuntimeModule>,
     urls: Option<RuntimeModule>,
+    file_calls: [FileCallOfLibrary; FILE_CALLS.len()],
+    url_makers: Box<[BuiltinId]>,
+}
+
+struct FileCallOfLibrary {
+    module: Option<RuntimeModule>,
+    member_of_global: Option<BuiltinId>,
+    name: Atom,
+    call: FileCall,
 }
 
 fn worker_builtins() -> &'static WorkerBuiltins {
@@ -91,6 +101,22 @@ fn worker_builtins() -> &'static WorkerBuiltins {
         let raw_text_maker = find_global(b"String")
             .zip(table::find_name(b"raw"))
             .and_then(|(holder, name)| table::own_member(holder, name));
+        let file_calls = FILE_CALLS.map(|(holder, name, call)| {
+            let text = |known: Atom| KNOWN_TEXTS[known.0 as usize];
+            let mut specifiers = holder.specifiers().iter();
+            let global = holder.global().and_then(|global| find_global(text(global)));
+            let member = global
+                .zip(table::find_name(text(name)))
+                .and_then(|(holder, name)| table::own_member(holder, name));
+            FileCallOfLibrary {
+                module: specifiers.find_map(|&it| table::module_by_specifier(text(it))),
+                member_of_global: member.map(table::canonical_id),
+                name,
+                call,
+            }
+        });
+        let makers = file_calls.iter().filter(|row| row.call == FileCall::Url);
+        let url_makers = makers.filter_map(|row| row.member_of_global).collect();
         WorkerBuiltins {
             constructor: global(name_of_constructor).map(table::canonical_id),
             name_of_constructor,
@@ -104,6 +130,8 @@ fn worker_builtins() -> &'static WorkerBuiltins {
             raw_text_maker: raw_text_maker.map(table::canonical_id),
             paths: table::module_by_specifier(b"node:path"),
             urls: table::module_by_specifier(b"node:url"),
+            file_calls,
+            url_makers,
         }
     })
 }
@@ -229,14 +257,38 @@ impl ContentsScan<'_, '_> {
         }
         match self.find_constructor_called(call) {
             Some(Constructor::Worker) => self.add_start_of_worker(expression, call),
-            Some(Constructor::Url) if !self.is_worker_argument(expression) => {
-                if let Some((name_node, name)) = self.find_file_named_by_own_url(call) {
-                    let name = ImportSpecifier::Constant(name);
-                    let form = WorkerNameForm::FromOwnFolder;
-                    self.add_name_written_elsewhere(expression, name_node, name, form);
-                }
+            Some(Constructor::Url) => self.look_at_url_of_file_beside(expression, call),
+            None => {}
+        }
+    }
+
+    pub(super) fn look_at_name_of_url_maker(&mut self, name: ExprId, builtin: BuiltinId) {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        if !(worker_builtins().url_makers).contains(&table::canonical_id(builtin)) {
+            return;
+        }
+        let mut callee = name;
+        while let Parent::Expr(parent) = bound.parent_of_expr(callee) {
+            if hir.type_assertion_operand(parent) == Some(callee) {
+                callee = parent;
+                continue;
             }
-            Some(Constructor::Url) | None => {}
+            if let ExprKind::Call(call) = hir[parent].kind
+                && hir[call].callee == callee
+            {
+                self.look_at_url_of_file_beside(parent, call);
+            }
+            return;
+        }
+    }
+
+    fn look_at_url_of_file_beside(&mut self, url: ExprId, call: CallId) {
+        if !self.is_worker_argument(url)
+            && let Some((name_node, name)) = self.find_file_named_by_own_url(call)
+        {
+            let name = ImportSpecifier::Constant(name);
+            let form = WorkerNameForm::FromOwnFolder;
+            self.add_name_written_elsewhere(url, name_node, name, form);
         }
     }
 
@@ -517,12 +569,36 @@ impl ContentsScan<'_, '_> {
 
     fn spells_same_file(&self, call: CallId) -> bool {
         let hir = self.request.hir;
-        let callee = hir.skip_type_assertions(hir[call].callee);
-        let urls = worker_builtins().urls;
-        let export = urls.and_then(|urls| self.find_export_named(callee, urls));
         hir[call].args.len() == 1
-            && (matches!(export, Some(known::fileURLToPath | known::pathToFileURL))
+            && (self.find_file_call(hir[call].callee).is_some()
                 || self.find_constructor_called(call) == Some(Constructor::Url))
+    }
+
+    fn find_file_call(&self, callee: ExprId) -> Option<FileCall> {
+        let callee = self.request.hir.skip_type_assertions(callee);
+        let builtin = self.find_builtin_that_may_be_named(callee);
+        let builtin = builtin.map(table::canonical_id);
+        let mut read_off: Option<(RuntimeModule, Option<Atom>)> = None;
+        for row in &worker_builtins().file_calls {
+            if builtin.is_some() && row.member_of_global == builtin {
+                return Some(row.call);
+            }
+            let Some(module) = row.module else {
+                continue;
+            };
+            let export = match read_off {
+                Some((read, export)) if read == module => export,
+                _ => {
+                    let export = self.find_export_named(callee, module);
+                    read_off = Some((module, export));
+                    export
+                }
+            };
+            if export == Some(row.name) {
+                return Some(row.call);
+            }
+        }
+        None
     }
 
     pub(super) fn look_at_name_of_worker_constructor(&mut self, expression: ExprId) {
@@ -849,8 +925,7 @@ impl ContentsScan<'_, '_> {
             },
         };
         if name == ImportSpecifier::Unknown
-            && let ExprKind::New(call) = hir[hir.skip_type_assertions(argument)].kind
-            && self.find_constructor_called(call) == Some(Constructor::Url)
+            && let Some(call) = self.find_call_that_makes_url(hir.skip_type_assertions(argument))
             && let Some((_, name)) = self.find_file_named_by_own_url(call)
         {
             let name = ImportSpecifier::Constant(name);
@@ -944,6 +1019,21 @@ impl ContentsScan<'_, '_> {
             return None;
         }
         analysis.import_site_index(ImportSiteKind::Import(import))
+    }
+
+    fn find_call_that_makes_url(&self, made: ExprId) -> Option<CallId> {
+        let hir = self.request.hir;
+        match hir[made].kind {
+            ExprKind::New(call) if self.find_constructor_called(call) == Some(Constructor::Url) => {
+                Some(call)
+            }
+            ExprKind::Call(call)
+                if self.find_file_call(hir[call].callee) == Some(FileCall::Url) =>
+            {
+                Some(call)
+            }
+            _ => None,
+        }
     }
 
     fn find_file_named_by_own_url(&self, call: CallId) -> Option<(ExprId, Atom)> {
@@ -1535,6 +1625,23 @@ mod tests {
         assert_eq!(find_file_named_as_in_executable(&paths, 0, written), None);
         assert_eq!(find(b"/project/lib/w.js"), None);
         assert_eq!(find(b"./lib/w.js"), None);
+    }
+
+    #[test]
+    fn every_function_that_answers_with_a_file_is_found_in_the_library() {
+        for (row, (holder, ..)) in worker_builtins().file_calls.iter().zip(FILE_CALLS) {
+            let name = bstr::BStr::new(KNOWN_TEXTS[row.name.0 as usize]);
+            assert_eq!(
+                row.member_of_global.is_some(),
+                holder.global().is_some(),
+                "{holder:?} {name}"
+            );
+            assert_eq!(
+                row.module.is_some(),
+                !holder.specifiers().is_empty(),
+                "{holder:?} {name}"
+            );
+        }
     }
 
     #[test]

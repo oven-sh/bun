@@ -221,17 +221,36 @@ fn classes_of_library_types(
     })
 }
 
+fn values_of_signatures(
+    files: &Files<'_>,
+    values: &[BuiltinValuePath<'_>],
+    signatures: impl Iterator<Item = FunctionRef>,
+) -> Vec<Option<u32>> {
+    let all = collect_call_signatures(files, values);
+    let methods = MethodsByName::group(files, values);
+    let value_of = |signature: FunctionRef| {
+        let listed = all.get(&signature).copied();
+        let asked = match find_claimants(files, signature) {
+            Claimants::None => None,
+            Claimants::Named(name) => methods.value_of(files, values, name, signature),
+            Claimants::Any => listed,
+        };
+        assert_eq!(asked, listed);
+        listed.map(|value| value.0)
+    };
+    signatures.map(value_of).collect()
+}
+
 fn values_of_functions(
     sources: &[SourceFile],
     path: &str,
     values: &[BuiltinValuePath<'_>],
 ) -> Vec<Option<u32>> {
     with_files(sources, |files| {
-        let signatures = collect_call_signatures(files, values);
         let file = file_at(files, path);
         let functions = (0..files.hir(file).fns.len() as u32).map(FnId);
-        let values = functions.map(|function| signatures.get(&FunctionRef { file, function }));
-        values.map(|value| value.map(|value| value.0)).collect()
+        let signatures = functions.map(|function| FunctionRef { file, function });
+        values_of_signatures(files, values, signatures)
     })
 }
 
@@ -240,17 +259,15 @@ fn values_of_call_signatures(
     values: &[BuiltinValuePath<'_>],
 ) -> Vec<Option<u32>> {
     with_files(&[script("/bun.d.ts", declarations)], |files| {
-        let signatures = collect_call_signatures(files, values);
         let file = file_at(files, "/bun.d.ts");
         let members = files.hir(file).members.iter();
-        members
+        let signatures = members
             .filter(|member| member.kind == MemberKind::CallSignature)
             .map(|member| FunctionRef {
                 file,
                 function: member.func,
-            })
-            .map(|signature| signatures.get(&signature).map(|value| value.0))
-            .collect()
+            });
+        values_of_signatures(files, values, signatures)
     })
 }
 
@@ -374,23 +391,14 @@ fn unknown_subtype_in_default_library_keeps_type_exact() {
 }
 
 #[test]
-fn symbols_list_each_class_with_final_denotation() {
+fn symbols_hold_each_class_with_final_denotation() {
     const SUBTYPE: &[Declaration] = &[subinterface("Registry", &["Map"])];
     with_files(&[LIBRARY, script("/registry.d.ts", SUBTYPE)], |files| {
-        let symbols = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, &[]);
-        let listed: Vec<(Sym, BuiltinTypeClass)> = symbols.classes().collect();
-        assert_eq!(listed.len(), TYPE_PATHS.len() - 1);
-        for &(symbol, class) in &listed {
-            assert_eq!(symbols.class_of(symbol), Some(class));
-        }
-        let listed_classes_of = |name: &str| -> Vec<Option<BuiltinTypeClass>> {
-            let symbol = interface_symbol(files, LIBRARY_PATH, name);
-            let entries = listed.iter().filter(|(candidate, _)| *candidate == symbol);
-            entries.map(|&(_, class)| Some(class)).collect()
-        };
-        assert_eq!(listed_classes_of("Map"), [view(MAP)]);
-        assert_eq!(listed_classes_of("Set"), [exact(SET)]);
-        assert_eq!(listed_classes_of("PropertyDescriptor"), []);
+        let symbols = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, Box::new(|| &[]));
+        let class_of = |name: &str| symbols.class_of(interface_symbol(files, LIBRARY_PATH, name));
+        assert_eq!(class_of("Map"), view(MAP));
+        assert_eq!(class_of("Set"), exact(SET));
+        assert_eq!(class_of("PropertyDescriptor"), None);
     });
 }
 
@@ -441,7 +449,7 @@ fn program_subtypes_are_interfaces_of_files_with_code() {
         module("/a.ts", PROGRAM),
     ];
     with_files(&sources, |files| {
-        let symbols = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, &[]);
+        let symbols = BuiltinTypeSymbols::compute(files, &TYPE_PATHS, Box::new(|| &[]));
         let expected = ["Index", "NamedIndex", "Failure", "Listed"];
         let expected = expected.map(|name| interface_symbol(files, "/a.ts", name));
         assert_eq!(symbols.program_subtypes(), expected);

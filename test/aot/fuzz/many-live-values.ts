@@ -1,12 +1,6 @@
-// Functions with much control flow and many values alive at once: what a code generator has to keep apart in registers and frame slots, across joins, loops, handlers and calls.
-//
-//   values    4 to 1,300 variables a function, each of one kind for good: int32, double, boolean, string, an object of a class, or anything in turn
-//   flow      if, for, while with break and continue, do, switch that falls through, labelled blocks and loops, try with catch and finally, an early return, ?: && || ??
-//   calls     functions the compiler cannot look through, one for each kind; closures that write variables of the function they were made in
-//   waits     one function in three is a generator or an async function: all its variables live across every yield and await
-//
-// Every function is called some hundred times with other arguments, and all its variables go into one number at the end. One line a function.
-// Always TypeScript: the mode `erased` gives the untyped form.
+// Functions with heavy control flow and many values live at once: what a code generator has to keep apart in registers
+// and stack slots across merges, loops, exception handlers and calls. 4 to 1,300 variables per function, each of one
+// fixed type.
 import type { Random } from "./random";
 
 type Kind = "int" | "double" | "flag" | "text" | "box" | "any";
@@ -130,7 +124,7 @@ export function generate(random: Random): string {
       return random.pick([`${a} ${random.pick(["<", ">", "<=", "!==", "==="])} ${below(3) ? b : below(50)}`, `${a} ${random.pick(["<", ">"])} ${b}`, of("flag") ?? `${a} & 1`, `${of("double") ?? a} < ${b}`, `${of("text") ?? '"k"'} < "k"`,
         `${of("box") ?? "spare"}.n > ${b}`, of("any") ? `typeof ${of("any")} === "${random.pick(["number", "string", "object", "undefined"])}"` : `${a} & 2`, `${a} > ${b} && ${b} > ${below(20)}`, `${a} < 0 || ${b} < 0`]);
     };
-    // `turns`: how often the place runs in one call at most. Loops in loops multiply.
+    // `turns`: the maximum number of times the site runs in one call. Nested loops multiply.
     const statements = (left: number, loops: string[], turns: number): string => {
       let all = "";
       for (let more = 1 + below(4); more-- && budget > 0; ) {

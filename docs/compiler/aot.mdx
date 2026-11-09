@@ -29,7 +29,7 @@ What you get:
 
 What it costs:
 
-- The build takes longer. Bun type checks the whole program and compiles every function it can reach, and nothing is cached between builds.
+- The build takes longer. Bun type checks and compiles every function that the program can reach, and nothing is cached between builds.
 - Untyped code can run slower than under the JIT. A JIT watches the program run and learns which objects show up at each property access. The compiler has to prove that at build time. Where it can't, the code looks the property up at run time.
 - [A few things differ from `bun run`](/compiler/compatibility). Built-in objects such as `Array.prototype` are read-only, and code from a string (`eval`, `new Function`) runs in an interpreter.
 
@@ -91,11 +91,39 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
     at /path/to/wrong.ts:1:7
 ```
 
-`bun run` removes your types and never checks them. `bun compile` relies on them, so it type checks the whole program first. If there's a type error, it writes no executable and exits with code `1`.
+`bun run` removes your types and never checks them. `bun compile` relies on them, so it type checks the program first. If there's a type error, it writes no executable and exits with code `1`. It doesn't check code that the executable leaves out: a type error inside a function that nothing calls doesn't stop the build. `bun compile --check` and `bun check --aot` check that code too.
 
-[`bun check --aot`](/runtime/check) reports the same errors and builds nothing. Bun checks each file with the nearest `tsconfig.json`. If you can't fix an error yet, you can [suppress it](/compiler/troubleshooting#the-build-stops-at-a-type-error).
+JavaScript files aren't type checked, even with `checkJs` or `// @ts-check`. A syntax error in one still stops the build.
 
-During development, [`bun run --aot` and `bun test --aot`](/compiler/debugging#run-under-the-compilers-rules) run the same checks and then run your program from its source.
+One error is different. TypeScript gives up on a type after 100 nested steps and reports `TS2589` ("Type instantiation is excessively deep and possibly infinite"). The compiler works such a type out in parts instead, so `TS2589` only stops the build when the type really has no end. `bun check` still reports it wherever `tsc` does.
+
+[`bun check --aot`](/runtime/check) reports every error that stops the build, and also the type errors in code that the build leaves out. It builds nothing. Bun checks each file with the nearest `tsconfig.json`, and reads that config's `files` and `include` for the globals they declare, even if nothing imports them. If you can't fix an error yet, you can [suppress it](/compiler/troubleshooting#the-build-stops-at-a-type-error).
+
+The build only stops where `tsc` reports an error under your own `tsconfig.json`:
+
+- `"noCheck": true` turns type errors off for the build too. Syntax errors still stop it.
+- An entry point that `exclude` rules out isn't type checked, and neither are the files that only it imports. An example is a worker that has a `tsconfig.json` of its own.
+- If `@types/bun` is installed but `types` doesn't name it, the build still reads it, and an error that only comes from its declarations doesn't stop the build.
+- Without a `tsconfig.json`, the build uses [the options of `bun check`](/runtime/check#without-a-tsconfigjson) with TypeScript's default `lib`, which declares the DOM. `typeof window` and `HTMLElement` are not errors.
+
+A few options can't change from one file to the next, because a build has one type checker and the entry point's `tsconfig.json` sets it up: `strictNullChecks`, `strictFunctionTypes`, `strictBindCallApply`, `strictBuiltinIteratorReturn`, `exactOptionalPropertyTypes`, `lib` (or the `target` it defaults from), `allowJs`, `maxNodeModuleJsDepth`, `resolveJsonModule` and `allowArbitraryExtensions`. If a folder's `tsconfig.json` sets one of them differently, the build doesn't type check the files in that folder, and its last line counts them as compiled without types. It still reads their types, but takes each one as a [guess](/compiler/internals#what-types-are-used-for) that the compiled code checks. They behave the same. Run `bun check` in that folder to see their type errors. A package that [publishes its types](/compiler/libraries#publish-a-package-with-its-types) is the exception: it keeps them whatever your `tsconfig.json` says.
+
+During development, [`bun run --aot`](/compiler/debugging#run-under-the-compilers-rules) runs the same checks and then runs your program from its source. [`bun test --aot`](/compiler/debugging#run-your-tests-compiled) compiles your tests and runs the compiled code.
+
+### Harden the compiled code
+
+The compiler leaves out every test that it can prove is not needed. If such a proof were wrong, which would be a bug in Bun, the program could read or write memory that it shouldn't. Every build keeps one guard against that. Where a value enters a place whose type the compiler has proven, it tests the type, unless the code there has already seen it: at a parameter, the result of a call, a store to a field, a variable or a captured variable, and a read of an element. `--aot-harden` puts more tests back, for programs that handle input from people you don't trust and can spare some speed.
+
+```bash terminal icon="terminal"
+bun compile ./server.ts --outfile server --aot-harden=proof-checks,ignore-told-ranges
+```
+
+| Name                 | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `proof-checks`       | Tests those types again where the value is read. Also tests what a branch has narrowed, what the compiler remembers of a field or an element across other code, and that nothing is used after the compiler has ended its life. Objects and closures that would have lived on the stack, or been reused once dead, stay on the heap. Every read or write of an element looks up, at that moment, where the array or typed array keeps its elements, how many there are and how they are stored, and stops the process if the compiler expected something else. |
+| `ignore-told-ranges` | Stops the compiler from telling any read or write that its index is in range. Each one tests its index where it is used, against the length that the array, typed array or string has at that moment, whatever an earlier test or the head of a loop has shown.                                                                                                                                                                                                                                                                                                |
+
+A test that fails, in any build, prints a line that starts with `AOT:` and ends with `This is a bug in Bun.`, and aborts the process. The program can't catch it. Neither name is on by default, and neither changes what a correct program does. In `Bun.build`, pass `compile: { aot: true, aotHarden: ["proof-checks", "ignore-told-ranges"] }`. A name that Bun doesn't know is an error.
 
 ## Read next
 

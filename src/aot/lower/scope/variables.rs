@@ -1,11 +1,12 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{BindingKind, InitialState, SymbolId};
 use bun_sema::check::aot::ClassRef;
+use bun_sema::program::Sym;
 
-use super::{BindingRef, ScopeSlot};
+use super::{BindingRef, ScopeSlot, Storage, environments};
 use crate::ir::generated::{Variable, VariableFlags, VariableInitialization};
-use crate::ir::{ClassSlot, DeclaredType, VariableId, VariableKey};
-use crate::lower::{FileLowering, class, function};
+use crate::ir::{ClassSlot, DeclaredType, Type, TypeTable, VariableId, VariableKey};
+use crate::lower::{FileLowering, class, function, module};
 use crate::modules::ModuleRef;
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -18,7 +19,10 @@ impl FileLowering<'_, '_, '_, '_> {
             VariableKey::Symbol(symbol)
                 if self.bound.binding_kind(symbol.id) == BindingKind::Import =>
             {
-                self.create_untyped_variable(self.bound.symbol(symbol.id).name)
+                Variable {
+                    flags: VariableFlags::IS_IMMUTABLE,
+                    ..self.create_untyped_variable(self.bound.symbol(symbol.id).name)
+                }
             }
             VariableKey::Symbol(symbol) => self.create_symbol_variable(symbol.id),
             VariableKey::ClassSlot { class, slot } => self.create_class_slot_variable(class, slot),
@@ -27,6 +31,47 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             VariableKey::PrivateState { part, .. } => self.create_private_state_variable(part),
             VariableKey::ModuleExports(_) => self.create_untyped_variable(known::exports),
+            VariableKey::MockOf(_) => {
+                let mut declared = DeclaredType::untyped();
+                declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
+                let mut flags = VariableFlags::IS_REPLACEABLE | VariableFlags::HOLDS_MOCK;
+                if self.inputs.modules.originals_beside_mocks_may_run() {
+                    flags |= VariableFlags::ORIGINAL_MAY_RUN;
+                }
+                Variable {
+                    name: None,
+                    declared,
+                    initialization: VariableInitialization::Uninitialized,
+                    flags,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
+            VariableKey::InstantiationState(_) => Variable {
+                name: None,
+                ..self.create_untyped_variable(known::default)
+            },
+            VariableKey::EnvironmentMadeAhead(_) => {
+                let scope = module::file_scope(self);
+                let layout = environments::environment_layout(self, scope);
+                let ty = self.fragment.types.intern(Type::environment(layout));
+                Variable {
+                    name: None,
+                    declared: DeclaredType::from_compiler(ty),
+                    initialization: VariableInitialization::Uninitialized,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
+            VariableKey::RequiredAnswer(_)
+            | VariableKey::RequiresMadeForOwnFile(_)
+            | VariableKey::RequiresMadeForOtherFolders(_) => {
+                let mut declared = DeclaredType::untyped();
+                declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
+                Variable {
+                    declared,
+                    initialization: VariableInitialization::Uninitialized,
+                    ..self.create_untyped_variable(known::default)
+                }
+            }
             VariableKey::InnerModuleExports(callback) => {
                 let module = self.fragment.declare_module(ModuleRef::Inner {
                     file: callback.file,
@@ -37,7 +82,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     ..self.create_untyped_variable(known::exports)
                 }
             }
-            VariableKey::SyntheticExport(_) | VariableKey::Copy(_) => {
+            VariableKey::SyntheticExport(_)
+            | VariableKey::Copy(_)
+            | VariableKey::MockOfRuntimeModule(_) => {
                 unreachable!("link defines the variable of an export")
             }
         };
@@ -48,7 +95,6 @@ impl FileLowering<'_, '_, '_, '_> {
         id
     }
 
-    // It holds `undefined` until the body of the module stores into it.
     fn create_untyped_variable(&mut self, name: Atom) -> Variable {
         Variable {
             name: Some(self.intern_atom(name)),
@@ -59,11 +105,20 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
+    pub(super) fn is_export_that_code_fills(&self, symbol: SymbolId) -> bool {
+        let placement = self.scopes.placement(BindingRef::Symbol(symbol));
+        let (file, id) = (self.file, symbol);
+        placement.is_some_and(|placement| matches!(placement.storage, Storage::Variable(_)))
+            && matches!(self.bound.initial_state(symbol), InitialState::Initialized)
+            && self.scopes.initial_function(symbol).is_none()
+            && self.is_exported_variable(VariableKey::Symbol(Sym { file, id }))
+    }
+
     fn create_symbol_variable(&mut self, symbol: SymbolId) -> Variable {
         let bound = self.bound;
         let binding = BindingRef::Symbol(symbol);
-        let name = self.intern_atom(bound.symbol(symbol).name);
-        let declared = self.location_position(binding);
+        let name = self.intern_variable_name(symbol);
+        let mut declared = self.location_position(binding);
         let (initialization, function) = match self.scopes.initial_function(symbol) {
             Some(source) => {
                 let function = function::declare_source_function(self, source, None);
@@ -72,6 +127,9 @@ impl FileLowering<'_, '_, '_, '_> {
             None => match bound.initial_state(symbol) {
                 InitialState::Undefined => (VariableInitialization::Undefined, None),
                 InitialState::Uninitialized | InitialState::Initialized => {
+                    if self.is_export_that_code_fills(symbol) {
+                        declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
+                    }
                     (VariableInitialization::Uninitialized, None)
                 }
             },
@@ -110,9 +168,17 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn compute_flags(&self, binding: BindingRef) -> VariableFlags {
-        match self.scopes.placement(binding) {
-            Some(placement) if placement.is_immutable => VariableFlags::IS_IMMUTABLE,
-            Some(_) | None => VariableFlags::default(),
+        match (self.scopes.placement(binding), binding) {
+            (Some(placement), _) if placement.is_immutable => VariableFlags::IS_IMMUTABLE,
+            (_, BindingRef::Symbol(symbol)) if self.is_replaceable(symbol) => {
+                VariableFlags::IS_REPLACEABLE
+            }
+            _ => VariableFlags::default(),
         }
+    }
+
+    pub(super) fn is_replaceable(&self, id: SymbolId) -> bool {
+        let file = self.file;
+        self.inputs.modules.is_replaceable(Sym { file, id })
     }
 }

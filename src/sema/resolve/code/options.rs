@@ -20,12 +20,17 @@ pub struct CodeOptions {
     pub node_paths: Vec<Vec<u8>>,
     pub tsconfig_override: Option<Vec<u8>>,
     pub transpiles_by_working_directory: bool,
+    pub allows_es_module_mark: bool,
     pub jsx: JsxSettings,
     pub forced_jsx_development: Option<bool>,
-    pub max_computed_candidates: u32,
+    pub mocks_any_file: bool,
+    pub follows_paths_to_functions_of_other_files: bool,
+    pub builds_executable: bool,
+    pub entry_points_that_run_first: Vec<Vec<u8>>,
+    pub ignores_declared_side_effects: bool,
+    pub looks_for_type_errors: bool,
 }
 
-/// The condition of `exports` and `imports` that names what `--aot` compiles.
 pub const AOT_CONDITION: &[u8] = b"aot";
 
 fn byte_strings(texts: &[&str]) -> Vec<Vec<u8>> {
@@ -58,9 +63,15 @@ impl CodeOptions {
             node_paths: Vec::new(),
             tsconfig_override: None,
             transpiles_by_working_directory: false,
+            allows_es_module_mark: false,
             jsx: JsxSettings::default(),
             forced_jsx_development: None,
-            max_computed_candidates: 1024,
+            mocks_any_file: false,
+            follows_paths_to_functions_of_other_files: false,
+            builds_executable: false,
+            entry_points_that_run_first: Vec::new(),
+            ignores_declared_side_effects: false,
+            looks_for_type_errors: false,
         };
         options.add_custom_condition(AOT_CONDITION);
         options
@@ -185,10 +196,5 @@ mod tests {
         assert_eq!(options.conditions, all);
         let custom = byte_strings(&["aot", "worker", "bun"]);
         assert_eq!(options.custom_conditions, custom);
-    }
-
-    #[test]
-    fn computed_specifiers_have_a_limit() {
-        assert!(CodeOptions::bun_run(b"/p").max_computed_candidates > 0);
     }
 }

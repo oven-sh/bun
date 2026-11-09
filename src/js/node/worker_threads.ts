@@ -30,12 +30,13 @@ const { isAbsolute: pathIsAbsolute } = require("node:path");
 // node's filename validation for non-eval workers: absolute or "./"/"../"-relative
 // paths and file: URL objects; bare specifiers and string URLs are rejected.
 function validateWorkerFilename(filename) {
-  if (filename instanceof URL) {
-    if (filename.protocol === "data:") return `${filename}`;
-    // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
-    return Bun.fileURLToPath(filename);
-  }
   if (typeof filename !== "string") {
+    const { isURL, toPathIfFileURL } = require("internal/url");
+    if (isURL(filename)) {
+      if (filename.protocol === "data:") return `${filename}`;
+      // throws ERR_INVALID_URL_SCHEME (TypeError) for non-file: URLs
+      return toPathIfFileURL(filename);
+    }
     // Not a string or URL: defer to the native Worker constructor, which
     // throws the canonical ERR_INVALID_ARG_TYPE with the exact node message.
     return filename;
@@ -766,34 +767,41 @@ function applyWorkerProcessOverrides() {
   }
   proc.umask = umask;
   // Disabled, throwing stubs (each carries `.disabled === true`, like node).
-  const disabled = ["abort", "chdir"];
-  if (process.platform !== "win32") {
-    disabled.push("setuid", "seteuid", "setgid", "setegid", "setgroups", "initgroups");
-  }
-  // node only disables send/disconnect/channel/connected in workers that inherited an
-  // IPC channel (NODE_CHANNEL_FD); otherwise they stay absent so `if (process.send)` works.
-  const hasIpc = !!process.env.NODE_CHANNEL_FD;
-  if (hasIpc) {
-    disabled.push("send", "disconnect");
-  }
-  for (const name of disabled) {
+  // Each name is spelled where it is defined: the ahead-of-time compiler locks the members of `process` that no code is seen to write, and under a name out of a list it sees a write to all of them.
+  function disabled(name: string) {
     const stub: any = function () {
       throw $ERR_WORKER_UNSUPPORTED_OPERATION(`process.${name}() is not supported in workers`);
     };
     stub.disabled = true;
-    Object.defineProperty(proc, name, { configurable: true, writable: true, enumerable: true, value: stub });
+    return { configurable: true, writable: true, enumerable: true, value: stub };
   }
-  // IPC accessors throw on access only in a worker that inherited an IPC channel.
-  if (hasIpc) {
-    for (const name of ["channel", "connected"]) {
-      Object.defineProperty(proc, name, {
+  Object.defineProperty(proc, "abort", disabled("abort"));
+  Object.defineProperty(proc, "chdir", disabled("chdir"));
+  if (process.platform !== "win32") {
+    Object.defineProperty(proc, "setuid", disabled("setuid"));
+    Object.defineProperty(proc, "seteuid", disabled("seteuid"));
+    Object.defineProperty(proc, "setgid", disabled("setgid"));
+    Object.defineProperty(proc, "setegid", disabled("setegid"));
+    Object.defineProperty(proc, "setgroups", disabled("setgroups"));
+    Object.defineProperty(proc, "initgroups", disabled("initgroups"));
+  }
+  // node only disables send/disconnect/channel/connected in workers that inherited an
+  // IPC channel (NODE_CHANNEL_FD); otherwise they stay absent so `if (process.send)` works.
+  if (process.env.NODE_CHANNEL_FD) {
+    Object.defineProperty(proc, "send", disabled("send"));
+    Object.defineProperty(proc, "disconnect", disabled("disconnect"));
+    // IPC accessors throw on access only in a worker that inherited an IPC channel.
+    function throwing(name: string) {
+      return {
         configurable: true,
         enumerable: false,
         get() {
           throw $ERR_WORKER_UNSUPPORTED_OPERATION(`process.${name} is not supported in workers`);
         },
-      });
+      };
     }
+    Object.defineProperty(proc, "channel", throwing("channel"));
+    Object.defineProperty(proc, "connected", throwing("connected"));
   }
 }
 

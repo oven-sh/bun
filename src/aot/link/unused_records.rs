@@ -1,13 +1,8 @@
-use super::names::ModuleOrigin;
-use super::state::{Numbering, UnitIds};
+use super::numbering::{Numbering, TableIds};
 use super::unit::LinkUnit;
 use crate::builtins::table;
-use crate::ir::generated::{
-    FieldFlags, Layout, LayoutFlags, LayoutKind, PropertyKey, PropertyKeyKind,
-};
-use crate::ir::{
-    Id, InParallel, ModuleId, PropertyKeyId, PropertyKeyTable, StringTable, for_each_mut,
-};
+use crate::ir::generated::{FieldFlags, Layout, LayoutFlags, LayoutKind, PropertyKeyKind};
+use crate::ir::{Id, InParallel, PropertyKeyId, PropertyKeyTable, StringTable, for_each_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub(super) struct UseInput<'a> {
@@ -15,8 +10,6 @@ pub(super) struct UseInput<'a> {
     pub numbering: &'a Numbering,
     pub property_keys: &'a PropertyKeyTable,
     pub strings: &'a StringTable,
-    /// The origin of each module, in a build that logs type mismatches.
-    pub origins_in_logging_build: Option<&'a [ModuleOrigin]>,
     pub in_parallel: InParallel<'a>,
 }
 
@@ -24,12 +17,12 @@ const UNITS_IN_A_TASK: usize = 64;
 const LAYOUTS_IN_A_TASK: usize = 1024;
 
 impl UseInput<'_> {
-    pub(super) fn for_each_unit(&self, visit: &(dyn Fn(&LinkUnit, &UnitIds) + Sync)) {
-        let units: Vec<_> = self.units.chunks(UNITS_IN_A_TASK).collect();
-        let ids: Vec<_> = self.numbering.units.chunks(UNITS_IN_A_TASK).collect();
+    pub(super) fn for_each_unit(&self, visit: &(dyn Fn(&LinkUnit, &TableIds) + Sync)) {
+        let units: Vec<&[LinkUnit]> = self.units.chunks(UNITS_IN_A_TASK).collect();
+        let tables = &self.numbering.tables;
         (self.in_parallel)(units.len(), &|task| {
-            for (unit, ids) in units[task].iter().zip(ids[task]) {
-                visit(unit, ids);
+            for unit in units[task] {
+                visit(unit, &tables[unit.tables as usize]);
             }
         });
     }
@@ -40,6 +33,7 @@ impl UseInput<'_> {
         marks: &[AtomicBool],
         visit: &(dyn Fn(&mut Layout, bool) + Sync),
     ) {
+        debug_assert_eq!(layouts.len(), marks.len());
         let layouts = layouts.chunks_mut(LAYOUTS_IN_A_TASK);
         let mut tasks: Vec<_> = layouts.zip(marks.chunks(LAYOUTS_IN_A_TASK)).collect();
         for_each_mut(&mut tasks, self.in_parallel, &|(layouts, marks)| {
@@ -54,14 +48,12 @@ pub(super) fn unmarked(count: usize) -> Vec<AtomicBool> {
     (0..count).map(|_| AtomicBool::new(false)).collect()
 }
 
-// Most marks are set many times, and a store takes the line from every other thread.
 pub(super) fn set_mark(mark: &AtomicBool) {
     if !mark.load(Ordering::Relaxed) {
         mark.store(true, Ordering::Relaxed);
     }
 }
 
-// Every other layout comes with the code that makes its objects and fills them.
 pub(super) fn is_plain_record(layout: &Layout) -> bool {
     layout.kind == LayoutKind::Record && layout.constructor.is_none()
 }
@@ -78,29 +70,11 @@ fn find_allocated_layouts(input: &UseInput<'_>) -> Vec<AtomicBool> {
     is_allocated
 }
 
-// An object literal names its layout and the places of its fields. The key may be in the program for another unit's sake.
-pub(super) fn find_program_key(
-    input: &UseInput<'_>,
-    unit: &LinkUnit,
-    ids: &UnitIds,
-    key: PropertyKeyId,
-) -> Option<PropertyKeyId> {
-    if let Some(id) = ids.property_keys[key.index()] {
-        return Some(id);
-    }
-    let local = unit.property_keys.get(key);
-    if local.kind != PropertyKeyKind::Text {
-        return None;
-    }
-    let text = input.strings.find(unit.strings.get(local.text?))?;
-    input.property_keys.find(&PropertyKey::from_text(text))
-}
-
 fn find_written_keys(layouts: &[Layout], input: &UseInput<'_>) -> Vec<AtomicBool> {
     let is_written = unmarked(input.property_keys.len());
     input.for_each_unit(&|unit, ids| {
         for &key in &unit.written_keys {
-            if let Some(id) = find_program_key(input, unit, ids, key) {
+            if let Some(id) = ids.property_keys[key.index()] {
                 set_mark(&is_written[id.index()]);
             }
         }
@@ -120,7 +94,6 @@ fn find_written_keys(layouts: &[Layout], input: &UseInput<'_>) -> Vec<AtomicBool
     is_written
 }
 
-// An error has a message that no compiled code stored: a type that requires one describes what native code makes.
 fn is_stored_by_native_code(input: &UseInput<'_>, key: PropertyKeyId) -> bool {
     let key = input.property_keys.get(key);
     let text = key.text.filter(|_| key.kind == PropertyKeyKind::Text);
@@ -128,29 +101,11 @@ fn is_stored_by_native_code(input: &UseInput<'_>, key: PropertyKeyId) -> bool {
     name.is_some_and(table::is_stored_by_native_code)
 }
 
-// The log compares a value with the type as the application declares it, whatever the rest of the program makes or stores.
-fn is_compared_as_declared(input: &UseInput<'_>, layout: &Layout) -> bool {
-    let origin = |module: ModuleId| Some(input.origins_in_logging_build?[module.index()]);
-    let origin = layout.module.and_then(origin);
-    origin.is_some_and(|origin| origin != ModuleOrigin::Runtime)
-}
-
-/// Says of a plain record that nothing in the program makes an object with it: it only describes objects.
-/// Answers whether the program writes a property under `asked_name`.
-pub(super) fn mark_unused_records(
-    layouts: &mut [Layout],
-    input: &UseInput<'_>,
-    asked_name: &[u8],
-) -> bool {
+pub(super) fn mark_unused_records(layouts: &mut [Layout], input: &UseInput<'_>) {
     let is_allocated = find_allocated_layouts(input);
     let is_written = find_written_keys(layouts, input);
-    let asked_text = input.strings.find(asked_name);
-    let asked_key =
-        asked_text.and_then(|text| input.property_keys.find(&PropertyKey::from_text(text)));
-    let is_asked_name_written =
-        asked_key.is_some_and(|key| is_written[key.index()].load(Ordering::Relaxed));
     input.for_each_layout(layouts, &is_allocated, &|layout, is_allocated| {
-        if !is_plain_record(layout) || is_compared_as_declared(input, layout) {
+        if !is_plain_record(layout) {
             return;
         }
         if !is_allocated {
@@ -158,6 +113,9 @@ pub(super) fn mark_unused_records(
         }
         for field in &mut layout.fields {
             let Some(key) = field.key else { continue };
+            if input.property_keys.get(key).kind != PropertyKeyKind::Text {
+                continue;
+            }
             let is_required = field.flags.contains(FieldFlags::IS_REQUIRED);
             if is_written[key.index()].load(Ordering::Relaxed)
                 || (is_required && is_stored_by_native_code(input, key))
@@ -168,15 +126,18 @@ pub(super) fn mark_unused_records(
             field.flags |= FieldFlags::IS_NEVER_WRITTEN;
         }
     });
-    is_asked_name_written
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::Program;
-    use crate::ir::generated::Field;
-    use crate::link::testing::link_sources_without_bun_modules;
+    use crate::ir::generated::{Field, PropertyKey};
+    use crate::ir::{LayoutId, Program};
+    use crate::link::numbering::ProgramCounts;
+    use crate::link::testing::{
+        forward, link_sources_without_bun_modules, units_in_tasks, with_test_files,
+    };
+    use crate::load::PerProject;
 
     const MAIN: &str = r#"
 import { make } from "./maker";
@@ -193,12 +154,14 @@ export function make(id: number): Made { return { id, label: "made" }; }
 "#;
 
     fn find_layout<'a>(program: &'a Program, name: &str) -> &'a Layout {
-        let has_name = |layout: &&Layout| {
-            layout
-                .name
-                .is_some_and(|id| program.strings.get(id) == name.as_bytes())
-        };
-        program.layouts.iter().find(has_name).expect(name)
+        let declaration = format!("interface {name} ");
+        let places = [MAIN, MAKER, FILLED_BY_NATIVE_CODE].map(|source| {
+            let written = source.find(&declaration)?;
+            Some((written + "interface ".len()) as u32)
+        });
+        let is_written_there =
+            |layout: &&Layout| layout.module.is_some() && places.contains(&Some(layout.position));
+        program.layouts.iter().find(is_written_there).expect(name)
     }
 
     fn flags_of_field(program: &Program, layout: &Layout, name: &str) -> FieldFlags {
@@ -249,7 +212,34 @@ export function make(id: number): Made { return { id, label: "made" }; }
         );
     }
 
-    // The only names that the program stores are `name` and `level`.
+    const STORED_UNDER_A_SYMBOL: &str = r#"
+const kState = Symbol("state");
+interface Holder { [kState]: number | undefined; never: number }
+export function store(holder: Holder): void { holder[kState] = 1; }
+export function read(holder: Holder): number { return (holder[kState] ?? 0) + holder.never; }
+"#;
+
+    #[test]
+    fn nobody_says_of_a_key_under_a_symbol_that_it_is_never_written() {
+        let linked = link_sources_without_bun_modules(&[("main.ts", STORED_UNDER_A_SYMBOL)]);
+        let program = &linked.expect("the program links").program;
+        let written = STORED_UNDER_A_SYMBOL.find("interface Holder ").unwrap() + "interface ".len();
+        let is_holder =
+            |layout: &&Layout| layout.module.is_some() && layout.position == written as u32;
+        let holder = program.layouts.iter().find(is_holder).expect("Holder");
+        let is_symbol =
+            |key: PropertyKeyId| program.property_keys.get(key).kind != PropertyKeyKind::Text;
+        let under_symbol = holder
+            .fields
+            .iter()
+            .find(|field| field.key.is_some_and(is_symbol));
+        assert_eq!(under_symbol.expect("kState").flags, FieldFlags::IS_REQUIRED);
+        assert_eq!(
+            flags_of_field(program, holder, "never"),
+            FieldFlags::IS_NEVER_WRITTEN
+        );
+    }
+
     const FILLED_BY_NATIVE_CODE: &str = r#"
 /// <reference lib="dom" />
 interface Warning extends Error { level: number }
@@ -297,7 +287,6 @@ export function make(level: number) { return { name: "made", level }; }
         }
     }
 
-    // An object made with the layout has no place for it, and whoever looks for the name finds nothing at once.
     #[test]
     fn an_optional_field_that_only_native_code_stores_is_never_written() {
         let linked = link_sources_without_bun_modules(&[("main.ts", FILLED_BY_NATIVE_CODE)]);
@@ -319,5 +308,68 @@ export function make(level: number) { return { name: "made", level }; }
             FieldFlags::IS_NEVER_WRITTEN
         );
         assert_eq!(required_names(program, branded), ["level"]);
+    }
+
+    fn record_with_keys(count: usize) -> Layout {
+        let field_under = |key: usize| Field {
+            key: Some(PropertyKeyId::new(key)),
+            ..Field::default()
+        };
+        Layout {
+            kind: LayoutKind::Record,
+            fields: (0..count).map(field_under).collect(),
+            ..Layout::default()
+        }
+    }
+
+    #[test]
+    fn each_unit_is_read_through_its_own_tables() {
+        with_test_files(|projects, [main, first, _]| {
+            let mut units = units_in_tasks(projects, &[&[main], &[first]], |_| {});
+            for (tables, unit) in (0..).zip(&mut units) {
+                unit.tables = tables;
+                unit.allocated_layouts = vec![LayoutId::new(0)];
+                unit.written_keys = vec![PropertyKeyId::new(0)];
+            }
+            let table_ids_mapping_0_to = |layout: usize, key: usize| TableIds {
+                layouts: vec![Some(LayoutId::new(layout))],
+                property_keys: vec![Some(PropertyKeyId::new(key))],
+                ..TableIds::default()
+            };
+            let numbering = Numbering {
+                functions: Vec::new(),
+                layouts: Vec::new(),
+                variables: Vec::new(),
+                modules: Vec::new(),
+                module_failures: PerProject::default(),
+                counts: ProgramCounts {
+                    layouts: 3,
+                    ..ProgramCounts::default()
+                },
+                tables: vec![table_ids_mapping_0_to(2, 0), table_ids_mapping_0_to(0, 2)],
+                layout_keys: Vec::new(),
+            };
+            let mut strings = StringTable::default();
+            let mut property_keys = PropertyKeyTable::default();
+            for name in [b"a", b"b", b"c"] {
+                property_keys.intern(PropertyKey::from_text(strings.intern(name)));
+            }
+            let mut layouts = vec![record_with_keys(3); 3];
+            let input = UseInput {
+                units: &units,
+                numbering: &numbering,
+                property_keys: &property_keys,
+                strings: &strings,
+                in_parallel: &forward,
+            };
+            mark_unused_records(&mut layouts, &input);
+            let (written, never_written) = (FieldFlags::default(), FieldFlags::IS_NEVER_WRITTEN);
+            for (layout, is_allocated) in layouts.iter().zip([true, false, true]) {
+                let is_never_allocated = layout.flags.contains(LayoutFlags::IS_NEVER_ALLOCATED);
+                assert_eq!(is_never_allocated, !is_allocated);
+                let flags = layout.fields.iter().map(|field| field.flags);
+                assert!(flags.eq([written, never_written, written]));
+            }
+        });
     }
 }

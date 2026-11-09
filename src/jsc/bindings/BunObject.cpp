@@ -26,6 +26,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include "headers.h"
 #include "BunObject.h"
+#include "BunCompiledModules.h"
 #include "webcore/streams/BunStreamConsumers.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/JSObject.h>
@@ -309,9 +310,10 @@ static JSValue constructBunVersionWithSha(VM& vm, JSObject*)
     return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_with_sha)));
 }
 
-static JSValue constructIsMainThread(VM&, JSObject* object)
+static JSValue constructIsMainThread(VM& vm, JSObject*)
 {
-    return jsBoolean(uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->scriptExecutionContext()->isMainThread());
+    // A ShadowRealm's global has its own ScriptExecutionContext, so ask the thread's default global.
+    return jsBoolean(defaultGlobalObject(vm)->scriptExecutionContext()->isMainThread());
 }
 
 static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
@@ -330,12 +332,18 @@ static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
     JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.sql", "default"_s);
 #if ENABLE(AOT)
     if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
-        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "sql"_s, 2 }, globalObject))
+        if (JSValue standIn = JSC::AOT::takeStandInForFunctionLeftOut(globalObject, { "sql"_s, 2, true, false }, globalObject))
             return standIn;
     }
 #endif
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
+    return sqlValue;
+}
+
+// `--sql-preconnect` reads Bun.sql before the program runs. A program compiled ahead of time holds what stands behind it only where the program, or an option written into the executable, uses it.
+extern "C" bool Bun__canReadSqlAtStart(Zig::GlobalObject* globalObject)
+{
+    return ::Bun::DeclaredModuleLoad::canLoad(globalObject, ::Bun::InternalModuleRegistry::Field::BunSql);
 }
 
 static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
@@ -349,8 +357,7 @@ static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
     }
 #endif
     RETURN_IF_EXCEPTION(scope, {});
-    auto clientData = WebCore::clientData(vm);
-    RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
+    return sqlValue;
 }
 
 JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
@@ -793,10 +800,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
         return {};
     }
 
-    std::set<EncodedJSValue> objVisited;
-    std::set<EncodedJSValue> subsetVisited;
-    MarkedArgumentBuffer gcBuffer;
-    bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, false, false);
+    Bun::DeepMatchState state;
+    bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(match));
 }
@@ -805,6 +810,11 @@ JSC_DEFINE_HOST_FUNCTION(functionBunNanoseconds, (JSGlobalObject * globalObject,
 {
     uint64_t time = Bun__readOriginTimer(bunVM(globalObject));
     return JSValue::encode(jsNumber(time));
+}
+
+extern "C" SYSV_ABI double AOT__nanoseconds(JSC::JSGlobalObject* globalObject)
+{
+    return static_cast<double>(Bun__readOriginTimer(bunVM(globalObject)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionPathToFileURL, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1160,6 +1170,11 @@ static JSC_DEFINE_CUSTOM_SETTER(setBunObjectMain, (JSC::JSGlobalObject * globalO
 {
     (void)thisEncoded;
     (void)propertyName;
+    if (Bun::hasCompiledModules()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        Bun::willStorePathOfMainModule(defaultGlobalObject(globalObject), JSValue::decode(encodedValue));
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     return BunObject_setter_main(globalObject, encodedValue);
 }
 

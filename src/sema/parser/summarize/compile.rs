@@ -11,7 +11,7 @@ pub struct CompileParseOptions<'a> {
     pub experimental_decorators: bool,
     pub every_file_is_a_module: bool,
     pub reads_jsdoc: bool,
-    pub keeps_function_directives: bool,
+    pub ignores_pure_comments: bool,
 }
 
 pub(super) fn has_reported_error(file: &FileBuilder, compiles: bool) -> bool {
@@ -47,7 +47,8 @@ pub fn parse_for_compile<'s>(
         },
         attach_comments: false,
         compiles: true,
-        keeps_function_directives: options.keeps_function_directives,
+        reads_as_bun_run: true,
+        ignores_pure_comments: options.ignores_pure_comments,
         skips_function_blocks: false,
         reads_module_statements_alone: false,
     };

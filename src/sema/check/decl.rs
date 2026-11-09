@@ -41,6 +41,7 @@ enum Read {
 
 impl Read {
     /// True if the result has the parameter at `index`.
+    #[inline]
     fn has(self, index: usize) -> bool {
         match self {
             Read::First(_) => true,
@@ -49,6 +50,7 @@ impl Read {
     }
 
     /// True if the caller reads the type of the parameter at `index`, which isn't a rest parameter.
+    #[inline]
     fn asks_for(self, index: usize) -> bool {
         match self {
             Read::First(count) => index < count,
@@ -474,8 +476,9 @@ enum Evaluating {
         text: Vec<u8>,
         result: Evaluated,
     },
-    /// A constant's initializer is being evaluated, for a use of the constant at this location.
-    Initializer(Location),
+    /// A constant's initializer is being evaluated, for a use of the constant at this location. The
+    /// number is `evaluations_of_the_moment` from before.
+    Initializer(Location, u32),
     /// A build leaves the entity name that is being evaluated to the run time.
     LeftToRunTime,
 }
@@ -495,6 +498,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn evaluate(&mut self, file: FileId, e: ExprId, location: Location) -> Evaluated {
         if self.is_stack_low() {
             self.bailed_out();
+            self.evaluations_of_the_moment += 1;
             return Evaluated::default();
         }
         let is_for_build = match location {
@@ -503,6 +507,7 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let (mut file, mut e, mut location) = (file, e, location);
         let mut begun: SmallVec<[Evaluating; 4]> = SmallVec::new();
+        let mut begun_constants: SmallVec<[(FileId, VarDeclId); 4]> = SmallVec::new();
         'operand: loop {
             let hir = self.hir(file);
             let mut result = match hir.checked_kind(e) {
@@ -569,11 +574,19 @@ impl<'p, 's> Checker<'p, 's> {
                     match self.evaluate_entity(file, e, location) {
                         Entity::Result(result) => result,
                         Entity::Constant(of, d) => {
-                            self.constants_in_evaluation.push((of, d));
-                            begun.push(Evaluating::Initializer(location));
-                            (file, e) = (of, self.hir(of)[d].init);
-                            location = Location::Variable(of, d);
-                            continue;
+                            self.constants_in_evaluation.insert((of, d));
+                            let before = self.evaluations_of_the_moment;
+                            begun.push(Evaluating::Initializer(location, before));
+                            begun_constants.push((of, d));
+                            file = of;
+                            match self.evaluated_initializers.get(&(of, d, is_for_build)) {
+                                Some(&known) => known,
+                                None => {
+                                    e = self.hir(of)[d].init;
+                                    location = Location::Variable(of, d);
+                                    continue;
+                                }
+                            }
                         }
                     }
                 }
@@ -624,11 +637,17 @@ impl<'p, 's> Checker<'p, 's> {
                         template_result.value = Some(EnumValue::String(self.atoms().intern(&text)));
                         result = template_result;
                     }
-                    Evaluating::Initializer(used_at) => {
-                        let constant = self.constants_in_evaluation.pop();
-                        if is_for_build
-                            && !self.is_const_inlined_by_transpiler(constant, used_at, result)
-                        {
+                    Evaluating::Initializer(used_at, before) => {
+                        let constant = begun_constants.pop();
+                        if let Some((of, d)) = constant {
+                            self.constants_in_evaluation.remove(&(of, d));
+                            // The same at every use, unless it was cut short by what else was in progress.
+                            if before == self.evaluations_of_the_moment {
+                                let key = (of, d, is_for_build);
+                                self.evaluated_initializers.insert(key, result);
+                            }
+                        }
+                        if is_for_build {
                             result.run_time_inputs |= READS_OTHER_FILE_OR_VARIABLE;
                         }
                         result = if used_at.file() != file {
@@ -725,7 +744,11 @@ impl<'p, 's> Checker<'p, 's> {
             Some((of, d)) if !self.constants_in_evaluation.contains(&(of, d)) => {
                 Entity::Constant(of, d)
             }
-            _ => no_value,
+            Some(_) => {
+                self.evaluations_of_the_moment += 1;
+                no_value
+            }
+            None => no_value,
         }
     }
 
@@ -743,11 +766,13 @@ impl<'p, 's> Checker<'p, 's> {
         let Some((declaration, declared @ (of, _))) = declaration.filter(|it| it.1 != used) else {
             let at = self.span_of_expr(file, e);
             self.error_at(at, 2565, &[Arg::Sym(symbol)]);
+            self.evaluations_of_the_moment += 1;
             return Evaluated::default();
         };
         if !is_declared_before_use(self, declared, location) {
             let at = self.span_of_expr(file, e);
             self.error_at(at, 2651, &[]);
+            self.evaluations_of_the_moment += 1;
             return Evaluated {
                 run_time_inputs: ALL_RUN_TIME_INPUTS,
                 ..Evaluated::number(0.0)
@@ -788,8 +813,13 @@ impl<'p, 's> Checker<'p, 's> {
             && member.0 > using.0
             && owner[using.idx()] == owner[member.idx()]
         {
+            self.evaluations_of_the_moment += 1;
             return Evaluated::default();
         }
+        if let Some(known) = self.p.enum_values.get(&self.task, &(file, member)) {
+            return known;
+        }
+        self.evaluations_of_the_moment += 1;
         self.get_enum_member_value(file, member)
     }
 }
@@ -1625,14 +1655,41 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Same, for callers that only read them.
     pub(super) fn local_type_params_of_symbol(&self, sym: Sym) -> SmallVec<[TypeId; 4]> {
-        if let Some((file, params)) = self.files().only_type_param_list(sym) {
-            let distinct = self.distinct_type_params(file, params);
-            return distinct.map(|tp| self.type_param(file, tp)).collect();
+        match self.files().only_type_param_list(sym) {
+            Some((file, params)) => self.types_of_distinct_type_params(file, params),
+            None => self.local_type_params_of_several_declarations(sym),
         }
+    }
+
+    fn types_of_distinct_type_params(
+        &self,
+        file: FileId,
+        params: Span<TypeParamId>,
+    ) -> SmallVec<[TypeId; 4]> {
+        let hir = self.hir(file);
+        let mut types = SmallVec::new();
+        'params: for tp in params.iter() {
+            let name = hir[tp].name;
+            if name != Atom::NONE && name != known::empty {
+                for earlier in params.iter() {
+                    if earlier == tp {
+                        break;
+                    }
+                    if hir[earlier].name == name {
+                        continue 'params;
+                    }
+                }
+            }
+            types.push(self.type_param(file, tp));
+        }
+        types
+    }
+
+    #[inline(never)]
+    fn local_type_params_of_several_declarations(&self, sym: Sym) -> SmallVec<[TypeId; 4]> {
         let lists = self.files().type_param_lists(sym);
         if let [(file, params)] = lists[..] {
-            let distinct = self.distinct_type_params(file, params);
-            return distinct.map(|tp| self.type_param(file, tp)).collect();
+            return self.types_of_distinct_type_params(file, params);
         }
         // Each declaration has its own type parameters here. They're taken from a single
         // declaration as far as it has them, so that whatever a constraint or a default references
@@ -2847,6 +2904,9 @@ impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── type syntax ─────────────────────────────
 
     pub fn types_from_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) -> Vec<TypeId> {
+        if nodes.is_empty() {
+            return Vec::new();
+        }
         let hir = self.hir(file);
         hir.ids(nodes)
             .map(|n| self.type_from_node(file, n))
@@ -2893,8 +2953,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let provisional = self.provisional(q);
         let pushed_at = match provisional {
-            None if in_flow_loop && self.may_be_in_flight(q) => {
-                let first = self.stack.iter().rposition(|&it| it == q);
+            None if in_flow_loop => {
+                let first = self.innermost_in_flight(q);
                 first.and_then(|first| self.flow_loop_pushed_since(first))
             }
             _ => None,
@@ -3373,15 +3433,16 @@ impl<'p, 's> Checker<'p, 's> {
                 {
                     return intended;
                 }
-                let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
+
                 // `resolveTypeReferenceName`: `getUnresolvedSymbolForEntityName`
                 // `NameResolver.Resolve`: for `const` the walk ends without an error at an `as const`.
                 let is_const_assertion = |n| matches!(hir.data(n), NodeData::Expr(e) if matches!(hir[e].kind, ExprKind::AsConst(_)));
                 let ignore_errors = self.bound(file).is_unchecked_type(node.idx())
-                    || names.first() == Some(&known::r#const)
+                    || hir.texts(name).next() == Some(known::r#const)
                         && (hir.find_ancestor(hir.node(node), is_const_assertion)).is_some();
                 let Some(sym) = self.resolve_type_reference_name(file, scope, name, ignore_errors)
                 else {
+                    let names: SmallVec<[Atom; 4]> = hir.texts(name).collect();
                     let args = self.types_from_nodes(file, args);
                     return self.unresolved_name_type(&names, &args);
                 };
@@ -3539,9 +3600,12 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Option<Sym> {
         let found = self.resolve_entity_name(file, scope, name, SymFlags::TYPE, ignore_errors)?;
         // `resolveEntityName` resolves an alias to the first symbol in the chain that has a type meaning.
-        let target = match self.combined_symbol_of_resolved_alias(found) {
-            Some(combined) => combined,
-            None => self.files().resolve_alias_as(found, SymFlags::TYPE)?,
+        let target = match self.files().flags(found).contains(SymFlags::ALIAS) {
+            true => match self.combined_symbol_of_resolved_alias(found) {
+                Some(combined) => combined,
+                None => self.files().resolve_alias_as(found, SymFlags::TYPE)?,
+            },
+            false => found,
         };
         // `getSymbol` only returns a symbol that has the requested meaning.
         self.files()
@@ -3610,7 +3674,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// true if `typeParameters` is nil whatever the alias declares. `getDeclaredTypeOfTypeAlias` assigns it after a
     /// `popTypeResolution` that succeeds, so not while the alias is being resolved, and not after a cycle.
     fn type_alias_links(&mut self, sym: Sym) -> (TypeId, bool) {
-        let declared = self.declared_type(sym);
+        if let Some(known) = self.p.declared_types.get(&self.task, &sym) {
+            return known;
+        }
+        let declared = self.resolve_declared_type(sym);
         let has_no_type_parameters = match self.p.declared_types.get(&self.task, &sym) {
             Some((_, has_no_type_parameters)) => has_no_type_parameters,
             // `pushTypeResolution` has just failed.
@@ -3642,7 +3709,9 @@ impl<'p, 's> Checker<'p, 's> {
         let has_no_type_parameters = !is_class_or_interface
             && flags.contains(SymFlags::TYPE_ALIAS)
             && self.type_alias_links(sym).1;
-        let (least, most) = if has_no_type_parameters {
+        let declares_none = has_no_type_parameters
+            || (self.files().only_type_param_list(sym)).is_some_and(|list| list.1.is_empty());
+        let (least, most) = if declares_none {
             (0, 0)
         } else {
             self.files().type_argument_arity(sym)
@@ -3701,11 +3770,13 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.symbol_to_string(sym)
         };
+        let subject = self.subject_of_arguments(&[Arg::Sym(sym)]);
         self.error_at(
             at,
             code,
             &[Arg::Bytes(&name), Arg::Number(least), Arg::Number(most)],
-        );
+        )
+        .subject = subject;
         is_js.then_some(most)
     }
 
@@ -4418,7 +4489,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `sig_type_params` for a signature that wasn't queried recently.
     fn look_up_sig_type_params(&mut self, sig: SigId) -> List<'p, TypeId> {
         match self.types().sig(sig) {
-            SigData::Synth { type_params, .. } => return List::Permanent(type_params),
+            SigData::Synth(SynthSig { type_params, .. }) => return List::Permanent(type_params),
             SigData::WithReturn { sig: inner, .. } => return self.sig_type_params(*inner),
             // Most functions have none.
             SigData::Decl { file, func, .. } if self.hir(*file)[*func].type_params.is_empty() => {
@@ -4483,7 +4554,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .filter(|&tp| self.types().map(mapper, tp).is_none())
                     .collect()
             }
-            SigData::Synth { type_params, .. } => type_params.to_vec(),
+            SigData::Synth(SynthSig { type_params, .. }) => type_params.to_vec(),
             SigData::WithReturn { sig: inner, .. } => {
                 let inner = *inner;
                 self.sig_type_params(inner).into_vec()
@@ -4788,7 +4859,7 @@ impl<'p, 's> Checker<'p, 's> {
             SigData::WithReturn { sig: inner, .. } => {
                 return self.sig_params_with_first(*inner, count);
             }
-            SigData::Synth { params, .. } => return self.cached_sig_params(sig, params),
+            SigData::Synth(SynthSig { params, .. }) => return self.cached_sig_params(sig, params),
             // Nothing is cached for these.
             SigData::DefaultConstruct { .. } => {
                 return match self.default_construct_base_sig(sig) {
@@ -4926,7 +4997,7 @@ impl<'p, 's> Checker<'p, 's> {
         !parameter.name.is_none()
             && declaration.ty.is_some()
             && (self.p.pat_types.get(&self.task, &(file, declaration.pat))).is_some()
-            && !(self.may_be_in_flight(q) && self.stack.contains(&q))
+            && !self.is_in_flight(q)
     }
 
     /// `m.MapsThisOnly()`
@@ -5150,13 +5221,16 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn derive_return_type(&mut self, sig: SigId) -> TypeId {
         match *self.types().sig(sig) {
             // `case sig.composite != nil`
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ret: TypeId::UNRESOLVED,
                 ref of,
                 is_union,
                 ref type_params,
                 ..
-            } if of.len() > 1 => self.resolve_return_type(sig, |c| {
+            }) if of.len() > 1 => self.resolve_return_type(sig, |c| {
+                if let Some(as_before) = c.return_type_of_grown_signature(sig) {
+                    return as_before;
+                }
                 let returns: Vec<TypeId> = of.iter().map(|&member| c.sig_return(member)).collect();
                 let combined = if is_union {
                     c.union_reduced(&returns)
@@ -5187,7 +5261,7 @@ impl<'p, 's> Checker<'p, 's> {
             } if self.is_optional_call_signature_of(of) => {
                 self.resolve_return_type(sig, |c| c.return_type_of_optional_call_signature(of))
             }
-            SigData::Synth { ret, .. } | SigData::WithReturn { ret, .. } => ret,
+            SigData::Synth(&SynthSig { ret, .. }) | SigData::WithReturn { ret, .. } => ret,
             // `case sig.target != nil`
             SigData::Decl { file, func, mapper } if self.is_instantiating(mapper) => self
                 .resolve_return_type(sig, |c| {
@@ -5204,6 +5278,15 @@ impl<'p, 's> Checker<'p, 's> {
                 self.instantiate(declared, mapper)
             }
         }
+    }
+
+    /// The return type of a signature that combines one signature more than another (`grown_signatures`), none with type
+    /// parameters, if the one more returns what one of the others returns: the same types are united and reduced.
+    fn return_type_of_grown_signature(&mut self, sig: SigId) -> Option<TypeId> {
+        let &(so_far, added) = self.grown_signatures.get(&sig)?;
+        let so_far = self.p.resolved_return_types.get(&self.task, &so_far)?;
+        let added = self.sig_return(added);
+        self.parts(so_far).contains(&added).then_some(so_far)
     }
 
     /// True if `WithReturn { sig: of, ret: UNRESOLVED }` is the clone that
@@ -5332,11 +5415,12 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn sig_this_parameter(&mut self, sig: SigId) -> Option<(TypeId, SigId)> {
         let (file, func, mapper) = match *self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_this_parameter(inner),
-            SigData::Synth { this, .. } => return Some((this?, sig)),
+            SigData::Synth(&SynthSig { this, .. }) => return Some((this?, sig)),
             SigData::Decl { file, func, mapper } => (file, func, mapper),
             _ => return None,
         };
-        if self.hir(file)[func].this_param.is_some() {
+        let declaration = &self.hir(file)[func];
+        if declaration.this_param.is_some() {
             let declared = self.type_of_this_parameter(file, func);
             let ty = self.instantiate(declared, mapper);
             // `instantiateSymbol(sig.thisParameter, m)`, as for the parameters.
@@ -5352,7 +5436,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `getSignatureFromDeclaration`: "If only one accessor includes a this-type annotation, the
         // other behaves as if it had the same type annotation"
-        let other_kind = match self.hir(file)[func].kind {
+        let other_kind = match declaration.kind {
             FnKind::Getter => Some(FnKind::Setter),
             FnKind::Setter => Some(FnKind::Getter),
             _ => None,
@@ -5393,9 +5477,9 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn derive_type_predicate(&mut self, sig: SigId) -> Option<Predicate> {
         let (file, func, mapper) = match *self.types().sig(sig) {
             SigData::WithReturn { sig: inner, .. } => return self.sig_predicate(inner),
-            SigData::Synth {
+            SigData::Synth(&SynthSig {
                 ref of, is_union, ..
-            } => {
+            }) => {
                 return match of[..] {
                     [] => None,
                     // `cloneSignature`, `instantiateSignatureEx`: the declaration, the target and

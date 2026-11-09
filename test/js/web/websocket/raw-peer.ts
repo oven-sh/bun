@@ -29,6 +29,8 @@ export type FrameOptions = {
   rsv2?: boolean;
   rsv3?: boolean;
   mask?: boolean;
+  /** The key of a masked frame; unused without `mask`. Without one, a payload above 64 KiB gets the all-zero key. */
+  key?: readonly [number, number, number, number];
   /** Overrides the length in the frame header, to lie about the payload size. */
   declaredLength?: number;
 };
@@ -87,8 +89,8 @@ export function encodeFrame(opcode: number, payload: Payload = "", options: Fram
   }
   if (!mask) return Buffer.concat([Buffer.from(head), body]);
   // An all-zero mask key leaves the payload unchanged, so large payloads skip the XOR loop.
-  if (body.length > 65536) return Buffer.concat([Buffer.from(head), Buffer.alloc(4), body]);
-  const key = [0x11, 0x22, 0x33, 0x44];
+  if (!options.key && body.length > 65536) return Buffer.concat([Buffer.from(head), Buffer.alloc(4), body]);
+  const key = options.key ?? [0x11, 0x22, 0x33, 0x44];
   const masked = Buffer.allocUnsafe(body.length);
   for (let i = 0; i < body.length; i++) masked[i] = body[i] ^ key[i & 3];
   return Buffer.concat([Buffer.from(head), Buffer.from(key), masked]);

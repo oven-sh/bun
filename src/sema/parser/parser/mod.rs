@@ -89,7 +89,9 @@ macro_rules! stacks {
                 StackLens { $($field: self.$field.len() as u32,)* }
             }
             fn truncate(&mut self, lens: &StackLens) {
-                $(self.$field.truncate(lens.$field as usize);)*
+                $(if self.$field.len() > lens.$field as usize {
+                    self.$field.truncate(lens.$field as usize);
+                })*
             }
             fn clear(&mut self) {
                 $(self.$field.clear();)*
@@ -140,17 +142,9 @@ macro_rules! file_lists {
         }
 
         fn truncate_file(file: &mut FileBuilder, lens: &FileLens) {
-            $(file.$field.truncate(lens.$field as usize);)*
-        }
-
-        /// Returns an empty file that reuses the list allocations of `old`, which loses them.
-        fn recycled_file(old: &mut FileBuilder) -> FileBuilder {
-            let mut file = FileBuilder::default();
-            $(
-                old.$field.clear();
-                file.$field = std::mem::take(&mut old.$field);
-            )*
-            file
+            $(if file.$field.len() > lens.$field as usize {
+                file.$field.truncate(lens.$field as usize);
+            })*
         }
     };
 }
@@ -193,32 +187,50 @@ pub(crate) struct Checkpoint {
 ///
 /// `COMMENTS`: the parser finds the nodes around each comment when the options enable it. See [`comments`]. When it's
 /// false that code is compiled out, so `bun check` and `bun lint`, which don't need those nodes, don't pay for it.
+// The fields are laid out as declared: small ones that most accesses touch first, where x86-64 reaches them with a
+// one-byte offset.
+#[repr(C)]
 pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
-    pub(crate) lx: Lexer<'a>,
-    pub(crate) f: FileBuilder,
-    pub(crate) s: Stacks,
     /// `ctx`
     pub(crate) context: u32,
-    /// Number of enclosing classes.
-    pub(crate) class_depth: u32,
-    pub(crate) options: Options,
     /// See `recovers()`.
     recovers: bool,
-    /// See `reads_jsdoc()`.
-    reads_jsdoc: bool,
-    pub(crate) jsdoc: jsdoc::State,
-    comments: comments::CommentTracker,
-    /// `parsingContexts`: one bit for each `ListKind` that has an open list.
-    pub(crate) lists: u32,
-    pub(crate) declaration_scan: stmt::DeclarationScan,
-    /// The start of the token where the last error was reported, and how many errors were reported there.
-    pub(crate) errors_at: (u32, u32),
     /// `Dialect::ecmascript`, in a JavaScript file.
     pub(crate) is_ecmascript: bool,
-    /// `Dialect::flow`, in a JavaScript file.
-    flow: bool,
-    /// True if a `<` after an expression can start type arguments. False in JavaScript, except for Flow.
-    pub(crate) has_type_arguments_in_expressions: bool,
+    pub(crate) options: Options,
+    pub(crate) lx: Lexer<'a>,
+    comments: comments::CommentTracker,
+    pub(crate) f: FileBuilder,
+    pub(crate) s: Stacks,
+    pub(crate) jsdoc: jsdoc::State,
+    /// The private names the enclosing classes have declared so far.
+    pub(crate) declared_private_names: Vec<Atom>,
+    pub(crate) declared: Declared,
+    /// `notParenthesizedArrow`: the sorted positions where a speculative parse found that no arrow function starts.
+    pub(crate) not_arrows: Vec<u32>,
+    /// See `is_at_parameters_of_function_type`. Each entry is a position, the context and the answer, sorted by
+    /// position.
+    pub(crate) function_type_starts: Vec<(u32, u32, bool)>,
+    /// See `try_type_arguments_in_expression`. Each entry is the position of a `<` and the context. Sorted.
+    pub(crate) not_type_arguments: Vec<(u32, u32)>,
+    pub(crate) declaration_scan: stmt::DeclarationScan,
+    /// The token where `fail` was last called, and its position.
+    failed_at: (T, u32),
+    /// `failed_at`, if that call is why the last `try_parse` rolled back.
+    pub(crate) was_abandoned_at: Option<(T, u32)>,
+    /// The start of the token where the last error was reported, and how many errors were reported there.
+    pub(crate) errors_at: (u32, u32),
+    /// For `rare::NESTED_MODULE_SYNTAX`, in a JavaScript file for oxc: how many `import` and `export` statements were
+    /// parsed at any depth, and how many of the file's top-level statements are one.
+    pub(crate) module_statements: (u32, u32),
+    /// See [`Parsed::end`].
+    pub(crate) end: (u32, u32),
+    /// The last `T?` node and its end.
+    pub(crate) last_nullable_type: (TypeNodeId, u32),
+    /// Number of enclosing classes.
+    pub(crate) class_depth: u32,
+    /// `parsingContexts`: one bit for each `ListKind` that has an open list.
+    pub(crate) lists: u32,
     /// In Flow: the start of the last expression statement.
     pub(crate) flow_statement_start: u32,
     /// `TypeExcludesFlags`: the context bits cleared inside a type, an enum's members and a top-level namespace. oxc
@@ -226,6 +238,25 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) cleared_in_types: u32,
     /// Number of `await` and `yield` expressions created so far.
     pub(crate) suspensions: u32,
+    /// Number of parameters so far with a modifier, a `?` or `...`. It only grows.
+    pub(crate) odd_parameters: u32,
+    /// While `reparses_rest_of_file` is set, the start of the previous statement.
+    pub(crate) reparsed_at: u32,
+    /// The position of a JSX child's `<` for which the native parser still has the token from before the rescan. See
+    /// `rescan_jsx_child`.
+    pub(crate) jsx_child_with_stale_token: u32,
+    /// The position of the `?` of the last optional parameter.
+    pub(crate) parameter_question_pos: u32,
+    /// See `private_name_before_in`. The position of the last one.
+    pub(crate) private_name_before_in: u32,
+    /// Number of speculative parses in progress.
+    speculations: u32,
+    /// See `reads_jsdoc()`.
+    reads_jsdoc: bool,
+    /// `Dialect::flow`, in a JavaScript file.
+    flow: bool,
+    /// True if a `<` after an expression can start type arguments. False in JavaScript, except for Flow.
+    pub(crate) has_type_arguments_in_expressions: bool,
     /// `Dialect::oxc`, in a TypeScript file. See `oxc.rs`.
     is_typescript_for_oxc: bool,
     /// True while parsing a class's `implements` clause for oxc, which accepts any word as a name there.
@@ -234,16 +265,6 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) is_in_interface_extends_for_oxc: bool,
     /// With `reports_like_oxc`: the class being parsed has an abstract member or a method without a body.
     pub(crate) has_odd_members: bool,
-    /// For `rare::NESTED_MODULE_SYNTAX`, in a JavaScript file for oxc: how many `import` and `export` statements were
-    /// parsed at any depth, and how many of the file's top-level statements are one.
-    pub(crate) module_statements: (u32, u32),
-    /// Number of parameters so far with a modifier, a `?` or `...`. It only grows.
-    pub(crate) odd_parameters: u32,
-    /// The private names the enclosing classes have declared so far.
-    pub(crate) declared_private_names: Vec<Atom>,
-    pub(crate) declared: Declared,
-    /// See [`Parsed::end`].
-    pub(crate) end: (u32, u32),
     pub(crate) has_top_level_await: bool,
     /// True if some top-level `await` is unambiguous: `await a`, `for await`, `await using`. `await (a)` doesn't count,
     /// because in a script it calls a function named `await`.
@@ -263,32 +284,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) recovery_hit_await: bool,
     /// True once the `reparseTopLevelAwait` reparse has run past the end of its statement. See `skip_to_element`.
     pub(crate) reparses_rest_of_file: bool,
-    /// While `reparses_rest_of_file` is set, the start of the previous statement.
-    pub(crate) reparsed_at: u32,
-    /// The position of a JSX child's `<` for which the native parser still has the token from before the rescan. See
-    /// `rescan_jsx_child`.
-    pub(crate) jsx_child_with_stale_token: u32,
-    /// The position of the `?` of the last optional parameter.
-    pub(crate) parameter_question_pos: u32,
-    /// See `private_name_before_in`. The position of the last one.
-    pub(crate) private_name_before_in: u32,
-    /// `notParenthesizedArrow`: the sorted positions where a speculative parse found that no arrow function starts.
-    pub(crate) not_arrows: Vec<u32>,
-    /// See `is_at_parameters_of_function_type`. Each entry is a position, the context and the answer, sorted by
-    /// position.
-    pub(crate) function_type_starts: Vec<(u32, u32, bool)>,
-    /// See `try_type_arguments_in_expression`. Each entry is the position of a `<` and the context. Sorted.
-    pub(crate) not_type_arguments: Vec<(u32, u32)>,
-    /// The last `T?` node and its end.
-    pub(crate) last_nullable_type: (TypeNodeId, u32),
-    /// Number of speculative parses in progress.
-    speculations: u32,
     /// True if `report` was called during one of them.
     has_reported: bool,
-    /// The token where `fail` was last called, and its position.
-    failed_at: (T, u32),
-    /// `failed_at`, if that call is why the last `try_parse` rolled back.
-    pub(crate) was_abandoned_at: Option<(T, u32)>,
 }
 
 /// `isAnExternalModuleIndicatorNode`
@@ -319,18 +316,9 @@ fn is_an_external_module_indicator(f: &FileBuilder, id: StmtId) -> bool {
     flags.contains(Flags::EXPORT)
 }
 
-/// A parser's inputs.
-struct Seed<'a> {
-    lx: Lexer<'a>,
-    file: FileBuilder,
-    stacks: Stacks,
-    declared: Declared,
-    options: Options,
-    jsdoc: jsdoc::State,
-}
-
-/// What a finished parser hands back, besides the file.
+/// What a finished parser hands back.
 struct Harvest<'a> {
+    file: Box<FileBuilder>,
     lx: Lexer<'a>,
     stacks: Stacks,
     declared: Declared,
@@ -360,8 +348,8 @@ pub(crate) fn run<'a>(
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
-    let mut f = scratch.recycled.take().unwrap_or_default();
-    let mut file = recycled_file(&mut f);
+    let mut file = *scratch.recycled.take().unwrap_or_default();
+    file.clear();
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
     let mut declared = std::mem::take(&mut scratch.declared);
@@ -390,18 +378,12 @@ pub(crate) fn run<'a>(
     lx.records_html_opens =
         options.dialect.oxc || is_ecmascript && options.dialect.module_or_script;
     let is_compiled_javascript = options.compiles && is_ecmascript;
-    lx.decodes_ill_formed_text = options.compiles;
+    lx.decodes_ill_formed_text = options.compiles || options.reads_as_bun_run;
     let is_flow = options.dialect.flow && options.is_javascript && !options.is_json;
     let is_general = options.recovers || jsdoc.wanted != 0 || is_flow;
-    let seed = Seed {
-        lx,
-        file,
-        stacks,
-        declared,
-        options,
-        jsdoc,
-    };
+
     let Harvest {
+        file: mut f,
         lx,
         stacks,
         declared,
@@ -410,9 +392,15 @@ pub(crate) fn run<'a>(
         has_plain_top_level_await,
         names_await_at_top_level,
     } = match (is_general, options.attach_comments) {
-        (true, _) => Parser::<true, true>::new(seed).parse_into(&mut f),
-        (false, true) => Parser::<false, true>::new(seed).parse_into(&mut f),
-        (false, false) => Parser::<false, false>::new(seed).parse_into(&mut f),
+        (true, _) => {
+            Parser::<true, true>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
+        }
+        (false, true) => {
+            Parser::<false, true>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
+        }
+        (false, false) => {
+            Parser::<false, false>::new(lx, file, stacks, declared, options, jsdoc).parse_source()
+        }
     };
     let (rejection, rejected_at) = (lx.rejection, lx.rejected_at);
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
@@ -435,7 +423,7 @@ pub(crate) fn run<'a>(
         return Err(Rejected::new(Rejection::TooLarge));
     }
     f.comment_directives = comment_directives;
-    if !options.keeps_function_directives {
+    if !options.ignores_pure_comments {
         pure_calls::mark_pure_calls(&mut f, text);
     }
     let names = &mut scratch.names;
@@ -471,15 +459,14 @@ pub(crate) fn run<'a>(
 
 impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
     #[inline(always)]
-    fn new(seed: Seed<'a>) -> Self {
-        let Seed {
-            lx,
-            file,
-            stacks,
-            declared,
-            options,
-            jsdoc,
-        } = seed;
+    fn new(
+        lx: Lexer<'a>,
+        file: FileBuilder,
+        stacks: Stacks,
+        declared: Declared,
+        options: Options,
+        jsdoc: jsdoc::State,
+    ) -> Self {
         let is_script = options.is_javascript && !options.is_json;
         let is_ecmascript = options.dialect.ecmascript && is_script;
         let is_flow = options.dialect.flow && is_script;
@@ -553,8 +540,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         }
     }
 
-    /// Parses the source and stores the result in `file`.
-    fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
+    /// Parses the source.
+    fn parse_source(mut self) -> Harvest<'a> {
         self.source_file();
         self.resolve_top_level_comments();
         self.report_scanner_flagged_errors();
@@ -568,8 +555,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             self.f.rare_syntax |= rare::LEGACY_OCTAL;
         }
         self.note_odd_exports();
-        *file = self.f;
         Harvest {
+            file: Box::new(self.f),
             lx: self.lx,
             stacks: self.s,
             declared: self.declared,
@@ -668,7 +655,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
             if is_in_prologue {
                 is_in_prologue = self.take_directive(statement);
             }
-            has_module_declaration |= self.is_module_declaration(statement);
+            has_module_declaration =
+                has_module_declaration || self.is_module_declaration(statement);
             self.take_stray_decorators(0);
             if is_an_external_module_indicator(&self.f, statement) {
                 self.f.has_module_syntax = true;
@@ -1034,6 +1022,12 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         rest.is_some_and(|rest| rest.starts_with(text))
     }
 
+    #[inline]
+    pub(crate) fn is_followed_by_bytes<const N: usize>(&self, text: &[u8; N]) -> bool {
+        let rest = self.lx.src.get(self.lx.end as usize..);
+        rest.and_then(|rest| rest.first_chunk::<N>()) == Some(text)
+    }
+
     /// Returns the next token's kind.
     #[inline]
     pub(crate) fn peek(&mut self) -> T {
@@ -1101,6 +1095,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
     }
 
     /// `tryParse`: keeps what `parse` built if it returns `Some` and hit no syntax error. Otherwise rolls back.
+    /// Kept out of line because the checkpoint is about 500 bytes, and a caller that recurses would hold one at every level.
+    #[inline(never)]
     pub(crate) fn try_parse<R>(&mut self, parse: impl FnOnce(&mut Self) -> Option<R>) -> Option<R> {
         if self.has_failed() {
             return None;
@@ -1132,7 +1128,8 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         None
     }
 
-    /// `lookAhead` for a test that parses. Everything it built is discarded.
+    /// `lookAhead` for a test that parses. Everything it built is discarded. Kept out of line like `try_parse`.
+    #[inline(never)]
     pub(crate) fn look_ahead_parsing(&mut self, test: impl FnOnce(&mut Self) -> bool) -> bool {
         if self.has_failed() {
             return false;
@@ -1266,8 +1263,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
 
     /// Returns `String(n)` as an atom.
     pub(crate) fn number_name(&mut self, n: f64) -> Atom {
-        let text = bun_sema::atom::number_to_string(n);
-        self.atom(&text)
+        let mut buffer = [0; 124];
+        let text = bun_core::fmt::FormatDouble::dtoa(&mut buffer, n);
+        self.atom(text)
     }
 
     // ───────────────────────────── lists ─────────────────────────────
@@ -1279,10 +1277,16 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         let items = self.s.ids.get(base..).unwrap_or_default();
         let len = items.len() as u32;
         match *items {
-            [only] if self.f.ids.len() < self.f.ids.capacity() => self.f.ids.push(only),
-            _ => self.f.ids.extend_from_slice(items),
+            [] => {}
+            [only] if self.f.ids.len() < self.f.ids.capacity() => {
+                self.f.ids.push(only);
+                self.s.ids.pop();
+            }
+            _ => {
+                self.f.ids.extend_from_slice(items);
+                self.s.ids.truncate(base);
+            }
         }
-        self.s.ids.truncate(base);
         IdList::new(start, len)
     }
 
@@ -1348,10 +1352,16 @@ macro_rules! take_span {
         // Push only when there's capacity, because a push that can grow the list keeps `only` in a recursive function's
         // frame.
         match *items {
-            [only] if $p.f.$field.len() < $p.f.$field.capacity() => $p.f.$field.push(only),
-            _ => $p.f.$field.extend_from_slice(items),
+            [] => {}
+            [only] if $p.f.$field.len() < $p.f.$field.capacity() => {
+                $p.f.$field.push(only);
+                $p.s.$field.pop();
+            }
+            _ => {
+                $p.f.$field.extend_from_slice(items);
+                $p.s.$field.truncate(base);
+            }
         }
-        $p.s.$field.truncate(base);
         $crate::parser::comments::finish_list!($p, $field, start, len);
         bun_sema::hir::Span::new(start, len)
     }};

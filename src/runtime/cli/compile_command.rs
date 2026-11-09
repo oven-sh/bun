@@ -6,6 +6,7 @@ mod failure;
 mod library;
 mod printing;
 mod reports;
+mod stored_strings;
 mod trimming;
 
 use core::ptr::NonNull;
@@ -38,6 +39,7 @@ pub(crate) use self::printing::{
     exit_with_failure, print_error_and_notes, print_failure, print_log, print_report_log,
     write_trimmed_size,
 };
+pub(crate) use self::stored_strings::print_stored_strings_and_exit;
 pub(crate) use self::trimming::{plan_trimming, trim_settings_of};
 
 pub(crate) struct CompileCommand;
@@ -79,12 +81,16 @@ pub(crate) struct ExecutableSettings<'r> {
     pub(crate) target: &'r CompileTarget,
     pub(crate) executable_path: Option<&'r [u8]>,
     pub(crate) root_dir: Fd,
-    pub(crate) env: &'r mut bun_dotenv::Loader,
+    /// The transpiler holds the same pointer and reads through it while the build runs. As with
+    /// `CompileRequest::log`, whoever needs the loader makes a reference for that use alone.
+    pub(crate) env: *mut bun_dotenv::Loader,
     pub(crate) windows: &'r WindowsOptions,
     pub(crate) exec_argv: &'r [u8],
     pub(crate) flags: Flags,
     pub(crate) runtime_options: RuntimeOptions,
     pub(crate) assets: &'r [Box<[u8]>],
+    /// Where the caller writes the metafiles behind the build, seen from the working directory. An empty path: no such file.
+    pub(crate) metafiles: [&'r [u8]; 2],
     pub(crate) embeds_source_maps: bool,
 }
 
@@ -95,7 +101,9 @@ pub(crate) struct CompileRequest<'r, 'a> {
     pub(crate) entry_points: &'r [&'r [u8]],
     pub(crate) bundler: Option<BundlerInputs<'a>>,
     pub(crate) executable: ExecutableSettings<'r>,
-    pub(crate) log: &'r mut bun_ast::Log,
+    /// The transpiler holds the same pointer, and its resolver and bundler write through it while
+    /// the build runs. Whoever writes here makes a reference for that write alone.
+    pub(crate) log: *mut bun_ast::Log,
 }
 
 pub(crate) struct CompileOutcome {
@@ -108,6 +116,8 @@ pub(crate) struct CompileOutcome {
     pub(crate) executable: Option<ExecutableDetails>,
     pub(crate) untyped_note: Vec<u8>,
     pub(crate) module_count: u32,
+    /// `Compilation::names_added_to_builtins`
+    pub(crate) names_added_to_builtins: Vec<(u32, Vec<u8>)>,
     pub(crate) engine_time: Duration,
     pub(crate) executable_time: Duration,
 }
@@ -144,7 +154,6 @@ pub(crate) enum CompileFailure {
     },
     /// `files_checked`: 0 where the build ended before it had counted them.
     Build {
-        refused_entry_points: Option<Vec<u32>>,
         files_checked: u32,
     },
     Assets(AssetError),
@@ -154,5 +163,8 @@ pub(crate) enum CompileFailure {
     FileNotWritten {
         path: Vec<u8>,
         error: bun_sys::Error,
+    },
+    SourceChanged {
+        path: Vec<u8>,
     },
 }

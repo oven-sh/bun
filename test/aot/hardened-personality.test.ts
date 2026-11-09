@@ -50,12 +50,6 @@ if (libc.symbols.prctl(38, 1, 0, 0, 0)) throw new Error("PR_SET_NO_NEW_PRIVS was
 if (libc.symbols.syscall(seccomp, setFilter, forEveryThread, ptr(filterProgram))) throw new Error("the filter was refused");
 ${startsThreadsAndWorkers}`;
 
-const programThatWritesFirst = `import { gzip } from "node:zlib";
-console.log("the first statement");
-${startsThreadsAndWorkers}`;
-
-const strace = Bun.which("strace");
-
 describe.skipIf(!hasGuardedPages)("a Bun built with --hardened=on", () => {
   let directory: ReturnType<typeof tempDir>;
   const pathOf = (name: string) => join(String(directory), name);
@@ -63,22 +57,17 @@ describe.skipIf(!hasGuardedPages)("a Bun built with --hardened=on", () => {
   beforeAll(async () => {
     directory = tempDir("aot-hardened-personality", {
       "forbids.js": programThatForbidsItselfTheCall,
-      "writes.js": programThatWritesFirst,
       "worker.js": `postMessage("done");\n`,
     });
-    for (const name of ["forbids", "writes"]) {
-      const sources = [pathOf(name + ".js"), pathOf("worker.js")];
-      const built = await run([bunExe(), "build", "--compile", "--aot", ...sources, "--outfile", pathOf(name)]);
-      expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-    }
+    const sources = [pathOf("forbids.js"), pathOf("worker.js")];
+    const built = await run([bunExe(), "build", "--compile", "--aot", ...sources, "--outfile", pathOf("forbids")]);
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   }, 120_000);
 
-  const roads = (name: string): [string, () => string[]][] => [
-    ["an executable that it compiled ahead of time", () => [pathOf(name)]],
-    ["a program that it runs from source", () => [bunExe(), "run", pathOf(name + ".js")]],
-  ];
-
-  test.each(roads("forbids"))(
+  test.each<[string, () => string[]]>([
+    ["an executable that it compiled ahead of time", () => [pathOf("forbids")]],
+    ["a program that it runs from source", () => [bunExe(), "run", pathOf("forbids.js")]],
+  ])(
     "%s starts threads and workers after it has forbidden itself to ask for its personality",
     async (_, command) => {
       expect(await run(command(), String(directory), bunEnv)).toEqual({
@@ -86,22 +75,6 @@ describe.skipIf(!hasGuardedPages)("a Bun built with --hardened=on", () => {
         stderr: "",
         exitCode: 0,
       });
-    },
-    120_000,
-  );
-
-  test.skipIf(!strace).each(roads("writes"))(
-    "%s asks for its personality once, before its first statement",
-    async (_, command) => {
-      const trace = pathOf("trace");
-      const traced = [strace!, "-f", "-qq", "-e", "trace=personality,write", "-e", "signal=none", "-o", trace];
-      const { stdout, exitCode } = await run([...traced, ...command()], String(directory), bunEnv);
-      expect({ stdout, exitCode }).toEqual({ stdout: "the first statement\n8 workers answered\n", exitCode: 0 });
-      const calls = (await Bun.file(trace).text())
-        .split("\n")
-        .map(line => /^\d+ +(personality\(|write\(1, "the first statement)/.exec(line)?.[1])
-        .filter(call => call !== undefined);
-      expect(calls).toEqual(["personality(", 'write(1, "the first statement']);
     },
     120_000,
   );

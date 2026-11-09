@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""values-that-fit-their-type.py <n>: a value that satisfies its type is never refused.
-The n-th of 5,607 programs: (kind of type) x (container) x (door). Untyped code of the same file builds an object name by name, or the object is parsed, and it has every member that the type requires. It comes in through the door
-(an annotation, a cast, the result of a function, a parameter, a field, a generic function, a callback, JSON.parse ..), held to the container of the type (the type itself, an array, a tuple, a Map, a Set, a Promise, a record, a
-property, a function that yields it ..). Then it is used in a dozen ordinary ways, one line each. TypeScript's classes are structural, so this goes for classes as for interfaces.
-One program each, because a type that admits such objects does so in the whole program. `names` lists the programs; a name does in place of the number.
-As plain Bun, line by line."""
+"""well-typed-values.py <n>: The n-th of 5,607 programs: (kind of type) x (container) x (entry path). Untyped code in
+the same file builds an object property by property, or the object is parsed. A value that satisfies its type must be
+accepted.
+"""
 import sys, json
 TYPES = {
  'fields': ('class T0 { id: number = 0; name: string = "made"; }', 'T0', '{ id: 1, name: "given" }', True, 'T0', []),

@@ -1,16 +1,16 @@
-// A function is an object. A compiler may leave out the object of a function that is only ever called, as long as nobody can tell.
-// Each case of the first table defines a function, calls it, and looks at it as an object in exactly one way. Alone in its program, nothing else makes the compiler keep the object.
-// In the second table the function sits in a field that nobody has read as a value: what is looked at, copied, listed or changed is the object that holds it.
+// A function is an object. The compiler may omit the object of a function that is only called, as long as nothing can
+// tell. Each case defines a function, calls it, and inspects it as an object in exactly one way, alone in its program.
 //
 //   bun functions-as-objects.ts <folder> [--sample=<how many>] [--only=<regex over names>]
-//
-// writes <folder>/one-look-<definition>.mjs and <folder>/holder-look-<holder>.mjs.
 import { writeCaseFiles, type CaseFile } from "./case-files";
 
 interface Definition {
   name: string;
   definition: string;
-  /** How the function is named afterwards. Without it, `LOOK` in the definition stands for the look, at a parameter `f`. */
+  /**
+   * The function's name afterwards. Without it, `LOOK` in the definition is a placeholder for the inspection of a
+   * parameter `f`.
+   */
   reference?: string;
   use?: string;
 }
@@ -47,7 +47,7 @@ interface Look {
   text: string;
 }
 
-/** `F` stands for the function. */
+/** `F` is a placeholder for the function. */
 const looks: Look[] = [
   { name: "name", text: "F.name" },
   { name: "length", text: "F.length" },

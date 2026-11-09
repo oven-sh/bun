@@ -15,9 +15,7 @@ use crate::load::runtime_modules::{RuntimeFileKind, RuntimeModules};
 use crate::load::sources::{ParsedSource, SourceKind, find_runtime_function};
 use crate::modules::ModuleRef;
 
-/// Decides which of Bun's own files a load reads: those that code asks for which the program can run.
 pub(crate) struct ReachWhileLoading<'a> {
-    /// `Application::Asks`
     pub asks: &'a RuntimeUses,
     state: Guarded<State>,
     function_files: Guarded<FxHashMap<RuntimeFunction, Option<FileId>>>,
@@ -26,7 +24,6 @@ pub(crate) struct ReachWhileLoading<'a> {
 #[derive(Default)]
 struct State {
     known: KnownRegions,
-    /// The imports that the load was told of, each with the version of the file that imports.
     told: FxHashSet<(FileId, u32, FileId)>,
 }
 
@@ -37,7 +34,6 @@ pub(crate) struct LoadInput<'a> {
     pub platform: Platforms,
 }
 
-// A file is known by its number among all of Bun's own files, read or not.
 struct FilesBeingLoaded<'a, 's> {
     runtime_modules: &'a RuntimeModules,
     manifest: &'static Manifest,
@@ -164,20 +160,14 @@ impl<'s> Library<'s> for FilesBeingLoaded<'_, 's> {
 }
 
 impl<'a> ReachWhileLoading<'a> {
-    /// What the walks of the load have read off the files of the program that it has made. `is_last_asked`: nobody asks again.
-    pub(crate) fn known_regions(
+    pub(crate) fn take_known_regions(
         &self,
         runtime_modules: &RuntimeModules,
         files: &Files<'_>,
-        is_last_asked: bool,
     ) -> KnownRegions {
         let find = |file: FileId| files.by_path.get(runtime_modules.path_of(file.0));
-        let mut state = self.state.lock();
-        let known = state.known.renumbered(&find);
-        if is_last_asked {
-            *state = State::default();
-        }
-        known
+        let state = core::mem::take(&mut *self.state.lock());
+        state.known.renumbered(&find)
     }
 
     pub(crate) fn new(asks: &'a RuntimeUses) -> Self {
@@ -188,8 +178,6 @@ impl<'a> ReachWhileLoading<'a> {
         }
     }
 
-    /// `CodeHost::choose_imports_to_follow`. What code asks for and no import of its file leads to is not read for that code, as where
-    /// every import is followed.
     pub(crate) fn choose_imports(
         &self,
         input: &LoadInput<'_>,
@@ -222,10 +210,9 @@ impl<'a> ReachWhileLoading<'a> {
             library: &library,
             names: input.names,
             platform: input.platform,
+            used_at_start: &[],
+            holds_what_unseen_code_finds: false,
             can_load_code_at_run_time: false,
-            further: &RuntimeUses::default(),
-            keeps_code_without_names: false,
-            holds_guessed_code: false,
         };
         let mut state = self.state.lock();
         let State { known, told } = &mut *state;

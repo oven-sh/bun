@@ -99,6 +99,17 @@ impl<'s> Checker<'_, 's> {
         !self.files.options.declarations_of_last_resort.is_empty()
     }
 
+    pub(in crate::check) fn lacks_installed_bun_types(&self) -> bool {
+        self.lacks_bun_types() || self.files.options.type_root_of_last_resort.is_some()
+    }
+
+    pub(in crate::check) fn base_of_interface_without_bun_types(&self, base: TypeId) -> TypeId {
+        match self.lacks_bun_types() && self.is_error_type(base) {
+            true => TypeId::ANY,
+            false => base,
+        }
+    }
+
     pub(in crate::check) fn is_inferred_file(&self, file: FileId) -> bool {
         self.is_in_compile_build(file) && self.files.role(file) == FileRole::Inferred
     }

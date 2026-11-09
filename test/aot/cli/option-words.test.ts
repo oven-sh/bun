@@ -3,6 +3,7 @@ import { existsSync, statSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned } from "../harness/commands";
+import "../harness/real-executables";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -17,50 +18,60 @@ const nm = isWindows ? null : (Bun.which("nm") ?? Bun.which("llvm-nm"));
 async function hasSymbol(path: string, name: string) {
   const { stdout, exitCode } = await spawned([nm!, path], "/", env);
   expect(exitCode).toBe(0);
-  return new RegExp(`^[0-9a-f]+ \\S ${name}$`, "m").test(stdout);
+  // A symbol is named "<function> <file>:<line>", followed by the role of the code for anything but the body.
+  return new RegExp(`^[0-9a-f]+ \\S ${name}(?: |$)`, "m").test(stdout);
 }
 
 const accepted = [
-  "validate",
-  "check=verify-each-pass",
-  "check=Validate,validate-back-end,validate-references",
-  "disable=flow-results",
-  "disable=flow:ProvenLayoutSets",
-  "only-passes=ResolveCalls,inline-calls",
-  "disable-in=0:1",
-  "disable-in=3",
-  "limit=RegExpPatternLengthWithCode:4",
-  "limit=reg-exp-pattern-length-with-code:4",
-  "heat=everything-is-cold",
-  "testing=ignore-branch-hints,force-gc-slow-paths",
-  "testing=ignore-expected-types",
-  "count-branches",
-  "drop-guard=TypeTest:0",
-  "layout-seed=7",
-  "report=report.json",
-  "verify-each-pass",
+  "check=Validate,verify-each-stage",
+  "testing=NoExecutable",
+  "testing=TypeErrorsWarn",
   "references=wide",
   "references=narrow",
+  // The engine has names for ARM64 CPUs alone.
+  ...(process.arch === "arm64" ? ["cpu=apple-m1"] : []),
   "threads=1",
   "erase-types",
   "out=program.bin",
   "symbols",
 ];
 
+const removed = [
+  "disable=flow-results",
+  "only-passes=ResolveCalls",
+  "disable-in=0:1",
+  "limit=MaxDataNodes:1",
+  "heat=everything-is-cold",
+  "sabotage=NoCallWrites",
+  "count-branches",
+  "count-arrivals",
+  "drop-guard=TypeTest:0",
+  "layout-seed=7",
+  "verify-each-pass",
+  "report=report.json",
+  "report-detail=sites",
+  "list=registry",
+  "log-type-mismatches",
+  "separate-programs",
+  "flow=Widened",
+  "validate",
+];
+
+const unknownFlag = (word: string) =>
+  `unknown flag --aot-${word.split("=")[0]}. The --aot flags for this command are --aot, --aot-allow-code-from-disk, --aot-huge-heap`;
+
 const rejected = [
-  ["disable=no-such-switch", "--aot-disable=no-such-switch: unknown switch no-such-switch"],
-  ["only-passes=NoSuchPass", "--aot-only-passes=NoSuchPass: unknown pass NoSuchPass"],
-  ["disable-in=0:0", "--aot-disable-in=0:0: the count must be above 0"],
-  ["limit=RegExpPatternLengthWithCode:many", "--aot-limit=RegExpPatternLengthWithCode:many: many is not a number"],
-  ["limit=MaxDataNodes:1", "--aot-limit=MaxDataNodes:1: the limit MaxDataNodes fails the build and cannot be lowered"],
-  ["layout-seed=seven", "--aot-layout-seed=seven: seven is not a number"],
-  ["testing=DropGuard", "--aot-testing=DropGuard: use drop-guard=<Opcode>:<n>"],
+  ...removed.map(word => [word, unknownFlag(word)]),
+  ["check=no-such-check", "--aot-check=no-such-check: unknown check no-such-check"],
+  ["check=verify-each-pass", "--aot-check=verify-each-pass: unknown check verify-each-pass"],
+  ["testing=DropGuard", "--aot-testing=DropGuard: unknown testing switch DropGuard"],
+  ["cpu=no-such-cpu", "--aot-cpu=no-such-cpu: unknown CPU no-such-cpu"],
   ["threads=many", 'Invalid value for --aot-threads: "many". Must be a whole number above zero'],
   ["threads=0", 'Invalid value for --aot-threads: "0". Must be a whole number above zero'],
   ["references=medium", 'Invalid value for --aot-references: "medium". Must be one of narrow, wide'],
 ];
 
-const hiddenExplainValues = ["unknown-code", "unproven-type", "mutation"];
+const hiddenExplainValues = ["unknown-code", "unproven-type"];
 
 const invalidProgram = {
   "wrong.ts": `import "./missing-module";
@@ -112,20 +123,20 @@ describe.concurrent("the hidden --aot- flags of a build", () => {
     expect(existsSync(executable(folder, "out"))).toBe(false);
   });
 
-  test("--aot-validate requires --aot", async () => {
+  test("--aot-erase-types requires --aot", async () => {
     using dir = tempDir("aot-flag-without-aot", invalidProgram);
     const { stdout, stderr, exitCode } = await bun(
       String(dir),
       "build",
       "--compile",
-      "--aot-validate",
+      "--aot-erase-types",
       "wrong.ts",
       "--outfile",
       "out",
     );
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: "",
-      stderr: "error: --aot-validate requires --aot\n",
+      stderr: "error: --aot-erase-types requires --aot\n",
       exitCode: 1,
     });
   });
@@ -136,39 +147,15 @@ describe.concurrent("the hidden --aot- flags of a build", () => {
       slot(async () => {
         using dir = tempDir("aot-flags-in-summary", pointsProgram);
         const folder = String(dir);
-        const words = [
-          "validate",
-          "check=validate-back-end,validate-references",
-          "disable=flow:ProvenLayoutSets",
-          "disable-in=0:1",
-          "limit=RegExpPatternLengthWithCode:4",
-          "heat=everything-is-cold",
-          "testing=ignore-branch-hints",
-          "count-branches",
-          "layout-seed=7",
-        ];
-        const changed = await compile(
-          folder,
-          "app.ts",
-          "changed",
-          ...words.map(word => "--aot-" + word),
-          "--aot-verify-each-pass",
-        );
+        const flags = ["--aot-check=Validate"];
+        const changed = await compile(folder, "app.ts", "changed", ...flags);
         built(changed);
         expect((changed.stdout + changed.stderr).split("\n")).toContain(
-          "Built with developer options: " +
-            [...words, "check=verify-each-pass"].map(word => "--aot-" + word).join(" "),
+          "Built with developer options: " + flags.join(" "),
         );
         expect(await run(folder, "changed")).toMatchObject({ stdout: "1,3,5 true\n", exitCode: 0, signal: null });
 
-        const unchanged = await compile(
-          folder,
-          "app.ts",
-          "unchanged",
-          "--aot-threads=1",
-          "--aot-symbols",
-          "--aot-report=report.json",
-        );
+        const unchanged = await compile(folder, "app.ts", "unchanged", "--aot-threads=1", "--aot-symbols");
         built(unchanged);
         expect(unchanged.stdout + unchanged.stderr).not.toMatch(/^Built with developer options/m);
         expect(await run(folder, "unchanged")).toMatchObject({ stdout: "1,3,5 true\n", exitCode: 0, signal: null });
@@ -183,6 +170,22 @@ describe.concurrent("the hidden --aot- flags of a build", () => {
         using dir = tempDir("aot-out", pointsProgram);
         const folder = String(dir);
         built(await compile(folder, "app.ts", "out", "--aot-out=program.bin"));
+        expect(statSync(join(folder, "program.bin")).size).toBeGreaterThan(0);
+      }),
+    300_000,
+  );
+
+  // A build with plugins is a call and has no command line.
+  test(
+    "compile.aotOut of Bun.build() writes it too",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-out-by-call", {
+          ...pointsProgram,
+          "build.ts": `await Bun.build({ entrypoints: ["./app.ts"], compile: { outfile: "./out", aot: true, aotOut: "program.bin" } as any });\n`,
+        });
+        const folder = String(dir);
+        expect(await bun(folder, "build.ts")).toMatchObject({ exitCode: 0, signal: null });
         expect(statSync(join(folder, "program.bin")).size).toBeGreaterThan(0);
       }),
     300_000,
@@ -221,11 +224,11 @@ describe.concurrent("the hidden --aot- flags of a build", () => {
   );
 
   test.each([
-    [[], "--aot-log-type-mismatches"],
-    [["run"], "--aot-log-type-mismatches"],
-    [["test"], "--aot-log-type-mismatches"],
-    [["build"], "missed-optimizations"],
-    [["compile"], "missed-optimizations"],
+    [[], "--aot-allow-code-from-disk"],
+    [["run"], "--aot-allow-code-from-disk"],
+    [["test"], "--aot"],
+    [["build"], "guards-json"],
+    [["compile"], "guards-json"],
     [["check"], "--explain"],
   ] as [string[], string][])("bun %j --help lists no hidden value of --explain", async (command, listed) => {
     using dir = tempDir("aot-help", {});

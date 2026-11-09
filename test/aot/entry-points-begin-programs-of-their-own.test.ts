@@ -1,13 +1,12 @@
-// `bun build --compile --aot main.ts worker.ts ..`: a global begins at an entry point, the process at the first and a Worker at the one that it names. What the compiler proves holds for
-// one global, so each entry point begins a program of its own: it is compiled as it is when it is built alone, and nothing that another entry point does costs it anything.
-// An entry point that loads a module by a name that the build does not know may load any of the others, so its program has to hold them all. An executable holds nothing twice: the
-// build has one program then, as it has where nothing starts a Worker.
-import { afterAll, expect } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+// `bun build --compile --aot main.ts worker.ts ..`: a global begins at an entry point, the process at the first and a Worker at the one that it names. All of them are compiled as one
+// program, and each global has its own instances of the modules: what one global does to a class, a function or a list that the files share is nothing to the others.
+import { expect } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
-import { compileCommand, withProgramOutput } from "./harness/flags";
+import { afterAll } from "./harness/default-timeout";
+import { compileCommand } from "./harness/flags";
 import { describe, test } from "./supported";
 
 const shared = `export class Point {
@@ -44,7 +43,7 @@ console.log(await Promise.all(["./worker.ts", "./lib/second.ts", "./lib/second.t
 console.log("main", lengths(points), describe(points[0]), started.join());
 `;
 
-// Each of them would cost the main program a direct call, a field at a fixed place or the type of an argument.
+// None of it holds in the main global: there the method is the one of the class, `describe` gets a Point, and `started` is another list.
 const worker = `import { Point, describe, started } from "./shared.ts";
 started.push("worker");
 Point.prototype.length = function () {
@@ -85,8 +84,8 @@ worker.onmessage = event => {
 `;
 
 // Each test has a folder of its own.
-describe.concurrent("compile/aot/entry points begin programs of their own", () => {
-  const root = String(tempDir("aot-entry-points-begin-programs", {}));
+describe.concurrent("compile/aot/a global begins at each entry point", () => {
+  const root = String(tempDir("aot-entry-points", {}));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
   const carrier = withoutDebugInformation();
 
@@ -109,39 +108,18 @@ describe.concurrent("compile/aot/entry points begin programs of their own", () =
   const build = async (folder: string, entryPoints: string[], name: string) => {
     built(
       await spawned(
-        [
-          bunExe(),
-          ...compileCommand,
-          ...carrier,
-          "--root",
-          ".",
-          withProgramOutput(join(folder, name + ".ir")),
-          ...entryPoints,
-          "--outfile",
-          join(folder, name),
-        ],
+        [bunExe(), ...compileCommand, ...carrier, "--root", ".", ...entryPoints, "--outfile", join(folder, name)],
         folder,
         bunEnv,
       ),
     );
     return join(folder, name);
   };
-  /** The program of entry point `index`, as the front end hands it to the engine. */
-  const programOf = (folder: string, name: string, index: number) =>
-    readFileSync(join(folder, name + ".ir" + (index ? "." + index : "")));
-  const areEqual = (a: Buffer, b: Buffer) => a.equals(b);
 
-  test("each is compiled as it is alone, and they run as in plain Bun", async () => {
+  test("they run as in plain Bun", async () => {
     const folder = write(join(root, "together"), files);
     const entryPoints = ["./main.ts", "./worker.ts", "./lib/second.ts", "./lib/third.ts"];
     const executable = await build(folder, entryPoints, "together");
-    for (const [index, entryPoint] of entryPoints.entries()) {
-      await build(folder, [entryPoint], "alone");
-      expect({
-        entryPoint,
-        isAsAlone: areEqual(programOf(folder, "together", index), programOf(folder, "alone", 0)),
-      }).toEqual({ entryPoint, isAsAlone: true });
-    }
     const plain = await spawned([bunExe(), "run", "main.ts"], folder, bunEnv);
     expect({ exitCode: plain.exitCode, signal: plain.signal, stderr: plain.stderr }).toEqual({
       exitCode: 0,
@@ -157,20 +135,9 @@ describe.concurrent("compile/aot/entry points begin programs of their own", () =
     });
   }, 600_000);
 
-  test("what a worker does is nothing to the main program", async () => {
-    const [loud, quiet] = [
-      write(join(root, "loud"), files),
-      write(join(root, "quiet"), { ...files, "worker.ts": quietWorker }),
-    ];
-    for (const folder of [loud, quiet]) await build(folder, ["./main.ts", "./worker.ts"], "program");
-    expect(areEqual(programOf(loud, "program", 0), programOf(quiet, "program", 0))).toBe(true);
-    expect(areEqual(programOf(loud, "program", 1), programOf(quiet, "program", 1))).toBe(false);
-  }, 600_000);
-
   test("an entry point that loads by a name nobody knows finds the others", async () => {
     const folder = write(join(root, "by-name"), files);
     const executable = await build(folder, ["./starter-of-workers.ts", "./lib/third.ts"], "by-name");
-    expect(existsSync(join(folder, "by-name.ir.1"))).toBe(false);
     const ran = await spawned([executable], root, { ...bunEnv, NAME_OF_MODULE: "./lib/third.ts" });
     expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
       stdout: "loaded by a name: third is in the main thread\nthird began a global\n",
@@ -235,7 +202,6 @@ worker.onmessage = async event => {
     writeFileSync(join(folder, "one-page.wasm"), moduleWithMemory(1));
     writeFileSync(join(folder, "two-pages.wasm"), moduleWithMemory(2));
     const executable = await build(folder, ["./main.ts", "./worker.ts"], "webassembly");
-    expect(existsSync(join(folder, "webassembly.ir.1"))).toBe(true);
     const plain = await spawned([bunExe(), "run", "main.ts"], folder, bunEnv);
     expect(plain.stdout).toContain("worker 1: 0\nworker 2: WebAssembly.RuntimeError: Out of bounds memory access\n");
     const ran = await spawned([executable], root, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
@@ -247,8 +213,8 @@ worker.onmessage = async event => {
     });
   }, 600_000);
 
-  // The host loads what `preload` names into the global of the Worker, so there the entry points meet. No other option does that.
-  test("only the option preload brings entry points together", async () => {
+  // The host loads what `preload` names into the global of the Worker. No other option loads an entry point.
+  test("what the option preload names is loaded into the global of the Worker first", async () => {
     const withOptions = (options: string) =>
       `const worker = new Worker("./worker.ts", ${options});\nworker.onmessage = event => {\n  console.log(event.data);\n  worker.terminate();\n};\n`;
     const folder = write(join(root, "options"), {
@@ -257,19 +223,12 @@ worker.onmessage = async event => {
       "named.ts": withOptions(`{ name: "quiet", env: { A: "1" } }`),
       "preloads.ts": withOptions(`{ preload: ["./lib/third.ts"] }`),
     });
-    await build(folder, ["./worker.ts"], "alone");
-    const alone = programOf(folder, "alone", 0);
     // The module that is loaded first is the first to send a message.
-    for (const [main, isAsAlone, stdout] of [
-      ["./named.ts", true, "quiet\n"],
-      ["./preloads.ts", false, "third began a global\n"],
+    for (const [main, stdout] of [
+      ["./named.ts", "quiet\n"],
+      ["./preloads.ts", "third began a global\n"],
     ] as const) {
       const executable = await build(folder, [main, "./worker.ts", "./lib/third.ts"], "with-options");
-      const hasProgramOfItsOwn = existsSync(join(folder, "with-options.ir.1"));
-      expect({ main, isAsAlone: hasProgramOfItsOwn && areEqual(programOf(folder, "with-options", 1), alone) }).toEqual({
-        main,
-        isAsAlone,
-      });
       const ran = await spawned([executable], root, bunEnv);
       expect({ main, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
         main,
@@ -281,74 +240,69 @@ worker.onmessage = async event => {
     }
   }, 600_000);
 
-  // The files of all programs are read and checked once. Each program is still what it is when it is built alone.
-  const expectEachAsAlone = async (folder: string, entryPoints: string[]) => {
-    await build(folder, entryPoints, "together");
-    for (const [index, entryPoint] of entryPoints.entries()) {
-      await build(folder, [entryPoint], "alone");
-      expect({
-        entryPoint,
-        isAsAlone: areEqual(programOf(folder, "together", index), programOf(folder, "alone", 0)),
-      }).toEqual({ entryPoint, isAsAlone: true });
-    }
-  };
-  const startsWorkers = (...names: string[]) =>
-    names.map(name => `new Worker(${JSON.stringify(name)}).onmessage = event => console.log(event.data);\n`).join("");
-
-  test("a package whose types do not check loses them in every program that holds it", async () => {
-    const manifest = (name: string) => JSON.stringify({ name, version: "1.0.0", type: "module", main: "./index.ts" });
-    const uses = `import { Pair, wrong } from "walked";\nimport { Box, depth, grow } from "symbol";\nimport { Span, middle } from "returned";\n`;
-    const values = `[new Pair(1, 2).sum(), wrong(new Pair(3, 4)), grow(new Box(1, 2)).area(), depth, middle(new Span(1, 5))].join(" ")`;
-    const folder = write(join(root, "packages"), {
-      "node_modules/walked/package.json": manifest("walked"),
-      "node_modules/walked/index.ts": `export class Pair {\n  constructor(public a: number, public b: number) {}\n  sum(): number {\n    return this.a + this.b;\n  }\n}\nexport function wrong(pair: Pair): number {\n  const text: string = pair.a;\n  return (text as any) + 1;\n}\n`,
-      "node_modules/symbol/package.json": manifest("symbol"),
-      "node_modules/symbol/index.ts": `export class Box {\n  constructor(public width: number, public height: number) {}\n  area(): number {\n    return this.width * this.height;\n  }\n}\nconst first = new Box(2, 3);\nexport const depth = first.depth;\nexport function grow(box: Box): Box {\n  return new Box(box.width + 1, box.height + 1);\n}\n`,
-      "node_modules/returned/package.json": manifest("returned"),
-      "node_modules/returned/index.ts": `export class Span {\n  constructor(public from: number, public to: number) {}\n}\nexport function middle(span: Span) {\n  return span.center + (span.from + span.to) / 2;\n}\n`,
-      "main.ts": `${uses}${startsWorkers("./worker.ts", "./other.ts")}console.log(${values});\n`,
-      "worker.ts": `${uses}postMessage(${values});\n`,
-      "other.ts": `import { Span, middle } from "returned";\npostMessage(middle(new Span(10, 50)));\n`,
+  // The exports of these CommonJS files stay in compiled code, and such a file is passed to the host only as what starts the realm. The host asks for the preloads first.
+  test("a CommonJS entry point of a Worker runs behind the CommonJS files that the option preload names", async () => {
+    const folder = write(join(root, "preloads-in-commonjs"), {
+      "main.cjs": `const worker = new Worker("./worker.cjs", { preload: ["./first.cjs", "./second.cjs"] });\nworker.onmessage = event => {\n  console.log(event.data);\n  if (event.data === "the entry ran") worker.terminate();\n};\nworker.onerror = event => console.log("error:", event.message);\n`,
+      "first.cjs": `postMessage("the first preload ran");\n`,
+      "second.cjs": `postMessage("the second preload ran");\n`,
+      "worker.cjs": `postMessage("the entry ran");\n`,
     });
-    await expectEachAsAlone(folder, ["./main.ts", "./worker.ts", "./other.ts"]);
+    const executable = await build(
+      folder,
+      ["./main.cjs", "./worker.cjs", "./first.cjs", "./second.cjs"],
+      "preloads-in-commonjs",
+    );
+    const ran = await spawned([executable], root, bunEnv);
+    expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+      stdout: "the first preload ran\nthe second preload ran\nthe entry ran\n",
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
   }, 600_000);
 
   test("each is configured by the tsconfig.json that its entry point finds", async () => {
     const options = { target: "esnext", module: "esnext", moduleResolution: "bundler" };
     const folder = write(join(root, "configured"), {
       "app/tsconfig.json": JSON.stringify({ compilerOptions: { ...options, strict: true } }),
-      "app/main.ts": `class Holder {\n  first: number | undefined;\n  second = 2;\n}\n${startsWorkers("./work/worker.ts")}console.log(Object.keys(new Holder()).join());\n`,
+      "app/main.ts": `class Holder {\n  first: number | undefined;\n  second = 2;\n}\nnew Worker("./work/worker.ts").onmessage = event => console.log(event.data);\nconsole.log(Object.keys(new Holder()).join());\n`,
       "work/tsconfig.json": JSON.stringify({
         compilerOptions: { ...options, strict: false, useDefineForClassFields: false },
       }),
       "work/worker.ts": `class Holder {\n  first: number;\n  second = 2;\n}\nfunction length(text: string) {\n  return text === null ? -1 : text.length;\n}\npostMessage(Object.keys(new Holder()).join() + " " + length(null));\n`,
     });
-    await expectEachAsAlone(folder, ["./app/main.ts", "./work/worker.ts"]);
-  }, 600_000);
-
-  test("what one program declares for every file is nothing to the others", async () => {
-    const folder = write(join(root, "declared"), {
-      "shared.ts": shared,
-      "globals.ts": `declare global {\n  interface Number {\n    twice(): number;\n  }\n  var counted: number;\n}\nexport const name = "globals";\n`,
-      "main.ts": `import { name } from "./globals.ts";\nimport { Point } from "./shared.ts";\n${startsWorkers("./worker.ts", "./second.ts")}console.log(name, typeof globalThis.counted, new Point(3, 4).length());\n`,
-      "worker.ts": `import { Point } from "./shared.ts";\npostMessage(new Point(6, 8).length());\n`,
-      "second.ts": `import { Point } from "./shared.ts";\npostMessage(new Point(9, 12).length());\n`,
+    const entryPoints = ["./app/main.ts", "./work/worker.ts"];
+    const executable = await build(folder, entryPoints, "configured");
+    // `bun run` takes useDefineForClassFields for every file from the tsconfig.json of the folder that it is started in. An executable takes it from the one that each file finds, with --aot and without.
+    const withoutCompiler = [
+      bunExe(),
+      "build",
+      "--compile",
+      "--root",
+      ".",
+      ...entryPoints,
+      "--outfile",
+      join(folder, "plain"),
+    ];
+    built(await spawned(withoutCompiler, folder, bunEnv));
+    const plain = await spawned([join(folder, "plain")], root, bunEnv);
+    expect({ stdout: plain.stdout, exitCode: plain.exitCode, signal: plain.signal, stderr: plain.stderr }).toEqual({
+      stdout: "first,second\nsecond -1\n",
+      exitCode: 0,
+      signal: null,
+      stderr: "",
     });
-    await expectEachAsAlone(folder, ["./main.ts", "./worker.ts", "./second.ts"]);
-  }, 600_000);
-
-  test("the order in which another program imports the files is nothing to a program", async () => {
-    const folder = write(join(root, "ordered"), {
-      "a.ts": `export class First {\n  constructor(public value: number) {}\n  twice(): number {\n    return this.value * 2;\n  }\n}\n`,
-      "b.ts": `export class Second {\n  constructor(public value: number) {}\n  half(): number {\n    return this.value / 2;\n  }\n}\n`,
-      "main.ts": `import { Second } from "./b.ts";\nimport { First } from "./a.ts";\n${startsWorkers("./worker.ts")}console.log(new First(2).twice(), new Second(2).half());\n`,
-      "worker.ts": `import { First } from "./a.ts";\nimport { Second } from "./b.ts";\npostMessage(new First(4).twice() + new Second(4).half());\n`,
+    const ran = await spawned([executable], root, bunEnv);
+    expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
+      stdout: plain.stdout,
+      stderr: "",
+      exitCode: 0,
+      signal: null,
     });
-    await expectEachAsAlone(folder, ["./main.ts", "./worker.ts"]);
   }, 600_000);
 
-  // A file is compiled once for each program that holds it.
-  test("entry points that share most of their files are one program", async () => {
+  test("a large namespace that two entry points import answers in each global", async () => {
     const functions = Array.from(
       { length: 6000 },
       (_, i) => `export function add${i}(value: number): number {\n  return value + ${i};\n}\n`,
@@ -356,11 +310,10 @@ worker.onmessage = async event => {
     const uses = `import * as large from "./large.ts";\n`;
     const folder = write(join(root, "shared-files"), {
       "large.ts": functions.join(""),
-      "main.ts": `${uses}${startsWorkers("./worker.ts")}console.log(large.add1(1));\n`,
+      "main.ts": `${uses}new Worker("./worker.ts").onmessage = event => console.log(event.data);\nconsole.log(large.add1(1));\n`,
       "worker.ts": `${uses}postMessage(large.add2(2));\n`,
     });
     const executable = await build(folder, ["./main.ts", "./worker.ts"], "shared-files");
-    expect(existsSync(join(folder, "shared-files.ir.1"))).toBe(false);
     const ran = await spawned([executable], root, bunEnv);
     expect({ stdout: ran.stdout, stderr: ran.stderr, signal: ran.signal }).toEqual({
       stdout: "2\n4\n",
@@ -370,10 +323,9 @@ worker.onmessage = async event => {
   }, 600_000);
 
   // Pages and plugins are further entry points by the hundred, and all of them are loaded into the one global.
-  test("where nothing starts a Worker the entry points are one program", async () => {
-    const folder = write(join(root, "one-program"), files);
-    const executable = await build(folder, ["./starter.ts", "./lib/third.ts"], "one-program");
-    expect(existsSync(join(folder, "one-program.ir.1"))).toBe(false);
+  test("where nothing starts a Worker an entry point is loaded by its name", async () => {
+    const folder = write(join(root, "one-global"), files);
+    const executable = await build(folder, ["./starter.ts", "./lib/third.ts"], "one-global");
     const ran = await spawned([executable], root, { ...bunEnv, NAME_OF_MODULE: "./lib/third.ts" });
     expect({ stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
       stdout: "loaded by a name: third is in the main thread\n",

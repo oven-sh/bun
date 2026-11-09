@@ -4,8 +4,8 @@ use bun_lint::rule::Plugin;
 /// This rule disallows IIFEs with a parenthesized arrow function body.
 pub struct NoUnreadableIife;
 
-const NO_UNREADABLE_IIFE: Message = Message::new("", "IIFE with parenthesized arrow function body is considered unreadable.");
-const USE_BLOCK_STATEMENT_BODY: Message = Message::new("", "Use a block statement body.");
+const NO_UNREADABLE_IIFE: &Message = &Message::new("", "IIFE with parenthesized arrow function body is considered unreadable.");
+const USE_BLOCK_STATEMENT_BODY: &Message = &Message::new("", "Use a block statement body.");
 
 impl Rule for NoUnreadableIife {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-unreadable-iife", Kind::Suggestion).has_suggestions();

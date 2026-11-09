@@ -32,36 +32,49 @@ console.log(rows + " rows")
 
 // GENERATED: show
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|string>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = TypeTest v0 testedType=null
-// CHECK-NEXT: Branch v1 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v2):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
+// CHECK-NEXT: Branch v1 -> taken b1(| 0), notTaken b2(| 0)
+// CHECK-NEXT: b1(v2):
 // CHECK-NEXT: v3 = String string="-"
-// CHECK-NEXT: Jump -> next b6(v3)
-// CHECK-NEXT: b4(v4):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v5 = PropGet v4 key="index"
-// CHECK-NEXT: v6 = Convert v5 declared={type=number site=[[w_2]]} illTypedCause=Assertion
+// CHECK-NEXT: Jump -> next b8(v3)
+// CHECK-NEXT: b2(v4):
+// CHECK-NEXT: v5 = NarrowByTest v0, v4
+// CHECK-NEXT: v6 = PropGet v5 key="index"
 // CHECK-NEXT: v7 = String string=":"
 // CHECK-NEXT: v8 = Add v6, v7
 // CHECK-NEXT: v9 = Builtin builtin=JSON
 // CHECK-NEXT: v10 = PropGet v9 key="stringify"
 // CHECK-NEXT: v11 = Convert v10 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v12 = Builtin builtin=Array
-// CHECK-NEXT: v13 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v14 = Call v13, v12, v4 calleeName="Array.from"
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v16 = Call v11, v9, v15 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|string site=[[w_4]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v18 = Add v8, v17
-// CHECK-NEXT: Jump -> next b6(v18)
-// CHECK-NEXT: b6(v19):
-// CHECK-NEXT: v20 = Convert v19 declared={type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v20
+// CHECK-NEXT: v12 = Builtin builtin=ArrayFrom
+// CHECK-NEXT: v13 = IsPristineArray v5
+// CHECK-NEXT: Branch v13 -> taken b3(), notTaken b4()
+// CHECK-NEXT: b3():
+// CHECK-NEXT: v14 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v14, v5
+// CHECK-NEXT: v16 = Convert v14 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b7(v16)
+// CHECK-NEXT: b4():
+// CHECK-NEXT: v17 = TypeTest v5 testedType=string
+// CHECK-NEXT: Branch v17 -> taken b5(| 0), notTaken b6(| 0)
+// CHECK-NEXT: b5(v18):
+// CHECK-NEXT: v19 = NewArray contents=anything
+// CHECK-NEXT: AppendSpread v19, v18
+// CHECK-NEXT: v21 = Convert v19 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b7(v21)
+// CHECK-NEXT: b6(v22):
+// CHECK-NEXT: v23 = Builtin builtin=Array [isNotReadFromHolder]
+// CHECK-NEXT: v24 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+// CHECK-NEXT: v25 = Call v24, v23, v22
+// CHECK-NEXT: v26 = Convert v25 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+// CHECK-NEXT: Jump -> next b7(v26)
+// CHECK-NEXT: b7(v27):
+// CHECK-NEXT: v28 = Call v11, v9, v27 calleeKey="stringify" calleeName="JSON.stringify"
+// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+// CHECK-NEXT: v30 = Add v8, v29
+// CHECK-NEXT: Jump -> next b8(v30)
+// CHECK-NEXT: b8(v31):
+// CHECK-NEXT: v32 = Convert v31 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+// CHECK-NEXT: Return v32
 // CHECK-NEXT: }

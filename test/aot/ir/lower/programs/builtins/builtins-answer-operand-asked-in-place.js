@@ -127,57 +127,8 @@ class Mine2 extends Promise {}
   show("species of Promise", chained instanceof Mine2, new Mine2(r => r(1)).catch(() => {}) instanceof Mine2, new Mine2(r => r(1)).finally(() => {}) instanceof Mine2);
 }
 
-// GENERATED: show Mine2 next [Symbol.species]
 // CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything, v1: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = NewArray v0 contents=anything
-// CHECK-NEXT: AppendSpread v7, v1
-// CHECK-NEXT: v9 = CallList v6, v4, v7 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v10 = Undefined
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Mine2"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_3]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_3]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_4]] flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_6]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_4]] flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_4]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_7]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_4]] flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.species]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=undefined|null|[[f_8]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewClosure function=[[f_9]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

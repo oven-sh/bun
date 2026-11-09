@@ -6,11 +6,11 @@ use bun_lint::prelude::*;
 /// `vi.setConfig({ testTimeout: ... })`.
 pub struct RequireTestTimeout<const RUNNER: u8 = { jest::VITEST }>;
 
-const TEST_MISSING_TIMEOUT: Message = Message::new("", "Test is missing a timeout.");
-const CONFIG_MISSING_TIMEOUT_OBJECT: Message = Message::new("", "`vi.setConfig()` is missing a `testTimeout` property.");
-const TEST_OPTIONS_MISSING_TIMEOUT_PROPERTY: Message = Message::new("", "Test options object is missing a `timeout` property.");
-const TIMEOUT_MUST_BE_A_NUMBER: Message = Message::new("", "Timeout must be a number.");
-const TIMEOUT_MUST_BE_NON_NEGATIVE: Message = Message::new("", "Timeout must not be negative.");
+const TEST_MISSING_TIMEOUT: &Message = &Message::new("", "Test is missing a timeout.");
+const CONFIG_MISSING_TIMEOUT_OBJECT: &Message = &Message::new("", "`vi.setConfig()` is missing a `testTimeout` property.");
+const TEST_OPTIONS_MISSING_TIMEOUT_PROPERTY: &Message = &Message::new("", "Test options object is missing a `timeout` property.");
+const TIMEOUT_MUST_BE_A_NUMBER: &Message = &Message::new("", "Timeout must be a number.");
+const TIMEOUT_MUST_BE_NON_NEGATIVE: &Message = &Message::new("", "Timeout must not be negative.");
 
 impl<const RUNNER: u8> Rule for RequireTestTimeout<RUNNER> {
     const META: Meta = jest::meta(RUNNER, "require-test-timeout", Kind::Suggestion);

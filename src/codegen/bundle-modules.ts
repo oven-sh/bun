@@ -16,21 +16,15 @@ import { readBuiltinUses } from "../../scripts/build/trim/builtin-uses.ts";
 import { featureNamed } from "../../scripts/build/trim/features.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
-import { locate, nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
+import { nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
 import { Guards } from "./builtins/guards.ts";
-import { listBundledNamesOfModule } from "./bundled-names";
-import {
-  encodeBundledPositions,
-  encodeBundledPositionsOfSecondText,
-  formatBundledPositions,
-} from "./bundled-positions";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP } from "./generate-js2native";
 import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry, idToEnumName } from "./internal-module-registry-scanner";
 import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
 import { recordedPointer, removableFeatures } from "./removable-entry-points.ts";
-import { define } from "./replacements";
+import { assertNoDestructuredGlobalThis, assertNoStoredFunctionBehindComma, define } from "./replacements";
 
 const builtinUsesFlag = "--builtin-uses=";
 const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
@@ -253,7 +247,6 @@ const config_cli = [
   `IS_BUN_DEVELOPMENT=${String(!!debug)}`,
   "--define",
   `__intrinsic__debug=${debug ? "$debug_log_enabled" : "false"}`,
-  "--sourcemap=external",
   "--outdir",
   path.join(TMP_DIR, "modules_out"),
 ];
@@ -272,16 +265,14 @@ if (out.exitCode !== 0) {
 mark("Bundle modules");
 
 const outputs = new Map();
-const bundledNames: string[] = [];
 
 for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   const file_path = entrypoint.slice(TMP_DIR.length + 1).replace(/\.ts$/, ".js");
-  const output = fs
-    .readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8")
-    .replace(/\n\/\/# debugId=\w+\n$/, "");
-  const sourceMap = JSON.parse(fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path + ".map"), "utf8"));
+  const output = fs.readFileSync(path.join(TMP_DIR, "modules_out", file_path), "utf8");
+  // Checks the input, since --minify-syntax turns `var a = globalThis.a; var b = globalThis.b;` into a destructuring.
+  assertNoDestructuredGlobalThis(fs.readFileSync(entrypoint, "utf8"), file_path);
   const written = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
-  bundledNames.push(...listBundledNamesOfModule(moduleList[i], written, output, sourceMap));
+  assertNoStoredFunctionBehindComma(written, moduleList[i]);
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");
   let usesAssert = output.includes("$assert");
@@ -312,32 +303,11 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
   }
 
-  const readByCompiler = locate(moduleList[i]);
-  bundledNames.push(
-    formatBundledPositions(
-      moduleList[i],
-      readByCompiler === path.join(BASE, moduleList[i])
-        ? encodeBundledPositions(written, output, sourceMap, captured)
-        : encodeBundledPositionsOfSecondText(
-            fs.readFileSync(readByCompiler, "utf8"),
-            written,
-            output,
-            sourceMap,
-            captured,
-          ),
-    ),
-  );
-
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, captured);
   outputs.set(file_path.replace(".js", ""), captured);
 }
-
-writeIfNotChanged(
-  path.join(CODEGEN_DIR, "bundled_names_of_modules.txt"),
-  bundledNames.map(line => line + "\n").join(""),
-);
 
 mark("Postprocesss modules");
 

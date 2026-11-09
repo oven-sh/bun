@@ -7,13 +7,12 @@ mod unused;
 use core::cell::{Cell, RefCell};
 use std::sync::OnceLock;
 
-use bun_core::StackCheck;
 use bun_js_parser::defines_table::{
     GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
-    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
+    GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES, is_pure_global_identifier,
 };
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::{Binding, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl};
+use bun_sema::bind::{Binding, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl, Parent};
 use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Constant, Decision, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
@@ -24,6 +23,7 @@ use bun_sema::hir::{
 };
 use bun_sema::module_format::ModuleFormat;
 use bun_sema::program::{FileId, Files, Sym};
+use bun_sema::util::SharedSort;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -34,7 +34,6 @@ use crate::lower::SourceKind;
 use crate::modules::{ImportBinding, Member, ModuleGraph, ModuleRef};
 use crate::options::RemovableOptions;
 
-// `known_primitive` of src/ast/expr.rs.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Primitive {
     Unknown,
@@ -74,7 +73,6 @@ impl Primitive {
     }
 }
 
-// The table says what the value is, so no getter of the program or of the host stands behind the name.
 fn is_read_without_code(builtin: BuiltinId, is_global: bool) -> bool {
     let entry = table::entry(builtin);
     match entry.kind {
@@ -94,7 +92,6 @@ fn find_path(names: &[&[u8]]) -> Option<BuiltinId> {
     })
 }
 
-// `bun run` does not read such a member where nothing takes its value.
 pub(crate) fn is_read_left_out_by_bun_run(member: BuiltinId) -> bool {
     static READS: OnceLock<Vec<BuiltinId>> = OnceLock::new();
     let reads = READS.get_or_init(|| {
@@ -102,20 +99,14 @@ pub(crate) fn is_read_left_out_by_bun_run(member: BuiltinId) -> bool {
             .iter()
             .chain(GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING);
         let mut reads: Vec<BuiltinId> = paths.filter_map(|names| find_path(names)).collect();
-        reads.sort_unstable();
+        reads.shared_sort_unstable();
         reads
     });
     reads.binary_search(&member).is_ok()
 }
 
-// The host may add a member to an object below the global object when the member is first read. What a module exports is filled when the module runs.
-fn may_be_added_by_first_read(member: BuiltinId) -> bool {
-    let is_global =
-        |builtin: BuiltinId| table::entry(builtin).holder == Some(BuiltinId::GlobalThis);
-    // A constructor is made with its prototype.
-    table::entry(table::canonical_id(member)).kind != BuiltinKind::Prototype
-        && !is_global(member)
-        && is_global(table::root_of(member))
+pub(crate) fn is_name_left_out_by_bun_run(name: &[u8]) -> bool {
+    is_pure_global_identifier(name)
 }
 
 fn is_arithmetic(op: BinOp) -> bool {
@@ -136,7 +127,6 @@ fn is_arithmetic(op: BinOp) -> bool {
     )
 }
 
-// A key that the bundler's parser holds as a string and does not mark as computed: `a`, `"a"`.
 fn find_written_name(key: PropKey, name_kind: NameKind) -> Option<Atom> {
     let is_written_name = matches!(name_kind, NameKind::Identifier | NameKind::StringLiteral);
     match key {
@@ -145,12 +135,9 @@ fn find_written_name(key: PropKey, name_kind: NameKind) -> Option<Atom> {
     }
 }
 
-// What still has to run of a class that is left out.
 #[derive(Default)]
 pub(crate) struct ClassChecks {
-    // Whether what the class extends is a constructor or null.
     pub heritage: bool,
-    // The members whose computed keys are converted to property keys.
     pub keys: SmallVec<[MemberId; 2]>,
 }
 
@@ -160,7 +147,6 @@ impl ClassChecks {
     }
 }
 
-// Whether evaluating a piece of a file's top level can be left out when nothing uses what it declares, by the rules of src/js_parser/p.rs.
 pub(crate) struct Removable<'a, 's> {
     files: &'a Files<'s>,
     pub hir: &'a hir::File<'s>,
@@ -171,14 +157,12 @@ pub(crate) struct Removable<'a, 's> {
     pub options: RemovableOptions,
     hoists_classes: bool,
     modules: Option<(&'a ModuleGraph, FileId)>,
-    stack: StackCheck,
     member_constants: RefCell<FxHashMap<EnumMemberId, Option<Primitive>>>,
-    // Whether a variable, a field or an export takes the value of what is asked about. `bun run` evaluates all of that, used or not.
+    parents_above_long_chains: RefCell<FxHashMap<ExprId, Parent>>,
     is_value_taken: Cell<bool>,
 }
 
 impl<'a, 's> Removable<'a, 's> {
-    // For the thread that calls it: the limit of the stack is that thread's.
     pub(crate) fn new(
         files: &'a Files<'s>,
         file: FileId,
@@ -206,13 +190,12 @@ impl<'a, 's> Removable<'a, 's> {
             options,
             hoists_classes: kind == Some(SourceKind::Program),
             modules: None,
-            stack: StackCheck::init(),
             member_constants: RefCell::default(),
+            parents_above_long_chains: RefCell::default(),
             is_value_taken: Cell::new(false),
         }
     }
 
-    // `const a = require("./module.mjs")`: with the graph, `a.name` is what it is under `import * as a`.
     pub(crate) fn with_modules(self, modules: &'a ModuleGraph, file: FileId) -> Removable<'a, 's> {
         Removable {
             modules: Some((modules, file)),
@@ -227,19 +210,14 @@ impl<'a, 's> Removable<'a, 's> {
         answer
     }
 
-    // What is stored under a name that nothing reads: `exports.name = value`.
     pub(crate) fn stored_value(&self, value: ExprId) -> bool {
         self.with_value_taken(true, || self.expression(value))
     }
 
-    // An import, and an export from another module, answer for themselves alone: whether the other module is evaluated is the caller's question.
     pub(crate) fn statement(&self, statement: StmtId) -> bool {
         let hir = self.hir;
         if self.never_runs(statement) || hir.is_erased_statement(statement) {
             return true;
-        }
-        if !self.stack.is_safe_to_recurse() {
-            return false;
         }
         match hir[statement].kind {
             StmtKind::Empty
@@ -260,9 +238,7 @@ impl<'a, 's> Removable<'a, 's> {
             StmtKind::Module(namespace) => !self.bound.makes_namespace_object(hir, namespace),
             StmtKind::ImportEquals(alias) => self.import_equals(alias),
             StmtKind::If { test, yes, no } => {
-                self.with_value_taken(false, || self.expression(test))
-                    && self.never_runs(yes)
-                    && self.never_runs(no)
+                self.stored_value(test) && self.never_runs(yes) && self.never_runs(no)
             }
             StmtKind::Try {
                 block, finalizer, ..
@@ -272,7 +248,6 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // The bundler makes a part of each declaration of a statement.
     pub(crate) fn declaration(&self, declaration: VarDeclId) -> bool {
         let node = &self.hir[declaration];
         if node.flags.contains(Flags::AMBIENT) {
@@ -292,7 +267,6 @@ impl<'a, 's> Removable<'a, 's> {
             })
     }
 
-    // A pattern reads properties of its value or runs its iterator. `value` is `NONE` where there is none.
     pub(crate) fn pattern(&self, pattern: PatId, value: ExprId) -> bool {
         let hir = self.hir;
         let literal = value
@@ -319,8 +293,7 @@ impl<'a, 's> Removable<'a, 's> {
                 let Some(ExprKind::Object(written)) = literal else {
                     return false;
                 };
-                self.stack.is_safe_to_recurse()
-                    && written.iter().all(|property| self.has_plain_key(property))
+                written.iter().all(|property| self.has_plain_key(property))
                     && properties.iter().all(|property| {
                         let property = &hir[property];
                         let name = find_written_name(property.key, property.name_kind);
@@ -338,7 +311,6 @@ impl<'a, 's> Removable<'a, 's> {
             .is_some_and(|checks| checks.is_empty())
     }
 
-    // `const A = class extends B {}`
     pub(crate) fn find_class_of_declaration(&self, declaration: VarDeclId) -> Option<ClassId> {
         let node = &self.hir[declaration];
         let is_plain = matches!(node.kind, VarKind::Var | VarKind::Let | VarKind::Const);
@@ -348,12 +320,7 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // `None`: the class has to be defined though nothing uses it.
     pub(crate) fn find_class_checks(&self, class: ClassId) -> Option<ClassChecks> {
-        self.with_value_taken(true, || self.find_checks_of_class(class))
-    }
-
-    fn find_checks_of_class(&self, class: ClassId) -> Option<ClassChecks> {
         let node = &self.hir[class];
         let mut checks = ClassChecks::default();
         if node.flags.contains(Flags::AMBIENT) {
@@ -361,7 +328,9 @@ impl<'a, 's> Removable<'a, 's> {
         }
         if self.has_decorator(node.modifiers)
             || !node.other_extends.is_empty()
-            || !self.expression(node.extends)
+            || !self.with_value_taken(self.has_valid_heritage(class), || {
+                self.expression(node.extends)
+            })
         {
             return None;
         }
@@ -387,9 +356,6 @@ impl<'a, 's> Removable<'a, 's> {
         }
         if !decisions.reads_member(expression) && self.find_constant(expression).is_some() {
             return true;
-        }
-        if !self.stack.is_safe_to_recurse() {
-            return false;
         }
         match hir[expression].kind {
             ExprKind::Ident(_) => self.identifier(expression),
@@ -445,18 +411,14 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // `[...[a, b]]`: the visitor of `bun run` puts the elements in the place of the spread, as the bundler's does under --minify-syntax.
     fn is_spread_of_removable_literal(&self, item: ExprId) -> bool {
         let ExprKind::Spread(spread) = self.hir[item].kind else {
             return false;
         };
         let spread = self.hir.skip_type_assertions(spread);
-        matches!(self.hir[spread].kind, ExprKind::Array(_))
-            && self.stack.is_safe_to_recurse()
-            && self.expression(spread)
+        matches!(self.hir[spread].kind, ExprKind::Array(_)) && self.expression(spread)
     }
 
-    // `minify_global_constructor` of src/ast/known_global.rs, which the visitor of `bun run` asks, and the bundler's under --minify-syntax. The arguments are judged by the caller.
     fn constructs_without_effects(&self, call: &hir::Call) -> bool {
         let hir = self.hir;
         let callee = hir.skip_type_assertions(call.callee);
@@ -466,6 +428,15 @@ impl<'a, 's> Removable<'a, 's> {
         let Some(constructor) = self.builtins.builtin_of_expression(callee) else {
             return false;
         };
+        let is_left_out = self.options.minifies_syntax()
+            && (!self.is_value_taken.get() || !self.options.has_no_bundle);
+        let may_be_replaced = matches!(
+            self.builtins.of_expr(callee),
+            Some(Resolved::Builtin(path)) if path.mutability != Mutability::AlwaysLocked
+        );
+        if may_be_replaced && !is_left_out {
+            return false;
+        }
         let mut arguments = hir.ids(call.args);
         let (Some(argument), None) = (arguments.next(), arguments.next()) else {
             return call.args.is_empty()
@@ -517,7 +488,6 @@ impl<'a, 's> Removable<'a, 's> {
         statement.is_none() || self.analysis.decisions.is_dead_stmt(statement)
     }
 
-    // A `var` and a function of a block are also bindings of the code around it, which this answer says nothing about.
     fn enclosed_block(&self, block: StmtId) -> bool {
         let hir = self.hir;
         if self.never_runs(block) {
@@ -546,8 +516,9 @@ impl<'a, 's> Removable<'a, 's> {
         let hir = self.hir;
         hir[declaration].members.iter().all(|member| {
             let node = &hir[member];
-            node.computed_name.is_none()
-                && (self.member_constant(member).is_some() || self.stored_value(node.init))
+            let is_known = self.member_constant(member).is_some()
+                && !self.analysis.decisions.reads_member(node.init);
+            node.computed_name.is_none() && (is_known || self.stored_value(node.init))
         })
     }
 
@@ -579,11 +550,9 @@ impl<'a, 's> Removable<'a, 's> {
             })
     }
 
-    // `None`: the member has to be defined. `Some(true)`: converting its key to a property key may run code.
     fn member_key(&self, member: MemberId) -> Option<bool> {
         let hir = self.hir;
         let node = &hir[member];
-        // The `prototype` of a class can't be redefined.
         let is_static = node.flags.contains(Flags::STATIC);
         let key = match node.key {
             PropKey::None | PropKey::Private(_) => return Some(false),
@@ -600,7 +569,7 @@ impl<'a, 's> Removable<'a, 's> {
             return (!is_static || !may_be_prototype).then_some(false);
         }
         let is_reference = matches!(hir[key].kind, ExprKind::Ident(_) | ExprKind::Dot { .. });
-        if !is_reference || !self.expression(key) {
+        if !is_reference || !self.stored_value(key) {
             return None;
         }
         match self.builtins.of_pure_expr(key) {
@@ -614,7 +583,6 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // `None`: the member has to be defined. `Some(true)`: only its key has to be converted to a property key.
     fn member(&self, member: MemberId) -> Option<bool> {
         let hir = self.hir;
         if !hir::has_runtime_member(hir, member) {
@@ -627,7 +595,7 @@ impl<'a, 's> Removable<'a, 's> {
         }
         let is_removable = match node.kind {
             MemberKind::Property => {
-                !node.flags.contains(Flags::STATIC) || self.expression(node.init)
+                !node.flags.contains(Flags::STATIC) || self.stored_value(node.init)
             }
             MemberKind::StaticBlock => match node.func.some().map(|block| hir[block].body) {
                 Some(FnBody::Block(statements)) => hir
@@ -662,7 +630,6 @@ impl<'a, 's> Removable<'a, 's> {
         node.kind != PropKind::Spread && name.is_some_and(|name| name != known::__proto__)
     }
 
-    // The last of several properties with one name counts.
     fn find_data_property(&self, properties: Span<PropId>, name: Atom) -> Option<ExprId> {
         let mut nodes = properties.iter().rev().map(|property| &self.hir[property]);
         let node = nodes.find(|node| find_written_name(node.key, node.name_kind) == Some(name))?;
@@ -684,7 +651,8 @@ impl<'a, 's> Removable<'a, 's> {
 
     fn unary(&self, op: UnOp, operand: ExprId) -> bool {
         match op {
-            UnOp::Void | UnOp::Not => self.expression(operand),
+            UnOp::Void => self.with_value_taken(false, || self.expression(operand)),
+            UnOp::Not => self.expression(operand),
             UnOp::Typeof => {
                 let name = self.hir.skip_type_assertions(operand);
                 match self.find_static_binding(name) {
@@ -721,12 +689,14 @@ impl<'a, 's> Removable<'a, 's> {
         let is_guarded = matches!(op, BinOp::Or | BinOp::And)
             && self.is_guarded_free_name(right, left, op == BinOp::And);
         converts_nothing
-            && self.expression(left)
+            && match op {
+                BinOp::Comma => self.with_value_taken(false, || self.expression(left)),
+                _ => self.expression(left),
+            }
             && !self.is_decided_by_member_read(left, &[right])
             && (is_guarded || self.expression(right))
     }
 
-    // `bun run` takes the value of the test, which the build knows.
     fn is_decided_by_member_read(&self, test: ExprId, arms: &[ExprId]) -> bool {
         let decisions = &self.analysis.decisions;
         decisions.reads_member(test) && arms.iter().any(|&arm| decisions.is_dead_expr(arm))
@@ -756,7 +726,6 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // The binding of a name that is evaluated and that no `with` and no `eval` can bind anew.
     fn find_static_binding(&self, name: ExprId) -> Option<Binding> {
         let is_static = matches!(self.hir[name].kind, ExprKind::Ident(_))
             && self.bound.is_evaluated_ident(name)
@@ -775,7 +744,6 @@ impl<'a, 's> Removable<'a, 's> {
         (self.find_static_binding(name) == Some(Binding::Free)).then_some(text)
     }
 
-    // `a.b` and `a["b"]` outside an optional chain: `a` without its casts.
     fn find_link(&self, expression: ExprId) -> Option<(ExprId, Atom)> {
         let hir = self.hir;
         let (ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. }) = hir[expression].kind
@@ -802,9 +770,16 @@ impl<'a, 's> Removable<'a, 's> {
             );
         }
         let is_export_of_namespace = match self.find_static_binding(object) {
-            Some(Binding::Symbol(symbol)) => {
-                matches!(*self.bound.symbol(symbol).decls, [Decl::ImportNamespace(_)])
-            }
+            Some(Binding::Symbol(symbol)) => match *self.bound.symbol(symbol).decls {
+                [Decl::ImportNamespace(import)] => {
+                    let object = self.builtins.of_symbol(symbol);
+                    let is_global = object.is_some_and(|object| {
+                        table::entry(object.id).holder == Some(BuiltinId::GlobalThis)
+                    });
+                    !self.hir[import].is_deferred && !is_global
+                }
+                _ => false,
+            },
             Some(Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free) | None => false,
         };
         ((is_export_of_namespace || self.is_bound_to_binding(expression, object))
@@ -813,30 +788,43 @@ impl<'a, 's> Removable<'a, 's> {
             || self.is_builtin_read(expression)
     }
 
-    // The read of a binding of another module, whatever becomes of the object that the member is written on.
     fn is_bound_to_binding(&self, member: ExprId, object: ExprId) -> bool {
-        matches!(self.hir[object].kind, ExprKind::Ident(_))
+        let Some(Binding::Symbol(symbol)) = self.find_static_binding(object) else {
+            return false;
+        };
+        // `lib.f; var lib = require("./x.mjs");` reads a member of undefined.
+        self.has_initializer_run_at(object, symbol)
             && self.modules.is_some_and(|(modules, file)| {
                 matches!(modules.member(file, member), Some(Member::Binding(_)))
             })
     }
 
     fn is_builtin_read(&self, expression: ExprId) -> bool {
-        let steps = self.builtins.global_path(self.hir, self.bound, expression);
-        let Some((global, members)) = steps.as_deref().and_then(<[_]>::split_last) else {
+        let Some(steps) = self.builtins.global_path(self.hir, self.bound, expression) else {
             return false;
         };
+        let Some((global, members)) = steps.split_last() else {
+            return false;
+        };
+        let is_locked = steps
+            .iter()
+            .all(|step| step.mutability == Mutability::AlwaysLocked);
+        let is_unused = !self.is_value_taken.get();
         let mut is_left_out = false;
-        members.iter().all(|member| {
-            let shows_that_it_was_read =
-                self.is_value_taken.get() && table::entry(member.id).is_added_at_first_read;
-            is_left_out |= !shows_that_it_was_read && is_read_left_out_by_bun_run(member.id);
-            is_read_without_code(member.id, false)
-                && (is_left_out || !may_be_added_by_first_read(member.id))
-        }) && is_read_without_code(global.id, true)
+        let is_name_left_out = || {
+            let name = self.find_free_name(expression);
+            (is_unused || !self.options.has_no_bundle)
+                && name.is_some_and(|name| is_name_left_out_by_bun_run(self.atoms.bytes(name)))
+        };
+        (is_locked || (members.is_empty() && is_name_left_out()))
+            && members.iter().all(|member| {
+                is_left_out |= is_unused && is_read_left_out_by_bun_run(member.id);
+                is_read_without_code(member.id, false)
+                    && (is_left_out || !table::entry(member.id).is_added_at_first_read)
+            })
+            && is_read_without_code(global.id, true)
     }
 
-    // `typeof a !== "undefined" && a`, `typeof a < "u" ? a : b`: the name is read only where it is known to exist.
     fn is_guarded_free_name(&self, value: ExprId, guard: ExprId, is_yes_branch: bool) -> bool {
         let hir = self.hir;
         let Some(name) = self.find_free_name(value) else {
@@ -897,7 +885,6 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // What stands for the expression is a literal: `is_primitive_literal` of the bundler's folded tree.
     fn literal(&self, expression: ExprId) -> Option<Primitive> {
         let expression = self.hir.skip_type_assertions(expression);
         if let Some(constant) = self.find_constant(expression) {
@@ -918,13 +905,8 @@ impl<'a, 's> Removable<'a, 's> {
         self.inlined_member(expression)
     }
 
-    // `to_number` of src/ast/expr.rs: the bundler's visitor folds `+` and `-` in front of these.
     fn has_folded_sign(&self, operand: ExprId) -> bool {
-        let literal = match self.stack.is_safe_to_recurse() {
-            true => self.literal(operand),
-            false => None,
-        };
-        match literal {
+        match self.literal(operand) {
             Some(
                 Primitive::Null
                 | Primitive::Undefined
@@ -936,7 +918,6 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // The bundler's parser puts the value in place of a member of an enum that it has visited, and it visits the enums of a file, in their order, before the other statements.
     fn inlined_member(&self, reference: ExprId) -> Option<Primitive> {
         let hir = self.hir;
         let member = self.find_enum_member(reference)?;
@@ -981,46 +962,53 @@ impl<'a, 's> Removable<'a, 's> {
         if let Some(&constant) = self.member_constants.borrow().get(&member) {
             return constant;
         }
-        let constant = match self.stack.is_safe_to_recurse() {
-            true => self.compute_member_constant(member),
-            false => None,
-        };
-        self.member_constants.borrow_mut().insert(member, constant);
-        constant
+        for earlier in (0..=member.0).map(EnumMemberId) {
+            if self.member_constants.borrow().contains_key(&earlier) {
+                continue;
+            }
+            self.member_constants.borrow_mut().insert(earlier, None);
+            let constant = self.compute_member_constant(earlier);
+            self.member_constants.borrow_mut().insert(earlier, constant);
+        }
+        self.member_constants.borrow()[&member]
     }
 
-    // A member without an initializer is one more than the member before it, if that is a number.
     fn compute_member_constant(&self, member: EnumMemberId) -> Option<Primitive> {
         let hir = self.hir;
-        let mut declarations = hir.enums.iter();
-        let declaration = declarations.find(|it| it.members.range().contains(&member.idx()))?;
+        let declaration = self.bound.enum_member_owner[member.idx()].some()?;
+        let first = hir[declaration].members.start;
         let mut counted_from = member;
-        loop {
+        let constant = loop {
             let node = &hir[counted_from];
             if node.computed_name.is_some() {
-                return None;
+                break None;
             }
             if let Some(initializer) = node.init.some() {
-                let constant = self.enum_constant(initializer)?;
-                let is_counted = counted_from == member || constant == Primitive::Number;
-                return is_counted.then_some(constant);
+                break self.enum_constant(initializer);
             }
-            if counted_from.0 == declaration.members.start {
-                return Some(Primitive::Number);
+            if counted_from.0 == first {
+                break Some(Primitive::Number);
             }
             counted_from = EnumMemberId(counted_from.0 - 1);
+            if let Some(&before) = self.member_constants.borrow().get(&counted_from) {
+                break before;
+            }
+        };
+        if counted_from == member {
+            return constant;
         }
+        let counted = constant.filter(|&constant| constant == Primitive::Number);
+        let passed = (counted_from.0 + 1..member.0).map(EnumMemberId);
+        let mut kept = self.member_constants.borrow_mut();
+        kept.extend(passed.map(|passed| (passed, counted)));
+        counted
     }
 
-    // The number or the string that the bundler's parser folds an initializer of an enum to.
     fn enum_constant(&self, initializer: ExprId) -> Option<Primitive> {
         let hir = self.hir;
         let initializer = hir.skip_type_assertions(initializer);
         if let Some(literal) = self.literal(initializer) {
             return matches!(literal, Primitive::Number | Primitive::String).then_some(literal);
-        }
-        if !self.stack.is_safe_to_recurse() {
-            return None;
         }
         let is_number = |operand: ExprId| self.enum_constant(operand) == Some(Primitive::Number);
         let is_folded = if let ExprKind::Unary { op, operand } = hir[initializer].kind {
@@ -1050,9 +1038,6 @@ impl<'a, 's> Removable<'a, 's> {
         let expression = hir.skip_type_assertions(expression);
         if let Some(literal) = self.literal(expression) {
             return literal;
-        }
-        if !self.stack.is_safe_to_recurse() {
-            return Primitive::Unknown;
         }
         match hir[expression].kind {
             ExprKind::Null => Primitive::Null,

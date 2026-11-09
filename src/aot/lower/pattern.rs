@@ -8,10 +8,8 @@ use bun_sema::hir::{ExprId, PatId};
 use self::view::NodeShape;
 use super::FunctionLowering;
 use super::expression::AssignmentTarget;
-use super::member::{KeyConversion, PropertyName, Reference};
-use super::positions::SiteOrigin;
+use super::member::{KeyConversion, Reference};
 use crate::ir::ValueId;
-use crate::ir::generated::TypeSiteKind;
 
 #[derive(Copy, Clone, Debug)]
 pub(super) enum PatternNode {
@@ -19,17 +17,16 @@ pub(super) enum PatternNode {
     Assignment(ExprId),
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum DefaultHolder {
+    Parameter,
+    ObjectPattern,
+    ArrayPattern,
+}
+
 impl FunctionLowering<'_, '_, '_, '_, '_> {
-    /// `mapped`: the last token before the pattern that the source map of Bun's transpiler knows. A `[` that binds names is not one.
-    pub(crate) fn bind_pattern(
-        &mut self,
-        pattern: PatId,
-        value: ValueId,
-        source: Option<ExprId>,
-        mapped: u32,
-    ) {
-        self.file.record_binding_pattern_flow(pattern, source);
-        self.destructure(PatternNode::Binding(pattern), value, source, mapped);
+    pub(crate) fn bind_pattern(&mut self, pattern: PatId, value: ValueId, source: Option<ExprId>) {
+        self.destructure(PatternNode::Binding(pattern), value, source);
     }
 
     pub(crate) fn assign_pattern(
@@ -38,39 +35,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         value: ValueId,
         source: Option<ExprId>,
     ) {
-        if let Some(source) = source {
-            self.file.record_assignment_pattern_flow(target, source);
-        }
-        let mapped = self.file.hir[target].pos;
-        self.destructure(PatternNode::Assignment(target), value, source, mapped);
+        self.destructure(PatternNode::Assignment(target), value, source);
     }
 
-    fn destructure(
-        &mut self,
-        node: PatternNode,
-        value: ValueId,
-        source: Option<ExprId>,
-        mapped: u32,
-    ) {
+    fn destructure(&mut self, node: PatternNode, value: ValueId, source: Option<ExprId>) {
         match self.file.node_shape(node) {
             NodeShape::Hole => {}
             NodeShape::Leaf => {
                 let position = self.file.node_position(node);
                 self.set_position(position);
-                let value = self.convert_element(node, value);
                 match node {
                     PatternNode::Binding(pattern) => {
-                        // JSC records a store to a name that lies in a scope.
-                        let binding = self.file.bound.initialized_binding(pattern);
-                        if !self.is_kept_in_register(binding) {
-                            let recorded = self.file.recorded_binding_position(pattern);
-                            self.builder.record_position(recorded);
-                        }
                         self.initialize_pattern_name(pattern, value, source);
                     }
                     PatternNode::Assignment(target) => {
                         let reference = self.lower_reference(target, KeyConversion::AtAccess);
-                        self.set_position_of_lone_target(target);
+                        self.set_position(position);
                         self.put_reference(&reference, value, source);
                     }
                 }
@@ -83,30 +63,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                         self.leave_nesting();
                     }
                 } else if self.enter_pattern(node) {
-                    let value = self.convert_element(node, value);
-                    self.destructure_object(node, value, mapped);
+                    self.destructure_object(node, value);
                     self.leave_nesting();
                 }
             }
             NodeShape::Array => {
                 if self.enter_pattern(node) {
-                    let value = self.convert_element(node, value);
-                    array::destructure_array(self, node, value, mapped);
+                    array::destructure_array(self, node, value);
                     self.leave_nesting();
                 }
             }
-        }
-    }
-
-    // A target that no `[` and no `{` stands around: a name, or the member in the head of a loop, which is stored to as by `=`.
-    fn set_position_of_lone_target(&mut self, target: ExprId) {
-        let file = &*self.file;
-        match file.hir.member_key(file.skip_type_syntax(target)) {
-            Some((object, _)) => self.set_position(file.member_position(object)),
-            None if self.is_kept_in_register(file.bound.binding(target)) => {}
-            None => self
-                .builder
-                .record_position(file.recorded_name_position(target)),
         }
     }
 
@@ -116,15 +82,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.enter_nesting(position)
     }
 
-    // What a pattern takes out of an object or a list has the type the checker gives the node that receives it.
-    fn convert_element(&mut self, node: PatternNode, value: ValueId) -> ValueId {
-        match node {
-            PatternNode::Binding(pattern) => self.convert_pattern_element(pattern, value),
-            PatternNode::Assignment(_) => value,
-        }
-    }
-
-    // The reference of `[a.b] = ..` is evaluated before the value is read. Every other target is resolved at the store.
     fn prepare_target(&mut self, target: PatternNode) -> Option<Reference> {
         let PatternNode::Assignment(expression) = target else {
             return None;
@@ -137,21 +94,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
-    // `member_store`: where the store is reported if the target is a member.
-    fn finish_target(
-        &mut self,
-        target: PatternNode,
-        prepared: Option<Reference>,
-        value: ValueId,
-        mapped: u32,
-        member_store: u32,
-    ) {
+    fn finish_target(&mut self, target: PatternNode, prepared: Option<Reference>, value: ValueId) {
         match prepared {
             Some(reference) => {
-                self.set_position(member_store);
+                let position = self.file.node_position(target);
+                self.set_position(position);
                 self.put_reference(&reference, value, None);
             }
-            None => self.destructure(target, value, None, mapped),
+            None => self.destructure(target, value, None),
         }
     }
 }
@@ -161,32 +111,37 @@ fn apply_default(
     value: ValueId,
     default: ExprId,
     target: PatternNode,
+    holder: DefaultHolder,
 ) -> ValueId {
-    // Under an annotation the node has the type the annotation gives the member, and the default is converted to it.
-    apply_default_with(lowering, value, default, target, &mut |lowering, value| {
-        let pattern = match target {
-            PatternNode::Binding(pattern) if lowering.file.has_annotated_root(target) => pattern,
-            PatternNode::Binding(_) | PatternNode::Assignment(_) => return value,
-        };
-        let types = PositionTypes {
-            written: WrittenType::Unwritten,
-            checked: lowering.file.queries.binding_type(pattern),
-        };
-        let origin = SiteOrigin {
-            kind: TypeSiteKind::Variable,
-            position: lowering.file.hir[pattern].pos,
-        };
-        let position = lowering.file.create_position(types, origin);
-        lowering.convert_initializer(value, position, Some(default))
-    })
+    apply_default_with(
+        lowering,
+        value,
+        default,
+        target,
+        holder,
+        &mut |lowering, value| {
+            let PatternNode::Binding(pattern) = target else {
+                return value;
+            };
+            if !lowering.file.has_annotated_root(target) {
+                return value;
+            }
+            let types = PositionTypes {
+                written: WrittenType::Unwritten,
+                checked: lowering.file.queries.binding_type(pattern),
+            };
+            let position = lowering.file.create_position(types);
+            lowering.convert_initializer(value, position, Some(default))
+        },
+    )
 }
 
-// The default is evaluated where the value is `undefined`, and `convert` gives it the type of what receives it.
 pub(super) fn apply_default_with(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     value: ValueId,
     default: ExprId,
     target: PatternNode,
+    holder: DefaultHolder,
     convert: &mut dyn FnMut(&mut FunctionLowering<'_, '_, '_, '_, '_>, ValueId) -> ValueId,
 ) -> ValueId {
     if default.is_none() {
@@ -200,13 +155,13 @@ pub(super) fn apply_default_with(
     lowering.jump(join);
     lowering.continue_in(use_default);
     let name = match lowering.file.node_shape(target) {
-        NodeShape::Leaf => lowering.file.default_function_name(target),
+        NodeShape::Leaf => lowering.file.default_function_name(target, default, holder),
         NodeShape::Object | NodeShape::Array | NodeShape::Hole => None,
     };
     let default_value = match name {
-        Some((binding, name, position)) => {
-            let key = lowering.file.function_name_key(binding, name, position);
-            lowering.lower_named_evaluation(default, PropertyName::Constant(key))
+        Some((binding, name, _)) => {
+            let name = lowering.file.name_given_by_binding(binding, name);
+            lowering.lower_named_evaluation(default, name)
         }
         None => lowering.lower_expression(default),
     };
@@ -215,4 +170,57 @@ pub(super) fn apply_default_with(
     lowering.jump(join);
     lowering.continue_in(join);
     lowering.builder.read_variable(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use bun_core::strings::index_of;
+
+    use crate::compile::testing::lower_program;
+    use crate::ir::Opcode;
+    use crate::load::host_platform;
+    use crate::lower::{Fragment, LoweringOptions};
+
+    #[track_caller]
+    fn lower(source: &str) -> Fragment {
+        let options = LoweringOptions {
+            platform: host_platform(),
+            embeds_function_text: false,
+            removable: Default::default(),
+            minifies_identifiers: false,
+            obfuscates: false,
+            counts_executions: false,
+            runs_tests: false,
+        };
+        let mut lowered = lower_program(&[("main.ts", source)], options);
+        assert_eq!(lowered.len(), 1);
+        lowered.remove(0).1.fragment
+    }
+
+    #[track_caller]
+    fn offset_of(source: &str, text: &str) -> u32 {
+        let offset = index_of(source.as_bytes(), text.as_bytes());
+        offset.expect("the source has the text") as u32
+    }
+
+    #[test]
+    fn member_behind_a_default_is_stored_to_at_its_own_position() {
+        let source = "export function probe(holder: any, list: any, make: any) {
+  [holder.first = {
+    made: make(),
+  }] = list;
+  ({ key: holder.second = {
+    made: make(),
+  } } = list);
+}
+";
+        let fragment = lower(source);
+        let functions = fragment.functions.iter();
+        let blocks = functions.flat_map(|(_, function)| function.body.blocks());
+        let values = blocks.flat_map(|block| block.values());
+        let stores = values.filter(|value| value.opcode == Opcode::PropSet);
+        let reported: Vec<u32> = stores.filter_map(|value| value.position).collect();
+        let expected = ["holder.first", "holder.second"].map(|text| offset_of(source, text));
+        assert_eq!(reported, expected);
+    }
 }

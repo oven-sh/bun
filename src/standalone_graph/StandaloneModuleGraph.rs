@@ -24,10 +24,10 @@ use bun_resolver::compiled_program::{CompiledEntryPoint, CompiledProgram, ImageF
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, E, Fd, FdExt as _, Stat};
 
-use crate::compiled_program::{self, CompiledProgramInput, Payload};
+use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, Payload};
 use crate::executable_file::{
-    ElfWriteError, ImageRange, MappedFile, Original, TemplateBytes, with_executable_image,
-    write_elf,
+    ElfWriteError, ImageRange, MappedFile, Original, PayloadParts, TemplateBytes,
+    with_executable_image, write_elf,
 };
 use crate::executable_request::{
     ExecutableAdditions, GraphBytes, InjectionAdditions, append_compiled_program_record,
@@ -126,34 +126,6 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
-/// `BUN_AOT_START_AT`. Answers the file of the entry point that the process starts with, or `None` where nothing asks for another than the first.
-#[cfg(not(bun_locked_environment))]
-fn start_at_named_entry_point(program: &mut CompiledProgram) -> Option<Result<u32, crate::Error>> {
-    if !bun_core::env::IS_CANARY {
-        return None;
-    }
-    let name = bun_core::env_var::BUN_AOT_START_AT.get()?;
-    let is_named = |entry_point: &CompiledEntryPoint| {
-        entry_point.is_below(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes(), name)
-    };
-    let has_image_for_each = program.images().nth(1).is_some();
-    let position = program.entry_points.iter().position(is_named);
-    Some(match position {
-        Some(position) => {
-            if has_image_for_each {
-                program.start_at(position);
-            }
-            Ok(program.entry_points[position].file_index)
-        }
-        None => Err(crate::Error::NoEntryPointToStartAt),
-    })
-}
-
-#[cfg(bun_locked_environment)]
-fn start_at_named_entry_point(_program: &mut CompiledProgram) -> Option<Result<u32, crate::Error>> {
-    None
-}
-
 // A process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
 // `get()` returns a raw `*mut`; the only post-init mutation is
 // `File::sourcemap` (`LazySourceMap::load`, serialized by `INIT_LOCK`).
@@ -237,14 +209,14 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
-    fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+    pub(crate) fn lookup_file(&self, name: &[u8]) -> Option<&File> {
         #[cfg(windows)]
-        {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            return self.files.get(normalize_file_key(name, &mut buf));
-        }
-        #[cfg(not(windows))]
-        self.files.get(name)
+        let mut buf = bun_paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let name = normalize_file_key(name, &mut buf);
+        self.files
+            .get(name)
+            .or_else(|| self.files.get(&self.key_of_asset_named_at_root(name)?))
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
@@ -289,11 +261,11 @@ impl StandaloneModuleGraph {
     /// the errno an `open(O_DIRECTORY)` of it would produce.
     pub fn dir_key(&self, name: &[u8]) -> Result<&[u8], E> {
         let mut buf = bun_paths::path_buffer_pool::get();
-        if let Some(index) = self
-            .directory_key(name, &mut buf)
-            .and_then(|key| self.dirs.get_index(key))
-        {
-            return Ok(&self.dirs.keys()[index]);
+        if let Some(key) = self.directory_key(name, &mut buf) {
+            return Ok(match self.dirs.get_index(key) {
+                Some(index) => &self.dirs.keys()[index],
+                None => keep_key_of_directory_with_code_alone(key),
+            });
         }
         let name = Self::normalize_dir_path(name, &mut buf);
         Err(if self.find_ref(name).is_some() {
@@ -349,6 +321,16 @@ impl StandaloneModuleGraph {
                 path::resolve_path::platform_to_posix_in_place::<u8>(&mut source_path);
                 push(&source_path, false);
             }
+            program.for_each_module_below(name, &mut |path| {
+                let mut end = prefix.len();
+                while recursive && let Some(length) = strings::index_of_char(&path[end..], b'/') {
+                    end += length as usize;
+                    push(&path[..end], true);
+                    end += 1;
+                }
+                push(path, false);
+                true
+            });
         }
 
         let mut out: Vec<(Box<[u8]>, bool)> = Vec::with_capacity(seen.count());
@@ -360,13 +342,28 @@ impl StandaloneModuleGraph {
 
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
-        {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            return self.files.get_mut(normalize_file_key(name, &mut buf));
+        let mut buf = bun_paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let name = normalize_file_key(name, &mut buf);
+        if self.compiled_program.is_none() || self.files.contains_key(name) {
+            return self.files.get_mut(name);
         }
-        #[cfg(not(windows))]
-        self.files.get_mut(name)
+        let key = self.key_of_asset_named_at_root(name)?;
+        self.files.get_mut(&key)
     }
+}
+
+/// A directory that holds nothing but compiled files has no key in the graph. Whoever opens one holds its key for as long as the process lives, so each is copied once.
+fn keep_key_of_directory_with_code_alone(key: &[u8]) -> &'static [u8] {
+    static KEPT: bun_threading::Guarded<std::collections::BTreeSet<&'static [u8]>> =
+        bun_threading::Guarded::new(std::collections::BTreeSet::new());
+    let mut kept = KEPT.lock();
+    if let Some(&key) = kept.get(key) {
+        return key;
+    }
+    let key: &'static [u8] = Box::leak(Box::from(key));
+    kept.insert(key);
+    key
 }
 
 #[cfg(windows)]
@@ -1053,22 +1050,16 @@ impl LazySourceMap {
                     }));
                 }
 
-                let data = Box::new(SerializedSourceMapLoaded {
-                    map: SerializedSourceMap {
+                let data = Box::new(SourceMap::SerializedSourceMap::Loaded {
+                    map: SourceMap::SerializedSourceMap::SerializedSourceMap {
                         bytes: serialized.bytes,
                     },
                     decompressed_files: decompressed_contents_slice.into_boxed_slice(),
                 });
 
                 stored.external_source_names = file_names;
-                // `from_provider` stores the pointer as a raw address in
-                // `SourceContentPtr.data`; the provider dispatch is never
-                // invoked for this type-punned pointer (guarded by
-                // `is_standalone_module_graph`).
-                stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
-                    bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
-                );
-                stored.is_standalone_module_graph = true;
+                // Never freed, like the graph that holds `stored`.
+                stored.standalone_module_graph = Some(Box::leak(data));
 
                 let parsed = Arc::new(stored);
                 // The Arc clone held in self keeps the parsed map alive.
@@ -1130,7 +1121,7 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
         const HAS_COMPILED_PROGRAM          = 1 << 14;
-        // _padding: u16
+        // _padding: u17
     }
 }
 
@@ -1348,7 +1339,7 @@ impl StandaloneModuleGraph {
                 linked_bytecode_payload = ptr;
             }
         }
-        let mut compiled_program = if offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
+        let compiled_program = if offsets.flags.contains(Flags::HAS_COMPILED_PROGRAM) {
             let payload = Payload {
                 base: raw_const,
                 length: raw_len,
@@ -1488,10 +1479,7 @@ impl StandaloneModuleGraph {
         }
 
         let module_count = modules.count();
-        let started = compiled_program
-            .as_mut()
-            .and_then(start_at_named_entry_point);
-        let entry_point_id = started.transpose()?.unwrap_or(offsets.entry_point_id);
+        let entry_point_id = offsets.entry_point_id;
         // `entry_point()` indexes `files`, which has one entry per name, not one per record.
         if entry_point_id as usize >= module_count {
             return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
@@ -1686,6 +1674,7 @@ pub(crate) fn to_bytes(
     flags: Flags,
     runtime_options: RuntimeOptions,
     program: Option<&CompiledProgramInput<'_>>,
+    image_place: ImagePlace,
 ) -> crate::Result<GraphBytes> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
@@ -2018,7 +2007,7 @@ pub(crate) fn to_bytes(
     }
 
     let image_ptr = program
-        .map(|program| compiled_program::append_image(&mut string_builder, program))
+        .map(|program| compiled_program::append_image(&mut string_builder, program, image_place))
         .transpose()?;
 
     // Region layout after the bytecode/module_info run above: source maps
@@ -2313,7 +2302,7 @@ impl<'a> Injected<'a> {
 }
 
 pub(crate) fn inject<'a>(
-    bytes: &mut [u8],
+    payload: &mut PayloadParts<'_>,
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
@@ -2321,7 +2310,8 @@ pub(crate) fn inject<'a>(
     temp_path_buf: &'a mut PathBuffer,
     additions: &mut InjectionAdditions<'_>,
 ) -> Option<Injected<'a>> {
-    additions.name_executable(bytes);
+    additions.name_executable(payload);
+    additions.log_part("behind the engine: name of the executable");
     let mut cwd_buf = bun_paths::path_buffer_pool::get();
     let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
         Ok(len) => &cwd_buf[..len],
@@ -2367,11 +2357,7 @@ pub(crate) fn inject<'a>(
                 zname.as_bytes(),
                 &[0],
             ]);
-            let len = beside.len() - 1;
-            zname_owned = Some(beside);
-            // SAFETY: trailing 0 byte appended above; `zname_owned` keeps the allocation alive until it is replaced
-            // together with `zname`.
-            zname = unsafe { ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len) };
+            zname = ZStr::from_slice_with_nul(zname_owned.insert(beside));
         }
     }
     #[cfg(windows)]
@@ -2487,13 +2473,7 @@ pub(crate) fn inject<'a>(
                                     // Note: the concat buffer is parked in
                                     // `zname_owned` (declared at fn entry) so it outlives the
                                     // loop and drops at fn exit.
-                                    let len = zname_z.len().saturating_sub(1);
-                                    zname_owned = Some(zname_z);
-                                    // SAFETY: trailing 0 byte appended above; `zname_owned`
-                                    // keeps the allocation alive for the rest of the fn.
-                                    zname = unsafe {
-                                        ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len)
-                                    };
+                                    zname = ZStr::from_slice_with_nul(zname_owned.insert(zname_z));
                                     continue;
                                 }
                             }
@@ -2566,10 +2546,13 @@ pub(crate) fn inject<'a>(
             break 'brk fd;
         }
     };
+    #[cfg(windows)]
     let _ = (&mut zname_owned, &mut zname);
+    additions.log_part("behind the engine: copy of the template");
 
     match target.os {
         CompileTargetOs::Mac => {
+            let bytes = payload.joined();
             let symbols_size = additions.symbols.map_or(0, |symbols| symbols.table.len());
             let mapped = MappedFile::open_with_room(self_exe, |template_size| {
                 bun_macho::MachoFile::room_for(template_size, bytes.len(), symbols_size)
@@ -2638,6 +2621,7 @@ pub(crate) fn inject<'a>(
             ));
         }
         CompileTargetOs::Windows => {
+            let bytes = payload.joined();
             let mut input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
@@ -2725,8 +2709,7 @@ pub(crate) fn inject<'a>(
                     cloned_executable_fd,
                     TemplateBytes::ReadOnce(&mut mapped),
                     None,
-                    bytes,
-                    additions.image,
+                    payload,
                     additions.symbols,
                 ))
             });
@@ -2749,8 +2732,7 @@ pub(crate) fn inject<'a>(
                         file,
                         mapping: Some((addresses.start, addresses.end)),
                     }),
-                    bytes,
-                    additions.image,
+                    payload,
                     additions.symbols,
                 )
             } else {
@@ -2775,8 +2757,7 @@ pub(crate) fn inject<'a>(
                     cloned_executable_fd,
                     TemplateBytes::Kept(&mut input_bytes),
                     None,
-                    bytes,
-                    additions.image,
+                    payload,
                     additions.symbols,
                 )
             };
@@ -2826,6 +2807,7 @@ pub(crate) fn inject<'a>(
                 cleanup(zname, cloned_executable_fd);
                 return None;
             }
+            let bytes = payload.joined();
             let total_byte_count: usize;
             #[cfg(windows)]
             {
@@ -3192,6 +3174,17 @@ pub fn target_builtins(
     }
 }
 
+/// The writer of ELF files takes the image from where it lies. Those of Mach-O and PE files make the whole file in one buffer.
+fn place_of_image(
+    target: &CompileTarget,
+    program: Option<&CompiledProgramInput<'_>>,
+) -> ImagePlace {
+    match (target.os, program) {
+        (CompileTargetOs::Linux | CompileTargetOs::Freebsd, Some(_)) => ImagePlace::OutsideGraph,
+        _ => ImagePlace::InGraph,
+    }
+}
+
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
@@ -3205,10 +3198,11 @@ pub fn to_executable(
     self_exe_path: Option<&[u8]>,
     flags: Flags,
     runtime_options: RuntimeOptions,
-    additions: &mut ExecutableAdditions<'_>,
+    additions: &mut ExecutableAdditions<'_, '_>,
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
+    let image_place = place_of_image(target, additions.compiled_program.as_deref());
     let GraphBytes { mut bytes, image } = match to_bytes(
         target,
         module_prefix,
@@ -3217,7 +3211,8 @@ pub fn to_executable(
         compile_exec_argv,
         flags,
         runtime_options,
-        additions.compiled_program,
+        additions.compiled_program.as_deref(),
+        image_place,
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -3229,6 +3224,9 @@ pub fn to_executable(
     };
     if bytes.is_empty() {
         return Ok(CompileResult::fail(CompileErrorReason::NoOutputFiles));
+    }
+    if additions.compiled_program.is_some() {
+        bun_aot::statistics::log_part_outside_stages("behind the engine: the payload");
     }
     // bytes drops at end of scope
 
@@ -3252,8 +3250,16 @@ pub fn to_executable(
         b"."
     };
     let mut injection = additions.for_injection(image);
+    let image_outside_graph = match image_place {
+        ImagePlace::InGraph => None,
+        ImagePlace::OutsideGraph => additions
+            .compiled_program
+            .as_deref_mut()
+            .map(|program| &mut *program.image),
+    };
+    let mut payload = PayloadParts::new(&mut bytes, image, image_outside_graph);
     let Some(injected) = inject(
-        &mut bytes,
+        &mut payload,
         &self_exe,
         windows_options,
         target,
@@ -3461,9 +3467,19 @@ impl StandaloneModuleGraph {
         len: usize,
         payload_file: Option<ImageFile>,
     ) -> crate::Result<Option<*mut StandaloneModuleGraph>> {
+        let Some(offsets) = Self::read_offsets(base, len) else {
+            return Ok(None);
+        };
+        let graph = from_bytes_alloc(base, len, offsets, payload_file)?;
+        // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
+        unsafe { &*graph }.prefetch_startup_pages();
+        Ok(Some(graph))
+    }
+
+    fn read_offsets(base: *mut u8, len: usize) -> Option<Offsets> {
         if len < size_of::<Offsets>() + TRAILER.len() {
             bun_core::debug_warn!("bun standalone module graph is too small to be valid");
-            return Ok(None);
+            return None;
         }
         // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
         // read-only; build short-lived views via raw `read_unaligned` so no `&[u8]`
@@ -3474,14 +3490,10 @@ impl StandaloneModuleGraph {
             unsafe { core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len()) };
         if trailer_bytes != TRAILER {
             bun_core::debug_warn!("bun standalone module graph has invalid trailer");
-            return Ok(None);
+            return None;
         }
         // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
-        let offsets: Offsets = unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) };
-        let graph = from_bytes_alloc(base, len, offsets, payload_file)?;
-        // SAFETY: `from_bytes_alloc` just allocated `graph` for the life of the process.
-        unsafe { &*graph }.prefetch_startup_pages();
-        Ok(Some(graph))
+        Some(unsafe { core::ptr::read_unaligned(offsets_ptr.cast::<Offsets>()) })
     }
 
     /// Starts reading the payload pages the entry point's static import closure
@@ -3816,16 +3828,6 @@ impl SerializedSourceMap {
         // SAFETY: index bounds-checked; layout per Header doc; pointer may be misaligned.
         unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(index)) }
     }
-}
-
-/// Once loaded, this map stores additional data for keeping track of source code.
-pub struct SerializedSourceMapLoaded {
-    pub map: SerializedSourceMap,
-
-    /// Only decompress source code once! Once a file is decompressed,
-    /// it is stored here. Decompression failures are stored as an empty
-    /// string, which will be treated as "no contents".
-    pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
 }
 
 pub(crate) fn serialize_json_source_map_for_standalone(

@@ -377,7 +377,8 @@ fn runtime_members() {
     let with_body = add_function(&mut file, FnBody::Block(IdList::EMPTY), true);
     let without_body = add_function(&mut file, FnBody::None, true);
     let (none, declare, is_abstract) = (Flags::empty(), Flags::AMBIENT, Flags::ABSTRACT);
-    let cases: [MemberCase; 20] = [
+    let accessor = Flags::ACCESSOR;
+    let cases: [MemberCase; 23] = [
         (MemberKind::Property, none, FnId::NONE, plain, true),
         (MemberKind::Property, none, FnId::NONE, decorated, true),
         (
@@ -395,6 +396,21 @@ fn runtime_members() {
             FnId::NONE,
             decorated,
             true,
+        ),
+        (MemberKind::Property, accessor, FnId::NONE, decorated, true),
+        (
+            MemberKind::Property,
+            accessor | declare,
+            FnId::NONE,
+            decorated,
+            false,
+        ),
+        (
+            MemberKind::Property,
+            accessor | is_abstract,
+            FnId::NONE,
+            decorated,
+            false,
         ),
         (MemberKind::Method, none, with_body, plain, true),
         (MemberKind::Getter, none, with_body, plain, true),
@@ -431,4 +447,77 @@ fn runtime_members() {
             assert_eq!(has_runtime_member(hir, member), case.4, "{case:?}");
         }
     });
+}
+
+#[test]
+fn long_lists_lie_in_one_block_in_order() {
+    let mut file = FileBuilder::default();
+    let (object, index) = add_index(&mut file, ExprId(0));
+    add_function(&mut file, FnBody::None, false);
+    let (expr_count, fn_count) = (file.exprs.len(), file.fns.len());
+    with_file(file, |hir| {
+        assert!(hir.owns_its_lists());
+        assert_eq!((hir.exprs.len(), hir.fns.len()), (expr_count, fn_count));
+        assert!(matches!(hir[object].kind, ExprKind::Ident(name) if name == known::this));
+        assert!(matches!(hir[index].kind, ExprKind::Index { obj, .. } if obj == object));
+        let exprs = hir.exprs.as_ptr_range();
+        let fns = hir.fns.as_ptr_range();
+        let gap = fns.start as usize - exprs.end as usize;
+        assert!(gap < 1024, "nothing but the other lists lies between them");
+    });
+}
+
+#[test]
+fn freed_long_lists_are_empty() {
+    let mut file = FileBuilder::default();
+    add_ident(&mut file);
+    with_file(file, |hir| {
+        hir.free_long_lists();
+        assert!(hir.exprs.is_empty() && !hir.owns_its_lists());
+    });
+}
+
+#[test]
+fn file_without_nodes_owns_no_block() {
+    with_file(FileBuilder::default(), |hir| assert!(!hir.owns_its_lists()));
+}
+
+#[test]
+fn imported_require_is_found_by_its_names() {
+    let entry = |specifier: u32, export: u32, path: u32| ImportedRequire {
+        specifier: Atom(specifier),
+        export: Atom(export),
+        path: Atom(path),
+        is_made: true,
+        other_values: OtherValues::None,
+    };
+    let mut imported: Vec<ImportedRequire> =
+        (0..1000).map(|at| entry(at / 10, at % 10, at)).collect();
+    imported.push(entry(3, 4, 5000));
+    let places = ImportedRequire::hash_by_names(&imported);
+    for places in [&places[..], &[]] {
+        let find = |specifier: u32, export: u32| {
+            let names = (Atom(specifier), Atom(export));
+            ImportedRequire::find_by_names(&imported, places, names.0, names.1).map(|it| it.path.0)
+        };
+        for at in 0..1000 {
+            assert_eq!(find(at / 10, at % 10), Some(at));
+        }
+        assert_eq!(find(100, 0), None);
+        assert_eq!(find(0, 10), None);
+    }
+}
+
+#[test]
+fn narrow_ids_come_back_from_a_block() {
+    let session = Session::new();
+    let arena = session.arena();
+    for last in [7, u32::from(u16::MAX)] {
+        let ids = vec![ExprId(0), ExprId::NONE, ExprId(last)];
+        let mut block = ListBlock::new_in(arena, Narrow::room_for(&ids));
+        let narrow = Narrow::moved_into(&mut block, arena, &mut ids.clone());
+        let read: Vec<ExprId> = (0..ids.len()).filter_map(|at| narrow.id_at(at)).collect();
+        assert_eq!(read, ids);
+        assert_eq!(narrow.id_at(ids.len()), None);
+    }
 }

@@ -4,10 +4,8 @@
 // the program below it, by Reflect.construct() for another new.target, by the operations of the language that make one without a call, and by the calls that no table of operands finds.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tls } from "harness";
-import { findBuiltinTable } from "./harness/builtin-table";
+import { builtinTableOf } from "./harness/builtin-table";
 import { test } from "./supported";
-
-const table = findBuiltinTable(bunExe());
 
 const script = `
 const table = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
@@ -139,29 +137,27 @@ console.log(JSON.stringify(found));
 process.exit(0);
 `;
 
-test.skipIf(table === undefined)(
-  "a class that lists the own names of its instances lists them however an instance is made",
-  () => {
-    const { stdout, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "--expose-internals", "-e", script, table!, JSON.stringify(tls)],
-      env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const found = JSON.parse(stdout.toString()) as {
-      below: number;
-      forAnotherTarget: number;
-      byTheLanguage: number;
-      byOneCall: number;
-      listing: number;
-      notListed: string[];
-    };
-    expect(found.notListed).toEqual([]);
-    expect(found.listing).toBeGreaterThan(100);
-    expect(found.below).toBeGreaterThan(60);
-    expect(found.forAnotherTarget).toBeGreaterThan(60);
-    expect(found.byTheLanguage).toBe(10);
-    expect(found.byOneCall).toBe(6);
-    expect(exitCode).toBe(0);
-  },
-);
+test("a class that lists the own names of its instances lists them however an instance is made", () => {
+  const table = builtinTableOf(bunExe());
+  const { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "--expose-internals", "-e", script, table, JSON.stringify(tls)],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const found = JSON.parse(stdout.toString()) as {
+    below: number;
+    forAnotherTarget: number;
+    byTheLanguage: number;
+    byOneCall: number;
+    listing: number;
+    notListed: string[];
+  };
+  expect(found.notListed).toEqual([]);
+  expect(found.listing).toBeGreaterThan(100);
+  expect(found.below).toBeGreaterThan(60);
+  expect(found.forAnotherTarget).toBeGreaterThan(60);
+  expect(found.byTheLanguage).toBe(10);
+  expect(found.byOneCall).toBe(6);
+  expect(exitCode).toBe(0);
+});

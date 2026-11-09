@@ -11,26 +11,26 @@ pub struct AccessorPairs {
     enforce_for_ts_types: bool,
 }
 
-const MISSING_GETTER_IN_PROPERTY_DESCRIPTOR: Message = Message::new(
+const MISSING_GETTER_IN_PROPERTY_DESCRIPTOR: &Message = &Message::new(
     "missingGetterInPropertyDescriptor",
     "Getter is not present in property descriptor.",
 );
-const MISSING_SETTER_IN_PROPERTY_DESCRIPTOR: Message = Message::new(
+const MISSING_SETTER_IN_PROPERTY_DESCRIPTOR: &Message = &Message::new(
     "missingSetterInPropertyDescriptor",
     "Setter is not present in property descriptor.",
 );
-const MISSING_GETTER_IN_OBJECT_LITERAL: Message =
-    Message::new("missingGetterInObjectLiteral", "Getter is not present for {{ name }}.");
-const MISSING_SETTER_IN_OBJECT_LITERAL: Message =
-    Message::new("missingSetterInObjectLiteral", "Setter is not present for {{ name }}.");
-const MISSING_GETTER_IN_CLASS: Message =
-    Message::new("missingGetterInClass", "Getter is not present for class {{ name }}.");
-const MISSING_SETTER_IN_CLASS: Message =
-    Message::new("missingSetterInClass", "Setter is not present for class {{ name }}.");
-const MISSING_GETTER_IN_TYPE: Message =
-    Message::new("missingGetterInType", "Getter is not present for type {{ name }}.");
-const MISSING_SETTER_IN_TYPE: Message =
-    Message::new("missingSetterInType", "Setter is not present for type {{ name }}.");
+const MISSING_GETTER_IN_OBJECT_LITERAL: &Message =
+    &Message::new("missingGetterInObjectLiteral", "Getter is not present for {{ name }}.");
+const MISSING_SETTER_IN_OBJECT_LITERAL: &Message =
+    &Message::new("missingSetterInObjectLiteral", "Setter is not present for {{ name }}.");
+const MISSING_GETTER_IN_CLASS: &Message =
+    &Message::new("missingGetterInClass", "Getter is not present for class {{ name }}.");
+const MISSING_SETTER_IN_CLASS: &Message =
+    &Message::new("missingSetterInClass", "Setter is not present for class {{ name }}.");
+const MISSING_GETTER_IN_TYPE: &Message =
+    &Message::new("missingGetterInType", "Getter is not present for type {{ name }}.");
+const MISSING_SETTER_IN_TYPE: &Message =
+    &Message::new("missingSetterInType", "Setter is not present for type {{ name }}.");
 
 /// A `get` or `set` accessor in an object literal, class, interface or type literal.
 #[derive(Copy, Clone)]
@@ -115,8 +115,8 @@ impl AccessorPairs {
         &self,
         func: Func<'a>,
         accessors: &mut dyn Iterator<Item = Accessor<'a>>,
-        missing_getter: Message,
-        missing_setter: Message,
+        missing_getter: &'static Message,
+        missing_setter: &'static Message,
         cx: &Cx<'a, Self>,
     ) {
         let accessors: SmallVec<[Accessor<'a>; 8]> = accessors.collect();

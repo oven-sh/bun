@@ -6,10 +6,10 @@ use super::resolve::{
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, Mutability};
 use crate::modules::ExportBinding;
-use bun_sema::atom::known;
 use bun_sema::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, Bound, Parent, StoreKind, SymbolId,
 };
+use bun_sema::file_analysis::FileAnalysis;
 use bun_sema::fold::{Decision, Decisions};
 use bun_sema::hir::{
     self, BinOp, Call, Chain, ClassId, ExprId, ExprKind, Flags, FnId, FnKind, NodeData, PatKind,
@@ -19,8 +19,6 @@ use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use smallvec::SmallVec;
 
-const MAX_STATES_OF_CLASS: usize = 256;
-
 const METHODS_OF_COLLECTIONS: [BuiltinId; 5] = [
     BuiltinId::WeakMapPrototypeGet,
     BuiltinId::WeakMapPrototypeHas,
@@ -28,6 +26,12 @@ const METHODS_OF_COLLECTIONS: [BuiltinId; 5] = [
     BuiltinId::WeakSetPrototypeAdd,
     BuiltinId::WeakSetPrototypeHas,
 ];
+
+pub(super) fn replaces_method_of_collections(replaced: &[u32]) -> bool {
+    let is_listed = |id: BuiltinId| replaced.binary_search(&(id as u32)).is_ok();
+    let mut methods = METHODS_OF_COLLECTIONS.iter();
+    methods.any(|&method| is_listed(table::canonical_id(method)) || is_listed(method))
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct PrivateState {
@@ -46,7 +50,11 @@ pub struct FilePrivateStates {
 }
 
 impl FilePrivateStates {
+    #[inline]
     pub fn site(&self, call: ExprId) -> Option<PrivateStateSite> {
+        if self.sites.is_empty() {
+            return None;
+        }
         find_by_key(&self.sites, call).copied()
     }
 
@@ -95,7 +103,6 @@ pub(super) fn find_in_file(input: &ResolveInput<'_, '_>, file: FileId) -> FilePr
     let Some(compiled) = input.files.compiled(file) else {
         return FilePrivateStates::default();
     };
-    // An entry that is in a field is missing in the collection.
     let mut methods = METHODS_OF_COLLECTIONS.iter();
     let is_locked = |&method| table::entry(method).mutability == Mutability::AlwaysLocked;
     if !input.modules.has_record(file) || !methods.all(is_locked) {
@@ -109,17 +116,22 @@ pub(super) fn find_in_file(input: &ResolveInput<'_, '_>, file: FileId) -> FilePr
         decisions: &compiled.analysis.decisions,
         candidates: Vec::new(),
     };
-    let creations = (0..finder.hir.exprs.len() as u32).map(ExprId);
-    finder.candidates = creations
-        .filter_map(|creation| finder.find_candidate(creation))
-        .collect();
+    let mut candidates = Vec::new();
+    for (index, expression) in finder.hir.exprs.iter().enumerate() {
+        if matches!(expression.kind, ExprKind::New(_))
+            && let Some(candidate) = finder.find_candidate(ExprId(index as u32))
+        {
+            candidates.push(candidate);
+        }
+    }
+    finder.candidates = candidates;
     finder
         .candidates
         .shared_sort_unstable_by_key(|candidate| candidate.symbol);
     if finder.candidates.is_empty() {
         return FilePrivateStates::default();
     }
-    finder.classify_mentions();
+    finder.classify_mentions(&compiled.analysis);
     finder.finish()
 }
 
@@ -155,10 +167,12 @@ impl Finder<'_, '_, '_> {
         {
             return None;
         }
-        if name == known::WeakMap {
-            return Some(PrivateStateKind::Field);
+        let name = table::find_name(self.input.files.atoms.bytes(name))?;
+        match table::global(name)? {
+            BuiltinId::WeakMap => Some(PrivateStateKind::Field),
+            BuiltinId::WeakSet => Some(PrivateStateKind::Brand),
+            _ => None,
         }
-        (name == known::WeakSet).then_some(PrivateStateKind::Brand)
     }
 
     fn is_value_unused(&self, expression: ExprId) -> bool {
@@ -189,7 +203,6 @@ impl Finder<'_, '_, '_> {
 
     fn find_holder(&self, creation: ExprId) -> Option<(SymbolId, Option<ExprId>)> {
         let (hir, bound) = (self.hir, self.bound);
-        // Only the first collection that a variable holds has its entries in fields.
         if !is_in_statement_of_file(bound, creation) {
             return None;
         }
@@ -238,7 +251,8 @@ impl Finder<'_, '_, '_> {
             BindingKind::Var | BindingKind::Let | BindingKind::Const
         );
         let recorded = bound.binding_stability_ignoring(symbol, &|_| true);
-        if !is_variable || recorded != BindingStability::Stable {
+        if !is_variable || recorded != BindingStability::Stable || bound.is_visible_to_eval(symbol)
+        {
             return false;
         }
         let stores = bound.stores_to(symbol).iter();
@@ -269,7 +283,7 @@ impl Finder<'_, '_, '_> {
         })
     }
 
-    fn classify_mentions(&mut self) {
+    fn classify_mentions(&mut self, analysis: &FileAnalysis<'_>) {
         for index in 0..self.hir.exprs.len() as u32 {
             let mention = ExprId(index);
             if !matches!(self.hir[mention].kind, ExprKind::Ident(_))
@@ -284,6 +298,14 @@ impl Finder<'_, '_, '_> {
             let candidates = &self.candidates;
             if let Ok(candidate) = candidates.binary_search_by_key(&symbol, |it| it.symbol) {
                 self.classify_mention(candidate, mention);
+            }
+        }
+        for binding in analysis.bindings_read_without_expression(self.hir, self.bound) {
+            let candidates = &mut self.candidates;
+            if let Binding::Symbol(symbol) = binding
+                && let Ok(candidate) = candidates.binary_search_by_key(&symbol, |it| it.symbol)
+            {
+                candidates[candidate].has_other_mention = true;
             }
         }
     }
@@ -318,7 +340,6 @@ impl Finder<'_, '_, '_> {
         }
     }
 
-    // `W.set(x, v)` and `W.add(x)` answer the collection.
     fn find_definition(&self, mention: ExprId, kind: PrivateStateKind) -> Option<ExprId> {
         let (hir, bound) = (self.hir, self.bound);
         let Parent::Expr(method) = bound.parent_of_expr(mention) else {
@@ -332,13 +353,14 @@ impl Finder<'_, '_, '_> {
             return None;
         };
         let site = hir[site];
-        let (method_name, argument_count) = match kind {
-            PrivateStateKind::Field => (&b"set"[..], 2),
-            PrivateStateKind::Brand => (&b"add"[..], 1),
+        let (defining_method, argument_count) = match kind {
+            PrivateStateKind::Field => (BuiltinId::WeakMapPrototypeSet, 2),
+            PrivateStateKind::Brand => (BuiltinId::WeakSetPrototypeAdd, 1),
         };
+        let name = table::find_name(self.input.files.atoms.bytes(name));
         let mut arguments = hir.ids(site.args);
         let is_definition = object == mention
-            && self.input.files.atoms.bytes(name) == method_name
+            && name == Some(table::entry(defining_method).name)
             && site.callee == method
             && matches!(site.chain, Chain::No)
             && site.args.len() == argument_count
@@ -382,7 +404,6 @@ impl Finder<'_, '_, '_> {
             && !members.any(|member| hir[member].flags.contains(Flags::ACCESSOR))
     }
 
-    // `W.set(this, v)` in a constructor: the objects of that class have room for the entry.
     fn find_constructed_class(&self, definition: ExprId) -> Option<ClassId> {
         let hir = self.hir;
         let ExprKind::Call(site) = hir[definition].kind else {
@@ -412,23 +433,21 @@ impl Finder<'_, '_, '_> {
         accepted.shared_sort_unstable_by_key(|&(owner, candidate)| (owner, candidate.symbol));
         let mut states: Vec<PrivateState> = Vec::new();
         let mut sites: Vec<(ExprId, PrivateStateSite)> = Vec::new();
-        for of_class in accepted.chunk_by(|first, second| first.0 == second.0) {
-            for &(owner, candidate) in of_class.iter().take(MAX_STATES_OF_CLASS) {
-                states.push(PrivateState {
-                    symbol: candidate.symbol,
+        for (owner, candidate) in accepted {
+            states.push(PrivateState {
+                symbol: candidate.symbol,
+                kind: candidate.kind,
+                owner,
+                creation: candidate.creation,
+            });
+            sites.extend(candidate.sites.iter().map(|&(call, role)| {
+                let site = PrivateStateSite {
+                    state: candidate.symbol,
                     kind: candidate.kind,
-                    owner,
-                    creation: candidate.creation,
-                });
-                sites.extend(candidate.sites.iter().map(|&(call, role)| {
-                    let site = PrivateStateSite {
-                        state: candidate.symbol,
-                        kind: candidate.kind,
-                        role,
-                    };
-                    (call, site)
-                }));
-            }
+                    role,
+                };
+                (call, site)
+            }));
         }
         let indexed = || (0..).zip(&states);
         let mut by_symbol: Vec<(SymbolId, u32)> = indexed()
@@ -578,6 +597,44 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
     }
 
     #[test]
+    fn a_collection_that_is_read_where_no_expression_spells_it_stays_a_collection() {
+        let brand = ["_Counter_instances Brand 2"];
+        let classic = "/** @jsxRuntime classic */\n";
+        for (name, head, more) in [
+            ("main.jsx", "/** @jsx _Counter_x.get */\n", "<a />;"),
+            (
+                "main.jsx",
+                "/** @jsx pick */\n/** @jsxFrag _Counter_x */\n",
+                "function pick(tag) { return tag; }\n<></>;",
+            ),
+            ("main.ts", "", "import entries = _Counter_x;\nentries;"),
+        ] {
+            let main = format!("{classic}{head}{COUNTER}{more}");
+            assert_eq!(describe_states(name, &main), brand, "{head}{more}");
+        }
+        let expected = ["_Counter_x Field 4", "_Counter_instances Brand 2"];
+        let main = format!(
+            "{classic}/** @jsx pick */\n{COUNTER}function pick(tag) {{ return tag; }}\n<a />;"
+        );
+        assert_eq!(describe_states("main.jsx", &main), expected);
+    }
+
+    #[test]
+    fn a_constant_that_evaluated_text_can_read_stays_a_collection() {
+        let class = "class C { constructor() { _x.set(this, 1); } read() { return __classPrivateFieldGet(this, _x, \"f\"); } }";
+        for keyword in ["const", "let", "var"] {
+            let main = format!("{keyword} _x = new WeakMap();\n{class}");
+            assert_eq!(
+                describe_states("main.mjs", &main),
+                ["_x Field 2"],
+                "{keyword}"
+            );
+            let main = format!("{main}\nfunction peek(text) {{ return eval(text); }}");
+            assert!(describe_states("main.mjs", &main).is_empty(), "{keyword}");
+        }
+    }
+
+    #[test]
     fn more_entries_and_more_uses_keep_the_state() {
         let expected = ["_Counter_x Field 5", "_Counter_instances Brand 2"];
         for more in [
@@ -617,5 +674,20 @@ _Counter_x = new WeakMap(), _Counter_instances = new WeakSet(), _Counter_step = 
         ] {
             assert!(describe_states("main.mjs", main).is_empty(), "{main}");
         }
+    }
+
+    #[test]
+    fn a_replaced_method_keeps_every_entry_in_its_collection() {
+        let main = format!("{IMPORT}{COUNTER}");
+        let files = [("main.mjs", main.as_str()), ("helpers.mjs", HELPERS)];
+        with_graph(&files, |graph, bind_input| {
+            let files = bind_input.files;
+            let file = file_named(bind_input, "main.mjs");
+            let mut helpers = KnownHelpers::compute(files, &run_serially);
+            helpers.keep_private_states_in_collections(&[BuiltinId::ObjectDefineProperty as u32]);
+            assert!(helpers.private_states(files, graph, file).is_some());
+            helpers.keep_private_states_in_collections(&[BuiltinId::WeakSetPrototypeHas as u32]);
+            assert!(helpers.private_states(files, graph, file).is_none());
+        });
     }
 }

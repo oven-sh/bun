@@ -1,9 +1,9 @@
 use bun_ast::Kind;
 use bun_core::fmt::QuotedFormatter;
 use bun_sema::atom::Interner;
-use bun_sema::check::aot::{DiagnosticClass, Effect};
+use bun_sema::check::aot::Effect;
 use bun_sema::fold::{FoldError, FoldErrorKind};
-use bun_sema::hir::{self, DiagnosticKind, File, StmtKind};
+use bun_sema::hir::{self, File, StmtKind};
 use bun_sema::messages::{self, Category};
 use bun_sema::module_format::CommonJsEvidence;
 use bun_sema::node::NodeData;
@@ -12,7 +12,7 @@ use bun_sema::resolve::CodeFailure;
 use bun_sema_driver::host::to_native;
 use bun_sema_driver::{BuildDiagnostic, EntryPointFailure, Incomplete, LoadFailure, log_message};
 
-use super::sink::{append_location, to_log_message};
+use super::sink::{append_location, to_driver_diagnostic, to_log_message};
 use super::{
     Diagnostic, Diagnostics, ProgramView, Severity, Span, SpanLocator, new_driver_diagnostic,
 };
@@ -48,7 +48,10 @@ impl Diagnostics {
                 Effect::StopsBuild => Kind::Err,
                 Effect::Warns => Kind::Warn,
                 Effect::WithdrawsTrust => {
-                    debug_assert!(false, "report_package_errors groups these by package");
+                    debug_assert!(
+                        false,
+                        "the driver decides the roles by these and returns none"
+                    );
                     continue;
                 }
                 Effect::Dropped => {
@@ -69,12 +72,7 @@ impl Diagnostics {
             let mut message =
                 log_message(&diagnostic).expect("the driver drops suggestions and messages");
             message.kind = kind;
-            match (kind, diagnostic.class) {
-                (Kind::Err, DiagnosticClass::EarlyError) => {
-                    self.add_early_error(diagnostic.code, message);
-                }
-                _ => self.add_message(diagnostic.code, message),
-            }
+            self.add_message(diagnostic.code, message);
         }
     }
 
@@ -93,8 +91,6 @@ impl Diagnostics {
         let mut locator = SpanLocator::new(view);
         let mut files_with_syntax_errors = Vec::new();
         for failure in modules.errors().iter().chain(modules.failures()) {
-            // The build stops here, before the check that reports syntax errors. A file that does not parse exports
-            // little, so its syntax errors say why the name is missing.
             if let ModuleFailureKind::ExportNotFound { exporter, .. } = failure.kind
                 && let ModuleRef::File(exporter) = exporter
                 && failure.effect() == FailureEffect::StopsBuild
@@ -118,6 +114,9 @@ impl Diagnostics {
                 | ModuleFailureKind::UnresolvedAtLoad { specifier, reason } => {
                     Diagnostic::new(code_of_failure(reason), span, &[atoms.bytes(specifier)])
                 }
+                ModuleFailureKind::NotAProgram {
+                    is_silent: true, ..
+                } => continue,
                 ModuleFailureKind::NotAProgram { .. } => {
                     let source = parsed_source(view.files(), failure.importer);
                     let reason = source.and_then(|source| source.parse_failure.as_deref());
@@ -133,14 +132,24 @@ impl Diagnostics {
                 ModuleFailureKind::ExportAmbiguous { name, .. } => {
                     Diagnostic::new(Code::AmbiguousExport, span, &[atoms.bytes(name)])
                 }
-                // Nothing is known to be wrong: the run that ends without the name throws.
                 ModuleFailureKind::ExportMayBeAbsent { .. } => continue,
             };
             diagnostic.severity = match failure.effect() {
                 FailureEffect::StopsBuild => Severity::Error,
                 FailureEffect::ThrowsAtSite => Severity::Warning,
             };
+            let code = diagnostic.code;
             self.add_with_locator(Some(&mut locator), diagnostic);
+            if let ModuleFailureKind::UnresolvedAtLoad { specifier, .. } = failure.kind
+                && let Some((_, template)) = messages::message(2307)
+                && let Some(added) = self.entries.last()
+                && added.key.4 == code.number()
+            {
+                let mut text = b"TS2307: ".to_vec();
+                messages::format(&mut text, template, &[atoms.bytes(specifier)]);
+                let file = added.key.1.clone();
+                self.missing_at_load.insert((file, text));
+            }
         }
     }
 
@@ -162,29 +171,32 @@ impl Diagnostics {
         }
     }
 
-    /// `deepest_compiled`: `LimitId::MaxNestingDepth`. Whatever walks a tree that is deeper may run out of stack.
-    pub(crate) fn add_incomplete_files(
-        &mut self,
-        incomplete: &[Incomplete],
-        deepest_compiled: u64,
-    ) {
+    pub(crate) fn add_incomplete_files(&mut self, incomplete: &[Incomplete]) {
+        const DEEPEST_THAT_MUST_BE_WALKED: u32 = 2000;
         for file in incomplete {
             let path = to_native(&file.path);
-            if file.is_nested_too_deeply || u64::from(file.deepest_nesting) > deepest_compiled {
+            if file.is_nested_too_deeply || file.deepest_nesting > DEEPEST_THAT_MUST_BE_WALKED {
                 let diagnostic = Diagnostic::new(Code::FileNestedTooDeeply, None, &[path]);
-                self.add(None, diagnostic);
+                match file.nested_too_deeply_at {
+                    Some((line, column)) => {
+                        let mut reported = to_driver_diagnostic(None, &diagnostic);
+                        reported.path.clone_from(&file.path);
+                        reported.has_undefined_range = false;
+                        (reported.line, reported.column) = (line, column);
+                        (reported.end_line, reported.end_column) = (line, column);
+                        let message = to_log_message(&reported, Severity::Error);
+                        self.add_message(diagnostic.code.number(), message);
+                    }
+                    None => self.add(None, diagnostic),
+                }
             } else {
-                self.report_internal_error(Stage::Check, file.message(path));
+                let message = file.message(path);
+                self.report_internal_error(Stage::Check, message);
             }
         }
     }
 
-    pub(crate) fn add_link_errors(
-        &mut self,
-        errors: Vec<LinkError>,
-        limits: &LimitValues,
-        describe: &dyn Fn(&LinkError) -> Vec<u8>,
-    ) {
+    pub(crate) fn add_link_errors(&mut self, errors: Vec<LinkError>, limits: &LimitValues) {
         for error in errors {
             match error {
                 LinkError::LimitExceeded { limit, count } => {
@@ -196,9 +208,6 @@ impl Diagnostics {
                     ];
                     let code = Code::ProgramLimitExceeded;
                     self.add(None, Diagnostic::new(code, None, &arguments));
-                }
-                _ => {
-                    self.report_internal_error(Stage::LinkAndEmit, describe(&error));
                 }
             }
         }
@@ -230,9 +239,22 @@ pub(crate) fn code_of_failure(failure: CodeFailure) -> Code {
     }
 }
 
-fn syntax_errors_of<'a>(hir: &'a File<'_>) -> impl Iterator<Item = &'a hir::Diagnostic> {
-    (hir.diagnostics.iter())
-        .filter(|it| it.kind == DiagnosticKind::Parse && it.class == DiagnosticClass::EarlyError)
+pub(crate) fn syntax_errors_of<'a>(hir: &'a File<'_>) -> impl Iterator<Item = &'a hir::Diagnostic> {
+    hir.syntax_errors()
+}
+
+pub(crate) fn describe_first_fold_error(
+    view: ProgramView<'_, '_>,
+    file: FileId,
+) -> Option<Vec<u8>> {
+    let files = view.files();
+    let first = files.analysis(file).errors.first()?;
+    let diagnostic = fold_error_diagnostic(files.hir(file), &files.atoms, file, first);
+    let located = to_driver_diagnostic(Some(&mut SpanLocator::new(view)), &diagnostic);
+    let mut sentence = located.text;
+    let position = format!(" ({}:{})", located.line, located.column);
+    sentence.extend_from_slice(position.as_bytes());
+    Some(sentence)
 }
 
 pub(super) fn fold_error_diagnostic(

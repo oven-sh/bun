@@ -335,7 +335,7 @@ rerunEach = 3
 
 #### clearMocks, mockReset, restoreMocks, unstubEnvs, unstubGlobals
 
-Clean up the previous test's mocks and stubs. The cleanup runs before each test and each retry, ahead of the `beforeEach` hooks. The option names and the order they run in are the same as Vitest's:
+Clean up the previous test's mocks and stubs. The cleanup runs before each test and each retry, ahead of the `beforeEach` hooks. The option names and the order they run in are the same as Vitest's, so Jest's `resetMocks` is `mockReset`:
 
 ```toml title="bunfig.toml" icon="settings"
 [test]

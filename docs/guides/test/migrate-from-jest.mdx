@@ -99,6 +99,19 @@ bun test --timeout 10000
 
 ---
 
+Move `clearMocks`, `resetMocks` and `restoreMocks` from your Jest config to `bunfig.toml`. Bun uses Vitest's name for `resetMocks`, which is `mockReset`.
+
+```toml bunfig.toml icon="settings"
+[test]
+clearMocks = true
+mockReset = true # resetMocks in Jest
+restoreMocks = true
+```
+
+Bun doesn't read your Jest config file or the `jest` key in `package.json`. Without `clearMocks` in `bunfig.toml`, a mock function keeps the calls of earlier tests, so an assertion like `toHaveBeenCalledTimes(1)` fails. See [Test configuration](/test/configuration#test-execution).
+
+---
+
 Many other Jest settings are irrelevant in `bun test`.
 
 - `transform` — Bun supports TypeScript & JSX. Configure other file types with [plugins](/runtime/plugins).

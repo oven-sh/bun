@@ -2786,6 +2786,36 @@ if (isBun) {
       expect(vi.isMockFunction(list[2])).toBe(false);
     });
 
+    test("{ spy: true } handles an element of an array like a property", () => {
+      class Service {
+        #secret = "secret";
+        reveal() {
+          return this.#secret;
+        }
+      }
+      class Klass {
+        method() {
+          return "Klass";
+        }
+      }
+      const plain = { method: () => "plain" };
+      const service = new Service();
+      const date = new Date(0);
+      const spied = vi.mockObject({ list: [plain, service, date, Klass] }, { spy: true });
+      // Vitest copies each object in an array into a plain object: reveal() throws on the copy, and the copy of
+      // the Date leaves Date.prototype spied. Its mock of a class in an array has methods that return undefined.
+      expect(spied.list[0]).toBe(plain);
+      expect(spied.list[1]).toBe(service);
+      expect(spied.list[2]).toBe(date);
+      expect(plain.method()).toBe("plain");
+      expect(plain.method).toHaveBeenCalledTimes(1);
+      expect(spied.list[1].reveal()).toBe("secret");
+      expect(spied.list[1].reveal).toHaveBeenCalledTimes(1);
+      expect(vi.isMockFunction(Date.prototype.getTime)).toBe(false);
+      expect(spied.list[3].prototype).toBe(Klass.prototype);
+      expect(new spied.list[3]().method()).toBe("Klass");
+    });
+
     test.each(modes)("%s: cycles and shared references", (_, options) => {
       const shared = { method() {} };
       const fn = () => 1;

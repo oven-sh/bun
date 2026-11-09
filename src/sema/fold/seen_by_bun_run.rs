@@ -77,6 +77,25 @@ impl Folder<'_, '_> {
         seen.and_then(ExprId::some).unwrap_or(e)
     }
 
+    /// Whether a question reads what stands at `e` by its kind: no name, call, read or value that says all of it.
+    pub(super) fn is_read_by_shape(&self, e: ExprId) -> bool {
+        !matches!(
+            self.hir[self.find_in_place(e)].kind,
+            ExprKind::Ident(_)
+                | ExprKind::Call(_)
+                | ExprKind::Dot { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Assign { .. }
+                | ExprKind::This
+                | ExprKind::Await(_)
+                | ExprKind::Yield { .. }
+                | ExprKind::Number(_)
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Null
+        )
+    }
+
     /// `member` stands where `read` is written: for `bun run` where `is_in_place` holds, and for the build.
     pub(super) fn note_member_in_place(
         &mut self,

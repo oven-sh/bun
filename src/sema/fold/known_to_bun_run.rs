@@ -283,9 +283,7 @@ impl<'s> Folder<'_, 's> {
         };
         let is_no_text = |e: ExprId| {
             let e = self.seen_by_bun_run(e);
-            matches!(self.folded(e).value, Value::Known(value)
-                if self.evaluator.to_constant(value) == Constant::String(known::empty))
-                && self.is_literal_to_bun_run(e)
+            self.is_no_text_to_build(e) && self.is_literal_to_bun_run(e)
         };
         let is_held_by_parser = |e: ExprId| {
             let e = self.seen_by_bun_run(e);
@@ -297,6 +295,11 @@ impl<'s> Folder<'_, 's> {
             _ => return None,
         };
         (self.computes_with_constants(sum) && self.is_text_by_shape(text)).then_some(text)
+    }
+
+    pub(super) fn is_no_text_to_build(&self, e: ExprId) -> bool {
+        matches!(self.folded(e).value, Value::Known(value)
+            if self.evaluator.to_constant(value) == Constant::String(known::empty))
     }
 
     /// Whether `known_primitive` of the parser says that `e` is a text.

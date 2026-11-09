@@ -20,7 +20,9 @@ impl<'s> Folder<'_, 's> {
         let kind = hir[e].kind;
         match kind {
             ExprKind::Unary { op, operand } => {
-                if op == UnOp::Not {
+                let is_not =
+                    |e: ExprId| matches!(hir[e].kind, ExprKind::Unary { op: UnOp::Not, .. });
+                if op == UnOp::Not && is_not(self.find_in_place(operand)) {
                     self.note_seen_in_place(e, |folder| folder.find_operand_of_double_not(operand));
                 }
                 let folded = self.fold_unary(op, operand);
@@ -168,7 +170,10 @@ impl<'s> Folder<'_, 's> {
     fn fold_binary(&mut self, e: ExprId, op: BinOp, left: ExprId, right: ExprId) -> Folded {
         match op {
             BinOp::Add => {
-                self.note_seen_in_place(e, |folder| folder.find_text_joined_with_no_text(e));
+                let is_no_text = |e: ExprId| self.is_no_text_to_build(self.find_in_place(e));
+                if is_no_text(left) || is_no_text(right) {
+                    self.note_seen_in_place(e, |folder| folder.find_text_joined_with_no_text(e));
+                }
                 let sum = self.fold_addition(e);
                 let find_text = |folder: &Self| folder.find_text_joined_with_nothing(left, right);
                 if let (Value::Unknown, Some(text)) =
@@ -199,7 +204,7 @@ impl<'s> Folder<'_, 's> {
             }
             BinOp::Comma => {
                 self.copy_condition(e, right);
-                if !self.is_callee(e) {
+                if self.is_read_by_shape(right) && !self.is_callee(e) {
                     self.note_operand_in_place(e, right, |folder| {
                         folder.minifies_syntax() && folder.removes_left_of_comma(left)
                     });

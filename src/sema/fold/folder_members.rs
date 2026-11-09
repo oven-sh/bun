@@ -35,9 +35,9 @@ impl Folder<'_, '_> {
             return Folded::UNKNOWN;
         };
         let literal = self.find_in_place(object);
-        if self.is_assignment_target(access) || self.is_delete_operand(access) {
-            return Folded::UNKNOWN;
-        }
+        let is_read = |folder: &Self| {
+            !folder.is_assignment_target(access) && !folder.is_delete_operand(access)
+        };
         let read = Read {
             access,
             object,
@@ -49,16 +49,24 @@ impl Folder<'_, '_> {
             is_kept_by_its_form: false,
         };
         match hir[literal].kind {
-            ExprKind::Array(items) => self.fold_item_read(read, items, key),
-            ExprKind::Object(properties) => self.fold_only_property_read(read, properties, key),
-            ExprKind::New(call) if self.makes_list_under_minify_syntax(call) => {
+            ExprKind::Array(items) if is_read(self) => self.fold_item_read(read, items, key),
+            ExprKind::Object(properties) if is_read(self) => {
+                self.fold_only_property_read(read, properties, key)
+            }
+            ExprKind::New(call) if self.makes_list_under_minify_syntax(call) && is_read(self) => {
                 let read = Read {
                     list_made_of: Some(call),
                     ..read
                 };
                 self.fold_item_read(read, hir[call].args, key)
             }
-            _ if chain != Chain::Continue => self.fold_member_of_text(access, object, key),
+            ExprKind::Array(_) | ExprKind::Object(_) => Folded::UNKNOWN,
+            _ if chain != Chain::Continue
+                && matches!(self.folded(object).value, Value::Known(_))
+                && is_read(self) =>
+            {
+                self.fold_member_of_text(access, object, key)
+            }
             _ => Folded::UNKNOWN,
         }
     }

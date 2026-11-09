@@ -298,14 +298,12 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
     false
 }
 
-/// True if the declaration binds a name at the top level of a script whose markup can assign it. No reference in the
-/// script shows that assignment.
-fn markup_may_write(declaration: VarDecl<'_>) -> bool {
+/// True if the declaration binds a name in `top_level`, the top-level scope of a script whose markup can assign it. No
+/// reference in the script shows that assignment.
+fn markup_may_write<'a>(declaration: VarDecl<'a>, top_level: Scope<'a>) -> bool {
     let mut may_write = false;
     declaration.pat().for_each_binding(&mut |pat| {
-        may_write |= pat
-            .symbol()
-            .is_some_and(|it| matches!(it.scope().kind(), ScopeKind::Global | ScopeKind::Module));
+        may_write |= pat.symbol().is_some_and(|it| it.scope() == top_level);
     });
     may_write
 }
@@ -346,11 +344,14 @@ fn fix_as_oxlint<'a>(
             return None;
         }
     }
-    let markup_assigns = fixer.file().markup_assigns_bindings();
+    let file = fixer.file();
+    let top_level = file
+        .markup_assigns_bindings()
+        .then(|| file.top_level_scope());
     let is_let = declarations.iter().any(|it| {
         it.init().is_none()
             || oxlint_is_written_to(it.pat())
-            || markup_assigns && markup_may_write(it)
+            || top_level.is_some_and(|top_level| markup_may_write(it, top_level))
     });
     let (file, span) = (fixer.file(), statement.span_without_export());
     let before = file.slice(Span::before(span.start, var));

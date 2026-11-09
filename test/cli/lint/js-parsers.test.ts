@@ -2909,50 +2909,61 @@ describe.concurrent("bun lint with an .oxlintrc.json", () => {
   });
 
   // The template assigns `count` and `label`, so `const` would throw `Assignment to constant variable` at runtime. The
-  // script doesn't show that: only a top-level binding can be assigned from the template, and the Astro template can't
-  // assign anything.
-  test("--fix keeps a top-level var of a .vue or .svelte script writable", async () => {
+  // script doesn't show that. Only a top-level binding can be assigned from the template. The whole script is off for
+  // `no-unassigned-vars`, as in oxlint. An Astro template doesn't assign, so its scripts keep oxlint's fixes.
+  const sourceTypes = [[[]], [["--parser-options", "sourceType: commonjs"]]];
+  test.each(sourceTypes)("--fix keeps a top-level var of a .vue or .svelte script writable %j", async extra => {
     const files = {
       ".oxlintrc.json": JSON.stringify({ rules: { "no-var": "error", "no-unassigned-vars": "error" } }),
       "TemplateWrites.vue": `<script setup>
 var count = 0;
 var label = "a";
 let dialog;
+function open() { dialog.showModal(); }
 function double() { var twice = count * 2; return twice; }
+function local() { let x; return x; }
 </script>
 
 <template>
   <button type="button" @click="count++">{{ count }} {{ label }}</button>
   <input v-model="label" />
-  <dialog ref="dialog" />
+  <dialog ref="dialog" @close="open()" />
 </template>
 `,
       "Counter.svelte": `<script>
   var count = 0;
   let dialog;
+  function open() { dialog.showModal(); }
   function double() { var twice = count * 2; return twice; }
 </script>
 <button on:click={() => count++}>{count}</button>
-<dialog bind:this={dialog} />
+<dialog bind:this={dialog} on:close={open} />
 `,
       "page.astro": `---
 var title = "x";
 let element;
 console.log(element);
+function local() { let x; return x; }
 ---
 <h1>{title}</h1>
 `,
     };
-    const result = await lint(files, ["--fix", "-f", "json"], ["TemplateWrites.vue", "Counter.svelte", "page.astro"]);
+    const reads = ["TemplateWrites.vue", "Counter.svelte", "page.astro"];
+    const result = await lint(files, ["--fix", "-f", "json", ...extra], reads);
     expect(result.files["TemplateWrites.vue"]).toContain(`let count = 0;
 let label = "a";
 let dialog;
+function open() { dialog.showModal(); }
 function double() { const twice = count * 2; return twice; }`);
     expect(result.files["Counter.svelte"]).toContain(`  let count = 0;
   let dialog;
+  function open() { dialog.showModal(); }
   function double() { const twice = count * 2; return twice; }`);
     expect(result.files["page.astro"]).toContain(`const title = "x";`);
-    expect(diagnostics(result.raw)).toMatchInlineSnapshot(`"page.astro 3:5 eslint(no-unassigned-vars)"`);
+    expect(diagnostics(result.raw)).toMatchInlineSnapshot(`
+          "page.astro 3:5 eslint(no-unassigned-vars)
+          page.astro 5:24 eslint(no-unassigned-vars)"
+        `);
     expect(result.exitCode).toBe(1);
   });
 });

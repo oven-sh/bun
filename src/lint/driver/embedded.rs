@@ -34,8 +34,9 @@ impl Framework {
     }
 
     /// True if the file's markup can assign a script's top-level bindings. A Vue template does with `v-model="x"` or
-    /// `@click="x++"`, Svelte markup with `bind:value={x}`. An Astro template only reads the frontmatter. The markup
-    /// isn't parsed, so a rule that decides from the absence of a write can't see those assignments.
+    /// `@click="x++"`, Svelte markup with `bind:value={x}`. An Astro expression can only do it as plain JavaScript,
+    /// which no directive does, and oxlint's `prefer-const` treats Astro as read-only too. The markup isn't parsed, so
+    /// a rule that decides from the absence of a write can't see those assignments.
     pub(crate) fn markup_assigns_bindings(self) -> bool {
         match self {
             Framework::Vue | Framework::Svelte => true,

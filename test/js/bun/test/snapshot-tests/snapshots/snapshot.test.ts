@@ -2193,6 +2193,107 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("is offered a plain object that has the property matchers in place of the values they matched", async () => {
+    const printed = [
+      `serialize(Any<Number>)`,
+      `\n{\n  "in": serialize(Any<Number>),\n}\n`,
+      `print(Any<Number>)`,
+      `\n{\n  "in": print(Any<Number>),\n}\n`,
+      `T \nTagged {\n  "a": Any<Number>,\n  "by": "nobody",\n}\n`,
+      `\n{\n  "in": T Tagged {\n    "a": Any<Number>,\n    "by": "nobody",\n  },\n}\n`,
+      `\nBox({\n  "a": Any<Number>,\n  "by": "nobody",\n})\n`,
+    ];
+    using dir = tempDir("snapshot-serializer-matchers", {
+      "a.test.js": `
+          // Only an instance has #name, so the getter throws a TypeError for any other object that has the prototype.
+          class Tagged {
+            #name = "T";
+            constructor(a, by) {
+              this.a = a;
+              this.by = by;
+            }
+            get [Symbol.toStringTag]() {
+              return this.#name;
+            }
+          }
+          const number = expect.any(Number);
+          expect.addSnapshotSerializer({
+            test: value => value?.by === "serialize",
+            serialize: (value, config, indentation, depth, refs, printer) =>
+              "serialize(" + printer(value.a, config, indentation, depth, refs) + ")",
+          });
+          expect.addSnapshotSerializer({
+            test: value => value?.by === "print",
+            print: (value, print) => "print(" + print(value.a) + ")",
+          });
+          expect.addSnapshotSerializer({
+            test: value => value?.box !== undefined,
+            print: (value, print) => "Box(" + print(value.box) + ")",
+          });
+          const offered = [];
+          expect.addSnapshotSerializer({
+            test(value) {
+              if (value?.by) {
+                const isPlain = Object.getPrototypeOf(value) === Object.prototype;
+                offered.push({ isPlain, a: value.a === number ? "the matcher" : value.a });
+              }
+              return false;
+            },
+            serialize: () => "",
+          });
+          test("t", () => {
+            for (const a of [1, 2]) {
+              for (const by of ["serialize", "print", "nobody"]) {
+                expect(new Tagged(a, by)).toMatchSnapshot({ a: number });
+                expect({ in: new Tagged(a, by) }).toMatchSnapshot({ in: { a: number } });
+              }
+              expect({ box: new Tagged(a, "nobody") }).toMatchSnapshot({ box: { a: number } });
+            }
+            expect(new Tagged(3, "print")).toMatchInlineSnapshot({ a: number }, \`print(Any<Number>)\`);
+            expect(offered).toEqual(Array(15).fill({ isPlain: true, a: "the matcher" }));
+          });
+        `,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
+    expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
+    // Each text is there twice, once for each value that the matcher matched.
+    expect(snap(dir)).toBe(
+      headers.bun + [...printed, ...printed].map((text, i) => `\nexports[\`t ${i + 1}\`] = \`${text}\`;\n`).join(""),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  test("prints the same for a Headers or a URL with property matchers, whatever they matched", async () => {
+    const printed = [`Id(Any<String>)`, `Link(Any<String>)`, `\n{\n  "to": Link(Any<String>),\n}\n`];
+    using dir = tempDir("snapshot-serializer-matched", {
+      "a.test.js": `
+          expect.addSnapshotSerializer({
+            test: value => value?.id !== undefined,
+            serialize: (value, config, indentation, depth, refs, printer) =>
+              "Id(" + printer(value.id, config, indentation, depth, refs) + ")",
+          });
+          expect.addSnapshotSerializer({
+            test: value => value?.href !== undefined,
+            print: (value, print) => "Link(" + print(value.href) + ")",
+          });
+          test("t", () => {
+            const string = expect.any(String);
+            for (const id of ["first", "second"]) {
+              expect(Object.assign(new Headers(), { id })).toMatchSnapshot({ id: string });
+              expect(new URL("http://example.com/" + id)).toMatchSnapshot({ href: string });
+              expect({ to: new URL("http://example.com/" + id) }).toMatchSnapshot({ to: { href: string } });
+            }
+          });
+        `,
+    });
+    const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
+    expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
+    expect(snap(dir)).toBe(
+      headers.bun + [...printed, ...printed].map((text, i) => `\nexports[\`t ${i + 1}\`] = \`${text}\`;\n`).join(""),
+    );
+    expect(exitCode).toBe(0);
+  });
+
   test.each(isolationFlags)(
     "lasts until the end of its test file, and for every file when a preload script adds it %j",
     async args => {

@@ -3019,6 +3019,7 @@ let el;
 let title = "a";
 console.log(title);
 title = "b";
+for (let i = 0; i < 2; i++) console.log(i);
 function f() {
   let local;
   let t = "a";
@@ -3058,6 +3059,12 @@ let fromSetup = 2;
   <p @click="fromPlain++">{{ fromSetup }}</p>
 </template>
 `,
+      // The text of a script isn't a tag.
+      "Mention.vue": `<script>
+export default { data: () => ({ sample: "<script setup>" }) };
+let unusedPlain = 1;
+</script>
+`,
       "Both.vue": `<script>
 let fromPlain = 1;
 </script>
@@ -3085,8 +3092,8 @@ let fromSetup = 2;
     };
     const result = await lint(files, ["-f", "json"]);
     expect(diagnostics(result.raw)).toMatchInlineSnapshot(`
-      "Assigned.vue 10:3 eslint(no-useless-assignment)
-      Assigned.vue 7:7 eslint(no-unassigned-vars)
+      "Assigned.vue 11:3 eslint(no-useless-assignment)
+      Assigned.vue 8:7 eslint(no-unassigned-vars)
       Candidates.vue 5:7 eslint(no-unused-vars)
       Candidates.vue 6:3 eslint(no-useless-assignment)
       Counter.svelte 7:11 eslint(no-unused-vars)
@@ -3094,6 +3101,8 @@ let fromSetup = 2;
       Dialog.svelte 4:9 eslint(no-unassigned-vars)
       Inner.vue 5:9 eslint(no-unused-vars)
       Inner.vue 6:7 eslint(prefer-const)
+      Mention.vue 3:5 eslint(no-unused-vars)
+      Mention.vue 3:5 eslint(prefer-const)
       Plain.vue 2:7 eslint(no-unused-vars)
       Plain.vue 3:5 eslint(prefer-const)
       Plain.vue 6:11 eslint(no-unused-vars)
@@ -3107,7 +3116,19 @@ let fromSetup = 2;
 
   test("--fix keeps a var that the template can assign writable", async () => {
     const files = {
-      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "no-var": "error" } }),
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        rules: {
+          "no-var": "error",
+          "no-unused-vars": ["error", { varsIgnorePattern: "^_", reportUsedIgnorePattern: true }],
+        },
+      }),
+      // A class the template can use isn't "marked as ignored but used" either.
+      "Legacy.vue": `<script setup lang="ts">
+class _Legacy {}
+new _Legacy();
+</script>
+`,
       "TemplateWrites.vue": `<script setup>
 var count = 0;
 var label = "a";

@@ -3922,11 +3922,18 @@ describe.concurrent("an .oxlintrc.json", () => {
       {
         ".oxlintrc.json": JSON.stringify({
           categories: { correctness: "off" },
-          rules: { "no-unused-vars": "error", "typescript/consistent-type-imports": "error" },
+          rules: { "typescript/consistent-type-imports": "error" },
         }),
-        "a.vue":
-          "<script>\n// eslint-disable-next-line typescript/consistent-type-imports\nexport const a = 1;\n</script>\n",
-        "a.js": "// eslint-disable-next-line no-unused-vars\nconst a = 1;\n",
+        "a.vue": `<script lang="ts">
+// eslint-disable-next-line typescript/consistent-type-imports
+import { Options } from "./options";
+export let a: Options;
+</script>
+`,
+        "a.ts": `// eslint-disable-next-line typescript/consistent-type-imports
+import { Options } from "./options";
+export let a: Options;
+`,
       },
       [".", "--report-unused-disable-directives"],
     );

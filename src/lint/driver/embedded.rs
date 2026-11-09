@@ -195,7 +195,11 @@ fn vue_has_setup(text: &[u8]) -> bool {
         if attribute(&text[at..at + tag], b"setup").is_some() {
             return true;
         }
-        at += tag + 1;
+        // Past the script, whose text can mention a tag.
+        let Some((_, after)) = until_end(text, at + tag + 1, ScriptKind::Js) else {
+            return false;
+        };
+        at = after;
     }
     false
 }

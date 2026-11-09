@@ -1723,6 +1723,7 @@ impl NoUselessAssignment {
             Entry::Vacant(entry) => {
                 let scope = variable.scope();
                 let is_ignored = !cfg!(debug_assertions) && !state.unknown.contains(&variable)
+                    || variable.symbol.is_template_reachable()
                     || oxlint_skips(variable.symbol)
                     || oxlint_treats_as_exported(variable.symbol, &mut state.exported)
                     || get_code_path_start_scope(scope, &state.code_path_start_scopes)

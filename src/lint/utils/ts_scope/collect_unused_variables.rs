@@ -1152,6 +1152,10 @@ fn collect<'a>(
                 continue;
             }
         }
+        // The template can use it. It's neither used nor unused.
+        if has_template && symbol.is_template_reachable() {
+            continue;
+        }
         let variable = Variable::new(symbol);
         let facts = Facts::of(variable);
         if keeps_used && facts.has(Facts::CLASS) {
@@ -1165,10 +1169,6 @@ fn collect<'a>(
             analysis.used_variables.extend(classes);
         }
         if !facts.has(Facts::DEFINED) {
-            continue;
-        }
-        // The template can use it. It's neither used nor unused.
-        if has_template && symbol.is_template_reachable() {
             continue;
         }
         // In a script, `var Array` is one more definition of an `ImplicitLibVariable`.

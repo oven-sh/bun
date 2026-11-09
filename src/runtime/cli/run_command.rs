@@ -1753,8 +1753,7 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
 }
 
-/// `--print` in `Run::start`: writes the entry point's result the way `console.log` does. It runs `beforeExit`
-/// itself, because a result that it printed as pending is printed again once that work has settled it.
+/// `--print` in `Run::start`: prints the result like `console.log`, runs `beforeExit`, then prints what settled there.
 #[cold]
 #[inline(never)]
 #[cfg_attr(

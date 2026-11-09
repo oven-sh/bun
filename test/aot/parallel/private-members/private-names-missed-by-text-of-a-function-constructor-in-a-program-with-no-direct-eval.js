@@ -45,7 +45,7 @@ const throughText = new Function(
   "outcome",
   "Compiled",
   `
-  const values = [["an object of the class", new Compiled()], ["the class", Compiled], ["an object of no class", {}], ["a number", 5]];
+  const values = [["an object of the class", new Compiled()], ["the class", Compiled], ["an object of no class", {}], ["another class", class {}], ["a number", 5]];
   const lines = [];
   for (const form of Object.keys(Compiled.forms)) {
     for (const [label, value] of values) lines.push("a compiled class, called by the text: " + form + ", " + label + ": " + outcome(() => Compiled.forms[form](value)));

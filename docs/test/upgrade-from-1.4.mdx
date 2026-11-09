@@ -31,7 +31,7 @@ The same applies to `expect(asyncFunction).toThrow()` and to an async custom mat
 grep -rnE '^[[:space:]]*expect\((async |.*\)\.(resolves|rejects)\.)' .
 ```
 
-Put `await` before each `expect(` that the search finds without one.
+Put `await` before each `expect(` that the search finds without one. If the function around it isn't `async`, make it `async`. That works for a `describe` callback too.
 
 ### `expect.stringMatching()` with a string
 
@@ -65,7 +65,7 @@ A test that relied on the error passes now. `expect(() => expect.extend(matchers
 grep -rn 'expect\.extend(' .
 ```
 
-Pass the object that holds the matcher functions. To check a matcher module, assert on each entry: `for (const matcher of Object.values(matchers)) expect(matcher).toBeFunction();`.
+Pass the object that holds the matcher functions. To keep the check that the error made, assert that every entry is a function, `default` and `__esModule` included: `for (const matcher of Object.values(matchers)) expect(matcher).toBeFunction();`.
 
 ### Getters in snapshots and failure messages
 
@@ -81,7 +81,7 @@ If a getter loads data when it's read, the test now loads the data itself:
 grep -rnE '(^|[{,])[[:space:]]*get [[:alpha:]_$][[:alnum:]_$]*\(\)|enumerable:[[:space:]]*true' .
 ```
 
-Assert on the property that the code must set, such as `expect(inbox.status).toBe("ready")`, not on the whole object.
+Assert on a plain property that the code must set, such as `expect(inbox.status).toBe("ready")`, not on the whole object. A read of one property doesn't run the other getters.
 
 ## Mock functions
 
@@ -219,12 +219,22 @@ A test that checks that no timer is left, or that a callback wasn't called after
 grep -rnE "[\"'](node:)?timers(/promises)?[\"']" .
 ```
 
-To put the timers of the code under test on the fake clock, send them through the global functions:
+To put the timers of the code under test on the fake clock, send them through the global functions. List each function that the code imports from the module:
 
-```ts title="debounce.test.ts" icon="/icons/typescript.svg"
+```ts title="poller.test.ts" icon="/icons/typescript.svg"
 mock.module("node:timers", () => ({
   setTimeout: (...args: Parameters<typeof setTimeout>) => globalThis.setTimeout(...args),
   clearTimeout: (timer?: NodeJS.Timeout) => globalThis.clearTimeout(timer),
+  setInterval: (...args: Parameters<typeof setInterval>) => globalThis.setInterval(...args),
+  clearInterval: (timer?: NodeJS.Timeout) => globalThis.clearInterval(timer),
+}));
+```
+
+`setTimeout` from `node:timers/promises` needs its own mock:
+
+```ts title="retry.test.ts" icon="/icons/typescript.svg"
+mock.module("node:timers/promises", () => ({
+  setTimeout: (ms?: number, value?: unknown) => new Promise(resolve => globalThis.setTimeout(resolve, ms, value)),
 }));
 ```
 

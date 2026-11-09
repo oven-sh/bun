@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { isLinux } from "harness";
+import { readFileSync } from "node:fs";
 import { hasSmallHeap, saysWhereItIs } from "./where-a-child-is";
 
 test.skipIf(!isLinux)(
@@ -10,10 +11,16 @@ test.skipIf(!isLinux)(
     const reader = child.stdout.getReader();
     expect(new TextDecoder().decode((await reader.read()).value)).toBe("ready\n");
     reader.releaseLock();
+    // The shell has printed, and reads next. The lists begin when it sleeps there: the state is the field behind the name.
+    const state = () => {
+      const stat = readFileSync(`/proc/${child.pid}/stat`, "utf8");
+      return stat[stat.lastIndexOf(")") + 2];
+    };
+    while (state() !== "S") await Bun.sleep(1);
 
     const said: string[] = [];
     using where = saysWhereItIs(child.pid, cmd, { first: 0, every: 20, span: 20, say: text => said.push(text) });
-    // The shell sleeps in its read. The first list may still show its last step to there, and no list after it differs.
+    // The shell sleeps in its read, and no list differs from the one before it.
     while (where.lists < 5) await Bun.sleep(5);
     expect(said.length).toBeLessThanOrEqual(2);
     expect(said.at(-1)).toMatch(
@@ -30,5 +37,8 @@ test("a child has a small heap when its environment limits the cell cage or the 
     hasSmallHeap({}),
     hasSmallHeap({ BUN_JSC_markedBlockCageSizeInMB: "64" }),
     hasSmallHeap({ BUN_JSC_structureHeapSizeInKB: "16384" }),
-  ]).toEqual([false, true, true]);
+    // No cage: the heap has no limit.
+    hasSmallHeap({ BUN_JSC_markedBlockCageSizeInMB: "0" }),
+    hasSmallHeap({ BUN_JSC_markedBlockCageSizeInMB: "0", BUN_JSC_structureHeapSizeInKB: "16384" }),
+  ]).toEqual([false, true, true, false, true]);
 });

@@ -512,11 +512,7 @@ describe.concurrent("WebKit 8156ba68ef upgrade", () => {
         } catch (error) {
           result = (error as Error).constructor.name;
         }
-        // preventExtensions is the one operation whose first call changes the answer of the later ones.
-        steps[name] =
-          (result === expected[trap] || (trap === "isExtensible" && result === false) ? "ok" : String(result)) +
-          ":" +
-          calls.splice(0).join("+");
+        steps[name] = (result === expected[trap] ? "ok" : String(result)) + ":" + calls.splice(0).join("+");
       };
       step("absent");
       step("absent again");
@@ -1241,7 +1237,7 @@ describe.concurrent("WebKit 8156ba68ef upgrade", () => {
       stderr: "",
       exitCode: 0,
     });
-  }, 30_000);
+  });
 
   // Options::useSharedArrayBuffer is Options::alwaysUseSharedArrayBuffer now (9e3f76240a), so the name of the
   // environment variable changed with it.
@@ -1252,8 +1248,8 @@ describe.concurrent("WebKit 8156ba68ef upgrade", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "undefined\n", exitCode: 0 });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "undefined\n", stderr: "", exitCode: 0 });
     expect(typeof SharedArrayBuffer).toBe("function");
   });
 });
@@ -1280,7 +1276,7 @@ describe("WebKit 8156ba68ef upgrade, in loops", () => {
       "caf\u00e9",
       "\u4e2d\u6587",
       "\ud800",
-      "y".repeat(300),
+      Buffer.alloc(300, "y").toString(),
     ];
     const leaf = () =>
       pick<() => unknown>([

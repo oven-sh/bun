@@ -391,6 +391,8 @@ test("async factory", () => {
 { "foo": "baz" }
 ```
 
+`mock.module()` doesn't update a file that your code has imported both with and without a `type` import attribute. For example, one module has `import data from "./data.json"` and another has `import data from "./data.json" with { type: "json" }`. Both modules keep the original after the `mock.module()` call. Bun evaluates either module again at its next `import()`, and the new copy gets the mock.
+
 ### Keeping Part of the Original Module
 
 The factory is passed a function that loads the original module. Spread its result to replace only some exports.
@@ -737,7 +739,7 @@ Spies and mocks made in a `--preload` script, or in one of its `beforeAll()` hoo
 Bun provides the `vi` object for tests written for Vitest. Where Vitest and Jest differ, mocks made with `vi.fn()` and `vi.spyOn()` behave as in Vitest:
 
 - `mockReset()` goes back to the original implementation.
-- `vi.restoreAllMocks()` keeps the recorded calls of the spies it restores.
+- `vi.restoreAllMocks()`, `jest.restoreAllMocks()` and `mock.restore()` keep the recorded calls of a `vi.spyOn()` spy they restore. They also keep what you set with `mockReturnValue()`, `mockImplementation()` and similar methods. A spy made with `spyOn()` or `jest.spyOn()` loses both.
 - `fn.mock` is still the same object after `mockClear()`.
 - `getMockImplementation()` returns what the next call runs, so a `mockReturnValueOnce()` that is still waiting comes first.
 

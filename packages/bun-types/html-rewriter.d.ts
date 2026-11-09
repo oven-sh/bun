@@ -65,7 +65,8 @@ declare namespace HTMLRewriterTypes {
      * next to existing text or another inserted string, where one of these
      * sequences can also form: `append`, `prepend`, `before` on the end
      * tag, and `before`, `after` and `replace` on a text chunk. Join
-     * strings that go into the same element and check the result.
+     * strings that go into the same element, check the result, and insert
+     * it with one call: `prepend` and `after` put a later call first.
      *
      * The advice for script and style source is for HTML elements only
      * (`el.namespaceURI === "http://www.w3.org/1999/xhtml"`). Inside `<svg>`

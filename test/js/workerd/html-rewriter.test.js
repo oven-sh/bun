@@ -1845,31 +1845,36 @@ describe("HTMLRewriter", () => {
 
     // With { html: true } a string lands right next to what is already there: the
     // element's own text, or another inserted string. A check of the string alone
-    // misses a sequence that forms at that joint. This is a matter of position, so
-    // it holds for every insertion inside the element. setInnerContent leaves no joint.
-    const parts = ["b{}</sty", "le><p>"];
+    // misses a sequence that forms at that joint: "b{}</sty" and "le><p>" each pass
+    // /<\/style/i. This is a matter of position, so it holds for every insertion
+    // inside the element. setInnerContent leaves no joint.
+    const [head, tail] = ["b{}</sty", "le><p>"];
     const existing = "<style>a{}</sty</style>";
     expect({
-      eachPartPasses: parts.every(part => !/<\/style/i.test(part)),
-      joinedIsCaught: /<\/style/i.test(parts.join("")),
       twoAppends: insert("style", "<style>a{}</style>", el => {
-        for (const part of parts) el.append(part, { html: true });
+        el.append(head, { html: true });
+        el.append(tail, { html: true });
       }),
-      append: insert("style", existing, el => el.append(parts[1], { html: true })),
-      prepend: insert("style", "<style>le><p></style>", el => el.prepend(parts[0], { html: true })),
-      endTagBefore: insert("style", existing, el => el.onEndTag(end => end.before(parts[1], { html: true }))),
+      // prepend puts a later call first. These two calls form the sequence, although
+      // their join in call order ("le><p>b{}</sty") has none.
+      twoPrepends: insert("style", "<style>a{}</style>", el => {
+        el.prepend(tail, { html: true });
+        el.prepend(head, { html: true });
+      }),
+      append: insert("style", existing, el => el.append(tail, { html: true })),
+      prepend: insert("style", "<style>le><p></style>", el => el.prepend(head, { html: true })),
+      endTagBefore: insert("style", existing, el => el.onEndTag(end => end.before(tail, { html: true }))),
       textChunkBefore: new HTMLRewriter()
         .on("style", {
           text(chunk) {
-            if (chunk.lastInTextNode) chunk.before(parts[1], { html: true });
+            if (chunk.lastInTextNode) chunk.before(tail, { html: true });
           },
         })
         .transform(existing),
-      setInnerContent: insert("style", existing, el => el.setInnerContent(parts[1], { html: true })),
+      setInnerContent: insert("style", existing, el => el.setInnerContent(tail, { html: true })),
     }).toEqual({
-      eachPartPasses: true,
-      joinedIsCaught: true,
       twoAppends: "<style>a{}b{}</style><p></style>",
+      twoPrepends: "<style>b{}</style><p>a{}</style>",
       append: "<style>a{}</style><p></style>",
       prepend: "<style>b{}</style><p></style>",
       endTagBefore: "<style>a{}</style><p></style>",

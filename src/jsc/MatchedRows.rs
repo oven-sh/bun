@@ -50,15 +50,6 @@ impl MatchedPlace {
         self.handle == NO_PLACE
     }
 
-    /// The pattern of the pair.
-    pub fn pattern(self) -> Option<JSValue> {
-        if self.is_none() {
-            return None;
-        }
-        let pattern = crate::cpp::Bun__JestMatchedRows__pattern(self.rows.0, self.handle);
-        (!pattern.is_empty()).then_some(pattern)
-    }
-
     /// The row of property `name`, if the comparison left one at this place.
     #[inline]
     pub fn row(self, name: &'static str) -> Option<MatchedRow> {
@@ -108,20 +99,10 @@ impl MatchedPlace {
         (!value.is_empty()).then_some((value, place))
     }
 
-    /// What `set_merged` stored for this place.
-    pub fn merged(self) -> Option<JSValue> {
-        if self.is_none() {
-            return None;
-        }
-        let merged = crate::cpp::Bun__JestMatchedRows__merged(self.rows.0, self.handle);
-        (!merged.is_empty()).then_some(merged)
-    }
-
-    /// Keeps the object that snapshot serializers are offered for this place, so it is built once.
-    pub fn set_merged(self, merged: JSValue) {
-        if !self.is_none() {
-            crate::cpp::Bun__JestMatchedRows__setMerged(self.rows.0, self.handle, merged);
-        }
+    /// What snapshot serializers are offered in place of the object of this place, which must not be none: a plain object, or an array for an array, that has the object's own enumerable properties in their order, with each row in place of its property. A function is offered as it is. The rows cell keeps what it builds, so a place is built once. A property whose getter throws is left out.
+    pub fn for_serializers(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let (rows, place) = self.cell_and_handle();
+        crate::cpp::Bun__JestMatchedRows__forSerializers(global, rows, place)
     }
 
     /// `JSValue::for_each_property_ordered_calling_getters` on `object`, the object of this place, which must not be none. A row is passed in place of its property, which is not read.

@@ -2202,6 +2202,20 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
       `T \nTagged {\n  "a": Any<Number>,\n  "by": "nobody",\n}\n`,
       `\n{\n  "in": T Tagged {\n    "a": Any<Number>,\n    "by": "nobody",\n  },\n}\n`,
       `\nBox({\n  "a": Any<Number>,\n  "by": "nobody",\n})\n`,
+      `Claimed(z=1, m=2, b=3, id=Any<Number>, Symbol(k)=Any<Number>)`,
+      `Claimed(id=Any<Number>)`,
+      `\nClaimed(list=[\n  Any<Number>,\n  2,\n])\n`,
+      `Claimed(at=1970-01-01T00:00:00.000Z, id=Any<Number>)`,
+      `\nClaimed(list=[\n  ObjectContaining {\n    "sku": "x",\n  },\n])\n`,
+      `Claimed(second=Any<Number>, first=Any<Number>)`,
+      `Claimed(id=Any<Number>)`,
+    ];
+    // With a serializer that is for no value, Bun prints what it prints without one.
+    const unclaimed = [
+      `\n{\n  "boom": [native code],\n  "id": Any<Number>,\n  "in": {\n    "boom": [native code],\n    "id": Any<Number>,\n  },\n}\n`,
+      `\n{\n  "id": Any<Number>,\n  "self": [Circular],\n}\n`,
+      `\n{\n  "id": Any<Number>,\n  "user": {\n    "login": "u",\n    "self": [Circular],\n  },\n}\n`,
+      `\n{\n  "id": Any<Number>,\n  "in": {\n    "id": Any<Number>,\n    "in": {\n      "id": Any<Number>,\n      "read": 0,\n    },\n    "read": 0,\n  },\n  "read": 0,\n}\n`,
     ];
     using dir = tempDir("snapshot-serializer-matchers", {
       "a.test.js": `
@@ -2230,6 +2244,15 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
             test: value => value?.box !== undefined,
             print: (value, print) => "Box(" + print(value.box) + ")",
           });
+          // Prints the keys of what it is offered in the order that they have there.
+          expect.addSnapshotSerializer({
+            test: value => value?.claimed === true,
+            print: (value, print) => {
+              const keys = Reflect.ownKeys(value).filter(key => key !== "claimed");
+              return "Claimed(" + keys.map(key => String(key) + "=" + print(value[key])).join(", ") + ")";
+            },
+          });
+          const symbol = Symbol("k");
           const offered = [];
           expect.addSnapshotSerializer({
             test(value) {
@@ -2248,17 +2271,77 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
                 expect({ in: new Tagged(a, by) }).toMatchSnapshot({ in: { a: number } });
               }
               expect({ box: new Tagged(a, "nobody") }).toMatchSnapshot({ box: { a: number } });
+              // Its own keys are in their order, and the one that is a symbol has its matcher too.
+              expect({ z: 1, claimed: true, m: 2, b: 3, [symbol]: a, id: a }).toMatchSnapshot({ [symbol]: number, id: number });
+              // A matcher that the property matchers inherit.
+              expect({ claimed: true, id: a }).toMatchSnapshot(Object.create({ id: number }));
+              // An array that is compared with an object.
+              expect({ claimed: true, list: [a, 2] }).toMatchSnapshot({ list: { 0: number } });
+              // A Date among the property matchers is no matcher, so the Date of the value stays.
+              expect({ claimed: true, at: new Date(0), id: a }).toMatchSnapshot({ at: new Date(0), id: number });
+              // The matcher is there in place of the element that it matched.
+              expect({ claimed: true, list: [{ sku: "x", amount: a }] }).toMatchSnapshot({ list: [expect.objectContaining({ sku: "x" })] });
+              // What matched in the prototype comes after the own keys, in the order of the property matchers.
+              expect({ claimed: true, __proto__: { get second() { return a; }, get first() { return a; } } }).toMatchSnapshot({ second: number, first: number });
+              // A getter that throws leaves its property out.
+              expect({ claimed: true, id: a, get boom() { throw new Error("boom"); } }).toMatchSnapshot({ id: number });
             }
             expect(new Tagged(3, "print")).toMatchInlineSnapshot({ a: number }, \`print(Any<Number>)\`);
             expect(offered).toEqual(Array(15).fill({ isPlain: true, a: "the matcher" }));
           });
         `,
+      "b.test.js": `
+          expect.addSnapshotSerializer({ test: () => false, serialize: () => "" });
+          test("t", () => {
+            const number = expect.any(Number);
+            expect({
+              id: 1,
+              get boom() {
+                throw new Error("boom");
+              },
+              in: {
+                id: 2,
+                get boom() {
+                  throw new Error("boom");
+                },
+              },
+            }).toMatchSnapshot({ id: number, in: { id: number } });
+
+            const cycle = { id: 1 };
+            cycle.self = cycle;
+            const cyclicMatchers = { id: number };
+            cyclicMatchers.self = cyclicMatchers;
+            expect(cycle).toMatchSnapshot(cyclicMatchers);
+            const user = { login: "u" };
+            user.self = user;
+            expect({ user, id: 1 }).toMatchSnapshot({ user, id: number });
+
+            let reads = 0;
+            const counted = (count, inside) => ({
+              id: count,
+              get read() {
+                reads += count;
+                return 0;
+              },
+              ...inside,
+            });
+            expect(counted(1, { in: counted(100, { in: counted(10000) }) })).toMatchSnapshot({
+              id: number,
+              in: { id: number, in: { id: number } },
+            });
+            // Each getter runs once for the object that the serializer is offered and once for the text, however deep it is.
+            expect(reads).toBe(20202);
+          });
+        `,
     });
     const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
-    expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
+    expect({ pass, stderr: pass === 2 ? "" : stderr }).toEqual({ pass: 2, stderr: "" });
     // Each text is there twice, once for each value that the matcher matched.
     expect(snap(dir)).toBe(
       headers.bun + [...printed, ...printed].map((text, i) => `\nexports[\`t ${i + 1}\`] = \`${text}\`;\n`).join(""),
+    );
+    expect(snap(dir, "b.test.js")).toBe(
+      headers.bun + unclaimed.map((text, i) => `\nexports[\`t ${i + 1}\`] = \`${text}\`;\n`).join(""),
     );
     expect(exitCode).toBe(0);
   });

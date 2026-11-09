@@ -4908,17 +4908,14 @@ impl Formatter<'_> {
         Ok(false)
     }
 
-    /// What the serializers are offered for `value`. If it has matched rows, that is a plain object: jest-snapshot's merge of the property matchers into it.
+    /// What the serializers are offered for `value`. If it has matched rows, that is a plain object that has them in place of the properties that they matched, see `MatchedPlace::for_serializers`.
     #[cold]
-    fn value_for_serializers(&mut self, value: JSValue) -> JsResult<JSValue> {
+    fn value_for_serializers(&self, value: JSValue) -> JsResult<JSValue> {
         let place = self.place.current();
-        let Some(pattern) = place.pattern() else { return Ok(value) };
-        if let Some(merged) = place.merged() {
-            return Ok(merged);
+        if place.is_none() {
+            return Ok(value);
         }
-        let merged = deep_merge(self.global_this, value, pattern, SnapshotFormat::Jest)?;
-        place.set_merged(merged);
-        Ok(merged)
+        place.for_serializers(self.global_this)
     }
 
     #[optimize(size)]

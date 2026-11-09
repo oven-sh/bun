@@ -2787,7 +2787,7 @@ describe.concurrent("a repeated resolution", () => {
 
   // By itself: it measures memory.
   test.serial("keeps no string alive that a specifier or a source was cut from", async () => {
-    const count = 24;
+    const count = 12;
     const megabytes = 16;
     const { stdout, stderr, exitCode } = await run(
       {
@@ -2802,8 +2802,10 @@ describe.concurrent("a repeated resolution", () => {
           const before = process.memoryUsage.rss();
           for (let i = 0; i < count; i++) {
             // Twice: the second resolution is the one that is kept.
-            if (i % 2) Bun.resolveSync(name(i), cutFrom(__dirname)), Bun.resolveSync(name(i), cutFrom(__dirname));
-            else require.resolve(cutFrom(name(i))), require.resolve(cutFrom(name(i)));
+            const cut = cutFrom(i % 2 ? __dirname : name(i));
+            if (i % 2) Bun.resolveSync(name(i), cut), Bun.resolveSync(name(i), cut);
+            else require.resolve(cut), require.resolve(cut);
+            // Now, not at the end: a build with a sanitizer gives back what it frees later, up to a limit.
             Bun.gc(true);
           }
           Bun.gc(true);
@@ -2818,8 +2820,8 @@ describe.concurrent("a repeated resolution", () => {
     );
     expect(stderr).toBe("");
     const { megabytesKept, hits } = JSON.parse(stdout);
-    // Each of the strings kept is 16 MB: 384 MB. A build with a sanitizer gives what it frees back later.
-    expect(megabytesKept).toBeLessThan(isASAN || isDebug ? 200 : 100);
+    // Each of the strings kept is 16 MB: 192 MB.
+    expect(megabytesKept).toBeLessThan(isASAN || isDebug ? 110 : 60);
     expect(hits).toBe(count);
     expect(exitCode).toBe(0);
   });

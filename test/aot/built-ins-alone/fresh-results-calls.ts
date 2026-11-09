@@ -287,6 +287,9 @@ export const calls: Record<string, string[]> = {
   "native:NewCppFunction:NodeTLS.cpp:getSystemCACertificates": [
     'import { getCACertificates } from "node:tls";\nconst list = getCACertificates("system");\nlist',
   ],
+  "native:NewCppFunction:NodeV8.cpp:jsFunctionNodeV8_serialize": [
+    'import { serialize } from "node:v8";\nserialize({ a: 1 })',
+  ],
   "%FrameworkFileSystemRouter%": [
     `import { frameworkRouterInternals } from "bun:internal-for-testing";\n${temporary}\nnew frameworkRouterInternals.FrameworkRouter({ root: folder, style: "nextjs-pages" })`,
   ],

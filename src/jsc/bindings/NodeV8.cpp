@@ -129,6 +129,44 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8_serialize, (JSGlobalObject * lexicalGl
     return JSValue::encode(buffer);
 }
 
+// v8.deserialize(): bun:jsc's deserialize(), except that bytes that are no serialized value throw node's Error, not a TypeError.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8_deserialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, jsFunctionNodeV8_deserialize);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = callFrame->argument(0);
+    RefPtr<JSC::ArrayBuffer> arrayBuffer;
+    size_t byteOffset = 0;
+    size_t byteLength = 0;
+    if (auto* jsArrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        arrayBuffer = jsArrayBuffer->impl();
+        byteLength = arrayBuffer->byteLength();
+    } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        arrayBuffer = view->possiblySharedBuffer();
+        byteOffset = view->byteOffset();
+        byteLength = view->byteLength();
+    } else {
+        // https://github.com/nodejs/node/blob/v26.3.0/src/node_serdes.cc#L339
+        return Bun::throwError(lexicalGlobalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "buffer must be a TypedArray or a DataView"_s);
+    }
+
+    auto deserialized = WebCore::SerializedScriptValue::tryFromArrayBuffer(*lexicalGlobalObject, lexicalGlobalObject, arrayBuffer.get(), byteOffset, byteLength);
+    EXCEPTION_ASSERT(!scope.exception() || deserialized.hasException());
+    if (deserialized.hasException()) {
+        auto exception = deserialized.releaseException();
+        if (!scope.exception() && exception.code() == WebCore::ExceptionCode::TypeError) {
+            // https://github.com/nodejs/node/blob/v26.3.0/deps/v8/src/objects/value-serializer.cc#L1631-L1633
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, exception.releaseMessage()));
+        } else
+            WebCore::propagateException(*lexicalGlobalObject, scope, WTF::move(exception));
+        RELEASE_AND_RETURN(scope, {});
+    }
+
+    return JSValue::encode(deserialized.releaseReturnValue());
+}
+
 JSC::JSValue createNodeV8Binding(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

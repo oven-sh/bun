@@ -139,6 +139,8 @@ public:
 
     WEBCORE_EXPORT Ref<JSC::ArrayBuffer> toArrayBuffer();
     static JSC::JSValue fromArrayBuffer(JSC::JSGlobalObject&, JSC::JSGlobalObject*, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset = 0, size_t maxByteLength = 0, SerializationErrorMode = SerializationErrorMode::Throwing, bool* didFail = nullptr);
+    // The value, or why the bytes are none, with nothing thrown for that: the caller picks the error.
+    static ExceptionOr<JSC::JSValue> tryFromArrayBuffer(JSC::JSGlobalObject&, JSC::JSGlobalObject*, JSC::ArrayBuffer*, size_t byteOffset, size_t maxByteLength);
 
     static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data)
     {

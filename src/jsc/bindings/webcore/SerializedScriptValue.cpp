@@ -5057,6 +5057,34 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
     return arrayBuffer;
 }
 
+static DeserializationResult deserializeBytesOf(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer& arrayBuffer, size_t byteOffset, size_t maxByteLength)
+{
+    auto blobURLs = Vector<String> {};
+    auto blobFiles = Vector<String> {};
+
+    if (arrayBuffer.isShared()) {
+        // prevent detaching while in-use
+        arrayBuffer.pin();
+    }
+
+    auto* data = static_cast<uint8_t*>(arrayBuffer.data()) + byteOffset;
+    auto size = std::min(arrayBuffer.byteLength(), maxByteLength);
+    auto span = std::span<uint8_t> { data, size };
+
+    auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, {}, nullptr, span, blobURLs, blobFiles, nullptr
+#if ENABLE(WEBASSEMBLY)
+        ,
+        nullptr, nullptr
+#endif
+    );
+
+    if (arrayBuffer.isShared()) {
+        arrayBuffer.unpin();
+    }
+
+    return result;
+}
+
 JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset, size_t maxByteLength, SerializationErrorMode throwExceptions, bool* didFail)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -5071,28 +5099,8 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
 
         return JSC::jsUndefined();
     }
-    auto blobURLs = Vector<String> {};
-    auto blobFiles = Vector<String> {};
 
-    if (arrayBuffer->isShared()) {
-        // prevent detaching while in-use
-        arrayBuffer->pin();
-    }
-
-    auto* data = static_cast<uint8_t*>(arrayBuffer->data()) + byteOffset;
-    auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
-    auto span = std::span<uint8_t> { data, size };
-
-    auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, {}, nullptr, span, blobURLs, blobFiles, nullptr
-#if ENABLE(WEBASSEMBLY)
-        ,
-        nullptr, nullptr
-#endif
-    );
-
-    if (arrayBuffer->isShared()) {
-        arrayBuffer->unpin();
-    }
+    auto result = deserializeBytesOf(domGlobal, globalObject, *arrayBuffer, byteOffset, maxByteLength);
 
     if (didFail) {
         *didFail = result.second != SerializationReturnCode::SuccessfullyCompleted;
@@ -5103,6 +5111,25 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
         maybeThrowExceptionIfSerializationFailed(*globalObject, result.second);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
+
+    return result.first ? result.first : jsNull();
+}
+
+ExceptionOr<JSC::JSValue> SerializedScriptValue::tryFromArrayBuffer(JSC::JSGlobalObject& domGlobal, JSC::JSGlobalObject* globalObject, JSC::ArrayBuffer* arrayBuffer, size_t byteOffset, size_t maxByteLength)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (!arrayBuffer || arrayBuffer->isDetached())
+        return exceptionForSerializationFailure(SerializationReturnCode::ValidationError);
+
+    auto result = deserializeBytesOf(domGlobal, globalObject, *arrayBuffer, byteOffset, maxByteLength);
+    RETURN_IF_EXCEPTION(throwScope, Exception { ExistingExceptionError });
+    // UnspecifiedError is the deserializer's word for no bytes at all.
+    if (result.second == SerializationReturnCode::UnspecifiedError)
+        return exceptionForSerializationFailure(SerializationReturnCode::ValidationError);
+    if (result.second != SerializationReturnCode::SuccessfullyCompleted)
+        return exceptionForSerializationFailure(result.second);
 
     return result.first ? result.first : jsNull();
 }

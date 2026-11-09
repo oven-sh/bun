@@ -1,8 +1,30 @@
-import { serialize as jscSerialize } from "bun:jsc";
+import { deserialize as jscDeserialize, serialize as jscSerialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { BlockList } from "node:net";
 import { types } from "node:util";
 import v8 from "node:v8";
+
+function thrownBy(fn: () => unknown): any {
+  try {
+    fn();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected a throw");
+}
+
+// What node throws from v8.serialize() and v8.deserialize(): an Error and no DOMException, with no code.
+function expectPlainError(error: any, message: string | RegExp) {
+  expect({
+    name: error.name,
+    code: error.code,
+    prototypeIsErrorPrototype: Object.getPrototypeOf(error) === Error.prototype,
+    isError: Error.isError(error),
+    isNativeError: types.isNativeError(error),
+  }).toEqual({ name: "Error", code: undefined, prototypeIsErrorPrototype: true, isError: true, isNativeError: true });
+  expect(error.message).toMatch(message);
+}
 
 // Buffer identity through v8.serialize/deserialize, matching node v26.3.0's
 // serializer delegate behavior (DefaultSerializer host objects). Non-Buffer
@@ -90,6 +112,9 @@ describe("v8 serialize/deserialize Buffer identity", () => {
         }
         Uint8Array.prototype.subarray = () => { throw new Error("tampered subarray"); };
         globalThis.Uint8Array = function Poisoned() { throw new Error("tampered ctor"); };
+        const jsc = require("bun:jsc");
+        jsc.serialize = () => { throw new Error("tampered bun:jsc serialize"); };
+        jsc.deserialize = () => { throw new Error("tampered bun:jsc deserialize"); };
         const out = v8.deserialize(v8.serialize({ b: Buffer.from("hi") }));
         console.log(Buffer.isBuffer(out.b), out.b.toString());`,
       ],
@@ -128,37 +153,44 @@ describe("v8 serialize/deserialize Buffer identity", () => {
   });
 });
 
+// v8.serialize() has a native entry of its own. For a value without a Buffer it answers what bun:jsc's serialize() answers.
+describe("v8.serialize of a value without a Buffer", () => {
+  test.each([
+    ["an object", () => ({ n: 1, s: "x" })],
+    ["a string", () => "text"],
+    ["undefined", () => undefined],
+    ["a Map", () => new Map([[1, { b: 2 }]])],
+    ["a Uint8Array", () => new Uint8Array([1, 2])],
+    ["a SharedArrayBuffer", () => new SharedArrayBuffer(4)],
+    ["a Blob", () => new Blob(["bytes"])],
+    ["a BlockList", () => new BlockList()],
+  ])("%s: a Buffer with the bytes of bun:jsc serialize", (_name, make) => {
+    const value = make();
+    const bytes = v8.serialize(value);
+    expect(Buffer.isBuffer(bytes)).toBe(true);
+    expect(bytes.toString("hex")).toBe(jscSerialize(value, { binaryType: "nodebuffer" }).toString("hex"));
+  });
+});
+
 // node's DefaultSerializer throws an Error for a value that cannot be cloned, where
 // structured clone throws a DataCloneError DOMException:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/v8.js#L379
 describe("v8.serialize of a value that cannot be cloned", () => {
   const needsTransfer = "Object that needs transfer was found in message but not listed in transferList";
-
-  function thrownBy(fn: () => unknown): any {
-    try {
-      fn();
-    } catch (error) {
-      return error;
-    }
-    throw new Error("expected a throw");
-  }
-
   // node names the value: "#<Object> could not be cloned."
-  function expectPlainError(error: any, message: string | RegExp = /could not be cloned\.$/) {
-    expect({
-      name: error.name,
-      code: error.code,
-      prototypeIsErrorPrototype: Object.getPrototypeOf(error) === Error.prototype,
-      isError: Error.isError(error),
-      isNativeError: types.isNativeError(error),
-    }).toEqual({ name: "Error", code: undefined, prototypeIsErrorPrototype: true, isError: true, isNativeError: true });
-    expect(error.message).toMatch(message);
-  }
+  const couldNotBeCloned = /could not be cloned\.$/;
 
   function detachedArrayBuffer() {
     const buffer = new ArrayBuffer(8);
     structuredClone(buffer, { transfer: [buffer] });
     return buffer;
+  }
+
+  function onDetachedArrayBuffer<View>(make: (buffer: ArrayBuffer) => View): View {
+    const buffer = new ArrayBuffer(8);
+    const view = make(buffer);
+    structuredClone(buffer, { transfer: [buffer] });
+    return view;
   }
 
   function revokedProxy() {
@@ -175,15 +207,25 @@ describe("v8.serialize of a value that cannot be cloned", () => {
     ["a nested function", () => ({ list: [function named() {}] })],
     ["a Map that holds a function", () => new Map([["key", () => {}]])],
     ["a detached ArrayBuffer", detachedArrayBuffer],
+    // node throws a TypeError for a view on a detached ArrayBuffer: its DefaultSerializer cannot wrap the bytes.
+    ["a Uint8Array on a detached ArrayBuffer", () => onDetachedArrayBuffer(buffer => new Uint8Array(buffer))],
+    ["a DataView on a detached ArrayBuffer", () => onDetachedArrayBuffer(buffer => new DataView(buffer))],
   ])("%s throws an Error", (_name, make) => {
-    expectPlainError(thrownBy(() => v8.serialize(make())));
+    expectPlainError(
+      thrownBy(() => v8.serialize(make())),
+      couldNotBeCloned,
+    );
     // A Buffer in the value takes the envelope path.
-    expectPlainError(thrownBy(() => v8.serialize({ value: make(), buffer: Buffer.from("x") })));
+    expectPlainError(
+      thrownBy(() => v8.serialize({ value: make(), buffer: Buffer.from("x") })),
+      couldNotBeCloned,
+    );
   });
 
   test("a MessagePort throws an Error", () => {
     const { port1, port2 } = new MessageChannel();
     try {
+      // The text is the serializer's. node's text here is "Unserializable host object: MessagePort ...".
       expectPlainError(
         thrownBy(() => v8.serialize({ port: port1 })),
         needsTransfer,
@@ -209,11 +251,25 @@ describe("v8.serialize of a value that cannot be cloned", () => {
         },
       ]),
     ) as ProxyHandler<object>;
-    expectPlainError(thrownBy(() => v8.serialize(new Proxy({ key: 1 }, handler))));
+    expectPlainError(
+      thrownBy(() => v8.serialize(new Proxy({ key: 1 }, handler))),
+      couldNotBeCloned,
+    );
     expectPlainError(
       thrownBy(() => v8.serialize({ nested: new Proxy({ key: 1 }, handler), buffer: Buffer.from("x") })),
+      couldNotBeCloned,
     );
     expect(trapsRun).toEqual([]);
+  });
+
+  test("a Proxy that the serializer does not come to stops nothing", () => {
+    // Of a Date the serializer takes the time and no property.
+    const date = Object.assign(new Date(0), { proxy: revokedProxy() });
+    expect(v8.deserialize(v8.serialize(date))).toEqual(new Date(0));
+    expect(v8.deserialize(v8.serialize({ date, buffer: Buffer.from("x") }))).toEqual({
+      date: new Date(0),
+      buffer: Buffer.from("x"),
+    });
   });
 
   test("what a getter throws passes through", () => {
@@ -242,8 +298,14 @@ describe("v8.serialize of a value that cannot be cloned", () => {
   test("a CryptoKey that is not extractable throws an Error", async () => {
     const secret = new TextEncoder().encode("THIS-IS-SECRET-KEY-MATERIAL-32B!");
     const key = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-    expectPlainError(thrownBy(() => v8.serialize(key)));
-    expectPlainError(thrownBy(() => v8.serialize({ key, buffer: Buffer.from("x") })));
+    expectPlainError(
+      thrownBy(() => v8.serialize(key)),
+      couldNotBeCloned,
+    );
+    expectPlainError(
+      thrownBy(() => v8.serialize({ key, buffer: Buffer.from("x") })),
+      couldNotBeCloned,
+    );
   });
 
   test("structured clone still throws a DataCloneError", () => {
@@ -282,5 +344,66 @@ describe("v8.serialize of a value that cannot be cloned", () => {
       port2.close();
       channel.close();
     }
+  });
+});
+
+// V8 throws an Error for bytes that it cannot deserialize, where structured clone throws a TypeError:
+// https://github.com/nodejs/node/blob/v26.3.0/deps/v8/src/objects/value-serializer.cc#L1631-L1633
+describe("v8.deserialize of bytes that are no serialized value", () => {
+  // The text is the serializer's. V8's text is "Unable to deserialize cloned data."
+  const unable = "Unable to deserialize data.";
+  const withoutLastBytes = (bytes: Buffer) => bytes.subarray(0, bytes.length - 3);
+
+  test.each([
+    ["bytes that stop early", () => withoutLastBytes(v8.serialize({ a: 1, b: "two" }))],
+    ["bytes with a Buffer inside that stop early", () => withoutLastBytes(v8.serialize({ buffer: Buffer.from("x") }))],
+    ["bytes of nothing", () => Buffer.from([1, 2, 3, 4, 5, 6, 7, 8])],
+    ["no bytes", () => Buffer.alloc(0)],
+  ])("%s throw an Error", (_name, make) => {
+    const bytes = make();
+    const copy = new Uint8Array(bytes);
+    for (const input of [bytes, copy, new DataView(copy.buffer), copy.buffer]) {
+      expectPlainError(
+        thrownBy(() => v8.deserialize(input as Uint8Array)),
+        unable,
+      );
+    }
+  });
+
+  test("what is no buffer throws node's ERR_INVALID_ARG_TYPE", () => {
+    for (const input of ["text", undefined, null, 1, {}, []]) {
+      const error = thrownBy(() => v8.deserialize(input as any));
+      expect(error).toBeInstanceOf(TypeError);
+      expect({ code: error.code, message: error.message }).toEqual({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "buffer must be a TypedArray or a DataView",
+      });
+    }
+  });
+
+  test(
+    "bytes that nest too deep throw a RangeError",
+    () => {
+      const prefix = new Uint8Array(jscSerialize(undefined));
+      const header = prefix.subarray(0, prefix.length - 1);
+      // An array of one element, at index 0.
+      const open = new Uint8Array([1, 1, 0, 0, 0, 0, 0, 0, 0]);
+      const close = new Uint8Array([255, 255, 255, 255]);
+      const depth = 50_000;
+      const payload = new Uint8Array(header.length + open.length * depth + 1 + close.length * depth);
+      payload.set(header, 0);
+      let offset = header.length;
+      for (let i = 0; i < depth; i++, offset += open.length) payload.set(open, offset);
+      payload[offset++] = prefix[prefix.length - 1];
+      for (let i = 0; i < depth; i++, offset += close.length) payload.set(close, offset);
+      expect(() => v8.deserialize(payload)).toThrow(RangeError);
+    },
+    isDebug || isASAN ? 30_000 : undefined,
+  );
+
+  test("structured clone's own entry still throws a TypeError", () => {
+    const error = thrownBy(() => jscDeserialize(withoutLastBytes(v8.serialize({ a: 1, b: "two" }))));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.message).toBe("Unable to deserialize data.");
   });
 });

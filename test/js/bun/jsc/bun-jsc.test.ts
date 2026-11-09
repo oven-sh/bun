@@ -483,7 +483,7 @@ it("deserialize rejects a RegExp record whose pattern does not parse", async () 
     [
       "bun:jsc rejected TypeError",
       "bun:jsc true xyz gi true",
-      "node:v8 rejected TypeError",
+      "node:v8 rejected Error",
       "node:v8 true xyz gi true",
       "",
     ].join("\n"),
@@ -540,7 +540,7 @@ it.each([
       outcome = "rejected with " + error.name;
     }
     console.log(outcome);
-    // A key the caller marked extractable still serializes.
+    // A key the caller marked extractable still serializes. node's v8.serialize() refuses every CryptoKey.
     const extractable = await crypto.subtle.importKey(
       "raw",
       secretBytes,

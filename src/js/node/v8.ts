@@ -30,6 +30,10 @@ const {
 } = $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 const setNewContextsHaveGC = $newCppFunction("NodeVM.cpp", "jsFunctionSetNewContextsHaveGC", 1);
+const serializeToBuffer = $newCppFunction("NodeV8.cpp", "jsFunctionNodeV8_serialize", 1) as (value: unknown) => Buffer;
+const deserializeBytes = $newCppFunction("NodeV8.cpp", "jsFunctionNodeV8_deserialize", 1) as (
+  bytes: unknown,
+) => unknown;
 
 const DateNow = Date.now;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -341,14 +345,14 @@ function deserialize(value) {
   } else if (isAnyArrayBuffer(value)) {
     view = new Uint8ArrayCtor(value);
   } else {
-    // Let jsc.deserialize validate and reject non-buffer input itself.
-    return jsc.deserialize(value);
+    // The native entry rejects what is no buffer.
+    return deserializeBytes(value);
   }
   if (hasBufferEnvelopeMagic(view)) {
-    const envelope = jsc.deserialize(Uint8ArrayPrototypeSubarray.$call(view, kBufferEnvelopeMagic.length));
+    const envelope = deserializeBytes(Uint8ArrayPrototypeSubarray.$call(view, kBufferEnvelopeMagic.length));
     return require("internal/serialization_buffers").restoreBuffers(envelope);
   }
-  return jsc.deserialize(value as ArrayBuffer);
+  return deserializeBytes(value);
 }
 function takeCoverage() {
   notimpl("takeCoverage");
@@ -356,10 +360,7 @@ function takeCoverage() {
 function stopCoverage() {
   notimpl("stopCoverage");
 }
-let serializeToBuffer: ((value: unknown) => Buffer) | undefined;
 function serialize(arg1) {
-  // Bound on the first call: a program that loads node:v8 for something else keeps no structured clone under --trim.
-  serializeToBuffer ??= $newCppFunction("NodeV8.cpp", "jsFunctionNodeV8_serialize", 1) as (value: unknown) => Buffer;
   const tagged = require("internal/serialization_buffers").tagBuffers(arg1);
   if (tagged === null) {
     return serializeToBuffer(arg1);

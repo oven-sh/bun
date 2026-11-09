@@ -128,6 +128,17 @@ impl Lazy {
         let mut file_buf = bun_paths::path_buffer_pool::get();
         #[cfg(unix)]
         let mut is_nonblocking = false;
+        #[cfg(unix)]
+        let mut caller_stat: Option<sys::Stat> = None;
+        // A write-only terminal is not reopened for reading: the read fails as it does on the fd itself.
+        #[cfg(unix)]
+        let write_only = |fd: Fd| {
+            sys::get_fcntl_flags(fd)
+                .is_ok_and(|flags| (flags & libc::O_ACCMODE as isize) == libc::O_WRONLY as isize)
+        };
+        #[cfg(unix)]
+        let unreadable =
+            |fd: Fd| sys::Error::from_code(sys::Errno::EBADF, sys::Tag::read).with_fd(fd);
 
         let fd: Fd = match &file.pathlike {
             PathOrFileDescriptor::Fd(pl_fd) => {
@@ -135,6 +146,9 @@ impl Lazy {
                     'brk: {
                         #[cfg(unix)]
                         {
+                            if sys::isatty(*pl_fd) && write_only(*pl_fd) {
+                                return Err(unreadable(*pl_fd));
+                            }
                             let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
                             if rc > -1 {
                                 is_nonblocking = true;
@@ -145,24 +159,63 @@ impl Lazy {
                         break 'brk *pl_fd;
                     }
                 } else {
-                    let duped = sys::dup_with_flags(*pl_fd, 0);
-
-                    let fd: Fd = match duped {
-                        Ok(fd) => fd,
-                        Err(err) => return Err(err.with_fd(*pl_fd)),
-                    };
-
+                    // A terminal is polled through a private O_NONBLOCK reopen, as uv_tty_init does.
                     #[cfg(unix)]
-                    {
-                        if fd.stdio_tag().is_none() {
-                            is_nonblocking = match sys::get_fcntl_flags(fd) {
-                                Ok(flags) => (flags & sys::O::NONBLOCK as isize) != 0,
-                                Err(_) => false,
-                            };
+                    let reopened_tty: Option<Fd> = {
+                        let stat = match sys::fstat(*pl_fd) {
+                            Ok(stat) => stat,
+                            Err(err) => return Err(err.with_fd(*pl_fd)),
+                        };
+                        let is_tty = sys::S::ISCHR(stat.st_mode as _) && sys::isatty(*pl_fd);
+                        caller_stat = Some(stat);
+                        if is_tty && write_only(*pl_fd) {
+                            return Err(unreadable(*pl_fd));
                         }
-                    }
+                        if is_tty {
+                            file.is_atty = Some(true);
+                            let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
+                            if rc > -1 {
+                                is_nonblocking = true;
+                                Some(Fd::from_native(rc))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    };
+                    #[cfg(not(unix))]
+                    let reopened_tty: Option<Fd> = None;
 
-                    fd.make_lib_uv_owned_for_syscall(sys::Tag::dup, sys::ErrorCase::CloseOnFail)?
+                    if let Some(fd) = reopened_tty {
+                        fd
+                    } else {
+                        // The reader owns the duplicate, and `Fd::close` skips 0 to 2.
+                        #[cfg(unix)]
+                        let duped = sys::dup_at_least(*pl_fd, 3);
+                        #[cfg(not(unix))]
+                        let duped = sys::dup_with_flags(*pl_fd, 0);
+
+                        let fd: Fd = match duped {
+                            Ok(fd) => fd,
+                            Err(err) => return Err(err.with_fd(*pl_fd)),
+                        };
+
+                        #[cfg(unix)]
+                        {
+                            if fd.stdio_tag().is_none() {
+                                is_nonblocking = match sys::get_fcntl_flags(fd) {
+                                    Ok(flags) => (flags & sys::O::NONBLOCK as isize) != 0,
+                                    Err(_) => false,
+                                };
+                            }
+                        }
+
+                        fd.make_lib_uv_owned_for_syscall(
+                            sys::Tag::dup,
+                            sys::ErrorCase::CloseOnFail,
+                        )?
+                    }
                 }
             }
             PathOrFileDescriptor::Path(path) => {
@@ -198,12 +251,15 @@ impl Lazy {
                 file.is_atty = Some(true);
             }
 
-            let stat: sys::Stat = match sys::fstat(fd) {
-                Ok(result) => result,
-                Err(err) => {
-                    fd.close();
-                    return Err(err);
-                }
+            let stat: sys::Stat = match caller_stat {
+                Some(stat) => stat,
+                None => match sys::fstat(fd) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        fd.close();
+                        return Err(err);
+                    }
+                },
             };
 
             let mode = stat.st_mode as _;

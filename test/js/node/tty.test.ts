@@ -299,6 +299,366 @@ describe.concurrent("ReadStream destroy()", () => {
   });
 });
 
+// Node reads a terminal through a handle that destroy(), pause() and unref() retract at once. A thread pool
+// read(2) on the fd could not be retracted: the process stayed alive until the next key, and that key went
+// to the destroyed stream. Each child here opens /dev/tty itself, so the stream is not process.stdin.
+describe.concurrent.skipIf(isWindows)("ReadStream on a terminal fd", () => {
+  // A marker line is complete once its newline arrived: a key typed before that interleaves with the echo.
+  const printed = (output: string, line: string) => output.includes(line + "\n") || output.includes(line + "\r\n");
+
+  // Runs `script` under a pty. `onOutput` sees the accumulated output after every chunk and writes keys.
+  async function runInTerminal(script: string, onOutput: (output: string, terminal: Bun.Terminal) => void) {
+    let output = "";
+    const decoder = new TextDecoder();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      terminal: {
+        cols: 200,
+        rows: 24,
+        data(terminal, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+          onOutput(output, terminal);
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    output += decoder.decode();
+    return { lines: Bun.stripANSI(output).split(/\r?\n/).filter(Boolean), exitCode };
+  }
+
+  const openTTY = `
+    const fs = require("fs");
+    const tty = require("tty");
+    const input = new tty.ReadStream(fs.openSync("/dev/tty", "r"));
+    input.setRawMode(true);
+    const keys = [];
+    input.on("data", chunk => {
+      keys.push(chunk.toString());
+      console.log("key " + JSON.stringify(chunk.toString()));
+    });
+  `;
+
+  // The shape of the report: the process must exit once destroy() has run, with no further input.
+  test("destroy() from a timer after a key closes the stream and the process exits", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => setTimeout(() => {
+          input.setRawMode(false);
+          input.on("close", () => console.log("closed " + JSON.stringify({ fd: input.fd, keys })));
+          input.destroy();
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && printed(output, "ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', 'closed {"fd":null,"keys":["a"]}']);
+    expect(exitCode).toBe(0);
+  });
+
+  // As Node: pause() stops the reads once the next chunk is buffered, and resume() delivers it.
+  test("pause() from a timer keeps the next key for resume()", async () => {
+    let wrote = 0;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => setTimeout(() => {
+          input.pause();
+          console.log("paused");
+          // The next key is typed once "paused" is seen. Wait for it to be buffered, not for time.
+          const deadline = Date.now() + 5000;
+          const poll = setInterval(() => {
+            if (input.readableLength === 0) {
+              if (Date.now() < deadline) return;
+              console.log("not buffered");
+              process.exit(1);
+            }
+            clearInterval(poll);
+            console.log("buffered " + input.readableLength);
+            input.once("data", () => {
+              input.setRawMode(false);
+              input.destroy();
+            });
+            input.resume();
+          }, 10);
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (wrote === 0 && printed(output, "ready")) {
+          wrote = 1;
+          terminal.write("a");
+        } else if (wrote === 1 && printed(output, "paused")) {
+          wrote = 2;
+          terminal.write("b");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', "paused", "buffered 1", 'key "b"']);
+    expect(exitCode).toBe(0);
+  });
+
+  // A pause() inside 'data' stops the reads at once: the next key stays in the terminal for the next reader.
+  test("pause() inside 'data' leaves the next key to a child with inherited stdio", async () => {
+    let wrote = 0;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => {
+          input.pause();
+          input.setRawMode(false);
+          console.log("paused");
+          const child = Bun.spawn({
+            cmd: [process.execPath, "-e", "process.stdin.once('data', d => { console.log('child got ' + JSON.stringify(d.toString())); process.exit(0); })"],
+            stdio: ["inherit", "inherit", "inherit"],
+            env: process.env,
+          });
+          child.exited.then(code => {
+            console.log("child " + code + " buffered " + input.readableLength);
+            input.destroy();
+          });
+        });
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (wrote === 0 && printed(output, "ready")) {
+          wrote = 1;
+          terminal.write("a");
+        } else if (wrote === 1 && printed(output, "paused")) {
+          wrote = 2;
+          terminal.write("b\n");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', "paused", "b", 'child got "b\\n"', "child 0 buffered 0"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // fs.ReadStream constructs on the next tick. A terminal stream is born constructed, as Node's, so a read() in
+  // the same tick starts the poll and a 'readable' listener gets the key.
+  test("read() in the constructing tick starts reading", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        const input = new tty.ReadStream(fs.openSync("/dev/tty", "r"));
+        input.setRawMode(true);
+        input.pause();
+        console.log("read " + JSON.stringify(input.read()));
+        input.once("readable", () => {
+          console.log("key " + JSON.stringify(String(input.read())));
+          input.setRawMode(false);
+          input.destroy();
+        });
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && printed(output, "ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["read null", "ready", 'key "a"']);
+    expect(exitCode).toBe(0);
+  });
+
+  test("on fd 0 destroy() from a timer closes the stream, leaves fd 0 open and the process exits", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        const input = new tty.ReadStream(0);
+        input.setRawMode(true);
+        input.once("data", chunk => setTimeout(() => {
+          input.setRawMode(false);
+          input.on("close", () => {
+            let fd0;
+            try { fd0 = fs.fstatSync(0).isCharacterDevice() ? "open" : "other"; } catch (e) { fd0 = e.code; }
+            console.log("closed " + JSON.stringify({ key: String(chunk), fd: input.fd, fd0 }));
+          });
+          input.destroy();
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && printed(output, "ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'closed {"key":"a","fd":0,"fd0":"open"}']);
+    expect(exitCode).toBe(0);
+  });
+
+  // The private reopen of the terminal must not take a closed stdio number: fd 0 to 2 are never closed,
+  // and a child with inherited stdio would get the terminal as its stderr.
+  test("the reopened terminal does not land on a closed fd 2", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        const fdState = () => { try { fs.fstatSync(2); return "open"; } catch (e) { return e.code; } };
+        const fd = fs.openSync("/dev/tty", "r");
+        fs.closeSync(2);
+        const input = new tty.ReadStream(fd);
+        input.setRawMode(true);
+        input.once("data", chunk => setTimeout(() => {
+          const afterKey = fdState();
+          input.setRawMode(false);
+          input.on("close", () => console.log("closed " + JSON.stringify({ key: String(chunk), afterKey, afterClose: fdState() })));
+          input.destroy();
+        }, 30));
+        console.log("ready " + fdState());
+      `,
+      (output, terminal) => {
+        if (!wrote && printed(output, "ready EBADF")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready EBADF", 'closed {"key":"a","afterKey":"EBADF","afterClose":"EBADF"}']);
+    expect(exitCode).toBe(0);
+  });
+
+  test("destroy() after an await leaves the next key to a child with inherited stdio", async () => {
+    let wrote = 0;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        const { once } = require("events");
+        (async () => {
+          console.log("ready");
+          await once(input, "data");
+          await Bun.sleep(30);
+          input.setRawMode(false);
+          input.destroy();
+          await once(input, "close");
+          console.log("destroyed");
+          const child = Bun.spawn({
+            cmd: [process.execPath, "-e", "process.stdin.once('data', d => { console.log('child got ' + JSON.stringify(d.toString())); process.exit(0); })"],
+            stdio: ["inherit", "inherit", "inherit"],
+            env: process.env,
+          });
+          console.log("child " + (await child.exited));
+        })();
+      `,
+      (output, terminal) => {
+        if (wrote === 0 && printed(output, "ready")) {
+          wrote = 1;
+          terminal.write("a");
+        } else if (wrote === 1 && printed(output, "destroyed")) {
+          wrote = 2;
+          terminal.write("b\n");
+        }
+      },
+    );
+    // The terminal is cooked again when "b\n" is typed, so the pty echoes it.
+    expect(lines).toEqual(["ready", 'key "a"', "destroyed", "b", 'child got "b\\n"', "child 0"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("unref() from a timer lets the process exit", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => setTimeout(() => {
+          input.setRawMode(false);
+          input.unref();
+          console.log("unref");
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && printed(output, "ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', "unref"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // As Node, where setRawMode() on a destroyed stream has no handle to act on.
+  test("setRawMode() after destroy() is a no-op", async () => {
+    let wrote = false;
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.once("data", () => setTimeout(() => {
+          input.destroy();
+          input.setRawMode(false);
+          console.log("after " + JSON.stringify({ fd: input.fd, isRaw: input.isRaw, destroyed: input.destroyed }));
+        }, 30));
+        console.log("ready");
+      `,
+      (output, terminal) => {
+        if (!wrote && printed(output, "ready")) {
+          wrote = true;
+          terminal.write("a");
+        }
+      },
+    );
+    expect(lines).toEqual(["ready", 'key "a"', 'after {"fd":null,"isRaw":false,"destroyed":true}']);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a subclass with its own _read keeps it and the fs.ReadStream buffer size", async () => {
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        class Sub extends tty.ReadStream {
+          _read() { this.push("own"); this.push(null); }
+        }
+        const input = new Sub(fs.openSync("/dev/tty", "r"));
+        input.on("data", chunk => console.log("data " + chunk));
+        input.on("end", () => console.log("end " + input.readableHighWaterMark));
+      `,
+      () => {},
+    );
+    expect(lines).toEqual(["data own", "end 65536"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A write-only fd is not reopened for reading: the read fails with EBADF, as it does on the fd itself.
+  test("a write-only terminal fd does not read the terminal", async () => {
+    const { lines, exitCode } = await runInTerminal(
+      `
+        const fs = require("fs");
+        const tty = require("tty");
+        const input = new tty.ReadStream(fs.openSync("/dev/tty", "w"));
+        input.on("error", err => console.log("error " + err.code));
+        input.on("data", chunk => console.log("key " + JSON.stringify(String(chunk))));
+      `,
+      () => {},
+    );
+    expect(lines).toEqual(["error EBADF"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("destroy() with no key read closes the caller's fd and exits", async () => {
+    const { lines, exitCode } = await runInTerminal(
+      `${openTTY}
+        input.on("close", () => console.log("closed " + JSON.stringify({ fd: input.fd })));
+        input.destroy();
+      `,
+      () => {},
+    );
+    expect(lines).toEqual(['closed {"fd":null}']);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe.concurrent("WriteStream destroy()", () => {
   async function destroyStdioStreams(exhaustDescriptors: boolean) {
     const script = `

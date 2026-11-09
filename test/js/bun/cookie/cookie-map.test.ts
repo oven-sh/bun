@@ -395,8 +395,10 @@ describe.each([undefined, null] as any[])("set(init) with a name or value of %p"
 
 test("set(init) with the null that get() returns for a cookie that does not exist", () => {
   const map = new Bun.CookieMap();
+  const missing = map.get("missing");
+  expect(missing).toBeNull();
   // @ts-expect-error
-  map.set({ name: "copy", value: map.get("missing") });
+  map.set({ name: "copy", value: missing });
   expect(map.toSetCookieHeaders()).toEqual(["copy=; Path=/; SameSite=Lax"]);
 });
 

@@ -1889,6 +1889,31 @@ pub(crate) mod js_bundler {
                  const result = Bun.spawnSync([\"bun\", \"build\", entrypoint, \"--format=esm\"]);")));
         }
 
+        // Before the plugins' `setup()` runs: a build that is already aborted asks them nothing.
+        let signal = match config.fast_get(global_this, jsc::BuiltinName::signal)? {
+            None => None,
+            Some(value) if value.is_undefined_or_null() => None,
+            Some(value) => match jsc::AbortSignal::ref_from_js(value) {
+                Some(signal) => Some(signal),
+                None => {
+                    return Err(global_this.throw_invalid_argument_type_value(
+                        b"signal",
+                        b"AbortSignal",
+                        value,
+                    ));
+                }
+            },
+        };
+        if let Some(signal) = &signal
+            && signal.aborted()
+        {
+            return Ok(jsc::JSPromise::rejected_promise(
+                global_this,
+                signal.js_reason(global_this),
+            )
+            .to_js());
+        }
+
         let mut plugins: Option<*mut Plugin> = None;
         let config = Config::from_js(global_this, config, &mut plugins)?;
 
@@ -1904,7 +1929,7 @@ pub(crate) mod js_bundler {
         );
         completion.promise = jsc::JSPromiseStrong::init(global_this);
         let promise = completion.promise.value();
-        completion.schedule();
+        completion.schedule(signal);
         Ok(promise)
     }
 

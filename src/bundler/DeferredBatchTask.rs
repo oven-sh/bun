@@ -57,7 +57,7 @@ impl DeferredBatchTask {
             let bv2 = self.get_bundle_v2();
             // A cancelled pass rejects the `.defer()` promises rather than resuming plugins into it.
             // (The completion's flag, not `graph.cancelled`: that one is the bundle thread's.)
-            let rejected = bv2.completion.as_ref().is_some_and(|c| c.is_cancelled());
+            let rejected = bv2.completion_cancel_cause().is_some();
             bv2.plugins_mut().expect("plugins").drain_deferred(rejected);
         }
         self.come_back();

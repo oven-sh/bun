@@ -439,7 +439,7 @@ impl Route {
         // While we're building, ensure this doesn't get freed.
         completion_task.html_build_task = Some(RefPtr::from_this(this));
         this.state.set(State::Building);
-        completion_task.schedule();
+        completion_task.schedule(None);
         Ok(())
     }
 

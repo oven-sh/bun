@@ -1090,6 +1090,9 @@ pub mod bv2_impl {
                 Err(bun_ast::Msg),
                 Success(ResolveSuccess),
                 NoMatch,
+                /// The pass was cancelled before the plugins answered: no message, the pass
+                /// fails as a whole with [`crate::Error::Cancelled`].
+                Cancelled,
                 #[default]
                 Pending,
                 Consumed,
@@ -1098,23 +1101,6 @@ pub mod bv2_impl {
                 #[inline]
                 pub(crate) fn consume(&mut self) -> ResolveValue {
                     core::mem::replace(self, ResolveValue::Consumed)
-                }
-            }
-
-            fn cancelled_msg(file: &[u8]) -> bun_ast::Msg {
-                bun_ast::Msg {
-                    data: bun_ast::Data {
-                        text: std::borrow::Cow::Borrowed(
-                            b"Bun.build was cancelled: the VM that owns its plugins shut down",
-                        ),
-                        location: Some(bun_ast::Location {
-                            file: Box::from(file),
-                            line: -1,
-                            column: -1,
-                            ..Default::default()
-                        }),
-                    },
-                    ..Default::default()
                 }
             }
 
@@ -1205,7 +1191,7 @@ pub mod bv2_impl {
                     // Some (asserted by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
                         let bv2 = &mut *self.bv2;
-                        if bv2.graph.cancelled {
+                        if bv2.graph.cancelled.is_some() {
                             self.answer_cancelled();
                             return;
                         }
@@ -1219,7 +1205,7 @@ pub mod bv2_impl {
                 /// was cancelled before it was handed over): answer it as cancelled, from whichever thread
                 /// holds it, through the bundle thread's queue like every other answer.
                 pub fn answer_cancelled(&mut self) {
-                    self.value = ResolveValue::Err(cancelled_msg(&self.import_record.source_file));
+                    self.value = ResolveValue::Cancelled;
                     // SAFETY: `bv2` outlives every request of its pass (it cannot finish before this answer).
                     unsafe { &mut *self.bv2 }.on_resolve_async(self);
                 }
@@ -1259,6 +1245,8 @@ pub mod bv2_impl {
                 #[default]
                 Pending,
                 NoMatch,
+                /// As [`ResolveValue::Cancelled`].
+                Cancelled,
                 Consumed,
             }
             impl LoadValue {
@@ -1350,7 +1338,7 @@ pub mod bv2_impl {
                     // by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
                         let bv2 = &mut *self.bv2;
-                        if bv2.graph.cancelled {
+                        if bv2.graph.cancelled.is_some() {
                             self.answer_cancelled();
                             return;
                         }
@@ -1363,7 +1351,7 @@ pub mod bv2_impl {
                 }
                 /// As `Resolve::answer_cancelled`.
                 pub fn answer_cancelled(&mut self) {
-                    self.value = LoadValue::Err(cancelled_msg(&self.path));
+                    self.value = LoadValue::Cancelled;
                     // SAFETY: as `Resolve::answer_cancelled`.
                     unsafe { &mut *self.bv2 }.on_load_async(self);
                 }
@@ -1808,10 +1796,38 @@ pub mod bv2_impl {
         /// from it (whether the result is an error, and the concurrent-task
         /// enqueue), so the high tier hands the bundler an erased owner +
         /// `&'static` vtable pair (same shape as [`DevServerHandle`]).
+        /// Why a `Bun.build` stops before its end. Set once on the JS thread, read by the bundle
+        /// thread at its checkpoints: the pass hands the plugins nothing further, consumes the
+        /// answers it still waits for, and returns [`crate::Error::Cancelled`] with no message.
+        #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+        #[repr(u8)]
+        pub enum CancelCause {
+            /// The `signal` the script passed fired: the promise rejects with `signal.reason`.
+            Aborted = 1,
+            /// The context that owns the plugins stopped (VM teardown, a disposed
+            /// `Bun.ModuleGraph`): nothing is reported to script.
+            ContextStopped = 2,
+        }
+
+        impl CancelCause {
+            /// The value an `AtomicU8` holds for "not cancelled".
+            pub const NONE: u8 = 0;
+
+            #[inline]
+            pub fn from_u8(raw: u8) -> Option<Self> {
+                match raw {
+                    1 => Some(Self::Aborted),
+                    2 => Some(Self::ContextStopped),
+                    _ => None,
+                }
+            }
+        }
+
         pub struct CompletionDispatch {
-            /// Whether the VM that owns the plugins is shutting down: stop
-            /// waiting for their answers and fail the build (any thread).
-            pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
+            /// Why the build is cancelled, if it is: stop waiting for the plugins'
+            /// answers and fail the build (any thread).
+            pub cancel_cause:
+                unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> Option<CancelCause>,
             /// Folds the event-loop field access + enqueue so the bundler
             /// needn't name the JSC event-loop type.
             pub enqueue_task_concurrent: unsafe fn(
@@ -1829,7 +1845,7 @@ pub mod bv2_impl {
         // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
         unsafe impl Send for CompletionHandle {}
         // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `is_cancelled(&self)`
+        // is modeled as `!Sync`, and this wrapper exposes `cancel_cause(&self)`
         // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
         // sharing across threads is not justified. The handle only needs to *move*
         // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
@@ -1837,9 +1853,9 @@ pub mod bv2_impl {
         // type `Sync`.
         impl CompletionHandle {
             #[inline]
-            pub(crate) fn is_cancelled(&self) -> bool {
+            pub(crate) fn cancel_cause(&self) -> Option<CancelCause> {
                 // SAFETY: vtable contract.
-                unsafe { (self.vtable.is_cancelled)(self.owner) }
+                unsafe { (self.vtable.cancel_cause)(self.owner) }
             }
             #[inline]
             pub(crate) fn enqueue_task_concurrent(
@@ -2439,17 +2455,13 @@ pub mod bv2_impl {
         fn is_done(&mut self) -> bool {
             self.thread_lock.assert_locked();
 
-            if !self.graph.cancelled && self.completion.as_ref().is_some_and(|c| c.is_cancelled()) {
-                // The VM that owns the plugins is shutting down. It answers every request the plugins still
-                // hold — and every hop that never reached them — as cancelled, on its own thread like any
-                // other answer; the pass keeps consuming answers until none is pending, hands nothing further
-                // to that VM (`dispatch()`), and fails as a whole at its next checkpoint.
-                self.graph.cancelled = true;
-                self.transpiler.log_mut().add_error(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    &b"Bun.build was cancelled: the VM that owns its plugins shut down"[..],
-                );
+            if self.graph.cancelled.is_none() {
+                // The JS thread cancelled the build (its signal fired, or the VM that owns the plugins is
+                // shutting down). It answers every request the plugins still hold — and every hop that
+                // never reached them — as cancelled, on its own thread like any other answer; the pass
+                // keeps consuming answers until none is pending, hands nothing further to that VM
+                // (`dispatch()`), and fails as a whole at its next checkpoint.
+                self.graph.cancelled = self.completion_cancel_cause();
             }
 
             if self.graph.pending_items == 0 {
@@ -5058,8 +5070,25 @@ pub mod bv2_impl {
                     // An error occurred, prevent spinning the event loop forever
                     this.decrement_scan_counter();
                 }
+                jsc_api::JSBundler::LoadValue::Cancelled => {
+                    this.note_cancelled_answer();
+                    drop(load_deinit);
+                    this.decrement_scan_counter();
+                }
                 jsc_api::JSBundler::LoadValue::Pending
                 | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),
+            }
+        }
+
+        /// A request came back answered as cancelled. The pass fails as a whole: the JS thread's cause
+        /// when it set one, else the plugins' context stopped without telling this build (a disposed
+        /// `Bun.ModuleGraph` while the VM lives on).
+        fn note_cancelled_answer(&mut self) {
+            if self.graph.cancelled.is_none() {
+                self.graph.cancelled = Some(
+                    self.completion_cancel_cause()
+                        .unwrap_or(dispatch::CancelCause::ContextStopped),
+                );
             }
         }
     }
@@ -5378,6 +5407,7 @@ pub mod bv2_impl {
                     log.errors += (kind == bun_ast::Kind::Err) as u32;
                     log.warnings += (kind == bun_ast::Kind::Warn) as u32;
                 }
+                jsc_api::JSBundler::ResolveValue::Cancelled => this.note_cancelled_answer(),
                 jsc_api::JSBundler::ResolveValue::Pending
                 | jsc_api::JSBundler::ResolveValue::Consumed => unreachable!(),
             }
@@ -5505,6 +5535,12 @@ pub mod bv2_impl {
             }
         }
 
+        /// The JS thread's word on the `Bun.build` this pass runs for (one atomic load).
+        #[inline]
+        pub(crate) fn completion_cancel_cause(&self) -> Option<dispatch::CancelCause> {
+            self.completion.as_ref().and_then(|c| c.cancel_cause())
+        }
+
         pub fn run_from_js_in_new_thread(
             &mut self,
             entry_points: &[&[u8]],
@@ -5524,6 +5560,9 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
+            if self.graph.cancelled.is_some() {
+                return Err(crate::Error::Cancelled);
+            }
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
             }
@@ -5550,6 +5589,11 @@ pub mod bv2_impl {
 
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
+            }
+            // Nothing ticks the loop during `link`: a signal that fired meanwhile is seen here,
+            // before any output file is written.
+            if self.completion_cancel_cause().is_some() {
+                return Err(crate::Error::Cancelled);
             }
 
             let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(

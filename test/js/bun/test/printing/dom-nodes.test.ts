@@ -319,6 +319,52 @@ describe("diffs", () => {
       "+ Received  + 1",
     ]);
   });
+
+  test("a node whose property matched an asymmetric matcher is indented markup", () => {
+    const failure = (received: unknown, pattern: object) => messageOf(() => expect(received).toMatchObject(pattern));
+    const message = `expect(received).toMatchObject(expected)
+
+- {
+-   "id": "nope",
+-   "tagName": Any<String>,
+- }
++ <button
++   class="b a"
++   id="x"
++ >
++   go
++ </button>
+
+- Expected  - 4
++ Received  + 6
+`;
+    // `id` doesn't match. When it comes first, the comparison ends before it reaches the matcher.
+    expect(failure(button(), { tagName: expect.any(String), id: "nope" })).toBe(message);
+    expect(failure(button(), { id: "nope", tagName: expect.any(String) })).toBe(message);
+    expect(failure(button(), { nodeType: expect.any(Number), id: "nope" })).toBe(
+      message.replace('"tagName": Any<String>', '"nodeType": Any<Number>'),
+    );
+    expect(failure({ el: button(), n: 1 }, { el: { tagName: expect.any(String) }, n: 2 }))
+      .toBe(`expect(received).toMatchObject(expected)
+
+  {
+-   "el": {
+-     "tagName": Any<String>,
+-   },
+-   "n": 2,
++   "el": <button
++     class="b a"
++     id="x"
++   >
++     go
++   </button>,
++   "n": 1,
+  }
+
+- Expected  - 4
++ Received  + 7
+`);
+  });
 });
 
 describe("snapshots", () => {
@@ -625,6 +671,54 @@ describe("snapshots", () => {
         },
       }
     `);
+  });
+
+  test("property matchers", () => {
+    expect(button()).toMatchInlineSnapshot(
+      { tagName: expect.any(String), nodeType: expect.any(Number) },
+      `
+      <button
+        class="b a"
+        id="x"
+      >
+        go
+      </button>
+    `,
+    );
+    expect({ el: button(), list: [h("i")], n: 1 }).toMatchInlineSnapshot(
+      { el: { tagName: expect.any(String) }, list: [{ nodeType: expect.any(Number) }], n: expect.any(Number) },
+      `
+      {
+        "el": <button
+          class="b a"
+          id="x"
+        >
+          go
+        </button>,
+        "list": [
+          <i />,
+        ],
+        "n": Any<Number>,
+      }
+    `,
+    );
+    // The matcher is the node's. The plain objects inside its markup print their own `tagName`.
+    expect(h("div", { o: { tagName: "inner" } }, { tagName: "child" })).toMatchInlineSnapshot(
+      { tagName: expect.any(String) },
+      `
+      <div
+        o={
+          {
+            "tagName": "inner",
+          }
+        }
+      >
+        {
+          "tagName": "child",
+        }
+      </div>
+    `,
+    );
   });
 });
 

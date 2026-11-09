@@ -263,11 +263,8 @@ void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
     if (m_valueIsWireText && (m_value.is8Bit() ? isEncodedCookieValue(m_value.span8()) : isEncodedCookieValue(m_value.span16()))) {
         builder.append(m_value);
     } else {
-        auto result = encodeURIComponent(vm, m_value, builder);
-        if (result.hasException()) {
-            // m_value contained unpaired surrogate. oops!
-            // fortunately, this never happens because the string has already had invalid surrogate pairs converted to the replacement character
-        }
+        // This fails only for an unpaired surrogate, which m_value never has.
+        encodeURIComponent(vm, m_value, builder);
     }
 
     // Add domain if present

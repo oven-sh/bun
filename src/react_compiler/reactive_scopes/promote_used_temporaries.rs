@@ -1303,7 +1303,21 @@ impl ReactiveFunctionVisitor for Mutations<'_> {
                 | AliasingEffect::MutateConditionally { value }
                 | AliasingEffect::MutateTransitive { value }
                 | AliasingEffect::MutateTransitiveConditionally { value } => self.reaches(value),
-                _ => false,
+                // No wildcard: a kind of effect that a sync adds has to be put on one side here.
+                AliasingEffect::Freeze { .. }
+                | AliasingEffect::Capture { .. }
+                | AliasingEffect::Alias { .. }
+                | AliasingEffect::MaybeAlias { .. }
+                | AliasingEffect::Assign { .. }
+                | AliasingEffect::Create { .. }
+                | AliasingEffect::CreateFrom { .. }
+                | AliasingEffect::ImmutableCapture { .. }
+                | AliasingEffect::Apply(_)
+                | AliasingEffect::CreateFunction { .. }
+                | AliasingEffect::MutateFrozen { .. }
+                | AliasingEffect::MutateGlobal { .. }
+                | AliasingEffect::Impure { .. }
+                | AliasingEffect::Render { .. } => false,
             });
         }
         if !matches!(instruction.value, ReactiveValue::Instruction(_)) {

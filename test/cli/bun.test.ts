@@ -185,6 +185,22 @@ describe("bun", () => {
       expect(stdout.toString()).not.toBeEmpty();
     });
 
+    // The fixture is a shell script with a mode bit; Windows has neither.
+    test.skipIf(isWindows)("getcompletes b lists the executables in node_modules/.bin", () => {
+      using dir = tempDir("getcompletes-bin", {
+        "package.json": JSON.stringify({ name: "test" }),
+        "node_modules/.bin/mybin": "#!/bin/sh\necho hi\n",
+      });
+      fs.chmodSync(join(String(dir), "node_modules/.bin/mybin"), 0o755);
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), "getcompletes", "b"],
+        env: bunEnv,
+        cwd: String(dir),
+      });
+      expect(stdout.toString().split("\n").filter(Boolean)).toContain("mybin");
+      expect(exitCode).toBe(0);
+    });
+
     // https://github.com/oven-sh/bun/issues/30086
     test("getcompletes keeps scripts whose names start with 'pre'/'post' when no sibling script exists", () => {
       using dir = tempDir("getcompletes-pre-post", {

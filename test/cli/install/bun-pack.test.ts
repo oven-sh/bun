@@ -5759,8 +5759,7 @@ long syscall(long nr, ...) {
   test.concurrent.each([
     // One row for each loop that reads a directory. `dir` is the directory whose first read fails.
     { walk: "the default walk, a subdirectory", packageJson: {}, files: { "lib/index.js": index }, dir: "lib" },
-    // The resolver reads the package root before pack does: pack is the second reader.
-    { walk: "the default walk, the package root", packageJson: {}, files: { "index.js": index }, dir: "", reader: 2 },
+    { walk: "the default walk, the package root", packageJson: {}, files: { "index.js": index }, dir: "" },
     {
       walk: '"files" with a directory',
       packageJson: { files: ["lib"] },

@@ -5551,16 +5551,33 @@ impl VirtualMachine {
             top_level_dir
         };
 
+        let import_kind = if is_esm {
+            bun_ast::ImportKind::Stmt
+        } else {
+            bun_ast::ImportKind::Require
+        };
+
+        let mut entry_point = None;
+        if source == MAIN_FILE_NAME && bun_paths::is_absolute(normalized_specifier) {
+            entry_point = match self
+                .transpiler
+                .resolver
+                .resolve_entry_point(normalized_specifier, import_kind)
+            {
+                ResultUnion::Success(r) => Some(r),
+                ResultUnion::Failure(e) => return Err(e.into()),
+                ResultUnion::Pending(_) | ResultUnion::NotFound => None,
+            };
+        }
+
         // A `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
         let result: bun_resolver::Result = loop {
-            let import_kind = if is_esm {
-                bun_ast::ImportKind::Stmt
-            } else {
-                bun_ast::ImportKind::Require
-            };
+            if let Some(entry_point) = entry_point.take() {
+                break entry_point;
+            }
             match self.transpiler.resolver.resolve_and_auto_install(
                 source_to_use,
                 normalized_specifier,

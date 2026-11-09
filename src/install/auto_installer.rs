@@ -252,7 +252,7 @@ impl hooks::AutoInstaller for PackageManager {
             _ => None,
         };
         let (base, path): (&[u8], &[u8]) = if let Some(member) = &member {
-            (self.root_dir.dir, self.lockfile.str(member))
+            (self.root_dir, self.lockfile.str(member))
         } else {
             let package_json_dir = package_json_dir?;
             match version.tag {

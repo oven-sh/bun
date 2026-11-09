@@ -550,7 +550,7 @@ impl<'a> RouteLoader<'a> {
         // under that lock, so iterating it live would walk freed buckets.
         let entry_ptrs: Vec<*mut Fs::Entry> = {
             let _entries_lock = fs.fs.entries_mutex.lock_guard();
-            match root_dir_info.get_entries_const() {
+            match root_dir_info.get_entries_listed_locked() {
                 Some(entries) => entries.data.values().copied().collect(),
                 None => return,
             }

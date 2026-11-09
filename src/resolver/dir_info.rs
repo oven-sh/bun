@@ -223,12 +223,26 @@ impl DirInfo {
         self.tsconfig_json.map(arena_ref)
     }
 
+    /// Caller must not hold `entries_mutex`: a placeholder slot is rewritten
+    /// in place under it.
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            // Scalar field read; see `get_entries_const` for the contract.
-            return self.get_entries_const().map_or(Fd::INVALID, |e| e.fd);
+            let rfs = &mut fs::FileSystem::instance().fs;
+            let _lock = rfs.entries_mutex.lock_guard();
+            return rfs
+                .entries
+                .at_index(self.entries)
+                .map_or(Fd::INVALID, |e| e.fd());
         }
         Fd::INVALID
+    }
+
+    /// False for the `Unlisted` placeholder. Caller holds `entries_mutex`.
+    pub(crate) fn is_listed_locked(&self) -> bool {
+        !matches!(
+            fs::FileSystem::instance().fs.entries.at_index(self.entries),
+            Some(fs::EntriesOption::Unlisted(_))
+        )
     }
 
     /// Generation-checked listing accessor for call sites that already hold
@@ -268,16 +282,28 @@ impl DirInfo {
             .get(query)
     }
 
-    /// As-cached listing access with no generation check and no locking.
-    /// Scalar fields (`fd`, `dir`) may be read through this unlocked; the
-    /// `.data` map must only be probed/iterated while `entries_mutex` is held
-    /// (a concurrent stale-generation re-read rewrites it in place).
-    pub fn get_entries_const(&self) -> Option<&fs::DirEntry> {
-        fs::FileSystem::instance()
-            .fs
-            .entries
-            .at_index(self.entries)?
-            .as_entries()
+    /// [`get_entry`](Self::get_entry) without listing an `Unlisted` directory:
+    /// the outer `None` is that directory, the inner one a missing name.
+    pub(crate) fn get_entry_if_listed(
+        &self,
+        generation: Generation,
+        query: &[u8],
+    ) -> Option<Option<fs::EntryLookup>> {
+        let rfs = &mut fs::FileSystem::instance().fs;
+        let _lock = rfs.entries_mutex.lock_guard();
+        if !self.is_listed_locked() {
+            return None;
+        }
+        Some(
+            rfs.entries_at_locked(self.entries, generation)
+                .and_then(|slot| slot.as_entries())
+                .and_then(|entries| entries.get(query)),
+        )
+    }
+
+    /// The listing as cached, read now if `Unlisted`. Caller holds `entries_mutex`.
+    pub fn get_entries_listed_locked(&self) -> Option<&'static fs::DirEntry> {
+        self.get_entries_ref_locked(0)
     }
 
     #[inline]

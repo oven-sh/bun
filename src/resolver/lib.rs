@@ -442,19 +442,6 @@ pub mod fs {
         pub fn get_default_temp_dir() -> &'static [u8] {
             RealFS::get_default_temp_dir()
         }
-
-        /// Returns the cached
-        /// `*EntriesOption` slot owned by the resolver's BSSMap singleton
-        /// (process-lifetime).
-        #[inline]
-        pub fn read_directory(
-            &mut self,
-            dir: &[u8],
-            generation: Generation,
-            store_fd: bool,
-        ) -> crate::CrateResult<&'static EntriesOption> {
-            self.fs.read_directory(dir, None, generation, store_fd)
-        }
     }
 
     // ── PathName / Path ──────────────────────────────────────────────────
@@ -733,6 +720,15 @@ pub mod fs {
         })
     }
 
+    // Relaxed: a statistic for tests, read after the fact.
+    static READDIR_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+    /// How many directory listings this process has read into the cache
+    /// (`bun:internal-for-testing` `getCounters().readdir`).
+    pub fn readdir_count() -> u32 {
+        READDIR_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
     // Modeled as
     // an unbounded `&mut DirEntry` so resolver match arms (`Entries(entries) =>
     // entries.dir`) auto-deref. The backing storage is the BSSMap singleton;
@@ -740,6 +736,17 @@ pub mod fs {
     pub enum EntriesOption {
         Entries(&'static mut DirEntry),
         Err(dir_entry::Err),
+        /// Opened for its `DirInfo` markers, not listed. `entries_at_locked` and
+        /// `read_directory_with_iterator` list it on the first request for names.
+        Unlisted(Unlisted),
+    }
+
+    #[derive(Clone, Copy)]
+    pub struct Unlisted {
+        /// Interned in `DirnameStore`.
+        pub dir: &'static [u8],
+        /// The open directory when the resolver keeps fds (`store_fd`).
+        pub fd: Fd,
     }
 
     impl EntriesOption {
@@ -751,13 +758,25 @@ pub mod fs {
             match self {
                 EntriesOption::Entries(entries) => Ok(&**entries),
                 EntriesOption::Err(err) => Err(err.canonical_error),
+                EntriesOption::Unlisted(_) => {
+                    Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))
+                }
             }
         }
 
         pub(crate) fn as_entries(&self) -> Option<&DirEntry> {
             match self {
                 EntriesOption::Entries(entries) => Some(&**entries),
-                EntriesOption::Err(_) => None,
+                EntriesOption::Err(_) | EntriesOption::Unlisted(_) => None,
+            }
+        }
+
+        /// The directory fd this slot keeps open, if any.
+        pub(crate) fn fd(&self) -> Fd {
+            match self {
+                EntriesOption::Entries(entries) => entries.fd,
+                EntriesOption::Unlisted(unlisted) => unlisted.fd,
+                EntriesOption::Err(_) => Fd::INVALID,
             }
         }
 
@@ -772,7 +791,7 @@ pub mod fs {
             let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
             match self {
                 EntriesOption::Entries(entries) => (entries.get(query), entries.fd),
-                EntriesOption::Err(_) => (None, Fd::INVALID),
+                EntriesOption::Err(_) | EntriesOption::Unlisted(_) => (None, Fd::INVALID),
             }
         }
 
@@ -782,6 +801,7 @@ pub mod fs {
             let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
             match self {
                 EntriesOption::Entries(entries) => Some((entries.dir, entries.fd)),
+                EntriesOption::Unlisted(unlisted) => Some((unlisted.dir, unlisted.fd)),
                 EntriesOption::Err(_) => None,
             }
         }
@@ -992,6 +1012,7 @@ pub mod fs {
             handle: Fd,
             iterator: &mut I,
         ) -> crate::CrateResult<DirEntry> {
+            READDIR_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
 
@@ -1011,7 +1032,13 @@ pub mod fs {
                 }
             }
 
-            // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
+            bun_core::scoped_log!(
+                crate::fs_full::Fs,
+                "readdir({}, {}) = {}",
+                handle,
+                bstr::BStr::new(dir_),
+                dir.data.count(),
+            );
 
             Ok(dir)
         }
@@ -1071,12 +1098,35 @@ pub mod fs {
             store_fd: bool,
             iterator: &mut I,
         ) -> crate::CrateResult<&'static EntriesOption> {
+            let _unlock_guard = self.entries_mutex.lock_guard();
+            self.read_directory_locked(
+                dir_maybe_trail_slash,
+                maybe_handle,
+                generation,
+                store_fd,
+                iterator,
+            )
+        }
+
+        /// Caller holds `entries_mutex`. Never returns an `Unlisted` slot.
+        pub(crate) fn read_directory_locked<I: DirEntryIterator>(
+            &mut self,
+            dir_maybe_trail_slash: &[u8],
+            maybe_handle: Option<Fd>,
+            generation: Generation,
+            store_fd: bool,
+            iterator: &mut I,
+        ) -> crate::CrateResult<&'static EntriesOption> {
+            debug_assert!(
+                self.entries_mutex.is_held_by_current_thread(),
+                "read_directory_locked: caller must hold entries_mutex",
+            );
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
             crate::Resolver::assert_valid_cache_key(dir);
-            let _unlock_guard = self.entries_mutex.lock_guard();
 
             let mut in_place: Option<*mut DirEntry> = None;
+            let mut unlisted: Option<(*mut EntriesOption, Unlisted)> = None;
 
             let mut cache_result = self.entries.get_or_put(dir)?;
             if cache_result.has_checked_if_exists() {
@@ -1092,9 +1142,12 @@ pub mod fs {
                         EntriesOption::Entries(e) if e.generation < generation => {
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
+                        EntriesOption::Unlisted(u) => unlisted = Some((cached_ptr, *u)),
                         cached => return Ok(cached),
                     }
-                } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
+                } else if cache_result.status == bun_alloc::ItemStatus::NotFound
+                    && generation == 0
+                    && maybe_handle.is_none()
                 {
                     return Ok(temp_entries_option_write(EntriesOption::Err(
                         dir_entry::Err {
@@ -1110,13 +1163,18 @@ pub mod fs {
                 Some(h) => h,
                 None => match self.open_dir(dir) {
                     Ok(h) => h,
-                    Err(err) => return self.read_directory_error(dir, err),
+                    Err(err) => {
+                        Self::fail_unlisted(unlisted, err);
+                        return self.read_directory_error(dir, err);
+                    }
                 },
             };
 
             // Close the handle on every exit path. Use
             // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
-            let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
+            let keeps_unlisted_fd = unlisted.is_some_and(|(_, u)| u.fd.is_valid());
+            let should_close_handle =
+                !had_handle && (!store_fd || keeps_unlisted_fd || self.need_to_close_files());
             let _close_guard = scopeguard::guard(handle, move |h| {
                 if should_close_handle {
                     let _ = bun_sys::close(h);
@@ -1131,12 +1189,10 @@ pub mod fs {
                 // SAFETY: `in_place` points to a `DirEntry` inside the BSSMap singleton;
                 // its `dir` field is DirnameStore-interned (&'static).
                 unsafe { (*existing).dir }
-            } else if !had_handle {
-                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
+            } else if let Some((_, unlisted)) = unlisted {
+                unlisted.dir
             } else {
-                // Intern into DirnameStore so the cache entry never dangles —
-                // `append_slice` is a bump-pointer copy, cost is bounded.
-                DirnameStore::instance().append_slice(dir)?
+                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
             };
 
             // Cache miss: read the directory entries
@@ -1148,6 +1204,7 @@ pub mod fs {
             {
                 Ok(e) => e,
                 Err(err) => {
+                    Self::fail_unlisted(unlisted, err);
                     if let Some(existing) = in_place {
                         // SAFETY: see above.
                         unsafe { (*existing).data.clear() };
@@ -1169,6 +1226,11 @@ pub mod fs {
             }
             if store_fd && !entries.fd.is_valid() {
                 entries.fd = handle;
+            }
+            if let Some((_, unlisted)) = unlisted
+                && unlisted.fd.is_valid()
+            {
+                entries.fd = unlisted.fd;
             }
 
             // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
@@ -1460,8 +1522,43 @@ pub mod fs {
             // `entries_mutex` held by the caller; sole `&mut` to this slot.
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
-            if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                if existing.generation < generation {
+            match unsafe { &mut *result_ptr } {
+                EntriesOption::Unlisted(unlisted) => {
+                    let unlisted = *unlisted;
+                    let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), unlisted.dir) {
+                        Ok(h) => h,
+                        Err(err) => {
+                            let err = err.into();
+                            Self::fail_unlisted(Some((result_ptr, unlisted)), err);
+                            return self.read_directory_error(unlisted.dir, err).ok();
+                        }
+                    };
+                    let _close_guard = scopeguard::guard(handle, |h| {
+                        let _ = bun_sys::close(h);
+                    });
+                    let mut new_entry = match self.readdir(
+                        false,
+                        None,
+                        unlisted.dir,
+                        generation,
+                        handle,
+                        &mut (),
+                    ) {
+                        Ok(e) => e,
+                        Err(err) => {
+                            Self::fail_unlisted(Some((result_ptr, unlisted)), err);
+                            return self.read_directory_error(unlisted.dir, err).ok();
+                        }
+                    };
+                    new_entry.fd = unlisted.fd;
+                    // SAFETY: slot is exclusively owned under `entries_mutex`.
+                    unsafe {
+                        *result_ptr = EntriesOption::Entries(&mut *bun_core::heap::into_raw(
+                            Box::new(new_entry),
+                        ))
+                    };
+                }
+                EntriesOption::Entries(existing) if existing.generation < generation => {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
@@ -1494,9 +1591,55 @@ pub mod fs {
                         }
                     }
                 }
+                EntriesOption::Entries(_) | EntriesOption::Err(_) => {}
             }
             // SAFETY: BSSMap-owned slot; outlives caller (process-static singleton).
             Some(unsafe { &*result_ptr })
+        }
+
+        /// The slot, still indexed by a `DirInfo`, becomes the error; its fd closes once.
+        fn fail_unlisted(unlisted: Option<(*mut EntriesOption, Unlisted)>, err: crate::Error) {
+            let Some((slot, unlisted)) = unlisted else {
+                return;
+            };
+            if unlisted.fd.is_valid() {
+                let _ = bun_sys::close(unlisted.fd);
+            }
+            // SAFETY: `slot` is a live BSSMap slot, exclusively held under `entries_mutex`.
+            unsafe {
+                *slot = EntriesOption::Err(dir_entry::Err {
+                    original_err: err,
+                    canonical_error: err,
+                });
+            }
+        }
+
+        /// Kind of `name` in the directory open as `fd`, following symlinks.
+        pub(crate) fn kind_at(&self, dir: &[u8], fd: Fd, name: &'static ZStr) -> Option<EntryKind> {
+            if !fd.is_valid() {
+                return None;
+            }
+            #[cfg(windows)]
+            {
+                match self
+                    .kind(dir, name.as_bytes(), Fd::INVALID, false)
+                    .ok()?
+                    .kind
+                {
+                    EntryKind::Dangling => None,
+                    kind => Some(kind),
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let _ = dir;
+                let stat = bun_sys::fstatat(fd, name).ok()?;
+                match bun_core::kind_from_mode(stat.st_mode as bun_sys::Mode) {
+                    bun_sys::FileKind::Directory => Some(EntryKind::Dir),
+                    bun_sys::FileKind::File => Some(EntryKind::File),
+                    _ => None,
+                }
+            }
         }
 
         fn platform_temp_dir_compute() -> &'static [u8] {
@@ -1647,7 +1790,9 @@ pub mod fs {
     }
 
     pub mod file_system {
-        pub use super::{DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS};
+        pub use super::{
+            DirEntry, DirnameStore, Entry, EntryKind, FilenameStore, RealFS, Unlisted,
+        };
         pub mod real_fs {
             pub use crate::fs::EntriesOption;
         }
@@ -1889,6 +2034,9 @@ pub mod dir_entry_accessor {
                     value: Some(&**entry),
                 })),
                 EntriesOption::Err(err) => Err(err.original_err.into_core()),
+                EntriesOption::Unlisted(_) => {
+                    Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT).into_core())
+                }
             }
         }
 

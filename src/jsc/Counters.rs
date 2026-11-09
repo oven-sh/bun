@@ -24,6 +24,7 @@ pub(crate) fn create_counters_object(heap: &JsHeap<'_>) -> CountersObject {
     CountersObject {
         spawn_sync_blocking: counters.spawn_sync_blocking,
         spawn_memfd: counters.spawn_memfd,
+        readdir: bun_resolver::fs::readdir_count().min(i32::MAX as u32) as i32,
     }
 }
 

@@ -587,7 +587,7 @@ impl FrameworkRouter {
                 // `DirEntry` map in place under that lock. Dropped before the
                 // walk so the `read_dir_info_ignore_error` recursion can re-lock.
                 let _entries_lock = fs_ref.fs.entries_mutex.lock_guard();
-                if let Some(entries) = dir_info.get_entries_const() {
+                if let Some(entries) = dir_info.get_entries_listed_locked() {
                     for (k, &v) in entries.data.iter() {
                         let _ = zig_order.put(Box::from(&**k), v);
                     }

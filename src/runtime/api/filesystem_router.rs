@@ -165,7 +165,7 @@ impl FileSystemRouter {
             // the guard: `bust_dir_cache` / the recursion below re-acquire it.
             let entry_ptrs: Vec<*mut Fs::Entry> = {
                 let _entries_lock = Fs::FileSystem::get().fs.entries_mutex.lock_guard();
-                match dir_ref.get_entries_const() {
+                match dir_ref.get_entries_listed_locked() {
                     Some(entries) => entries.data.values().copied().collect(),
                     None => Vec::new(),
                 }

@@ -457,6 +457,8 @@ struct DeepMatchState {
     // If `records`, `recorded` gets 4 values per compared property (see recordIfAsked).
     // An undefined patternOfValue means `value` is the asymmetric matcher the property matched.
     bool records { false };
+    // Set by the first record of a matched asymmetric matcher. Without one there is no row to show.
+    bool recordedMatcher { false };
     JSC::MarkedArgumentBuffer recorded;
     WTF::Vector<JSC::Identifier> recordedNames;
 
@@ -464,6 +466,7 @@ struct DeepMatchState {
     {
         if (!records)
             return;
+        recordedMatcher |= patternOfValue.isUndefined();
         recorded.append(holder);
         recorded.append(pattern);
         recorded.append(value);
@@ -478,7 +481,7 @@ struct MatchedRow {
     uint32_t childPlace { 0 };
 };
 JSC::Structure* createMatchedRowsStructure(JSC::VM&, JSC::JSGlobalObject*);
-// The rows cell for what `state` recorded, or the empty value if the root leads to no matched matcher. Takes the names out of `state`.
+// The rows cell for what `state` recorded, or the empty value if the root leads to no matched matcher. Takes the names out of `state`. The cell is its only GC allocation (the Structure is made once per global object). It throws nothing and enters no JavaScript.
 JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject*, DeepMatchState&, JSC::JSValue root, JSC::JSValue rootPattern);
 // `value` is empty if the place has no row of that name or index: the printer then reads the property from the object.
 MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::PropertyName);

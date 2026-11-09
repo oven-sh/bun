@@ -159,17 +159,14 @@ JSC::Structure* createMatchedRowsStructure(JSC::VM& vm, JSC::JSGlobalObject* glo
 
 JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& state, JSC::JSValue root, JSC::JSValue rootPattern)
 {
+    // Most walks record no matched matcher, and then there is nothing to show. A record that ran out of memory lacks values.
+    if (!state.recordedMatcher || state.recorded.hasOverflowed())
+        return {};
+
     using PlaceKey = std::pair<JSC::JSCell*, JSC::JSCell*>;
     constexpr unsigned none = std::numeric_limits<unsigned>::max();
     size_t records = state.recordedNames.size();
     auto isMatcher = [&](size_t record) { return state.recorded.at(record * 4 + 3).isUndefined(); };
-
-    // Most walks record no matched matcher, and then there is nothing to show.
-    size_t firstMatcher = 0;
-    while (firstMatcher < records && !isMatcher(firstMatcher))
-        firstMatcher++;
-    if (firstMatcher == records)
-        return {};
 
     // Every (holder, pattern) pair that holds a record gets a number.
     WTF::HashMap<PlaceKey, unsigned> numbers;

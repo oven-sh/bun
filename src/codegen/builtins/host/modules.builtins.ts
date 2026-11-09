@@ -226,6 +226,13 @@ const polls = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
+// prettier-ignore
+const membersOfExpectHeldByBoth = [
+  "addEqualityTesters", "addSnapshotSerializer", "any", "anything", "arrayContaining", "assertions", "closeTo", "extend",
+  "getState", "hasAssertions", "not", "objectContaining", "prototype", "rejectsTo", "resolvesTo", "setState",
+  "stringContaining", "stringMatching", "toSatisfy", "unreachable",
+];
+
 // The matcher that it answers keeps the pattern, and wherever a comparison meets the matcher the pattern goes to Bun__deepMatch().
 const answersMatcherOfPattern = {
   args: { pattern: b.any.optional, others: b.any.rest },
@@ -560,11 +567,12 @@ export default b.declarations(
     ),
   ),
   b.same("bun:test.expect", "%Expect%"),
-  // "vitest" exports a function of its own, with the constructor as its prototype: Expect::create_of_vitest() in src/runtime/test_runner/expect.rs.
+  // "vitest" exports a function of its own, which inherits from the constructor and holds the members of it: Expect__createOfVitest() in src/jsc/bindings/ExpectDeferred.cpp.
   b.fn("bun:test/vitest.expect", expects),
   b.inherits("bun:test/vitest.expect", "%Expect%"),
   b.fn("bun:test/vitest.expect.soft", expects),
   b.fn("bun:test/vitest.expect.poll", polls),
+  sameMembers("bun:test/vitest.expect", "%Expect%", membersOfExpectHeldByBoth),
   b.fn("bun:test.setSystemTime", b.otherwise),
   b.namespace("bun:test.mock", { module: b.otherwise, restore: b.otherwise, clearAllMocks: b.otherwise }),
   b.fn("bun:test.mock", b.otherwise),

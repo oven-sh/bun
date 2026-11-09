@@ -28,8 +28,7 @@ use js_ast::OpCode as Op;
 // `visit_expr_in_out` are surfaced.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    /// Without `minify_syntax` the printer spells `E::Undefined` as the identifier
-    /// `undefined`, which a binding of that name in scope (or a `with` body) captures.
+    /// Without `minify_syntax` the printer spells `E::Undefined` as the identifier `undefined`.
     fn printed_undefined_is_shadowed(&mut self, loc: bun_ast::Loc) -> bool {
         if self.options.features.minify_syntax {
             return false;

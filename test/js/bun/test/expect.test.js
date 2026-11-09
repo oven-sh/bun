@@ -3976,6 +3976,333 @@ describe("expect()", () => {
       expect({ ...received, point: { ...received.point } }).toEqual(before);
       expect(Object.keys(received.point)).toEqual(["x"]);
     });
+    if (isBun) {
+      /** The message of the assertion that fails in `assertion`, without colors. Any other error is thrown again. */
+      const failureOf = (/** @type {() => void} */ assertion) => {
+        try {
+          assertion();
+        } catch (error) {
+          const message = Bun.stripANSI(ANY(error).message);
+          if (!message.startsWith("expect(received)")) throw error;
+          return message;
+        }
+        throw new Error("expected the assertion to fail");
+      };
+      /**
+       * The lines that the diff in `message` marks, and the two counts below them.
+       * With `AGENT=1` the diff keeps one unmarked line next to a marked one and folds the others.
+       */
+      const marked = (/** @type {string} */ message) => message.split("\n").filter(line => /^[-+] /.test(line));
+
+      test("prints an object whose class has a getter that reads a private field", () => {
+        class Tagged {
+          #name = "T";
+          a = 1;
+          b = 2;
+          get [Symbol.toStringTag]() {
+            return this.#name;
+          }
+        }
+        const number = expect.any(Number);
+        const tagged = Object.freeze(new Tagged());
+        const pattern = Object.freeze({ a: number, b: 3 });
+        expect(failureOf(() => expect(tagged).toMatchObject(pattern)).split("\n")).toEqual([
+          "expect(received).toMatchObject(expected)",
+          "",
+          "- {",
+          "+ T ",
+          "+ Tagged {",
+          '    "a": Any<Number>,',
+          '-   "b": 3,',
+          '+   "b": 2,',
+          "  }",
+          "",
+          "- Expected  - 2",
+          "+ Received  + 3",
+          "",
+        ]);
+        // The comparison ends at the first property that differs. With `b` first it does not reach the matcher.
+        expect(failureOf(() => expect(tagged).toMatchObject({ b: 3, a: number })).split("\n")).toEqual([
+          "expect(received).toMatchObject(expected)",
+          "",
+          "- {",
+          '-   "a": Any<Number>,',
+          '-   "b": 3,',
+          "+ T ",
+          "+ Tagged {",
+          '+   "a": 1,',
+          '+   "b": 2,',
+          "  }",
+          "",
+          "- Expected  - 3",
+          "+ Received  + 4",
+          "",
+        ]);
+        expect(failureOf(() => expect(tagged).not.toMatchObject({ a: number }))).toBe(
+          'expect(received).not.toMatchObject(expected)\n\nExpected: not {\n  "a": Any<Number>,\n}\n',
+        );
+        expect(Object.entries(tagged)).toEqual([
+          ["a", 1],
+          ["b", 2],
+        ]);
+        expect(pattern.a).toBe(number);
+
+        const { Database } = require("bun:sqlite");
+        using database = new Database(":memory:");
+        const statement = database.query("select 1 as a");
+        const array = expect.any(Array);
+        const ownKeys = Reflect.ownKeys(statement);
+        // The own properties of a statement are functions with internal names. Their lines are left out.
+        const failure = (/** @type {object} */ expected) =>
+          failureOf(() => expect(statement).toMatchObject(expected))
+            .split("\n")
+            .filter(line => !/^\+ (  "|Received)/.test(line));
+        // `columnNames` is a getter of the class, and so is the tag, which is the text of the query.
+        expect(failure({ columnNames: array, paramsCount: 5 })).toEqual([
+          "expect(received).toMatchObject(expected)",
+          "",
+          "- {",
+          '+ "select 1 as a" ',
+          "+ Statement {",
+          '    "columnNames": Any<Array>,',
+          '-   "paramsCount": 5,',
+          "  }",
+          "",
+          "- Expected  - 2",
+          "",
+        ]);
+        expect(failure({ paramsCount: 5, columnNames: array })).toEqual([
+          "expect(received).toMatchObject(expected)",
+          "",
+          "- {",
+          '-   "columnNames": Any<Array>,',
+          '-   "paramsCount": 5,',
+          '+ "select 1 as a" ',
+          "+ Statement {",
+          "  }",
+          "",
+          "- Expected  - 3",
+          "",
+        ]);
+        expect(failureOf(() => expect(statement).not.toMatchObject({ columnNames: array }))).toBe(
+          'expect(received).not.toMatchObject(expected)\n\nExpected: not {\n  "columnNames": Any<Array>,\n}\n',
+        );
+        expect(Reflect.ownKeys(statement)).toEqual(ownKeys);
+        expect(statement.columnNames).toEqual(["a"]);
+      });
+
+      test("prints a link back to the root as a circular reference, once for each child", () => {
+        const tree = (/** @type {number} */ count, /** @type {boolean} */ throughMeta) => {
+          /** @type {{ id: number, name: string, children: { id: number }[] }} */
+          const root = { id: 0, name: "root", children: [] };
+          for (let id = 1; id <= count; id++) {
+            root.children.push(
+              Object.freeze(throughMeta ? { id, meta: Object.freeze({ parent: root }) } : { id, parent: root }),
+            );
+          }
+          Object.freeze(root.children);
+          return Object.freeze(root);
+        };
+        const failure = (/** @type {ReturnType<typeof tree>} */ root) =>
+          failureOf(() =>
+            expect(root).toMatchObject({
+              children: root.children.map(() => ({ id: expect.any(Number) })),
+              name: "other",
+            }),
+          );
+        const direct = tree(2, false);
+        // The `id` of a child matched: its line is the same on both sides, and the diff does not mark it.
+        expect(marked(failure(direct))).toEqual([
+          '+       "parent": [Circular],',
+          '+       "parent": [Circular],',
+          '-   "name": "other",',
+          '+   "id": 0,',
+          '+   "name": "root",',
+          "- Expected  - 1",
+          "+ Received  + 4",
+        ]);
+        expect(direct.children.map(child => child.id)).toEqual([1, 2]);
+        // The pattern does not name `meta`, the object that holds the link.
+        expect(marked(failure(tree(2, true)))).toEqual([
+          '+       "meta": {',
+          '+         "parent": [Circular],',
+          "+       },",
+          '+       "meta": {',
+          '+         "parent": [Circular],',
+          "+       },",
+          '-   "name": "other",',
+          '+   "id": 0,',
+          '+   "name": "root",',
+          "- Expected  - 1",
+          "+ Received  + 8",
+        ]);
+        for (const throughMeta of [false, true]) {
+          const [small, large] = [6, 12].map(count => failure(tree(count, throughMeta)));
+          expect(small.split("[Circular]")).toHaveLength(6 + 1);
+          expect(large.split("[Circular]")).toHaveLength(12 + 1);
+          // Each child adds the same lines, so twice the children is less than twice the text.
+          expect(large.length).toBeLessThan(2 * small.length);
+        }
+      });
+
+      test("shows the matcher that a property of a Headers, a URL, an Event or a CryptoHasher matched", () => {
+        const number = expect.any(Number);
+        const string = expect.any(String);
+        const holders = {
+          event: Object.freeze(new Event("x")),
+          hasher: Object.freeze(new Bun.CryptoHasher("sha1")),
+          headers: Object.freeze(Object.assign(new Headers(), { id: "v1" })),
+          message: Object.freeze(new MessageEvent("message", { data: "hello" })),
+          url: Object.freeze(new URL("https://example.com/a")),
+        };
+        const ownKeys = () => Object.values(holders).map(holder => Reflect.ownKeys(holder));
+        const before = ownKeys();
+        const pattern = Object.freeze({
+          event: Object.freeze({ timeStamp: number }),
+          hasher: Object.freeze({ algorithm: string }),
+          headers: Object.freeze({ id: string }),
+          message: Object.freeze({ data: string }),
+          url: Object.freeze({ href: string }),
+          wrong: 2,
+        });
+        // A MessageEvent has its own layout. The four other rows that matched are the same line on both sides.
+        expect(
+          failureOf(() => expect(Object.freeze({ ...holders, wrong: 1 })).toMatchObject(pattern)).split("\n"),
+        ).toEqual([
+          "expect(received).toMatchObject(expected)",
+          "",
+          "  {",
+          '-   "event": {',
+          '+   "event": Event Event {',
+          '+     "isTrusted": false,',
+          '      "timeStamp": Any<Number>,',
+          "    },",
+          '-   "hasher": {',
+          '+   "hasher": CryptoHasher CryptoHasher {',
+          '      "algorithm": Any<String>,',
+          "    },",
+          '-   "headers": {',
+          '+   "headers": Headers Headers {',
+          '      "id": Any<String>,',
+          "    },",
+          '-   "message": {',
+          '-     "data": Any<String>,',
+          '+   "message": MessageEvent {',
+          '+     type: "message",',
+          "+     data: Any<String>, ",
+          "    },",
+          '-   "url": {',
+          '+   "url": URL URL {',
+          '      "href": Any<String>,',
+          "    },",
+          '-   "wrong": 2,',
+          '+   "wrong": 1,',
+          "  }",
+          "",
+          "- Expected  - 7",
+          "+ Received  + 9",
+          "",
+        ]);
+        expect(ownKeys()).toEqual(before);
+        expect([holders.hasher.algorithm, holders.headers.id, holders.message.data, holders.url.href]).toEqual([
+          "sha1",
+          "v1",
+          "hello",
+          "https://example.com/a",
+        ]);
+        expect(pattern.headers.id).toBe(string);
+
+        // A Map, a Set and a FormData print their entries, and an entry is not the object that matched.
+        const form = new FormData();
+        form.append("append", "entry");
+        const entries = failureOf(() =>
+          expect({ form, map: new Map([["k", { size: 1 }]]), set: new Set([{ size: 1 }]), wrong: 1 }).toMatchObject({
+            form: { append: expect.any(Function) },
+            map: { size: number },
+            set: { size: number },
+            wrong: 2,
+          }),
+        );
+        expect(entries.split("\n").filter(line => /^\+ +"(append|size)"/.test(line))).toEqual([
+          '+     "append": "entry",',
+          '+       "size": 1,',
+          '+       "size": 1,',
+        ]);
+      });
+
+      test("a getter runs on the received object, also in the props of a React element", () => {
+        const number = expect.any(Number);
+        const string = expect.any(String);
+        const sum = Object.freeze({
+          a: 1,
+          get total() {
+            return this.a + 1;
+          },
+          wrong: 1,
+        });
+        expect(marked(failureOf(() => expect(sum).toMatchObject({ a: number, wrong: 2 })))).toEqual([
+          '-   "wrong": 2,',
+          '+   "total": 2,',
+          '+   "wrong": 1,',
+          "- Expected  - 1",
+          "+ Received  + 2",
+        ]);
+        expect(sum.a).toBe(1);
+
+        const element = (
+          /** @type {string} */ type,
+          /** @type {object} */ props,
+          /** @type {string | null} */ key = null,
+        ) => Object.freeze({ $$typeof: Symbol.for("react.element"), type, key, ref: null, props });
+        /** The lines of `received` in the diff of `{ e: received, wrong: 1 }` with `{ e: pattern, wrong: 2 }`. */
+        const printed = (/** @type {object} */ received, /** @type {object} */ pattern) =>
+          failureOf(() => expect({ e: received, wrong: 1 }).toMatchObject({ e: pattern, wrong: 2 }))
+            .split("\n")
+            .filter(line => line.startsWith("+   ") && !line.startsWith('+   "wrong"'));
+        const item = Object.freeze({
+          id: "c1",
+          get label() {
+            return this.id + "?";
+          },
+        });
+        const list = Object.freeze({
+          id: "a1",
+          get label() {
+            return this.id + "!";
+          },
+          children: Object.freeze([element("li", item), element("li", Object.freeze({ id: "c2" }))]),
+        });
+        const pattern = Object.freeze({ props: { id: string, children: [{ props: { id: string } }, {}] } });
+        expect(printed(element("ul", list), pattern)).toEqual([
+          '+   "e": <ul id=Any<String>label="a1!">',
+          '+     <li id=Any<String>label="c1?" />',
+          '+     <li id="c2" />',
+          "+   </ul>,",
+        ]);
+        expect([list.id, item.id]).toEqual(["a1", "c1"]);
+        expect(pattern.props.id).toBe(string);
+        // The element and its props are two objects. Each shows what its own pattern matched.
+        expect(
+          printed(element("input", { type: "text", key: "prop" }, "k1"), { key: string, props: { type: string } }),
+        ).toEqual(['+   "e": <input key=Any<String> type=Any<String>key="prop" />,']);
+        // A single child, and a prop that is an element or an object, show what they matched as well.
+        expect(
+          printed(element("p", { id: "a1", children: element("b", { id: "c1" }) }), {
+            props: { children: { props: { id: string } } },
+          }),
+        ).toEqual(['+   "e": <p id="a1">', "+     <b id=Any<String> />", "+   </p>,"]);
+        expect(
+          printed(element("p", { icon: element("i", { id: "c1" }), style: { color: "red", width: 1 } }), {
+            props: { icon: { props: { id: string } }, style: { color: string } },
+          }),
+        ).toEqual([
+          '+   "e": <p icon=<i id=Any<String> />style={',
+          '+       "color": Any<String>,',
+          '+       "width": 1,',
+          "+     } />,",
+        ]);
+      });
+    }
     test("with expect matcher", () => {
       const f = Symbol.for("foo");
       const b = Symbol.for("bar");

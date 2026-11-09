@@ -4906,6 +4906,32 @@ describe("bundler", () => {
     });
   }
 
+  // A block keeps a function declaration that is async, so another `case` can call it. Its callback was a `let` of the
+  // `case` that declares it: "ReferenceError: Cannot access '_temp' before initialization". It is declared in the component.
+  itBundled("react-compiler/NestedAsyncComponentCalledThroughAnotherCase", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const x0 = "!";
+        function viaAnotherCase(k) {
+          switch (k) {
+            case "never":
+              async function Leaf({ x }) {
+                return <i x={x} on={() => k + x0} />;
+              }
+            default:
+              return Leaf;
+          }
+        }
+        const { on } = (await viaAnotherCase("red")({ x: 1 })).props;
+        console.log(on(), on.name === "on" ? "in place" : "moved out");
+      `,
+      ...reactWithMemo,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    run: { stdout: "red! moved out" },
+  });
+
   // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies
   // used to be reported as reading a ref during render, unless it was initialized in one of a few ways. The expected sizes
   // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`.

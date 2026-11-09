@@ -231,8 +231,10 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
                 }
                 // A block around the statement of a label would take the label from a loop.
                 if scope.kind != Kind::Label {
-                    // Beside a direct `eval` a block keeps a function declaration, and a `case` can skip a `let`.
-                    if scope.contains_direct_eval && !scope.kind_stops_hoisting() {
+                    // A `case` can call a declaration that its block keeps, and skip the `let` of its callback.
+                    if !scope.kind_stops_hoisting()
+                        && (scope.contains_direct_eval || Self::is_kept_in_a_block(pending))
+                    {
                         break;
                     }
                     return OutlinedPlace::List(scope);
@@ -247,6 +249,15 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
             first_local: self.current_scope().generated.len(),
             own_name: pending.own_name,
         }
+    }
+
+    /// A block makes a `let` of a function declaration, but not of one that is async or a generator.
+    fn is_kept_in_a_block(pending: &bun_react_compiler::PendingCompile) -> bool {
+        use js_ast::flags::Function;
+        pending.own_name.is_some()
+            && pending.binding == pending.own_name
+            && (pending.flags.contains(Function::IsAsync)
+                || pending.flags.contains(Function::IsGenerator))
     }
 
     fn is_declared_around_compiled_function(&self, name: &[u8]) -> bool {

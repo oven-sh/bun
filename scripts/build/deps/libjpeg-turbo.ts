@@ -27,9 +27,9 @@ const VERSION = "3.2.0";
 // prettier-ignore
 const JPEG8 = [
   // compress
-  "jcapimin", "jcapistd", "jccoefct", "jccolor", "jcdctmgr", "jcdiffct",
-  "jchuff", "jcicc", "jcinit", "jclhuff", "jclossls", "jcmainct", "jcmarker",
-  "jcmaster", "jcomapi", "jcparam", "jcphuff", "jcprepct", "jcsample", "jctrans",
+  "jcapimin", "jcapistd", "jccoefct", "jccolor", "jcdctmgr",
+  "jchuff", "jcicc", "jcinit", "jcmainct", "jcmarker", "jcmaster",
+  "jcomapi", "jcparam", "jcphuff", "jcprepct", "jcsample", "jctrans",
   // decompress
   "jdapimin", "jdapistd", "jdatadst", "jdatasrc", "jdcoefct", "jdcolor",
   "jddctmgr", "jddiffct", "jdhuff", "jdicc", "jdinput", "jdlhuff", "jdlossls",
@@ -39,8 +39,8 @@ const JPEG8 = [
   "jfdctflt", "jfdctfst", "jfdctint", "jidctflt", "jidctfst", "jidctint",
   "jidctred",
   // misc
-  "jaricom", "jcarith", "jdarith", "jerror", "jmemmgr", "jmemnobs",
-  "jquant1", "jquant2", "jutils", "jpeg_nbits",
+  "jaricom", "jdarith", "jerror", "jmemmgr", "jmemnobs", "jutils",
+  "jpeg_nbits",
 ];
 
 // 8bit-only.patch gates the BMP/PPM file-I/O entry points and the 12/16-bit
@@ -95,14 +95,20 @@ export const libjpegTurbo: Dependency = {
   // codec_jpeg.rs commits the decoded rows on that signal. It reads the flag
   // through tj3BunCompletedWithWarning(), which the patch adds, so the link
   // fails without the patch.
+  //
+  // unused-encoders.patch: without color quantization and the lossless encoder, which nothing in TurboJPEG's API that
+  // codec_jpeg.rs calls can select, and without the Huffman encoder in C, which is 64 times one unrolled step. Both
+  // architectures always have the one in assembly, and NO_GETENV leaves no variable that turns it off.
   patches: [
     "patches/libjpeg-turbo/8bit-only.patch",
+    "patches/libjpeg-turbo/unused-encoders.patch",
     "patches/libjpeg-turbo/fatal-clears-warning.patch",
     "patches/libjpeg-turbo/jbun_stubs.c",
   ],
 
   build: cfg => {
     const withSimd: [string, string] = ["#cmakedefine WITH_SIMD 1", "#define WITH_SIMD 1"];
+    const noArithmeticEncoder: [string, string] = ["#cmakedefine C_ARITH_CODING_SUPPORTED 1", "/* */"];
     const srcDir = depSourceDir(cfg, "libjpeg-turbo");
     const hostWin = cfg.host.os === "windows";
     return {
@@ -133,10 +139,12 @@ export const libjpegTurbo: Dependency = {
       includes: ["src", ...(cfg.arm64 ? ["simd/arm"] : [])],
       defines: {
         BUN_8BIT_ONLY: true,
-        // jpeg_nbits.h only defines this itself on Arm. The C Huffman encoders
-        // (jcphuff.c always, jchuff.c when SIMD is off) then use bsr instead of
-        // jpeg_nbits_table. The 64 KB table still ships on x64: jchuff-sse2.asm
-        // carries its own copy.
+        BUN_SIMD_HUFFMAN_ONLY: true,
+        BUN_NO_QUANT_OR_LOSSLESS_ENCODER: true,
+        NO_GETENV: true,
+        // jpeg_nbits.h only defines this itself on Arm. The C Huffman encoder
+        // of jcphuff.c then uses bsr instead of jpeg_nbits_table. The 64 KB
+        // table still ships on x64: jchuff-sse2.asm carries its own copy.
         ...(cfg.arm64 ? {} : { USE_CLZ_INTRINSIC: true }),
       },
       headers: {
@@ -148,7 +156,8 @@ export const libjpegTurbo: Dependency = {
             ["@LIBJPEG_TURBO_VERSION_NUMBER@", "3002000"],
             withSimd,
             ["#cmakedefine RIGHT_SHIFT_IS_UNSIGNED 1", "/* #undef RIGHT_SHIFT_IS_UNSIGNED */"],
-            cmakedefine(true), // C_/D_ARITH_CODING_SUPPORTED
+            noArithmeticEncoder,
+            cmakedefine(true), // D_ARITH_CODING_SUPPORTED
           ],
         },
         "jconfigint.h": {
@@ -166,7 +175,8 @@ export const libjpegTurbo: Dependency = {
             ["#cmakedefine WITH_PROFILE", "/* #undef WITH_PROFILE */"],
             ["#cmakedefine HAVE_BUILTIN_CTZL", cfg.windows ? "/* */" : "#define HAVE_BUILTIN_CTZL"],
             ["#cmakedefine HAVE_INTRIN_H", cfg.windows ? "#define HAVE_INTRIN_H" : "/* */"],
-            cmakedefine(true), // C_/D_ARITH_CODING_SUPPORTED
+            noArithmeticEncoder,
+            cmakedefine(true), // D_ARITH_CODING_SUPPORTED
           ],
         },
         // jversion.h.in's only token is @COPYRIGHT_YEAR@ for the cjpeg banner.

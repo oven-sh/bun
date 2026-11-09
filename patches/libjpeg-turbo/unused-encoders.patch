@@ -1,0 +1,77 @@
+--- a/src/jchuff.c
++++ b/src/jchuff.c
+@@ -154,6 +154,10 @@ start_pass_huff(j_compress_ptr cinfo, boolean gather_statistics)
+ 
+ #ifdef WITH_SIMD
+   entropy->simd = jsimd_set_huff_encode_one_block(cinfo);
++#ifdef BUN_SIMD_HUFFMAN_ONLY
++  if (!entropy->simd)
++    ERREXIT(cinfo, JERR_NOT_COMPILED);
++#endif
+ #endif
+ 
+   for (ci = 0; ci < cinfo->comps_in_scan; ci++) {
+@@ -542,6 +546,10 @@ encode_one_block_simd(working_state *state, JCOEFPTR block, int last_dc_val,
+ 
+ #endif
+ 
++#if defined(BUN_SIMD_HUFFMAN_ONLY) && !defined(WITH_SIMD)
++#error "BUN_SIMD_HUFFMAN_ONLY needs WITH_SIMD"
++#endif
++#ifndef BUN_SIMD_HUFFMAN_ONLY
+ LOCAL(boolean)
+ encode_one_block(working_state *state, JCOEFPTR block, int last_dc_val,
+                  c_derived_tbl *dctbl, c_derived_tbl *actbl)
+@@ -641,6 +649,7 @@ encode_one_block(working_state *state, JCOEFPTR block, int last_dc_val,
+ 
+   return TRUE;
+ }
++#endif /* BUN_SIMD_HUFFMAN_ONLY */
+ 
+ 
+ /*
+@@ -710,8 +719,12 @@ encode_mcu_huff(j_compress_ptr cinfo, JBLOCKROW *MCU_data)
+       /* Update last_dc_val */
+       state.cur.last_dc_val[ci] = MCU_data[blkn][0][0];
+     }
+-  } else
++  }
++#ifndef BUN_SIMD_HUFFMAN_ONLY
++  else
++#endif
+ #endif
++#ifndef BUN_SIMD_HUFFMAN_ONLY
+   {
+     for (blkn = 0; blkn < cinfo->blocks_in_MCU; blkn++) {
+       ci = cinfo->MCU_membership[blkn];
+@@ -725,6 +738,7 @@ encode_mcu_huff(j_compress_ptr cinfo, JBLOCKROW *MCU_data)
+       state.cur.last_dc_val[ci] = MCU_data[blkn][0][0];
+     }
+   }
++#endif /* BUN_SIMD_HUFFMAN_ONLY */
+ 
+   /* Completed MCU, so update state */
+   cinfo->dest->next_output_byte = state.next_output_byte;
+--- a/src/jmorecfg.h
++++ b/src/jmorecfg.h
+@@ -245,7 +245,9 @@ typedef int boolean;
+ #define C_PROGRESSIVE_SUPPORTED     /* Progressive JPEG?  (Requires
+                                        C_MULTISCAN_FILES_SUPPORTED and
+                                        ENTROPY_OPT_SUPPORTED) */
++#ifndef BUN_NO_QUANT_OR_LOSSLESS_ENCODER
+ #define C_LOSSLESS_SUPPORTED        /* Lossless JPEG? */
++#endif
+ #define ENTROPY_OPT_SUPPORTED       /* Optimization of entropy coding parms? */
+ /* Note: if you selected 12-bit data precision, it is dangerous to turn off
+  * ENTROPY_OPT_SUPPORTED.  The standard Huffman tables are only good for 8-bit
+@@ -269,8 +271,10 @@ typedef int boolean;
+ #define IDCT_SCALING_SUPPORTED      /* Output rescaling via IDCT?  (Requires
+                                        DCT_ISLOW_SUPPORTED) */
+ #define UPSAMPLE_MERGING_SUPPORTED  /* Fast path for sloppy upsampling? */
++#ifndef BUN_NO_QUANT_OR_LOSSLESS_ENCODER
+ #define QUANT_1PASS_SUPPORTED       /* 1-pass color quantization? */
+ #define QUANT_2PASS_SUPPORTED       /* 2-pass color quantization? */
++#endif
+ 
+ /* more capability options later, no doubt */
+ 

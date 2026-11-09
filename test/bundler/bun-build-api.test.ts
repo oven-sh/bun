@@ -491,6 +491,77 @@ describe("Bun.build", () => {
     });
   });
 
+  describe("define and drop keys that are not valid identifiers", () => {
+    const keyError = (key: string) => `define key ${JSON.stringify(key)} must be a valid identifier`;
+
+    test("fail the build, each with a log", async () => {
+      using dir = tempDir("bun-build-define-key", { "entry.ts": `console.log(1);` });
+      const options = {
+        entrypoints: [join(String(dir), "entry.ts")],
+        define: { "1x": "2", "a b": "3" },
+        drop: ["c-d"],
+      };
+      const result = await Bun.build({ ...options, throw: false });
+      expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+        success: false,
+        logs: [keyError("1x"), keyError("a b"), keyError("c-d")],
+      });
+      await expect(Bun.build(options)).rejects.toThrow("Bundle failed");
+    });
+
+    test("come with the errors of the other options", async () => {
+      using dir = tempDir("bun-build-define-key-and-more", { "entry.ts": `console.log(1);` });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        define: { "1x": "2" },
+        splitting: true,
+        format: "cjs",
+        throw: false,
+      });
+      expect({ success: result.success, logs: result.logs.map(log => log.message) }).toEqual({
+        success: false,
+        logs: [keyError("1x"), 'Code splitting is currently only supported when format is set to "esm"'],
+      });
+    });
+
+    // The build stops before it has read an entry point, and it has to free what it made until then.
+    test.skipIf(!isASAN)("lose no memory, and neither does a value that does not parse", async () => {
+      using dir = tempDir("bun-build-define-leak", { "entry.js": "0;\n" });
+      const script = `
+        const entrypoints = [${JSON.stringify(join(String(dir), "entry.js"))}];
+        let failed = 0;
+        for (let i = 0; i < 3; i++) {
+          for (const define of [{ "1x": "2" }, { K: "{" }]) {
+            const result = await Bun.build({ entrypoints, define, throw: false });
+            if (!result.success && result.logs.length === 1) failed++;
+          }
+        }
+        console.log("failed", failed);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: {
+          ...bunEnv,
+          // abort_on_error=0: a leak is exit code 1, not SIGABRT.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "abort_on_error=0"].filter(Boolean).join(":"),
+          // The check says on stderr that it ran.
+          LSAN_OPTIONS: [bunEnv.LSAN_OPTIONS, "verbosity=1"].filter(Boolean).join(":"),
+          // Frees what JavaScript still holds, so only what is lost counts.
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("failed 6\n");
+      expect(stderr).toContain("LeakSanitizer: checking for leaks");
+      // One block for each stack that a lost allocation came from.
+      const leaks = stderr.split(/\n\s*\n/).filter(block => /^(?:Direct|Indirect) leak of /.test(block));
+      expect(leaks).toEqual([]);
+      expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/12818
   test("sourcemap + build error crash case", async () => {
     const dir = tempDirWithFiles("build", {

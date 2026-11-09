@@ -2765,20 +2765,25 @@ export const after = { a: 1 };
 
   it("define errors after an earlier config error don't corrupt the log", async () => {
     // An `external` with two `*` logs one error without aborting the constructor.
-    // The four define-key errors that follow make the log's buffer grow.
+    // The four define-key errors that follow make the log's buffer grow, and the constructor throws all five.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           const define = { "0x": "1", "1x": "1", "2x": "1", "3x": "1" };
+          const outcomes = new Set();
           for (let i = 0; i < 20; i++) {
-            const t = new Bun.Transpiler({ external: ["a*b*c"], define });
-            if (i % 10 === 0) t.transformSync("export const a = 1;");
+            try {
+              new Bun.Transpiler({ external: ["a*b*c"], define });
+              outcomes.add("constructed");
+            } catch (e) {
+              outcomes.add(JSON.stringify([e.message, ...e.errors.map(error => error.message)]));
+            }
             if (i % 10 === 9) Bun.gc(true);
           }
           Bun.gc(true);
-          console.log("constructed");
+          console.log([...outcomes].join("\\n"));
         `,
       ],
       env: bunEnv,
@@ -2787,11 +2792,27 @@ export const after = { a: 1 };
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-      stdout: "constructed\n",
+      stdout:
+        JSON.stringify([
+          "Failed to load define",
+          'External path "a*b*c" cannot have more than one "*" wildcard',
+          'define key "0x" must be a valid identifier',
+          'define key "1x" must be a valid identifier',
+          'define key "2x" must be a valid identifier',
+          'define key "3x" must be a valid identifier',
+        ]) + "\n",
       stderr: "",
       exitCode: 0,
       signalCode: null,
     });
+  });
+
+  it.each([
+    ["1x", 'define key "1x" must be a valid identifier'],
+    // Without the throw, this one is applied to `cfg["my-key"].url`.
+    ["cfg.my-key.url", 'define key "cfg.my-key.url" contains invalid identifier "my-key"'],
+  ])("a define key that is not a valid identifier is an error: %s", (key, message) => {
+    expect(() => new Bun.Transpiler({ define: { [key]: '"U"', FOO: '"bar"' } })).toThrow(message);
   });
 
   it("JSX keys", () => {

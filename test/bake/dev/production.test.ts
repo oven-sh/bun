@@ -436,6 +436,27 @@ export default function () {
     expect(exitCode).toBe(1);
   });
 
+  test("a define key that is not a valid identifier stops the build before the config module runs", async () => {
+    using dir = tempDir("bake-production-define-key", {
+      "app.ts": `console.log("config ran");\nexport default { app: { framework: ${JSON.stringify(minimalFramework)} } };`,
+      "routes/index.ts": `export default function () { return new Response("Hello"); }`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./app.ts", "--outdir", "./dist", "--define", "1x=2"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, lastLineOfStderr: stderr.trimEnd().split("\n").at(-1), exitCode }).toEqual({
+      stdout: "",
+      lastLineOfStderr: 'error: define key "1x" must be a valid identifier',
+      exitCode: 1,
+    });
+  });
+
   test('a framework entry point that a "browser" map disables is reported', async () => {
     using dir = tempDir("bake-production-disabled-entry", {
       "package.json": JSON.stringify({ name: "app", browser: { "./client.ts": false } }),

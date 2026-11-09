@@ -401,10 +401,19 @@ describe("bundler", () => {
         console.log("SUCCESS: BUN_OPTIONS applied to standalone executable");
       `,
     },
-    run: {
-      env: { BUN_OPTIONS: "--smol" },
-      stdout: /SUCCESS: BUN_OPTIONS applied to standalone executable/,
-    },
+    run: [
+      {
+        env: { BUN_OPTIONS: "--smol" },
+        stdout: /SUCCESS: BUN_OPTIONS applied to standalone executable/,
+      },
+      // A define key that is not a valid identifier stops the executable before the entry point runs.
+      {
+        env: { BUN_OPTIONS: "--define=1x=2" },
+        exitCode: 1,
+        stdout: "",
+        stderr: 'error: define key "1x" must be a valid identifier',
+      },
+    ],
   });
 
   // Test BUN_OPTIONS combined with compile-exec-argv

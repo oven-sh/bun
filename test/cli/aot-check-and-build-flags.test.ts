@@ -1,6 +1,8 @@
 // What `bun check --aot` and `bun build --compile --aot` say about their own flags, and about a store that replaces a member of a built-in object.
 import { describe, expect, test } from "bun:test";
-import { bunExe, tempDir } from "harness";
+import { bunExe, isWindows, tempDir } from "harness";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
 
@@ -65,6 +67,53 @@ console.log(result.success, result.logs.filter(log => String(log.message).includ
 `,
     });
     expect((await bun(String(dir), "build.ts")).stdout).toBe("false 1\n");
+  }, 120_000);
+});
+
+describe.concurrent.skipIf(!!unsupported)("a define key that is not a valid identifier", () => {
+  const files = { "a.ts": `console.log("entry ran");\n`, "tsconfig.json": tsconfig };
+  const keyError = 'error: define key "1x" must be a valid identifier\n';
+
+  test("stops bun build --compile --aot before it writes an executable", async () => {
+    using dir = tempDir("aot-build-define-key", files);
+    const cwd = String(dir);
+    const result = await bun(cwd, "build", "--compile", "--aot", "--define", "1x=2", "a.ts", "--outfile", "a");
+    const isWritten = existsSync(join(cwd, isWindows ? "a.exe" : "a"));
+    expect({ ...result, isWritten }).toEqual({ stdout: "", stderr: keyError, exitCode: 1, isWritten: false });
+  }, 120_000);
+
+  test.each(["check --aot", "--aot", "run --aot", "run --debug-aot"])(
+    "stops bun %s",
+    async command => {
+      using dir = tempDir("aot-run-define-key", files);
+      expect(await bun(String(dir), ...command.split(" "), "--define", "1x=2", "a.ts")).toEqual({
+        stdout: "",
+        stderr: keyError,
+        exitCode: 1,
+      });
+    },
+    120_000,
+  );
+
+  test("bun --aot prints only the log for a value that does not parse", async () => {
+    using dir = tempDir("aot-run-define-value", files);
+    expect(await bun(String(dir), "--aot", "--define", "K={", "a.ts")).toEqual({
+      stdout: "",
+      stderr: `1 | {\n    ^\nerror: Expected "}" but found end of file\n    at defines.json:1:1\n`,
+      exitCode: 1,
+    });
+  }, 120_000);
+
+  test("is in the logs of Bun.build", async () => {
+    using dir = tempDir("aot-build-api-define-key", {
+      ...files,
+      "build.ts": `const result = await Bun.build({ entrypoints: ["./a.ts"], throw: false, define: { "1x": "2" }, compile: { outfile: "./a", aot: true } });
+console.log(JSON.stringify([result.success, ...result.logs.map(log => String(log.message))]));
+`,
+    });
+    expect((await bun(String(dir), "build.ts")).stdout).toBe(
+      JSON.stringify([false, 'define key "1x" must be a valid identifier']) + "\n",
+    );
   }, 120_000);
 });
 

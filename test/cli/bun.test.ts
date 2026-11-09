@@ -569,6 +569,123 @@ describe("bun", () => {
     });
   });
 
+  describe.concurrent("a define key that is not a valid identifier", () => {
+    // Every file prints a line, so stdout shows whether any of them ran.
+    const files = {
+      "entry.js": `console.log("entry ran");`,
+      "exits.js": `console.log("entry ran");\nprocess.exit(0);`,
+      "a.test.js": `import { test } from "bun:test";\ntest("t", () => console.log("test ran"));`,
+      "members.js": `console.log(cfg["api"].url, cfg.api["url"], cfg["api"]["url"]);`,
+      "middle.js": `console.log(cfg["my-key"].url);`,
+    };
+    const notIdentifier = (...keys: string[]) =>
+      keys.map(key => `error: define key ${JSON.stringify(key)} must be a valid identifier\n`).join("\n");
+    const badPart = (key: string, part: string) =>
+      `error: define key ${JSON.stringify(key)} contains invalid identifier ${JSON.stringify(part)}\n`;
+
+    type Options = { env?: Record<string, string>; files?: Record<string, string> };
+    async function bun(args: string[], options: Options = {}) {
+      using dir = tempDir("define-key", { ...files, ...options.files });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env: { ...bunEnv, ...options.env },
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test.each<[string, string[], Options, string]>([
+      // Without the early stop, this one exits before the error is printed.
+      ["an entry point that calls process.exit(0)", ["--define", "1x=2", "exits.js"], {}, notIdentifier("1x")],
+      ["--drop", ["--drop", "a-b", "entry.js"], {}, notIdentifier("a-b")],
+      [
+        "bunfig.toml [define]",
+        ["entry.js"],
+        { files: { "bunfig.toml": `[define]\n"a-b" = "1"\n` } },
+        notIdentifier("a-b"),
+      ],
+      ["BUN_OPTIONS", ["entry.js"], { env: { BUN_OPTIONS: "--define=1x=2" } }, notIdentifier("1x")],
+      [
+        "every key at once",
+        ["--define", "1x=2", "--define", "a b=3", "--drop", "c-d", "entry.js"],
+        {},
+        notIdentifier("1x", "a b", "c-d"),
+      ],
+      ["a key with a blank before the =", ["--define", "K = false", "entry.js"], {}, notIdentifier("K ")],
+      ["a last part that is not an identifier", ["--define", "a.b-c=1", "entry.js"], {}, badPart("a.b-c", "b-c")],
+      [
+        "two keys with such a part",
+        ["--define", "a.b-c=1", "--define", "d.e f=2", "entry.js"],
+        {},
+        badPart("a.b-c", "b-c") + "\n" + badPart("d.e f", "e f"),
+      ],
+      // Without the stop, these two are applied to `cfg["my-key"]`, and the error follows the output.
+      [
+        "a middle part that is not an identifier",
+        ["--define", 'cfg.my-key.url="U"', "middle.js"],
+        {},
+        badPart("cfg.my-key.url", "my-key"),
+      ],
+      ["--drop with such a part", ["--drop", "cfg.my-key.url", "middle.js"], {}, badPart("cfg.my-key.url", "my-key")],
+      ["--watch", ["--watch", "--define", "1x=2", "entry.js"], {}, notIdentifier("1x")],
+      ["--hot", ["--hot", "--define", "1x=2", "entry.js"], {}, notIdentifier("1x")],
+      ["bun repl", ["repl", "--define", "1x=2"], {}, notIdentifier("1x")],
+      [
+        "bun build --watch",
+        ["build", "--watch", "--define", "1x=2", "entry.js", "--outdir", "out"],
+        {},
+        notIdentifier("1x"),
+      ],
+    ])("stops %s before any code runs", async (_, args, options, stderr) => {
+      expect(await bun(args, options)).toEqual({ stdout: "", stderr, exitCode: 1 });
+    });
+
+    test.each([
+      ["test", ["test"]],
+      ["test --watch", ["test", "--watch"]],
+    ])("stops bun %s before any test file", async (_, command) => {
+      expect(await bun([...command, "--define", "1x=2", "./a.test.js"])).toEqual({
+        stdout: expect.stringMatching(/^bun test v.*\n$/),
+        stderr: notIdentifier("1x"),
+        exitCode: 1,
+      });
+    });
+
+    test("a key of identifiers is applied to every spelling of the member", async () => {
+      expect(await bun(["--define", 'cfg.api.url="U"', "members.js"])).toEqual({
+        stdout: "U U U\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // `bun build` failed for such a key before, and also reported what it found after the defines.
+    test.each<[string, string[], string]>([
+      ["every key", ["--define", "1x=2", "--define", "a b=3", "--drop", "c-d"], notIdentifier("1x", "a b", "c-d")],
+      [
+        "an error of an earlier option, which comes first",
+        ["--external", "a*b*c", "--define", "1x=2"],
+        `error: External path "a*b*c" cannot have more than one "*" wildcard\n\n` + notIdentifier("1x"),
+      ],
+      [
+        "no error of a later option",
+        ["--splitting", "--format=cjs", "--outdir", "out", "--define", "1x=2"],
+        notIdentifier("1x"),
+      ],
+      [
+        "a value that does not parse",
+        ["--define", "K={"],
+        `1 | {\n    ^\nerror: Expected "}" but found end of file\n    at defines.json:1:1\n`,
+      ],
+    ])("bun build prints only the log: %s", async (_, args, stderr) => {
+      expect(await bun(["build", ...args, "entry.js"])).toEqual({ stdout: "", stderr, exitCode: 1 });
+    });
+  });
+
   test("--help lists check, lint and fmt", async () => {
     await using proc = Bun.spawn({ cmd: [bunExe(), "--help"], env: bunEnv, stderr: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);

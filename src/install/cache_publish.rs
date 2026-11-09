@@ -87,8 +87,8 @@ impl Drop for StagedEntry<'_> {
     }
 }
 
-/// Windows can't rename a directory while a virus scanner has one of its new files open, and can't
-/// replace a file that another program has open. All the waits share one time budget.
+/// Windows can't rename a directory while a virus scanner has one of its new files open. All the
+/// waits share one time budget.
 pub(crate) struct RenameRetry {
     #[cfg(windows)]
     started: Option<std::time::Instant>,
@@ -137,8 +137,7 @@ impl RenameRetry {
         }
     }
 
-    /// Sleeps before the next attempt at a rename that failed with `err`. Returns `err` if it
-    /// doesn't mean that another program has a file open, or once the budget is spent.
+    /// Sleeps before the next attempt. Returns `err` if no wait helps or the budget is spent.
     #[cfg(not(windows))]
     pub(crate) fn wait(&mut self, err: sys::Error) -> Result<(), RenameError> {
         Err(err.into())
@@ -171,8 +170,7 @@ impl RenameRetry {
     }
 }
 
-/// Returns whether `err` is one that Windows fails a rename with while another program has a file
-/// open.
+/// Whether `err` is what Windows fails a rename with while another handle is in the way.
 #[cfg(windows)]
 fn is_in_use(err: &sys::Error) -> bool {
     matches!(err.get_errno(), E::EPERM | E::EACCES | E::EBUSY)

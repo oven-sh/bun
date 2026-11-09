@@ -669,8 +669,7 @@ fn read_clone_config(repo: &bun_sys::Dir) -> bun_sys::Maybe<Vec<u8>> {
     }
 }
 
-/// Overwrites the `config` file of the clone in `repo` with the output of `clone_config`. On
-/// Windows, the rename waits while the handle of another program refuses it.
+/// Overwrites the `config` file of the clone in `repo` with the output of `clone_config`.
 fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> Result<(), RenameError> {
     let old = read_clone_config(repo)?;
     let config = clone_config(url, &old);
@@ -793,8 +792,8 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
     true
 }
 
-/// Writes the `config` of the clone of `url` in `staging`, then moves the clone into the cache. A
-/// usable clone that is already in the cache is kept instead, unless `replaces` is set.
+/// Moves the clone of `url` from `staging` into the cache. A usable clone that is already in the
+/// cache is kept instead, unless `replaces` is set.
 fn finish_clone(
     task: &mut Task::Task<'_>,
     staging: CacheStaging,
@@ -807,14 +806,11 @@ fn finish_clone(
         log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{message}"));
         Error::InstallFailed
     };
-    // The clone gets its `config` before it is published, so the installs that find it in the
-    // cache find this text too. None of them then replaces the `config` of a clone that others
-    // already use, which Windows can refuse.
+    // Before `publish`, so that no install has to replace the `config` of a clone that others use.
     let written = bun_sys::Dir::borrow(&staging.cache_dir)
         .open_at(&staging.tmp_name)
         .map_err(RenameError::from)
-        // The folder is closed again before `publish`, because Windows cannot rename a directory
-        // with an open handle inside it.
+        // Closed before `publish`: Windows cannot rename a directory with an open handle in it.
         .and_then(|staged| write_clone_config(&staged, url));
     if let Err(err) = written {
         staging.discard();
@@ -826,8 +822,7 @@ fn finish_clone(
         &bare_repo_folder_name(task.id),
         &|repo| !replaces && is_own_clone(repo),
     )?;
-    // The clone of another install, which published first. Its `config` can record another URL,
-    // or still be git's own.
+    // The kept clone of another install can record another URL, or still hold git's `config`.
     if kept {
         write_clone_config(&repo, url).map_err(|err| not_written(&mut task.log, &err))?;
     }

@@ -41,6 +41,7 @@ impl<'s> Checker<'_, 's> {
             true => TASK_STACK_OF_WORKER,
             false => TASK_STACK,
         };
+        self.has_stack_for_questions = left >= 2 * TASK_STACK_OF_WORKER + WORKER_STACK_LEFT_OVER;
     }
 
     /// Call this before `check_file`. `round` counts from 0, and no other task of the round has `index`. Without this
@@ -1188,6 +1189,38 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `checkSourceElement` for a type node.
+    /// `checkJSDocTypeIsInJsFile` for `?T`, `!T`, `T?` and `T!`: 17019 17020.
+    pub(super) fn report_jsdoc_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        class: DiagnosticClass,
+    ) {
+        let hir = self.hir(file);
+        let TypeNodeKind::JSDoc {
+            ty,
+            kind,
+            is_postfix,
+        } = hir[node].kind
+        else {
+            return;
+        };
+        if has_parse_diagnostics(hir) {
+            return;
+        }
+        let is_nullable = kind == JSDocTypeKind::Nullable;
+        let mut suggestion = self.type_from_node(file, ty);
+        // `getNullableType`
+        if is_nullable && !suggestion.is_never() && suggestion != TypeId::VOID {
+            let null: &[TypeId] = if is_postfix { &[] } else { &[TypeId::NULL] };
+            suggestion = self.union(&[&[suggestion, TypeId::UNDEFINED], null].concat());
+        }
+        let token = Arg::Text(if is_nullable { "?" } else { "!" });
+        let code = if is_postfix { 17019 } else { 17020 };
+        let arguments = [token, Arg::Type(suggestion)];
+        self.error(file, node, code, &arguments).class = class;
+    }
+
     pub(super) fn check_type_node(&mut self, file: FileId, node: TypeNodeId) {
         if node.is_none() || self.is_stack_low() {
             return;
@@ -1251,22 +1284,9 @@ impl<'s> Checker<'_, 's> {
                 ..
             } => {}
             // `checkJSDocType`: `checkJSDocTypeIsInJsFile`
-            TypeNodeKind::JSDoc {
-                ty,
-                kind,
-                is_postfix,
-            } => {
-                let is_nullable = kind == JSDocTypeKind::Nullable;
+            TypeNodeKind::JSDoc { ty, .. } => {
                 if !hir.is_js {
-                    let mut suggestion = self.type_from_node(file, ty);
-                    // `getNullableType`
-                    if is_nullable && !suggestion.is_never() && suggestion != TypeId::VOID {
-                        let null: &[TypeId] = if is_postfix { &[] } else { &[TypeId::NULL] };
-                        suggestion = self.union(&[&[suggestion, TypeId::UNDEFINED], null].concat());
-                    }
-                    let token = Arg::Text(if is_nullable { "?" } else { "!" });
-                    let code = if is_postfix { 17019 } else { 17020 };
-                    self.grammar_error_on_node(file, node, code, &[token, Arg::Type(suggestion)]);
+                    self.report_jsdoc_type(file, node, DiagnosticClass::TypeScriptGrammar);
                 }
                 self.check_type_node(file, ty);
             }

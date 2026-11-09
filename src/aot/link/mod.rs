@@ -1,72 +1,65 @@
 mod beside;
-mod body_remap;
 mod definitions;
 mod entries;
 mod fields_of_base_functions;
-mod keys;
-mod layout_order;
+mod grouped;
+mod linked_functions;
 mod literal_slots;
-mod marks;
-mod module_marks;
+mod merge_property_keys;
+mod merge_strings;
+mod merge_types;
+mod merged_keys;
 mod module_records;
 mod module_table;
-mod move_definitions;
-mod names;
+mod move_records;
 mod numbering;
 mod program_keys;
-mod property_keys;
+mod rings_of_bases;
 mod state;
-mod step_times;
-mod strings;
+mod tables;
 #[cfg(test)]
 pub(crate) mod testing;
 #[cfg(test)]
 mod tests;
-mod type_hashes;
-mod types;
 mod unit;
 mod united_layouts;
 mod unused_records;
 
 pub use beside::Beside;
-pub(crate) use beside::{run_beside, run_one_after_the_other};
-pub use body_remap::BodyRemap;
-pub use names::{ModuleOrigin, ProgramKeys, ProgramNames};
+pub(crate) use beside::{run_beside, run_one_after_the_other, run_steps_beside};
+pub use linked_functions::{FunctionsOfUnit, LinkedFunctions};
+pub use numbering::TableIds;
 pub use program_keys::{
-    InProject, KeyContext, ProgramFunctionKey, ProgramKey, ProgramLayoutKey, ProgramModule,
-    ProgramVariableKey, Rehoming, compare_program_modules,
+    InProject, KeyContext, ProgramFunctionKey, ProgramLayoutKey, ProgramModule, ProgramVariableKey,
+    compare_program_modules,
 };
-pub use state::UnitIds;
 pub use unit::LinkUnit;
 
-use crate::builtins::RuntimeFunction;
 use crate::ir::generated::{ModuleFlags, VariableFlags};
-use crate::ir::{Id, InParallel, Program, drop_each, for_each_mut};
-use crate::load::{PerProject, ProgramFile, ProjectId, SourceKind, Sources};
-use crate::modules::{ModuleGraph, Shape};
-use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
+use crate::ir::{InParallel, Program, TypeTable};
+use crate::load::{PerProject, ProgramFile, ProjectId, Sources};
+use crate::modules::ModuleGraph;
+use crate::statistics::{LimitId, Stage, StepClock};
 use bun_sema::program::FileId;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::LoadedProgram;
 use definitions::{
-    MergedUnits, choose_definitions, forget_library_layouts_without_definition,
-    synthetic_export_keys,
+    choose_definitions, forget_library_layouts_without_definition, order_layout_definitions,
+    relate_functions, relate_layouts, synthetic_export_keys,
 };
-use keys::merge_keys;
-use marks::mark;
-use module_records::{RecordInput, RecordProgress, build_module_records};
-use module_table::{collect_module_origins, collect_modules};
-use move_definitions::{MoveInput, move_definitions};
-use numbering::{ProgramDefinitions, number_program};
-use property_keys::merge_property_keys;
-use state::{Definitions, ModuleTable, Retained};
-use step_times::StepTimes;
-use strings::merge_strings;
-use types::{
-    TypeTableInput, collision_between, intern_prepared_types, merge_types, order_types_by_contents,
-    prepare_types,
+use merge_property_keys::merge_property_keys;
+use merge_strings::order_strings;
+use merge_types::{
+    NamesOfRecords, find_alike_types, make_type_records, merge_types, sort_types_by_height,
 };
-use unit::KeyList;
+use merged_keys::{Merged, MergedKeys, merge_keys};
+use module_records::{RecordInput, build_module_records, variables_shown_by_export_tables};
+use module_table::collect_modules;
+use move_records::{make_synthetic_export_variables, move_records};
+#[cfg(test)]
+use numbering::ProgramKeys;
+use numbering::{check_count_of_ids, number_program};
+use tables::{LinkTables, collect_tables};
 use united_layouts::{add_views_of_literals, unite_layout_definitions};
 use unused_records::{UseInput, mark_unused_records};
 
@@ -75,7 +68,6 @@ pub struct LinkProject<'a, 's> {
     pub loaded: &'a LoadedProgram<'s>,
     pub graph: &'a ModuleGraph,
     pub sources: &'a Sources,
-    /// The files that were not lowered because the program does not reach them, in ascending order.
     pub unreached_files: &'a [FileId],
 }
 
@@ -84,63 +76,24 @@ pub(crate) type Projects<'a, 's> = PerProject<LinkProject<'a, 's>>;
 pub struct LinkInput<'a, 's> {
     pub units: Vec<LinkUnit>,
     pub projects: PerProject<LinkProject<'a, 's>>,
-    pub limits: &'a LimitValues,
-    pub reports_type_mismatches: bool,
     pub in_parallel: InParallel<'a>,
     pub beside: Beside<'a>,
 }
 
-/// What link has read for the last time. Nothing waits for the memory, and it takes a while to free.
 pub type Leftovers = Box<dyn Send>;
 
 pub struct Linked {
-    /// It lists no function: they are in `body_remap`, with the ids of their units.
     pub program: Program,
-    pub body_remap: BodyRemap,
-    pub names: ProgramNames,
-    pub keys: ProgramKeys,
-    /// The program writes a property of that name, which is an option of `Worker`.
-    pub writes_preload: bool,
-    pub counters: Counters,
+    pub functions: LinkedFunctions,
+    pub modules: Vec<ProgramModule>,
     pub leftovers: Leftovers,
+    #[cfg(test)]
+    pub(crate) keys: ProgramKeys,
 }
 
 #[derive(Debug)]
 pub enum LinkError {
-    UndefinedFunction {
-        key: ProgramFunctionKey,
-        referenced_in: ProgramFile,
-    },
-    UndefinedLayout {
-        key: ProgramLayoutKey,
-        referenced_in: ProgramFile,
-    },
-    UndefinedVariable {
-        key: ProgramVariableKey,
-        referenced_in: ProgramFile,
-    },
-    ConflictingDefinitions {
-        key: ProgramKey,
-        files: [ProgramFile; 2],
-    },
-    ConflictingRuntimeFunctions {
-        function: RuntimeFunction,
-        files: [ProgramFile; 2],
-    },
-    MissingUnit {
-        file: ProgramFile,
-    },
-    MissingRecord {
-        module: ProgramModule,
-        named_by: Option<ProgramModule>,
-    },
-    TypeHashCollision {
-        files: [ProgramFile; 2],
-    },
-    LimitExceeded {
-        limit: LimitId,
-        count: u64,
-    },
+    LimitExceeded { limit: LimitId, count: u64 },
 }
 
 fn key_context<'a>(projects: &Projects<'a, '_>, project: ProjectId) -> KeyContext<'a> {
@@ -148,413 +101,412 @@ fn key_context<'a>(projects: &Projects<'a, '_>, project: ProjectId) -> KeyContex
         project,
         graph: projects.get(project).graph,
         runtime_sources: projects.runtime.sources,
-        rehoming: None,
     }
 }
 
-/// Calls `meanwhile` with the keys of the program, once, on the calling thread, unless link fails first.
-pub fn link_while(
-    input: LinkInput<'_, '_>,
-    meanwhile: &mut dyn FnMut(&ProgramKeys),
-) -> Result<Linked, Vec<LinkError>> {
+fn describe_tables(units: &[LinkUnit], tables: &[LinkTables]) -> String {
+    let sum = |length_of: fn(&LinkTables) -> u32| -> u64 {
+        tables
+            .iter()
+            .map(|tables| u64::from(length_of(tables)))
+            .sum()
+    };
+    let most_types = tables.iter().map(|tables| tables.lengths.types).max();
+    format!(
+        "collect tables: {} units, {} sets of tables, the largest of {} types, in all of them {} strings, {} property keys, {} types, {} functions, {} layouts, {} variables",
+        units.len(),
+        tables.len(),
+        most_types.unwrap_or(0),
+        sum(|tables| tables.lengths.strings),
+        sum(|tables| tables.lengths.property_keys),
+        sum(|tables| tables.lengths.types),
+        sum(|tables| tables.lengths.functions),
+        sum(|tables| tables.lengths.layouts),
+        sum(|tables| tables.lengths.variables),
+    )
+}
+
+type KeysOfTables<'a> = (
+    Vec<ProgramVariableKey>,
+    MergedKeys<'a, ProgramVariableKey>,
+    MergedKeys<'a, ProgramFunctionKey>,
+    MergedKeys<'a, ProgramLayoutKey>,
+);
+
+fn merge_keys_of_tables<'a>(
+    tables: &[LinkTables],
+    projects: &Projects<'a, '_>,
+    in_parallel: InParallel<'_>,
+    beside: Beside<'_>,
+) -> KeysOfTables<'a> {
+    let atoms = &projects.application.loaded.files().atoms;
+    let mut steps = StepClock::new(Stage::LinkAndEmit);
+    let ((synthetic_exports, variables), (functions, layouts)) = run_steps_beside(
+        beside,
+        &mut steps,
+        ["merge keys of variables", "of functions, layouts"],
+        || {
+            let synthetic_exports = synthetic_export_keys(projects);
+            let mut variable_lists = collect_key_lists(tables, |tables| &tables.variables);
+            variable_lists.push(&synthetic_exports);
+            let variables = merge_keys(&variable_lists, atoms, in_parallel);
+            (synthetic_exports, variables)
+        },
+        || {
+            let mut steps = StepClock::new(Stage::LinkAndEmit);
+            run_steps_beside(
+                beside,
+                &mut steps,
+                ["merge keys of functions", "of layouts"],
+                || {
+                    let functions = collect_key_lists(tables, |tables| &tables.functions);
+                    merge_keys(&functions, atoms, in_parallel)
+                },
+                || {
+                    let layouts = collect_key_lists(tables, |tables| &tables.layouts);
+                    merge_keys(&layouts, atoms, in_parallel)
+                },
+            )
+        },
+    );
+    (synthetic_exports, variables, functions, layouts)
+}
+
+pub fn link(input: LinkInput<'_, '_>) -> Result<Linked, Vec<LinkError>> {
     let LinkInput {
         units,
         projects,
-        limits,
-        reports_type_mismatches,
         in_parallel,
         beside,
     } = input;
     let atoms = &projects.application.loaded.files().atoms;
-    let mut times = StepTimes::new();
-    let mut units = order_units(units, &projects)?;
-    for_each_mut(&mut units, in_parallel, &LinkUnit::index);
-    check_limits(&units, &projects, limits)?;
-    let ((modules, synthetic_exports), (functions, layouts)) = run_beside(
+    let mut steps = StepClock::new(Stage::LinkAndEmit);
+    let mut units = order_units(units);
+    let tables = collect_tables(&mut units, &projects, in_parallel);
+    if steps.logs() {
+        steps.end(&describe_tables(&units, &tables));
+    }
+    let ((ordered_strings, string_ids), (types_by_height, of_keys)) = run_steps_beside(
         beside,
+        &mut steps,
+        [
+            "order and ids of strings",
+            "heights of types, modules, keys",
+        ],
         || {
-            let modules = collect_modules(&projects, &units);
-            (modules, synthetic_export_keys(&projects))
+            let strings = order_strings(&tables, in_parallel);
+            let ids = strings.list_ids(in_parallel);
+            (strings, ids)
         },
         || {
-            let functions = collect_key_lists(&units, |unit| &unit.functions);
-            let layouts = collect_key_lists(&units, |unit| &unit.layouts);
-            (
-                merge_keys(&functions, in_parallel),
-                merge_keys(&layouts, in_parallel),
+            let mut steps = StepClock::new(Stage::LinkAndEmit);
+            run_steps_beside(
+                beside,
+                &mut steps,
+                ["heights of types", "modules, keys"],
+                || sort_types_by_height(&tables, in_parallel),
+                || {
+                    let mut steps = StepClock::new(Stage::LinkAndEmit);
+                    run_steps_beside(
+                        beside,
+                        &mut steps,
+                        ["list modules", "merge keys"],
+                        || {
+                            let modules = collect_modules(&projects, &units, &tables);
+                            let shown =
+                                variables_shown_by_export_tables(&projects, atoms, &modules);
+                            (modules, shown)
+                        },
+                        || merge_keys_of_tables(&tables, &projects, in_parallel, beside),
+                    )
+                },
             )
         },
     );
-    forget_library_layouts_without_definition(&mut units, &layouts);
-    if crate::statistics::logs_stages() {
-        let definitions = || units.iter().flat_map(|unit| &unit.layout_definitions);
-        let mut defined: Vec<u32> = (units.iter().zip(&layouts.local_to_merged))
-            .flat_map(|(unit, merged)| {
-                let ids = unit.layout_definitions.iter();
-                ids.map(|(id, _)| merged[id.index()])
-            })
-            .collect();
-        defined.sort_unstable();
-        defined.dedup();
-        // Several types go by one layout, and each has a definition. Two definitions of one type for one layout say the same.
-        let mut of_types: Vec<_> = (units.iter().zip(&layouts.local_to_merged))
-            .flat_map(|(unit, merged)| {
-                unit.object_types.iter().map(|&(definition, ty)| {
-                    let (id, layout) = &unit.layout_definitions[definition as usize];
-                    (merged[id.index()], ty, layout.fields.len())
-                })
-            })
-            .collect();
-        let of_types_count = of_types.len();
-        let fields_of_types: usize = of_types.iter().map(|it| it.2).sum();
-        of_types.sort_unstable();
-        of_types.dedup_by_key(|it| (it.0, it.1));
-        bun_core::print_errorln!(
-            "AOT link | units {} | layout definitions {} with {} fields | for {} layouts | keys named {} | of object types {} with {} fields, without those that say the same {} with {} fields",
-            units.len(),
-            definitions().count(),
-            definitions().map(|(_, it)| it.fields.len()).sum::<usize>(),
-            defined.len(),
-            layouts.keys.len(),
-            of_types_count,
-            fields_of_types,
-            of_types.len(),
-            of_types.iter().map(|it| it.2).sum::<usize>(),
-        );
-    }
-    let mut variable_lists = collect_key_lists(&units, |unit| &unit.variables);
-    variable_lists.push(&synthetic_exports);
-    let variables = merge_keys(&variable_lists, in_parallel);
-    drop(synthetic_exports);
-    times.end_step(StatisticId::LinkMergeKeysNanoseconds);
+    let ((modules, shown_by_export_tables), keys_of_tables) = of_keys;
+    let (synthetic_exports, variables, functions, layouts) = keys_of_tables;
 
-    let merged = MergedUnits {
+    let (alike_types, (mut strings, of_keys)) = run_steps_beside(
+        beside,
+        &mut steps,
+        [
+            "types that are alike",
+            "table of strings, definitions, numbers",
+        ],
+        || {
+            let names = NamesOfRecords {
+                strings: &string_ids,
+                layouts: &layouts.local_to_merged,
+                functions: &functions.local_to_merged,
+            };
+            find_alike_types(&tables, &types_by_height, names, in_parallel)
+        },
+        || {
+            let mut steps = StepClock::new(Stage::LinkAndEmit);
+            run_steps_beside(
+                beside,
+                &mut steps,
+                ["table of strings", "definitions, numbers"],
+                || ordered_strings.make_table(in_parallel),
+                || {
+                    let mut steps = StepClock::new(Stage::LinkAndEmit);
+                    forget_library_layouts_without_definition(
+                        &mut units,
+                        &tables,
+                        &layouts,
+                        in_parallel,
+                    );
+                    steps.end("forget library layouts");
+                    order_layout_definitions(&mut units, in_parallel);
+                    steps.end("order the definitions of layouts");
+
+                    let merged = Merged {
+                        units: &units,
+                        tables: &tables,
+                        modules: &modules,
+                        functions: &functions,
+                        layouts: &layouts,
+                        variables: &variables,
+                        in_parallel,
+                    };
+                    let definitions = choose_definitions(&merged, &projects, beside);
+                    steps.end("choose definitions");
+                    let numbering = number_program(
+                        &merged,
+                        &definitions,
+                        &synthetic_exports,
+                        &shown_by_export_tables,
+                        beside,
+                    );
+                    steps.end("number the program");
+                    (definitions, numbering)
+                },
+            )
+        },
+    );
+    drop(ordered_strings);
+    let (mut definitions, mut numbering) = of_keys;
+    numbering.counts.check_limit()?;
+    check_count_of_ids(strings.len())?;
+    store_ids(&mut numbering.tables, string_ids, |ids| &mut ids.strings);
+
+    let synthetic_exports =
+        make_synthetic_export_variables(&definitions, &numbering, atoms, &mut strings);
+    steps.end("variables of synthetic exports");
+
+    let merged = Merged {
         units: &units,
+        tables: &tables,
         modules: &modules,
         functions: &functions,
         layouts: &layouts,
         variables: &variables,
         in_parallel,
     };
-    let mut errors = Vec::new();
-    let definitions = choose_definitions(&merged, &projects, beside, &mut errors);
-    times.end_step(StatisticId::LinkChooseDefinitionsNanoseconds);
-    let mut retained = mark(&merged, &projects, &definitions, &mut errors);
-    times.end_step(StatisticId::LinkMarkNanoseconds);
-    if !errors.is_empty() {
-        return Err(errors);
-    }
-
-    let (mut numbering, (merged_strings, merged_types)) = run_beside(
+    let (related_layouts, (related_functions, (mut records, of_keys_and_types))) = run_steps_beside(
         beside,
-        || number_program(&merged, &definitions, &retained),
+        &mut steps,
+        [
+            "families of layouts",
+            "types of functions, records of modules, property keys, types",
+        ],
+        || relate_layouts(&merged, &definitions.bases_of_layouts),
         || {
-            run_beside(
+            let mut steps = StepClock::new(Stage::LinkAndEmit);
+            run_steps_beside(
                 beside,
-                || merge_strings(&units, &retained.units, in_parallel),
-                || merge_types(&units, &retained.units, in_parallel),
-            )
-        },
-    );
-    debug_assert_eq!(merged_strings.local_to_program.len(), units.len());
-    debug_assert_eq!(merged_types.types.len(), units.len());
-    let mut strings = merged_strings.table;
-    let merged_ids = merged_strings
-        .local_to_program
-        .into_iter()
-        .zip(merged_types.types);
-    for (ids, (string_ids, type_ids)) in numbering.units.iter_mut().zip(merged_ids) {
-        ids.strings = string_ids;
-        ids.types = type_ids;
-    }
-    let mut type_representatives = merged_types.type_representatives;
-    order_types_by_contents(
-        &units,
-        &mut numbering.units,
-        &mut type_representatives,
-        in_parallel,
-    );
-    for_each_mut(
-        &mut units,
-        in_parallel,
-        &LinkUnit::release_hashes_of_strings_and_types,
-    );
-    times.end_step(StatisticId::LinkMergeStringsAndTypesNanoseconds);
-
-    // No type names a property key.
-    let (merged_property_keys, (keys, prepared_types)) = run_beside(
-        beside,
-        || merge_property_keys(&units, &retained.units, &numbering.units, in_parallel),
-        || {
-            run_beside(
-                beside,
-                || ProgramKeys::new(&functions, &layouts, &variables, &modules, &numbering),
+                &mut steps,
+                [
+                    "types of functions, members of built-ins",
+                    "records of modules, property keys, types",
+                ],
+                || relate_functions(&merged),
                 || {
-                    prepare_types(&TypeTableInput {
-                        units: &units,
-                        type_representatives: &type_representatives,
-                        ids: &numbering.units,
-                        marks: &retained.units,
-                        in_parallel,
-                    })
+                    let mut steps = StepClock::new(Stage::LinkAndEmit);
+                    run_steps_beside(
+                        beside,
+                        &mut steps,
+                        ["records of modules", "property keys and types"],
+                        || {
+                            build_module_records(
+                                &units,
+                                &RecordInput {
+                                    projects: &projects,
+                                    atoms,
+                                    modules: &modules,
+                                    functions: &functions,
+                                    variables: &variables,
+                                    definitions: &definitions,
+                                    numbering: &numbering,
+                                    in_parallel,
+                                },
+                                &mut strings,
+                            )
+                        },
+                        || {
+                            let mut steps = StepClock::new(Stage::LinkAndEmit);
+                            run_steps_beside(
+                                beside,
+                                &mut steps,
+                                ["merge property keys", "merge types"],
+                                || merge_property_keys(&tables, &numbering.tables, in_parallel),
+                                || {
+                                    let ids = &numbering.tables;
+                                    let heights = &types_by_height;
+                                    merge_types(&tables, heights, alike_types, ids, in_parallel)
+                                },
+                            )
+                        },
+                    )
                 },
             )
         },
     );
-    let unit_ids = numbering.units.iter_mut();
-    for (ids, property_keys) in unit_ids.zip(merged_property_keys.local_to_program) {
-        ids.property_keys = property_keys;
-    }
-    times.end_step(StatisticId::LinkMergePropertyKeysNanoseconds);
-    let prepared_types = prepared_types.map_err(|error| vec![error])?;
-    times.end_step(StatisticId::LinkBuildTypeTableNanoseconds);
+    let ((property_keys, property_key_ids), (merged_types, type_ids)) = of_keys_and_types;
+    definitions.add_related_layouts(related_layouts);
+    definitions.add_related_functions(related_functions);
+    records.take_positions_from(&mut units);
+    check_count_of_ids(merged_types.count)?;
+    check_count_of_ids(property_keys.len())?;
+    store_ids(&mut numbering.tables, type_ids, |ids| &mut ids.types);
+    store_ids(&mut numbering.tables, property_key_ids, |ids| {
+        &mut ids.property_keys
+    });
 
-    let (types, mut tables) = run_beside(
+    let (mut types, mut program_tables) = run_steps_beside(
         beside,
-        || intern_prepared_types(prepared_types),
+        &mut steps,
+        ["records and table of types", "move records"],
         || {
-            let defined =
-                ProgramDefinitions::new(&functions, &layouts, &variables, &definitions, &retained);
-            move_definitions(
+            let ids = &numbering.tables;
+            let records = make_type_records(&tables, &merged_types, ids, in_parallel);
+            TypeTable::of_distinct_types(records)
+        },
+        || {
+            move_records(
                 &mut units,
-                &MoveInput {
-                    defined,
-                    layouts: &layouts,
-                    definitions: &definitions,
-                    numbering: &numbering,
-                    atoms,
-                    in_parallel,
-                    beside,
-                },
-                &mut strings,
+                &functions,
+                &layouts,
+                &variables,
+                &definitions,
+                &numbering,
+                synthetic_exports,
+                in_parallel,
+                beside,
             )
         },
     );
-    let mut types =
-        types.map_err(|places| vec![collision_between(&units, &type_representatives, places)])?;
-    let unit_marks = core::mem::take(&mut retained.units);
-    // The records of the modules name no layout and no type, and the layouts are united without a look at a unit or a string.
-    let (views, records) = run_beside(
-        beside,
-        || {
-            let defined = &mut tables.layouts;
-            let other_definitions = core::mem::take(&mut tables.other_layout_definitions);
-            let views =
-                unite_layout_definitions(defined, other_definitions, &mut types, in_parallel);
-            fields_of_base_functions::take_fields_of_base_functions(defined, &keys.layouts);
-            views
-        },
-        || {
-            let build_records = || {
-                build_module_records(
-                    &mut units,
-                    &RecordInput {
-                        projects: &projects,
-                        atoms,
-                        modules: &modules,
-                        functions: &functions,
-                        variables: &variables,
-                        definitions: &definitions,
-                        numbering: &numbering,
-                        progress: RecordProgress::default(),
-                    },
-                    &mut strings,
-                )
-            };
-            run_beside(beside, build_records, || meanwhile(&keys)).0
-        },
-    );
-    let records = records.map_err(|error| vec![error])?;
-    let module_origins = collect_module_origins(&projects, &modules, &numbering);
-    let mut writes_preload = false;
-    run_beside(
-        beside,
-        || {
-            let defined = &mut tables.layouts;
-            let uses = UseInput {
-                units: &units,
-                numbering: &numbering,
-                property_keys: &merged_property_keys.table,
-                strings: &strings,
-                origins_in_logging_build: reports_type_mismatches.then_some(&module_origins[..]),
-                in_parallel,
-            };
-            writes_preload = mark_unused_records(defined, &uses, b"preload");
-            literal_slots::widen_literal_slots(defined, &uses, &types);
-            add_views_of_literals(defined, views);
-            literal_slots::expect_fields_filled_with_other_data(defined, &tables.data, &types);
-        },
-        || drop_each(unit_marks, in_parallel),
-    );
-    times.end_step(StatisticId::LinkMoveDefinitionsNanoseconds);
 
-    // A mock stores its object as what a CommonJS file exports.
+    let defined = &mut program_tables.layouts;
+    let other_definitions = core::mem::take(&mut program_tables.other_layout_definitions);
+    let views = unite_layout_definitions(defined, other_definitions, &mut types, in_parallel);
+    rings_of_bases::cut_rings_of_bases(defined);
+    let keys = &numbering.layout_keys;
+    fields_of_base_functions::take_fields_of_base_functions(defined, keys, in_parallel);
+    steps.end("unite layouts");
+    let defined = &mut program_tables.layouts;
+    let uses = UseInput {
+        units: &units,
+        numbering: &numbering,
+        property_keys: &property_keys,
+        strings: &strings,
+        in_parallel,
+    };
+    mark_unused_records(defined, &uses);
+    literal_slots::widen_literal_slots(defined, &uses, &types);
+    steps.end("mark unused records, widen slots of literals");
+    add_views_of_literals(defined, views);
+    let data = &program_tables.data;
+    literal_slots::expect_fields_filled_with_other_data(defined, data, &types, in_parallel);
+    steps.end("views of literals, fields filled with other data");
+
     for module in &records.modules {
         if let Some(exports) = module.exports_variable
             && module.flags.contains(ModuleFlags::MAY_BE_MOCKED)
         {
-            tables.variables[exports.to_word() as usize].flags |= VariableFlags::IS_REPLACEABLE;
+            program_tables.variables[exports.to_word() as usize].flags |=
+                VariableFlags::IS_REPLACEABLE;
         }
     }
-    let functions_by_unit = core::mem::take(&mut tables.functions_by_unit);
-    let body_remap = BodyRemap::new(core::mem::take(&mut numbering.units), functions_by_unit);
+    #[cfg(test)]
+    let keys = ProgramKeys::new(&functions, &layouts, &numbering);
+    let linked_functions = LinkedFunctions::new(
+        core::mem::take(&mut numbering.tables),
+        program_tables.functions,
+    );
     let program = Program {
         strings,
-        property_keys: merged_property_keys.table,
+        property_keys,
         types,
-        type_sites: tables.type_sites,
-        expected_results: tables.expected_results,
-        layouts: tables.layouts,
-        variables: tables.variables,
+        type_sites: Vec::new(),
+        expected_results: program_tables.expected_results,
+        layouts: program_tables.layouts,
+        variables: program_tables.variables,
         modules: records.modules,
         module_failures: records.module_failures,
         ambiguous_exports: records.ambiguous_exports,
         source_stamps: Vec::new(),
-        eval_scopes: tables.eval_scopes,
+        eval_scopes: program_tables.eval_scopes,
         functions: Vec::new(),
-        data: tables.data,
+        data: program_tables.data,
         entries: records.entries,
         runtime_functions: records.runtime_functions,
         web_assembly_modules: records.web_assembly_modules,
         replaceable_builtins: Vec::new(),
         opened_names: Vec::new(),
+        builtins_used_at_start: Vec::new(),
     };
-    count_definitions(&definitions, &retained, &mut times.counters);
-    count_module_forms(&projects, &modules, &mut times.counters);
-    let names = ProgramNames::new(&program, &body_remap, module_origins, beside);
-    times.end_step(StatisticId::LinkNameProgramNanoseconds);
+    steps.end("functions, program");
     Ok(Linked {
         program,
-        body_remap,
-        names,
+        functions: linked_functions,
+        modules: modules.modules,
+        leftovers: Box::new((
+            units,
+            tables,
+            into_owned_lists(functions),
+            into_owned_lists(layouts),
+            into_owned_lists(variables),
+            numbering,
+            definitions,
+            types_by_height,
+            merged_types,
+        )),
+        #[cfg(test)]
         keys,
-        writes_preload,
-        counters: times.counters,
-        leftovers: Box::new((units, numbering, retained, functions, layouts, variables)),
     })
 }
 
-fn collect_key_lists<K>(
-    units: &[LinkUnit],
-    key_list: fn(&LinkUnit) -> &KeyList<K>,
-) -> Vec<&KeyList<K>> {
-    units.iter().map(key_list).collect()
+fn collect_key_lists<K>(tables: &[LinkTables], keys_of: fn(&LinkTables) -> &Vec<K>) -> Vec<&[K]> {
+    let lists = tables.iter();
+    lists.map(|tables| keys_of(tables).as_slice()).collect()
 }
 
-fn compiled_files(projects: &Projects<'_, '_>) -> Vec<ProgramFile> {
-    let mut files = Vec::new();
-    for project in ProjectId::ALL {
-        let compiled = projects.get(project).loaded.files().compiled_files().iter();
-        let first = files.len();
-        files.extend(compiled.map(|&file| ProgramFile { project, file }));
-        files[first..].shared_sort_unstable();
+fn store_ids<I>(
+    tables: &mut [TableIds],
+    lists: Vec<Vec<Option<I>>>,
+    list_of: fn(&mut TableIds) -> &mut Vec<Option<I>>,
+) {
+    assert_eq!(tables.len(), lists.len());
+    for (ids, list) in tables.iter_mut().zip(lists) {
+        *list_of(ids) = list;
     }
-    files
 }
 
-// The lower stage leaves out a constant text that has an early error, and what the program does not reach.
+fn into_owned_lists<K>(merged: MergedKeys<'_, K>) -> (Vec<K>, Vec<Vec<u32>>) {
+    (merged.keys, merged.local_to_merged)
+}
+
 fn is_unit_optional(projects: &Projects<'_, '_>, file: ProgramFile) -> bool {
     let project = projects.get(file.project);
     project.unreached_files.binary_search(&file.file).is_ok()
-        || matches!(project.sources.kind(file.file), SourceKind::EvaluatedText)
 }
 
-fn order_units(
-    mut units: Vec<LinkUnit>,
-    projects: &Projects<'_, '_>,
-) -> Result<Vec<LinkUnit>, Vec<LinkError>> {
+fn order_units(mut units: Vec<LinkUnit>) -> Vec<LinkUnit> {
     units.shared_sort_unstable_by_key(|unit| unit.file);
-    let mut errors = Vec::new();
-    let has_unit = |file: ProgramFile| units.binary_search_by_key(&file, |unit| unit.file).is_ok();
-    let expected_files = compiled_files(projects).into_iter();
-    let expected_files =
-        expected_files.filter(|&file| !is_unit_optional(projects, file) || has_unit(file));
-    let mut compiled_files = expected_files.peekable();
-    for unit in &units {
-        let file = unit.file;
-        while let Some(missing) = compiled_files.next_if(|&compiled| compiled < file) {
-            errors.push(LinkError::MissingUnit { file: missing });
-        }
-        if compiled_files.next_if_eq(&file).is_none() {
-            errors.push(LinkError::ConflictingDefinitions {
-                key: ProgramKey::Module(ProgramModule::File(file)),
-                files: [file, file],
-            });
-        }
-    }
-    errors.extend(compiled_files.map(|file| LinkError::MissingUnit { file }));
-    match errors.is_empty() {
-        true => Ok(units),
-        false => Err(errors),
-    }
-}
-
-fn check_limits(
-    units: &[LinkUnit],
-    projects: &Projects<'_, '_>,
-    limits: &LimitValues,
-) -> Result<(), Vec<LinkError>> {
-    let sum = |local_count: fn(&LinkUnit) -> usize| -> u64 {
-        units.iter().map(|unit| local_count(unit) as u64).sum()
-    };
-    // Each can have a copy.
-    let synthetic_export_counts = projects
-        .iter()
-        .map(|(_, project)| 2 * project.graph.synthetic_exports().len() as u64);
-    let counts = [
-        sum(|unit| unit.functions.keys.len()),
-        sum(|unit| unit.layouts.keys.len()),
-        sum(|unit| unit.variables.keys.len()) + synthetic_export_counts.sum::<u64>(),
-        sum(|unit| unit.strings.len()),
-        sum(|unit| unit.property_keys.len()),
-        sum(|unit| unit.types.len()),
-        sum(|unit| unit.records.type_sites.len()),
-        sum(|unit| unit.records.expected_results.len()),
-        sum(|unit| unit.records.eval_scopes.len()),
-        sum(|unit| unit.records.data.len()),
-    ];
-    let limit = LimitId::MaxProgramIds;
-    let maximum = limits.get(limit);
-    match counts.into_iter().find(|&count| count > maximum) {
-        Some(count) => Err(vec![LinkError::LimitExceeded { limit, count }]),
-        None => Ok(()),
-    }
-}
-
-fn count_module_forms(projects: &Projects<'_, '_>, modules: &ModuleTable, counters: &mut Counters) {
-    let (mut with_names, mut with_value, mut faces) = (0, 0, 0);
-    for &module in &modules.modules {
-        let (project, own) = match module {
-            ProgramModule::File(_) | ProgramModule::Inner { .. } => module
-                .in_own_project()
-                .expect("the module has its text in a file"),
-            ProgramModule::Face(_) => {
-                faces += 1;
-                continue;
-            }
-            _ => continue,
-        };
-        match projects.get(project).graph.shape(own) {
-            Shape::Names => with_names += 1,
-            Shape::Value => with_value += 1,
-            Shape::EsModule | Shape::AsToday => {}
-        }
-    }
-    counters.count(StatisticId::ModulesWithNames, with_names);
-    counters.count(StatisticId::ModulesWithValue, with_value);
-    counters.count(StatisticId::Faces, faces);
-}
-
-fn count_definitions(definitions: &Definitions, retained: &Retained, counters: &mut Counters) {
-    let functions = definitions.functions.iter().zip(&retained.functions);
-    let dropped_functions =
-        functions.filter(|(definition, is_retained)| definition.is_some() && !**is_retained);
-    counters.count(
-        StatisticId::FunctionsDroppedByLink,
-        dropped_functions.count() as u64,
+    assert!(
+        units.is_sorted_by(|first, second| first.file < second.file),
+        "a file has one unit"
     );
-    counters.count(
-        StatisticId::ConversionsOutsideFamily,
-        definitions.conversions_outside_family.len() as u64,
-    );
+    units
 }

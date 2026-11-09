@@ -685,7 +685,8 @@ impl<'c, 'p, 's> Writer<'_, 'c, 'p, 's> {
             let ty = self.queries.return_type(function);
             self.emit_type(&site, b"returns", ty);
             let function = FunctionRef { file, function };
-            let signature = self.queries.function_signature(function);
+            let mut signature = self.queries.function_signature(function);
+            signature.result.checked = self.queries.function_result(function);
             let answer = self.signature_text(&signature);
             self.emit(&site, b"signature", Ok(answer));
             if let Some(implementation) = self.queries.overload_implementation(function) {

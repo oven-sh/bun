@@ -268,6 +268,11 @@ describe.concurrent("--print of a result that throws while it is formatted", () 
     expect({ stderr, exitCode }).toEqual({ stderr: reported.stderr, exitCode: 1 });
   });
 
+  test("a timer that the hook starts before it throws does not crash", async () => {
+    const hook = `setTimeout(() => console.log("timer ran"), 5); throw new Error("inspect failed");`;
+    expect(await print(`({ [Symbol.for("nodejs.util.inspect.custom")]() { ${hook} } })`)).toEqual(reported);
+  });
+
   // The error printer returns normally here and leaves the exception on the VM.
   test("an Error with a property that throws", async () => {
     const source = `Object.defineProperty(/a/, "source", { get() { throw new Error("inner failed"); } })`;

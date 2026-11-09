@@ -13,6 +13,7 @@ import {
   pgCopyDone,
   pgCopyOutResponse,
   pgDataRow,
+  pgErrorResponse,
   pgMockServer,
   pgReadyForQuery,
   pgRowDescription,
@@ -980,43 +981,75 @@ describe("a query keeps its state in private fields", () => {
     }
   });
 
-  // With no `get` trap, and with one that passes the Proxy on as the receiver.
-  const handlers = [{}, { get: Reflect.get }];
+  // What stands for a query and is none: a Proxy with no `get` trap, a Proxy whose trap passes itself on as the
+  // receiver, and an object that inherits from the query.
+  const wrappers: [string, <T extends object>(query: T) => T][] = [
+    ["a Proxy of a Proxy of a query", query => new Proxy(new Proxy(query, {}), {})],
+    ["a Proxy of a query with a get trap", query => new Proxy(query, { get: Reflect.get })],
+    ["an object that inherits from a query", query => Object.create(query)],
+    ["an object that inherits from a Proxy of a query", query => Object.create(new Proxy(query, {}))],
+  ];
 
-  test.each(handlers)("a Proxy of a fragment is that fragment", async handler => {
+  test.each(wrappers)("%s is that fragment", async (_, wrap) => {
     await using sql = new SQL(":memory:");
-    const proxied = <T extends object>(query: T): T => new Proxy(new Proxy(query, handler), handler);
     await sql`create table t (id int)`;
     await sql`insert into t ${sql([{ id: 1 }, { id: 2 }, { id: 3 }])}`;
-    expect(await sql`select id from ${proxied(sql("t"))} where ${proxied(sql`id = 2`)}`).toEqual([{ id: 2 }]);
-    expect(await sql`select id from t where ${proxied(sql`id = ${1}`)} or id = ${3} order by id`).toEqual([
+    expect(await sql`select id from ${wrap(sql("t"))} where ${wrap(sql`id = 2`)}`).toEqual([{ id: 2 }]);
+    expect(await sql`select id from t where ${wrap(sql`id = ${1}`)} or id = ${3} order by id`).toEqual([
       { id: 1 },
       { id: 3 },
     ]);
-    const conditions = [proxied(sql`id = ${1}`), proxied(sql`or id = ${3}`)];
+    const conditions = [wrap(sql`id = ${1}`), wrap(sql`or id = ${3}`)];
     expect(await sql`select id from t where ${conditions} order by id`).toEqual([{ id: 1 }, { id: 3 }]);
   });
 
-  test("an object that only inherits from a query is no fragment", async () => {
+  test("an object that inherits from Query.prototype and from no query is no fragment", async () => {
     await using sql = new SQL(":memory:");
     const prototype = Object.getPrototypeOf(sql`select 1`);
-    for (const value of [Object.create(prototype), Object.create(sql`1`), new Proxy(Object.create(prototype), {})]) {
+    for (const value of [Object.create(prototype), new Proxy(Object.create(prototype), {})]) {
       const error = await sql`select ${value}`.catch((error: unknown) => error);
       expect(error).toBeInstanceOf(SyntaxError);
       expect((error as Error).message).toBe("Invalid query: SQL Fragment cannot be executed or was misused");
     }
   });
 
-  test.each(handlers)("a Proxy of a query has the status of the query, and cancels it", async handler => {
+  test.each(wrappers)("%s has the status of the query, and cancels it", async (_, wrap) => {
     await using sql = new SQL(":memory:");
     const query = sql`select 1 as x`;
-    const proxy = new Proxy(new Proxy(query, handler), handler);
-    expect({ active: proxy.active, cancelled: proxy.cancelled }).toEqual({ active: false, cancelled: false });
-    expect(util.inspect({ proxy })).toBe("{ proxy: Query {  } }");
-    expect(proxy.simple()).toBe(proxy);
-    expect(proxy.cancel()).toBe(proxy);
-    expect({ proxy: proxy.cancelled, query: query.cancelled }).toEqual({ proxy: true, query: true });
-    expect(Bun.inspect(proxy)).toBe("Query { cancelled }");
+    const wrapped = wrap(query);
+    expect({ active: wrapped.active, cancelled: wrapped.cancelled }).toEqual({ active: false, cancelled: false });
+    expect(util.inspect({ wrapped })).toBe("{ wrapped: Query {  } }");
+    expect(wrapped.cancel()).toBe(wrapped);
+    expect({ wrapped: wrapped.cancelled, query: query.cancelled }).toEqual({ wrapped: true, query: true });
+    expect(Bun.inspect(wrapped)).toBe("Query { cancelled }");
     expect(await query.catch(error => error.code)).toBe("ERR_SQLITE_QUERY_CANCELLED");
+  });
+
+  test.each(wrappers)("simple() of %s selects the simple protocol", async (_, wrap) => {
+    const seen: string[] = [];
+    const { port, server } = await pgMockServer(type => {
+      seen.push(type);
+      if (type === "Q") {
+        return [
+          pgRowDescription([{ name: "x", typeOid: 23 }]),
+          pgDataRow([Buffer.from("1")]),
+          pgCommandComplete("SELECT 1"),
+          pgReadyForQuery(),
+        ];
+      }
+      // The extended protocol: the query fails, and does not wait.
+      if (type === "P") return pgErrorResponse({ S: "ERROR", C: "0A000", M: "not the simple protocol" });
+      if (type === "S") return pgReadyForQuery();
+    });
+    try {
+      await using sql = new SQL(`postgres://user@127.0.0.1:${port}/db`, { max: 1 });
+      const query = sql`select 1 as x`;
+      const wrapped = wrap(query);
+      expect(wrapped.simple()).toBe(wrapped);
+      const rows = await query.catch(error => error.message);
+      expect({ seen, rows }).toEqual({ seen: ["Q"], rows: [{ x: 1 }] });
+    } finally {
+      server.close();
+    }
   });
 });

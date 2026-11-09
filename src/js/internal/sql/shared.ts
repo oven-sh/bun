@@ -407,7 +407,7 @@ class QueryBuilder {
     return quote + name.replaceAll(quote, quote + quote).replaceAll(".", quote + "." + quote) + quote;
   }
 
-  /** `value` passed `instanceof Query`. So does a Proxy of a query, and an object that inherits from `Query.prototype`. */
+  /** `value` passed `instanceof Query`. So does an object that inherits from `Query.prototype` and from no query. */
   fragment(value: object) {
     const query = queryOf(value);
     if (query === undefined) {

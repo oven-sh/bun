@@ -4,7 +4,7 @@
 //! Working code has none of these errors, so the common case of finding nothing has to be cheap. Each check scans the
 //! nodes of one kind, and most files have few or none of that kind.
 
-use super::{Checks, Tops};
+use super::{Checks, Tops, is_identifier_byte};
 use crate::ast::{
     BinOp, Chain, Class, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member,
     MemberKind, Node, Param, PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag,
@@ -584,7 +584,7 @@ impl<'a> Checks<'a, '_> {
                 VarKind::AwaitUsing => "Missing initializer in await using declaration",
                 _ => "Complex binding patterns require an initialization value",
             };
-            // acorn has read the token after the binding when it looks for the `=`.
+            // acorn has declared the names and read the next token when it looks for the `=`.
             self.when_read_to(raw.loc.end, |checks| checks.fail(raw.loc.end, message));
         }
         for it in file.stmts_of_kind(StmtTag::Var) {
@@ -593,7 +593,11 @@ impl<'a> Checks<'a, '_> {
             };
             // For oxc see `declaration_list`, here and below.
             if list.is_empty() && !self.is_oxc {
-                self.unexpected(self.after_token(it.span().start));
+                let next = self.after_token(it.span().start);
+                // acorn reads a word there as the name, and rejects a keyword once it has read it.
+                if !(self.token_at(next).first()).is_some_and(|&it| is_identifier_byte(it)) {
+                    self.unexpected(next);
+                }
             }
             if matches!(
                 list.first().map(|it| it.var_kind()),
@@ -1861,10 +1865,23 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// `operand` is the left operand of `operator`, which acorn doesn't read as part of the expression.
+    /// `operand` is the left operand of `operator`, which acorn doesn't read as part of the expression, nor the
+    /// operators after it.
     fn after_left_operand(&self, operand: Expr<'a>, operator: Expr<'a>) -> RecordOwner {
         let end = operand.span().end;
-        match Self::is_list_item(operator) {
+        let mut top = operator;
+        while let Node::Expr(parent) = top.parent()
+            && !top.is_parenthesized()
+            && match parent.kind() {
+                ExprKind::Binary { op, left, .. } => op != BinOp::Comma && left == top,
+                ExprKind::Cond { test, .. } => test == top,
+                ExprKind::Unary { op, .. } => matches!(op, UnOp::PostInc | UnOp::PostDec),
+                _ => false,
+            }
+        {
+            top = parent;
+        }
+        match Self::is_list_item(top) {
             true => RecordOwner::Unexpected(end, skip_trivia(self.file.text(), end)),
             false => RecordOwner::ReadTo(end),
         }
@@ -2413,9 +2430,9 @@ impl<'a> Checks<'a, '_> {
                 }
                 StmtKind::Var(list) => {
                     for declaration in list {
-                        declaration.pat().for_each_binding(&mut |it| {
-                            if let PatKind::Ident(name) = it.kind() {
-                                exported.push((name.bytes(), it.span().start, it.span().end));
+                        declaration.pat().for_each_binding(&mut |pat| {
+                            if let PatKind::Ident(name) = pat.kind() {
+                                exported.push((name.bytes(), pat.span().start, it.span().end));
                             }
                         });
                     }

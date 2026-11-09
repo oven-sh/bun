@@ -1233,6 +1233,7 @@ describe.concurrent("bun lint", () => {
         "1:14: Parsing error: Shorthand property assignments are valid only in destructuring patterns",
       ],
       ["var x = [{ b = 1 } + 1];", "1:20: Parsing error: Unexpected token +"],
+      ["var x = [{ b = 1 } + 1 + 2];", "1:20: Parsing error: Unexpected token +"],
       ["var x = !{ b = 1 };", "1:14: Parsing error: Unexpected token ="],
       ["var x = a + { b = 1 };", "1:17: Parsing error: Unexpected token ="],
       [
@@ -1295,12 +1296,17 @@ describe.concurrent("bun lint", () => {
       ["function f() { await 08 }", "1:22: Parsing error: Invalid number"],
       ["class A { static { await 08 } }", "1:26: Parsing error: Invalid number"],
       ["enum 08", "1:6: Parsing error: Invalid number"],
+      ["var enum = 08;", "1:5: Parsing error: The keyword 'enum' is reserved"],
+      ["var if = 08;", "1:5: Parsing error: Unexpected keyword 'if'"],
       ["a: a: 08", "1:7: Parsing error: Invalid number"],
       ["a: a: }", "1:4: Parsing error: Label 'a' is already declared"],
       ["break a; 08", "1:10: Parsing error: Invalid number"],
       ["function f() { delete a\n08 }", "2:1: Parsing error: Invalid number"],
       ["new.target 08", "1:12: Parsing error: Invalid number"],
       ["let [a] 08", "1:9: Parsing error: Invalid number"],
+      ["let [a]\n}", "1:8: Parsing error: Complex binding patterns require an initialization value"],
+      ["export let a; export let a;", "1:26: Parsing error: Identifier 'a' has already been declared"],
+      ["export var a; export var a = eval = 1", "1:30: Parsing error: Assigning to eval in strict mode"],
       ["export var a; export var a\n08", "2:1: Parsing error: Invalid number"],
       // Two checks deferred to one token: acorn's order is the inner node's first.
       [
@@ -1340,6 +1346,8 @@ describe.concurrent("bun lint", () => {
       ['"use strict"; let [a, a]\n08', "2:1: Parsing error: Invalid number"],
       ['"use strict"; let [a, a] = x\n08', "1:23: Parsing error: Identifier 'a' has already been declared"],
       ['"use strict"; try {} catch ([e, e]) { 08 }', "1:33: Parsing error: Identifier 'e' has already been declared"],
+      // acorn declares the names before it looks for the `=`.
+      ['"use strict"; let [a, a];', "1:23: Parsing error: Identifier 'a' has already been declared"],
     ];
     // With an older `ecmaVersion`, newer syntax is a tokenizer error, which comes before a deferred check.
     const editions: [ecmaVersion: number, code: string, error: string][] = [

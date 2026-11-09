@@ -489,13 +489,14 @@ pub(super) fn first_error<'a>(
     checks.strict_mode();
     checks.octals_in_strict_code();
     checks.keywords_as_identifiers();
-    checks.early_errors();
-    // After the early errors: acorn checks the parameters once it has parsed an expression body, and after the `"use
-    // strict"` of a block body.
-    checks.parameters();
+    // acorn declares a name as soon as it has read it, before any check on the node around it.
     if checks.is_whole {
         checks.redeclarations();
     }
+    checks.early_errors();
+    // acorn checks the parameters once it has parsed an expression body, and after the `"use strict"` of a block
+    // body.
+    checks.parameters();
     checks.first.map(|it| it.1)
 }
 
@@ -672,7 +673,7 @@ fn oxc_checks<'a, 'c>(file: &'a File<'a>, candidates: Option<&'c Candidates>) ->
     }
 }
 
-fn is_identifier_byte(byte: u8) -> bool {
+pub(super) fn is_identifier_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..)
 }
 
@@ -943,10 +944,10 @@ impl<'a, 'c> Checks<'a, 'c> {
             1434 | 1435 => self.unexpected(self.after_token(at)),
             // acorn treats `enum` as a reserved word, not a keyword.
             1389 | 1390 if self.token_at(at) == b"enum" => self.reserved(at),
-            1389 | 1390 => self.fail(
-                at,
-                [b"Unexpected keyword '", self.token_at(at), b"'"].concat(),
-            ),
+            1389 | 1390 => {
+                let message = [b"Unexpected keyword '", self.token_at(at), b"'"].concat();
+                self.after_identifier(at, |checks| checks.fail(at, message));
+            }
             1472 => {
                 // TypeScript reports it at the token after the `try` block.
                 let without_clause = (self.file.stmts_of_kind(StmtTag::Try))

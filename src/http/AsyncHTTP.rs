@@ -771,11 +771,7 @@ impl<'a> AsyncHTTP<'a> {
                     client.close_proxy_tunnel(false);
                     debug_assert!(client.h2.is_none());
                     drop(core::mem::take(&mut client.custom_ssl_ctx));
-                    // The clone took its own reference in `start_queued_task`
-                    // (a redirect can replace it). Release it, then put the
-                    // original's bits back: `NetworkTask::notify` copies this
-                    // whole struct over the original, and a retry must keep the
-                    // client certificate. The raw dealloc below never drops it.
+                    // Clone-owned (`start_queued_task`); shared bits again for the copy-back.
                     drop(core::mem::take(&mut client.tls_props));
                     core::ptr::write(
                         &mut client.tls_props,

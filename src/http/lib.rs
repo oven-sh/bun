@@ -5352,8 +5352,7 @@ impl<'a> HTTPClient<'a> {
                         }
                     }
                 }
-                // `bun install` sends its client certificate only where it sends the registry's
-                // credential headers. fetch() keeps its `tls` option across redirects, as undici does.
+                // The client certificate follows the credential headers under the install policy.
                 self.state.flags.strip_tls_identity_on_redirect = !hop.same_origin
                     && !hop.https_upgrade
                     && self.flags.redirect_credentials == RedirectCredentialsPolicy::HttpsUpgrade

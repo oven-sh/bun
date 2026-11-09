@@ -2108,7 +2108,13 @@ describe("nested describe output", () => {
     // Markers force result order a1 → b1 → a2.
     const waitFor = `
       import { existsSync, writeFileSync } from "node:fs";
-      const waitFor = async (f: string) => { while (!existsSync(f)) await Bun.sleep(5); };
+      const waitFor = async (f: string) => {
+        const deadline = Date.now() + 4000;
+        while (!existsSync(f)) {
+          if (Date.now() > deadline) throw new Error("missing marker: " + f);
+          await Bun.sleep(5);
+        }
+      };
     `;
     const { stderr, exitCode } = await run(
       {
@@ -2133,6 +2139,7 @@ describe("nested describe output", () => {
       "nested-output-parallel-resume",
     );
 
+    expect(stderr).not.toContain("missing marker");
     const b1 = stderr.indexOf("(pass) b1");
     const a2 = stderr.indexOf("(pass) a2");
     expect(b1).toBeGreaterThan(-1);

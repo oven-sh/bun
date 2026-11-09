@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, onTestFinished, test } from "bun:test";
+import { describe as vitestDescribe, test as vitestTest } from "vitest";
 
 // Prints one line for each scenario: serial or concurrent | how many times `run` ran | the scenario.
 // A scenario is "concurrent" when one `run` starts before another one has ended.
@@ -94,6 +95,24 @@ scenario("describe.concurrent > test.serial", run => {
   describe.concurrent("group", () => {
     test.serial("a", run);
     test.serial("b", run);
+  });
+});
+scenario("describe.sequential > test", run => {
+  describe.sequential("group", () => {
+    test("a", run);
+    test("b", run);
+  });
+});
+scenario("describe.sequential > test, from vitest", run => {
+  vitestDescribe.sequential("group", () => {
+    vitestTest("a", run);
+    vitestTest("b", run);
+  });
+});
+scenario("describe(name, { sequential: true }) > test, from vitest", run => {
+  vitestDescribe("group", { sequential: true }, () => {
+    vitestTest("a", run);
+    vitestTest("b", run);
   });
 });
 

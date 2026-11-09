@@ -135,6 +135,9 @@ test.concurrent("describe.serial --concurrent", async () => {
     serial     | 6 runs | describe.serial > beforeEach, test, afterEach
     serial     | 3 runs | test, describe.serial > test, test
     serial     | 2 runs | describe.concurrent > test.serial
+    serial     | 2 runs | describe.sequential > test
+    serial     | 2 runs | describe.sequential > test, from vitest
+    serial     | 2 runs | describe(name, { sequential: true }) > test, from vitest
     concurrent | 2 runs | describe.serial > test.concurrent
     concurrent | 2 runs | describe.serial > describe.concurrent > test
     concurrent | 2 runs | describe.concurrent > describe > test
@@ -166,6 +169,9 @@ test.concurrent("describe.serial, no flag", async () => {
     serial     | 6 runs | describe.serial > beforeEach, test, afterEach
     serial     | 3 runs | test, describe.serial > test, test
     serial     | 2 runs | describe.concurrent > test.serial
+    serial     | 2 runs | describe.sequential > test
+    serial     | 2 runs | describe.sequential > test, from vitest
+    serial     | 2 runs | describe(name, { sequential: true }) > test, from vitest
     concurrent | 2 runs | describe.serial > test.concurrent
     concurrent | 2 runs | describe.serial > describe.concurrent > test
     concurrent | 2 runs | describe.concurrent > describe > test

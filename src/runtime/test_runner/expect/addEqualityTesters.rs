@@ -119,8 +119,16 @@ impl Expect {
         Ok(())
     }
 
-    fn run_equality_testers(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
+    fn run_equality_testers(global: &JSGlobalObject, a: JSValue, b: JSValue, is_strict: bool) -> JsResult<Option<bool>> {
         let Some(testers) = Self::equality_testers(global)? else { return Ok(None) };
+        let Some(utils) = ExpectMatcherUtils::singleton(global).as_class_ref::<ExpectMatcherUtils>() else { return Ok(None) };
+        let outer = utils.is_comparing_strictly.replace(is_strict);
+        let verdict = Self::ask_equality_testers(global, testers, a, b);
+        utils.is_comparing_strictly.set(outer);
+        verdict
+    }
+
+    fn ask_equality_testers(global: &JSGlobalObject, testers: JSValue, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
         let context = ExpectMatcherContext { flags: Flags::default(), parent: None }.to_js(global);
         let mut iter = testers.array_iterator(global)?;
         while let Some(tester) = iter.next()? {
@@ -141,8 +149,8 @@ impl Expect {
 
     /// Called by C++ deep equality. Returns 1 for equal, 0 for not equal or threw, -1 if no tester decided.
     #[unsafe(no_mangle)]
-    pub(crate) extern "C" fn Expect__runEqualityTesters(global: &JSGlobalObject, a: JSValue, b: JSValue) -> i8 {
-        match Self::run_equality_testers(global, a, b) {
+    pub(crate) extern "C" fn Expect__runEqualityTesters(global: &JSGlobalObject, a: JSValue, b: JSValue, is_strict: bool) -> i8 {
+        match Self::run_equality_testers(global, a, b, is_strict) {
             Ok(Some(equal)) => i8::from(equal),
             Ok(None) => -1,
             Err(_) => 0,

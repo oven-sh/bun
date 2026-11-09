@@ -9,7 +9,7 @@
 
 import { bunEnv, bunExe, tempDir, withoutAggressiveGC } from "harness";
 import test_interop from "./test-interop.js";
-var { isBun, expect, describe, test, it } = await test_interop();
+var { isBun, expect, describe, test, it, jest } = await test_interop();
 
 //expect.addSnapshotSerializer(alignedAnsiStyleSerializer);
 
@@ -95,14 +95,10 @@ it("is available globally when matcher is variadic", () => {
 it("exposes matcherUtils in context", () => {
   expect.extend({
     _shouldNotError(_actual) {
-      const pass = "equals" in this;
-      //const pass = this.equals(
-      //  this.utils,
-      //  Object.assign(matcherUtils, {
-      //    iterableEquality,
-      //    subsetEquality,
-      //  }),
-      //);
+      const pass =
+        typeof this.equals === "function" &&
+        typeof this.utils.iterableEquality === "function" &&
+        typeof this.utils.subsetEquality === "function";
       const message = pass
         ? () => "expected this.utils to be defined in an extend call"
         : () => "expected this.utils not to be defined in an extend call";
@@ -933,6 +929,480 @@ describe.skipIf(!isBun)("passing a module namespace to expect.extend()", () => {
       stdout: ["default: object, toBeEven: function", "default: object, toBeOdd: function", ""],
       stderr: [" 2 pass", " 0 fail"],
     });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// What the two answer is in expect-utils.test.ts. These tests are about the matcher that gets them.
+describe("this.utils.iterableEquality and this.utils.subsetEquality", () => {
+  /** Calls `probe` with the `this` of a custom matcher. */
+  function inMatcher(probe) {
+    let result;
+    expect.extend({
+      _toRunInMatcher() {
+        result = probe(this);
+        return { pass: true, message: () => "" };
+      },
+    });
+    expect(0)._toRunInMatcher();
+    return result;
+  }
+
+  /** Checks `[expected, run]` rows: what `run` returns. */
+  function check(rows) {
+    const entries = Object.entries(rows);
+    expect(Object.fromEntries(entries.map(([name, [, run]]) => [name, run()]))).toStrictEqual(
+      Object.fromEntries(entries.map(([name, [expected]]) => [name, expected])),
+    );
+  }
+
+  function passes(assert) {
+    try {
+      assert();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function* gen(items) {
+    yield* items;
+  }
+  /** The built-in rules take two of these for equal, whatever they hold: they have no property. */
+  class Hidden {
+    #items;
+    constructor(items) {
+      this.#items = items;
+    }
+    *[Symbol.iterator]() {
+      yield* this.#items;
+    }
+  }
+
+  test("both are own functions of this.utils, and the same ones in every matcher", () => {
+    const utils = inMatcher(context => context.utils);
+    const describeMember = name => ({
+      type: typeof utils[name],
+      name: utils[name].name,
+      length: utils[name].length,
+      isSameInNextCall: inMatcher(context => context.utils[name]) === utils[name],
+      descriptor: Object.getOwnPropertyDescriptor(utils, name),
+    });
+    const own = { writable: true, enumerable: true, configurable: true };
+    expect(["iterableEquality", "subsetEquality"].map(describeMember)).toEqual([
+      {
+        type: "function",
+        name: "iterableEquality",
+        length: 2,
+        isSameInNextCall: true,
+        descriptor: { value: utils.iterableEquality, ...own },
+      },
+      {
+        type: "function",
+        name: "subsetEquality",
+        length: 2,
+        isSameInNextCall: true,
+        descriptor: { value: utils.subsetEquality, ...own },
+      },
+    ]);
+
+    let inAsymmetricMatcher;
+    expect.extend({
+      _toSeeItsUtils() {
+        inAsymmetricMatcher = this.utils;
+        return { pass: true, message: () => "" };
+      },
+    });
+    expect(1).toEqual(expect._toSeeItsUtils());
+    expect(inAsymmetricMatcher).toBe(utils);
+  });
+
+  test("a custom matcher hands them to this.equals()", () => {
+    expect.extend({
+      _toEqualIterable(received, expected) {
+        const pass = this.equals(received, expected, [this.utils.iterableEquality]);
+        return { pass, message: () => "the two " + (pass ? "are equal" : "differ") };
+      },
+      _toBeSupersetOf(received, expected) {
+        const testers = [...this.customTesters, this.utils.iterableEquality, this.utils.subsetEquality];
+        const pass = this.equals(received, expected, testers);
+        return { pass, message: () => "the first " + (pass ? "has" : "lacks") + " what the second has" };
+      },
+    });
+    expect(new Set([1, 2]))._toEqualIterable(new Set([1, 2]));
+    expect(new Set([1, 2])).not._toEqualIterable(new Set([1, 3]));
+    expect(new Hidden([1, 2]))._toEqualIterable(new Hidden([1, 2]));
+    expect(new Hidden([1, 2])).not._toEqualIterable(new Hidden([1, 3]));
+    expect(() => expect(new Hidden([1, 2]))._toEqualIterable(new Hidden([1, 3]))).toThrow("the two differ");
+    expect(() => expect(new Hidden([1, 2])).not._toEqualIterable(new Hidden([1, 2]))).toThrow("the two are equal");
+    expect({ a: new Hidden([1]), b: { c: 2, d: 3 } })._toBeSupersetOf({ a: new Hidden([1]), b: { c: 2 } });
+    expect({ a: new Hidden([1]), b: { c: 2, d: 3 } }).not._toBeSupersetOf({ a: new Hidden([2]), b: { c: 2 } });
+    expect({ b: { c: 2 } }).not._toBeSupersetOf({ b: { c: 2, d: 3 } });
+  });
+
+  test("a matcher that uses them works in every place a matcher can be", async () => {
+    expect.extend({
+      _toHoldTheItemsOf(received, expected) {
+        const pass = this.equals(received, expected, [...this.customTesters, this.utils.iterableEquality]);
+        return { pass, message: () => "the two " + (pass ? "are equal" : "differ") };
+      },
+    });
+    const [same, other] = [() => new Hidden([1, 2]), () => new Hidden([1, 3])];
+
+    await expect(Promise.resolve(same())).resolves._toHoldTheItemsOf(same());
+    await expect(Promise.resolve(same())).resolves.not._toHoldTheItemsOf(other());
+    await expect(Promise.reject(same())).rejects._toHoldTheItemsOf(same());
+    await expect(Promise.reject(same())).rejects.not._toHoldTheItemsOf(other());
+    expect.soft(same())._toHoldTheItemsOf(same());
+    expect.soft(same()).not._toHoldTheItemsOf(other());
+    await expect.poll(same)._toHoldTheItemsOf(same());
+    await expect.poll(same).not._toHoldTheItemsOf(other());
+
+    expect({ a: same() }).toEqual({ a: expect._toHoldTheItemsOf(same()) });
+    expect({ a: same() }).not.toEqual({ a: expect._toHoldTheItemsOf(other()) });
+    expect({ a: same() }).toEqual({ a: expect.not._toHoldTheItemsOf(other()) });
+    expect({ a: same() }).toStrictEqual({ a: expect._toHoldTheItemsOf(same()) });
+    expect({ a: same() }).not.toStrictEqual({ a: expect._toHoldTheItemsOf(other()) });
+    expect({ a: same(), b: 1 }).toMatchObject({ a: expect._toHoldTheItemsOf(same()) });
+    expect({ a: same(), b: 1 }).not.toMatchObject({ a: expect._toHoldTheItemsOf(other()) });
+    expect([1, same()]).toContainEqual(expect._toHoldTheItemsOf(same()));
+    expect([1, same()]).not.toContainEqual(expect._toHoldTheItemsOf(other()));
+    const fn = jest.fn();
+    fn(same());
+    expect(fn).toHaveBeenCalledWith(expect._toHoldTheItemsOf(same()));
+    expect(fn).not.toHaveBeenCalledWith(expect._toHoldTheItemsOf(other()));
+    expect([
+      expect._toHoldTheItemsOf(same()).asymmetricMatch(same()),
+      expect._toHoldTheItemsOf(other()).asymmetricMatch(same()),
+    ]).toEqual([true, false]);
+  });
+
+  // Bun's toEqual() and toMatchObject() are not made of the two testers. Each row has what the built-in matcher says,
+  // and then what a matcher says that is made of them the way Jest makes its own.
+  test("toEqual() and toMatchObject() beside a matcher that is made of the two", () => {
+    expect.extend({
+      _toEqualByTesters(received, expected) {
+        const pass = this.equals(received, expected, [this.utils.iterableEquality]);
+        return { pass, message: () => "the two " + (pass ? "are equal" : "differ") };
+      },
+      _toMatchByTesters(received, expected) {
+        const pass = this.equals(received, expected, [this.utils.iterableEquality, this.utils.subsetEquality]);
+        return { pass, message: () => "the first " + (pass ? "has" : "lacks") + " what the second has" };
+      },
+    });
+    /** `pair` makes the two values anew for each matcher: a generator can be read once. */
+    const equal = pair => [
+      passes(() => expect(pair()[0]).toEqual(pair()[1])),
+      passes(() => expect(pair()[0])._toEqualByTesters(pair()[1])),
+    ];
+    const match = pair => [
+      passes(() => expect(pair()[0]).toMatchObject(pair()[1])),
+      passes(() => expect(pair()[0])._toMatchByTesters(pair()[1])),
+    ];
+    check({
+      "toEqual(): Sets in another order": [[true, true], () => equal(() => [new Set([1, 2]), new Set([2, 1])])],
+      "toEqual(): Sets that differ": [[false, false], () => equal(() => [new Set([1, 2]), new Set([1, 3])])],
+      "toEqual(): Maps that differ": [[false, false], () => equal(() => [new Map([[1, 2]]), new Map([[1, 3]])])],
+      "toEqual(): generators": [[true, true], () => equal(() => [gen([1, 2]), gen([1, 2])])],
+      // toEqual() has no rule for an iterable that is no Set and no Map. It compares the properties, and these have
+      // none.
+      "toEqual(): generators that differ": [[true, false], () => equal(() => [gen([1, 2]), gen([1, 3])])],
+      "toEqual(): iterables with different private items": [
+        [true, false],
+        () => equal(() => [new Hidden([1, 2]), new Hidden([1, 3])]),
+      ],
+      "toEqual(): a Set and a generator": [[false, false], () => equal(() => [new Set([1]), gen([1])])],
+      "toMatchObject(): fewer properties": [[true, true], () => match(() => [{ a: 1, b: 2 }, { a: 1 }])],
+      "toMatchObject(): more properties": [[false, false], () => match(() => [{ a: 1 }, { a: 1, b: 2 }])],
+      "toMatchObject(): an array of subsets": [[true, true], () => match(() => [[{ a: 1, b: 2 }], [{ a: 1 }]])],
+      "toMatchObject(): a Date": [[true, true], () => match(() => [{ a: new Date(0) }, { a: new Date(0) }])],
+      // toMatchObject() compares the properties of every two objects: #44405, #15673.
+      "toMatchObject(): another Date": [[true, false], () => match(() => [{ a: new Date(0) }, { a: new Date(1) }])],
+      "toMatchObject(): another Error": [
+        [true, false],
+        () => match(() => [{ a: new Error("x") }, { a: new Error("y") }]),
+      ],
+      "toMatchObject(): another Set": [[true, false], () => match(() => [{ a: new Set([1]) }, { a: new Set([2]) }])],
+      "toMatchObject(): another Map": [
+        [true, false],
+        () => match(() => [{ a: new Map([[1, 2]]) }, { a: new Map([[1, 3]]) }]),
+      ],
+      "toMatchObject(): a generator that differs": [
+        [true, false],
+        () => match(() => [{ a: gen([1]) }, { a: gen([2]) }]),
+      ],
+    });
+  });
+
+  // An asymmetric matcher says itself how much of a value it takes. Jest hands it the registered testers alone, and
+  // Vitest leaves subsetEquality out of what it hands it (vitest-dev/vitest#11100). Each row has what toMatchObject()
+  // says, and then what a matcher says that has subsetEquality in its list.
+  test("subsetEquality in the list does not loosen what an asymmetric matcher compares", () => {
+    expect.extend({
+      _toMatchShape(received, expected) {
+        const pass = this.equals(received, expected, [this.utils.iterableEquality, this.utils.subsetEquality]);
+        return { pass, message: () => "the value " + (pass ? "has" : "does not have") + " the shape" };
+      },
+      _toEqualWithItsTesters(received, expected) {
+        const pass = this.equals(received, expected, this.customTesters);
+        return { pass, message: () => "the two " + (pass ? "are equal" : "differ") };
+      },
+      _toEqualWithoutAList(received, expected) {
+        const pass = this.equals(received, expected);
+        return { pass, message: () => "the two " + (pass ? "are equal" : "differ") };
+      },
+    });
+    const both = (a, b) => [passes(() => expect(a).toMatchObject(b)), passes(() => expect(a)._toMatchShape(b))];
+    const item = { id: 1 };
+    const longerItem = { id: 1, required: "x" };
+    const equalByToEqual = sample => ({ asymmetricMatch: other => passes(() => expect(other).toEqual(sample)) });
+    check({
+      "any()": [[true, true], () => both({ a: 1, b: 2 }, { a: expect.any(Number) })],
+      "any() that does not match": [[false, false], () => both({ a: "x", b: 2 }, { a: expect.any(Number) })],
+      // toMatchObject() of Bun takes this pair, which Jest's and Vitest's do not: the row is the made matcher alone.
+      "arrayContaining() whose item has a property more": [
+        false,
+        () => passes(() => expect([item])._toMatchShape(expect.arrayContaining([longerItem]))),
+      ],
+      "arrayContaining() whose item has a property more, in a property": [
+        [false, false],
+        () => both({ nested: [item] }, { nested: expect.arrayContaining([longerItem]) }),
+      ],
+      "arrayContaining() whose item has a property less": [
+        [false, false],
+        () => both({ nested: [longerItem] }, { nested: expect.arrayContaining([item]) }),
+      ],
+      "a property more beside arrayContaining()": [
+        [false, false],
+        () => both({ nested: [item] }, { nested: expect.arrayContaining([item]), extra: true }),
+      ],
+      "arrayContaining() with the same item": [
+        [true, true],
+        () => both({ nested: [longerItem] }, { nested: expect.arrayContaining([longerItem]) }),
+      ],
+      "arrayContaining() of an array with an item more": [
+        [true, true],
+        () => both({ nested: [longerItem, { extra: true }] }, { nested: expect.arrayContaining([longerItem]) }),
+      ],
+      "a property less beside arrayContaining()": [
+        [true, true],
+        () => both({ nested: [item], extra: true }, { nested: expect.arrayContaining([item]) }),
+      ],
+      "not.arrayContaining() whose item has a property more": [
+        [true, true],
+        () => both({ nested: [item] }, { nested: expect.not.arrayContaining([longerItem]) }),
+      ],
+      "objectContaining() whose property has a property less": [
+        [false, false],
+        () => both({ a: { b: { c: 1, d: 2 } } }, { a: expect.objectContaining({ b: { c: 1 } }) }),
+      ],
+      "objectContaining() with fewer properties": [
+        [true, true],
+        () => both({ a: { b: { c: 1 }, e: 3 } }, { a: expect.objectContaining({ b: { c: 1 } }) }),
+      ],
+      "a matcher of expect.extend() that hands on this.customTesters": [
+        [false, false],
+        () => both({ a: { c: 1, d: 2 } }, { a: expect._toEqualWithItsTesters({ c: 1 }) }),
+      ],
+      "a matcher of expect.extend() that hands on no list": [
+        [false, false],
+        () => both({ a: { c: 1, d: 2 } }, { a: expect._toEqualWithoutAList({ c: 1 }) }),
+      ],
+      "an object whose asymmetricMatch() uses toEqual()": [
+        [false, false],
+        () => both({ a: { c: 1, d: 2 } }, { a: equalByToEqual({ c: 1 }) }),
+      ],
+    });
+  });
+
+  test("a comparison that throws leaves the testers as they were", () => {
+    const context = inMatcher(context => context);
+    const { iterableEquality, subsetEquality } = context.utils;
+    const throwing = () => {
+      throw new RangeError("thrown while the two are compared");
+    };
+    expect(() => context.equals({ a: 1 }, { a: { asymmetricMatch: throwing } }, [subsetEquality])).toThrow(RangeError);
+    expect(() => context.equals(new Set([{}]), new Set([{}]), [iterableEquality, throwing])).toThrow(RangeError);
+    expect(() => context.equals({ a: {} }, { a: {} }, [subsetEquality, throwing])).toThrow(RangeError);
+    expect(context.customTesters).toEqual([]);
+    expect(context.equals({ a: 1, b: 2 }, { a: 1 }, [subsetEquality])).toBe(true);
+    expect(context.equals({ a: 1, b: 2 }, { a: 1 })).toBe(false);
+    expect(context.equals(gen([1]), gen([2]))).toBe(true);
+  });
+
+  /** Runs `bun test` on a file with this text. */
+  async function runTestFile(text) {
+    using dir = tempDir("expect-extend-testers", { "testers.test.js": text });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "testers.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const results = stderr
+      .split("\n")
+      .filter(line => /^\((pass|fail)\)/.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+    return { stdout, results, exitCode };
+  }
+
+  /** The start of a test file that registers these members of `this.utils` with expect.addEqualityTesters(). */
+  const registering = names => `
+    import { expect, mock, test } from "bun:test";
+    class Hidden {
+      #items;
+      constructor(items) { this.#items = items; }
+      *[Symbol.iterator]() { yield* this.#items; }
+    }
+    let utils;
+    expect.extend({ toGrabUtils() { utils = this.utils; return { pass: true, message: () => "" }; } });
+    expect(0).toGrabUtils();
+    expect.addEqualityTesters(${JSON.stringify(names)}.map(name => utils[name]));
+  `;
+
+  test.concurrent(
+    "expect.addEqualityTesters() takes iterableEquality, and the built-in matchers then use it",
+    async () => {
+      const { results, exitCode } = await runTestFile(`
+        ${registering(["iterableEquality"])}
+        test("iterables are compared by their items", () => {
+          expect(new Hidden([1, 2])).toEqual(new Hidden([1, 2]));
+          expect(new Hidden([1, 2])).not.toEqual(new Hidden([1, 3]));
+          expect({ a: [new Hidden([1])] }).not.toEqual({ a: [new Hidden([2])] });
+          expect(new Hidden([1, 2])).not.toStrictEqual(new Hidden([1, 3]));
+          expect([new Hidden([1])]).toContainEqual(new Hidden([1]));
+          expect([new Hidden([1])]).not.toContainEqual(new Hidden([2]));
+          const fn = mock();
+          fn(new Hidden([1]));
+          expect(fn).toHaveBeenCalledWith(new Hidden([1]));
+          expect(fn).not.toHaveBeenCalledWith(new Hidden([2]));
+        });
+        test("toStrictEqual() stays strict for the members of an iterable", () => {
+          class Metre {}
+          class Yard {}
+          const pairs = [[new Metre(), new Yard()], [[, 1], [undefined, 1]], [{ a: undefined, b: 1 }, { b: 1 }]];
+          for (const [a, b] of pairs) {
+            expect(new Set([a])).toEqual(new Set([b]));
+            expect(new Set([a])).not.toStrictEqual(new Set([b]));
+            expect(new Map([[1, a]])).not.toStrictEqual(new Map([[1, b]]));
+            expect(new Hidden([a])).toEqual(new Hidden([b]));
+            expect(new Hidden([a])).not.toStrictEqual(new Hidden([b]));
+          }
+        });
+        test("an object that two Sets hold is compared once", () => {
+          const make = () => {
+            const root = {};
+            const object = { root };
+            root.a = new Set([object]);
+            root.b = new Set([object]);
+            return root;
+          };
+          expect(make()).toEqual(make());
+          expect(make()).toStrictEqual(make());
+        });
+    `);
+      expect(results).toEqual([
+        "(pass) iterables are compared by their items",
+        "(pass) toStrictEqual() stays strict for the members of an iterable",
+        "(pass) an object that two Sets hold is compared once",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("expect.addEqualityTesters() takes subsetEquality, and toEqual() then takes a subset", async () => {
+    const { results, exitCode } = await runTestFile(`
+        ${registering(["iterableEquality", "subsetEquality"])}
+        test("toEqual() takes an object with fewer properties", () => {
+          expect({ a: 1, b: 2 }).toEqual({ a: 1 });
+          expect({ a: 1 }).not.toEqual({ a: 1, b: 2 });
+          expect({ a: 1, b: 2 }).not.toEqual({ a: 2 });
+          expect({ a: new Hidden([1]), b: 2 }).toEqual({ a: new Hidden([1]) });
+          expect({ a: new Hidden([1]), b: 2 }).not.toEqual({ a: new Hidden([2]) });
+        });
+    `);
+    expect(results).toEqual(["(pass) toEqual() takes an object with fewer properties"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Where those of Jest and of Vitest differ, the two are Jest's, as toEqual() and toMatchObject() are for the three.
+  const rows = {
+    "typed arrays": "undefined",
+    "a Set of another realm": true,
+    "a Set of another realm that differs": false,
+    "an own symbol that differs": false,
+    "an iterator that cannot be made": "undefined",
+    "a symbol of the subset with another value": false,
+    "a subset that inherits from Error.prototype": "undefined",
+    "through this.equals(), bytes of two classes": true,
+    "through this.equals(), a Set of another realm": true,
+    "through this.equals(), an own symbol that differs": false,
+    // Not true: each level holds another item. Either the stack is deep enough to find that, or it runs out.
+    "iterables that differ 20000 levels in": "false or RangeError",
+    "through this.equals(), iterables that differ 20000 levels in": "false or RangeError",
+  };
+  const printingRows = specifier => `
+    import vm from "node:vm";
+    import { expect, test } from ${JSON.stringify(specifier)};
+    const [setOfOne, setOfTwo] = vm.runInNewContext("[new Set([1]), new Set([2])]");
+    const key = Symbol("key");
+    const tagged = value => ({ [key]: value, *[Symbol.iterator]() {} });
+    const throwing = { [Symbol.iterator]() { throw new RangeError("no iterator"); } };
+    class Nest {
+      #item;
+      constructor(item) { this.#item = item; }
+      *[Symbol.iterator]() { yield this.#item; }
+    }
+    const nest = (depth, innermost) => {
+      let value = innermost;
+      while (depth--) value = new Nest(value);
+      return value;
+    };
+    test("rows", () => {
+      expect.extend({
+        toPrintRows() {
+          const { equals, utils: { iterableEquality, subsetEquality } } = this;
+          const rows = {
+            "typed arrays": () => iterableEquality(new Uint8Array([1]), new Uint8Array([2])),
+            "a Set of another realm": () => iterableEquality(new Set([1]), setOfOne),
+            "a Set of another realm that differs": () => iterableEquality(new Set([1]), setOfTwo),
+            "an own symbol that differs": () => iterableEquality(tagged(1), tagged(2)),
+            "an iterator that cannot be made": () => iterableEquality(throwing, throwing),
+            "a symbol of the subset with another value": () => subsetEquality({ [key]: 1 }, { [key]: 2 }),
+            "a subset that inherits from Error.prototype": () => subsetEquality({}, Object.create(Error.prototype)),
+            "through this.equals(), bytes of two classes": () =>
+              equals(Buffer.from([1, 2]), new Uint8Array([1, 2]), [iterableEquality]),
+            "through this.equals(), a Set of another realm": () =>
+              equals(new Set([1]), setOfOne, [iterableEquality]),
+            "through this.equals(), an own symbol that differs": () => equals(tagged(1), tagged(2), [iterableEquality]),
+            "iterables that differ 20000 levels in": () => iterableEquality(nest(20000, 1), nest(20000, 2)),
+            "through this.equals(), iterables that differ 20000 levels in": () =>
+              equals(nest(20000, 1), nest(20000, 2), [iterableEquality]),
+          };
+          const answers = Object.entries(rows).map(([name, run]) => {
+            let answer;
+            try {
+              answer = run();
+            } catch (error) {
+              answer = error.constructor.name;
+            }
+            if (name.includes("20000")) answer = answer === true ? true : "false or RangeError";
+            return [name, answer === undefined ? "undefined" : answer];
+          });
+          console.log(JSON.stringify(Object.fromEntries(answers)));
+          return { pass: true, message: () => "" };
+        },
+      });
+      expect(0).toPrintRows();
+    });
+  `;
+
+  test.concurrent.each(["bun:test", "@jest/globals", "vitest"])("a test of %s gets them", async specifier => {
+    const { stdout, results, exitCode } = await runTestFile(printingRows(specifier));
+    expect(results).toEqual(["(pass) rows"]);
+    expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual(rows);
     expect(exitCode).toBe(0);
   });
 });

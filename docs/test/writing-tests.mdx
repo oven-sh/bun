@@ -665,6 +665,40 @@ A tester registered in a test file applies until that file ends. A tester regist
 
 To compare nested values inside a tester, call `this.equals(a, b, customTesters)`. `customTesters` is the third argument the tester receives.
 
+### Testers in custom matchers
+
+In a matcher registered with `expect.extend()`, `this.equals(a, b, customTesters)` only uses the testers it is given. The registered testers are in `this.customTesters`. `this.utils` has the two testers that Jest builds `toEqual()` and `toMatchObject()` from:
+
+| Tester                        | Compares                                                                                                                      |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `this.utils.iterableEquality` | Two iterable objects that aren't arrays or typed arrays, by their items. The items of a `Set` or a `Map` can be in any order. |
+| `this.utils.subsetEquality`   | Each property of the expected object with the same property of the received one, which can have more properties.              |
+
+Both return `undefined` for other values, and then the next tester or the built-in rules decide.
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+expect.extend({
+  toHaveTheItemsOf(received, expected) {
+    const pass = this.equals(received, expected, [...this.customTesters, this.utils.iterableEquality]);
+    return { pass, message: () => `expected the two ${pass ? "not " : ""}to have the same items` };
+  },
+});
+
+function* countTo(limit: number) {
+  for (let i = 1; i <= limit; i++) yield i;
+}
+
+test("generators are compared by what they yield", () => {
+  expect(countTo(3)).toHaveTheItemsOf(countTo(3));
+  expect(countTo(3)).not.toHaveTheItemsOf(countTo(4));
+});
+```
+
+The two testers are the ones in Jest's `@jest/expect-utils`, also in a `"vitest"` test. Bun's own `toEqual()` and `toMatchObject()` don't call them, and accept some values that the testers reject:
+
+- `toEqual()` compares an iterable that isn't a `Set` or a `Map`, such as a generator, by its properties and not by its items.
+- `toMatchObject()` compares a `Date`, an `Error`, a `Set` or a `Map` in the expected object by its enumerable properties, so two different dates match.
+
 ## Test State
 
 `expect.getState()` returns information about the running test. Custom matchers can read the properties below from `this`.

@@ -2739,8 +2739,30 @@ impl ExpectMatcherContext {
         custom_testers: JsLocal<'_>,
         strict_check: bool,
     ) -> JsResult<bool> {
-        let global_this = cx.global();
-        let (a, b, custom_testers) = (a.to_js(), b.to_js(), custom_testers.to_js());
+        Self::compare(cx.global(), a.to_js(), b.to_js(), custom_testers.to_js(), strict_check)
+    }
+
+    /// `this.equals()` for the testers of `this.utils`, which compare the members of their two values with it.
+    #[inline(never)]
+    pub(crate) fn equals_with(
+        global_this: &JSGlobalObject,
+        a: JSValue,
+        b: JSValue,
+        custom_testers: JSValue,
+        strict_check: bool,
+    ) -> JsResult<bool> {
+        Self::compare(global_this, a, b, custom_testers, strict_check)
+    }
+
+    /// The body of `equals()` and of `equals_with()`. Each has its own copy, so that `this.equals()` stays one call.
+    #[inline(always)]
+    fn compare(
+        global_this: &JSGlobalObject,
+        a: JSValue,
+        b: JSValue,
+        custom_testers: JSValue,
+        strict_check: bool,
+    ) -> JsResult<bool> {
         // Only an array has testers: `null` is an empty list in Jest and Vitest, and Bun used to ignore this argument.
         let custom_testers = if !custom_testers.js_type().is_array() || custom_testers.get_length(global_this)? == 0 {
             JSValue::ZERO
@@ -2828,13 +2850,15 @@ pub(crate) struct ExpectMatcherUtils {
     pub(crate) testers_file: Cell<u32>,
     pub(crate) serializers_of_file: bun_jsc::JsCell<Vec<bool>>,
     pub(crate) serializers_file: Cell<u32>,
+    /// While testers run: whether `toStrictEqual()` asked them. The testers of `this.utils` compare members alike.
+    pub(crate) is_comparing_strictly: Cell<bool>,
 }
 
 impl ExpectMatcherUtils {
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn ExpectMatcherUtils_createSigleton(global_this: &JSGlobalObject) -> JSValue {
         let utils = ExpectMatcherUtils::default().to_js(global_this);
-        let functions: [(&str, bun_jsc::JSHostFn, u32); 8] = [
+        let functions: [(&str, bun_jsc::JSHostFn, u32); 10] = [
             ("stringify", generated::Bun__ExpectMatcherUtils__stringify, 1),
             ("printExpected", generated::Bun__ExpectMatcherUtils__printExpected, 1),
             ("printReceived", generated::Bun__ExpectMatcherUtils__printReceived, 1),
@@ -2843,6 +2867,8 @@ impl ExpectMatcherUtils {
             ("matcherHint", generated::Bun__ExpectMatcherUtils__matcherHint, 1),
             ("printWithType", generated::Bun__ExpectMatcherUtils__printWithType, 3),
             ("diff", generated::Bun__ExpectMatcherUtils__diff, 2),
+            ("iterableEquality", generated::Bun__ExpectMatcherUtils__iterableEquality, 2),
+            ("subsetEquality", generated::Bun__ExpectMatcherUtils__subsetEquality, 2),
         ];
         for (name, function, length) in functions {
             let function = JSFunction::create(global_this, name, function, length, Default::default());

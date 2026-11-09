@@ -3143,8 +3143,26 @@ declare module "bun:test" {
           secondArgumentColor?: MatcherHintColor;
         },
       ): string;
-      //iterableEquality: Tester;
-      //subsetEquality: Tester;
+      /**
+       * The tester that Jest's `toEqual()` compares iterables with. Pass it to `equals` to compare by their items
+       * what the built-in rules compare by their properties, such as generators.
+       *
+       * Returns `undefined` unless both values are iterable objects that aren't arrays or typed arrays.
+       *
+       * @example
+       * this.equals(received, expected, [...this.customTesters, this.utils.iterableEquality]);
+       */
+      iterableEquality(a: unknown, b: unknown, customTesters?: Array<Tester>): boolean | undefined;
+      /**
+       * The tester that Jest's `toMatchObject()` compares objects with. Pass it to `equals` to let the received
+       * value have more properties than the expected one.
+       *
+       * Returns `undefined` unless `subset` is an object other than an array, `Error`, `Date`, `Set` or `Map`.
+       *
+       * @example
+       * this.equals(received, expected, [this.utils.iterableEquality, this.utils.subsetEquality]);
+       */
+      subsetEquality(object: unknown, subset: unknown, customTesters?: Array<Tester>): boolean | undefined;
       // ...
     }>;
   }

@@ -823,11 +823,13 @@ test("this.equals and the functions of this.utils do not need a receiver", () =>
       "EXPECTED_COLOR",
       "RECEIVED_COLOR",
       "diff",
+      "iterableEquality",
       "matcherHint",
       "printExpected",
       "printReceived",
       "printWithType",
       "stringify",
+      "subsetEquality",
     ],
   });
 });
@@ -1189,15 +1191,21 @@ describe("expect.addEqualityTesters", () => {
   });
 
   test("this.equals rejects a tester that is not a function", () => {
-    let message = "";
+    let messages: string[] = [];
     expect.extend({
       toPassBadTesters() {
-        message = messageOf(() => this.equals(1, 2, [1 as any]));
+        messages = [[1], [undefined], [this.utils.iterableEquality, undefined]].map(testers =>
+          messageOf(() => this.equals(1, 2, testers as any)),
+        );
         return { pass: true, message: () => "" };
       },
     });
     (expect(1) as any).toPassBadTesters();
-    expect(message).toBe('The "customTesters[0]" argument must be of type function. Received type number (1)');
+    expect(messages).toEqual([
+      'The "customTesters[0]" argument must be of type function. Received type number (1)',
+      'The "customTesters[0]" argument must be of type function. Received undefined',
+      'The "customTesters[1]" argument must be of type function. Received undefined',
+    ]);
   });
 
   test.each([undefined, null, false, 0, "", true, 1, {}, "nope"])("this.equals has no testers in %p", testers => {

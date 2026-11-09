@@ -3151,7 +3151,7 @@ pub(crate) fn member(global: &JSGlobalObject, value: JSValue, name: &'static str
     jsc::host_fn::from_js_host_call(global, || unsafe { SnapshotFormat__get(global, value, name.as_ptr(), name.len()) })
 }
 
-fn item(global: &JSGlobalObject, value: JSValue, index: u32) -> JsResult<JSValue> {
+pub(crate) fn item(global: &JSGlobalObject, value: JSValue, index: u32) -> JsResult<JSValue> {
     unsafe extern "C" {
         safe fn SnapshotFormat__getIndex(global: &JSGlobalObject, value: JSValue, index: u32) -> JSValue;
     }
@@ -3371,7 +3371,7 @@ fn call(global: &JSGlobalObject, function: JSValue, this: JSValue, name: &str, a
     function.call(global, this, arguments)
 }
 
-fn call_method(global: &JSGlobalObject, object: JSValue, name: &'static str, arguments: &[JSValue]) -> JsResult<JSValue> {
+pub(crate) fn call_method(global: &JSGlobalObject, object: JSValue, name: &'static str, arguments: &[JSValue]) -> JsResult<JSValue> {
     call(global, member(global, object, name)?, object, name, arguments)
 }
 

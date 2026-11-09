@@ -63,10 +63,10 @@ export interface BindgenSources {
 }
 
 /**
- * Write the list of `.bind.ts` files for the steps that read them all. On the command line the list is 150 entries
- * and over 10000 characters, which cmd.exe refuses on a Windows host (#48301). Written at configure time, like
- * emitCppBind's cxx-sources.txt, with `writeIfChanged` so an unchanged list keeps its mtime and the edges that name
- * it as an input stay clean.
+ * Write the list of `.bind.ts` files for the steps that read them all: on the command line it outruns cmd.exe
+ * (HOST_SHELL_COMMAND_BUDGET in ninja.ts). Written at configure time, like emitCppBind's cxx-sources.txt, with
+ * `writeIfChanged`: an unchanged list keeps its mtime, and the edges that name it as an input stay clean. A changed
+ * list (a schema added, removed or moved) re-runs them.
  */
 export function writeBindgenSources(path: string, bindgen: readonly string[]): BindgenSources {
   const crates = new Map(bindgen.map(src => [src, crateOf(src)]));
@@ -618,8 +618,10 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const jsOutputs = sources.nodeFallbacks.map(s => resolve(outDir, basename(s)));
   const outputs = [...jsOutputs, ...jsOutputs.map(o => `${o}.zst`)];
 
-  // The script (build-fallbacks.ts) takes the output directory and finds the
-  // sources with readdirSync("."); they are inputs so ninja tracks them.
+  // The script (build-fallbacks.ts) reads its args as [outdir, ...sources]
+  // but actually ignores the sources — it does readdirSync(".") to discover
+  // files. We pass them anyway: as inputs ninja tracks their edits, and in
+  // the command line a deleted file re-runs the edge.
   const script = resolve(sourceDir, "build-fallbacks.ts");
   n.build({
     outputs,
@@ -631,7 +633,7 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
       cwd: sourceDir,
       desc: "node-fallbacks/*.js",
       // `bun run build-fallbacks` resolves to `./build-fallbacks.ts` in cwd
-      args: shJoin(cfg, ["run", "build-fallbacks", outDir]),
+      args: shJoin(cfg, ["run", "build-fallbacks", outDir, ...sources.nodeFallbacks]),
     },
   });
 

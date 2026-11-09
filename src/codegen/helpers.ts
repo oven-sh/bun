@@ -124,9 +124,8 @@ export function pathToUpperSnakeCase(filepath: string) {
 }
 
 /**
- * The entries of a list option: `a,b,c`, or `@<file>` with one entry per line. A list of every `.bind.ts` is over
- * 10000 characters, more than cmd.exe allows on a command line, so the build writes it to a file (writeBindgenSources
- * in scripts/build/codegen.ts).
+ * The entries of a list option: `a,b,c`, or `@<file>` with one entry per line, for a list that does not fit a command
+ * line (writeBindgenSources in scripts/build/codegen.ts).
  */
 export function listOption(value: string): string[] {
   const entries = value.startsWith("@") ? fs.readFileSync(value.slice(1), "utf8").split(/\r?\n/) : value.split(",");

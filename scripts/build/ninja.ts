@@ -127,23 +127,19 @@ export interface Rule {
   /** Content written to rspfile (usually $in or $in_newline). */
   rspfile_content?: string;
   /**
-   * The command needs a shell (`cd`, `&&`, `>`). Ninja runs a command through `/bin/sh -c` on posix and through
-   * CreateProcess on Windows, so the rule's Windows-host text is `cmd /c "..."`, and cmd.exe refuses a command line
-   * over 8191 characters. `build()` asserts that each edge's command stays within HOST_SHELL_COMMAND_BUDGET on every
-   * host: CI configures on Linux and macOS alone (it cross-compiles the Windows binaries), so only a developer's
-   * native Windows build would find the overrun otherwise.
+   * The command needs a shell (`cd`, `&&`, `>`), so on a Windows host its text is `cmd /c "..."` (ninja runs a command
+   * through `/bin/sh -c` on posix and through CreateProcess on Windows). `build()` holds each edge of the rule to
+   * HOST_SHELL_COMMAND_BUDGET, on every host.
    */
   hostShell?: boolean;
 }
 
 /**
- * The most characters the command of a `hostShell` edge may have, as this host's configure expands it. cmd.exe's
- * limit is 8191. Half of it is left for a Windows host: its rule text wraps the command (`cmd /c "cd /d ... && set
- * ...&& "`, about 40 characters more), and its checkout path may be longer than this host's, up to MAX_PATH (260),
- * where a command names a checkout-rooted path several times (the working directory, the runtime, the script, the
- * output directory). That leaves room for 16 such paths to grow by 246 characters each. A list of source files names
- * one per entry and overruns the budget on every host: 150 `.bind.ts` files on one command were 10151 characters on a
- * 14-character checkout (#48301). Such a list goes in a file the command names: see writeBindgenSources in codegen.ts.
+ * cmd.exe caps a command line at 8191 characters (#48301: the list of every `.bind.ts` on one command was over 12000).
+ * Half, because configure mostly runs where the text is not cmd.exe's: CI cross-compiles the Windows binaries from
+ * Linux, and a developer's Windows checkout path can be up to MAX_PATH longer than this host's, for each of the few
+ * places a command names one. A list of source files goes in a file the command names (writeBindgenSources in
+ * codegen.ts).
  */
 export const HOST_SHELL_COMMAND_BUDGET = 4096;
 
@@ -323,6 +319,13 @@ export class Ninja {
         hint: `Remove it from ruleVars.${name}. If another configuration's text uses it, that text is another rule.`,
       });
     }
+    assert(
+      !spec.command.startsWith("cmd /c ") || spec.hostShell === true,
+      `Rule ${name} runs through cmd /c without hostShell`,
+      {
+        hint: "Set hostShell: true on the rule, so build() holds its edges to HOST_SHELL_COMMAND_BUDGET.",
+      },
+    );
 
     this.lines.push(`rule ${name}`);
     this.lines.push(`  command = ${spec.command}`);
@@ -574,6 +577,8 @@ export class Ninja {
 
 export interface ManifestRule {
   /** Unexpanded: `$out`, `$in` and the edge's variables are still references. */
+  command: string;
+  /** Unexpanded, as `command`. */
   description: string | undefined;
   restat: boolean;
   generator: boolean;
@@ -619,6 +624,7 @@ export function readManifest(text: string): Manifest {
     const [keyword, rest = ""] = splitOnce(line, " ");
     if (keyword === "rule") {
       const rule: ManifestRule = {
+        command: "",
         description: undefined,
         restat: false,
         generator: false,
@@ -626,7 +632,8 @@ export function readManifest(text: string): Manifest {
       };
       manifest.rules.set(rest, rule);
       bind = (name, value) => {
-        if (name === "description") rule.description = value;
+        if (name === "command") rule.command = value;
+        else if (name === "description") rule.description = value;
         else if (name === "restat") rule.restat = true;
         else if (name === "generator") rule.generator = true;
         else if (name === "pool") rule.pool = value;

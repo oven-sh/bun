@@ -1,9 +1,10 @@
 /**
  * A codegen command on a Windows host runs through `cmd /c`, and cmd.exe refuses a command line over 8191 characters.
- * The list of every `.bind.ts` file, on the command line, is over 10000 (#48301). So configure writes that list to a
- * file (writeBindgenSources in scripts/build/codegen.ts), the two steps that read it take `--sources=@<file>`
- * (listOption in src/codegen/helpers.ts), and Ninja.build() holds every `hostShell` rule's edges to a budget on every
- * host, because CI configures on Linux and macOS alone.
+ * The list of every `.bind.ts` file did not fit (#48301). So configure writes that list to a file (writeBindgenSources
+ * in scripts/build/codegen.ts), the two steps that read it take `--sources=@<file>` (listOption in
+ * src/codegen/helpers.ts), and Ninja.build() holds every `hostShell` rule's edges to HOST_SHELL_COMMAND_BUDGET on
+ * every host: CI builds the Windows binaries on Linux, so no build of CI runs the `cmd /c` text. The real rules are
+ * registered here (`configure`), so on a Windows test machine the text the guard measures is cmd.exe's.
  */
 import { describe, expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
@@ -11,6 +12,7 @@ import { readFileSync, statSync, utimesSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
+  crateOf,
   emitBindgen,
   registerCodegenRules,
   writeBindgenSources,
@@ -18,7 +20,7 @@ import {
 } from "../../scripts/build/codegen.ts";
 import { registerDirStamps } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type Toolchain } from "../../scripts/build/config.ts";
-import { HOST_SHELL_COMMAND_BUDGET, Ninja, readManifest } from "../../scripts/build/ninja.ts";
+import { HOST_SHELL_COMMAND_BUDGET, Ninja, expand, readManifest } from "../../scripts/build/ninja.ts";
 import { quote } from "../../scripts/build/shell.ts";
 import type { Sources } from "../../scripts/glob-sources.ts";
 import { listOption } from "../../src/codegen/helpers.ts";
@@ -65,7 +67,7 @@ describe("Ninja.build with a hostShell rule", () => {
     const args = "--sources=" + Buffer.alloc(HOST_SHELL_COMMAND_BUDGET, "x").toString();
     expect(() => graph(String(dir)).build(edge("codegen", String(dir), args))).toThrow(
       expect.objectContaining({
-        message: expect.stringContaining("codegen/out.h"),
+        message: expect.stringContaining(resolve(String(dir), "codegen", "out.h")),
         hint: expect.stringContaining(`$args is ${args.length} characters`),
       }),
     );
@@ -76,6 +78,13 @@ describe("Ninja.build with a hostShell rule", () => {
     const long = "--sources=" + Buffer.alloc(HOST_SHELL_COMMAND_BUDGET, "x").toString();
     expect(() => graph(String(dir)).build(edge("codegen", String(dir), "--sources=@list.txt"))).not.toThrow();
     expect(() => graph(String(dir)).build(edge("codegen_bun", String(dir), long))).not.toThrow();
+  });
+
+  test("a rule whose text is cmd /c has to carry the flag", () => {
+    using dir = tempDir("host-shell-budget-flag", {});
+    const graph = () => new Ninja({ buildDir: String(dir) });
+    expect(() => graph().rule("copy_exe", { command: 'cmd /c "copy /Y $in $out"' })).toThrow("without hostShell");
+    expect(() => graph().rule("copy_exe", { command: 'cmd /c "copy /Y $in $out"', hostShell: true })).not.toThrow();
   });
 
   test("counts $in and $out", () => {
@@ -175,12 +184,33 @@ describe("the list of .bind.ts files", () => {
     expect(statSync(path).mtime).toEqual(earlier);
   });
 
+  /** Every `.bind.ts` under src/, as glob-sources.ts finds them for emitBindgen. */
+  function repoBindFiles(cfg: Config): string[] {
+    return Array.from(new Bun.Glob("src/**/*.bind.ts").scanSync({ cwd: cfg.cwd }), p => resolve(cfg.cwd, p)).sort();
+  }
+
+  test("on the command line, as it was, it fails configure on the real codegen rules", () => {
+    using dir = tempDir("bindgen-sources-inline", {});
+    const { cfg, n } = configure(String(dir));
+    const bindgen = repoBindFiles(cfg);
+    const inline = `--sources=${bindgen.map(src => `${crateOf(src)}=${src}`).join(",")}`;
+    expect(inline.length).toBeGreaterThan(HOST_SHELL_COMMAND_BUDGET);
+    for (const rule of ["codegen", "codegen_bun"] as const) {
+      expect(() =>
+        n.build({
+          outputs: [resolve(cfg.codegenDir, `${rule}.h`)],
+          rule,
+          inputs: bindgen,
+          vars: { cwd: cfg.cwd, desc: rule, args: inline },
+        }),
+      ).toThrow("over the budget");
+    }
+  });
+
   test("leaves the bindgen command within the budget for every .bind.ts of the repository", () => {
     using dir = tempDir("bindgen-sources-repo", {});
     const { cfg, n, o, dirStamp } = configure(String(dir));
-    const bindgen = Array.from(new Bun.Glob("src/**/*.bind.ts").scanSync({ cwd: cfg.cwd }), p =>
-      resolve(cfg.cwd, p),
-    ).sort();
+    const bindgen = repoBindFiles(cfg);
     expect(bindgen.length).toBeGreaterThan(100);
     const bindgenSources = writeBindgenSources(resolve(String(dir), "bindgen-sources.txt"), bindgen);
 
@@ -193,13 +223,18 @@ describe("the list of .bind.ts files", () => {
       bindgenSources,
     });
 
-    const edge = readManifest(n.toString()).edges.find(edge =>
+    const manifest = readManifest(n.toString());
+    const edge = manifest.edges.find(edge =>
       edge.outputs.includes(n.rel(resolve(cfg.codegenDir, "GeneratedBindings+Tables.h"))),
     )!;
     expect(edge.bindings.args).toContain(`--sources=@${bindgenSources.path}`);
     expect(edge.bindings.args).not.toContain(".bind.ts");
-    expect(edge.bindings.args.length).toBeLessThan(1024);
     expect(edge.implicitInputs).toContain(n.rel(bindgenSources.path));
+    // The command as this host's rule text expands it: cmd.exe's own on a Windows machine.
+    const command = expand(manifest.rules.get("codegen")!.command, name =>
+      name === "in" ? edge.inputs.join(" ") : name === "out" ? edge.outputs.join(" ") : (edge.bindings[name] ?? ""),
+    );
+    expect(command.length).toBeLessThan(1024);
     expect(
       readFileSync(bindgenSources.path, "utf8")
         .split("\n")

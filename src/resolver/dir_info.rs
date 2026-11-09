@@ -406,8 +406,7 @@ pub use Flags as Flag;
 // COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 
-/// What the resolver does with the map besides `put_slot`. As there, a write that gives a directory another answer
-/// moves `resolution_epoch`.
+/// The map as the resolver writes it: a write that gives a directory another answer moves `resolution_epoch`.
 pub(crate) struct Map<'a>(pub(crate) &'a mut HashMap);
 
 impl<'a> Map<'a> {

@@ -1,7 +1,4 @@
-//! A bounded memo of resolver answers, valid while [`crate::resolution_epoch`] stands.
-//!
-//! An answer is kept only if its resolver run read nothing but the caches (`Resolver::dir_cache_misses`), and every write
-//! to those caches moves the epoch. What one VM alone reads besides them moves that VM's memo: [`Memo::forget`].
+//! A memo of the answers that the resolver read from its caches. A write to those moves [`crate::resolution_epoch`].
 
 use bun_core::{WTFString, WTFStringImplStruct};
 
@@ -67,9 +64,7 @@ const FIRST_SIGHTS: usize = 64;
 
 /// In `Way::kind`, above the bits of a `Kind`: the entry answered since it was put.
 const ANSWERED: u8 = 1 << 7;
-/// An entry that has not answered yet is replaced at every one of this many tries, and kept at the others. A pair that
-/// comes back once is no better than one that was kept and not asked for since, and the strings of an entry are out of
-/// the CPU cache by the time it is replaced. So a program that resolves each pair twice replaces few entries.
+/// An entry that has not answered yet makes way at one try of this many: a pair that comes back once is no better.
 const TRIES_PER_UNANSWERED_ENTRY: u8 = 8;
 
 /// In a mark, beside 7 bits of the tag: the pair is never kept.
@@ -215,8 +210,7 @@ impl<T: Text + ?Sized, A: Answer> Memo<T, A> {
             .collect();
     }
 
-    /// After `Lookup::Repeated` or `Lookup::New`: keeps the answer, over the less recently used entry. Not at every
-    /// call if that entry has not answered yet: see `TRIES_PER_UNANSWERED_ENTRY`.
+    /// After `Lookup::Repeated` or `Lookup::New`: keeps the answer, as `TRIES_PER_UNANSWERED_ENTRY` allows.
     pub fn put(&mut self, slot: Slot, specifier: &T, source: &T, kind: Kind, path: &A) {
         self.put_entry(slot, specifier, source, kind, path, true);
     }
@@ -273,8 +267,7 @@ impl<T: Text + ?Sized, A: Answer> Memo<T, A> {
         ways[0].kind = kind.0;
     }
 
-    /// After `Lookup::Stale`: the entry answers again, with `path`. Most often that is the path it has, and then it
-    /// keeps the string it has.
+    /// After `Lookup::Stale`: the entry answers again, and keeps the string it has if `path` is the same.
     pub fn refresh(&mut self, slot: Slot, path: &A) {
         let Some(Bucket([way, _])) = self.buckets.get_mut(slot.bucket as usize) else {
             return;

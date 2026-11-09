@@ -5704,8 +5704,7 @@ impl VirtualMachine {
         self.resolution_memo.answers.hits()
     }
 
-    /// An input of this VM's resolver changed that `bun_resolver::resolution_epoch` does not guard: one that no other
-    /// VM reads. No answer that the resolver gave before is given again without it.
+    /// Call where this VM alone writes an input of its resolver. `bun_resolver::resolution_epoch` guards the others.
     pub fn forget_resolutions(&mut self) {
         self.resolution_memo.forget();
     }
@@ -5914,8 +5913,7 @@ impl VirtualMachine {
         )
     }
 
-    /// `resolve_without_on_resolve` for what the table of built-in names and the memo do not answer.
-    /// `retry_on_not_found`: a lookup that fails drops the directory from the cache and is made once more.
+    /// The resolver's part of `resolve_without_on_resolve`. `retry_on_not_found`: drop the directory and look again.
     fn resolve_with_resolver<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
@@ -6099,8 +6097,7 @@ impl VirtualMachine {
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
     }
 
-    /// `resolve_without_on_resolve` for a pair whose answer the memo keeps or checks: the second resolution of a pair,
-    /// one whose entry is from before the epoch moved, and in builds with assertions every resolution.
+    /// `resolve_without_on_resolve` where the memo keeps or checks what the resolver answers.
     #[inline]
     fn resolve_for_memo<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
@@ -6183,8 +6180,7 @@ impl VirtualMachine {
         Ok(resolved)
     }
 
-    /// The two keys of the memo for a resolution, unless something besides them, the kind of the resolution and
-    /// what `bun_resolver::resolution_epoch` guards shapes the answer.
+    /// The keys of the memo for a resolution. None if more than the keys, the kind and the epoch shapes the answer.
     #[inline]
     fn resolution_memo_keys<'a>(
         &mut self,
@@ -6222,8 +6218,7 @@ impl VirtualMachine {
         use crate::resolution_memo::Use;
         let is_off = bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RESOLUTION_MEMO::get()
             .unwrap_or(false)
-            // Such an executable asks the disk at every resolution whether it has the file
-            // (`StandaloneModuleGraph::resolve_module`), and keeps no record of the answer.
+            // A compiled program asks the disk at every resolution whether it has the file, and keeps no record.
             || self
                 .standalone_module_graph
                 .is_some_and(|graph| graph.compiled_program().is_some());
@@ -6239,8 +6234,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Whether the memo can keep what the resolver answered for `specifier`. A pair that has an entry has a name that
-    /// no `onLoad` serves.
+    /// Whether the memo can keep the resolver's answer. A pair that has an entry has a name that no `onLoad` serves.
     fn is_resolution_to_remember(
         &self,
         facts: ResolverFacts,
@@ -6289,10 +6283,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Builds with assertions: the resolver answers what it answered for the pair before, unless the epoch moved in
-    /// between, this VM forgot, or one of the two runs read something from the disk that no cache holds. So a write to
-    /// what the resolver reads that moves neither fails here, at the next resolution of a pair from before the write.
-    /// `found`: what the resolver answered, or None if it found nothing.
+    /// Builds with assertions: under one epoch, and without a read that no cache holds, a pair resolves as before.
     #[cold]
     #[inline(never)]
     fn hold_against_last_answer(
@@ -8676,8 +8667,7 @@ fn may_name_a_package(specifier: &bun_core::String) -> bool {
     !specifier.is_8bit() || bun_resolver::is_package_path(specifier.latin1())
 }
 
-/// What the resolver of a VM counts of its reads of the disk: `Resolver::dir_cache_misses` and
-/// `Resolver::unrecorded_reads`.
+/// `Resolver::dir_cache_misses` and `Resolver::unrecorded_reads` of a VM's resolver.
 #[derive(Clone, Copy)]
 struct ResolverReads {
     cache_misses: u32,

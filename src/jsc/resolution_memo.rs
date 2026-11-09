@@ -55,8 +55,7 @@ impl<'a> Borrowed<'a> {
     #[inline]
     pub(crate) fn new(answer: &'a bun_core::WTFStringImplStruct) -> Self {
         let answer = core::ptr::from_ref(answer).cast_mut();
-        // SAFETY: a live impl for `'a`. `adopt` takes over a reference, which `ManuallyDrop` never gives up: it stays
-        // the caller's.
+        // SAFETY: a live impl for `'a`. `ManuallyDrop` never gives up the reference that `adopt` takes over.
         let answer = unsafe { bun_core::WTFString::adopt(answer) };
         Self(
             core::mem::ManuallyDrop::new(answer),

@@ -439,18 +439,14 @@ macro_rules! bufs {
 // (the resolver mutex is one of the two documented guards for the entries singleton).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
-/// Moves when a past resolution can come out differently. One per process, like the directory cache.
-///
-/// Only this crate moves it, in the functions that write what the resolver reads: the map of directory listings, the
-/// map of `DirInfo`, a listing that is read again in place, and the working directory.
+/// Moves when a past resolution can come out differently: in the functions of this crate that write what it reads.
 pub mod resolution_epoch {
     use core::cell::Cell;
     use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
     use bun_core::Environment::CI_ASSERT;
 
-    /// On a cache line of its own: every resolution reads it. A write is a directory that is read again or dropped, a
-    /// `process.chdir()`, or a lookup that fails, which drops a directory.
+    /// On a cache line of its own: every resolution reads it, and a failed lookup or a `process.chdir()` writes it.
     #[repr(align(64))]
     struct Epoch(AtomicU64);
 
@@ -519,8 +515,7 @@ pub mod resolution_epoch {
     }
 
     impl Watch {
-        /// What this thread's own resolver runs did to the caches does not count: a remembered answer has to hold
-        /// then too.
+        /// The bumps of this thread's own resolver runs do not count: a remembered answer has to hold then too.
         pub fn is_undisturbed(&self) -> bool {
             let is_quiet = CHANGES_IN_PROGRESS.load(Ordering::SeqCst) == 0;
             let bumps = BUMPS_OF_THIS_THREAD.with(Cell::get) - self.bumps_of_this_thread;
@@ -664,8 +659,7 @@ pub struct Resolver<'a> {
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
 
-    /// How often a lookup of a directory went past the cache. A run that leaves it as it was read the caches alone, and
-    /// `resolution_epoch` moves when they change: its answer can be remembered.
+    /// How often a lookup of a directory went past the cache. A run that leaves it as it was read the caches alone.
     pub dir_cache_misses: u32,
     /// In builds with assertions: how many of those lookups ended with a read of the disk that no cache holds.
     pub unrecorded_reads: u32,
@@ -4746,8 +4740,7 @@ impl<'a> Resolver<'a> {
         found
     }
 
-    /// `is_recorded`: false at the end if the same call can read the disk again and find something else, because a
-    /// directory that it opened, or has yet to open, is in no cache.
+    /// `is_recorded`: false at the end if a directory that the call opened, or has yet to open, is in no cache.
     fn dir_info_from_disk(
         &mut self,
         enable_logging: bool,

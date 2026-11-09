@@ -636,6 +636,31 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // A path that names no embedded file is read from disk, relative to the working directory: the copy on disk says so.
+  itBundled("compile/EmbeddedRootIgnoresEntryPointSpelling", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/src/entry.ts": /* js */ `
+        for (const spec of ["./w/worker.ts", "./src/w/worker.ts"]) {
+          const w = new Worker(spec);
+          console.log(spec, "->", await new Promise(r => { w.onmessage = e => r(e.data); w.onerror = e => r("error: " + e.message); }));
+          w.terminate();
+        }
+      `,
+      "/src/w/worker.ts": `postMessage("worker:embedded");`,
+    },
+    runtimeFiles: {
+      "/src/w/worker.ts": `postMessage("worker:disk");`,
+    },
+    entryPointsRaw: ["src/entry.ts", "./src/w/worker.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "./w/worker.ts -> worker:embedded\n./src/w/worker.ts -> worker:disk\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   itBundled("compile/WorkerRelativePathTSExtension", {
     backend: "cli",
     compile: true,

@@ -1,6 +1,6 @@
 use super::{
-    ExportId, ExprId, ExprKind, FileIn, Flags, ImportId, PropKey, PropKind, StmtId, StmtKind,
-    Storage, rare,
+    ExportId, ExprFlags, ExprId, ExprKind, FileIn, Flags, ImportId, PropKey, PropKind, StmtId,
+    StmtKind, Storage, rare,
 };
 use crate::atom::{Atom, known};
 
@@ -29,6 +29,25 @@ impl<S: Storage> FileIn<S> {
             ExprKind::String(text) => Some(text),
             _ => None,
         }
+    }
+
+    /// The values in the `with { .. }` object `attributes` that are no string literals. Each is an early error.
+    pub fn import_attribute_values_refused(
+        &self,
+        attributes: ExprId,
+    ) -> impl Iterator<Item = ExprId> + '_ {
+        let props = match self.exprs.get(attributes.idx()).map(|node| node.kind) {
+            Some(ExprKind::Object(props)) => Some(props),
+            _ => None,
+        };
+        let not_string_literal = ExprFlags::TEMPLATE_LITERAL | ExprFlags::PARENTHESIZED;
+        let values = props.into_iter().flat_map(|props| props.iter());
+        let values = values.filter_map(move |prop| self[prop].value.some());
+        values.filter(move |&value| {
+            let is_string = matches!(self[value].kind, ExprKind::String(_))
+                && !self.expr_flags(value).intersects(not_string_literal);
+            !is_string && !matches!(self[value].kind, ExprKind::Missing)
+        })
     }
 
     pub fn find_name_of_loaded_import(&self, name: Atom) -> Option<(Atom, Atom)> {

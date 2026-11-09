@@ -1,0 +1,5 @@
+{
+  "name": "chai",
+  "type": "module",
+  "main": "./index.js"
+}

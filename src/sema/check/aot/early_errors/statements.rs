@@ -289,27 +289,14 @@ impl Checker<'_, '_> {
     }
 
     fn check_import_attribute_values(&mut self, hir: &File<'_>, file: FileId, s: StmtId) {
-        let Some(attributes) = hir.statement_import_attributes(s).some() else {
-            return;
-        };
-        let ExprKind::Object(props) = hir[attributes].kind else {
-            return;
-        };
-        let not_string_literal = ExprFlags::TEMPLATE_LITERAL | ExprFlags::PARENTHESIZED;
-        for p in props.iter() {
-            let Some(value) = hir[p].value.some() else {
-                continue;
-            };
-            let is_string = matches!(hir[value].kind, ExprKind::String(_))
-                && !hir.expr_flags(value).intersects(not_string_literal);
-            if !is_string && !matches!(hir[value].kind, ExprKind::Missing) {
-                let at = (
-                    file,
-                    self.start_of(file, value),
-                    self.end_of_expr(file, value),
-                );
-                self.early_error_at(at, 2858, &[]);
-            }
+        let attributes = hir.statement_import_attributes(s);
+        for value in hir.import_attribute_values_refused(attributes) {
+            let at = (
+                file,
+                self.start_of(file, value),
+                self.end_of_expr(file, value),
+            );
+            self.early_error_at(at, 2858, &[]);
         }
     }
 }

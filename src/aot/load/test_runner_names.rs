@@ -481,25 +481,35 @@ impl NamesOfChai {
         }
     }
 
-    fn may_stand_in(self, import: &Import) -> bool {
-        !import.type_only && import.spec == self.vitest
+    fn may_stand_in(self, import: &Import, bound: &Bound<'_>) -> bool {
+        !import.type_only
+            && import.spec == self.vitest
+            && matches!(bound.parent_of_stmt(import.stmt), Parent::File)
     }
 
     fn holds(self, name: &ImportSpec) -> bool {
         !name.type_only && self.names.contains(&name.imported)
     }
 
-    fn are_imported_in(self, hir: &File<'_>) -> bool {
+    fn are_imported_in(self, hir: &File<'_>, bound: &Bound<'_>) -> bool {
         (hir.imports.iter()).any(|import| {
-            self.may_stand_in(import) && import.named.iter().any(|name| self.holds(&hir[name]))
+            self.may_stand_in(import, bound)
+                && import.named.iter().any(|name| self.holds(&hir[name]))
         })
     }
 
-    fn take_out_of(self, file: &mut FileBuilder, atoms: &Interner<'_>) -> Vec<StmtId> {
+    fn take_out_of(
+        self,
+        file: &mut FileBuilder,
+        (atoms, bound): (&Interner<'_>, &Bound<'_>),
+    ) -> Vec<StmtId> {
         let mut added = Vec::new();
         for index in 0..file.imports.len() {
             let import = file.imports[index];
-            if !self.may_stand_in(&import) {
+            let refused = file
+                .import_attribute_values_refused(import.attributes)
+                .next();
+            if !self.may_stand_in(&import, bound) || refused.is_some() {
                 continue;
             }
             let (start, len) = (import.named.start, import.named.len);
@@ -509,22 +519,27 @@ impl NamesOfChai {
             if kept == len {
                 continue;
             }
-            let of_chai = ImportId(file.imports.len() as u32);
-            for name in &mut names[kept as usize..] {
-                name.import = of_chai;
+            if kept > 0 || import.default != Atom::NONE {
+                let of_vitest = ImportId(file.imports.len() as u32);
+                for name in &mut names[..kept as usize] {
+                    name.import = of_vitest;
+                }
+                file.add_import(Import {
+                    named: Span::new(start, kept),
+                    has_named_imports: kept > 0,
+                    stmt: StmtId::NONE,
+                    ..import
+                });
+                let written = file[import.stmt];
+                let statement = file.stmt(StmtKind::Import(of_vitest), written.start);
+                file[statement].loc = written.loc;
+                added.push(statement);
             }
-            file.imports[index].named = Span::new(start, kept);
-            file.add_import(Import {
-                spec: atoms.intern(MODULE_OF_CHAI),
-                default: Atom::NONE,
-                namespace: Atom::NONE,
-                named: Span::new(start + kept, len - kept),
-                has_named_imports: true,
-                stmt: StmtId::NONE,
-                attributes: ExprId::NONE,
-                ..import
-            });
-            added.push(file.stmt(StmtKind::Import(of_chai), POSITION));
+            let of_chai = &mut file.imports[index];
+            of_chai.spec = atoms.intern(MODULE_OF_CHAI);
+            of_chai.default = Atom::NONE;
+            of_chai.named = Span::new(start + kept, len - kept);
+            of_chai.attributes = ExprId::NONE;
         }
         added
     }
@@ -566,7 +581,8 @@ pub(crate) fn import_used_names<'s>(
     let is_entry_point = file_of_run.is_entry_point;
     let hoisting = hoisted_mocks::plan(request, atoms, is_of_vitest, is_entry_point);
     let names_of_chai = NamesOfChai::new(atoms);
-    if uses.is_empty() && hoisting.is_none() && !names_of_chai.are_imported_in(request.hir) {
+    let imports_chai = names_of_chai.are_imported_in(request.hir, request.bound);
+    if uses.is_empty() && hoisting.is_none() && !imports_chai {
         return TreeChange::Unchanged;
     }
     let with_prefix = |prefix: &[u8]| -> Vec<Atom> {
@@ -581,9 +597,9 @@ pub(crate) fn import_used_names<'s>(
     if let Some(hoisting) = &hoisting {
         hoisting.apply(&mut file, atoms);
     }
-    let of_chai = names_of_chai.take_out_of(&mut file, atoms);
+    let other_names = names_of_chai.take_out_of(&mut file, (atoms, request.bound));
     if uses.is_empty() {
-        put_around_body(&mut file, &of_chai, &[]);
+        put_around_body(&mut file, &other_names, &[]);
         *request.hir = finish_file(file, arena, atoms);
         return TreeChange::Changed;
     }
@@ -714,7 +730,7 @@ pub(crate) fn import_used_names<'s>(
         let init = write_question_of_own_globals(&mut file, atoms);
         added.push(write_answer(&mut file, left_alone, init));
     }
-    added.extend(of_chai);
+    added.extend(other_names);
     put_around_body(&mut file, &added, &[]);
     *request.hir = finish_file(file, arena, atoms);
     TreeChange::Changed
@@ -1448,6 +1464,138 @@ mod tests {
             let described = describe(&format!("a.test.{extension}"), text);
             let expected = format!(" | {written} written | 0 typed");
             assert_eq!(described, expected, "{text}");
+        }
+    }
+
+    fn describe_imports(name: &str, text: &str) -> String {
+        with_loaded_test_run(&[(name, text)], &default_settings(), |_, loaded| {
+            let files = loaded.project(ProjectId::Application).loaded.files();
+            let path = format!("/project/{name}");
+            let file = files
+                .by_path
+                .get(path.as_bytes())
+                .expect("the file is in the program");
+            let hir = files.hir(file);
+            let text_of = |atom: Atom| BStr::new(files.atoms.bytes(atom)).to_string();
+            for (index, import) in hir.imports.iter().enumerate() {
+                for name in import.named.iter() {
+                    assert_eq!(hir[name].import.idx(), index, "{text}");
+                }
+                let later = hir.imports.iter().skip(index + 1);
+                let holds_the_same_with = import.attributes.is_some()
+                    && later
+                        .into_iter()
+                        .any(|other| other.attributes == import.attributes);
+                assert!(!holds_the_same_with, "{text}");
+            }
+            let describe = |import: &bun_sema::hir::Import| {
+                let names = import.named.iter().map(|name| {
+                    let name = hir[name];
+                    let kind = if name.type_only { "type " } else { "" };
+                    match name.imported == name.local {
+                        true => format!("{kind}{}", text_of(name.imported)),
+                        false => {
+                            let (imported, local) = (text_of(name.imported), text_of(name.local));
+                            format!("{kind}{imported} as {local}")
+                        }
+                    }
+                });
+                let names = names.collect::<Vec<String>>().join(", ");
+                let default = match import.default == Atom::NONE {
+                    true => String::new(),
+                    false => format!("{} ", text_of(import.default)),
+                };
+                let clause = match import.has_named_imports {
+                    true => format!("{{{names}}} "),
+                    false => String::new(),
+                };
+                let with = if import.attributes.is_some() {
+                    " with"
+                } else {
+                    ""
+                };
+                format!("{default}{clause}from {}{with}", text_of(import.spec))
+            };
+            let mut described = Vec::new();
+            for statement in hir.ids(hir.body) {
+                let StmtKind::Import(import) = hir[statement].kind else {
+                    continue;
+                };
+                assert_eq!(hir[import].stmt, statement, "{text}");
+                described.push(describe(&hir[import]));
+            }
+            let of_the_body = hir.ids(hir.body).collect::<Vec<_>>();
+            let nested = hir
+                .imports
+                .iter()
+                .filter(|import| import.stmt.is_some() && !of_the_body.contains(&import.stmt));
+            described.extend(nested.map(|import| format!("nested: {}", describe(import))));
+            described.join(" | ")
+        })
+    }
+
+    #[test]
+    fn the_statement_that_names_assert_or_should_imports_them_from_chai() {
+        let rows = [
+            (
+                "js",
+                "import { assert, should as renamed } from 'vitest'; assert; renamed;",
+                "{assert, should as renamed} from chai",
+            ),
+            (
+                "js",
+                "import { before, assert, vi, should } from 'vitest'; before; assert; vi; should;",
+                "{before, vi} from vitest | {assert, should} from chai",
+            ),
+            (
+                "js",
+                "import vitest, { assert } from 'vitest'; vitest; assert;",
+                "vitest from vitest | {assert} from chai",
+            ),
+            (
+                "js",
+                "import vitest, { assert, vi } from 'vitest'; vitest; assert; vi;",
+                "vitest {vi} from vitest | {assert} from chai",
+            ),
+            (
+                "ts",
+                "import { assert, type TestContext } from 'vitest'; assert; let context: TestContext;",
+                "{type TestContext} from vitest | {assert} from chai",
+            ),
+            (
+                "ts",
+                "import { type assert, vi } from 'vitest'; vi; let a: typeof assert;",
+                "{type assert, vi} from vitest",
+            ),
+            (
+                "js",
+                "import { assert } from 'vitest'; import { vi, should } from 'vitest'; assert; vi; should;",
+                "{vi} from vitest | {assert} from chai | {should} from chai",
+            ),
+            (
+                "js",
+                "import { assert, vi } from 'vitest' with {}; assert; vi;",
+                "{vi} from vitest with | {assert} from chai",
+            ),
+            (
+                "js",
+                "import { assert } from 'vitest' with {}; assert;",
+                "{assert} from chai",
+            ),
+            (
+                "js",
+                "import { assert, vi } from 'vitest'; describe; assert; vi;",
+                "{describe as %test:describe} from vitest | {default as %bun} from bun | {vi} from vitest | {assert} from chai",
+            ),
+            (
+                "ts",
+                "declare module 'ambient' { import { assert, vi } from 'vitest'; export const v: typeof vi; }",
+                "nested: {assert, vi} from vitest",
+            ),
+        ];
+        for (extension, text, imports) in rows {
+            let described = describe_imports(&format!("a.test.{extension}"), text);
+            assert_eq!(described, imports, "{text}");
         }
     }
 }

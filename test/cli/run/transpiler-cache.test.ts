@@ -912,6 +912,11 @@ describe.concurrent("`bun test` and `bun run`", () => {
     "import default": ["js", `import v from "vitest"; export function f() { return v; }`, true],
     "import *": ["js", `import * as V from "vitest"; export function f() { return V.vi.mock("./dep.js"); }`, true],
     "import that is not used": ["ts", `import { vi } from "vitest"; export function f() {}`, true],
+    "import of chai names that is not used": [
+      "ts",
+      `import { assert, should } from "vitest"; export function f() {}`,
+      true,
+    ],
     "export *": ["js", `export * from "vitest"; export function f() {}`, true],
     "export * as": ["js", `export * as v from "vitest"; export function f() {}`, true],
     "export from": ["js", `export { vi } from "@jest/globals"; export function f() {}`, true],

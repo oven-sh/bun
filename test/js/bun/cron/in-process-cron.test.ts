@@ -1,5 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("Bun.cron (in-process)", () => {
@@ -494,4 +494,168 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     expect(await Bun.file(m("result")).text()).toBe("ok");
     expect(await Bun.file(m("ghost.fired")).exists()).toBe(false);
   }, 130_000);
+});
+
+// A Worker keeps no list of its jobs: they stop with the Worker's context, as on a main thread without --hot.
+describe.concurrent("Bun.cron (in-process) in a Worker", () => {
+  // process.threadCpuUsage() advances in ticks of about 15.6 ms on Windows.
+  test.skipIf(isWindows).each([
+    ["", []],
+    [" under --hot", ["--hot", "--no-clear-screen"]],
+  ])("to stop many jobs in a Worker%s costs less than to schedule them", async (_, flags) => {
+    using dir = tempDir("cron-stop-cost", {
+      "stop-cost-fixture.js": `
+        const cpuTime = run => {
+          const before = process.threadCpuUsage();
+          const result = run();
+          const { user, system } = process.threadCpuUsage(before);
+          return [user + system, result];
+        };
+        // The CPU time of this thread to stop the jobs, as a fraction of its CPU time to schedule them.
+        const cost = (count, stop) => {
+          const [schedule, jobs] = cpuTime(() => Array.from({ length: count }, () => Bun.cron("* * * * *", () => {})));
+          return cpuTime(() => stop(jobs))[0] / schedule;
+        };
+
+        if (Bun.isMainThread) {
+          const worker = new Worker(import.meta.url);
+          worker.onmessage = ({ data }) => {
+            console.log(JSON.stringify(data));
+            worker.terminate();
+          };
+          // With --hot the main thread does not end by itself.
+          worker.addEventListener("close", () => process.exit(0));
+          worker.postMessage(Number(process.argv[2]));
+        } else {
+          self.onmessage = ({ data: count }) =>
+            postMessage({
+              oldestFirst: cost(count, jobs => {
+                for (let i = 0; i < count; i++) jobs[i].stop();
+              }),
+              newestFirst: cost(count, jobs => {
+                for (let i = count - 1; i >= 0; i--) jobs[i].stop();
+              }),
+            });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, "stop-cost-fixture.js", String(isDebug ? 10_000 : 100_000)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    const { oldestFirst, newestFirst } = JSON.parse(stdout);
+    // A stop costs about a tenth of a schedule. When each stop searched a list of the Worker's jobs,
+    // to stop this many cost up to 3 (debug) or 39 (release) times as much as to schedule them.
+    // A cost that is not below 1 stays in the result, so that a failure shows it.
+    expect({
+      oldestFirst: oldestFirst < 1 || oldestFirst,
+      newestFirst: newestFirst < 1 || newestFirst,
+      exitCode,
+    }).toEqual({ oldestFirst: true, newestFirst: true, exitCode: 0 });
+  });
+
+  // process.cpuUsage() has the same ticks on Windows. A debug build cannot schedule enough jobs in time for the
+  // search to stand out: 3.5 against 0.8 at 10,000 jobs.
+  test.skipIf(isWindows || isDebug)(
+    "to end a Worker that has many jobs costs less than 8 times their schedule",
+    async () => {
+      using dir = tempDir("cron-worker-end-cost", {
+        "end-cost-fixture.js": `
+          if (Bun.isMainThread) {
+            const worker = new Worker(import.meta.url);
+            worker.onmessage = ({ data: schedule }) => {
+              const before = process.cpuUsage();
+              worker.addEventListener("close", () => {
+                const { user, system } = process.cpuUsage(before);
+                console.log((user + system) / schedule);
+              });
+              worker.terminate();
+            };
+            worker.postMessage(Number(process.argv[2]));
+          } else {
+            self.onmessage = ({ data: count }) => {
+              const before = process.threadCpuUsage();
+              for (let i = 0; i < count; i++) Bun.cron("* * * * *", () => {});
+              const { user, system } = process.threadCpuUsage(before);
+              // No collection is in progress when the Worker ends.
+              Bun.gc(true);
+              postMessage(user + system);
+            };
+          }
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "end-cost-fixture.js", "100000"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) console.error(stderr);
+      const cost = Number(stdout);
+      // The CPU time of the process to end the Worker, over the CPU time of the Worker to schedule its jobs: 0.4 to 1.1.
+      // It was about 30 when each job searched the list for itself. Bun 1.4.2 did not search at the end of a Worker.
+      expect({ cost: cost < 8 || cost, exitCode }).toEqual({ cost: true, exitCode: 0 });
+    },
+  );
+
+  test.each([
+    ["worker.terminate()", "scheduled\nclosed\n"],
+    ["process.exit() in a tick", "closed\n"],
+  ])("a Worker that ends with %s stops its jobs", async (how, output) => {
+    using dir = tempDir("cron-worker-end", {
+      "worker-fixture.js": `
+        // LeakSanitizer does not report what a module body allocates (test/leaksan.supp), so the jobs start in a handler.
+        self.onmessage = ({ data: how }) => {
+          const { jest } = Bun.jest();
+          jest.useFakeTimers();
+          jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+          const never = new Promise(() => {});
+          Bun.cron("* * * * *", () => {});
+          Bun.cron("* * * * *", () => never);
+          const stoppedInTick = Bun.cron("* * * * *", () => never);
+          Bun.cron("* * * * *", () => {}).stop();
+          jest.advanceTimersByTime(60_000);
+          stoppedInTick.stop();
+          // The Worker ends with a job that waits for its next tick, two whose tick is pending
+          // (one of them stopped), and one that was stopped before its first tick.
+          if (how === "worker.terminate()") {
+            postMessage("scheduled");
+          } else {
+            Bun.cron("* * * * *", () => process.exit(0));
+            jest.advanceTimersByTime(60_000);
+          }
+        };
+      `,
+      "main-fixture.js": `
+        const worker = new Worker("./worker-fixture.js");
+        worker.onmessage = ({ data }) => {
+          console.log(data);
+          worker.terminate();
+        };
+        worker.addEventListener("close", () => {
+          Bun.gc(true);
+          console.log("closed");
+        });
+        worker.postMessage(process.argv[2]);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main-fixture.js", how],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) console.error(stderr);
+    // A debug build asserts that the Worker listed no job. A build with LeakSanitizer reports a job that was not released.
+    expect({ stdout, exitCode }).toEqual({ stdout: output, exitCode: 0 });
+  });
 });

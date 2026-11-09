@@ -1467,8 +1467,7 @@ impl CronJob {
     /// job until then, or until the promise is collected. Nothing else of the job is kept. With
     /// the tick's callback on the stack (it disposed its own graph) `on_timer_fire` finishes the
     /// stop when the callback returns. `vm_is_going`: the promise will not settle on this VM, so
-    /// the claim is taken back now (the job leaves the list here, where
-    /// `clear_all_for_vm::<Teardown>` would have found it). May free `this`.
+    /// the claim is taken back now: no list keeps the job for `clear_all_for_vm` to find. May free `this`.
     fn stop_with_its_context(this: ThisPtr<Self>, vm: &VirtualMachine, vm_is_going: bool) {
         if this.in_fire.get() {
             return Self::self_stop(this, vm);
@@ -1510,14 +1509,17 @@ impl CronJob {
 
     /// `.reload`: --hot — promises in flight will still settle on this VM, so
     /// the tick's claim is left for onPromiseResolve/Reject to take.
-    /// `.teardown`: worker exit — the event loop is dying, settle never
-    /// happens, so take the claim back here to avoid leaking the struct.
+    /// `.teardown`: the VM ends, so no promise settles on it. A claim that is still out is taken back here.
     pub(crate) fn clear_all_for_vm<const MODE: ClearMode>(vm: &mut VirtualMachine) {
         // Drain the list first so `stop_internal` (which re-enters the VM)
         // doesn't alias the list borrow.
         let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() else {
             return;
         };
+        debug_assert!(
+            vm.worker.is_none() || jobs.capacity() == 0,
+            "a Worker listed a Bun.cron() job"
+        );
         for job in core::mem::take(jobs) {
             let this = job.this_ptr();
             this.stop_internal(vm);
@@ -1756,10 +1758,8 @@ impl CronJob {
             )));
         };
 
-        // The cron_jobs list exists so --hot reload and worker teardown can
-        // stop/release jobs. Main-thread VMs without --hot never enumerate it,
-        // so skip the list ref + append entirely.
-        if vm.hot_reload == HotReload::Hot || vm.worker.is_some() {
+        // The list is for a `--hot` reload to stop the jobs, and only the main VM reloads. An unlisted job stops with its context.
+        if vm.hot_reload == HotReload::Hot && vm.worker.is_none() {
             if let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() {
                 jobs.push(job.clone());
             }

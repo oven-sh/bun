@@ -100,7 +100,7 @@ pub(crate) struct RuntimeState {
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
-    /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
+    /// The main VM's in-process `Bun.cron()` jobs under `--hot`, which a reload must
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
@@ -1697,7 +1697,7 @@ unsafe fn parse_worker_exec_argv_flags(
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —
-/// stops every in-process `Bun.cron()` job registered on
+/// stops every in-process `Bun.cron()` job still listed on
 /// this VM and releases the pending-promise ref so the struct frees (the event
 /// loop is dying; settle callbacks will never run).
 fn stop_cron_for_vm_teardown(vm: &mut VirtualMachine) {

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { tempDir } from "harness";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -72,8 +73,12 @@ describe("fs.Dir", () => {
       });
 
       describe("reading from the directory", () => {
-        it.each([0, 1, false, "foo", {}])("throws if passed a non-function callback (%p)", badCb => {
+        it.each([null, 0, 1, false, "foo", {}])("throws if passed a non-function callback (%p)", badCb => {
+          // toThrow() also takes a rejected promise. toThrowWithCode() takes only a throw from the call.
+          expect(() => dir.read(badCb as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
           expect(() => dir.read(badCb as any)).toThrow(/The "callback" argument must be of type function/);
+          // No read started: a read in flight makes readSync() throw ERR_DIR_CONCURRENT_OPERATION.
+          expect(dir.readSync()).toBeNull();
         });
 
         it("it can be read synchronously, even though no entries exist", () => {
@@ -98,6 +103,13 @@ describe("fs.Dir", () => {
           expect(actual).toBeNull();
         });
       }); // </reading from the directory>
+
+      it.each([null, 0, 1, false, "foo", {}])("close throws if passed a non-function callback (%p)", badCb => {
+        expect(() => dir.close(badCb as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+        expect(() => dir.close(badCb as any)).toThrow(/The "callback" argument must be of type function/);
+        // The directory is still open.
+        expect(dir.closeSync()).toBeUndefined();
+      });
 
       it("can be closed asynchronously", async () => {
         const actual = await dir.close();
@@ -128,6 +140,11 @@ describe("fs.Dir", () => {
           expect(() => dir.close()).toThrow("Directory handle was closed");
         });
 
+        it("close checks the callback before the closed handle", () => {
+          expect(() => dir.close(null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+          expect(() => dir.close(null as any)).toThrow(/The "callback" argument must be of type function/);
+        });
+
         it("attempts to read will throw", () => {
           expect(() => dir.readSync()).toThrow("Directory handle was closed");
           expect(() => dir.read()).toThrow("Directory handle was closed");
@@ -135,6 +152,17 @@ describe("fs.Dir", () => {
       }); // </when closed>
     }); // </when an empty directory is opened>
   }); // </given an empty temp directory>
+
+  it("a read with a non-function callback takes no entry", () => {
+    using tmp = tempDir("dir-read-invalid-callback", { "a.txt": "", "b.txt": "" });
+    using dir = fs.opendirSync(String(tmp));
+    // The first read loads both entries.
+    const first = dir.readSync();
+    expect(() => dir.read(null as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    const second = dir.readSync();
+    expect([first?.name, second?.name].sort()).toEqual(["a.txt", "b.txt"]);
+    expect(dir.readSync()).toBeNull();
+  });
 }); // </fs.Dir>
 
 describe("fs.opendir async validation", () => {

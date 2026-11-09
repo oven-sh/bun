@@ -24,6 +24,7 @@ const tries = {
   realpathSync: () => fs.realpathSync(file) === file,
   realpathNative: () => fs.realpathSync.native(dir) === dir,
   realpathMissing: () => fs.realpathSync(path.join(dir, "none.txt")),
+  streamAnswersAsOpenSync: async () => { const same = []; for (const p of [dir + "/./hello.txt", dir + "/sub/../hello.txt", dir + "//hello.txt"]) { let opened = "opens"; try { fs.closeSync(fs.openSync(p, "r")); } catch (error) { opened = error.code; } const streamed = await new Promise(resolve => fs.createReadStream(p).on("data", () => {}).on("end", () => resolve("opens")).on("error", error => resolve(error.code))); same.push(streamed === opened); } return same.join(); },
 };
 for (const [name, run] of Object.entries(tries)) {
   try { console.log(name + ":", await run()); } catch (error) { console.log(name + ": throws", error.code); }
@@ -56,6 +57,7 @@ missing: throws ENOENT
 realpathSync: true
 realpathNative: true
 realpathMissing: throws ENOENT
+streamAnswersAsOpenSync: true,true,true
 `,
       stderr: "",
       exitCode: 0,

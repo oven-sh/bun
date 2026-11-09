@@ -83,9 +83,9 @@ impl Handler for Finder {
     }
 }
 
-/// oxlint goes by how a character is written in the file. It has to be written as `\x1b` or `\u001b`, also in a string,
-/// or the first character after the backslashes has to be the value as a hexadecimal digit, which is true of `\1`
-/// without a group and of `\cL`. It labels each of them.
+/// oxlint goes by how a character is written in the file. It has to be the character itself (since oxlint 1.91), or
+/// written as `\x1b` or `\u001b`, also in a string, or the first character after the backslashes has to be the value as
+/// a hexadecimal digit, which is true of `\1` without a group and of `\cL`. It labels each of them.
 fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoControlRegex>) {
     let Some(pattern) = run_on_regex_node(e) else {
         return;
@@ -105,15 +105,17 @@ fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoControlRegex>) {
         // `\0`
         let is_octal = is_escaped_digit(start);
         let is_null = is_octal && end == start + 2 && value == 0 && !byte(end).is_some_and(|it| it.is_ascii_digit());
-        if is_null || groups > 0 && value > 1 && u32::from(value) <= groups {
+        // An octal escape that could be a backreference, like `[\2]` with two groups, is left alone.
+        if is_null || is_octal && value > 1 && u32::from(value) <= groups {
             return None;
         }
         let char_span = pattern.span(start, end);
         let source_text = cx.slice(char_span);
+        let is_raw = source_text.first() == Some(&value);
         let after_backslashes = strings::trim_left(source_text, b"\\");
         let is_the_digit = after_backslashes.first().and_then(|it| char::from(*it).to_digit(16)) == Some(u32::from(value));
         let escape = source_text.strip_prefix(b"\\\\").or_else(|| source_text.strip_prefix(b"\\"));
-        if !is_the_digit && !escape.is_some_and(|it| matches!(it.first(), Some(b'x' | b'u'))) {
+        if !is_raw && !is_the_digit && !escape.is_some_and(|it| matches!(it.first(), Some(b'x' | b'u'))) {
             return None;
         }
         let label = move || match (is_octal, char_span.end - char_span.start) {

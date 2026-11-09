@@ -1039,7 +1039,8 @@ const hand: Project[] = [
   },
   {
     name: "no-cycle/exports-itself-on-the-way",
-    about: "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
+    about:
+      "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
     config: noCycle({ maxDepth: 2 }),
     files: {
       "a.ts": `import { bar } from "./m";\nexport const a = bar;\n`,
@@ -2332,7 +2333,7 @@ const hand: Project[] = [
   },
   {
     name: "no-control-regex/place",
-    about: "the first of the characters as they are written; a tab is none",
+    about: "the first of the characters as they are written, or the character itself (oxlint 1.91)",
     config: rules([], { "no-control-regex": "error" }),
     files: {
       "a.js": lines(
@@ -2344,6 +2345,17 @@ const hand: Project[] = [
         `a = new RegExp("\t");`,
         String.raw`a = /[\x00-\x1f]/;`,
         String.raw`a = /\u{1b}/u;`,
+        `a = /a\bb/;`,
+        `a = /\x00/;`,
+        `a = /[\b]/u;`,
+        `a = /\\\b/;`,
+        `a = new RegExp("a\bb");`,
+        `a = RegExp("\x00");`,
+        `a = /(a)(b)\x02/;`,
+        `a = new RegExp("(a)(b)\x02");`,
+        `a = new RegExp("\\n\x1f\bb");`,
+        `a = new RegExp("\u{1F600}\bb");`,
+        `a = / /;`,
       ),
     },
   },
@@ -2379,13 +2391,11 @@ const hand: Project[] = [
         String.raw`new RegExp('\\u{1f}');`,
         String.raw`new RegExp('\0');`,
         String.raw`new RegExp('\\0');`,
-        String.raw`new RegExp('\00');`,
         String.raw`new RegExp('\\00');`,
         String.raw`new RegExp('\1');`,
         String.raw`new RegExp('\\1');`,
         String.raw`new RegExp('\\2(a)');`,
         String.raw`new RegExp('\12');`,
-        String.raw`new RegExp('\01');`,
         String.raw`new RegExp('\\08');`,
         String.raw`new RegExp('\\cL');`,
         String.raw`new RegExp('[\\1]');`,
@@ -2395,6 +2405,18 @@ const hand: Project[] = [
         "new RegExp(`a${b}\\x1f`);",
         "new RegExp(String.raw`\\x1f`);",
         "new RegExp('😀\\x1f');",
+      ),
+    },
+  },
+  {
+    name: "no-control-regex/string-reader",
+    about:
+      "how oxlint 1.87 reads a string: `\\0` and a digit, and a line continuation. oxlint 1.92 reads both differently",
+    config: rules([], { "no-control-regex": "error" }),
+    files: {
+      "a.ts": lines(
+        String.raw`new RegExp('\00');`,
+        String.raw`new RegExp('\01');`,
         "new RegExp('a\\",
         String.raw`\x1f');`,
       ),

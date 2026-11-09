@@ -956,10 +956,21 @@
   "a.js:4:13+1 eslint(valid-typeof)"
  ],
  "no-control-regex/place": [
+  "a.js:10:6+1 eslint(no-control-regex)",
+  "a.js:11:7+1 eslint(no-control-regex)",
+  "a.js:13:18+1 eslint(no-control-regex)",
+  "a.js:14:13+1 eslint(no-control-regex)",
+  "a.js:15:12+1 eslint(no-control-regex)",
+  "a.js:16:23+1 eslint(no-control-regex)",
+  "a.js:17:19+1 eslint(no-control-regex)",
+  "a.js:18:21+1 eslint(no-control-regex)",
   "a.js:1:7+4 eslint(no-control-regex)",
   "a.js:2:6+6 eslint(no-control-regex)",
+  "a.js:3:6+1 eslint(no-control-regex)",
+  "a.js:6:17+1 eslint(no-control-regex)",
   "a.js:7:7+4 eslint(no-control-regex)",
-  "a.js:8:6+6 eslint(no-control-regex)"
+  "a.js:8:6+6 eslint(no-control-regex)",
+  "a.js:9:7+1 eslint(no-control-regex)"
  ],
  "no-regex-spaces/written": [
   "a.ts:12:3+3 eslint(no-regex-spaces)",
@@ -1116,8 +1127,9 @@
  "no-control-regex/written": [
   "a.ts:10:2+2 eslint(no-control-regex)",
   "a.ts:11:2+2 eslint(no-control-regex)",
+  "a.ts:12:8+4 eslint(no-control-regex)",
   "a.ts:13:8+4 eslint(no-control-regex)",
-  "a.ts:14:15+4 eslint(no-control-regex)",
+  "a.ts:14:11+4 eslint(no-control-regex)",
   "a.ts:15:2+3 eslint(no-control-regex)",
   "a.ts:18:13+4 eslint(no-control-regex)",
   "a.ts:19:13+5 eslint(no-control-regex)",
@@ -1127,20 +1139,17 @@
   "a.ts:22:13+7 eslint(no-control-regex)",
   "a.ts:23:13+7 eslint(no-control-regex)",
   "a.ts:25:13+2 eslint(no-control-regex)",
-  "a.ts:27:13+2 eslint(no-control-regex)",
-  "a.ts:28:13+4 eslint(no-control-regex)",
-  "a.ts:29:13+2 eslint(no-control-regex)",
+  "a.ts:27:13+4 eslint(no-control-regex)",
+  "a.ts:28:13+2 eslint(no-control-regex)",
+  "a.ts:29:13+3 eslint(no-control-regex)",
   "a.ts:2:2+2 eslint(no-control-regex)",
   "a.ts:30:13+3 eslint(no-control-regex)",
-  "a.ts:31:13+3 eslint(no-control-regex)",
-  "a.ts:33:13+2 eslint(no-control-regex)",
-  "a.ts:34:13+3 eslint(no-control-regex)",
-  "a.ts:35:13+4 eslint(no-control-regex)",
-  "a.ts:36:14+3 eslint(no-control-regex)",
-  "a.ts:38:13+4 eslint(no-control-regex)",
-  "a.ts:39:13+3 eslint(no-control-regex)",
-  "a.ts:42:17+4 eslint(no-control-regex)",
-  "a.ts:44:1+4 eslint(no-control-regex)",
+  "a.ts:32:13+3 eslint(no-control-regex)",
+  "a.ts:33:13+4 eslint(no-control-regex)",
+  "a.ts:34:14+3 eslint(no-control-regex)",
+  "a.ts:36:13+4 eslint(no-control-regex)",
+  "a.ts:37:13+3 eslint(no-control-regex)",
+  "a.ts:40:17+4 eslint(no-control-regex)",
   "a.ts:5:2+3 eslint(no-control-regex)",
   "a.ts:7:2+2 eslint(no-control-regex)",
   "a.ts:8:3+2 eslint(no-control-regex)"
@@ -9600,5 +9609,10 @@
   "regexp-namespace-interface.ts:10:21+2 typescript(restrict-template-expressions)",
   "sentinel.ts:3:29+14 typescript(restrict-template-expressions)",
   "sentinel.ts:4:29+7 typescript(restrict-template-expressions)"
+ ],
+ "no-control-regex/string-reader": [
+  "a.ts:1:13+2 eslint(no-control-regex)",
+  "a.ts:2:13+2 eslint(no-control-regex)",
+  "a.ts:4:1+4 eslint(no-control-regex)"
  ]
 }

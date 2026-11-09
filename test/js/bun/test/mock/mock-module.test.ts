@@ -1059,7 +1059,19 @@ describe.concurrent("the original of a mocked module", () => {
   });
 
   // Under bun test a plugin is asked before the builtins, so one that serves a builtin serves the original of its mock too.
-  test("importOriginal of a builtin that an onLoad plugin serves", async () => {
+  test("importOriginal of a builtin that a plugin serves, and a module that a plugin names like an original", async () => {
+    const served = `
+      import { expect, test, vi } from "bun:test";
+      import * as os from "node:os";
+
+      const given = vi.hoisted(() => ({}));
+      vi.mock("node:os", async importOriginal => ({ ...(given.original = await importOriginal()), platform: () => "mocked" }));
+
+      test("the plugin is shown the path of the builtin, and what it serves has the name of the builtin", () => {
+        expect([os.platform(), given.original.platform(), given.original.shown]).toEqual(["mocked", "plugin", "os"]);
+        expect(given.original.frame).toMatch(/ node:os:\\d+:\\d+$/);
+      });
+    `;
     await expectFixturesToPass(
       {
         "preload.ts": `
@@ -1069,26 +1081,36 @@ describe.concurrent("the original of a mocked module", () => {
             name: "serves node:os",
             setup(build) {
               build.onLoad({ filter: /^os$/, namespace: "node" }, args => ({
-                exports: { platform: () => "plugin", shown: args.path },
-                loader: "object",
+                contents:
+                  'export const platform = () => "plugin"; export const shown = ' +
+                  JSON.stringify(args.path) +
+                  "; export const frame = new Error().stack.split(String.fromCharCode(10))[1];",
+                loader: "js",
               }));
             },
           });
+          // After the plugin, so that it serves this one too.
+          await import("node:os");
         `,
-        "plugin.test.ts": `
-          import { expect, test, vi } from "bun:test";
-          import * as os from "node:os";
+        "first-mock.test.ts": served,
+        "later-mock.test.ts": served.replace("const given", `vi.mock("not-a-builtin", () => ({}));\n      const given`),
+        "named.test.ts": `
+          import { plugin } from "bun";
+          import { expect, test } from "bun:test";
 
-          const given = vi.hoisted(() => ({}));
-          vi.mock("node:os", async importOriginal => ({ ...(given.original = await importOriginal()), platform: () => "mocked" }));
+          plugin({
+            name: "names a module like an original",
+            setup: build => void build.module("node:zlib?actual", () => ({ exports: { from: "plugin" }, loader: "object" })),
+          });
 
-          test("the plugin is shown the path of the builtin", () => {
-            expect([os.platform(), given.original.platform(), given.original.shown]).toEqual(["mocked", "plugin", "os"]);
+          test("import() asks the plugin for it, and require() of a node: name asks the builtins alone", async () => {
+            const required = require("node:zlib?actual");
+            expect([(await import("node:zlib?actual")).from, typeof required.gzipSync]).toEqual(["plugin", "function"]);
           });
         `,
       },
-      1,
-      ["--preload", "./preload.ts"],
+      3,
+      ["--preload", "./preload.ts", "--isolate"],
     );
   });
 

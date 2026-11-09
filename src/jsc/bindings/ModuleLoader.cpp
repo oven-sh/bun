@@ -661,8 +661,8 @@ static NEVER_INLINE const BunString* builtinOfOriginalModuleKey(Zig::GlobalObjec
     auto builtin = Bun::builtinModuleOfOriginalKey(keyString);
     if (!builtin)
         return nullptr;
-    // A virtual module or a mock that is registered under this very key is runVirtualModule()'s to serve.
-    if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules; virtualModules && virtualModules->contains(keyString))
+    // Outside bun test runVirtualModule() is asked after the builtins: what is registered under this very key is its to serve.
+    if (auto* virtualModules = isBunTest ? nullptr : globalObject->onLoadPlugins.virtualModules; virtualModules && virtualModules->contains(keyString))
         return nullptr;
     original = Bun::toStringView(*builtin);
     return &original;

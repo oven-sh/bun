@@ -1000,7 +1000,7 @@ __attribute__((minsize)) static JSObject* esmExportsBeforePatches(Zig::GlobalObj
     // Reading a builtin's exports would force its lazy ones, and the caller can load it again for free.
     String specifier = mock->specifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (builtinModuleOfOriginalKey(originalModuleKey(specifier)))
+    if (isBuiltinModuleKey(specifier))
         return nullptr;
 
     LoadedModule loaded;
@@ -5197,7 +5197,13 @@ Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObj
 JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad)
 {
     auto fallback = [&]() -> JSC::JSValue {
-        return globalObject->onLoadPlugins.run(globalObject, specifier->toWTFString(BunString::ZeroCopy), onLoad);
+        JSC::JSValue answer = globalObject->onLoadPlugins.run(globalObject, specifier->toWTFString(BunString::ZeroCopy), onLoad);
+        // What a plugin serves for the original of a builtin has the builtin's name, as what it serves for the builtin has.
+        if (answer) [[unlikely]] {
+            if (auto builtin = Zig::builtinModuleOfOriginalKey(specifier->toWTFString(BunString::ZeroCopy)))
+                *specifier = Bun::toStringView(*builtin);
+        }
+        return answer;
     };
 
     if (isBunTest && !Zig::JSMock__isInPreload(globalObject)) {

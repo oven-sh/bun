@@ -196,11 +196,13 @@ export function bunExe() {
 
 export function noCoreCmd(argv: string[]): string[] {
   if (isWindows) return argv;
-  // Linux pipe collectors ignore RLIMIT_CORE; the mapping filter survives exec (core(5)).
-  const command = isLinux
-    ? 'ulimit -c 0 && printf 0 > /proc/self/coredump_filter && exec "$@"'
-    : 'ulimit -c 0 && exec "$@"';
-  return ["/bin/sh", "-c", command, "--", ...argv];
+  // Pipe collectors ignore RLIMIT_CORE; the mapping filter survives exec (core(5)).
+  // Sandboxes may forbid changing it. Still run the test; filtering cannot bound a collector's exit latency.
+  const command =
+    isLinux || isAndroid
+      ? 'ulimit -c 0 2>/dev/null || :; { printf 0 > "/proc/$$/coredump_filter"; } 2>/dev/null || :; exec "$@"'
+      : 'ulimit -c 0 2>/dev/null || :; exec "$@"';
+  return [isAndroid ? "/system/bin/sh" : "/bin/sh", "-c", command, "--", ...argv];
 }
 
 /**

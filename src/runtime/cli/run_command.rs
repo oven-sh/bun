@@ -1677,10 +1677,10 @@ impl Run<'_> {
             }
 
             if ctx.runtime_options.eval.eval_and_print {
-                print_eval_result(vm);
+                print_eval_result_around_before_exit(vm);
+            } else {
+                vm.on_before_exit();
             }
-
-            vm.on_before_exit();
         }
 
         if log_has_msgs(vm) {
@@ -1753,21 +1753,34 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     Output::flush();
 }
 
-/// `--print` in `Run::start`: writes the entry point's result the way `console.log` does.
+/// `--print` in `Run::start`: writes the entry point's result the way `console.log` does. It runs `beforeExit`
+/// itself, because a result that it printed as pending is printed again once that work has settled it.
 #[cold]
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
-    unsafe(link_section = ".text.unlikely.print_eval_result")
+    unsafe(link_section = ".text.unlikely.print_eval_result_around_before_exit")
 )]
-fn print_eval_result(vm: &mut VirtualMachine) {
+fn print_eval_result_around_before_exit(vm: &mut VirtualMachine) {
     let global = vm.global();
     let result = vm
         .entry_point_result
         .value
         .get()
         .unwrap_or(JSValue::UNDEFINED);
+    // The process entry is the outermost frame: a conversion that threw is reported here.
+    let print = |value: JSValue| {
+        crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
+            bun_jsc::ConsoleObject::message_with_type_and_level(
+                bun_jsc::ConsoleObject::MessageType::Log,
+                bun_jsc::ConsoleObject::MessageLevel::Log,
+                global,
+                &[value],
+            )
+        }));
+    };
     let mut took_turn = false;
+    let mut printed_pending = None;
     let to_print = match result.as_any_promise() {
         None => result,
         Some(promise) => {
@@ -1788,24 +1801,26 @@ fn print_eval_result(vm: &mut VirtualMachine) {
                 }
             }
             match promise.status() {
-                PromiseStatus::Pending => result,
+                PromiseStatus::Pending => {
+                    printed_pending = Some(promise);
+                    result
+                }
                 _ => promise.result(vm.jsc_vm()),
             }
         }
     };
-    // The process entry is the outermost frame: a conversion that threw is reported here.
-    crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &[to_print],
-        )
-    }));
+    print(to_print);
     // The result is printed as soon as it settles. What settled it can have started work that runs before `beforeExit`.
     while took_turn && vm.unhandled_error_counter == 0 && vm.is_event_loop_alive() {
         vm.tick();
         vm.auto_tick_active();
+    }
+    vm.on_before_exit();
+    // Printed as pending, settled since. The mark above outlives the turn, so nothing else reports a rejection.
+    if let Some(promise) = printed_pending
+        && promise.status() != PromiseStatus::Pending
+    {
+        print(promise.result(vm.jsc_vm()));
     }
 }
 

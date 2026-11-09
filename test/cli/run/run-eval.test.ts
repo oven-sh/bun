@@ -344,15 +344,23 @@ describe.concurrent("--print of a promise that is pending when the event loop dr
     });
   });
 
-  test("settled by a timer that a beforeExit listener starts: printed once, as pending", async () => {
-    const script = `
-      let settle;
-      const result = new Promise(resolve => { settle = resolve; });
-      process.once("beforeExit", () => setTimeout(() => settle("LATE"), 1));
-      process.on("exit", code => console.log("exit", code));
-      result`;
-    expect(await print(script)).toEqual({ stdout: "Promise { <pending> }\nexit 0\n", stderr: "", exitCode: 0 });
-  });
+  // The extra turn ends with the result still pending. Nothing else reports what it settles to afterwards.
+  test.each(["resolve", "reject"])(
+    "settled by a timer that a beforeExit listener starts: printed as pending, then what %s() got",
+    async settle => {
+      const script = `
+        let settle;
+        const result = new Promise((resolve, reject) => { settle = ${settle}; });
+        process.once("beforeExit", () => setTimeout(() => settle("LATE"), 1));
+        process.on("exit", code => console.log("exit", code));
+        result`;
+      expect(await print(script)).toEqual({
+        stdout: "Promise { <pending> }\nLATE\nexit 0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 
   // The error ends the loop with the timer still ref'd. Nothing of the script runs after it.
   test.each(["resolve", "reject"])("after an unhandled rejection the %s() timer does not run", async settle => {

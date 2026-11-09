@@ -124,6 +124,31 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             });
         }
 
+        /// An import that loads no style sheet still adds its layer to the layer order.
+        fn push_layers_of_unloaded_import(&mut self, wrapping_conditions: &Vec<ImportConditions>) {
+            if wrapping_conditions.iter().any(|c| c.layer.is_some()) {
+                self.push_entry(
+                    CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
+                    wrapping_conditions,
+                );
+            }
+        }
+
+        /// The external import is hoisted out of the anonymous layer that its
+        /// neighbours share, so something else must hold the place of its sublayer.
+        fn push_sublayer_of_external_import(&mut self, conditions: &Vec<ImportConditions>) {
+            let names_a_sublayer = conditions
+                .iter()
+                .skip_while(|c| !c.has_anonymous_layer())
+                .any(|c| c.layer.as_ref().is_some_and(|layer| layer.v.is_some()));
+            if names_a_sublayer {
+                self.push_entry(
+                    CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
+                    conditions,
+                );
+            }
+        }
+
         /// Every visit of a bare "layer" makes a new anonymous layer, also when it
         /// is the same rule or its conditions look the same.
         fn append_conditions(
@@ -186,8 +211,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             //
             // So that's what we do here. See "StyleRuleImport::requestStyleSheet()" in
             // WebKit for more information.
-            //
-            // An import that is not loaded still adds its layer to the layer order.
             for visited_source_index in self.visited.slice() {
                 if visited_source_index.get() == source_index.get() {
                     debug!(
@@ -195,21 +218,19 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         source_index.get(),
                         self.input_file_pretty(source_index),
                     );
-                    self.push_entry(
-                        CssImportOrderKind::Layers(Layers::Owned(Vec::new())),
-                        wrapping_conditions,
-                    );
+                    self.push_layers_of_unloaded_import(wrapping_conditions);
                     return;
                 }
             }
 
-            self.visited.push(source_index);
-
+            // An asset, such as "./icon.svg", is not a style sheet.
             let Some(repr): Option<&BundlerStyleSheet> =
                 self.css_asts[source_index.get() as usize].as_deref()
             else {
-                return; // Sanity check
+                self.push_layers_of_unloaded_import(wrapping_conditions);
+                return;
             };
+            self.visited.push(source_index);
             let top_level_rules = &repr.rules;
 
             // Any pre-import layers come first.
@@ -222,9 +243,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     wrapping_conditions,
                 );
             }
-
-            // `visited.pop()` happens at the end of this function; the early
-            // return above intentionally skips it.
 
             // Iterate over the top-level "@import" rules
             for rule in top_level_rules.v.iter() {
@@ -281,12 +299,14 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                                 fork_conditions(wrapping_conditions, self.arena);
                             let all_import_records = shallow_clone_records(wrapping_import_records);
                             self.append_conditions(&mut all_conditions, import_rule);
+                            self.push_sublayer_of_external_import(&all_conditions);
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path),
                                 conditions: all_conditions,
                                 condition_import_records: all_import_records,
                             });
                         } else {
+                            self.push_sublayer_of_external_import(wrapping_conditions);
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path),
                                 // SAFETY: arena-backed `Vec` header; the pushed

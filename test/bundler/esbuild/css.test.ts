@@ -2722,6 +2722,51 @@ describe("bundler", () => {
       },
       out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}}`,
     },
+    // The external import declares "w" ahead of "v", also with no other copy of "f.css".
+    SublayerOfALoneExternalImportInAnonymousLayer: {
+      files: {
+        "/entry.css": `@import "./a.css" layer;`,
+        "/a.css": /* css */ `
+          @import "https://example.com/ext.css" layer(w);
+          @import "./g.css";
+          @import "./f.css" layer(w);
+        `,
+        "/g.css": `@layer v { .t { color: blue } }`,
+        "/f.css": `.t { color: red }`,
+      },
+      out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{@layer w;@layer v{.t{color:#00f}}@layer w{.t{color:red}}}`,
+    },
+    // An import that does not load a style sheet still declares its layer, each time.
+    LayersOfImportsOfAnAsset: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.svg" layer(x);
+          @import "./a.svg" layer(y);
+          @import "./c.css" layer(y);
+          @import "./b.css" layer(x);
+        `,
+        "/a.svg": `<svg/>`,
+        "/b.css": `.t { color: red }`,
+        "/c.css": `.t { color: blue }`,
+      },
+      out: "@layer x;@layer y{.t{color:#00f}}@layer x{.t{color:red}}",
+    },
+    // An asset under no layer adds nothing, so the statement stays ahead of the external import.
+    ImportOfAnAssetAheadOfAStatement: {
+      files: {
+        "/entry.css": /* css */ `
+          @import "./a.svg" screen;
+          @import "./a.svg" screen;
+          @import "./a.css";
+        `,
+        "/a.svg": `<svg/>`,
+        "/a.css": /* css */ `
+          @layer x;
+          @import "https://example.com/e.css" layer(y);
+        `,
+      },
+      out: `@layer x;@import "https://example.com/e.css" layer(y);`,
+    },
     // Browsers accept an "@import" behind an unknown at-rule, and it applies once.
     ImportBehindAnUnknownAtRule: {
       files: {
@@ -2787,7 +2832,7 @@ describe("bundler", () => {
           .a { c: d }
         `,
       },
-      out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@import "data:text/css,@import \\"https://example.com/other.css\\" layer(v);" layer;@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{.a{c:d}}`,
+      out: `@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@import "data:text/css,@import \\"https://example.com/other.css\\" layer(v);" layer;@import "data:text/css,@import \\"https://example.com/ext.css\\" layer(w);" layer;@layer{@layer w;@layer v;.a{c:d}}`,
     },
     // A copy with no layer does not cover a list under "layer(w)": the list is what declares "w" ahead of "u".
     ListForADuplicateImportUnderLayer: {

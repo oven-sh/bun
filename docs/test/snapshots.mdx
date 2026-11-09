@@ -292,6 +292,8 @@ Bun's format and `pretty-format` print most values the same way. They differ on 
 
 In a file in Jest's format, the stored text also has a `Cause:` line for each error in the `cause` chain, as in Jest 30. Bun has one `Error` for your tests and for the runtime, and Jest on Node.js has two. So a `Proxy` of an error that the runtime created, such as a file system error, gets a `Cause:` line in Bun and none in Jest.
 
+Jest 29 and earlier versions of Bun stored the message alone. If such an entry fails because of a `Cause:` line, run `bun test --update-snapshots` to rewrite it.
+
 A new snapshot file uses Vitest's format if `test` is imported from `"vitest"`, and Bun's format otherwise.
 
 Inline snapshots don't record which runner wrote them, so Bun accepts a match in any runner's format. It writes and updates them in the format of the runner that `test` is imported from.

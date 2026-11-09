@@ -44,10 +44,16 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   readonly #adapter: DatabaseAdapter<any, any, Handle>;
 
   static {
+    const behind = (value: object): object | null =>
+      $isProxyObject(value) ? $getProxyInternalField(value, $proxyFieldTarget) : $getPrototypeOf(value);
     queryOf = value => {
-      while ($isObject(value)) {
+      // A Proxy in a prototype chain can lead back into the chain. `slow` takes every second step and meets `value` there.
+      let slow = value;
+      for (let steps = 1; $isObject(value); steps++) {
         if (#status in value) return value;
-        value = $isProxyObject(value) ? $getProxyInternalField(value, $proxyFieldTarget) : $getPrototypeOf(value);
+        value = behind(value);
+        if (steps % 2 === 0) slow = behind(slow!);
+        if (value === slow) break;
       }
       return undefined;
     };

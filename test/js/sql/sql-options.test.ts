@@ -1013,6 +1013,17 @@ describe("a query keeps its state in private fields", () => {
     }
   });
 
+  test("a prototype chain that a Proxy leads back into has no query", async () => {
+    await using sql = new SQL(":memory:");
+    const prototype = Object.getPrototypeOf(sql`select 1`);
+    const cancelled = Object.getOwnPropertyDescriptor(prototype, "cancelled")!.get!;
+    const object = {};
+    Object.setPrototypeOf(object, new Proxy(new Proxy(object, {}), {}));
+    expect(cancelled.call(object)).toBe(false);
+    expect(prototype.cancel.call(object)).toBe(object);
+    expect(prototype.simple.call(object)).toBe(object);
+  });
+
   test.each(wrappers)("%s has the status of the query, and cancels it", async (_, wrap) => {
     await using sql = new SQL(":memory:");
     const query = sql`select 1 as x`;

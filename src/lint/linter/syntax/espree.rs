@@ -480,6 +480,7 @@ pub(super) fn first_error<'a>(
     checks.keywords_as_identifiers();
     checks.parameters();
     checks.early_errors();
+    // After the early errors: acorn reports one in `b` before it gets to the comma of `<a {...b, c} />`.
     checks.jsx_spreads();
     if checks.is_whole {
         checks.redeclarations();
@@ -1159,9 +1160,7 @@ impl<'a, 'c> Checks<'a, 'c> {
         }
     }
 
-    /// acorn-jsx has no spread child, `<a>{...b}</a>`. After the `...` of an attribute it reads one expression, so
-    /// `<a {...b, c} />` stops at the comma. It reports an error in that expression first, so this runs after the
-    /// checks for those.
+    /// acorn-jsx has no spread child, `<a>{...b}</a>`, and it stops at the comma of `<a {...b, c} />`.
     fn jsx_spreads(&mut self) {
         let file = self.file;
         if file.hir.jsx.is_empty() || !file.language().reads_jsx_spreads_like_acorn() {

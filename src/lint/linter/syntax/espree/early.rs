@@ -230,8 +230,7 @@ impl<'a> Checks<'a, '_> {
         }
     }
 
-    /// `<a>{b, c}</a>`, `<a b={c, d} />`, `<a {...b, c} />`. acorn-jsx accepts the first two. For the third see
-    /// [`Checks::jsx_spreads`].
+    /// `<a>{b, c}</a>`, `<a b={c, d} />`, `<a {...b, c} />`. acorn-jsx accepts the first two.
     fn sequences_in_jsx(&mut self) {
         let file = self.file;
         let message = "Sequence expressions cannot be directly nested inside JSX";

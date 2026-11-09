@@ -587,9 +587,7 @@ impl LanguageOptions {
         }
     }
 
-    /// True if the file gets espree's errors for the JSX spreads that acorn-jsx doesn't read: a spread child,
-    /// `<a>{...b}</a>`, and a sequence after the `...` of an attribute, `<a {...b, c} />`. Without a config there's no
-    /// ESLint to match, so such a file is linted.
+    /// acorn-jsx doesn't read `<a>{...b}</a>` or `<a {...b, c} />`. Without a config there's no ESLint to match.
     pub fn reads_jsx_spreads_like_acorn(&self) -> bool {
         self.parser == Parser::Espree
             && self.rejects_what_parser_rejects

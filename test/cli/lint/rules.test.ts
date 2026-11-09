@@ -109,9 +109,7 @@ test.concurrent("`>` and `}` in JSX text are parse errors, worded like espree's"
   expect(exitCode).toBe(1);
 });
 
-// Each error is what ESLint 10.12.0 reports. acorn-jsx has no spread child, after the `...` of an attribute it reads one
-// expression, and before ES2015 acorn has no `...` token. Without a config of ESLint there's no parser to match, so a
-// file with a spread child or with a sequence after the `...` is linted.
+// Each error is what ESLint 10.12.0 reports. Without a config of ESLint there's no parser to match.
 test.concurrent("a JSX spread that acorn-jsx doesn't parse is a parse error, worded like espree's", async () => {
   const config = `export default [
     { files: ["*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } },
@@ -173,8 +171,7 @@ test.concurrent("a JSX spread that acorn-jsx doesn't parse is a parse error in a
   ]);
 });
 
-// What the `import` rules know about a file is cached by how the importer's config parses it. `a.mjs` has no config:
-// its report shows that the rule runs for it. With an oxlint config, `import/no-deprecated` reads that cache.
+// `a.mjs` has no config, and its report shows that the rule runs for it. `import/no-deprecated` uses the same cache.
 test.concurrent("only an importer with an ESLint config gets the parse error of a JSX spread child", async () => {
   const config = `export default [{
     plugins: { import: { meta: { name: "eslint-plugin-import" } } },

@@ -6885,3 +6885,108 @@ describe("same-target destructuring with an unstable target", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A name in the body of a `with` statement is looked up on the object first,
+// which can run a getter or a proxy trap. The lookup stays where nothing uses
+// its value, and it keeps its place among the statements around it.
+describe("name lookups inside a with statement", () => {
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minify: { syntax: true } });
+  const minify = source => minifier.transformSync(source);
+
+  it("keeps an unused typeof of a name", () => {
+    expect(minify("with (o) { typeof x; }")).toBe("with(o)typeof x;");
+    expect(minify('with (o) { typeof x === "undefined"; }')).toBe("with(o)typeof x;");
+    expect(minify("with (o) { void typeof x; }")).toBe("with(o)typeof x;");
+    expect(minify("with (o) { [typeof x]; }")).toBe("with(o)typeof x;");
+    expect(minify("with (o) { typeof x ? a() : b(); }")).toBe("with(o)typeof x,a();");
+    expect(minify("with (o) { if (typeof x) {} }")).toBe("with(o)typeof x;");
+    expect(minify("with (o) { (function () { typeof x; })(); }")).toBe("with(o)(function(){typeof x})();");
+  });
+
+  it("does not fold a typeof of a name", () => {
+    expect(minify("with (o) { y = !typeof x; }")).toBe("with(o)y=!typeof x;");
+    expect(minify("with (o) { y = void typeof x; }")).toBe("with(o)y=void typeof x;");
+    expect(minify('with (o) { y = void (typeof x !== "undefined" && x); }')).toBe('with(o)y=void(typeof x<"u"&&x);');
+    expect(minify("with (o) { y = (typeof x, 1); }")).toBe("with(o)y=(typeof x,1);");
+  });
+
+  it("keeps an unused read of a var that the body declares", () => {
+    expect(minify("function f(o) { with (o) { var x; x; typeof x; } }")).toBe(
+      "function f(o){with(o){var x;x;typeof x}}",
+    );
+    expect(minify("function f(o) { with (o) { { var x; x; } } }")).toBe("function f(o){with(o){var x;x}}");
+    expect(minify("function f(o) { with (o) { for (var x in y) { x; } } }")).toBe(
+      "function f(o){with(o)for(var x in y)x}",
+    );
+    // The function declares the name too.
+    expect(minify("function f(o) { var x; with (o) { var x; x; } }")).toBe("function f(o){var x;with(o){var x;x}}");
+    // Two blocks of the body declare the name.
+    expect(minify("function f(o) { with (o) { { var x; } { var x; x; } } }")).toBe(
+      "function f(o){with(o){var x;{var x;x}}}",
+    );
+    // A labeled statement declares the name.
+    expect(minify("function f(o) { with (o) { l: do var x = 1; while (x, 0); } }")).toBe(
+      "function f(o){with(o)l:do var x=1;while(x,0)}",
+    );
+    expect(minify("function f(o) { with (o) l: var x = 1, y = !typeof x; }")).toBe(
+      "function f(o){with(o)l:var x=1,y=!typeof x}",
+    );
+    // The catch binding of the name is outside the `with` statement.
+    expect(minify("function f(o) { try {} catch (x) { with (o) { var x; x; typeof x; } } }")).toBe(
+      "function f(o){try{}catch(x){with(o){var x;x;typeof x}}}",
+    );
+  });
+
+  it("keeps a call before the lookup of the var that the next statement stores to", () => {
+    expect(minify("function f(o, g) { with (o) { var r; const t = g(); r = t; } return r; }")).toBe(
+      "function f(o,g){with(o){var r;const t=g();r=t}return r}",
+    );
+    expect(minify("function f(o, g) { with (o) { const t = g(); var r = t; } return r; }")).toBe(
+      "function f(o,g){with(o){const t=g();var r=t}return r}",
+    );
+    // At the top level of a file the declaration is printed as an assignment.
+    expect(minify("with (o) { const t = g(); var r = t; }")).toBe("with(o){const t=g();r=t}var r;");
+    // So is the initializer of a `for`-`in` head.
+    expect(minify("function f(o, g) { with (o) { const t = g(); for (var r = t in {}); } return r; }")).toBe(
+      "function f(o,g){with(o){const t=g();r=t;for(var r in{});}return r}",
+    );
+    // Without the `with` statement the call moves into the declaration.
+    expect(minify("function f(o, g) { { const t = g(); var r = t; } return r; }")).toBe(
+      "function f(o,g){var r=g();return r}",
+    );
+  });
+
+  it("keeps a read before the lookup of a var that the body declares", () => {
+    expect(
+      minify("function f(o) { with (o) { var r; let y = 1; o.b = () => y++; const t = y; return [r, t]; } }"),
+    ).toBe("function f(o){with(o){var r;let y=1;o.b=()=>y++;const t=y;return[r,t]}}");
+  });
+
+  it("keeps a property read of a name that no scope declares", () => {
+    expect(minify("with (o) { Math.PI; }")).toBe("with(o)Math.PI;");
+    expect(minify("with (o) { Math.PI; Math.PI; }")).toBe("with(o){Math.PI;Math.PI}");
+    expect(minify("function f(o) { with (o) {} Math.PI; }")).toBe("function f(o){with(o);}");
+
+    const defines = new Bun.Transpiler({
+      loader: "js",
+      minifyWhitespace: true,
+      minify: { syntax: true },
+      define: { "FOO.bar": "1" },
+    });
+    expect(defines.transformSync("with (o) { y = FOO.bar; }")).toBe("with(o)y=FOO.bar;");
+    expect(defines.transformSync("y = FOO.baz; with (o) { y = FOO.bar; }")).toBe("y=FOO.baz;with(o)y=FOO.bar;");
+    expect(defines.transformSync("function f(o) { with (o) {} return FOO.bar; }")).toBe(
+      "function f(o){with(o);return 1}",
+    );
+  });
+
+  it("removes a read that the object cannot see", () => {
+    // Outside the body.
+    expect(minify("typeof x; with (o) {}")).toBe("with(o);");
+    expect(minify("function f(o) { with (o) { var x; } x; typeof x; }")).toBe("function f(o){with(o)var x}");
+    // The name is a binding of the body.
+    expect(minify("with (o) { let x; x; typeof x; }")).toBe("with(o){let x}");
+    expect(minify("with (o) { class x {} x; typeof x; }")).toBe("with(o){class x{}}");
+    expect(minify("with (o) { (function () { var x; x; typeof x; })(); }")).toBe("with(o)(function(){var x})();");
+  });
+});

@@ -1,5 +1,6 @@
 use bun_sema::bind::Parent;
 use bun_sema::fold::is_removed_where_never_run;
+use bun_sema::import_sites::is_in_with_scope;
 use bun_sema::util::SharedSort;
 
 use super::*;
@@ -211,7 +212,9 @@ impl Removable<'_, '_> {
                 UnOp::Typeof => {
                     let name = hir.skip_type_assertions(operand);
                     if matches!(hir[name].kind, ExprKind::Ident(_)) {
-                        return self.is_name_initialized(name);
+                        // Inside a `with` the lookup of the name can run a trap or a getter of the object.
+                        return !is_in_with_scope(self.bound, name)
+                            && self.is_name_initialized(name);
                     }
                     if matches!(decisions.decision(name), Decision::GlobalPath(&[_])) {
                         return false;

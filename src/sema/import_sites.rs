@@ -16,12 +16,11 @@ mod written_arms;
 pub use call_sites::{
     RequireCall, RequireCallForm, does_import_meta_resolve_ask_resolver,
     ends_in_call_that_reads_frame_of_caller, find_module_printed_as_require, find_require_call,
-    is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
+    is_in_with_scope, is_linked_by_bundler, is_module_call_of_plugin, is_name_read_by_transpiler,
     is_name_written_out,
 };
 pub(crate) use call_sites::{
-    call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope, is_process,
-    may_construct_worker,
+    call_site_arguments, call_site_kind, is_free_common_js, is_process, may_construct_worker,
 };
 pub use changed_files::{
     TextsOfFile, find_texts_of_exports, write_from_other_folder, write_start_from_other_folder,

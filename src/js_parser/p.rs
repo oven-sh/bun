@@ -2775,8 +2775,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 js_ast::StmtData::SLocal(mut local) => {
                     if local.decls.len_u32() > 0 {
+                        let is_var = local.kind == js_ast::LocalKind::KVar;
                         let first = &mut local.decls.slice_mut()[0];
-                        if matches!(first.binding.data, js_ast::b::B::BIdentifier(_)) {
+                        if let js_ast::b::B::BIdentifier(id) = first.binding.data {
+                            // Below "with", a `var` is looked up before its initializer runs.
+                            if is_var && self.var_store_asks_with_target(id.r#ref) {
+                                return false;
+                            }
                             if let Some(value) = first.value.as_mut() {
                                 break 'brk js_ast::StoreRef::from_bump(value);
                             }
@@ -3807,7 +3812,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.has_with_scope = true;
             }
 
-            // Marked up the chain like contains_direct_eval, for compute_reserved_names_for_scope.
+            // Marked up the chain like contains_direct_eval, for the renamer and find_symbol.
             let mut scope_iter: Option<js_ast::StoreRef<Scope>> = Some(scope);
             while let Some(mut s) = scope_iter {
                 if s.contains_with {
@@ -6311,19 +6316,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // if the result is unused and the operand has no side effects. However, it
                 // has a special case where if the operand is an identifier expression such
                 // as "typeof x" and "x" doesn't exist, no reference error is thrown so the
-                // operation has no side effects.
+                // operation has no side effects, unless "x" has `must_keep_due_to_with_stmt`.
                 //
                 // Note that there *is* actually a case where "typeof x" can throw an error:
                 // when "x" is being referenced inside of its TDZ (temporal dead zone). TDZ
                 // checks are not yet handled correctly by bun or esbuild, so this possibility is
                 // currently ignored.
                 js_ast::op::Code::UnTypeof => {
-                    if matches!(ex.value.data, js_ast::ExprData::EIdentifier(_))
+                    if let js_ast::ExprData::EIdentifier(ident) = ex.value.data
                         && ex
                             .flags
                             .contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
                     {
-                        return true;
+                        return !ident.must_keep_due_to_with_stmt();
                     }
                     return self.expr_can_be_removed_if_unused_without_dce_check(&ex.value);
                 }
@@ -8047,7 +8052,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.relocated_top_level_vars
             .push(LocRef { loc, ref_: r#ref });
         self.record_usage(r#ref);
-        Expr::init_identifier(r#ref, loc)
+        self.var_store_target(loc, r#ref)
+    }
+
+    /// The target of the assignment that replaces a `var` declaration with an initializer.
+    pub(crate) fn var_store_target(&self, loc: bun_ast::Loc, r#ref: Ref) -> Expr {
+        let target = E::Identifier::init(r#ref)
+            .with_must_keep_due_to_with_stmt(self.var_store_asks_with_target(r#ref));
+        Expr {
+            loc,
+            data: js_ast::ExprData::EIdentifier(target),
+        }
     }
 
     // One statement could potentially expand to several statements

@@ -206,11 +206,14 @@ impl SideEffects {
                         // "typeof x" must not be transformed into if "x" since doing so could
                         // cause an exception to be thrown. Instead we can just remove it since
                         // "typeof x" is special-cased in the standard to never throw.
-                        if matches!(un.value.data, ExprData::EIdentifier(_))
+                        if let ExprData::EIdentifier(ident) = un.value.data
                             && un
                                 .flags
                                 .contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
                         {
+                            if ident.must_keep_due_to_with_stmt() {
+                                return Some(expr);
+                            }
                             return None;
                         }
 

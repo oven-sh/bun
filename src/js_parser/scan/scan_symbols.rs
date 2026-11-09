@@ -21,7 +21,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Every `break 'brk` below assigns `declare_loc` first; the one
         // early-`return` builds its own `FindSymbolResult` without reading it.
         let declare_loc: bun_ast::Loc;
-        let mut is_inside_with_scope = false;
+        // The scope that lists the symbol.
+        let mut found_in: Option<js_ast::StoreRef<Scope>> = None;
         let mut scope_use = true;
         // This function can show up in profiling.
         // That's part of why we do this.
@@ -36,11 +37,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut did_forbid_arguments = false;
 
             while let Some(scope) = current {
-                // Track if we're inside a "with" statement body
-                if scope.kind == js_ast::scope::Kind::With {
-                    is_inside_with_scope = true;
-                }
-
                 // Forbid referencing "arguments" inside class bodies
                 if scope.forbid_arguments && !did_forbid_arguments && name == b"arguments" {
                     let r = js_lexer::range_of_identifier(self.source, loc);
@@ -55,6 +51,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Is the symbol a member of this scope?
                 if let Some(member) = scope.get_member_with_hash(name, hash) {
                     declare_loc = member.loc;
+                    found_in = current;
                     // Unbound globals live in the module scope.
                     scope_use = self.track_scope_uses
                         && (scope.parent.is_some()
@@ -74,6 +71,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(member) = exported.get(name) {
                             if member.data.is_enum() == ts.is_enum_scope {
                                 declare_loc = member.loc;
+                                found_in = current;
                                 // If this is an identifier from a sibling TypeScript namespace, then we're
                                 // going to have to generate a property access instead of a simple reference.
                                 // Lazily-generate an identifier that represents this property access.
@@ -108,7 +106,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Ok(FindSymbolResult {
                     r#ref: Ref::NONE,
                     declare_loc: Some(loc),
-                    is_inside_with_scope,
+                    is_inside_with_scope: self.module_scope().contains_with
+                        && self.lookup_asks_with_target(None, Ref::NONE),
                 });
             }
 
@@ -145,6 +144,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             break 'brk new_ref;
         };
 
+        // Only a file that has a "with" statement takes the walk.
+        let is_inside_with_scope =
+            self.module_scope().contains_with && self.lookup_asks_with_target(found_in, ref_);
+
         // If we had to pass through a "with" statement body to get to the symbol
         // declaration, then this reference could potentially also refer to a
         // property on the target object of the "with" statement. We must not rename
@@ -163,5 +166,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             declare_loc: Some(declare_loc),
             is_inside_with_scope,
         })
+    }
+
+    /// True when a store to `ref_`, a `var` of the current scope, asks a "with" target.
+    pub(crate) fn var_store_asks_with_target(&self, ref_: Ref) -> bool {
+        self.module_scope().contains_with
+            && self.lookup_asks_with_target(Some(self.current_scope), ref_)
+    }
+
+    /// `found_in` lists `ref_`. A `var` belongs to its function scope, so its walk goes on to there.
+    #[cold]
+    #[inline(never)]
+    fn lookup_asks_with_target(
+        &self,
+        found_in: Option<js_ast::StoreRef<Scope>>,
+        ref_: Ref,
+    ) -> bool {
+        let mut current = Some(self.current_scope);
+        while let Some(scope) = current {
+            if scope.kind == js_ast::scope::Kind::With {
+                return true;
+            }
+            if current == found_in {
+                break;
+            }
+            current = scope.parent;
+        }
+        if current.is_none()
+            || self.symbols[ref_.inner_index() as usize].kind != js_ast::symbol::Kind::Hoisted
+        {
+            return false;
+        }
+
+        while let Some(scope) = current {
+            if scope.kind_stops_hoisting() {
+                return false;
+            }
+            if scope.kind == js_ast::scope::Kind::With {
+                return true;
+            }
+            current = scope.parent;
+        }
+        false
     }
 }

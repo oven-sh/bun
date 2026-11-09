@@ -583,7 +583,8 @@ pub(crate) fn is_process(
             && is_free_name(hir, bound, follow_settled_bindings(hir, bound, object), global_objects))
 }
 
-pub(crate) fn is_in_with_scope(bound: &Bound<'_>, ident: ExprId) -> bool {
+/// The innermost scope that makes the lookup of the name `ident` dynamic is a `with` statement or lies in one.
+pub fn is_in_with_scope(bound: &Bound<'_>, ident: ExprId) -> bool {
     let mut scope = bound.dynamic_lookup_scope(NodeData::Expr(ident));
     while let Some(at) = scope {
         let data = &bound.scopes[at.idx()];

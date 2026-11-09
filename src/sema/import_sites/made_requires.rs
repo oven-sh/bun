@@ -2,6 +2,7 @@ use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
     is_free_name,
 };
+use super::parameters::find_values_passed_for_pattern;
 use super::touched_exports::is_only_tested;
 use crate::atom::{Atom, known};
 use crate::bind::{
@@ -12,11 +13,11 @@ use crate::bind::{
 use crate::fold::{Decisions, outermost_cast};
 use crate::hir::{
     BinOp, Branches, Call, Chain, ExprId, ExprKind, File, Flags, FnBody, FnId, FnKind, IdList,
-    ImportedRequire, MemberKey, NodeData, OtherValues, PatKind, StmtKind, UnOp,
+    ImportedRequire, MemberKey, NodeData, OtherValues, PatKind, PropKey, PropKind, StmtKind, UnOp,
 };
 use crate::util::{FxHashMap, FxHashSet, SharedSort};
 use smallvec::SmallVec;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 fn is_node_module(specifier: Atom) -> bool {
     specifier == known::module || specifier == known::node_module
@@ -132,6 +133,15 @@ pub(super) struct Text<'a, 'h, 'b, 'd> {
     pub(super) hir: &'a File<'h>,
     pub(super) bound: &'a Bound<'b>,
     pub(super) decisions: Option<&'a Decisions<'d>>,
+    urls_handed: Option<&'a UrlsHanded>,
+}
+
+type Handed = (SymbolId, Option<Atom>);
+
+#[derive(Default)]
+pub(super) struct UrlsHanded {
+    known: RefCell<FxHashMap<Handed, bool>>,
+    pub(super) found_own_file: Cell<bool>,
 }
 
 impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
@@ -145,6 +155,14 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
             hir,
             bound,
             decisions,
+            urls_handed: None,
+        }
+    }
+
+    pub(super) fn with_urls_handed(self, urls_handed: &'a UrlsHanded) -> Self {
+        Text {
+            urls_handed: Some(urls_handed),
+            ..self
         }
     }
 
@@ -542,12 +560,178 @@ fn find_arguments_of_create_require(
 fn find_made_require(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> Option<OwnRequire> {
     let arguments = find_arguments_of_create_require(text, e, left)?;
     let base = text.hir.ids(arguments).next()?;
-    if names_own_file_behind(text, base, LONGEST_CHAIN_OF_BINDINGS, left) {
+    if names_own_file_behind(text, base, LONGEST_CHAIN_OF_BINDINGS, left)
+        || is_handed_own_file_by_calls_in_sight(text, base, left)
+    {
         Some(OwnRequire::Made)
     } else if starts_at_own_folder(text, base, LONGEST_CHAIN_OF_BINDINGS, left) {
         Some(OwnRequire::MadeForPath(base))
     } else {
         None
+    }
+}
+
+fn find_identifiers_written(hir: &File<'_>, name: Atom) -> Vec<ExprId> {
+    let all = hir.lazy.cells.identifiers_by_name.get_or_init(|| {
+        let exprs = (0..).map(ExprId).zip(hir.exprs.iter());
+        let mut all: Vec<(Atom, ExprId)> = exprs
+            .filter_map(|(e, written)| match written.kind {
+                ExprKind::Ident(name) => Some((name, e)),
+                _ => None,
+            })
+            .collect();
+        all.shared_sort_unstable_by_key(|it| (it.0.0, it.1));
+        all.into_boxed_slice()
+    });
+    let first = all.partition_point(|it| it.0.0 < name.0);
+    let count = all[first..].partition_point(|it| it.0 == name);
+    all[first..first + count].iter().map(|it| it.1).collect()
+}
+
+fn is_handed_own_file_by_calls_in_sight(
+    text: Text<'_, '_, '_, '_>,
+    base: ExprId,
+    left: StepsLeft,
+) -> bool {
+    let Text {
+        hir,
+        bound,
+        decisions,
+        urls_handed,
+    } = text;
+    let (true, Some(decisions), Some(urls_handed)) = (left.passes_late, decisions, urls_handed)
+    else {
+        return false;
+    };
+    let find_written = |name: Atom| find_identifiers_written(hir, name);
+    let mut is_handed = false;
+    let mut walked: Vec<(Handed, usize, bool)> = Vec::new();
+    let mut places: FxHashMap<Handed, usize> = FxHashMap::default();
+    let mut to_ask: Vec<(ExprId, usize)> = vec![(base, usize::MAX)];
+    let refused = 'walk: loop {
+        let Some((value, asker)) = to_ask.pop() else {
+            break None;
+        };
+        let all = StepsLeft::ALL;
+        let mut reaches_own_file =
+            names_own_file_behind(text, value, LONGEST_CHAIN_OF_BINDINGS, all);
+        if !reaches_own_file {
+            let value = hir.skip_type_assertions(value);
+            let (mention, key) = match hir.member_key(value) {
+                Some((object, MemberKey::Name(key))) => {
+                    (hir.skip_type_assertions(object), Some(key))
+                }
+                Some(_) => break Some(asker),
+                None => (value, None),
+            };
+            let (Some(ExprKind::Ident(name)), Binding::Symbol(parameter)) =
+                (expr_kind(hir, mention), bound.binding(mention))
+            else {
+                break Some(asker);
+            };
+            let handed = (parameter, key);
+            let known = urls_handed.known.borrow().get(&handed).copied();
+            match (places.get(&handed), known) {
+                (Some(&place), _) => reaches_own_file = walked[place].2,
+                (None, Some(true)) => reaches_own_file = true,
+                (None, Some(false)) => break Some(asker),
+                (None, None) => {
+                    let place = walked.len();
+                    walked.push((handed, asker, false));
+                    places.insert(handed, place);
+                    if key.is_some() && !is_only_read_by_member(hir, bound, parameter, name) {
+                        break Some(place);
+                    }
+                    let Some((values, path, _)) = find_values_passed_for_pattern(
+                        hir,
+                        bound,
+                        decisions,
+                        mention,
+                        &find_written,
+                        true,
+                    ) else {
+                        break Some(place);
+                    };
+                    for value in values {
+                        let mut keys = path.iter().copied().chain(key);
+                        let written = keys.try_fold(value, |object, key| {
+                            find_value_written_under(hir, object, key)
+                        });
+                        match written {
+                            Some(value) => to_ask.push((value, place)),
+                            None => break 'walk Some(place),
+                        }
+                    }
+                }
+            }
+        }
+        if reaches_own_file {
+            let mut place = asker;
+            while let Some(it) = walked.get_mut(place)
+                && !it.2
+            {
+                it.2 = true;
+                place = it.1;
+            }
+            is_handed |= place == usize::MAX;
+        }
+    };
+    let mut known = urls_handed.known.borrow_mut();
+    if let Some(mut place) = refused {
+        while let Some(it) = walked.get(place) {
+            known.insert(it.0, false);
+            place = it.1;
+        }
+        return false;
+    }
+    known.extend(walked.iter().filter(|it| it.2).map(|it| (it.0, true)));
+    if is_handed {
+        urls_handed.found_own_file.set(true);
+    }
+    is_handed
+}
+
+fn is_only_read_by_member(hir: &File<'_>, bound: &Bound<'_>, object: SymbolId, name: Atom) -> bool {
+    let is_callee = |member: ExprId| match bound.parent_of_expr(member) {
+        Parent::Expr(user) => match expr_kind(hir, user) {
+            Some(ExprKind::Call(call)) => hir[call].callee == member,
+            Some(ExprKind::TaggedTemplate(_)) | None => true,
+            Some(_) => false,
+        },
+        _ => false,
+    };
+    find_identifiers_written(hir, name)
+        .into_iter()
+        .all(|written| {
+            if !bound.is_evaluated_ident(written)
+                || bound.binding(written) != Binding::Symbol(object)
+            {
+                return true;
+            }
+            let Parent::Expr(member) = bound.parent_of_expr(written) else {
+                return false;
+            };
+            hir.member_key(member).is_some_and(|(of, _)| of == written)
+                && !is_callee(member)
+                && is_only_called_or_read(hir, bound, written, 0)
+        })
+}
+
+fn find_value_written_under(hir: &File<'_>, object: ExprId, key: Atom) -> Option<ExprId> {
+    let Some(ExprKind::Object(properties)) = expr_kind(hir, hir.skip_type_assertions(object))
+    else {
+        return None;
+    };
+    let is_plain = properties.iter().all(|id| {
+        matches!(hir[id].kind, PropKind::Init | PropKind::Shorthand)
+            && matches!(hir[id].key, PropKey::Name(_))
+    });
+    let mut written = properties
+        .iter()
+        .filter(|&id| hir[id].key == PropKey::Name(key));
+    match (is_plain, written.next(), written.next()) {
+        (true, Some(property), None) => Some(hir[property].value),
+        _ => None,
     }
 }
 
@@ -1272,6 +1456,7 @@ fn is_given_require_of_file(
         hir,
         bound,
         decisions,
+        ..
     } = text;
     let Some((expression, call)) = find_call_around(hir, bound, function) else {
         return false;
@@ -1406,6 +1591,7 @@ fn follow_each_side_once(
         hir,
         bound,
         decisions,
+        ..
     } = text;
     if !bound.may_name_own_require() && hir.imported_requires.is_empty() {
         return None;

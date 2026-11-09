@@ -14,7 +14,6 @@ mod tests;
 mod touched_exports;
 mod written_arms;
 
-pub use call_sites::is_load_found_late;
 pub use call_sites::{
     RequireCall, RequireCallForm, WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY,
     does_import_meta_resolve_ask_resolver, ends_in_call_that_reads_frame_of_caller,
@@ -26,6 +25,7 @@ pub(crate) use call_sites::{
     call_site_arguments, call_site_kind, is_free_common_js, is_in_with_scope, is_process,
     may_construct_worker,
 };
+pub use call_sites::{is_load_found_late, is_site_of_handed_url};
 pub use changed_files::{
     TextsOfFile, find_texts_of_exports, write_from_other_folder, write_start_from_other_folder,
 };

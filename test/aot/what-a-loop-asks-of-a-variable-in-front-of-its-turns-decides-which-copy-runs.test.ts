@@ -4,7 +4,7 @@
 // `--aot-testing=WhatLoopsAskOfVariablesInFrontIsTakenToHold` sends both answers into the typed copy. Under `--aot-harden=proof-checks` what a test has let pass is asked again at run time: with both the
 // program stops by name. `FailGuesses` stands beside the word on both sides: it lays a road of its own to the loop as written, which the word would leave without one.
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "path";
 import { slot, spawned, unsupported, withoutCrashReport } from "./harness/commands";
@@ -101,7 +101,14 @@ describe.skipIf(!!unsupported)("what a loop asks of a variable in front of its t
           stdout: plain.stdout,
           exitCode: plain.exitCode,
         });
-        expect((await build("held", `--aot-testing=${WORD},${GUESSES}`)).exitCode).toBe(0);
+        const built = await build("held", `--aot-testing=${WORD},${GUESSES}`);
+        // A Bun that is built with assertions or a sanitizer verifies the code of every unit: there the build itself refuses what the word lays.
+        if (isASAN || isDebug) {
+          expect(built.stderr).toContain("a Narrowed stands in a block that has not exactly one incoming edge");
+          expect(built.exitCode).toBe(1);
+          return;
+        }
+        expect(built.exitCode).toBe(0);
         const held = await spawned([executable("held")], folder, { ...env, ...withoutCrashReport });
         expect(held.stderr).toContain(stops);
         expect(held.exitCode).not.toBe(0);

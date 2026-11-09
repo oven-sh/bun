@@ -433,6 +433,7 @@ static AOT::AnswerForName answersForName(JSGlobalObject* globalObject, const Str
         BunString found = { BunStringTag::Dead };
         {
             SetForScope engineAsks(answersOfPluginsOnThisThread().engineAsks, true);
+            SetForScope importStatement(global->onResolvePlugins.isResolvingImportStatement, true);
             answer = Bun__AOT__onResolveAnswersFor(globalObject, &nameArgument, &importerArgument, &found);
         }
         (void)scope.tryClearException();
@@ -853,10 +854,16 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
     auto module = compiledModuleForRequest(globalObject, path, hasImportAttributes, AOT::LoadByName::Require);
     if (module && isReadAsCodeByRequire(globalObject, *module, path))
         module = compiledModuleForRequest(globalObject, makeString(path, "?ts"_s), hasImportAttributes, AOT::LoadByName::Require);
-    if (!module)
-        return false;
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!module) {
+        // Of a file of data that its parser refused the executable holds what the parser said, and no module.
+        BunString pathOfForm = Bun::toString(path);
+        JSValue refused = hasImportAttributes ? JSValue() : JSValue::decode(Bun__compiledProgramErrorOfRefusedData(globalObject, &pathOfForm));
+        if (refused)
+            throwException(globalObject, scope, refused);
+        return false;
+    }
     // In a test run willStoreLoaderOfExtension() has taken the files of the kind out of the program.
     if (JSValue loader = reloadsFilesFromDisk() ? JSValue() : loaderOfProgramForFile(globalObject, path)) {
         JSString* key = jsString(vm, path);

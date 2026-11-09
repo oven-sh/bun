@@ -6,6 +6,7 @@
 // Passes: 1
 // Grows: the build, linear
 // Room of the peak: 192 MB: each line of twenty bytes is a read that every copy of the loop holds, and the loop is built for lists, for views and for whatever comes: 159 | 215 | 341 MB at 200 | 400 | 800: a line, 0.3 MB a holder.
+// Todo on linux arm64: it grows: the peak 159 | 227 | 375 MB, and at most 354 MB at the last: a holder costs 0.36 MB of the peak there.
 const size = Number(process.env.SIZE ?? 4);
 const names = Array.from({ length: size }, (_, place) => `a${place}`);
 const out = [];

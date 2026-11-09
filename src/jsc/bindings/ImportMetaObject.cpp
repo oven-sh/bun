@@ -103,7 +103,15 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     if (index != notFound) {
         StringView view = specifier;
         url = URL::fileURLWithFileSystemPath(view.substring(0, index));
-        url.setQuery(view.substring(index + 1));
+        StringView suffix = view.substring(index + 1);
+        size_t fragment = suffix.find('#');
+        if (fragment == notFound)
+            url.setQuery(suffix);
+        else {
+            if (fragment)
+                url.setQuery(suffix.left(static_cast<unsigned>(fragment)));
+            url.setFragmentIdentifier(suffix.substring(static_cast<unsigned>(fragment) + 1));
+        }
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);
     }

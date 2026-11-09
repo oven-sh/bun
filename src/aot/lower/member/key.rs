@@ -72,11 +72,8 @@ impl FileLowering<'_, '_, '_, '_> {
         Some(self.symbol_key(symbol))
     }
 
-    pub(in crate::lower) fn find_name_that_key_spells(
-        &mut self,
-        member: MemberId,
-    ) -> Option<StringId> {
-        let PropKey::Computed(key) = self.hir.runtime_member_key(member) else {
+    pub(in crate::lower) fn find_name_that_key_spells(&mut self, key: PropKey) -> Option<StringId> {
+        let PropKey::Computed(key) = key else {
             return None;
         };
         let symbol = self.queries.symbol_member_name(self.file, key)?;
@@ -222,7 +219,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(found) = self.file.find_constant_key(computed) {
             return (PropertyName::Constant(found), None);
         }
+        let position = self.position();
         let value = self.lower_expression(computed);
+        if self.builder.is_constant(value) {
+            let constant = expression::find_constant_outside_dead_zone(self.file, computed);
+            if let Some(found) = constant.and_then(|constant| self.file.find_key_of_constant(constant)) {
+                self.set_position(position);
+                return (PropertyName::Constant(found), Some(value));
+            }
+        }
         let key = self.builder.to_property_key(value);
         (PropertyName::Computed(key), Some(value))
     }

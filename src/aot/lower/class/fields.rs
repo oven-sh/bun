@@ -289,9 +289,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) {
         let target = self.find_field_target(class, member);
         let function_name = match (is_defined, target) {
-            (true, FieldTarget::Property(name)) => {
-                Some(GivenName::under_member(&self.file.hir[member], name))
-            }
+            (true, FieldTarget::Property(name)) => Some(self.name_under_member(member, name)),
             (true, FieldTarget::Private(name)) => Some(self.name_under_private_name(class, name)),
             (false, _) => self.find_name_of_decorated_value(member),
         };

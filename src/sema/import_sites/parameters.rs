@@ -192,6 +192,7 @@ fn find_only_name_of(
     bound: &Bound<'_>,
     function: FnId,
     find_written: FindWritten<'_>,
+    may_be_exported: bool,
 ) -> Option<SymbolId> {
     let name = find_name_of(hir, bound, function, find_written)?;
     let mut hoisted = bound.runtime.annex_b_functions().iter();
@@ -201,7 +202,7 @@ fn find_only_name_of(
         && bound.is_stable_binding(name)
         && !bound.is_visible_to_eval(name)
         && !hoisted.any(|it| it.function == function)
-        && !is_exported(hir, bound, name);
+        && (may_be_exported || !is_exported(hir, bound, name));
     is_only_name.then_some(name)
 }
 
@@ -248,7 +249,7 @@ pub fn find_values_passed_for(
     find_written: FindWritten<'_>,
 ) -> Option<SmallVec<[ExprId; 4]>> {
     let (values, path, _) =
-        find_values_passed_for_pattern(hir, bound, decisions, mention, find_written)?;
+        find_values_passed_for_pattern(hir, bound, decisions, mention, find_written, false)?;
     path.is_empty().then_some(values)
 }
 
@@ -258,6 +259,7 @@ pub(super) fn find_values_passed_for_pattern(
     decisions: &Decisions<'_>,
     mention: ExprId,
     find_written: FindWritten<'_>,
+    may_be_exported: bool,
 ) -> Option<(SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool)> {
     let Binding::Symbol(parameter) = bound.binding(mention) else {
         return None;
@@ -304,7 +306,7 @@ pub(super) fn find_values_passed_for_pattern(
     if hir[id].default.is_some() {
         values.push(hir[id].default);
     }
-    let Some(name) = find_only_name_of(hir, bound, function, find_written) else {
+    let Some(name) = find_only_name_of(hir, bound, function, find_written, may_be_exported) else {
         let arguments = find_arguments_where_written(hir, bound, function, find_written)?;
         let mut passed = hir.ids(arguments).take(index + 1);
         if passed.clone().any(is_spread) {

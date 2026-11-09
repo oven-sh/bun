@@ -4269,20 +4269,37 @@ pub enum ResolveMode {
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
+    /// `import.meta.resolve()`, `Bun.resolveSync()`: ESM resolution that loads nothing.
+    EsmResolve,
 }
 
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::EsmResolve)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
-            Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::Esm | Self::EsmResolve => bun_ast::ImportKind::Stmt,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
+        }
+    }
+
+    /// The caller only wants the path; nothing is loaded.
+    #[inline]
+    pub fn only_resolves(self) -> bool {
+        matches!(self, Self::RequireResolve | Self::EsmResolve)
+    }
+
+    /// For functions that load nothing when they resolve as ESM (`import.meta.resolveSync()`).
+    #[inline]
+    pub fn loading_nothing_if_esm(self) -> Self {
+        match self {
+            Self::Esm => Self::EsmResolve,
+            mode => mode,
         }
     }
 
@@ -4320,6 +4337,26 @@ pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::Buffe
 /// the JS thread.
 #[thread_local]
 static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
+
+/// Candidate positions of the `#` that starts a fragment in `./a.mjs#x` or `/a.mjs#x`, last one first, because file and folder names may contain `#`.
+fn fragments_of_path(specifier: &[u8]) -> impl Iterator<Item = usize> + '_ {
+    let is_separator = |byte: u8| byte == b'/' || (cfg!(windows) && byte == b'\\');
+    let after_dots = specifier
+        .strip_prefix(b"..")
+        .or_else(|| specifier.strip_prefix(b"."));
+    let is_path = bun_paths::is_absolute(specifier)
+        || after_dots
+            .and_then(|rest| rest.first())
+            .is_some_and(|&byte| is_separator(byte));
+    let end = match bun_core::strings::index_of_char_usize(specifier, b'?') {
+        _ if !is_path => 0,
+        Some(query) => query,
+        None => specifier.len(),
+    };
+    (1..end)
+        .rev()
+        .filter(move |&mark| specifier[mark] == b'#' && !is_separator(specifier[mark - 1]))
+}
 
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
@@ -5760,7 +5797,7 @@ impl VirtualMachine {
         mode: ResolveMode,
         same_is_no_answer: bool,
     ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
-        let answer = match run_on_resolve(global, specifier, source)? {
+        let answer = match run_on_resolve(global, specifier, source, IS_A_FILE_PATH, mode)? {
             None => return Ok(None),
             Some(Err(error)) => return Ok(Some(Err(error))),
             Some(Ok(answer)) => answer,
@@ -5780,7 +5817,7 @@ impl VirtualMachine {
         drop(answer_utf8);
         let is_own = is_bare
             && (answer.eql(specifier)
-                || match run_on_resolve(global, &answer, source)? {
+                || match run_on_resolve(global, &answer, source, IS_A_FILE_PATH, mode)? {
                     None => false,
                     Some(Ok(_)) => true,
                     Some(Err(error)) => return Ok(Some(Err(error))),
@@ -5798,9 +5835,12 @@ impl VirtualMachine {
             mode,
             global_cache,
         )?;
-        // Not on disk, for an `onLoad` to serve.
-        if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
-            return Ok(Some(Ok(answer)));
+        // Not on disk: either an `onLoad` serves it, or nothing is loaded and the callback's absolute path stands, like the answer of a resolve hook in Node.js.
+        if resolved.is_err() {
+            let stands = mode.only_resolves() && bun_paths::is_absolute(&answer.to_utf8());
+            if stands || global.has_on_load(&answer.to_utf8())? {
+                return Ok(Some(Ok(answer)));
+            }
         }
         Ok(Some(resolved))
     }
@@ -5950,7 +5990,7 @@ impl VirtualMachine {
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
-        let resolve_result = jsc_vm._resolve(
+        let mut resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
@@ -5958,6 +5998,25 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
+        // A file whose name really contains `#` wins; only if that lookup fails is the `#...` part treated as a fragment.
+        if resolve_result.is_err() && mode.is_esm() {
+            for mark in fragments_of_path(specifier_utf8.slice()) {
+                let (path, fragment) = specifier_utf8.slice().split_at(mark);
+                let without_fragment = jsc_vm._resolve(
+                    &mut result,
+                    path,
+                    normalize_source(source_utf8.slice()),
+                    true,
+                    IS_A_FILE_PATH,
+                    global_cache,
+                );
+                if without_fragment.is_ok() {
+                    result.query_string = if fragment.len() > 1 { fragment } else { b"" };
+                    resolve_result = without_fragment;
+                    break;
+                }
+            }
+        }
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
@@ -6020,7 +6079,11 @@ impl VirtualMachine {
         }
 
         if let Some(query) = query_string {
-            *query = bun_core::String::clone_utf8(result.query_string);
+            // Return the fragment as written: `#x`, not the key's `?#x`.
+            *query = bun_core::String::clone_utf8(match result.query_string {
+                [b'?', fragment @ ..] if fragment.first() == Some(&b'#') => fragment,
+                written => written,
+            });
         }
 
         Ok(Ok(bun_core::String::clone_utf8(result.path)))
@@ -8334,6 +8397,8 @@ fn run_on_resolve(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     importer: &bun_core::String,
+    importer_is_a_file: bool,
+    mode: ResolveMode,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let (in_file_namespace, in_another_namespace) = global.has_on_resolve();
     if !in_file_namespace && !in_another_namespace {
@@ -8361,6 +8426,27 @@ fn run_on_resolve(
         Some(query) => &importer[..query],
         None => &importer[..],
     };
+    // For import(), an importer that isn't a file arrives as `/namespace:path`. Folder names may contain a colon, but a namespace never contains a slash.
+    let importer_namespace =
+        match ModuleLoader::namespace_and_path(importer.strip_prefix(b"/").unwrap_or(importer)).0 {
+            b"" => &b"file"[..],
+            [_] if cfg!(windows) => &b"file"[..],
+            namespace
+                if namespace
+                    .iter()
+                    .any(|&byte| bun_paths::resolve_path::is_sep_any(byte)) =>
+            {
+                &b"file"[..]
+            }
+            namespace => namespace,
+        };
+    let resolve_dir = match importer_namespace {
+        b"file" if importer_is_a_file => bun_paths::dirname(importer).unwrap_or(importer),
+        b"file" => importer,
+        _ => b"",
+    };
+    let importer_namespace = bun_core::StringView::borrow_utf8(importer_namespace);
+    let resolve_dir = bun_core::StringView::borrow_utf8(resolve_dir);
     let importer = bun_core::StringView::borrow_utf8(importer);
     let _scope = OnResolveScope::enter(vm);
     let mut answer = None;
@@ -8369,6 +8455,9 @@ fn run_on_resolve(
             &bun_core::StringView::from_bytes(namespace),
             &bun_core::StringView::borrow_utf8(path),
             &importer,
+            &importer_namespace,
+            &resolve_dir,
+            mode,
         )?;
     }
     if answer.is_none() && asks_file_namespace {
@@ -8380,6 +8469,9 @@ fn run_on_resolve(
                 &specifier
             }),
             &importer,
+            &importer_namespace,
+            &resolve_dir,
+            mode,
         )?;
     }
     let Some(on_resolve_plugin) = answer else {
@@ -8444,7 +8536,27 @@ fn run_on_resolve(
         bun_core::String::create_format(format_args!("{}:{}", user_namespace, file_path))
     } else if file_path.starts_with_ascii(b"file://") {
         let path = bun_url::path_from_file_url(&file_path);
-        if path.is_dead() { file_path } else { path }
+        if path.is_dead() {
+            file_path
+        } else {
+            let url = file_path.to_utf8();
+            let mut parts = url.slice().splitn(2, |&byte| byte == b'#');
+            let in_front = parts.next().unwrap_or_default();
+            let fragment = bstr::BStr::new(parts.next().unwrap_or_default());
+            let query = bstr::BStr::new(
+                in_front
+                    .splitn(2, |&byte| byte == b'?')
+                    .nth(1)
+                    .unwrap_or_default(),
+            );
+            match (query.is_empty(), fragment.is_empty()) {
+                (true, true) => path,
+                (false, true) => bun_core::String::create_format(format_args!("{path}?{query}")),
+                (_, false) => {
+                    bun_core::String::create_format(format_args!("{path}?{query}#{fragment}"))
+                }
+            }
+        }
     } else {
         file_path
     };

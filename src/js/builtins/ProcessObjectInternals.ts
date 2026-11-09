@@ -678,7 +678,13 @@ export function rawDebug() {
 // Port of https://github.com/nodejs/node/blob/main/lib/internal/process/warning.js onWarning.
 // The 'warning' listener itself is a native trampoline registered when `process` is created
 // (BunProcess.cpp); this builds the printer it forwards to on the first warning.
-export function createOnWarning(process, redirectPath, disabledArr, writeWarning) {
+export function createOnWarning(
+  // Not `process`: the platform below is the one that this text was built for.
+  processObject,
+  redirectPath,
+  disabledArr,
+  writeWarning,
+) {
   // --disable-warning names/codes as a Set: matches Node's SafeSet lookup
   // and avoids an FFI + utf8() encode per emit.
   const disabled = disabledArr && disabledArr.length ? new Set(disabledArr) : null;
@@ -695,36 +701,7 @@ export function createOnWarning(process, redirectPath, disabledArr, writeWarning
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
     // a reassigned process.stderr is honored and stderr is not materialized when redirected.
-    process.stderr.write(message + "\n");
-  }
-
-  // path.basename(), without node:path: neither the module nor what a program has stored under its name is asked.
-  function basename(path: string) {
-    if (typeof path !== "string")
-      return (
-        process.platform === "win32"
-          ? $bindgen("node_path.bind.ts", "basenameWin32")
-          : $bindgen("node_path.bind.ts", "basenamePosix")
-      )(path);
-    const isWindows = process.platform === "win32";
-    let start = 0;
-    if (isWindows && path.length >= 2 && path.charCodeAt(1) === 58 /* : */) {
-      const letter = path.charCodeAt(0) | 32;
-      if (letter >= 97 /* a */ && letter <= 122 /* z */) start = 2;
-    }
-    let end = -1;
-    for (let i = path.length - 1; i >= start; --i) {
-      const code = path.charCodeAt(i);
-      if (code === 47 /* / */ || (isWindows && code === 92) /* \\ */) {
-        if (end !== -1) {
-          start = i + 1;
-          break;
-        }
-      } else if (end === -1) {
-        end = i + 1;
-      }
-    }
-    return end === -1 ? "" : path.slice(start, end);
+    processObject.stderr.write(message + "\n");
   }
 
   interface ProcessWarning extends Error {
@@ -734,13 +711,13 @@ export function createOnWarning(process, redirectPath, disabledArr, writeWarning
     if (!(warning instanceof Error)) return;
     const name = warning.name || "Warning";
     const isDeprecation = name === "DeprecationWarning";
-    if (isDeprecation && process.noDeprecation) return;
+    if (isDeprecation && processObject.noDeprecation) return;
     const code = warning.code;
     // --disable-warning filters the *print*, not the emit — user listeners
     // still receive the event (Node keeps this check inside onWarning).
     if (disabled && (disabled.has(name) || (code && disabled.has(code)))) return;
-    const trace = process.traceProcessWarnings || (isDeprecation && process.traceDeprecation);
-    let msg = `(node:${process.pid}) `;
+    const trace = processObject.traceProcessWarnings || (isDeprecation && processObject.traceDeprecation);
+    let msg = `(node:${processObject.pid}) `;
     if (code) msg += `[${code}] `;
     // Only touch `.stack` when tracing: it materializes the lazy trace and may run
     // a user Error.prepareStackTrace (Node short-circuits `trace && warning.stack`).
@@ -756,9 +733,13 @@ export function createOnWarning(process, redirectPath, disabledArr, writeWarning
     writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
-      writeOut(
-        `(Use \`${basename(process.argv0 || "node")} --trace-warnings ...\` to show where the warning was created)`,
-      );
+      // The native path.basename(): what a program has stored under that name of node:path is not asked.
+      const program = (
+        process.platform === "win32"
+          ? $bindgen("node_path.bind.ts", "basenameWin32")
+          : $bindgen("node_path.bind.ts", "basenamePosix")
+      )(processObject.argv0 || "node");
+      writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
     }
   };
 }

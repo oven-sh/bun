@@ -6,7 +6,7 @@
 // CHECK-NOT: CallDirect
 // CHECK-LABEL: function {{*}}name="Template" {{*}}kind=BaseConstructor
 // CHECK-NOT: CallDirect
-// CHECK: ElemSet
+// CHECK: PropSet {{*}}key="first-b"
 // CHECK: PropSet {{*}}key="b"
 // CHECK-NOT: CallDirect
 // CHECK-LABEL: function {{*}}name="Chosen" {{*}}kind=BaseConstructor

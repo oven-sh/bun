@@ -1218,7 +1218,14 @@ impl Follower<'_, '_, '_> {
                     written.map(|it| it.1).collect()
                 };
                 let decisions = self.inputs.decisions;
-                match find_values_passed_for_pattern(hir, bound, decisions, name, &find_written) {
+                match find_values_passed_for_pattern(
+                    hir,
+                    bound,
+                    decisions,
+                    name,
+                    &find_written,
+                    false,
+                ) {
                     Some((passed, path, is_left_out)) => {
                         self.values_of_any(passed).and_then(|mut values| {
                             if is_left_out {

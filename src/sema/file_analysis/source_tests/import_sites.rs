@@ -811,6 +811,206 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"var url = given => given || elsewhere; var m = require("module"); var load = m.createRequire(url(x, y)); load("a");"#,
         &["module"],
     ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { const load = createRequire(url); return load("./a.json"); } read(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const read = (url: string) => createRequire(url)("./a.json"); read(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } read(import.meta.url); read(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } function outer(url: string) { return read(url); } outer(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = require("module"); function read(file) { return createRequire(file)("./a.json"); } read(__filename);"#,
+        &["module", "./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; export function read(url: string) { return createRequire(url)("./a.json"); } read(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url });"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url, other: 1 }); read({ url: import.meta.url });"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function h0(url: string) { return createRequire(url)("./a.json"); } function h1(url: string) { return h0(url); } function h2(url: string) { return h1(url); } function h3(url: string) { return h2(url); } function h4(url: string) { return h3(url); } h4(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string, n: number): unknown { return n ? read(url, n - 1) : createRequire(url)("./a.json"); } read(import.meta.url, 1);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function one(url: string): unknown { return two(url) ?? createRequire(url)("./a.json"); } function two(url: string): unknown { return one(url); } one(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } function between(url: string) { return read(url); } function label(p: { url: string }) { return between(p.url); } const LABEL = label({ url: import.meta.url }); export { between as b, label as a, LABEL as t };"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read({ url }: { url: string }) { return createRequire(url)("./a.json"); } read({ url: import.meta.url });"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read({ at: { url } }: { at: { url: string } }) { return createRequire(url)("./a.json"); } read({ at: { url: import.meta.url } });"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function left(url: string) { return read(url); } function right(url: string) { return read(url); } function read(url: string) { return createRequire(url)("./a.json"); } function top(url: string) { return [left(url), right(url)]; } top(import.meta.url);"#,
+        &["./a.json"],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } read(import.meta.url); read(other);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { url = other; return createRequire(url)("./a.json"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } [import.meta.url].map(read);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string = other) { return createRequire(url)("./a.json"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } read(...list);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } "#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string): unknown { return read(url) ?? createRequire(url)("./a.json"); }"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json"); } function outer(url: string) { return read(url); } outer(import.meta.url); outer(other);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { p.url = other; return createRequire(p.url)("./a.json"); } read({ url: import.meta.url });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { change(p); return createRequire(p.url)("./a.json"); } read({ url: import.meta.url });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string; set(): void }) { p.set(); return createRequire(p.url)("./a.json"); } read({ url: import.meta.url, set: change });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url?: string }) { delete p.url; return createRequire(p.url)("./a.json"); } read({ url: import.meta.url });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url, ...other });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url, ["url"]: other });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ get url() { return import.meta.url; } });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } const given = { url: import.meta.url }; read(given);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(p: { url: string }) { return createRequire(p.url)("./a.json"); } read({ url: import.meta.url }); read({ url: other });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read({ url = other }: { url?: string }) { return createRequire(url)("./a.json"); } read({ url: import.meta.url });"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read({ url }: { url: string }) { return createRequire(url)("./a.json"); } read(given);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.cjs"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.ts"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("a"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("./a.json?raw"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("pkg/a.json"); } read(import.meta.url);"#,
+        &[],
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; function read(url: string) { return createRequire(url)("../a.json"); } read(import.meta.url);"#,
+        &["../a.json"],
+    ),
 ];
 
 const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[
@@ -1329,6 +1529,52 @@ fn call_of_require_made_for_own_file_is_site() {
                 _ => None,
             });
             assert_eq!(required.collect::<Vec<&str>>(), specifiers, "{text}");
+        });
+    }
+}
+
+#[test]
+fn require_made_of_handed_url_is_site_where_it_names_json_alone() {
+    let programs = [
+        (
+            r#"function read(url: string) { return createRequire(url)(name); } read(import.meta.url);"#,
+            0,
+        ),
+        (
+            r#"function read(url: string) { const load = createRequire(url); load(name); return load("./a.json"); } read(import.meta.url);"#,
+            1,
+        ),
+        (
+            r#"function read() { return createRequire(import.meta.url)(name); } read();"#,
+            1,
+        ),
+        (
+            r#"function read(url: string, names: string[]) { const load = createRequire(url); for (const name of names) load(name); } read(import.meta.url, ["./a.json", "../a.json"]);"#,
+            1,
+        ),
+        (
+            r#"function read(url: string, names: string[]) { const load = createRequire(url); for (const name of names) load(name); } read(import.meta.url, ["./a.json", "./a.cjs"]);"#,
+            0,
+        ),
+        (
+            r#"function read(url: string) { return createRequire(url)("./" + name + ".json"); } read(import.meta.url);"#,
+            0,
+        ),
+        (
+            r#"function read(url: string) { return createRequire(url)(flag ? "./a.json" : "./b.json"); } read(import.meta.url);"#,
+            1,
+        ),
+        (
+            r#"function read(url: string) { return createRequire(url)(flag ? "./a.json" : "./b.cjs"); } read(import.meta.url);"#,
+            0,
+        ),
+    ];
+    for (text, count) in programs {
+        let text = format!(r#"import {{ createRequire }} from "node:module"; {text}"#);
+        analyzed("a.mts", &text, |s| {
+            let sites = s.analysis.import_sites.iter();
+            let required = sites.filter(|site| matches!(site.kind, ImportSiteKind::Require(_)));
+            assert_eq!(required.count(), count, "{text}");
         });
     }
 }

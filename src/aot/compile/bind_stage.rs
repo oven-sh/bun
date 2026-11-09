@@ -15,7 +15,7 @@ use crate::link::run_steps_beside;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::loaders::{gives_data, loader_by_path};
 use crate::load::source_provider::{RefusedText, SourceProvider};
-use crate::load::sources::parsed_source;
+use crate::load::sources::{JSON_PARSE_ERROR_FOR_BLANK_TEXT, parsed_source};
 use crate::load::{PerProject, ProjectId};
 use crate::module_keys::type_attribute_of;
 use crate::modules::{
@@ -280,10 +280,13 @@ fn keep_where_parsers_refused_data(
     let (files, sources) = (view.files(), view.sources);
     let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
     for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
-        let refused_at = parsed_source(files, file).and_then(|it| it.refused_at.as_ref());
-        let Some((loader, place)) = refused_at else {
+        let source = parsed_source(files, file);
+        let Some((loader, place)) = source.and_then(|it| it.refused_at.as_ref()) else {
             continue;
         };
+        let said_by_bun_run = source
+            .and_then(|it| it.parse_failure.as_deref())
+            .filter(|&it| it == JSON_PARSE_ERROR_FOR_BLANK_TEXT);
         let paths = sources.module_paths(file);
         let message = [
             &b"\""[..],
@@ -294,7 +297,7 @@ fn keep_where_parsers_refused_data(
         provider.keep_where_text_is_refused(&RefusedText {
             path: paths.public_path,
             is_syntax_error: *loader == Loader::Json,
-            message: &message.concat(),
+            message: said_by_bun_run.unwrap_or(&message.concat()),
             line: place.line,
             column: place.column,
             offset: place.offset,

@@ -88,6 +88,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/a-call-of-import-made-where-the-tests-are-done-runs-no-mocked-file.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-call-that-a-body-caught-ends-nothing-where-it-is-made-again.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -689,6 +693,10 @@
     "asan": 240000
   },
   "aot/a-server-keeps-what-its-handlers-use.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-slot-that-a-loop-reads-in-front-of-itself-to-test-it-does-not-claim-to-follow-its-store.test.ts": {
     "default": 60000,
     "asan": 240000
   },

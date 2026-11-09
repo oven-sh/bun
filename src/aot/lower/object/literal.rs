@@ -12,7 +12,7 @@ use super::{ObjectBuilder, builder};
 use crate::builtins::id::BuiltinId;
 use crate::ir::ValueId;
 use crate::ir::generated::LimitId;
-use crate::lower::member::{GivenName, PropertyName};
+use crate::lower::member::PropertyName;
 use crate::lower::{CheckerTypeId, FileLowering, FunctionLowering, captures};
 
 #[derive(Copy, Clone)]
@@ -477,7 +477,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     self.lower_taken_value_for_effect(prop.value);
                     return;
                 };
-                let given = GivenName::under_property(&prop, name);
+                let given = self.name_under_property(&prop, key, name);
                 let value = self.lower_named_evaluation(prop.value, given);
                 self.set_position(prop.pos);
                 let value = self.convert_dictionary_member(dictionary, key, value, prop.value);
@@ -492,7 +492,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let function_key = self.file.scopes.function_key(CodeUnit::Function(function));
                 let captures_home = captures::captures_home_object(self.file, function_key);
                 let home = captures_home.then(|| self.open_head(object));
-                let given = GivenName::under_property(&prop, name);
+                let given = self.name_under_property(&prop, key, name);
                 let closure = self.create_named_closure(function, Some(given), home);
                 let closure = self.convert_dictionary_member(dictionary, key, closure, prop.value);
                 self.add_property(object, name, closure, Some(prop.value));
@@ -505,7 +505,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.define_waiting_elements(object);
                 let head = self.open_head(object);
                 let function = get_method_function(hir, &prop);
-                let given = GivenName::under_property(&prop, name);
+                let given = self.name_under_property(&prop, key, name);
                 let closure = self.lower_method(function, given, head);
                 let (computed_key, constant_key) = name.key_operands();
                 if let Some(key) = constant_key {

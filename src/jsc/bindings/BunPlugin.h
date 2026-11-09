@@ -296,7 +296,17 @@ public:
         {
         }
 
-        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer);
+        // Mirrors `ResolveMode` in VirtualMachine.rs.
+        enum class Asker : uint8_t { Import,
+            Require,
+            RequireResolve,
+            ImportResolve };
+        JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer, const BunString* importerNamespace, const BunString* resolveDir, Asker);
+
+        // Set by import() and consumed by the loader's resolve hook.
+        bool isResolvingImportCall { false };
+        // Cleared while a callback runs: anything the callback resolves is a separate request.
+        bool isResolvingImportStatement { false };
     };
 };
 

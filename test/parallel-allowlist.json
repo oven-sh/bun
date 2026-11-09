@@ -1769,6 +1769,8 @@
     "aot/a-require-made-for-another-folder-finds-there-a-package-left-outside-the-executable.test.ts",
     "aot/the-first-warning-of-an-executable-asks-no-replaced-basename.test.ts",
     "aot/the-types-of-a-file-do-not-depend-on-which-file-was-lowered-before-it.test.ts",
+    "aot/a-slot-that-a-loop-reads-in-front-of-itself-to-test-it-does-not-claim-to-follow-its-store.test.ts",
+    "aot/a-call-of-import-made-where-the-tests-are-done-runs-no-mocked-file.test.ts",
     "aot/a-class-of-buns-modules-over-a-constructor-function-names-it-as-its-base.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",

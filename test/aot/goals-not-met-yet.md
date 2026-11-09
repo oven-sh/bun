@@ -4,9 +4,9 @@ This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of th
 
 43 wrong answers in 14 files stand under a mark. They are no goals, and are not counted among them.
 
-240 goals in 133 files: 162 on what a program reaches of the library and what --trim keeps, 22 on how a build grows with its program, 56 on other things.
+241 goals in 134 files: 162 on what a program reaches of the library and what --trim keeps, 23 on how a build grows with its program, 56 on other things.
 
-81 of them are a yes or a no. Of the others 35 are held to what is reached today by a case beside them, 6 could be, 1 cannot grow worse, 63 are counted at every run and compared between runs, 52 move with the platform and with every change, and 2 say no measured number.
+82 of them are a yes or a no. Of the others 35 are held to what is reached today by a case beside them, 6 could be, 1 cannot grow worse, 63 are counted at every run and compared between runs, 52 move with the platform and with every change, and 2 say no measured number.
 
 5 lines spell a mark from which no case was declared where this page was written. What they mark is not counted.
 
@@ -222,6 +222,7 @@ what does.
 | test/aot/parallel/untyped-speed/product-fields-merged-object-vs-literal.cjs | AccessesUnknown = 0: the count takes in the functions of Bun's library that come into this executable | printed by the run | = 0 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/untyped-speed/product-fields-merged-object-vs-literal.cjs | ValuesInDouble <= 9: the count takes in the functions of Bun's library that come into this executable | printed by the run | <= 9 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/what-a-build-takes-grows-with-its-program/classes-below-one-base-with-a-field-each-and-an-object-of-them-out-of-sight.js | it answers as plain Bun: it grows: the peak 62 \| 97 \| 310 MB, and at most 102 MB at the last; 1.95 times as fast as the program, and at most 1.5: 1,121 \| 2,329 \| 7,050 M instructions. Without the statement on the prototype it grows 1.04 times as fast | no | yes | no number: the goal is a yes or a no |
+| test/aot/parallel/what-a-build-takes-grows-with-its-program/one-loop-reads-many-holders-from-in-front-under-one-counter.js | it answers as plain Bun on linux arm64: it grows: the peak 159 \| 227 \| 375 MB, and at most 354 MB at the last: a holder costs 0.36 MB of the peak there. | no | yes | no number: the goal is a yes or a no |
 | test/aot/parallel/what-a-build-takes-grows-with-its-program/records-that-meet-at-one-parameter-and-as-many-names-read-off-them.js | it answers as plain Bun: it grows: the build takes 1964 \| 2698 \| 5231 M instructions: it grows 1.73 times as fast as its program, and at most 1.5. The peak is within its bound. The text is JavaScript. Under a name that ends in .ts, where the checker gives the parameter a type, it is within the bound | no | yes | no number: the goal is a yes or a no |
 | test/aot/parallel/what-the-printer-asks-below-a-proxy-with-traps/a-set-trap-alone-brings-nothing-of-the-library.js | ImageFunctionsEmitted <= 20: what this program reaches of Bun's library is not cut down to what it uses yet | printed by the run | <= 20 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/perf/everyday-twins.test.ts | compile/aot/perf/everyday-twins > characters.js: characters by index, the caller seen \| characters by a for-of: at most 2 times: 23 times | no | yes | no number: the goal is a yes or a no |

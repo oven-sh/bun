@@ -2562,7 +2562,7 @@ impl<'a> LinkerContext<'a> {
             bits.set(i);
             reach.push(bits);
         }
-        // An import is visited before its importer: without cycles the first round finds everything.
+        // Visit imports before their importers, so that without cycles the first round already reaches the fixpoint.
         let mut order: Vec<usize> = Vec::with_capacity(n);
         let mut seen = vec![false; n];
         let mut stack: Vec<(usize, usize)> = Vec::new();

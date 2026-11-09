@@ -905,8 +905,10 @@ static JSC::JSPromise* importModuleFrom(Zig::GlobalObject* globalObject, const S
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     globalObject->onLoadPlugins.isResolvingImportCall = true;
+    globalObject->onResolvePlugins.isResolvingImportCall = true;
     // The loader takes the referrer for the key of the module that imports.
     JSC::JSPromise* promise = Bun::testFileModuleLoader(globalObject)->requestImportModule(globalObject, JSC::Identifier::fromString(vm, specifier), JSC::Identifier::fromString(vm, Bun::referrerOfImportCallInCodeThatIsNotCompiled(from)), nullptr, nullptr);
+    globalObject->onResolvePlugins.isResolvingImportCall = false;
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 #if ENABLE(AOT)
@@ -1169,9 +1171,21 @@ static BunPlugin::OnLoad::RunningModuleMock* findRunningModuleMock(Zig::GlobalOb
 
 static void giveTurnsSoon(Zig::GlobalObject*);
 
+#if ENABLE(AOT)
+static WTF::BitVector modulesOfLoadThatHaveYetToFinish(Zig::GlobalObject*, JSC::AOT::ModuleID asked, JSC::AOT::LoadOf);
+#endif
+
 static void addToImportChain(Zig::GlobalObject* globalObject, BunPlugin::OnLoad::RunningModuleMock& running, const String& key)
 {
     running.importChain.add(key);
+#if ENABLE(AOT)
+    // The loader sees this load and no further: what the statements of a compiled module lead to is booked here.
+    if (auto module = JSC::getVM(globalObject).hasCompiledCode() ? Bun::compiledModuleForPath(key) : std::nullopt) {
+        running.compiledImportChain.merge(modulesOfLoadThatHaveYetToFinish(globalObject, *module, JSC::AOT::LoadOf::WhatStandsForModule));
+        if (auto own = uncheckedDowncast<JSModuleMock>(running.mock.get())->compiledModuleThatNeverRan; own && *own != module->index())
+            running.compiledImportChain.clear(*own);
+    }
+#endif
     if (size_t query = key.find('?'); query != notFound)
         running.importChainWithoutQuery.add(key.left(query));
     // See giveTurns(). The load that now asks for it has to be fetched first.
@@ -4876,6 +4890,22 @@ JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, 
 // As in keyOfImportWhileModuleMocksRun(): what is imported or required is booked on the chain of every running factory that it does not wait for. Without a factory in the async context the file that wrote it says whose it is.
 static bool isWaitingForModule(Zig::GlobalObject*, BunPlugin::OnLoad::RunningModuleMock&, const String& start, const String& mocked, Vector<String>& unfinished);
 
+// As keyOfModuleThatDoesNotWait() has it: of an import the modules that have yet to finish.
+static WTF::BitVector modulesOfLoadThatHaveYetToFinish(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID asked, JSC::AOT::LoadOf loadOf)
+{
+    WTF::BitVector booked;
+    WTF::BitVector reached = JSC::AOT::modulesThatLoadLeadsTo(globalObject, asked, loadOf);
+    reached.set(asked.index());
+    for (size_t module : reached) {
+        JSC::AOT::ModuleID file(module);
+        // What stands for a mocked module has yet to finish while its factory has yet to settle.
+        auto* mockOfFile = registeredModuleMock(globalObject, JSC::AOT::pathOfFileOfModule(file));
+        if ((mockOfFile && mockOfFile->state != JSModuleMock::State::Settled) || JSC::AOT::isBeingEvaluated(globalObject, file) || !JSC::AOT::isEvaluatedFile(globalObject, file))
+            booked.set(module);
+    }
+    return booked;
+}
+
 uint32_t addToImportChainsOfCompiledFactories(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID importer, JSC::AOT::ModuleID asked, JSC::AOT::LoadByName loadedBy)
 {
     uint32_t moment = loadedBy == JSC::AOT::LoadByName::Import ? ++globalObject->onLoadPlugins.momentOfModuleMocks : globalObject->onLoadPlugins.momentOfModuleMocks;
@@ -4901,22 +4931,12 @@ uint32_t addToImportChainsOfCompiledFactories(Zig::GlobalObject* globalObject, J
     for (auto* mock : unawaited)
         mock->detach(globalObject);
     Vector<JSObject*, 2> callers = factoriesInAsyncContext(globalObject);
-    // As keyOfModuleThatDoesNotWait() has it: of an import the modules that have yet to finish. What is required goes on the chain as it is.
+    // What is required goes on the chain as it is.
     auto listWhatIsBooked = [&](JSC::AOT::LoadOf loadOf) {
+        if (loadedBy != JSC::AOT::LoadByName::Require)
+            return modulesOfLoadThatHaveYetToFinish(globalObject, asked, loadOf);
         WTF::BitVector booked;
-        if (loadedBy == JSC::AOT::LoadByName::Require) {
-            booked.set(asked.index());
-            return booked;
-        }
-        WTF::BitVector reached = JSC::AOT::modulesThatLoadLeadsTo(globalObject, asked, loadOf);
-        reached.set(asked.index());
-        for (size_t module : reached) {
-            JSC::AOT::ModuleID file(module);
-            // What stands for a mocked module has yet to finish while its factory has yet to settle.
-            auto* mockOfFile = registeredModuleMock(globalObject, JSC::AOT::pathOfFileOfModule(file));
-            if ((mockOfFile && mockOfFile->state != JSModuleMock::State::Settled) || JSC::AOT::isBeingEvaluated(globalObject, file) || !JSC::AOT::isEvaluatedFile(globalObject, file))
-                booked.set(module);
-        }
+        booked.set(asked.index());
         return booked;
     };
     Vector<BunPlugin::OnLoad::RunningModuleMock*, 2> factoriesThatBook;
@@ -6999,12 +7019,23 @@ JSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const String& 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     String path = Zig::withoutOriginalModuleQuery(namespaceLength ? key.substringSharingImpl(namespaceLength + 1) : key);
+    size_t suffix = namespaceLength ? notFound : path.find('?');
+    // Module keys store a fragment that has no query as `?#x`. Plugins see `#x`.
+    if (suffix != notFound && suffix + 1 < path.length() && path[suffix + 1] == '#')
+        path = makeString(StringView(path).left(suffix), StringView(path).substring(suffix + 1));
 
-    for (size_t i = 0; i < group->filters.size(); i++) {
-        auto matchResult = group->filters[i]->match(globalObject, path, 0);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (matchResult)
-            matches.callbacks.append(group->callbacks[i].get());
+    while (true) {
+        for (size_t i = 0; i < group->filters.size(); i++) {
+            auto matchResult = group->filters[i]->match(globalObject, path, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (matchResult)
+                matches.callbacks.append(group->callbacks[i].get());
+        }
+        // If no filter matches the path with its query, try the path alone, so /\.mjs$/ also matches a.mjs?v=1 (as in Bun.build and esbuild).
+        if (!matches.callbacks.isEmpty() || suffix == notFound)
+            break;
+        path = path.left(suffix);
+        suffix = notFound;
     }
     if (matches.callbacks.hasOverflowed()) [[unlikely]] {
         JSC::throwOutOfMemoryError(globalObject, scope);
@@ -7073,7 +7104,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
     return virtualModules->contains(path) ? std::optional<String> { path } : std::nullopt;
 }
 
-EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer)
+EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* importer, const BunString* importerNamespace, const BunString* resolveDir, Asker asker)
 {
     Group* groupPtr = this->group(namespaceString ? namespaceString->toWTFString(BunString::ZeroCopy) : String());
     if (groupPtr == nullptr) {
@@ -7123,7 +7154,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
 
         JSC::MarkedArgumentBuffer arguments;
 
-        JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
         const auto& builtinNames = WebCore::builtinNames(vm);
         auto* pathJS = Bun::toJS(globalObject, *path);
         RETURN_IF_EXCEPTION(scope, {});
@@ -7135,8 +7166,24 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, cons
         paramsObject->putDirect(
             vm, builtinNames.importerPublicName(),
             importerJS);
+        auto* importerNamespaceJS = Bun::toJS(globalObject, *importerNamespace);
+        RETURN_IF_EXCEPTION(scope, {});
+        paramsObject->putDirect(vm, Identifier::fromString(vm, "namespace"_s), importerNamespaceJS);
+        JSValue resolveDirJS = jsUndefined();
+        if (!resolveDir->isEmpty()) {
+            resolveDirJS = Bun::toJS(globalObject, *resolveDir);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        paramsObject->putDirect(vm, Identifier::fromString(vm, "resolveDir"_s), resolveDirJS);
+        // import.meta.resolve() and Bun.resolveSync() report what import() would load, so they are "dynamic-import" too.
+        ASCIILiteral kind = asker == Asker::Require ? "require-call"_s
+            : asker == Asker::RequireResolve        ? "require-resolve"_s
+            : isResolvingImportStatement            ? "import-statement"_s
+                                                    : "dynamic-import"_s;
+        paramsObject->putDirect(vm, Identifier::fromString(vm, "kind"_s), jsNontrivialString(vm, kind));
         arguments.append(paramsObject);
 
+        SetForScope ownRequests(isResolvingImportStatement, false);
         auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -7322,20 +7369,20 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject, (JSC::JSGlobalObject
     return {};
 }
 
-extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* from)
+extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Zig::GlobalObject* globalObject, const BunString* namespaceString, const BunString* path, const BunString* from, const BunString* importerNamespace, const BunString* resolveDir, Zig::BunPlugin::OnResolve::Asker asker)
 {
 #if ENABLE(AOT)
     bool engineAsks = false;
     if (std::optional<JSC::EncodedJSValue> kept = Bun::takeAnswerKeptForLoader(globalObject, namespaceString, path, from, engineAsks))
         return *kept;
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-    JSC::EncodedJSValue answer = globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
+    JSC::EncodedJSValue answer = globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from, importerNamespace, resolveDir, asker);
     JSC::Exception* thrown = scope.exception();
     if (engineAsks) [[unlikely]]
         Bun::keepAnswerForLoader(globalObject, namespaceString, path, from, thrown ? thrown->value() : JSC::JSValue::decode(answer), !!thrown);
     return answer;
 #else
-    return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from);
+    return globalObject->onResolvePlugins.run(globalObject, namespaceString, path, from, importerNamespace, resolveDir, asker);
 #endif
 }
 

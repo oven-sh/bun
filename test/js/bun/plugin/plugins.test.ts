@@ -4761,3 +4761,287 @@ it.concurrent("the path passed to onLoad is still valid after the module is free
     exitCode: 0,
   });
 });
+
+describe("a file: URL with a query or a fragment", () => {
+  async function printed(files: Record<string, string>) {
+    using dir = tempDir("plugin-and-a-file-url", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const counted = `
+    globalThis.count = (globalThis.count ?? 0) + 1;
+    export const id = globalThis.count;
+    export const url = import.meta.url;
+  `;
+  const head = `
+    import { join } from "node:path";
+    import { pathToFileURL } from "node:url";
+    const file = join(import.meta.dir, "counted.mjs");
+    const href = pathToFileURL(file).href;
+  `;
+
+  it("is kept whole when an onResolve answers with it", async () => {
+    const result = await printed({
+      "counted.mjs": counted,
+      "main.mjs": `${head}
+        Bun.plugin({
+          name: "answers with a URL",
+          setup(build) {
+            build.onResolve({ filter: /^counted-module/ }, ({ path }) => ({ path: href + path.slice("counted-module".length) }));
+          },
+        });
+        for (const suffix of ["", "?a", "?b", "#a", "?a#a", "?a", "#a", "?", "#"]) {
+          const module = await import("counted-module" + suffix);
+          console.log(module.id, module.url.slice(href.length) || "(bare)");
+        }
+      `,
+    });
+    expect(result).toEqual({
+      stdout: "1 (bare)\n2 ?a\n3 ?b\n4 #a\n5 ?a#a\n2 ?a\n4 #a\n1 (bare)\n1 (bare)\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is a module of its own, about whose path the plugins are asked", async () => {
+    const result = await printed({
+      "counted.mjs": `export const id = "from disk";`,
+      "main.mjs": `${head}
+        let loads = 0;
+        Bun.plugin({
+          name: "filters that end with the name of the file",
+          setup(build) {
+            build.onResolve({ filter: /counted\\.mjs$/ }, ({ path }) => void console.log("onResolve", path === file));
+            build.onLoad({ filter: /counted\\.mjs$/ }, ({ path }) => {
+              console.log("onLoad", path === file);
+              return { contents: "export const id = " + ++loads + "; export const url = import.meta.url;", loader: "js" };
+            });
+          },
+        });
+        for (const suffix of ["", "?a", "#a", "?a"]) {
+          const module = await import(href + suffix);
+          console.log(module.id, module.url.slice(href.length) || "(bare)");
+        }
+      `,
+    });
+    expect(result).toEqual({
+      stdout:
+        "onResolve true\nonLoad true\n1 (bare)\n" +
+        "onResolve true\nonLoad true\n2 ?a\n" +
+        "onResolve true\nonLoad true\n3 #a\n" +
+        "onResolve true\n2 ?a\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("hands an onLoad that asks for the query what is written", async () => {
+    const result = await printed({
+      "counted.mjs": counted,
+      "main.mjs": `${head}
+        Bun.plugin({
+          name: "filters that ask for what follows the path",
+          setup(build) {
+            build.onLoad({ filter: /counted\\.mjs[?#]/ }, ({ path }) => {
+              console.log("onLoad", path.slice(file.length));
+            });
+          },
+        });
+        for (const suffix of ["", "?a", "#a", "?a#a"]) console.log((await import(href + suffix)).id);
+      `,
+    });
+    expect(result).toEqual({ stdout: "1\nonLoad ?a\n2\nonLoad #a\n3\nonLoad ?a#a\n4\n", stderr: "", exitCode: 0 });
+  });
+
+  it("is answered by a virtual module under the path", async () => {
+    const result = await printed({
+      "counted.mjs": counted,
+      "main.mjs": `${head}
+        Bun.plugin({
+          name: "a virtual module",
+          setup(build) {
+            build.module(file, () => ({ exports: { id: "virtual" }, loader: "object" }));
+          },
+        });
+        for (const suffix of ["", "?a", "#a", "?a#a"]) console.log((await import(href + suffix)).id);
+      `,
+    });
+    expect(result).toEqual({ stdout: "virtual\nvirtual\nvirtual\nvirtual\n", stderr: "", exitCode: 0 });
+  });
+});
+
+it("an onResolve is told the kind of the request, the namespace of the importer and its folder", async () => {
+  using dir = tempDir("plugin-on-resolve-is-told", {
+    "other.mjs": `export const here = 1;
+`,
+    "static.mjs": `import "made-up-import-statement";
+export * from "made-up-export-from";
+import "made-up-outer.js";
+`,
+    "main.mjs": `import { createRequire } from "node:module";
+const dir = import.meta.dir;
+Bun.plugin({
+  name: "is told",
+  setup(build) {
+    build.onResolve({ filter: /^made-up-/ }, args => {
+      const folder = args.resolveDir === dir ? "the folder of the importer" : String(args.resolveDir);
+      console.log(args.path.slice("made-up-".length) + ":", args.kind, "|", args.namespace, "|", folder, "|", Object.keys(args).sort().join());
+      if (args.path === "made-up-outer.js") Bun.resolveSync("made-up-inner.js", dir);
+      return { path: dir + "/other.mjs" };
+    });
+    build.onResolve({ filter: /^in-a-namespace$/ }, () => ({ path: "entry", namespace: "virtual" }));
+    build.onLoad({ filter: /./, namespace: "virtual" }, () => ({ contents: \`import "made-up-from-a-namespace";\`, loader: "js" }));
+  },
+});
+const name = road => "made-up-" + road;
+await import("./static.mjs");
+await import(name("import-call"));
+const require = createRequire(import.meta.url);
+require(name("require-call"));
+require.resolve(name("require-resolve"));
+import.meta.resolve(name("import-meta-resolve"));
+Bun.resolveSync(name("resolve-sync"), dir);
+import.meta.resolveSync(name("import-meta-resolve-sync"));
+await import("in-a-namespace");
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: `import-statement: import-statement | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+export-from: import-statement | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+outer.js: import-statement | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+inner.js: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+import-call: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+require-call: require-call | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+require-resolve: require-resolve | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+import-meta-resolve: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+resolve-sync: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+import-meta-resolve-sync: dynamic-import | file | the folder of the importer | importer,kind,namespace,path,resolveDir
+from-a-namespace: import-statement | virtual | undefined | importer,kind,namespace,path,resolveDir
+`,
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.skipIf(isWindows)("an importer in a folder whose name holds a colon is a file", async () => {
+  using dir = tempDir("plugin-importer-with-a-colon", {
+    "kept.mjs": `export const here = 1;`,
+    "with:colon/inner.mjs": `import "../kept.mjs"; await import("../kept.mjs");`,
+    "main.mjs": `
+      Bun.plugin({
+        name: "is told",
+        setup(build) {
+          build.onResolve({ filter: /kept\\.mjs$/ }, args => {
+            console.log(args.kind, args.namespace, args.resolveDir === import.meta.dir + "/with:colon");
+          });
+        },
+      });
+      await import("./with:colon/inner.mjs");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "import-statement file true\ndynamic-import file true\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("a module in a namespace is told as the importer by a statement and by import() alike", async () => {
+  using dir = tempDir("plugin-importer-in-a-namespace", {
+    "kept.mjs": `export const here = 1;`,
+    "main.mjs": `
+      Bun.plugin({
+        name: "is told",
+        setup(build) {
+          build.onResolve({ filter: /^enter$/ }, () => ({ path: "entry", namespace: "virtual" }));
+          build.onLoad({ filter: /./, namespace: "virtual" }, () => ({
+            contents: 'import "made-up-statement"; await import("made-up-call");',
+            loader: "js",
+          }));
+          build.onResolve({ filter: /^made-up-/ }, args => {
+            console.log(args.kind, args.namespace, args.resolveDir);
+            return { path: import.meta.dir + "/kept.mjs" };
+          });
+        },
+      });
+      await import("enter");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "import-statement virtual undefined\ndynamic-import virtual undefined\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("an absolute path that an onResolve answers with stands where nothing is loaded", async () => {
+  using dir = tempDir("plugin-answers-with-a-path-that-is-not-on-disk", {
+    "main.mjs": `
+      import { createRequire } from "node:module";
+      import { join } from "node:path";
+      import { pathToFileURL } from "node:url";
+      const missing = join(import.meta.dir, "not-on-disk.mjs");
+      Bun.plugin({
+        name: "answers",
+        setup(build) {
+          build.onResolve({ filter: /^made-up-name$/ }, () => ({ path: missing }));
+        },
+      });
+      const require = createRequire(import.meta.url);
+      console.log(import.meta.resolve("made-up-name") === pathToFileURL(missing).href);
+      console.log(require.resolve("made-up-name") === missing);
+      console.log(Bun.resolveSync("made-up-name", import.meta.dir) === missing);
+      console.log(import.meta.resolveSync("made-up-name") === missing);
+      console.log(await import("made-up-name").catch(error => error.code));
+      try {
+        require("made-up-name");
+      } catch (error) {
+        console.log(error.code);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "true\ntrue\ntrue\ntrue\nERR_MODULE_NOT_FOUND\nMODULE_NOT_FOUND\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

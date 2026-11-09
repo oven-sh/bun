@@ -96,6 +96,7 @@
 #include "ErrorStackTrace.h"
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
+#include <wtf/SetForScope.h>
 #include "JS2Native.h"
 #include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
@@ -169,6 +170,7 @@
 #include "libusockets.h"
 #include "ModuleLoader.h"
 #include "BunCompiledModules.h"
+#include "PathInlines.h"
 #include "DLHandleMap.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
@@ -4168,11 +4170,18 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     const bool isImportCall = std::exchange(globalObject->onLoadPlugins.isResolvingImportCall, false);
 #endif
 
+    bool isImportStatement = !std::exchange(globalObject->onResolvePlugins.isResolvingImportCall, false);
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && JSC::AOT::isResolvingImportCall(vm))
+        isImportStatement = false;
+#endif
+
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
         RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
 
     WTF::String keyString;
+    WTF::String suffixOfURL;
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -4194,6 +4203,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
                 keyString = url.fileSystemPath();
+                // An empty query or fragment counts as absent, as in Node.js.
+                auto query = url.query();
+                auto fragment = url.fragmentIdentifier();
+                suffixOfURL = makeString(query.isEmpty() ? ""_s : "?"_s, query, fragment.isEmpty() ? ""_s : "#"_s, fragment);
             } else {
                 keyString = moduleName;
             }
@@ -4231,6 +4244,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         BunString keyZ = Bun::toString(keyString);
         BunString referrerZ = Bun::toString(referrerString);
         BunString queryZ = BunStringEmpty;
+        SetForScope importStatement(globalObject->onResolvePlugins.isResolvingImportStatement, isImportStatement);
         Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
         RETURN_IF_EXCEPTION(scope, {});
         if (!res.success) {
@@ -4239,9 +4253,16 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         }
         resolved = res.result.value.transferToWTFString();
         auto query = queryZ.transferToWTFString();
+        // A file embedded in an executable has one instance and no source text to evaluate again, so it ignores the suffix.
+        auto isHeldOnce = [&] {
+            return Bun::isFileInExecutable(resolved) || (Bun::isCompiledModule(resolved) && !Bun::compiledModulesRunInPlaceOfFiles());
+        };
+        if (query.isEmpty() && !suffixOfURL.isEmpty() && isAbsolutePath(resolved) && !isHeldOnce())
+            query = suffixOfURL;
 
+        // Store a fragment that has no query as `?#x`, so the key cannot be confused with a file whose name contains `#`.
         if (!query.isEmpty())
-            resolved = makeString(resolved, query);
+            resolved = query[0] == '#' ? makeString(resolved, '?', query) : makeString(resolved, query);
     }
     if (hasModuleMocks) [[unlikely]]
         resolved = Bun::keyOfImportByPackage(globalObject, resolved, referrerString, true);
@@ -4357,7 +4378,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     auto referrer = JSC::Identifier::fromString(vm, sourceOriginStringHolder);
     globalObject->onLoadPlugins.isResolvingImportCall = globalObject->onLoadPlugins.hasVirtualModules();
+    globalObject->onResolvePlugins.isResolvingImportCall = true;
     JSC::Identifier key = loader->resolve(globalObject, JSC::Identifier::fromString(vm, moduleName), referrer, nullptr, /* useImportMap */ true);
+    globalObject->onResolvePlugins.isResolvingImportCall = false;
     if (scope.exception()) [[unlikely]]
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 

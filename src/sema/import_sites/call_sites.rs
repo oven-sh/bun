@@ -5,9 +5,9 @@ use super::alternatives::{
 };
 use super::changed_files::find_operands_that_name_changed_files;
 use super::made_requires::{
-    OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
-    follow_to_own_require, holds_import_meta_require, is_nothing, may_be_modified,
-    may_require_get_members, settled_symbol,
+    OwnRequire, StepsLeft, Text, UrlsHanded, find_imported_export, find_own_require,
+    follow_settled_bindings, follow_to_own_require, holds_import_meta_require, is_nothing,
+    may_be_modified, may_require_get_members, settled_symbol,
 };
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
@@ -877,6 +877,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         ..
     } = inputs;
     let mut alternatives = FoundAlternatives::default();
+    let urls_handed = UrlsHanded::default();
     let mut module_require_objects = Vec::new();
     let mut requires_of_other_files = Vec::new();
     let mut paths_given_to_create_require = Vec::new();
@@ -944,14 +945,23 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             }
         }
         let text = Text::of(hir, bound, Some(decisions));
-        let Some(found) = find_call_site(text, call, form, StepsLeft::ALL) else {
+        let with_urls_handed = text.with_urls_handed(&urls_handed);
+        let found = find_call_site(with_urls_handed, call, form, StepsLeft::ALL);
+        let is_url_handed = urls_handed.found_own_file.take()
+            && find_call_site(text, call, form, StepsLeft::ALL).is_none();
+        let Some(found) = found else {
             continue;
         };
         if is_dead {
             module_require_objects.extend(found.module_require_object);
             continue;
         }
+        let in_front = alternatives.lengths();
         let mut site = create_call_site(inputs, &found, &mut alternatives);
+        if is_url_handed && !names_json_alone(inputs, &site, &alternatives) {
+            alternatives.cut_back_to(in_front);
+            continue;
+        }
         if !is_ordinary_builtin_call(&site) {
             module_require_objects.extend(found.module_require_object);
             let has_query = matches!(site.specifier, ImportSpecifier::Constant(name)
@@ -962,7 +972,9 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                 site.is_host_value = false;
             }
             let argument = site.specifier_node;
-            if let (true, ImportSpecifier::Constant(name)) = (is_found_late, site.specifier) {
+            if let (true, false, ImportSpecifier::Constant(name)) =
+                (is_found_late, is_url_handed, site.specifier)
+            {
                 alternatives
                     .names_out_of_data_files
                     .push((name, argument, true));
@@ -1022,6 +1034,17 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         requires_of_other_files,
         paths_given_to_create_require,
     }
+}
+
+pub fn is_site_of_handed_url(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+    call: ExprId,
+) -> bool {
+    let text = Text::of(hir, bound, Some(decisions));
+    find_call_form(hir, call)
+        .is_some_and(|form| find_call_site(text, call, form, StepsLeft::ALL).is_none())
 }
 
 pub fn is_load_found_late(
@@ -1202,6 +1225,25 @@ fn is_ordinary_builtin_call(site: &ImportSite) -> bool {
         && !matches!(site.specifier, ImportSpecifier::Constant(_))
 }
 
+fn names_json_alone(
+    inputs: &ScanInputs<'_, '_>,
+    site: &ImportSite,
+    alternatives: &FoundAlternatives,
+) -> bool {
+    let is_json = |name: Atom| {
+        let name = inputs.atoms.bytes(name);
+        (name.starts_with(b"./") || name.starts_with(b"../")) && name.ends_with(b".json")
+    };
+    match site.specifier {
+        ImportSpecifier::Constant(name) => is_json(name),
+        ImportSpecifier::OneOf(Alternatives { first, count }) => {
+            let mut found = alternatives.found[first as usize..][..count as usize].iter();
+            found.all(|it| matches!(*it, ImportSpecifier::Constant(name) if is_json(name)))
+        }
+        ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => false,
+    }
+}
+
 fn create_call_site(
     inputs: &ScanInputs<'_, '_>,
     found: &CallSite,
@@ -1266,6 +1308,24 @@ struct FoundAlternatives {
     asked_of_other_files: AskedOfDataFiles,
     asked_of_own_exports: AskedOfOwnExports,
     names_out_of_data_files: Vec<(Atom, ExprId, bool)>,
+}
+
+impl FoundAlternatives {
+    fn lengths(&self) -> [usize; 4] {
+        [
+            self.found.len(),
+            self.paths_from_own_directory.len(),
+            self.answers_of_resolvers.len(),
+            self.names_out_of_data_files.len(),
+        ]
+    }
+
+    fn cut_back_to(&mut self, lengths: [usize; 4]) {
+        self.found.truncate(lengths[0]);
+        self.paths_from_own_directory.truncate(lengths[1]);
+        self.answers_of_resolvers.truncate(lengths[2]);
+        self.names_out_of_data_files.truncate(lengths[3]);
+    }
 }
 
 fn call_specifier(

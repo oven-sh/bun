@@ -4,6 +4,7 @@ use super::*;
 use crate::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, ResolvedFrom, find_names_folded_by_transpiler,
     find_written_arms, is_linked_by_bundler, is_name_read_by_transpiler, is_name_written_out,
+    is_site_of_handed_url,
 };
 use crate::resolve::{
     CodeFailure, CodeFile, CodeImportForm, CodeImportKind, CodeRequest, CodeResolution,
@@ -77,6 +78,21 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
         };
         let resolution = resolve_site(context, key, hir, site, alternatives, names, written);
+        let is_json = |path: &[u8]| path.ends_with(b".json");
+        let resolution = match site.kind {
+            ImportSiteKind::Require(call)
+                if alternatives.iter().all(|it| {
+                    matches!(*it, ImportSpecifier::Constant(name) if is_json(atoms.bytes(name)))
+                }) && !files_of(resolution).all(|file| is_json(file.path))
+                    && is_site_of_handed_url(hir, bound, decisions, call) =>
+            {
+                SiteResolution::Computed(ComputedResolution::Candidates {
+                    candidates: &[],
+                    spellings: &[],
+                })
+            }
+            _ => resolution,
+        };
         let arms = match site.specifier {
             ImportSpecifier::Unknown => find_written_arms(hir, bound, decisions, site),
             _ => SmallVec::new(),

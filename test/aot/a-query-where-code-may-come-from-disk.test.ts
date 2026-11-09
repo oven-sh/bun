@@ -155,3 +155,47 @@ an import of code module
     timeout,
   );
 });
+
+describe("a file: URL with a query or a fragment, of a file that the executable holds", () => {
+  async function printed(...flags: string[]) {
+    using dir = tempDir("aot-file-url-under-a-query", {
+      "counted.mjs": `globalThis.count = (globalThis.count ?? 0) + 1;\nexport const id = globalThis.count;\n`,
+      "main.mjs": `if (globalThis.never) await import("./counted.mjs");
+const href = new URL("./counted.mjs", import.meta.url).href;
+for (const suffix of ["?a", "#a", "?a#a", ""]) {
+  try {
+    console.log(JSON.stringify(suffix), (await import(href + suffix)).id);
+  } catch (error) {
+    console.log(JSON.stringify(suffix), "threw", error.name, error.code);
+  }
+}
+`,
+    });
+    const executable = join(String(dir), isWindows ? "program.exe" : "program");
+    built(
+      await spawned(
+        [bunExe(), "build", "--compile", ...flags, "./main.mjs", "--outfile", executable],
+        String(dir),
+        bunEnv,
+      ),
+    );
+    return (await spawned([executable], String(dir), bunEnv)).stdout;
+  }
+  const oneModule = `"?a" 1\n"#a" 1\n"?a#a" 1\n"" 1\n`;
+
+  test.concurrent(
+    "is answered by the one module of that file",
+    async () => {
+      expect(await printed("--aot")).toBe(oneModule);
+    },
+    timeout,
+  );
+
+  test.concurrent.skipIf(!without("a hardened build"))(
+    "is answered by the one module of that file where code may come from disk",
+    async () => {
+      expect(await printed("--aot", "--aot-allow-code-from-disk")).toBe(oneModule);
+    },
+    timeout,
+  );
+});

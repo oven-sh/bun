@@ -2719,7 +2719,7 @@ test("the hash in a chunk's name follows everything that the chunk reaches, thro
   const again = await names();
   writeFileSync(`${dir}/m0.js`, text(0, -1));
   const changed = await names();
-  // Beside the files of the cycle: the file apart and a chunk of helpers, which reach none of them.
+  // Besides the files in the cycle there are apart.js and a chunk of shared helpers; neither imports anything from the cycle.
   expect(first).toHaveLength(count + 2);
   expect(again).toEqual(first);
   expect(first.filter(name => !changed.includes(name))).toHaveLength(count);

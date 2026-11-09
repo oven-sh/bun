@@ -71,7 +71,8 @@ use crate::load::runtime_modules::{RuntimeModules, RuntimeResolution};
 use crate::load::runtime_types;
 use crate::load::source_provider::{SourceFile, SourceProvider};
 use crate::load::sources::{
-    FileWithQuery, ParsedSource, PluginModuleName, SourceKind, parsed_source_mut,
+    FileWithQuery, JSON_PARSE_ERROR_FOR_BLANK_TEXT, ParsedSource, PluginModuleName, SourceKind,
+    parsed_source_mut,
 };
 use crate::load::test_runner_names;
 use crate::load::text_for_json_parse::is_taken_by_json_parse;
@@ -81,7 +82,6 @@ use crate::statistics::{Stage, StepClock};
 
 const BUNDLE_MODULE: &[u8] = b"bun:bundle";
 const EMPTY_MODULE: &[u8] = b"export {};";
-const JSON_PARSE_ERROR_FOR_BLANK_TEXT: &[u8] = b"JSON Parse error: Unexpected EOF";
 const JSON_PARSE_ERROR: &[u8] = b"JSON Parse error: Unable to parse JSON string";
 const PAGE_NOT_NAMED_AS_ONE: &[u8] =
     b"bun test --aot imports an HTML page only from a file that is named as one, like page.html";
@@ -1579,8 +1579,14 @@ impl CodeHost for LoadHost<'_> {
                 let what = b"an import of an HTML page in a program that runs in place";
                 self.refuse_file(what, path);
             }
-            let is_refused_by_json_parse =
-                load.runs_tests && loader == Loader::Json && !is_taken_by_json_parse(text);
+            let is_blank_json_of_executable = loader == Loader::Json
+                && self.default_loader(path) == Loader::Json
+                && !load.runs_tests
+                && !self.input.options.aot.runs_in_place
+                && !is_from_plugin
+                && is_all_whitespace(text);
+            let is_refused_by_json_parse = is_blank_json_of_executable
+                || load.runs_tests && loader == Loader::Json && !is_taken_by_json_parse(text);
             if !is_refused_by_json_parse {
                 let mut parsed = parse_data(loader, plugin_module);
                 let source = parsed_source_mut(&mut parsed.payload);
@@ -1636,6 +1642,8 @@ impl CodeHost for LoadHost<'_> {
                 payload: Some(Box::new(ParsedSource {
                     plugin_module,
                     parse_failure: Some(failure.to_vec()),
+                    refused_at: is_blank_json_of_executable
+                        .then(|| (Loader::Json, bun_ast::Location::default())),
                     byte_count: text.len(),
                     ..ParsedSource::new(SourceKind::Program, Loader::Js)
                 })),

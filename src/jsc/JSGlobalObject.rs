@@ -690,11 +690,23 @@ impl JSGlobalObject {
         namespace_: &BunString,
         path: &BunString,
         source: &BunString,
+        source_namespace: &BunString,
+        resolve_dir: &BunString,
+        mode: crate::virtual_machine::ResolveMode,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
         let ns = (namespace_.length() > 0).then_some(namespace_);
-        let result =
-            crate::from_js_host_call(self, || Bun__runOnResolvePlugins(self, ns, path, source))?;
+        let result = crate::from_js_host_call(self, || {
+            Bun__runOnResolvePlugins(
+                self,
+                ns,
+                path,
+                source,
+                source_namespace,
+                resolve_dir,
+                mode as u8,
+            )
+        })?;
         if result.is_undefined_or_null() {
             return Ok(None);
         }
@@ -1366,7 +1378,17 @@ extern "C" fn Bun__importMetaResolve(
         source,
         specifier
     );
-    Zig__GlobalObject__resolve(res, global, specifier, source, query)
+    match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
+        global,
+        specifier,
+        source,
+        Some(query),
+        crate::virtual_machine::ResolveMode::EsmResolve,
+    ) {
+        Ok(Ok(path)) => *res = ErrorableString::ok(path),
+        Ok(Err(value)) => *res = ErrorableString::err(value),
+        Err(_) => debug_assert!(global.has_exception()),
+    }
 }
 
 /// `import.meta.resolve()` skips the resolver for a path or `file:` URL, so it runs `onResolve` plugins through this.
@@ -1395,7 +1417,7 @@ extern "C" fn Bun__resolveWithOnResolve(
         specifier_path.as_ref().unwrap_or(specifier),
         source_path.as_ref().unwrap_or(source),
         Some(query),
-        crate::virtual_machine::ResolveMode::Esm,
+        crate::virtual_machine::ResolveMode::EsmResolve,
         true,
     ) {
         Ok(None) => return false,
@@ -1453,6 +1475,9 @@ unsafe extern "C" {
         namespace_: Option<&BunString>,
         path: &BunString,
         source: &BunString,
+        source_namespace: &BunString,
+        resolve_dir: &BunString,
+        mode: u8,
     ) -> JSValue;
     safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
     safe fn Bun__onResolveNamespaces(global: &JSGlobalObject) -> u8;

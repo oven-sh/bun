@@ -1,10 +1,6 @@
 // Reference: bun build --compile
 const show = (value) => typeof value + " " + JSON.stringify(value);
 {
-  const all = await import("./nothing.json");
-  console.log("json", show(all.default), Object.keys(all).join());
-}
-{
   const all = await import("./nothing.jsonc");
   console.log("jsonc", show(all.default), Object.keys(all).join());
 }

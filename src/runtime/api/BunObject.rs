@@ -866,7 +866,7 @@ pub(crate) fn resolve_sync(
         return Err(global_this.throw_invalid_arguments(format_args!("parent must be a string")));
     };
     let mode = if esm {
-        ResolveMode::Esm
+        ResolveMode::EsmResolve
     } else {
         ResolveMode::Require
     };
@@ -918,7 +918,7 @@ pub(crate) fn bun_resolve_sync(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })
@@ -982,7 +982,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
             global,
             &specifier_str,
             &source_str,
-            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
+            ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve).loading_nothing_if_esm(),
         )?
         .into_js(global)
     })

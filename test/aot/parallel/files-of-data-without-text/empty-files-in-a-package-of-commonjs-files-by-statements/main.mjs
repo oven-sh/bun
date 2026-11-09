@@ -1,6 +1,4 @@
 // Reference: bun build --compile
-import json from "./nothing.json";
-import * as all_json from "./nothing.json";
 import jsonc from "./nothing.jsonc";
 import * as all_jsonc from "./nothing.jsonc";
 import json5 from "./nothing.json5";
@@ -16,7 +14,6 @@ import * as all_markdown from "./nothing.markdown";
 import txt from "./nothing.txt";
 import * as all_txt from "./nothing.txt";
 const show = (value) => typeof value + " " + JSON.stringify(value);
-console.log("json", show(json), Object.keys(all_json).join());
 console.log("jsonc", show(jsonc), Object.keys(all_jsonc).join());
 console.log("json5", show(json5), Object.keys(all_json5).join());
 console.log("toml", show(toml), Object.keys(all_toml).join());

@@ -5,7 +5,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::check::aot::ShapeKind;
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    Chain, ExprId, ExprKind, Flags, Member, MemberKey, NameKind, NodeData, Prop, PropKey,
+    Chain, ExprId, ExprKind, Flags, Member, MemberId, MemberKey, NameKind, NodeData, Prop, PropKey,
 };
 use bun_sema::program::Sym;
 
@@ -81,6 +81,31 @@ impl From<PropertyName> for GivenName {
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
+    pub(crate) fn name_under_property(
+        &mut self,
+        property: &Prop,
+        key: PropKey,
+        name: PropertyName,
+    ) -> GivenName {
+        self.with_name_that_key_spells(GivenName::under_property(property, name), key)
+    }
+
+    pub(crate) fn name_under_member(&mut self, member: MemberId, name: PropertyName) -> GivenName {
+        let key = self.file.hir.runtime_member_key(member);
+        self.with_name_that_key_spells(GivenName::under_member(&self.file.hir[member], name), key)
+    }
+
+    fn with_name_that_key_spells(&mut self, given: GivenName, key: PropKey) -> GivenName {
+        let name_that_key_spells = match given.name {
+            PropertyName::Computed(_) => self.file.find_name_that_key_spells(key),
+            PropertyName::Constant(_) => None,
+        };
+        GivenName {
+            name_that_key_spells,
+            ..given
+        }
+    }
+
     fn resolve_access(&mut self, name: PropertyName) -> PropertyName {
         match name {
             PropertyName::Constant(key) => self.normalize_access_key(key),

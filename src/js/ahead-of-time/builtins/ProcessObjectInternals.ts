@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a460fde8ae5bb69af5496319d339ced92217c2d6a08344b44771c628d7ebcd53.
+// Written against that file with the SHA-256 c21c44ea067564fdbb28b3b4df0412ec0a0dd5893d2ffd1cfc6eece3b0f0708d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -732,35 +732,6 @@ export function createOnWarning(
     if (IS_COMPILED_AHEAD_OF_TIME && WARNINGS_LOAD_NODE_EVENTS && wroteInPlaceOfStream) require("node:events");
   }
 
-  // path.basename(), without node:path: neither the module nor what a program has stored under its name is asked.
-  function basename(path: string) {
-    if (typeof path !== "string")
-      return (
-        process.platform === "win32"
-          ? $bindgen("node_path.bind.ts", "basenameWin32")
-          : $bindgen("node_path.bind.ts", "basenamePosix")
-      )(path);
-    const isWindows = process.platform === "win32";
-    let start = 0;
-    if (isWindows && path.length >= 2 && path.charCodeAt(1) === 58 /* : */) {
-      const letter = path.charCodeAt(0) | 32;
-      if (letter >= 97 /* a */ && letter <= 122 /* z */) start = 2;
-    }
-    let end = -1;
-    for (let i = path.length - 1; i >= start; --i) {
-      const code = path.charCodeAt(i);
-      if (code === 47 /* / */ || (isWindows && code === 92) /* \\ */) {
-        if (end !== -1) {
-          start = i + 1;
-          break;
-        }
-      } else if (end === -1) {
-        end = i + 1;
-      }
-    }
-    return end === -1 ? "" : path.slice(start, end);
-  }
-
   interface ProcessWarning extends Error {
     detail?: unknown;
   }
@@ -790,9 +761,13 @@ export function createOnWarning(
     writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
-      writeOut(
-        `(Use \`${basename(processObject.argv0 || "node")} --trace-warnings ...\` to show where the warning was created)`,
-      );
+      // The native path.basename(): what a program has stored under that name of node:path is not asked.
+      const program = (
+        process.platform === "win32"
+          ? $bindgen("node_path.bind.ts", "basenameWin32")
+          : $bindgen("node_path.bind.ts", "basenamePosix")
+      )(processObject.argv0 || "node");
+      writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
     }
   };
 }

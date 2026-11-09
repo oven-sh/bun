@@ -1382,7 +1382,7 @@ fn test_file_that_is_no_program_fails_where_it_is_loaded() {
 }
 
 #[test]
-fn blank_json_fails_where_a_test_run_loads_it() {
+fn blank_json_fails_where_it_is_loaded() {
     let files = [("blank.json", " \n"), ("empty.json", "{}")];
     let (blank, empty): (&[u8], &[u8]) = (b"/project/blank.json", b"/project/empty.json");
     with_test_run_host(&files, |fixture| {
@@ -1392,7 +1392,10 @@ fn blank_json_fails_where_a_test_run_loads_it() {
         assert_eq!(fixture.parse_failure_of(empty), None);
     });
     with_host(&files, |fixture| {
-        assert_eq!(fixture.parse_failure_of(blank), None);
+        let said = fixture.parse_failure_of(blank);
+        let expected = &b"JSON Parse error: Unexpected EOF"[..];
+        assert_eq!(said.as_deref(), Some(expected));
+        assert_eq!(fixture.parse_failure_of(empty), None);
     });
 }
 

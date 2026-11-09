@@ -39,8 +39,6 @@ for (const [mocked, order, first, second, asks, turn, begunBy, before, via, end]
   if (end === "resolves-early" && (mocked !== "file" || asks === "package" || asks === "require" || begunBy !== "test"))
     continue;
   if (mocked === "package" && (asks === "asks" || asks === "require" || begunBy !== "test")) continue;
-  // Under `bun test` a require() of the module of a running factory that is written in another file throws. Compiled code answers it with the original.
-  if (asks === "require" && first !== second) continue;
   // Under `bun test` an import() written in a package, of a mocked module whose factory nobody has called yet, gets the module itself at once. Compiled code calls the factory and waits for it.
   if (asks === "package" && order !== "first-ahead" && (order === "second-alone" || turn === "later")) continue;
   if (end === "fails" && before === "imports-over") continue;

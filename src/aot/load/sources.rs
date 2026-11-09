@@ -78,6 +78,8 @@ pub(crate) struct FileWithQuery {
     pub query: Box<[u8]>,
 }
 
+pub(crate) const JSON_PARSE_ERROR_FOR_BLANK_TEXT: &[u8] = b"JSON Parse error: Unexpected EOF";
+
 pub(crate) struct ParsedSource {
     pub kind: SourceKind,
     pub loader: Loader,

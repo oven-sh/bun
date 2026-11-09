@@ -110,7 +110,20 @@ For example, if you're adding types for a new API, you should just add code to `
 
 ## The type inventory
 
-`test/integration/bun-types/inventory/<preset>.txt` lists every symbol that has a declaration in bun-types, with the shape the TypeScript checker resolves it to: the globals, the exports of the modules bun-types declares (`bun`, `bun:test`, `*.html`), and the exports it adds to node modules and namespaces (`node:tls`, `NodeJS`). The members of a listed symbol are printed in full, wherever they come from. Interface merging with `lib.dom.d.ts` and `@types/node`, `UseLibDomIfAvailable`, and every other conditional alias are resolved, so a file shows what a user sees, not what the `.d.ts` source says. There is one file per `lib` preset: `esnext`, `esnext-dom`, `es2022`, `es2022-dom`, and `no-lib`. `ts7.1/` is not covered.
+`test/integration/bun-types/inventory/<preset>.txt` lists every symbol that has a declaration in bun-types, with the shape the TypeScript checker resolves it to: the globals, the exports of the modules bun-types declares (`bun`, `bun:test`, `*.html`), and the exports it adds to node modules and namespaces (`node:tls`, `NodeJS`). The members of a listed symbol are printed in full, wherever they come from. Interface merging with `lib.dom.d.ts` and `@types/node`, `UseLibDomIfAvailable`, and every other conditional alias are resolved, so a file shows what a user sees, not what the `.d.ts` source says.
+
+There is one file per preset:
+
+- `esnext`, `esnext-dom`, `es2022`, `es2022-dom`, and `no-lib` are `types: ["bun"]` with that `lib`.
+- `test-globals` and `vitest-globals` are the entry points that `index.d.ts` does not load (`/// <reference types="bun-types/test-globals" />`). Each file lists only what the entry point adds.
+- `ts7.1/` is not covered.
+
+How to read a line:
+
+- `name(a: A): B` is a method, with one line per overload. `name: (a: A) => B` is a property with a function type. TypeScript compares the parameters of a method bivariantly, so a change from one form to the other is a type change.
+- `[?]`, `[readonly]` and `[static]` after a name are its modifiers.
+- `...` stands for the type literal that the line is part of (`vi.useFakeTimers(): ...`).
+- The members of a union are in alphabetical order, not in source order.
 
 `test/integration/bun-types/inventory.test.ts` fails when the files no longer match the package. After a change to `packages/bun-types`, regenerate them and commit the result:
 

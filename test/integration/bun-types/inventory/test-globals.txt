@@ -1,0 +1,74 @@
+# bun-types inventory: preset test-globals
+# lib: lib.esnext.d.ts
+# only the declarations that /// <reference types="bun-types/test-globals" /> adds
+# typescript: 6.0.2
+# @types/node: 26.2.0
+# undici-types: 8.3.0
+
+# globals
+var afterAll (bun-types/test-globals.d.ts): (fn: (() => Promise<unknown> | void) | ((done: (err?: unknown) => void) => void), options?: HookOptions | undefined) => void
+var afterEach (bun-types/test-globals.d.ts): (fn: (() => Promise<unknown> | void) | ((done: (err?: unknown) => void) => void), options?: HookOptions | undefined) => void
+var aroundAll (bun-types/test-globals.d.ts): (fn: (runSuite: () => Promise<void>, context: object, suite: TestSuite) => unknown, options?: HookOptions | undefined) => void
+var aroundEach (bun-types/test-globals.d.ts): (fn: (runTest: () => Promise<void>, context: TestContext, suite: TestSuite) => unknown, options?: HookOptions | undefined) => void
+var beforeAll (bun-types/test-globals.d.ts): (fn: (() => Promise<unknown> | void) | ((done: (err?: unknown) => void) => void), options?: HookOptions | undefined) => void
+var beforeEach (bun-types/test-globals.d.ts): (fn: (() => Promise<unknown> | void) | ((done: (err?: unknown) => void) => void), options?: HookOptions | undefined) => void
+var describe (bun-types/test-globals.d.ts): Describe<[]>
+var expect (bun-types/test-globals.d.ts): Expect
+var expectTypeOf (bun-types/test-globals.d.ts)
+  call <Actual>(actual: Actual): PositiveExpectTypeOf<Actual>
+  call <Actual>(): PositiveExpectTypeOf<Actual>
+var it (bun-types/test-globals.d.ts): Test<[]>
+var jest (bun-types/test-globals.d.ts): typeof jest
+var onTestFinished (bun-types/test-globals.d.ts): (fn: (() => Promise<unknown> | void) | ((done: (err?: unknown) => void) => void), options?: HookOptions | undefined) => void
+var test (bun-types/test-globals.d.ts): Test<[]>
+var vi (bun-types/test-globals.d.ts)
+  advanceTimersByTime(milliseconds: number): ...
+  advanceTimersByTimeAsync(milliseconds: number): Promise<...>
+  advanceTimersToNextFrame(): ...
+  advanceTimersToNextTimer(steps?: number | undefined): ...
+  advanceTimersToNextTimerAsync(steps?: number | undefined): Promise<...>
+  clearAllMocks(): ...
+  clearAllTimers(): ...
+  doMock(id: string, factory?: ModuleMockFactory<any> | ModuleMockOptions | undefined): (Disposable & Promise<void>) | Disposable
+  doMock<T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions | undefined): (Disposable & Promise<void>) | Disposable
+  doUnmock(id: Promise<unknown> | string): void
+  dynamicImportSettled(): Promise<void>
+  fn: { <T extends (...args: Array<any>) => any>(func?: T | undefined): jest.Mock<T>; <Args extends Array<any>, Instance>(func: new (...args: Args) => Instance): jest.Mock<(...args: Args) => Instance>; <T extends (...args: Array<any>) => any>(func?: T | undefined): jest.Mock<T> }
+  getMockedSystemTime(): Date | null
+  getRealSystemTime(): number
+  getTimerCount(): number
+  hoisted<T>(factory: () => T): T
+  importActual<T = any>(id: string): Promise<T>
+  importMock<T = any>(id: string): Promise<Mocked<T>>
+  isFakeTimers(): boolean
+  isMockFunction: (fn: unknown) => fn is Mock<(...args: any[]) => any>
+  mock<T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions | undefined): Promise<void> | void
+  mock(id: string, factory?: ModuleMockFactory<any> | ModuleMockOptions | undefined): Promise<void> | void
+  mockObject<T>(value: T, options?: undefined | { spy?: boolean | undefined; }): Mocked<T>
+  mocked: <T>(item: T, options?: unknown) => Mocked<T>
+  resetAllMocks(): ...
+  resetConfig(): void
+  resetModules(): ...
+  restoreAllMocks(): ...
+  runAllTicks(): ...
+  runAllTimers(): ...
+  runAllTimersAsync(): Promise<...>
+  runOnlyPendingTimers(): ...
+  runOnlyPendingTimersAsync(): Promise<...>
+  setConfig(config: { [option: string]: unknown; testTimeout?: number | undefined; hookTimeout?: number | undefined; maxConcurrency?: number | undefined; clearMocks?: boolean | undefined; mockReset?: boolean | undefined; restoreMocks?: boolean | undefined; unstubEnvs?: boolean | undefined; unstubGlobals?: boolean | undefined; }): void
+  setSystemTime(now?: Date | number | string | undefined): ...
+  setTimerTickMode(mode: "manual" | "nextTimerAsync"): ...
+  setTimerTickMode(mode: "interval", interval?: number | undefined): ...
+  spyOn: { <T extends object, K extends number | string | symbol>(obj: T, property: K, accessType: "get"): Mock<() => T[K]>; <T extends object, K extends number | string | symbol>(obj: T, property: K, accessType: "set"): Mock<(value: T[K]) => void>; <T extends object, K extends number | string | symbol>(obj: T, methodOrPropertyValue: K): Mock<Extract<T[K], (...args: Array<any>) => any>> }
+  stubEnv<T extends string>(name: T, value: T extends "PROD" | "DEV" | "SSR" ? boolean | undefined : string | undefined): ...
+  stubGlobal(name: number | string | symbol, value: unknown): ...
+  unmock(id: Promise<unknown> | string): void
+  unstubAllEnvs(): ...
+  unstubAllGlobals(): ...
+  useFakeTimers(options?: "legacy" | "modern" | FakeTimersOptions | undefined): ...
+  useRealTimers(): ...
+  waitFor<T>(callback: () => Promise<T> | T, options?: number | undefined | { timeout?: number | undefined; interval?: number | undefined; }): Promise<T>
+  waitUntil<T>(callback: () => Promise<T> | T, options?: number | undefined | { timeout?: number | undefined; interval?: number | undefined; }): Promise<Exclude<T, "" | 0 | 0n | false | null | undefined>>
+var xdescribe (bun-types/test-globals.d.ts): Describe<[]>
+var xit (bun-types/test-globals.d.ts): Test<[]>
+var xtest (bun-types/test-globals.d.ts): Test<[]>

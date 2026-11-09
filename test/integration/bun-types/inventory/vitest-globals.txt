@@ -1,0 +1,525 @@
+# bun-types inventory: preset vitest-globals
+# lib: lib.esnext.d.ts
+# only the declarations that /// <reference types="bun-types/vitest-globals" /> adds
+# typescript: 6.0.2
+# @types/node: 26.2.0
+# undici-types: 8.3.0
+
+# module "vitest"
+interface AssertType (bun-types/vitest.d.ts)
+  call <T>(value: T): void
+interface Assertion<R extends Promise<void> | void = void, T = unknown> (bun-types/vitest.d.ts)
+  fail: (message?: string | undefined) => R
+  lastCalledWith: (...expected: Array<unknown>) => R
+  not: Assertion<R, T>
+  nthCalledWith: (n: number, ...expected: Array<unknown>) => R
+  pass: (message?: string | undefined) => R
+  rejects: Assertion<Promise<void>, unknown>
+  resolves: Assertion<Promise<void>, Awaited<T extends (...args: Array<any>) => infer Returned ? Returned : T>>
+  toBe: { (expected: any): R; <X = any>(expected: NoInfer<X>): R }
+  toBeArray: () => R
+  toBeArrayOfSize: (size: number) => R
+  toBeBoolean: () => R
+  toBeCalled: () => R
+  toBeCalledTimes: (expected: number) => R
+  toBeCalledWith: (...expected: Array<unknown>) => R
+  toBeCloseTo: (expected: number, numDigits?: number | undefined) => R
+  toBeDate: () => R
+  toBeDefined: () => R
+  toBeEmpty: () => R
+  toBeEmptyObject: () => R
+  toBeEven: () => R
+  toBeFalse: () => R
+  toBeFalsy: () => R
+  toBeFinite: () => R
+  toBeFunction: () => R
+  toBeGreaterThan: (expected: bigint | number) => R
+  toBeGreaterThanOrEqual: (expected: bigint | number) => R
+  toBeInstanceOf: (value: unknown) => R
+  toBeInteger: () => R
+  toBeLessThan: (expected: bigint | number) => R
+  toBeLessThanOrEqual: (expected: bigint | number) => R
+  toBeNaN: () => R
+  toBeNegative: () => R
+  toBeNil: () => R
+  toBeNull: () => R
+  toBeNumber: () => R
+  toBeObject: () => R
+  toBeOdd: () => R
+  toBeOneOf: { (expected: Iterable<any>): R; <X = any>(expected: NoInfer<Iterable<X>>): R }
+  toBePositive: () => R
+  toBeString: () => R
+  toBeSymbol: () => R
+  toBeTrue: () => R
+  toBeTruthy: () => R
+  toBeTypeOf: (type: "bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined") => R
+  toBeUndefined: () => R
+  toBeValidDate: () => R
+  toBeWithin: (start: number, end: number) => R
+  toContain: { (expected: any): R; <X = any>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): R }
+  toContainAllKeys: { (expected: Array<number | string | symbol>): R; <X = any>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R }
+  toContainAllValues: (expected: Array<unknown>) => R
+  toContainAnyKeys: { (expected: Array<number | string | symbol>): R; <X = any>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R }
+  toContainAnyValues: (expected: Array<unknown>) => R
+  toContainEqual: { (expected: any): R; <X = any>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): R }
+  toContainKey: { (expected: number | string | symbol): R; <X = any>(expected: __internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>): R }
+  toContainKeys: { (expected: Array<number | string | symbol>): R; <X = any>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R }
+  toContainValue: (expected: unknown) => R
+  toContainValues: (expected: Array<unknown>) => R
+  toEndWith: (expected: string) => R
+  toEqual: { (expected: any): R; <X = any>(expected: NoInfer<X>): R }
+  toEqualIgnoringWhitespace: (expected: string) => R
+  toHaveBeenCalled: () => R
+  toHaveBeenCalledAfter(mock: MockInstance<Procedure>, failIfNoFirstInvocation?: boolean | undefined): R
+  toHaveBeenCalledBefore(mock: MockInstance<Procedure>, failIfNoFirstInvocation?: boolean | undefined): R
+  toHaveBeenCalledExactlyOnceWith: (...expected: Array<unknown>) => R
+  toHaveBeenCalledOnce: () => void
+  toHaveBeenCalledTimes: (expected: number) => R
+  toHaveBeenCalledWith: (...expected: Array<unknown>) => R
+  toHaveBeenLastCalledWith: (...expected: Array<unknown>) => R
+  toHaveBeenNthCalledWith: (n: number, ...expected: Array<unknown>) => R
+  toHaveLastResolvedWith: (expected: unknown) => R
+  toHaveLastReturnedWith: (expected: unknown) => R
+  toHaveLength: (length: number) => R
+  toHaveNthResolvedWith: (n: number, expected: unknown) => R
+  toHaveNthReturnedWith: (n: number, expected: unknown) => R
+  toHaveProperty: (keyPath: Array<number | string> | number | string, value?: unknown) => R
+  toHaveResolved: () => R
+  toHaveResolvedTimes: (times: number) => R
+  toHaveResolvedWith: (expected: unknown) => R
+  toHaveReturned: () => R
+  toHaveReturnedTimes: (times: number) => R
+  toHaveReturnedWith: (expected: unknown) => R
+  toInclude: (expected: string) => R
+  toIncludeRepeated: (expected: string, times: number) => R
+  toMatch: (expected: RegExp | string) => R
+  toMatchFileSnapshot: (path: string, hint?: string | undefined) => Promise<void>
+  toMatchInlineSnapshot: { (value?: string | undefined): R; (propertyMatchers?: object | undefined, value?: string | undefined): R }
+  toMatchObject: (subset: object) => R
+  toMatchSnapshot: { (hint?: string | undefined): R; (propertyMatchers?: object | undefined, hint?: string | undefined): R }
+  toReturn(): R
+  toSatisfy: (predicate: (value: any) => boolean) => R
+  toStartWith: (expected: string) => R
+  toStrictEqual: { (expected: any): R; <X = any>(expected: NoInfer<X>): R }
+  toThrow: (expected?: unknown) => R
+  toThrowError: (expected?: unknown) => R
+  toThrowErrorMatchingInlineSnapshot: (value?: string | undefined) => R
+  toThrowErrorMatchingSnapshot: (hint?: string | undefined) => R
+interface AsymmetricMatchersContaining (bun-types/vitest.d.ts)
+  any(constructor: ((...args: Array<any>) => any) | (new (...args: Array<any>) => any)): any
+  anything(): any
+  arrayContaining<E = any>(arr: ReadonlyArray<E>): any
+  closeTo(num: number, numDigits?: number | undefined): any
+  objectContaining(obj: object): any
+  stringContaining(str: String | string): any
+  stringMatching(regex: RegExp | String | string): any
+  toSatisfy(predicate: (value: any) => unknown, message?: string | undefined): any
+type AsyncMatcherResult (bun-types/vitest.d.ts) = Promise<MatcherResult>
+interface ExpectStatic (bun-types/vitest.d.ts)
+  call <T>(actual: T, message?: string | undefined): Assertion<void, T>
+  addEqualityTesters: (testers: Array<Tester>) => void
+  addSnapshotSerializer: (serializer: SnapshotSerializer) => void
+  any(constructor: ((...args: Array<any>) => any) | (new (...args: Array<any>) => any)): any
+  anything(): any
+  arrayContaining<E = any>(arr: ReadonlyArray<E>): any
+  assertions: (neededAssertions: number) => void
+  closeTo(num: number, numDigits?: number | undefined): any
+  extend(matchers: MatchersObject<MatcherUtils & MatcherState>): void
+  getState: () => ExpectState & Record<string, unknown>
+  hasAssertions: () => void
+  not: AsymmetricMatchersContaining
+  objectContaining(obj: object): any
+  poll<T>(fn: () => T, options?: undefined | { interval?: number | undefined; timeout?: number | undefined; message?: string | undefined; }): Omit<Assertion<Promise<void>, Awaited<T>>, "rejects" | "resolves" | "toMatchInlineSnapshot" | "toMatchSnapshot" | "toThrow" | "toThrowError" | "toThrowErrorMatchingInlineSnapshot" | "toThrowErrorMatchingSnapshot">
+  rejectsTo: AsymmetricMatchers
+  resolvesTo: AsymmetricMatchers
+  setState: (state: Partial<ExpectState> & Record<string, unknown>) => void
+  soft<T>(actual: T, message?: string | undefined): Assertion<void, T>
+  stringContaining(str: String | string): any
+  stringMatching(regex: RegExp | String | string): any
+  toSatisfy(predicate: (value: any) => unknown, message?: string | undefined): any
+  unreachable: (msg?: Error | string | undefined) => never
+type ExpectTypeOf<Actual, Options extends { positive: boolean; }> (bun-types/vitest.d.ts) = Options["positive"] extends true ? PositiveExpectTypeOf<Actual> : NegativeExpectTypeOf<Actual>
+interface JestAssertion<R extends Promise<void> | void, T = unknown> (bun-types/vitest.d.ts)
+  fail: (message?: string | undefined) => R
+  lastCalledWith: (...expected: Array<unknown>) => R
+  nthCalledWith: (n: number, ...expected: Array<unknown>) => R
+  pass: (message?: string | undefined) => R
+  toBe: { (expected: any): R; <X = any>(expected: NoInfer<X>): R }
+  toBeArray: () => R
+  toBeArrayOfSize: (size: number) => R
+  toBeBoolean: () => R
+  toBeCalled: () => R
+  toBeCalledTimes: (expected: number) => R
+  toBeCalledWith: (...expected: Array<unknown>) => R
+  toBeCloseTo: (expected: number, numDigits?: number | undefined) => R
+  toBeDate: () => R
+  toBeDefined: () => R
+  toBeEmpty: () => R
+  toBeEmptyObject: () => R
+  toBeEven: () => R
+  toBeFalse: () => R
+  toBeFalsy: () => R
+  toBeFinite: () => R
+  toBeFunction: () => R
+  toBeGreaterThan: (expected: bigint | number) => R
+  toBeGreaterThanOrEqual: (expected: bigint | number) => R
+  toBeInstanceOf: (value: unknown) => R
+  toBeInteger: () => R
+  toBeLessThan: (expected: bigint | number) => R
+  toBeLessThanOrEqual: (expected: bigint | number) => R
+  toBeNaN: () => R
+  toBeNegative: () => R
+  toBeNil: () => R
+  toBeNull: () => R
+  toBeNumber: () => R
+  toBeObject: () => R
+  toBeOdd: () => R
+  toBeOneOf: { (expected: Iterable<any>): R; <X = any>(expected: NoInfer<Iterable<X>>): R }
+  toBePositive: () => R
+  toBeString: () => R
+  toBeSymbol: () => R
+  toBeTrue: () => R
+  toBeTruthy: () => R
+  toBeTypeOf: (type: "bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined") => R
+  toBeUndefined: () => R
+  toBeValidDate: () => R
+  toBeWithin: (start: number, end: number) => R
+  toContain: { (expected: any): R; <X = any>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): R }
+  toContainAllKeys: { (expected: Array<number | string | symbol>): R; <X = any>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R }
+  toContainAllValues: (expected: Array<unknown>) => R
+  toContainAnyKeys: { (expected: Array<number | string | symbol>): R; <X = any>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R }
+  toContainAnyValues: (expected: Array<unknown>) => R
+  toContainEqual: { (expected: any): R; <X = any>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): R }
+  toContainKey: { (expected: number | string | symbol): R; <X = any>(expected: __internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>): R }
+  toContainKeys: { (expected: Array<number | string | symbol>): R; <X = any>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R }
+  toContainValue: (expected: unknown) => R
+  toContainValues: (expected: Array<unknown>) => R
+  toEndWith: (expected: string) => R
+  toEqual: { (expected: any): R; <X = any>(expected: NoInfer<X>): R }
+  toEqualIgnoringWhitespace: (expected: string) => R
+  toHaveBeenCalled: () => R
+  toHaveBeenCalledAfter(mock: MockInstance<Procedure>, failIfNoFirstInvocation?: boolean | undefined): R
+  toHaveBeenCalledBefore(mock: MockInstance<Procedure>, failIfNoFirstInvocation?: boolean | undefined): R
+  toHaveBeenCalledExactlyOnceWith: (...expected: Array<unknown>) => R
+  toHaveBeenCalledOnce: () => void
+  toHaveBeenCalledTimes: (expected: number) => R
+  toHaveBeenCalledWith: (...expected: Array<unknown>) => R
+  toHaveBeenLastCalledWith: (...expected: Array<unknown>) => R
+  toHaveBeenNthCalledWith: (n: number, ...expected: Array<unknown>) => R
+  toHaveLastResolvedWith: (expected: unknown) => R
+  toHaveLastReturnedWith: (expected: unknown) => R
+  toHaveLength: (length: number) => R
+  toHaveNthResolvedWith: (n: number, expected: unknown) => R
+  toHaveNthReturnedWith: (n: number, expected: unknown) => R
+  toHaveProperty: (keyPath: Array<number | string> | number | string, value?: unknown) => R
+  toHaveResolved: () => R
+  toHaveResolvedTimes: (times: number) => R
+  toHaveResolvedWith: (expected: unknown) => R
+  toHaveReturned: () => R
+  toHaveReturnedTimes: (times: number) => R
+  toHaveReturnedWith: (expected: unknown) => R
+  toInclude: (expected: string) => R
+  toIncludeRepeated: (expected: string, times: number) => R
+  toMatch: (expected: RegExp | string) => R
+  toMatchFileSnapshot: (path: string, hint?: string | undefined) => Promise<void>
+  toMatchInlineSnapshot: { (value?: string | undefined): R; (propertyMatchers?: object | undefined, value?: string | undefined): R }
+  toMatchObject: (subset: object) => R
+  toMatchSnapshot: { (hint?: string | undefined): R; (propertyMatchers?: object | undefined, hint?: string | undefined): R }
+  toReturn(): R
+  toSatisfy: (predicate: (value: any) => boolean) => R
+  toStartWith: (expected: string) => R
+  toStrictEqual: { (expected: any): R; <X = any>(expected: NoInfer<X>): R }
+  toThrow: (expected?: unknown) => R
+  toThrowError: (expected?: unknown) => R
+  toThrowErrorMatchingInlineSnapshot: (value?: string | undefined) => R
+  toThrowErrorMatchingSnapshot: (hint?: string | undefined) => R
+interface Matcher<T extends MatcherUtils & MatcherState = MatcherUtils & MatcherState, E extends Array<any> = Array<any>> (bun-types/vitest.d.ts)
+  call (this: T, received: any, ...expected: E): MatcherResult
+type MatcherResult (bun-types/vitest.d.ts) = AsyncMatcherResult | MatcherResult
+type MatcherState (bun-types/vitest.d.ts) = MatcherUtils & MatcherState
+interface Matchers<R extends Promise<void> | void = Promise<void> | void, T = unknown> (bun-types/vitest.d.ts)
+type MatchersObject<T extends MatcherUtils & MatcherState = MatcherUtils & MatcherState> (bun-types/vitest.d.ts) = Record<string, Matcher<T, Array<any>>> & ThisType<T> & {}
+type Mock<T extends Constructable | Procedure = Procedure> (bun-types/vitest.d.ts) = MockInstance<T> & (T extends Constructable ? T extends Procedure ? { (...args: Parameters<T>): ReturnType<T>; new (...args: ConstructorParameters<T>): InstanceType<T>; } : new (...args: ConstructorParameters<T>) => InstanceType<T> : { (...args: MockParameters<T>): MockReturnType<T>; new (...args: MockParameters<T>): MockReturnType<T>; }) & { [P in keyof T]: T[P]; }
+interface MockContext<T extends Constructable | Procedure = Procedure> (bun-types/vitest.d.ts)
+  calls: Array<MockParameters<T>>
+  contexts: Array<MockThis<T>>
+  instances: Array<MockThis<T>>
+  invocationCallOrder: Array<number>
+  lastCall: MockParameters<T> | undefined
+  results: Array<MockResult<MockReturnType<T>>>
+  settledResults: Array<MockSettledResult<Awaited<MockReturnType<T>>>>
+interface MockInstance<T extends Constructable | Procedure = Procedure> (bun-types/vitest.d.ts)
+  [Symbol.dispose](): void
+  getMockImplementation(): MockImplementation<T> | undefined
+  getMockName(): string
+  mock: MockContext<T>
+  mockClear(): MockInstance<T>
+  mockImplementation(fn: MockImplementation<T>): MockInstance<T>
+  mockImplementationOnce(fn: MockImplementation<T>): MockInstance<T>
+  mockName(name: string): MockInstance<T>
+  mockRejectedValue(error: unknown): MockInstance<T>
+  mockRejectedValueOnce(error: unknown): MockInstance<T>
+  mockReset(): MockInstance<T>
+  mockResolvedValue(value: Awaited<MockReturnType<T>>): MockInstance<T>
+  mockResolvedValueOnce(value: Awaited<MockReturnType<T>>): MockInstance<T>
+  mockRestore(): void
+  mockReturnThis(): MockInstance<T>
+  mockReturnValue(value: MockReturnType<T>): MockInstance<T>
+  mockReturnValueOnce(value: MockReturnType<T>): MockInstance<T>
+  mockThrow(value: unknown): MockInstance<T>
+  mockThrowOnce(value: unknown): MockInstance<T>
+  withImplementation(fn: MockImplementation<T>, callback: () => Promise<unknown>): Promise<void>
+  withImplementation(fn: MockImplementation<T>, callback: () => unknown): MockInstance<T>
+type MockResult<T> (bun-types/vitest.d.ts) = MockResultIncomplete | MockResultReturn<T> | MockResultThrow
+interface MockResultIncomplete (bun-types/vitest.d.ts)
+  type: "incomplete"
+  value: undefined
+interface MockResultReturn<T> (bun-types/vitest.d.ts)
+  type: "return"
+  value: T
+interface MockResultThrow (bun-types/vitest.d.ts)
+  type: "throw"
+  value: any
+type MockSettledResult<T> (bun-types/vitest.d.ts) = MockSettledResultFulfilled<T> | MockSettledResultIncomplete | MockSettledResultRejected
+interface MockSettledResultFulfilled<T> (bun-types/vitest.d.ts)
+  type: "fulfilled"
+  value: T
+interface MockSettledResultIncomplete (bun-types/vitest.d.ts)
+  type: "incomplete"
+  value: undefined
+interface MockSettledResultRejected (bun-types/vitest.d.ts)
+  type: "rejected"
+  value: any
+type Mocked<T> (bun-types/vitest.d.ts) = { [P in keyof T]: T[P] extends Procedure ? MockInstance<T[P]> : T[P] extends Constructable ? MockedClass<T[P]> : T[P]; } & T
+type MockedClass<T extends Constructable> (bun-types/vitest.d.ts) = MockInstance<T> & { prototype: T extends { prototype: any; } ? Mocked<T["prototype"]> : never; } & T
+type MockedFunction<T extends Constructable | Procedure> (bun-types/vitest.d.ts) = MockInstance<T> & (T extends Constructable ? T extends Procedure ? { (...args: Parameters<T>): ReturnType<T>; new (...args: ConstructorParameters<T>): InstanceType<T>; } : new (...args: ConstructorParameters<T>) => InstanceType<T> : { (...args: MockParameters<T>): MockReturnType<T>; new (...args: MockParameters<T>): MockReturnType<T>; }) & { [P in keyof T]: T[P]; } & MaybeMockedConstructor<T> & { [K in keyof { [K in keyof T as T[K] extends Procedure ? K : never]: T[K]; }]: T[K] extends Procedure ? MockedFunction<T[K]> : T[K]; } & { [K in Properties<T>]: T[K]; }
+type MockedObject<T> (bun-types/vitest.d.ts) = MaybeMockedConstructor<T> & { [K in keyof { [K in keyof T as T[K] extends Procedure ? K : never]: T[K]; }]: T[K] extends Procedure ? MockedFunction<T[K]> : T[K]; } & { [K in Properties<T>]: T[K]; }
+type OnTestFailedHandler (bun-types/vitest.d.ts) = (context: TestContext) => Awaitable<void>
+type OnTestFinishedHandler (bun-types/vitest.d.ts) = (context: TestContext) => Awaitable<void>
+interface ProvidedContext (bun-types/vitest.d.ts)
+type RunMode (bun-types/vitest.d.ts) = "only" | "run" | "skip" | "todo"
+type RunnerTask (bun-types/vitest.d.ts) = RunnerTestCase<object> | RunnerTestFile | RunnerTestSuite
+interface RunnerTestCase<ExtraContext = object> (bun-types/vitest.d.ts)
+  annotations: Array<TestAnnotation>
+  concurrent [?]: true | undefined
+  context: TestContext & ExtraContext
+  fails [?]: true | undefined
+  file: RunnerTestFile
+  fullName: string
+  fullTestName: string
+  id: string
+  meta: TaskMeta
+  mode: "only" | "run" | "skip" | "todo"
+  name: string
+  repeats: number
+  result: { state: "fail" | "pass" | "run" | "skip"; errors?: Array<unknown> | undefined; retryCount: number; repeatCount: number; note?: string | undefined; }
+  retry: number
+  suite [?]: RunnerTestSuite | undefined
+  timeout: number
+  type: "test"
+interface RunnerTestFile (bun-types/vitest.d.ts)
+  file: RunnerTestFile
+  filepath: string
+  fullName: string
+  fullTestName [?]: string | undefined
+  meta: TaskMeta
+  mode: "only" | "run" | "skip" | "todo"
+  name: string
+  suite [?]: RunnerTestSuite | undefined
+  type: "suite"
+interface RunnerTestSuite (bun-types/vitest.d.ts)
+  file: RunnerTestFile
+  fullName: string
+  fullTestName [?]: string | undefined
+  meta: TaskMeta
+  mode: "only" | "run" | "skip" | "todo"
+  name: string
+  suite [?]: RunnerTestSuite | undefined
+  type: "suite"
+type SnapshotSerializer (bun-types/test.d.ts) = SnapshotSerializer
+interface SuiteAPI (bun-types/vitest.d.ts)
+  call (name: TaskName, fn?: ((...args: []) => any) | undefined, timeout?: number | undefined): void
+  call (name: TaskName, options: SuiteOptions, fn?: ((...args: []) => any) | undefined): void
+  concurrent: SuiteAPI
+  each: Each<SuiteOptions>
+  for<T>(rows: ReadonlyArray<T>): Register<[row: T], SuiteOptions>
+  for(headings: TemplateStringsArray, ...values: Array<any>): Register<[row: any], SuiteOptions>
+  only: SuiteAPI
+  runIf(condition: any): SuiteAPI
+  sequential: SuiteAPI
+  shuffle: SuiteAPI
+  skip: SuiteAPI
+  skipIf(condition: any): SuiteAPI
+  todo: SuiteAPI
+interface SuiteOptions (bun-types/vitest.d.ts)
+  concurrent [?]: boolean | undefined
+  fails [?]: boolean | undefined
+  only [?]: boolean | undefined
+  repeats [?]: number | undefined
+  retry [?]: number | undefined | { count?: number | undefined; }
+  sequential [?]: boolean | undefined
+  shuffle [?]: boolean | undefined
+  skip [?]: boolean | undefined
+  timeout [?]: number | undefined
+  todo [?]: boolean | undefined
+type SyncMatcherResult (bun-types/vitest.d.ts) = MatcherResult
+interface TaskMeta (bun-types/vitest.d.ts)
+type TaskState (bun-types/vitest.d.ts) = "fail" | "pass" | RunMode
+interface TestAPI<ExtraContext = object> (bun-types/vitest.d.ts)
+  call <Context>(name: TaskName, fn?: TestFunction<Context> | undefined, timeout?: number | undefined): void
+  call <Context>(name: TaskName, options: TestOptions, fn?: TestFunction<Context> | undefined): void
+  afterAll: typeof afterAll<ExtraContext>
+  afterEach: typeof afterEach<ExtraContext>
+  aroundAll: typeof aroundAll<ExtraContext>
+  aroundEach: typeof aroundEach<ExtraContext>
+  beforeAll: typeof beforeAll<ExtraContext>
+  beforeEach: typeof beforeEach<ExtraContext>
+  concurrent: TestAPI<ExtraContext>
+  describe: SuiteAPI
+  each: Each<TestOptions>
+  extend<Added extends Record<string, any> = object>(fixtures: Fixtures<Added, ExtraContext>): TestAPI<Extended<ExtraContext, Added>>
+  extend<Name extends string, Value>(name: Name, value: FixtureValue<Value, ExtraContext>): TestAPI<Extended<ExtraContext, Record<Name, Value>>>
+  extend<Name extends string, Value>(name: Name, options: FixtureOptions, value: FixtureValue<Value, ExtraContext>): TestAPI<Extended<ExtraContext, Record<Name, Value>>>
+  fails: TestAPI<ExtraContext>
+  for<T>(rows: ReadonlyArray<T>): Register<[row: T, context: TestContext & ExtraContext], TestOptions>
+  for(headings: TemplateStringsArray, ...values: Array<any>): Register<[row: any, context: TestContext & ExtraContext], TestOptions>
+  only: TestAPI<ExtraContext>
+  override(fixtures: Partial<Fixtures<ExtraContext, object>>): TestAPI<ExtraContext>
+  runIf(condition: any): TestAPI<ExtraContext>
+  scoped(fixtures: Partial<Fixtures<ExtraContext, object>>): TestAPI<ExtraContext>
+  sequential: TestAPI<ExtraContext>
+  skip: TestAPI<ExtraContext>
+  skipIf(condition: any): TestAPI<ExtraContext>
+  todo: TestAPI<ExtraContext>
+interface TestAnnotation (bun-types/test.d.ts)
+  attachment [?]: object | undefined
+  message: string
+  type: string
+interface TestContext (bun-types/vitest.d.ts)
+  annotate: { (message: string, type?: string | undefined, attachment?: object | undefined): Promise<TestAnnotation>; (message: string, attachment?: object | undefined): Promise<TestAnnotation> }
+  expect [readonly]: ExpectStatic
+  onTestFailed(fn: OnTestFailedHandler, timeout?: number | undefined): void
+  onTestFinished(fn: OnTestFinishedHandler, timeout?: number | undefined): void
+  signal [readonly]: AbortSignal
+  skip: { (note?: string | undefined): never; (condition: boolean, note?: string | undefined): void }
+  task [readonly]: Readonly<RunnerTestCase<object>>
+type TestFunction<ExtraContext = object> (bun-types/vitest.d.ts) = (context: TestContext & ExtraContext) => any
+interface TestOptions (bun-types/vitest.d.ts)
+  concurrent [?]: boolean | undefined
+  fails [?]: boolean | undefined
+  only [?]: boolean | undefined
+  repeats [?]: number | undefined
+  retry [?]: number | undefined | { count?: number | undefined; }
+  sequential [?]: boolean | undefined
+  skip [?]: boolean | undefined
+  timeout [?]: number | undefined
+  todo [?]: boolean | undefined
+var TestRunner (bun-types/vitest.d.ts)
+  getCurrentTest(): RunnerTestCase<object> | undefined
+interface VitestUtils (bun-types/vitest.d.ts)
+  advanceTimersByTime: (...args: [milliseconds: number]) => VitestUtils
+  advanceTimersByTimeAsync: (...args: [milliseconds: number]) => Promise<VitestUtils>
+  advanceTimersToNextFrame: (...args: []) => VitestUtils
+  advanceTimersToNextTimer: (...args: [steps?: number | undefined]) => VitestUtils
+  advanceTimersToNextTimerAsync: (...args: [steps?: number | undefined]) => Promise<VitestUtils>
+  clearAllMocks: (...args: []) => VitestUtils
+  clearAllTimers: (...args: []) => VitestUtils
+  doMock: (((...args: [module: Promise<unknown>, factory?: ModuleMockFactory<unknown> | ModuleMockOptions | undefined]) => Disposable & Promise<void>) & { (id: string, factory?: ModuleMockFactory<any> | ModuleMockOptions | undefined): (Disposable & Promise<void>) | Disposable; <T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions | undefined): (Disposable & Promise<void>) | Disposable }) | { (id: string, factory?: ModuleMockFactory<any> | ModuleMockOptions | undefined): (Disposable & Promise<void>) | Disposable; <T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions | undefined): (Disposable & Promise<void>) | Disposable }
+  doUnmock: (id: Promise<unknown> | string) => void
+  dynamicImportSettled: () => Promise<void>
+  fn<T extends Constructable | Procedure = Procedure>(implementation?: T | undefined): Mock<T>
+  getMockedSystemTime: (((...args: []) => Date) & (() => Date | null)) | (((...args: []) => null) & (() => Date | null))
+  getRealSystemTime: () => number
+  getTimerCount: () => number
+  hoisted: <T>(factory: () => T) => T
+  importActual: <T = any>(id: string) => Promise<T>
+  importMock<T = Record<string, any>>(id: string): Promise<MaybeMockedDeep<T>>
+  isFakeTimers: (((...args: []) => false) & (() => boolean)) | (((...args: []) => true) & (() => boolean))
+  isMockFunction(fn: any): fn is Mock<Procedure>
+  mock: (((...args: [id: string, factory?: ModuleMockFactory<any> | ModuleMockOptions | undefined]) => Promise<void>) & { <T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions | undefined): Promise<void> | void; (id: string, factory?: ModuleMockFactory<any> | ModuleMockOptions | undefined): Promise<void> | void }) | { <T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions | undefined): Promise<void> | void; (id: string, factory?: ModuleMockFactory<any> | ModuleMockOptions | undefined): Promise<void> | void }
+  mockObject<T>(value: T, options?: undefined | { spy?: boolean | undefined; }): MaybeMockedDeep<T>
+  mocked<T>(item: T, deep?: false | undefined): MaybeMocked<T>
+  mocked<T>(item: T, deep: true): MaybeMockedDeep<T>
+  mocked<T>(item: T, options: { partial?: false | undefined; deep?: false | undefined; }): MaybeMocked<T>
+  mocked<T>(item: T, options: { partial?: false | undefined; deep: true; }): MaybeMockedDeep<T>
+  mocked<T>(item: T, options: { partial: true; deep?: false | undefined; }): MaybePartiallyMocked<T>
+  mocked<T>(item: T, options: { partial: true; deep: true; }): MaybePartiallyMockedDeep<T>
+  mocked<T>(item: T): MaybeMocked<T>
+  resetAllMocks: (...args: []) => VitestUtils
+  resetConfig: () => void
+  resetModules: (...args: []) => VitestUtils
+  restoreAllMocks: (...args: []) => VitestUtils
+  runAllTicks: (...args: []) => VitestUtils
+  runAllTimers: (...args: []) => VitestUtils
+  runAllTimersAsync: (...args: []) => Promise<VitestUtils>
+  runOnlyPendingTimers: (...args: []) => VitestUtils
+  runOnlyPendingTimersAsync: (...args: []) => Promise<VitestUtils>
+  setConfig: (config: { [option: string]: unknown; testTimeout?: number | undefined; hookTimeout?: number | undefined; maxConcurrency?: number | undefined; clearMocks?: boolean | undefined; mockReset?: boolean | undefined; restoreMocks?: boolean | undefined; unstubEnvs?: boolean | undefined; unstubGlobals?: boolean | undefined; }) => void
+  setSystemTime: (...args: [now?: Date | number | string | undefined]) => VitestUtils
+  setTimerTickMode(mode: "manual" | "nextTimerAsync"): VitestUtils
+  setTimerTickMode(mode: "interval", interval?: number | undefined): VitestUtils
+  spyOn<T extends object, S extends string | symbol>(object: T, key: S, accessor: "get"): Mock<() => T[S]>
+  spyOn<T extends object, G extends string | symbol>(object: T, key: G, accessor: "set"): Mock<(arg: T[G]) => void>
+  spyOn<T extends object, M extends number | string | symbol>(object: T, key: M): Required<T>[M] extends Procedure | Constructable ? Mock<Required<T>[M]> : never
+  spyOn<T extends object, K extends number | string | symbol>(object: T, key: SpyOnValue<T, K> extends Procedure | Constructable ? K : never): Mock<SpyOnValue<T, K> extends Procedure | Constructable ? SpyOnValue<T, K> : never>
+  stubEnv<T extends string>(name: T, value: T extends "PROD" | "DEV" | "SSR" ? boolean | undefined : string | undefined): VitestUtils
+  stubGlobal: (...args: [name: number | string | symbol, value: unknown]) => VitestUtils
+  unmock: (id: Promise<unknown> | string) => void
+  unstubAllEnvs: (...args: []) => VitestUtils
+  unstubAllGlobals: (...args: []) => VitestUtils
+  useFakeTimers: (...args: [options?: "legacy" | "modern" | FakeTimersOptions | undefined]) => VitestUtils
+  useRealTimers: (...args: []) => VitestUtils
+  waitFor: <T>(callback: () => Promise<T> | T, options?: number | undefined | { timeout?: number | undefined; interval?: number | undefined; }) => Promise<T>
+  waitUntil: <T>(callback: () => Promise<T> | T, options?: number | undefined | { timeout?: number | undefined; interval?: number | undefined; }) => Promise<Exclude<T, "" | 0 | 0n | false | null | undefined>>
+function afterAll (bun-types/vitest.d.ts)
+  call <ExtraContext = object>(fn: (context: ExtraContext, suite: Readonly<RunnerTestFile | RunnerTestSuite>) => unknown, timeout?: number | undefined): void
+function afterEach (bun-types/vitest.d.ts)
+  call <ExtraContext = object>(fn: (context: TestContext & ExtraContext) => unknown, timeout?: number | undefined): void
+function aroundAll (bun-types/vitest.d.ts)
+  call <ExtraContext = object>(fn: (runSuite: () => Promise<void>, context: ExtraContext, suite: Readonly<RunnerTestFile | RunnerTestSuite>) => unknown, timeout?: number | undefined): void
+function aroundEach (bun-types/vitest.d.ts)
+  call <ExtraContext = object>(fn: (runTest: () => Promise<void>, context: TestContext & ExtraContext, suite: Readonly<RunnerTestSuite>) => unknown, timeout?: number | undefined): void
+var assert (bun-types/vitest.d.ts): any
+var assertType (bun-types/vitest.d.ts): AssertType
+function beforeAll (bun-types/vitest.d.ts)
+  call <ExtraContext = object>(fn: (context: ExtraContext, suite: Readonly<RunnerTestFile | RunnerTestSuite>) => unknown, timeout?: number | undefined): void
+function beforeEach (bun-types/vitest.d.ts)
+  call <ExtraContext = object>(fn: (context: TestContext & ExtraContext) => unknown, timeout?: number | undefined): void
+var describe (bun-types/vitest.d.ts): SuiteAPI
+var expect (bun-types/vitest.d.ts): ExpectStatic
+var expectTypeOf (bun-types/vitest.d.ts)
+  call <Actual>(actual: Actual): PositiveExpectTypeOf<Actual>
+  call <Actual>(): PositiveExpectTypeOf<Actual>
+function inject (bun-types/vitest.d.ts)
+  call <T extends never>(key: T): ProvidedContext[T] | undefined
+var it (bun-types/vitest.d.ts): TestAPI<object>
+function onTestFailed (bun-types/vitest.d.ts)
+  call (fn: OnTestFailedHandler, timeout?: number | undefined): void
+function onTestFinished (bun-types/vitest.d.ts)
+  call (fn: OnTestFinishedHandler, timeout?: number | undefined): void
+var should (bun-types/vitest.d.ts): any
+suite -> describe
+test -> it
+var vi (bun-types/vitest.d.ts): VitestUtils
+vitest -> vi
+
+# globals
+var afterAll (bun-types/vitest-globals.d.ts): <ExtraContext = object>(fn: (context: ExtraContext, suite: Readonly<RunnerTestFile | RunnerTestSuite>) => unknown, timeout?: number | undefined) => void
+var afterEach (bun-types/vitest-globals.d.ts): <ExtraContext = object>(fn: (context: TestContext & ExtraContext) => unknown, timeout?: number | undefined) => void
+var aroundAll (bun-types/vitest-globals.d.ts): <ExtraContext = object>(fn: (runSuite: () => Promise<void>, context: ExtraContext, suite: Readonly<RunnerTestFile | RunnerTestSuite>) => unknown, timeout?: number | undefined) => void
+var aroundEach (bun-types/vitest-globals.d.ts): <ExtraContext = object>(fn: (runTest: () => Promise<void>, context: TestContext & ExtraContext, suite: Readonly<RunnerTestSuite>) => unknown, timeout?: number | undefined) => void
+var assertType (bun-types/vitest-globals.d.ts): AssertType
+var beforeAll (bun-types/vitest-globals.d.ts): <ExtraContext = object>(fn: (context: ExtraContext, suite: Readonly<RunnerTestFile | RunnerTestSuite>) => unknown, timeout?: number | undefined) => void
+var beforeEach (bun-types/vitest-globals.d.ts): <ExtraContext = object>(fn: (context: TestContext & ExtraContext) => unknown, timeout?: number | undefined) => void
+var describe (bun-types/vitest-globals.d.ts): SuiteAPI
+var expect (bun-types/vitest-globals.d.ts): ExpectStatic
+var expectTypeOf (bun-types/vitest-globals.d.ts)
+  call <Actual>(actual: Actual): PositiveExpectTypeOf<Actual>
+  call <Actual>(): PositiveExpectTypeOf<Actual>
+var it (bun-types/vitest-globals.d.ts): TestAPI<object>
+var onTestFailed (bun-types/vitest-globals.d.ts): (fn: OnTestFailedHandler, timeout?: number | undefined) => void
+var onTestFinished (bun-types/vitest-globals.d.ts): (fn: OnTestFinishedHandler, timeout?: number | undefined) => void
+var suite (bun-types/vitest-globals.d.ts): SuiteAPI
+var test (bun-types/vitest-globals.d.ts): TestAPI<object>
+var vi (bun-types/vitest-globals.d.ts): VitestUtils
+var vitest (bun-types/vitest-globals.d.ts): VitestUtils

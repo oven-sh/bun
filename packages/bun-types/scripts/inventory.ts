@@ -14,6 +14,11 @@
 // plain text sorted by name, so `git diff` on them is the review surface for a
 // change to packages/bun-types.
 //
+// The package also ships entry points that index.d.ts does not load, for
+// `/// <reference types="bun-types/test-globals" />` and
+// `/// <reference types="bun-types/vitest-globals" />`. Each has a preset of its
+// own. Its file lists only what the entry point adds to a program.
+//
 // With --check the tool writes nothing. It exits 1 and prints a diff when a
 // preset's output differs from the file in <out>.
 //
@@ -35,17 +40,30 @@ const DEFAULT_OUT = join(REPO_ROOT, "test/integration/bun-types/inventory");
 
 const DOM_LIBS = ["lib.dom.d.ts", "lib.dom.iterable.d.ts", "lib.dom.asynciterable.d.ts"];
 
-/**
- * The `lib` matrix. The names are the file names TypeScript ships in its lib/
- * directory. `[]` means no lib at all: @types/node then pulls in es2020 through
- * its own `/// <reference lib>` directives.
- */
-const PRESETS: Record<string, { lib: string[] }> = {
+interface Preset {
+  /**
+   * The names are the file names TypeScript ships in its lib/ directory. `[]`
+   * means no lib at all: @types/node then pulls in es2020 through its own
+   * `/// <reference lib>` directives.
+   */
+  lib: string[];
+  /**
+   * A file of the package that index.d.ts does not load. The program references
+   * it the way a project does, and the output lists only the symbols that it
+   * declares. vitest-globals.d.ts loads vitest.d.ts, so it covers both.
+   */
+  entryPoint?: string;
+}
+
+/** The `lib` matrix for `types: ["bun"]`, then one preset per extra entry point. */
+const PRESETS: Record<string, Preset> = {
   "esnext": { lib: ["lib.esnext.d.ts"] },
   "esnext-dom": { lib: ["lib.esnext.d.ts", ...DOM_LIBS] },
   "es2022": { lib: ["lib.es2022.d.ts"] },
   "es2022-dom": { lib: ["lib.es2022.d.ts", ...DOM_LIBS] },
   "no-lib": { lib: [] },
+  "test-globals": { lib: ["lib.esnext.d.ts"], entryPoint: "bun-types/test-globals" },
+  "vitest-globals": { lib: ["lib.esnext.d.ts"], entryPoint: "bun-types/vitest-globals" },
 };
 
 function parseArgs(argv: string[]) {
@@ -140,10 +158,9 @@ async function createProject(tempDir: string): Promise<{ projectDir: string; ver
   return { projectDir, versions };
 }
 
-const ENTRY_SOURCE = "export {};\n";
-
-function createProgram(projectDir: string, lib: string[]) {
+function createProgram(projectDir: string, { lib, entryPoint }: Preset) {
   const entry = toPosix(join(projectDir, "entry.ts"));
+  const entrySource = (entryPoint ? `/// <reference types=${JSON.stringify(entryPoint)} />\n` : "") + "export {};\n";
   const options: ts.CompilerOptions = {
     lib,
     target: ts.ScriptTarget.ESNext,
@@ -158,7 +175,7 @@ function createProgram(projectDir: string, lib: string[]) {
   };
   const host = ts.createCompilerHost(options, true);
   const readFile = host.readFile;
-  host.readFile = file => (toPosix(file) === entry ? ENTRY_SOURCE : readFile(file));
+  host.readFile = file => (toPosix(file) === entry ? entrySource : readFile(file));
   const fileExists = host.fileExists;
   host.fileExists = file => toPosix(file) === entry || fileExists(file);
   host.getCurrentDirectory = () => projectDir;
@@ -168,7 +185,16 @@ function createProgram(projectDir: string, lib: string[]) {
 
 const byName = (a: { name: string }, b: { name: string }) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
-function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string): string[] {
+/**
+ * @param baseFiles For an entry-point preset, the files of the program without
+ * the entry point. Only symbols declared outside of them are listed.
+ */
+function inventory(
+  program: ts.Program,
+  entry: ts.SourceFile,
+  projectDir: string,
+  baseFiles?: ReadonlySet<string>,
+): string[] {
   const checker = program.getTypeChecker();
   const packageDir = realPathOf(join(projectDir, "node_modules", "bun-types"));
   const tsLibDir = realPathOf(dirname(ts.getDefaultLibFilePath(program.getCompilerOptions())));
@@ -199,7 +225,8 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
     return toPosix(relative(projectDir, fileName));
   }
 
-  const isPackageFile = (sourceFile: ts.SourceFile) => realPath(sourceFile.fileName).startsWith(packageDir + "/");
+  const isPackageFile = (sourceFile: ts.SourceFile) =>
+    realPath(sourceFile.fileName).startsWith(packageDir + "/") && !baseFiles?.has(sourceFile.fileName);
 
   /**
    * True when bun-types declares or augments the symbol. Declarations that merge
@@ -245,8 +272,8 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
   }
 
   /**
-   * A member of a union or an intersection, in parentheses where TypeScript
-   * would put them: function types, conditional types, and (`wrap`) an
+   * A member of a union, an intersection, or a tuple, in parentheses where
+   * TypeScript would put them: function types, conditional types, and (`wrap`) an
    * intersection inside a union or a union inside an intersection.
    */
   function memberText(member: ts.Type, wrap: boolean): string {
@@ -258,15 +285,113 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
     return wrap || isFunction || isConditional ? `(${text})` : text;
   }
 
+  const modifierFlags = (sym: ts.Symbol) => {
+    const decl = sym.valueDeclaration ?? sym.declarations?.[0];
+    return decl && ts.canHaveModifiers(decl) ? ts.getCombinedModifierFlags(decl) : ts.ModifierFlags.None;
+  };
+
+  /** `readonly x`, or `get x()` with no `set x()`. */
+  const isReadonly = (sym: ts.Symbol) =>
+    !!(modifierFlags(sym) & ts.ModifierFlags.Readonly) ||
+    (!!(sym.flags & ts.SymbolFlags.GetAccessor) && !(sym.flags & ts.SymbolFlags.SetAccessor));
+
+  /**
+   * `name(a: A): B`, one entry per overload, when the member is declared as a
+   * method. A property with a function type prints as `name: (a: A) => B`. The
+   * two differ: TypeScript compares method parameters bivariantly.
+   */
+  function methodTexts(prop: ts.Symbol, name: string): string[] | undefined {
+    if (!(prop.flags & ts.SymbolFlags.Method)) return undefined;
+    const type = checker.getNonNullableType(checker.getTypeOfSymbol(prop));
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    if (signatures.length === 0) return undefined;
+    const optional = prop.flags & ts.SymbolFlags.Optional ? "?" : "";
+    return signatures.map(sig => `${name}${optional}${signatureText(sig, ts.SignatureKind.Call, ": ")}`);
+  }
+
+  /** `{ a: A; b?: B }`, `(a: A) => B` or `new (a: A) => B`: an object type that is written inline and has no name. */
+  function isTypeLiteral(type: ts.Type): boolean {
+    if (!(type.flags & ts.TypeFlags.Object) || !type.symbol) return false;
+    const { objectFlags } = type as ts.ObjectType;
+    return (
+      !!(objectFlags & ts.ObjectFlags.Anonymous) &&
+      !(objectFlags & ts.ObjectFlags.Mapped) &&
+      !!(type.symbol.flags & ts.SymbolFlags.TypeLiteral)
+    );
+  }
+
+  function typeLiteralText(type: ts.Type): string {
+    const calls = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const constructs = checker.getSignaturesOfType(type, ts.SignatureKind.Construct);
+    const indexes = checker.getIndexInfosOfType(type);
+    const props = checker.getPropertiesOfType(type);
+    if (indexes.length === 0 && props.length === 0) {
+      if (constructs.length === 0) {
+        if (calls.length === 1) return signatureText(calls[0]!, ts.SignatureKind.Call, " => ");
+        if (calls.length > 1) {
+          return `{ ${calls.map(sig => signatureText(sig, ts.SignatureKind.Call, ": ")).join("; ")} }`;
+        }
+      } else if (calls.length === 0 && constructs.length === 1) {
+        return signatureText(constructs[0]!, ts.SignatureKind.Construct, " => ");
+      }
+    }
+    // Members stay in declaration order, which is the order TypeScript keeps them in.
+    const members = [
+      ...calls.map(sig => signatureText(sig, ts.SignatureKind.Call, ": ")),
+      ...constructs.map(sig => signatureText(sig, ts.SignatureKind.Construct, ": ")),
+      ...indexes.map(info => {
+        const key = info.declaration?.parameters[0]?.name.getText() ?? "x";
+        return `${info.isReadonly ? "readonly " : ""}[${key}: ${typeText(info.keyType)}]: ${typeText(info.type)}`;
+      }),
+      ...props.flatMap(prop => {
+        const name = clean(prop.name);
+        const key = /^[A-Za-z_$][\w$]*$/.test(name) || name.startsWith("[") ? name : JSON.stringify(name);
+        const optional = prop.flags & ts.SymbolFlags.Optional ? "?" : "";
+        return (
+          methodTexts(prop, key) ??
+          `${isReadonly(prop) ? "readonly " : ""}${key}${optional}: ${typeText(checker.getTypeOfSymbol(prop))}`
+        );
+      }),
+    ];
+    return members.length === 0 ? "{}" : `{ ${members.join("; ")}; }`;
+  }
+
+  function tupleText(type: ts.TupleTypeReference): string {
+    const { elementFlags, labeledElementDeclarations, readonly } = type.target;
+    const elements = checker
+      .getTypeArguments(type)
+      .slice(0, elementFlags.length)
+      .map((element, i) => {
+        const flags = elementFlags[i]!;
+        const name = labeledElementDeclarations?.[i]?.name.getText();
+        const label = name === undefined ? "" : `${name}: `;
+        if (flags & ts.ElementFlags.Variadic) return `...${label}${typeText(element)}`;
+        if (flags & ts.ElementFlags.Rest) return `...${label}Array<${typeText(element)}>`;
+        if (flags & ts.ElementFlags.Optional) {
+          if (name !== undefined) return `${name}?: ${typeText(element)}`;
+          return `${memberText(element, element.isUnion() || element.isIntersection())}?`;
+        }
+        return label + typeText(element);
+      });
+    return `${readonly ? "readonly " : ""}[${elements.join(", ")}]`;
+  }
+
+  // Type literals whose members are being printed. A literal that contains itself prints as `...` there.
+  const printing = new Set<ts.Type>();
+
   /**
    * TypeScript orders union members by internal type id, which shifts whenever a
    * declaration moves. Sort them so that a refactor with no type change is a
-   * no-op in the output. Function-typed members print one signature per overload
-   * for the same reason: `signatureToString` is stable, the anonymous object
-   * type around it is not.
+   * no-op in the output. Everything a union can hide in is printed here for
+   * that reason, not by `typeToString`: type arguments, tuples, the members of
+   * type literals, and signatures.
+   *
+   * @param expandAlias The type alias whose right-hand side this is. Every other
+   * aliased type prints as the name of its alias.
    */
   function typeText(type: ts.Type, expandAlias?: ts.Symbol): string {
-    if (type.isUnion() && (!type.aliasSymbol || type.aliasSymbol === expandAlias)) {
+    const expand = !type.aliasSymbol || type.aliasSymbol === expandAlias;
+    if (expand && type.isUnion()) {
       // A union built from an aliased union plus extra members (`FormDataEntryValue | null`)
       // keeps the alias in `origin`. Print through it so the alias name survives.
       // A `keyof X` origin is not a union: TypeScript prints it as `keyof X`, keep that.
@@ -283,15 +408,25 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
       if (hasTrue && hasFalse) texts.push("boolean");
       return texts.sort().join(" | ");
     }
-    if (type.isIntersection() && !type.aliasSymbol) {
+    if (expand && type.isIntersection()) {
       // TypeScript keeps intersection members in source order, so only recurse.
       return type.types.map(t => memberText(t, t.isUnion())).join(" & ");
+    }
+    if (expand && checker.isTupleType(type)) return tupleText(type as ts.TupleTypeReference);
+    if (expand && isTypeLiteral(type)) {
+      if (printing.has(type)) return "...";
+      printing.add(type);
+      try {
+        return typeLiteralText(type);
+      } finally {
+        printing.delete(type);
+      }
     }
     // `Name<Arg, Arg>`: a class, interface, or alias instantiation. Print the
     // arguments through typeText so unions inside them are sorted too. The
     // positional mapping is only trusted when re-rendering the arguments the way
     // TypeScript does reproduces its own text.
-    const typeArguments = referenceTypeArguments(type);
+    const typeArguments = type.aliasSymbol === expandAlias && expandAlias ? undefined : referenceTypeArguments(type);
     if (typeArguments && typeArguments.length > 0) {
       const raw = rawTypeText(type);
       const open = raw.indexOf("<");
@@ -309,17 +444,21 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
         }
       }
     }
+    // The type of a method or of a function declaration: one signature per overload.
     const callSignatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
     if (
       callSignatures.length > 0 &&
       !type.aliasSymbol &&
       type.symbol &&
-      type.symbol.flags & (ts.SymbolFlags.Method | ts.SymbolFlags.Function | ts.SymbolFlags.TypeLiteral) &&
+      type.symbol.flags & (ts.SymbolFlags.Method | ts.SymbolFlags.Function) &&
       checker.getPropertiesOfType(type).length === 0 &&
       checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0
     ) {
       if (callSignatures.length === 1) return signatureText(callSignatures[0]!, ts.SignatureKind.Call, " => ");
       return `{ ${callSignatures.map(sig => signatureText(sig, ts.SignatureKind.Call, ": ")).join("; ")} }`;
+    }
+    if (expandAlias && type.aliasSymbol === expandAlias) {
+      return clean(checker.typeToString(type, undefined, typeFormat | ts.TypeFormatFlags.InTypeAlias));
     }
     return rawTypeText(type);
   }
@@ -362,16 +501,23 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
   function modifiers(sym: ts.Symbol): string {
     const out: string[] = [];
     if (sym.flags & ts.SymbolFlags.Optional) out.push("?");
-    const decl = sym.valueDeclaration ?? sym.declarations?.[0];
-    if (decl && ts.canHaveModifiers(decl)) {
-      const mods = ts.getCombinedModifierFlags(decl);
-      if (mods & ts.ModifierFlags.Readonly) out.push("readonly");
-      if (mods & ts.ModifierFlags.Static) out.push("static");
-    }
+    if (isReadonly(sym)) out.push("readonly");
+    if (modifierFlags(sym) & ts.ModifierFlags.Static) out.push("static");
     return out.length ? ` [${out.join(" ")}]` : "";
   }
 
   function emitTypeMembers(type: ts.Type, indent: string) {
+    // A member that refers back to this type literal (`vi.useFakeTimers(): typeof vi`) prints it as `...`.
+    const guard = isTypeLiteral(type) && !printing.has(type);
+    if (guard) printing.add(type);
+    try {
+      emitMembers(type, indent);
+    } finally {
+      if (guard) printing.delete(type);
+    }
+  }
+
+  function emitMembers(type: ts.Type, indent: string) {
     for (const sig of checker.getSignaturesOfType(type, ts.SignatureKind.Call)) {
       lines.push(`${indent}call ${signatureText(sig, ts.SignatureKind.Call, ": ")}`);
     }
@@ -385,7 +531,10 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
     }
     const props = [...checker.getPropertiesOfType(type)].sort(byName);
     for (const prop of props) {
-      lines.push(`${indent}${clean(prop.name)}${modifiers(prop)}: ${typeText(checker.getTypeOfSymbol(prop))}`);
+      const name = clean(prop.name);
+      const methods = methodTexts(prop, name);
+      if (methods) for (const method of methods) lines.push(indent + method);
+      else lines.push(`${indent}${name}${modifiers(prop)}: ${typeText(checker.getTypeOfSymbol(prop))}`);
     }
   }
 
@@ -435,15 +584,15 @@ function inventory(program: ts.Program, entry: ts.SourceFile, projectDir: string
         const params = decl?.typeParameters?.map(
           p => checker.getDeclaredTypeOfSymbol(checker.getSymbolAtLocation(p.name)!) as ts.TypeParameter,
         );
-        // A union on the right-hand side goes through typeText for a stable member order.
-        const aliasText = declared.isUnion()
-          ? typeText(declared, target)
-          : clean(checker.typeToString(declared, undefined, typeFormat | ts.TypeFormatFlags.InTypeAlias));
-        lines.push(`${indent}type ${path}${typeParamsText(params)} (${where}) = ${aliasText}`);
+        lines.push(`${indent}type ${path}${typeParamsText(params)} (${where}) = ${typeText(declared, target)}`);
       } else if (target.flags & ts.SymbolFlags.Enum) {
         lines.push(`${indent}enum ${path} (${where})`);
         for (const member of checker.getExportsOfModule(target)) {
-          lines.push(`${inner}${member.name} = ${typeText(checker.getDeclaredTypeOfSymbol(member))}`);
+          // The value, not the literal type: that one prints as the member's own name.
+          const declaration = member.valueDeclaration;
+          const value = declaration && ts.isEnumMember(declaration) ? checker.getConstantValue(declaration) : undefined;
+          const text = value === undefined ? typeText(checker.getDeclaredTypeOfSymbol(member)) : JSON.stringify(value);
+          lines.push(`${inner}${member.name} = ${text}`);
         }
       }
       if (target.flags & (ts.SymbolFlags.Variable | ts.SymbolFlags.Function | ts.SymbolFlags.Property)) {
@@ -521,12 +670,20 @@ async function main() {
     const { projectDir, versions } = await createProject(tempDir);
     let failed = false;
     for (const preset of args.presets) {
-      const { lib } = PRESETS[preset]!;
-      const { program, entry } = createProgram(projectDir, lib);
-      const lines = inventory(program, entry, projectDir);
+      const { lib, entryPoint } = PRESETS[preset]!;
+      const { program, entry } = createProgram(projectDir, { lib, entryPoint });
+      const baseFiles = entryPoint
+        ? new Set(
+            createProgram(projectDir, { lib })
+              .program.getSourceFiles()
+              .map(file => file.fileName),
+          )
+        : undefined;
+      const lines = inventory(program, entry, projectDir, baseFiles);
       const header = [
         `# bun-types inventory: preset ${preset}`,
         `# lib: ${lib.join(", ") || "(none)"}`,
+        ...(entryPoint ? [`# only the declarations that /// <reference types="${entryPoint}" /> adds`] : []),
         ...Object.entries(versions).map(([name, version]) => `# ${name}: ${version}`),
         "",
       ];

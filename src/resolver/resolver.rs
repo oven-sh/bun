@@ -2947,8 +2947,7 @@ impl<'a> Resolver<'a> {
         if built_from.is_recorded() && built_from.file_id() != now.file_id() {
             return true;
         }
-        // Nothing added, removed or renamed since the listing the facts derive from was read: they
-        // hold, except for a name that is a link, whose kind changes with the directory untouched.
+        // An unchanged directory keeps its facts, except for a linked name: its kind changes without the directory.
         let holds = built_from.holds_for(&now);
         let kind_of = |this: &mut Self, name: &[u8]| -> Option<Option<Fs::EntryKind>> {
             if holds && !this.listing_entry_is_link(info, name) {

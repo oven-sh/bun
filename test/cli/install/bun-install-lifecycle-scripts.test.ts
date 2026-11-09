@@ -16,7 +16,7 @@ import {
   statSync,
   writeSync,
 } from "fs";
-import { appendFile, exists, mkdir, rm, symlink, writeFile } from "fs/promises";
+import { appendFile, chmod, exists, mkdir, rm, symlink, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
@@ -2198,6 +2198,21 @@ describe("the trusted set", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("the shell of bun install started by bun run", async () => {
+      const { "payload/package.json": payload, ...rest } = files("postinstall", true);
+      using ctx = await project("hoisted", {
+        ...rest,
+        "payload/package.json": { ...payload, bin: { bash: "run.sh" } },
+      });
+      expect((await bun(ctx, ["install", "--ignore-scripts"])).exitCode).toBe(0);
+      expect(await exists(join(ctx.packageDir, "node_modules", ".bin", "bash"))).toBeTrue();
+      await rm(join(ctx.packageDir, "node_modules", "native"), { recursive: true, force: true });
+      const { err, exitCode } = await bun(ctx, ["run", "setup"]);
+      expect(err).not.toContain("error:");
+      expect(await built(ctx)).toBe(`${osType()}\n`);
+      expect(exitCode).toBe(0);
+    });
+
     // The project chose its direct dependencies' bins for its own scripts.
     test.concurrent("the project's own scripts still find the project's bins first", async () => {
       const { "package.json": manifest, ...rest } = files("postinstall", false);
@@ -2208,6 +2223,127 @@ describe("the trusted set", () => {
       expect((await bun(ctx, ["install"])).exitCode).toBe(0);
       expect(await textOf(ctx.packageDir, "built.txt")).toBe("planted\n");
     });
+  });
+
+  // `uses-what-bin` depends on `what-bin` and runs it. `payload` has a bin with the same name, and links it first.
+  describe("a trusted script finds the bins of its own dependencies", () => {
+    const files = (trusted: boolean, contested = true) => ({
+      "package.json": {
+        name: "foo",
+        dependencies: { "uses-what-bin": "1.0.0", ...(contested ? { payload: "file:./payload" } : {}) },
+        trustedDependencies: trusted ? ["uses-what-bin"] : [],
+      },
+      "payload/package.json": { name: "payload", version: "1.0.0", bin: { "what-bin": "run.js" } },
+      "payload/run.js": `#!/usr/bin/env node\nrequire("fs").writeFileSync("what-bin.txt", "payload");\n`,
+    });
+    const built = (ctx: TestCtx, linker: Linker) => textOf(packageDirOf(ctx, linker, "uses-what-bin"), "what-bin.txt");
+
+    test.concurrent.each(linkers)("bun install (%s)", async linker => {
+      using ctx = await project(linker, files(true));
+      const { err, exitCode } = await bun(ctx, ["install"]);
+      expect(err).not.toContain("error:");
+      expect(await built(ctx, linker)).toBe("what-bin@1.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent.each(linkers)("bun pm trust (%s)", async linker => {
+      using ctx = await project(linker, files(false));
+      expect((await bun(ctx, ["install"])).out).toContain("Blocked 1 postinstall");
+      const { err, exitCode } = await bun(ctx, ["pm", "trust", "uses-what-bin"]);
+      expect(err).not.toContain("error:");
+      expect(await built(ctx, linker)).toBe("what-bin@1.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a later install", async () => {
+      using ctx = await project("hoisted", files(true));
+      expect((await bun(ctx, ["install"])).exitCode).toBe(0);
+      await rm(join(ctx.packageDir, "node_modules", "uses-what-bin"), { recursive: true, force: true });
+      const { err, exitCode } = await bun(ctx, ["install"]);
+      expect(err).not.toContain("error:");
+      expect(await built(ctx, "hoisted")).toBe("what-bin@1.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("nothing is linked for it if the name leads to another of its dependencies", async () => {
+      using ctx = await project("hoisted", {
+        "package.json": { name: "foo", dependencies: { native: "file:./native" }, trustedDependencies: ["native"] },
+        "native/package.json": {
+          name: "native",
+          version: "1.0.0",
+          // The bin of both is `what-bin`.
+          dependencies: { "a-bin": "npm:what-bin@1.0.0", "z-bin": "npm:what-bin@1.5.0" },
+          scripts: { postinstall: "what-bin" },
+        },
+      });
+      const { err, exitCode } = await bun(ctx, ["install"]);
+      expect(err).not.toContain("error:");
+      expect(await textOf(ctx.packageDir, "node_modules", "native", "what-bin.txt")).toBe("what-bin@1.0.0");
+      expect(await exists(join(ctx.packageDir, "node_modules", "native", "node_modules"))).toBeFalse();
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent.skipIf(isWindows)("nothing is linked for it if the name is a system command", async () => {
+      using ctx = await project("hoisted", {
+        ...files(true),
+        "system/what-bin": "#!/bin/sh\nprintf system > what-bin.txt\n",
+      });
+      await chmod(join(ctx.packageDir, "system", "what-bin"), 0o755);
+      const { err, exitCode } = await bun(ctx, ["install"], {
+        PATH: `${join(ctx.packageDir, "system")}:${ctx.env.PATH}`,
+      });
+      expect(err).not.toContain("error:");
+      expect(await built(ctx, "hoisted")).toBe("system");
+      expect(await exists(join(ctx.packageDir, "node_modules", "uses-what-bin", "node_modules"))).toBeFalse();
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("nothing is linked for it if no other package has the name", async () => {
+      using ctx = await project("hoisted", files(true, false));
+      expect((await bun(ctx, ["install"])).exitCode).toBe(0);
+      expect(await built(ctx, "hoisted")).toBe("what-bin@1.0.0");
+      expect(await exists(join(ctx.packageDir, "node_modules", "uses-what-bin", "node_modules"))).toBeFalse();
+    });
+  });
+
+  test.concurrent("a script that bun.lockb records for a dependency is not run", async () => {
+    const script = `${bunExe()} -e "require('fs').appendFileSync(process.env.RUNS, '.')"`;
+    using ctx = await project(
+      "hoisted",
+      {
+        "package.json": {
+          name: "foo",
+          workspaces: ["member"],
+          dependencies: { "no-deps": "1.0.0" },
+          trustedDependencies: ["no-deps"],
+        },
+        "member/package.json": { name: "member", version: "1.0.0", scripts: { postinstall: script } },
+      },
+      { saveTextLockfile: false },
+    );
+    const env = { RUNS: join(ctx.packageDir, "runs.txt") };
+    expect((await bun(ctx, ["install"], env)).exitCode).toBe(0);
+    expect(await file(env.RUNS).text()).toBe(".");
+
+    // A row has six strings of 8 bytes, with postinstall the third, and a byte that says it is filled. Copies the string
+    // of `member` into the row before it, which is that of `no-deps`.
+    const path = join(ctx.packageDir, "bun.lockb");
+    const lockb = Buffer.from(await file(path).arrayBuffer());
+    const length = Buffer.alloc(4);
+    length.writeUInt32LE((script.length | 0x80000000) >>> 0);
+    const postinstall = lockb.indexOf(length) - 4;
+    const row = postinstall - 16 - 49;
+    expect(lockb.subarray(row, row + 48)).toEqual(Buffer.alloc(48));
+    lockb.copy(lockb, row + 16, postinstall, postinstall + 8);
+    lockb[row + 48] = 1;
+    await write(path, lockb);
+
+    await rm(join(ctx.packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(env.RUNS);
+    const { err, exitCode } = await bun(ctx, ["install"], env);
+    expect(err).not.toContain("error:");
+    expect(await file(env.RUNS).text()).toBe(".");
+    expect(exitCode).toBe(0);
   });
 
   // A working directory keeps the case it was typed in, and `bun run` writes PATH from it.

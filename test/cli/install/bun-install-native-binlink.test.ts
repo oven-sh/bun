@@ -118,6 +118,52 @@ describe.concurrent("native binlink optimization", () => {
       await expectPlatformBin();
     });
 
+    test(`a trusted script runs the platform-specific bin with linker ${linker}`, async () => {
+      const { packageDir, packageJson } = await verdaccio.createTestDir({ bunfigOpts: { linker } });
+      await mkdir(join(packageDir, "user"));
+      await Promise.all([
+        writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "test-app",
+            dependencies: { user: "file:./user" },
+            nativeDependencies: ["test-native-binlink"],
+            trustedDependencies: ["user"],
+          }),
+        ),
+        writeFile(
+          join(packageDir, "user", "package.json"),
+          JSON.stringify({
+            name: "user",
+            version: "1.0.0",
+            dependencies: { "test-native-binlink": "1.0.0" },
+            scripts: { postinstall: "test-binlink-cmd > out.txt" },
+          }),
+        ),
+      ]);
+      const tmp = join(packageDir, ".bun-tmp");
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: {
+          ...bunEnv,
+          BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+          BUN_TMPDIR: tmp,
+          TMPDIR: tmp,
+          TEMP: tmp,
+        },
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      const user = realpathSync(join(packageDir, "node_modules", "user"));
+      expect(readFileSync(join(user, "out.txt"), "utf8")).toContain("SUCCESS: Using platform-specific bin");
+      expect(existsSync(join(user, "node_modules"))).toBe(false);
+      expect(exitCode).toBe(0);
+    });
+
     // bunx takes the bin of a package from that package's own package.json. Here the entry in `.bin` leads into
     // the platform package, and the file of the main package keeps the mode of its tarball.
     test.skipIf(isWindows).each(["a folder", "a link to another folder"])(

@@ -916,6 +916,22 @@ pub mod fs {
             crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
         }
 
+        /// `is_node_module`, however `node_modules` is spelled, or in a package of the install
+        /// cache.
+        pub fn is_dependency(&self) -> bool {
+            let mut components = crate::strings::split_any(self.name().dir, b"/\\").peekable();
+            while let Some(component) = components.next() {
+                if crate::strings::contains(component, b"@@@")
+                    || component.starts_with(b"@G@")
+                    || (component.eq_ignore_ascii_case(b"node_modules")
+                        && components.peek().is_some())
+                {
+                    return true;
+                }
+            }
+            false
+        }
+
         /// Key used to identify this path in the incremental graph: the real
         /// `text` for `file:` paths, the `pretty` form otherwise.
         #[inline]

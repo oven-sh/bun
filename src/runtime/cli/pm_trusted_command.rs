@@ -99,7 +99,7 @@ impl Blocked {
 
         let mut scripts = packages.items_scripts()[package_id];
         // Pass `true` to get the scripts that will run once the package is trusted.
-        match scripts.get_list(log, lockfile, folder, alias, resolution, true) {
+        match scripts.get_list(log, folder, alias, resolution, true) {
             Ok(list) => Ok(list.filter(|list| list.total > 0)),
             Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -532,6 +532,7 @@ impl TrustCommand {
 
                 let output_in_foreground = false;
                 let optional = false;
+                bun_install::bin::link_own_bins(pm, info.package_id, &info.scripts_list);
                 pm.spawn_package_lifecycle_scripts(
                     &mut *ctx,
                     info.scripts_list.clone(),

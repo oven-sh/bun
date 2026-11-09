@@ -1614,6 +1614,48 @@ async function installStreamPkg(
   return results;
 }
 
+describe.concurrent("the pax size of an entry", () => {
+  // The body of `data` is an entry of its own, which only a reader that takes the size for 0 finds.
+  const withSize = (size: string) => {
+    const body = Buffer.concat(tarFile("package/index.js", Buffer.from("second")));
+    let record = "";
+    for (let len = 0; record.length !== len || len === 0;) {
+      len = record.length;
+      record = `${len} size=${size}\n`;
+    }
+    const pax = Buffer.from(record);
+    return gzipSync(
+      Buffer.concat([
+        ...tarFile("package/package.json", Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }))),
+        ...tarFile("package/index.js", Buffer.from("first")),
+        tarHeader("PaxHeader", pax.length, "x"),
+        pax,
+        pad512(pax.length),
+        tarHeader("package/data", body.length, "0"),
+        body,
+        Buffer.alloc(1024),
+      ]),
+    );
+  };
+  const ways = ["libdeflate", "zlib", "buffered", "streaming"] as const;
+
+  test.each(ways)("can have leading zeros (%s)", async way => {
+    const [{ error, exitCode, files }] = await installStreamPkg(way, withSize("0001024"), { files: true });
+    expect(error).toBeUndefined();
+    expect(files).toMatchObject({ "index.js": "first" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(ways.flatMap(way => ["", "0x1", "+1", "0.5", " 1", "1k"].map(size => [size, way] as const)))(
+    "fails the install if it has anything but digits: %j (%s)",
+    async (size, way) => {
+      const [{ error, installed, cached, exitCode }] = await installStreamPkg(way, withSize(size));
+      expect({ error, installed, cached }).toEqual({ error: expect.any(String), installed: false, cached: 0 });
+      expect(exitCode).toBe(1);
+    },
+  );
+});
+
 // -------------------------------------------------------------------
 // A gzip member ends with the CRC32 and the length (ISIZE) of its data.
 // Where no integrity is recorded (a `file:` or URL tarball on its first

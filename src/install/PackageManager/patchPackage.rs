@@ -1100,7 +1100,6 @@ fn has_trusted_scripts(
     let mut scripts = pkg.scripts;
     let list = scripts.get_list(
         &mut bun_ast::Log::init(),
-        &manager.lockfile,
         &mut folder_path,
         name,
         &pkg.resolution,

@@ -1,7 +1,7 @@
 import { escapeHTML } from "bun" with { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync } from "node:fs";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { existsSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
   addStrings,
@@ -743,6 +743,77 @@ describe("macros in data: URL modules", () => {
       expect(existsSync(path.join(String(dir), "MACRO_RAN"))).toBe(false);
       expect(exitCode).toBe(1);
     });
+  });
+});
+
+describe("macros in a dependency's files", () => {
+  const macroFiles = (folder: string) => ({
+    [`${folder}/caller.js`]: `import { f } from "./macro.js" with { type: "macro" };\nexport const value = f();\n`,
+    [`${folder}/macro.js`]: `import { writeFileSync } from "node:fs";\nexport function f() {\n  writeFileSync("MACRO_RAN", "");\n  return "INLINED";\n}\n`,
+  });
+  async function build(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./entry.js", "--target=browser", "--outdir=dist"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode, ran: existsSync(path.join(dir, "MACRO_RAN")) };
+  }
+  const refused = {
+    stderr: expect.stringContaining("macros cannot be run from node_modules"),
+    exitCode: 1,
+    ran: false,
+  };
+  const allowed = { stderr: "", exitCode: 0, ran: true };
+
+  test.concurrent.each([
+    "Node_Modules/dep",
+    "NODE_MODULES/@scope/dep",
+    "cache/dep@1.0.0@@@1",
+    "cache/@scope/dep@1.0.0@@@1/lib",
+    "cache/dep@1.0.0@@registry.example.com@@@1",
+    "cache/dep@1.0.0@@@1_patch_hash=0123456789abcdef",
+    "cache/@G@0123456789abcdef0123456789abcdef01234567",
+    "cache/@GH@owner-dep-0123456@@@1",
+    "cache/@T@0123456789abcdef@@@1",
+  ])("are refused in %s", async folder => {
+    using dir = tempDir("macro-dependency", {
+      "entry.js": `import "dep";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `try { require("../../${folder}/caller.js") } catch {}\n`,
+      ...macroFiles(folder),
+    });
+    expect(await build(String(dir))).toEqual(refused);
+  });
+
+  test.concurrent.skipIf(!isWindows && !isMacOS)("are refused if they import themselves in another case", async () => {
+    using dir = tempDir("macro-dependency-case", {
+      "entry.js": `import "dep";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `import "../../Node_Modules/dep/caller.js";\n`,
+      ...macroFiles("node_modules/dep"),
+    });
+    expect(await build(String(dir))).toEqual(refused);
+  });
+
+  test.concurrent.each(["src", "node_modules_old", "my-node_modules/x", "a@@b"])("run in %s", async folder => {
+    using dir = tempDir("macro-project", { "entry.js": `import "./${folder}/caller.js";\n`, ...macroFiles(folder) });
+    expect(await build(String(dir))).toEqual(allowed);
+  });
+
+  test.concurrent("run in a linked package, also if a dependency imports it", async () => {
+    using dir = tempDir("macro-linked", {
+      "entry.js": `import "dep";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "node_modules/dep/index.js": `import "linked";\n`,
+      ...macroFiles("packages/linked"),
+      "packages/linked/package.json": JSON.stringify({ name: "linked", version: "1.0.0", main: "caller.js" }),
+    });
+    symlinkSync(path.join(String(dir), "packages/linked"), path.join(String(dir), "node_modules/linked"), "junction");
+    expect(await build(String(dir))).toEqual(allowed);
   });
 });
 

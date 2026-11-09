@@ -44,6 +44,7 @@ type Bitset = DynamicBitSet;
 
 pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
+    pub(crate) package_id: PackageID,
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) optional: bool,
 }
@@ -1034,6 +1035,7 @@ impl<'a> PackageInstaller<'a> {
     fn spawn_scripts(&mut self, entry: PendingLifecycleScript, log_level: Options::LogLevel) {
         let name = entry.list.package_name.clone();
         let output_in_foreground = false;
+        bin::link_own_bins(self.manager(), entry.package_id, &entry.list);
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
             self.command_ctx,
             entry.list,
@@ -1677,7 +1679,8 @@ impl<'a> PackageInstaller<'a> {
         let mut count: usize = 0;
         let (scripts, gypfile) = 'brk: {
             let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
-            if scripts.filled {
+            // It may have no package.json.
+            if scripts.filled && resolution_tag == resolution::Tag::Folder {
                 break 'brk (scripts, None);
             }
 
@@ -2742,21 +2745,15 @@ impl<'a> PackageInstaller<'a> {
                 .lockfile()
                 .has_trusted_dependency(folder_name, folder_name, resolution);
         let log = self.manager().log_mut();
-        let scripts_list = match scripts.get_list(
-            log,
-            self.lockfile(),
-            package_path,
-            folder_name,
-            resolution,
-            trusted,
-        ) {
-            Ok(Some(list)) => list,
-            Ok(None) => return false,
-            Err(err) => {
-                self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
-                return false;
-            }
-        };
+        let scripts_list =
+            match scripts.get_list(log, package_path, folder_name, resolution, trusted) {
+                Ok(Some(list)) => list,
+                Ok(None) => return false,
+                Err(err) => {
+                    self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
+                    return false;
+                }
+            };
 
         if !self
             .manager()
@@ -2796,6 +2793,7 @@ impl<'a> PackageInstaller<'a> {
             .push((self.current_tree_id, scripts_list.package_name.clone()));
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {
             list: scripts_list,
+            package_id,
             tree_id: self.current_tree_id,
             optional,
         });

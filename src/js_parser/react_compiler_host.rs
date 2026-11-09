@@ -8,6 +8,7 @@ use bun_ast as js_ast;
 use bun_collections::VecExt;
 
 use crate::JSXImport;
+use crate::lexer::is_identifier_continue;
 use crate::p::P;
 
 /// What [`P::enter_react_compiler_candidate`] decided about a function.
@@ -207,14 +208,15 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 
 /// Whether `eval` stands in `source` as a name of its own. In `evaluate` and `retrieval` it is a part of a longer name.
 fn has_the_word_eval(source: &[u8]) -> bool {
-    // A byte that is not ASCII is no part of a name here: it can be the end of a space, such as U+00A0.
-    let is_of_a_name = |byte: &u8| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'$';
+    use bun_core::lexer::{char_and_size, last_char};
     let mut searched = 0;
     while let Some(found) = bun_core::strings::index_of(&source[searched..], b"eval") {
         let start = searched + found;
         searched = start + b"eval".len();
-        let before = start.checked_sub(1).and_then(|at| source.get(at));
-        if !before.is_some_and(is_of_a_name) && !source.get(searched).is_some_and(is_of_a_name) {
+        // The character in front of the word is four bytes at most.
+        let (before, _) = last_char(&source[start.saturating_sub(4)..start]);
+        let (after, _) = char_and_size(source, searched);
+        if !is_identifier_continue(before) && !is_identifier_continue(after) {
             return true;
         }
     }

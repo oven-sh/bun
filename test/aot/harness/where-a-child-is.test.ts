@@ -16,7 +16,13 @@ test.skipIf(!isLinux)(
       const stat = readFileSync(`/proc/${child.pid}/stat`, "utf8");
       return stat[stat.lastIndexOf(")") + 2];
     };
-    while (state() !== "S") await Bun.sleep(1);
+    const deadline = performance.now() + 2000;
+    let last = state();
+    while (last !== "S" && performance.now() < deadline) {
+      await Bun.sleep(1);
+      last = state();
+    }
+    expect(last).toBe("S");
 
     const said: string[] = [];
     using where = saysWhereItIs(child.pid, cmd, { first: 0, every: 20, span: 20, say: text => said.push(text) });
@@ -40,5 +46,8 @@ test("a child has a small heap when its environment limits the cell cage or the 
     // No cage: the heap has no limit.
     hasSmallHeap({ BUN_JSC_markedBlockCageSizeInMB: "0" }),
     hasSmallHeap({ BUN_JSC_markedBlockCageSizeInMB: "0", BUN_JSC_structureHeapSizeInKB: "16384" }),
-  ]).toEqual([false, true, true, false, true]);
+    // The size that the engine chooses.
+    hasSmallHeap({ BUN_JSC_structureHeapSizeInKB: "0" }),
+    hasSmallHeap({ BUN_JSC_markedBlockCageSizeInMB: "64", BUN_JSC_structureHeapSizeInKB: "0" }),
+  ]).toEqual([false, true, true, false, true, false, true]);
 });

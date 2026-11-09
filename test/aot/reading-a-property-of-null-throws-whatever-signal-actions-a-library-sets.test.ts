@@ -249,7 +249,7 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
     stdout: "pipe",
     stderr: "pipe",
   });
-  using _where = hasSmallHeap(env) ? saysWhereItIs(proc.pid, cmd) : undefined;
+  using _where = hasSmallHeap({ ...bunEnv, ...env }) ? saysWhereItIs(proc.pid, cmd) : undefined;
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }

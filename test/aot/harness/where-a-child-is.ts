@@ -30,10 +30,10 @@ function look(pid: number): Look {
 
 /**
  * A child with one of these has a heap that is small on purpose: it ends in a second or two, or it does not end.
- * A cell cage of 0 MB is no cage, and no limit.
+ * A size of 0 is no limit: a cell cage of 0 MB is no cage, and a structure heap of 0 KB has the size that the engine chooses.
  */
 export const hasSmallHeap = (env: Record<string, string | undefined>) =>
-  !!(Number(env.BUN_JSC_markedBlockCageSizeInMB) || env.BUN_JSC_structureHeapSizeInKB);
+  !!(Number(env.BUN_JSC_markedBlockCageSizeInMB) || Number(env.BUN_JSC_structureHeapSizeInKB));
 
 /**
  * While the child has not ended, its threads go to `say`: after `first` milliseconds, and then every `every`, as long as they are not

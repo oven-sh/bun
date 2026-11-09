@@ -117,6 +117,12 @@ enum ModuleFace {
 }
 
 #[derive(Copy, Clone)]
+struct ExportOfModule {
+    specifier: Atom,
+    export: Atom,
+}
+
+#[derive(Copy, Clone)]
 pub(super) struct Text<'a, 'h, 'b, 'd> {
     pub(super) hir: &'a File<'h>,
     pub(super) bound: &'a Bound<'b>,
@@ -206,7 +212,11 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         None
     }
 
-    fn find_export_read_off_some_module(self, e: ExprId, left: StepsLeft) -> Option<(Atom, Atom)> {
+    fn find_export_read_off_some_module(
+        self,
+        e: ExprId,
+        left: StepsLeft,
+    ) -> Option<ExportOfModule> {
         let (specifier, face, names) = self.find_names_read_off_module(e, left)?;
         let (&export, before) = names.split_first()?;
         let is_export = match *before {
@@ -214,7 +224,7 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
             [first] => face == ModuleFace::Namespace && first == known::default,
             _ => false,
         };
-        is_export.then_some((specifier, export))
+        is_export.then_some(ExportOfModule { specifier, export })
     }
 
     fn find_export_read_off_module(
@@ -223,7 +233,8 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         left: StepsLeft,
         modules: [Atom; 2],
     ) -> Option<Atom> {
-        let (specifier, export) = self.find_export_read_off_some_module(e, left)?;
+        let ExportOfModule { specifier, export } =
+            self.find_export_read_off_some_module(e, left)?;
         modules.contains(&specifier).then_some(export)
     }
 
@@ -231,7 +242,8 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         if let Some((holder, name)) = find_member_of_global(self.hir, self.bound, callee) {
             return find_listed_call(holder, name);
         }
-        let (specifier, export) = self.find_export_read_off_some_module(callee, left)?;
+        let ExportOfModule { specifier, export } =
+            self.find_export_read_off_some_module(callee, left)?;
         find_listed_call(HolderOfFileCalls::of_specifier(specifier)?, export)
     }
 

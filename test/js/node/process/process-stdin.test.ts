@@ -66,6 +66,7 @@ test.concurrent.skipIf(isWindows)(
   "process.stdin attaches after a Bun.stdin.stream() reader failed to open a directory on fd 0",
   async () => {
     // The failed reader leaves the cached Bun.stdin.stream() errored, and an errored stream has no native handle for process.stdin.
+    // POSIX only: the directory check that fails the open (open_file_blob) is #[cfg(unix)].
     const script = `
       const { isErrored } = require("node:stream");
       let web;

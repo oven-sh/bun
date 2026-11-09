@@ -382,6 +382,7 @@ describe.concurrent("a stream that a native consumer takes", () => {
   // An S3 upload reads the stream through a reader. The reader is not acquired when the open fails, so the stream is not locked.
   test("errors a Bun.file() stream whose file does not open when an S3 upload reads it", async () => {
     using dir = tempDir("web-stream-state", {});
+    // Never reached: the upload fails before its first request. It keeps a regression away from the real S3 host.
     await using endpoint = Bun.serve({ port: 0, fetch: () => new Response("ok") });
     const s3 = new Bun.S3Client({
       accessKeyId: "test",

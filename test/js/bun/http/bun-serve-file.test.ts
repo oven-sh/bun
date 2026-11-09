@@ -1136,8 +1136,9 @@ describe("a handler that consumes a Bun.file() stream that fails to open", () =>
     return { statuses, errors };
   }
 
-  it("a catch that drops the promise of cancel() answers", async () => {
-    const outcome = await ask(() => {
+  // cancel() on the errored stream rejects with the open error, and that promise is already handled.
+  it("cancel() in the handler's catch: a dropped promise is ignored, an awaited one rejects", async () => {
+    const dropped = await ask(() => {
       const stream = missing();
       try {
         return new Response(stream.pipeThrough(new TransformStream()));
@@ -1146,11 +1147,7 @@ describe("a handler that consumes a Bun.file() stream that fails to open", () =>
         return notFound();
       }
     });
-    expect(outcome).toEqual({ statuses: [404, 404], errors: [] });
-  });
-
-  it("a catch that awaits cancel() gets the open error again", async () => {
-    const outcome = await ask(async () => {
+    const awaited = await ask(async () => {
       const stream = missing();
       try {
         return new Response(stream.pipeThrough(new TransformStream()));
@@ -1159,7 +1156,10 @@ describe("a handler that consumes a Bun.file() stream that fails to open", () =>
         return notFound();
       }
     });
-    expect(outcome).toEqual({ statuses: [500, 500], errors: ["ENOENT", "ENOENT"] });
+    expect({ dropped, awaited }).toEqual({
+      dropped: { statuses: [404, 404], errors: [] },
+      awaited: { statuses: [500, 500], errors: ["ENOENT", "ENOENT"] },
+    });
   });
 
   // A whole-body reader returns a promise. The open error is its rejection, so a try/catch around the call does not see it.
@@ -1212,7 +1212,7 @@ describe("a handler that consumes a Bun.file() stream that fails to open", () =>
       .catch(() => "no response");
   }
 
-  it("pipeTo() into the writable side of the body ends the response", async () => {
+  it("pipeTo() into the writable side of the body aborts the response unless preventAbort", async () => {
     expect({
       default: await pipeWithFallback(),
       preventAbort: await pipeWithFallback({ preventAbort: true }),

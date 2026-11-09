@@ -2261,7 +2261,7 @@ describe("ReadableStream for a File that fails to open", () => {
   const missing = join(import.meta.dir, "fetch.js.txt.notfound");
   const enoent = expect.objectContaining({ code: "ENOENT", syscall: "open" });
   // label => [makeStream, expected error]
-  const doors = {
+  const sources = {
     "Bun.file(missing).stream()": [() => file(missing).stream(), enoent],
     "Bun.file(missing).slice().stream()": [() => file(missing).slice(0, 10).stream(), enoent],
     "new Response(Bun.file(missing)).body": [() => new Response(file(missing)).body, enoent],
@@ -2271,14 +2271,12 @@ describe("ReadableStream for a File that fails to open", () => {
     ],
     "file removed after .stream()": [
       () => {
-        const dir = tempDir("file-stream-open-fail", { "gone.txt": "gone before the first read" });
-        const stream = file(join(String(dir), "gone.txt")).stream();
-        dir[Symbol.dispose]();
-        return stream;
+        using dir = tempDir("file-stream-open-fail", { "gone.txt": "gone before the first read" });
+        return file(join(String(dir), "gone.txt")).stream();
       },
       enoent,
     ],
-    // open() succeeds, the fstat() after it reports a directory.
+    // open() succeeds, the fstat() after it reports a directory. POSIX only: that check in open_file_blob is #[cfg(unix)].
     ...(isWindows
       ? {}
       : {
@@ -2288,11 +2286,13 @@ describe("ReadableStream for a File that fails to open", () => {
           ],
         }),
   };
-  // These have thrown the open error at the call on every release. A Bun.serve handler reaches error() through that throw.
+  // These throw the open error at the call. A Bun.serve handler reaches error() through that throw.
+  // values() returned up to 1.3.14, and its next() rejected. The others have thrown on every release.
   const throwingConsumers = {
     "getReader()": stream => stream.getReader(),
     "tee()": stream => stream.tee(),
     "pipeThrough()": stream => stream.pipeThrough(new TransformStream()),
+    "values()": stream => stream.values(),
     "new ReadableStreamDefaultReader()": stream => new ReadableStreamDefaultReader(stream),
     "new Response(stream).textStream()": stream => new Response(stream).textStream(),
   };
@@ -2314,8 +2314,8 @@ describe("ReadableStream for a File that fails to open", () => {
     "stream.pipeTo()": stream => stream.pipeTo(new WritableStream()),
   };
 
-  describe.each(Object.entries(doors))("%s", (label, [makeStream, expected]) => {
-    it.each(Object.entries(throwingConsumers))("%s throws and leaves the stream errored", async (name, consume) => {
+  describe.each(Object.entries(sources))("%s", (_label, [makeStream, expected]) => {
+    it.each(Object.entries(throwingConsumers))("%s throws and leaves the stream errored", async (_name, consume) => {
       const stream = makeStream();
       let thrown;
       try {
@@ -2370,45 +2370,41 @@ describe("ReadableStream for a File that fails to open", () => {
       expect(outcomes).toEqual(Object.fromEntries(Object.keys(promiseConsumers).map(name => [name, expected])));
     });
 
-    it("pipeTo() aborts its destination and leaves the stream errored", async () => {
-      const stream = makeStream();
-      const aborts = [];
-      const error = await stream
-        .pipeTo(
-          new WritableStream({
-            abort(reason) {
-              aborts.push(reason);
-            },
-          }),
-        )
-        .catch(e => e);
-      expect(error).toEqual(expected);
-      expect(aborts).toEqual([error]);
-      expect(
-        await stream
-          .getReader()
-          .read()
-          .catch(e => e),
-      ).toBe(error);
-    });
-
-    it("pipeTo() with preventAbort leaves its destination writable", async () => {
-      const written = [];
-      const aborts = [];
-      const destination = new WritableStream({
-        write(chunk) {
-          written.push(chunk);
-        },
-        abort(reason) {
-          aborts.push(reason);
-        },
+    it("pipeTo() aborts its destination unless preventAbort, and leaves the stream errored", async () => {
+      async function pipe(options) {
+        const stream = makeStream();
+        const written = [];
+        const aborts = [];
+        const destination = new WritableStream({
+          write(chunk) {
+            written.push(chunk);
+          },
+          abort(reason) {
+            aborts.push(reason);
+          },
+        });
+        const error = await stream.pipeTo(destination, options).catch(e => e);
+        // Only a destination that was not aborted takes a later write.
+        const later = await destination
+          .getWriter()
+          .write("footer")
+          .then(
+            () => "written",
+            e => (e === error ? "rejects with the open error" : e),
+          );
+        // Read only from an errored stream: a stream that the failed open left readable never settles this read.
+        const read = isErrored(stream)
+          ? await stream
+              .getReader()
+              .read()
+              .catch(e => e)
+          : "not errored";
+        return { error, aborted: aborts.length === 1 && aborts[0] === error, later, written, read: read === error };
+      }
+      expect({ default: await pipe(), preventAbort: await pipe({ preventAbort: true }) }).toEqual({
+        default: { error: expected, aborted: true, later: "rejects with the open error", written: [], read: true },
+        preventAbort: { error: expected, aborted: false, later: "written", written: ["footer"], read: true },
       });
-      const error = await makeStream()
-        .pipeTo(destination, { preventAbort: true })
-        .catch(e => e);
-      expect(error).toEqual(expected);
-      await destination.getWriter().write("footer");
-      expect({ aborts, written }).toEqual({ aborts: [], written: ["footer"] });
     });
   });
 

@@ -98,6 +98,20 @@ Bun.markdown.html("## Hello World", { headings: { ids: true } });
 // '<h2 id="hello-world">Hello World</h2>\n'
 ```
 
+`autolink` wraps the content of each heading in a link to the ID of that heading, so `autolink` needs `ids: true`. Without `ids`, `autolink` has no effect:
+
+```ts
+// `ids` and `autolink` together give the same result as `headings: true`
+Bun.markdown.html("## Hello World", { headings: { ids: true, autolink: true } });
+// '<h2 id="hello-world"><a href="#hello-world">Hello World</a></h2>\n'
+
+// `autolink` without `ids`: no ID, so no link
+Bun.markdown.html("## Hello World", { headings: { autolink: true } });
+// '<h2>Hello World</h2>\n'
+```
+
+Only `Bun.markdown.html()` writes the link. `Bun.markdown.render()` and `Bun.markdown.react()` ignore `autolink`. With `ids: true`, they pass the `id` to your `heading` callback or heading component, and you write the link there.
+
 ---
 
 ## `Bun.markdown.render()`

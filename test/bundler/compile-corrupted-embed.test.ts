@@ -37,9 +37,12 @@ function writeU64At(fd: number, position: number, value: bigint): void {
   writeSync(fd, buf, 0, 8, position);
 }
 
-/// In bun itself, the ".bun" section is the BUN_COMPILED header. `bun build --compile` points the section header at
-/// the embedded payload instead, so sh_addr and sh_offset locate `[u64 LE length][payload]`.
-function elfFindBunSection(fd: number): { fileOffset: number; vaddr: bigint } {
+type ElfSection = { name: string; type: number; flags: bigint; vaddr: bigint; fileOffset: number; size: number };
+
+const SHT_PROGBITS = 1;
+const SHF_ALLOC = 2n;
+
+function elfSections(fd: number): ElfSection[] {
   const ehdr = readAt(fd, 0, 64);
   if (ehdr.readUInt32BE(0) !== 0x7f454c46) throw new Error("not an ELF file");
   const e_shoff = Number(ehdr.readBigUInt64LE(0x28));
@@ -48,19 +51,30 @@ function elfFindBunSection(fd: number): { fileOffset: number; vaddr: bigint } {
   const e_shstrndx = ehdr.readUInt16LE(0x3e);
 
   const shstrtab = readAt(fd, e_shoff + e_shstrndx * e_shentsize, e_shentsize);
-  const shstrOff = Number(shstrtab.readBigUInt64LE(0x18));
+  const names = readAt(fd, Number(shstrtab.readBigUInt64LE(0x18)), Number(shstrtab.readBigUInt64LE(0x20)));
 
+  const sections: ElfSection[] = [];
   for (let i = 0; i < e_shnum; i++) {
     const sh = readAt(fd, e_shoff + i * e_shentsize, e_shentsize);
-    const name = readAt(fd, shstrOff + sh.readUInt32LE(0), 5);
-    if (name.toString("latin1") === ".bun\0") {
-      return {
-        fileOffset: Number(sh.readBigUInt64LE(0x18)),
-        vaddr: sh.readBigUInt64LE(0x10),
-      };
-    }
+    const nameStart = sh.readUInt32LE(0);
+    sections.push({
+      name: names.toString("latin1", nameStart, names.indexOf(0, nameStart)),
+      type: sh.readUInt32LE(4),
+      flags: sh.readBigUInt64LE(8),
+      vaddr: sh.readBigUInt64LE(0x10),
+      fileOffset: Number(sh.readBigUInt64LE(0x18)),
+      size: Number(sh.readBigUInt64LE(0x20)),
+    });
   }
-  throw new Error("no .bun section");
+  return sections;
+}
+
+/// In bun itself, the ".bun" section is the BUN_COMPILED header. `bun build --compile` points the section header at
+/// the embedded payload instead, so sh_addr and sh_offset locate `[u64 LE length][payload]`.
+function elfFindBunSection(fd: number): { fileOffset: number; vaddr: bigint } {
+  const section = elfSections(fd).find(section => section.name === ".bun");
+  if (!section) throw new Error("no .bun section");
+  return { fileOffset: section.fileOffset, vaddr: section.vaddr };
 }
 
 /// Overwrites the payload's u64 length prefix.
@@ -315,6 +329,71 @@ test.if(reportsTruncation)(
       });
     }
     rmSync(cut);
+  },
+  TIMEOUT,
+);
+
+// GNU strip and objcopy write a new file from the section headers. Bytes that no section covers are lost. The word
+// that holds the payload's address stays where bun itself has its ".bun" section, which the compile points at the payload.
+test.skipIf(!isLinux)(
+  "a section header covers the word that holds the payload's address",
+  async () => {
+    using dir = tempDir("compile-pointer-section", {
+      "app.js": `console.log("hello from standalone");`,
+    });
+    const exe = await compileApp(String(dir));
+
+    const bun = openSync(bunExe(), "r");
+    const fd = openSync(exe, "r");
+    try {
+      const word = elfFindBunSection(bun);
+      const payload = elfFindBunSection(fd);
+      expect(readAt(fd, word.fileOffset, 8).readBigUInt64LE()).toBe(payload.vaddr);
+
+      const coveringSections = elfSections(fd).filter(
+        section =>
+          (section.flags & SHF_ALLOC) !== 0n &&
+          section.fileOffset <= word.fileOffset &&
+          word.fileOffset + 8 <= section.fileOffset + section.size,
+      );
+      expect(coveringSections).toEqual([
+        {
+          name: ".bun.pointer",
+          type: SHT_PROGBITS,
+          flags: expect.any(BigInt),
+          vaddr: word.vaddr,
+          fileOffset: word.fileOffset,
+          size: 8,
+        },
+      ]);
+    } finally {
+      closeSync(fd);
+      closeSync(bun);
+    }
+  },
+  TIMEOUT,
+);
+
+const gnuStrip = isLinux && Bun.which("strip");
+const hasGnuStrip =
+  !!gnuStrip &&
+  Bun.spawnSync({ cmd: [gnuStrip, "--version"], stdout: "pipe" })
+    .stdout.toString()
+    .includes("GNU");
+test.if(hasGnuStrip)(
+  "runs its program after GNU strip",
+  async () => {
+    using dir = tempDir("compile-stripped", {
+      "app.js": `console.log("hello from standalone");`,
+    });
+    const exe = await compileApp(String(dir));
+    const stripped = corruptedCopy(exe, "stripped", path => {
+      const { stderr, exitCode } = Bun.spawnSync({ cmd: [gnuStrip!, path], stderr: "pipe" });
+      expect(stderr.toString()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+    expect(await run(stripped)).toEqual({ stdout: "hello from standalone\n", stderr: "", exitCode: 0 });
+    rmSync(stripped);
   },
   TIMEOUT,
 );

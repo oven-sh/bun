@@ -153,10 +153,18 @@ impl LoadSegments {
 
 const ET_EXEC: u16 = 2;
 
+/// The 8 bytes of BUN_COMPILED, which hold the payload's address. `.bun` covered them as linked, and names the payload after a compile.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct PointerWord {
+    pub address: u64,
+    pub file_offset: u64,
+}
+
 struct PayloadPlan {
     replaces_payload: bool,
     /// `.bun` as linked: where BUN_COMPILED holds the payload's address.
     pointer_file_offset: u64,
+    pointer_address: u64,
     section_index: u16,
     address: u64,
     file_offset: u64,
@@ -201,6 +209,14 @@ impl PayloadPlan {
         // Subtract first: a smaller payload moves the tail down.
         offset - self.tail_start + self.moved_tail_start
     }
+
+    /// `None` for a replaced payload: the word already holds its address, and the plan does not know where it is.
+    fn pointer_word(&self) -> Option<PointerWord> {
+        (!self.replaces_payload).then_some(PointerWord {
+            address: self.pointer_address,
+            file_offset: self.pointer_file_offset,
+        })
+    }
 }
 
 impl<'a> ElfFile<TemplateBytes<'a>> {
@@ -211,11 +227,12 @@ impl<'a> ElfFile<TemplateBytes<'a>> {
 
     /// Find the `.bun` section and place the payload so the kernel `mmap`s it at exec time alongside the rest of the binary.
     /// `parts`, one behind the other, are the payload.
+    /// Also returns the word that the pieces write the payload's address to, if they write one.
     pub fn bun_section_in_pieces(
         mut self,
         parts: &[&'a [u8]],
         code: Option<Range<u64>>,
-    ) -> Result<Vec<Piece<'a>>, ElfError> {
+    ) -> Result<(Vec<Piece<'a>>, Option<PointerWord>), ElfError> {
         let payload_length: u64 = parts.iter().map(|part| part.len() as u64).sum();
         let plan = self.plan_payload(payload_length, code)?;
         self.write_payload_headers(&plan);
@@ -239,7 +256,7 @@ impl<'a> ElfFile<TemplateBytes<'a>> {
             Piece::Zeros(plan.aligned_size - plan.content_size),
             Piece::Bytes(tail),
         ]);
-        Ok(pieces)
+        Ok((pieces, plan.pointer_word()))
     }
 }
 
@@ -315,6 +332,7 @@ impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
         let plan = PayloadPlan {
             replaces_payload,
             pointer_file_offset: bun_section.file_offset,
+            pointer_address: bun_section.vaddr,
             section_index: bun_section.section_index,
             address: mapping.address,
             file_offset: mapping.file_offset,
@@ -873,14 +891,14 @@ mod tests {
         let mut bytes = template.to_vec();
         let written = ElfFile::over(TemplateBytes::Kept(&mut bytes))
             .and_then(|elf| elf.bun_section_in_pieces(&[payload], None))
-            .map(concatenate);
+            .map(|(pieces, _)| concatenate(pieces));
         (written, bytes)
     }
 
     fn write_with_code(template: &[u8], payload: &[u8], code: Range<u64>) -> Vec<u8> {
         let mut bytes = template.to_vec();
         let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
-        concatenate(elf.bun_section_in_pieces(&[payload], Some(code)).unwrap())
+        concatenate(elf.bun_section_in_pieces(&[payload], Some(code)).unwrap().0)
     }
 
     fn payload_segments(elf: &[u8]) -> Vec<(u32, u64, u64)> {
@@ -981,6 +999,33 @@ mod tests {
             let tail_start = (rw_phdr.p_offset + rw_phdr.p_filesz) as usize;
             let zero_fill = &written.elf[tail_start..written.shdr.sh_offset as usize];
             assert!(!zero_fill.is_empty() && is_zero(zero_fill));
+        }
+    }
+
+    #[test]
+    fn pieces_name_the_pointer_word() {
+        for architecture in ARCHITECTURES {
+            let template = template(architecture);
+            let linked_bun = find_section(&template, b".bun");
+            let payload = create_payload(page_size(&template));
+
+            let mut bytes = template.clone();
+            let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
+            let (_, word) = elf.bun_section_in_pieces(&[&payload], None).unwrap();
+            assert_eq!(
+                word,
+                Some(PointerWord {
+                    address: linked_bun.sh_addr,
+                    file_offset: linked_bun.sh_offset,
+                })
+            );
+
+            // A replaced payload keeps its address, so the word is not written.
+            let first = write_checked(&template, linked_bun.sh_addr, &payload).elf;
+            let mut bytes = first.clone();
+            let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
+            let (_, word) = elf.bun_section_in_pieces(&[&payload], None).unwrap();
+            assert_eq!(word, None);
         }
     }
 
@@ -1109,7 +1154,7 @@ mod tests {
                 ];
                 let mut bytes = trimmed.clone();
                 let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
-                let pieces = elf
+                let (pieces, _) = elf
                     .bun_section_in_pieces(&parts, Some(code.clone()))
                     .unwrap();
                 assert_eq!(pieces.len(), 8);

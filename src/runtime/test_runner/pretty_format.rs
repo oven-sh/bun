@@ -6,7 +6,7 @@ use bun_core::fmt as bun_fmt;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
-    JSPropertyIterator, JSType, JSValue, JsClass as _, JsError, JsResult, MatchedPlace, MatchedPlaceScope,
+    JSType, JSValue, JsClass as _, JsError, JsResult, MatchedPlace, MatchedPlaceScope,
     MatchedRows, StringJsc as _, VM,
 };
 use bun_core::{strings, EncodedSlice, Utf8Bytes};
@@ -2071,7 +2071,8 @@ impl<'a> Formatter<'a> {
                     let tag_name_slice: Utf8Bytes;
                     let mut is_tag_kind_primitive = false;
 
-                    if let Some(type_value) = place.row_or("type", || value.get(self.global_this, "type"))?.0 {
+                    let (type_value, type_place) = place.row_or("type", || value.get(self.global_this, "type"))?;
+                    if let Some(type_value) = type_value {
                         let _tag = Tag::get(type_value, self.global_this)?;
 
                         if _tag.cell == JSType::Symbol {
@@ -2081,7 +2082,7 @@ impl<'a> Formatter<'a> {
                             tag_name_slice = tag_name_view.to_utf8();
                             is_tag_kind_primitive = true;
                         } else if _tag.cell.is_object() || type_value.is_callable() {
-                            let name = type_value.get_name_property(self.global_this)?;
+                            let name = type_place.name_property(type_value, self.global_this)?;
                             tag_name_slice = if name.is_empty() {
                                 Utf8Bytes::Borrowed(b"NoName")
                             } else {
@@ -2149,14 +2150,7 @@ impl<'a> Formatter<'a> {
                         // trailing " />" is skipped) and restore unconditionally afterward.
                         let inner: JsResult<bool> = (|| {
                         let Some(props_obj) = props.get_object() else { return Ok(false); };
-                        let props_iter = JSPropertyIterator::init(
-                            self.global_this,
-                            props_obj,
-                            jsc::PropertyIteratorOptions {
-                                skip_empty_name: true,
-                                include_value: true,
-                            },
-                        )?;
+                        let props_iter = props_place.own_properties(props_obj, self.global_this)?;
 
                         let (children_prop, children_place) =
                             props_place.row_or("children", || props.get(self.global_this, "children"))?;
@@ -2170,15 +2164,11 @@ impl<'a> Formatter<'a> {
                                 // `JSPropertyIterator::i` is private upstream;
                                 // track the 1-based iteration index locally.
                                 let mut iter_i: usize = 0;
-                                while let Some((prop, property_value)) = props_iter.next()? {
+                                while let Some((prop, property_value, property_place)) = props_iter.next()? {
                                     iter_i += 1;
                                     if prop.eq_ascii(b"children") {
                                         continue;
                                     }
-                                    let (property_value, property_place) = match props_place.row_named(&prop) {
-                                        Some(row) => row,
-                                        None => (property_value, MatchedPlace::default()),
-                                    };
 
                                     let tag = Tag::get(property_value, self.global_this)?;
 
@@ -2246,9 +2236,12 @@ impl<'a> Formatter<'a> {
                             if let Some(children) = children_prop {
                                 let tag = Tag::get(children, self.global_this)?;
 
-                                // An element whose `$$typeof` matched a matcher is no child to print, as an object is not.
-                                let print_children = matches!(tag.tag, Tag::String | Tag::JSX | Tag::Array)
-                                    && children_place.row("$$typeof").is_none();
+                                let print_children = match tag.tag {
+                                    // An element whose `$$typeof` matched a matcher is no child to print, as an object is not.
+                                    Tag::JSX => children_place.row("$$typeof").is_none(),
+                                    Tag::String | Tag::Array => true,
+                                    _ => false,
+                                };
 
                                 if print_children {
                                     'print_children: {

@@ -3,7 +3,9 @@
 use core::ffi::c_void;
 
 use crate::js_value::ForEachPropertyWithRowsCallback;
-use crate::{JSGlobalObject, JSValue, JsResult};
+use crate::{
+    IntoIterObject, JSGlobalObject, JSPropertyIterator, JSValue, JsResult, PropertyIteratorOptions,
+};
 
 /// The rows of one `JSValue::jest_deep_match` call, or none. It is a GC cell with no `Strong`: the stack roots it, so keep it in locals, arguments and a formatter that is a local.
 #[repr(transparent)]
@@ -177,11 +179,63 @@ impl MatchedPlace {
         })
     }
 
+    /// The own enumerable properties of `object` that a string names, as `JSPropertyIterator` yields them with `skip_empty_name` and `include_value`, for the object of this place, or for any object if this place is none. With a place, a row is yielded in place of its property, which is not read, and the name of every row is listed: where the property is if `object` owns it, and otherwise where a property added under that name would be, in the order of the walk.
+    pub fn own_properties<'a>(
+        self,
+        object: impl IntoIterObject,
+        global: &'a JSGlobalObject,
+    ) -> JsResult<PropertiesWithRows<'a>> {
+        let object = object.into_iter_object();
+        let names = if self.is_none() {
+            let options = PropertyIteratorOptions {
+                skip_empty_name: true,
+                include_value: true,
+            };
+            JSPropertyIterator::init(global, object, options)?
+        } else {
+            let (rows, place) = self.cell_and_handle();
+            // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
+            unsafe { JSPropertyIterator::init_with_matched_rows(global, object, rows, place)? }
+        };
+        Ok(PropertiesWithRows {
+            len: names.len,
+            names,
+            place: self,
+        })
+    }
+
     /// The rows cell and the handle of this place, which must not be none. The handle is not checked against the cell: C++ answers for any number.
     #[inline(always)]
     fn cell_and_handle(self) -> (JSValue, PlaceHandle) {
         assert!(!self.is_none() && !self.rows.is_empty());
         (self.rows.0, self.handle)
+    }
+}
+
+/// What [`MatchedPlace::own_properties`] lists.
+pub struct PropertiesWithRows<'a> {
+    /// How many names are listed. As with `JSPropertyIterator::len`, `next` may yield fewer.
+    pub len: usize,
+    names: JSPropertyIterator<'a>,
+    place: MatchedPlace,
+}
+
+impl PropertiesWithRows<'_> {
+    /// The name of the next property, the value to print for it and the place of that value. The name is valid until `self` drops.
+    pub fn next(&self) -> JsResult<Option<(bun_core::StringView<'_>, JSValue, MatchedPlace)>> {
+        if self.place.is_none() {
+            let next = self.names.next()?;
+            return Ok(next.map(|(name, value)| (name, value, MatchedPlace::default())));
+        }
+        while let Some((name, _)) = self.names.next()? {
+            if let Some((value, place)) = self.place.row_named(&name) {
+                return Ok(Some((name, value, place)));
+            }
+            if let Some(value) = self.names.value_of_last()? {
+                return Ok(Some((name, value, MatchedPlace::default())));
+            }
+        }
+        Ok(None)
     }
 }
 

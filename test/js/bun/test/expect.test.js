@@ -4266,7 +4266,7 @@ describe("expect()", () => {
         expect(sum.a).toBe(1);
 
         const element = (
-          /** @type {string} */ type,
+          /** @type {string | object} */ type,
           /** @type {object} */ props,
           /** @type {string | null} */ key = null,
         ) => Object.freeze({ $$typeof: Symbol.for("react.element"), type, key, ref: null, props });
@@ -4318,6 +4318,71 @@ describe("expect()", () => {
           '+       "width": 1,',
           "+     } />,",
         ]);
+
+        // The comparison read the getter that matched. The printer shows the matcher and does not read it again.
+        let reads = 0;
+        const counted = Object.freeze({
+          get id() {
+            reads++;
+            return "a1";
+          },
+          other: 1,
+        });
+        expect(printed(element("div", counted), { props: { id: string } })).toEqual([
+          '+   "e": <div id=Any<String>other=1 />,',
+        ]);
+        expect(reads).toBe(1);
+        // A prop that matched is listed also if the props do not own it as an enumerable property:
+        // where the property is if they own it, and otherwise where a new property of that name would be.
+        const hidden = (/** @type {object} */ props, /** @type {string} */ name) =>
+          Object.freeze(Object.defineProperty(props, name, { enumerable: false }));
+        const inheriting = (/** @type {object} */ prototype, /** @type {object} */ own) =>
+          Object.freeze(Object.assign(Object.create(prototype), own));
+        class Props {
+          z = 1;
+          get id() {
+            return "x";
+          }
+        }
+        expect(
+          printed(element("div", hidden({ a: 1, hidden: "h", z: 2 }, "hidden")), { props: { hidden: string } }),
+        ).toEqual(['+   "e": <div a=1 hidden=Any<String>z=2 />,']);
+        expect(printed(element("div", hidden({ hidden: "h" }, "hidden")), { props: { hidden: string } })).toEqual([
+          '+   "e": <div hidden=Any<String> />,',
+        ]);
+        expect(printed(element("div", Object.freeze(new Props())), { props: { id: string } })).toEqual([
+          '+   "e": <div z=1id=Any<String> />,',
+        ]);
+        expect(
+          printed(element("div", inheriting({ inherited: "p" }, { own: 1, z: 2 })), { props: { inherited: string } }),
+        ).toEqual(['+   "e": <div own=1 z=2inherited=Any<String> />,']);
+        expect(
+          printed(element("div", inheriting({ 5: "five" }, { 2: "two", a: 1 })), { props: { 5: string } }),
+        ).toEqual(['+   "e": <div 2="two" 5=Any<String>a=1 />,']);
+        // Inherited `children` that a matcher matched count as a prop, which puts the space after `a=1`.
+        // Inherited `children` with a child that matched are printed.
+        expect(
+          printed(element("div", inheriting({ children: "text" }, { a: 1, b: 2, c: 3 })), {
+            props: { children: string },
+          }),
+        ).toEqual(['+   "e": <div a=1 b=2c=3 />,']);
+        expect(
+          printed(element("div", inheriting({ children: Object.freeze([element("b", { v: 2 })]) }, {})), {
+            props: { children: [{ props: { v: number } }] },
+          }),
+        ).toEqual(['+   "e": <div>', "+     <b v=Any<Number> />", "+   </div>,"]);
+        // An array of children is still one if a `$$typeof` of its own matched.
+        expect(
+          printed(element("div", { children: Object.freeze(Object.assign(["a", "b"], { $$typeof: 1 })) }), {
+            props: { children: { $$typeof: expect.anything() } },
+          }),
+        ).toEqual(['+   "e": <div>', "+     a", "+     b", "+   </div>,"]);
+        // A matcher that the tag of the type matched stands in for the tag, so the type has no name.
+        expect(
+          printed(element(Object.freeze({ [Symbol.toStringTag]: "Fancy" }), { id: "x" }), {
+            type: { [Symbol.toStringTag]: string },
+          }),
+        ).toEqual(['+   "e": <NoName id="x" />,']);
       });
     }
     test("with expect matcher", () => {

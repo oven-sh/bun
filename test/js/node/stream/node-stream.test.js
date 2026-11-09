@@ -2187,7 +2187,7 @@ describe("the members of node:stream before node:stream has loaded", () => {
     );
   });
 
-  it.concurrent("node:stream/promises loads after a program deletes the promises of node:stream", async () => {
+  it.concurrent("node:stream/promises loads node:stream and does not read its promises", async () => {
     await Promise.all([
       // Deleted from the `Stream` of node:net, before node:stream has loaded.
       expectChildToPrint(
@@ -2195,26 +2195,28 @@ describe("the members of node:stream before node:stream has loaded", () => {
           const { Socket } = require("node:net");
           const Stream = Object.getPrototypeOf(Object.getPrototypeOf(Object.getPrototypeOf(Socket)));
           delete Stream.promises;
-          console.log(JSON.stringify({
-            ofTheModule: Object.keys(require("node:stream/promises")),
-            ofNodeStream: typeof require("node:stream").promises,
-          }));
+          const ofTheModule = Object.keys(require("node:stream/promises"));
+          // A data property once node:stream has loaded.
+          const kindOfPipeline = "value" in Object.getOwnPropertyDescriptor(Stream, "pipeline") ? "data" : "accessor";
+          console.log(JSON.stringify({ ofTheModule, kindOfPipeline, ofNodeStream: typeof require("node:stream").promises }));
         `,
-        { ofTheModule: ["finished", "pipeline"], ofNodeStream: "undefined" },
+        { ofTheModule: ["finished", "pipeline"], kindOfPipeline: "data", ofNodeStream: "undefined" },
       ),
-      // Deleted after node:stream has loaded.
+      // Replaced after node:stream has loaded. A module that is not an object stops import() with a segmentation fault.
       expectChildToPrint(
         `
           const nodeStream = require("node:stream");
           const promises = nodeStream.promises;
-          delete nodeStream.promises;
-          console.log(JSON.stringify({
-            isTheSameObject: require("node:stream/promises") === promises,
-            ofTheModule: Object.keys(require("node:stream/promises")),
-            ofNodeStream: typeof nodeStream.promises,
-          }));
+          Object.defineProperty(nodeStream, "promises", { value: "replaced" });
+          import("node:stream/promises").then(imported => {
+            console.log(JSON.stringify({
+              isTheDefaultOfImport: imported.default === promises,
+              isTheSameObject: require("node:stream/promises") === promises,
+              ofNodeStream: nodeStream.promises,
+            }));
+          });
         `,
-        { isTheSameObject: true, ofTheModule: ["finished", "pipeline"], ofNodeStream: "undefined" },
+        { isTheDefaultOfImport: true, isTheSameObject: true, ofNodeStream: "replaced" },
       ),
     ]);
   });

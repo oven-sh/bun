@@ -1,7 +1,7 @@
 // Tests for rule behavior that the recorded cases from the rules' own test suites can't cover, because it takes a
 // project or the command line.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync, statSync, utimesSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { endChildren, spawn } from "../children";
@@ -314,6 +314,8 @@ describe.concurrent("`import` rules give each importer the parse error of its ow
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (!stdout.startsWith("[")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
+    // Every case has at least one error.
+    expect(exitCode).toBe(1);
     const results: {
       filePath: string;
       messages: { ruleId: string | null; line: number; column: number; message: string }[];
@@ -325,6 +327,8 @@ describe.concurrent("`import` rules give each importer the parse error of its ow
       .sort();
   }
 
+  // A debug build takes seconds to resolve a config and lint two files.
+  const timeout = isDebug || isASAN ? 120_000 : 10_000;
   const importer = `import shared from "../shared.js";\nexport default shared;\n`;
   /** A flat config whose `with/` and `without/` importers differ only in the given language options. */
   const eslintConfig = (withOptions: string, withoutOptions: string) =>
@@ -343,59 +347,70 @@ describe.concurrent("`import` rules give each importer the parse error of its ow
     ["a.mjs", "with-oxlint/b.mjs"],
     ["with-oxlint/b.mjs", "a.mjs"],
   ];
-  test.each(orders)("an oxlint config accepts a decorator that espree rejects (%s first)", async (first, second) => {
-    const files = {
-      "bunfig.toml": `[lint.rules]\n"import/default" = "error"\n\n[lint.parserOptions.ecmaFeatures]\njsx = true\n`,
-      "decorated.mjs": "function dec(t) {\n  return t;\n}\n@dec\nclass A {}\nexport default A;\n",
-      "a.mjs": `import A from "./decorated.mjs";\nexport default A;\n`,
-      "with-oxlint/.oxlintrc.json": `{ "plugins": ["import"], "rules": { "import/no-deprecated": "error" } }`,
-      "with-oxlint/b.mjs": `import A from "../decorated.mjs";\nexport default A;\n`,
-    };
-    expect(await lintImporters(files, first, second)).toEqual([
-      `a.mjs 1:15 import/default Parse errors in imported module './decorated.mjs': Unexpected character '@' (4:1)`,
-    ]);
-  });
+  test.each(orders)(
+    "an oxlint config accepts a decorator that espree rejects (%s first)",
+    async (first, second) => {
+      const files = {
+        "bunfig.toml": `[lint.rules]\n"import/default" = "error"\n\n[lint.parserOptions.ecmaFeatures]\njsx = true\n`,
+        "decorated.mjs": "function dec(t) {\n  return t;\n}\n@dec\nclass A {}\nexport default A;\n",
+        "a.mjs": `import A from "./decorated.mjs";\nexport default A;\n`,
+        "with-oxlint/.oxlintrc.json": `{ "plugins": ["import"], "rules": { "import/no-deprecated": "error" } }`,
+        "with-oxlint/b.mjs": `import A from "../decorated.mjs";\nexport default A;\n`,
+      };
+      expect(await lintImporters(files, first, second)).toEqual([
+        `a.mjs 1:15 import/default Parse errors in imported module './decorated.mjs': Unexpected character '@' (4:1)`,
+      ]);
+    },
+    timeout,
+  );
 
   const sides = [
     ["with/a.mjs", "without/b.mjs"],
     ["without/b.mjs", "with/a.mjs"],
   ];
-  test.each(sides)("`globalReturn` allows a top-level `return` (%s first)", async (first, second) => {
-    const files = {
-      "package.json": "{}",
-      "eslint.config.mjs": eslintConfig(`parserOptions: { ecmaFeatures: { globalReturn: true } }`, ""),
-      "shared.js": `const a = 1;\nif (a) {\n  return;\n}\nmodule.exports = () => import("./other.js");\n`,
-      "other.js": "export const other = 1;\n",
-      "with/a.mjs": importer,
-      "without/b.mjs": importer,
-    };
-    expect(await lintImporters(files, first, second)).toEqual([
-      `with/a.mjs 1:8 import/default No default export found in imported module "../shared.js".`,
-      `without/b.mjs 1:20 import/default Parse errors in imported module '../shared.js': 'return' outside of function (3:3)`,
-    ]);
-  });
+  test.each(sides)(
+    "`globalReturn` allows a top-level `return` (%s first)",
+    async (first, second) => {
+      const files = {
+        "package.json": "{}",
+        "eslint.config.mjs": eslintConfig(`parserOptions: { ecmaFeatures: { globalReturn: true } }`, ""),
+        "shared.js": `const a = 1;\nif (a) {\n  return;\n}\nmodule.exports = () => import("./other.js");\n`,
+        "other.js": "export const other = 1;\n",
+        "with/a.mjs": importer,
+        "without/b.mjs": importer,
+      };
+      expect(await lintImporters(files, first, second)).toEqual([
+        `with/a.mjs 1:8 import/default No default export found in imported module "../shared.js".`,
+        `without/b.mjs 1:20 import/default Parse errors in imported module '../shared.js': 'return' outside of function (3:3)`,
+      ]);
+    },
+    timeout,
+  );
 
-  test.each(sides)("`impliedStrict` rejects a legacy octal literal (%s first)", async (first, second) => {
-    const files = {
-      "package.json": "{}",
-      "eslint.config.mjs": eslintConfig(
-        `sourceType: "script", parserOptions: { ecmaFeatures: { impliedStrict: true } }`,
-        `, sourceType: "script"`,
-      ),
-      "shared.js": `const a = 08;\nmodule.exports = () => import("./other.js?" + a);\n`,
-      "other.js": "export const other = 1;\n",
-      "with/a.mjs": importer,
-      "without/b.mjs": importer,
-    };
-    expect(await lintImporters(files, first, second)).toEqual([
-      `with/a.mjs 1:20 import/default Parse errors in imported module '../shared.js': Invalid number (1:11)`,
-      `without/b.mjs 1:8 import/default No default export found in imported module "../shared.js".`,
-    ]);
-  });
+  test.each(sides)(
+    "`impliedStrict` rejects a legacy octal literal (%s first)",
+    async (first, second) => {
+      const files = {
+        "package.json": "{}",
+        "eslint.config.mjs": eslintConfig(
+          `sourceType: "script", parserOptions: { ecmaFeatures: { impliedStrict: true } }`,
+          `, sourceType: "script"`,
+        ),
+        "shared.js": `const a = 08;\nmodule.exports = () => import("./other.js?" + a);\n`,
+        "other.js": "export const other = 1;\n",
+        "with/a.mjs": importer,
+        "without/b.mjs": importer,
+      };
+      expect(await lintImporters(files, first, second)).toEqual([
+        `with/a.mjs 1:20 import/default Parse errors in imported module '../shared.js': Invalid number (1:11)`,
+        `without/b.mjs 1:8 import/default No default export found in imported module "../shared.js".`,
+      ]);
+    },
+    timeout,
+  );
 
   // Both importers read ES2017. A `/* eslint-env */` comment in the imported file raises the edition only where the
-  // config gets it from an `env`, because `parserOptions.ecmaVersion` wins over every environment. Resolving an ESLint
-  // 8 config takes a debug build a few seconds.
+  // config gets it from an `env`, because `parserOptions.ecmaVersion` wins over every environment.
   test.each(sides)(
     "an ESLint 8 config's `env` and a comment decide the edition (%s first)",
     async (first, second) => {
@@ -411,7 +426,29 @@ describe.concurrent("`import` rules give each importer the parse error of its ow
         `with/a.mjs 1:20 import/default Parse errors in imported module '../shared.js': Unexpected token ? (2:17)`,
       ]);
     },
-    20_000,
+    timeout,
+  );
+
+  // `import/no-unused-modules` keeps one export list per parse settings of the files it has seen. `with/a.mjs` can't
+  // read `shared.js`, so a list made for its settings would say that `a` is unused.
+  test.each([
+    ["with/a.mjs", "without/shared.js"],
+    ["without/shared.js", "with/a.mjs"],
+  ])(
+    "import/no-unused-modules reads the exports of a file with that file's edition (%s first)",
+    async (first, second) => {
+      const files = {
+        ".eslintrc.json": `{ "root": true, "plugins": ["import"], "rules": { "import/no-unused-modules": ["error", { "unusedExports": true }] } }`,
+        "with/.eslintrc.json": `{ "parserOptions": { "ecmaVersion": 2017, "sourceType": "module" } }`,
+        "without/.eslintrc.json": `{ "env": { "es2017": true }, "parserOptions": { "sourceType": "module" } }`,
+        "without/shared.js": "/* eslint-env es2020 */\nexport const a = null ?? 1;\n",
+        "with/a.mjs": `import { a } from "../without/shared.js";\nexport default a;\n`,
+      };
+      expect(await lintImporters(files, first, second)).toEqual([
+        "with/a.mjs 2:1 import/no-unused-modules exported declaration 'default' not used within other modules",
+      ]);
+    },
+    timeout,
   );
 });
 

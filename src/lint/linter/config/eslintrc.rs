@@ -2050,7 +2050,7 @@ impl Eslint8 {
 
     /// A hash of everything that [`Eslint8::edition`] reads, for a cache key. Two configs with equal identities give
     /// every file the same edition, whatever its `/* eslint-env */` comments say.
-    pub fn identity(&self) -> u64 {
+    pub(crate) fn identity(&self) -> u64 {
         self.identity
     }
 

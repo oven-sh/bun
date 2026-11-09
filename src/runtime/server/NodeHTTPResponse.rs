@@ -132,6 +132,8 @@ bitflags! {
         const TUNNELED                            = 1 << 8;
         /// Its dispatch threw while it was queued (pipelining): advanceResponsePipeline decides at its turn.
         const DISPATCH_THREW_WHILE_QUEUED         = 1 << 9;
+        /// write_head() ran while the connection tracked activity (`State::tracks_node_activity`): the flush_headers() that sends that head is a write.
+        const HEAD_UNDER_INACTIVITY_TIMER         = 1 << 10;
     }
 }
 
@@ -187,6 +189,8 @@ unsafe extern "C" {
     // False when no read of this socket is being parsed.
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
     -> bool;
+    // Refreshes the Timeout of the socket inactivity timeout, which the server socket holds while the state has `HTTP_NODE_TRACKS_ACTIVITY`.
+    safe fn Bun__NodeHTTP__touchInactivityTimer(ssl: core::ffi::c_int, socket: *mut c_void);
 
     // Moves the connection's captured node:http request-trailer section out. `*out` points into
     // a C++ thread-local valid until the next call on this thread; caller copies immediately.
@@ -875,6 +879,26 @@ impl NodeHTTPResponse {
     }
 }
 
+/// Only for a connection whose state has `tracks_node_activity()`.
+#[cold]
+fn refresh_inactivity_timer(raw_response: uws::AnyResponse) {
+    Bun__NodeHTTP__touchInactivityTimer(
+        any_response_is_ssl(&raw_response) as core::ffi::c_int,
+        raw_response.socket().cast(),
+    );
+}
+
+impl NodeHTTPResponse {
+    /// A server write restarts an armed socket inactivity timeout, like Node's `net.Socket._writeGeneric`. Call it behind the last check that can throw and before the write, which can close the socket.
+    #[inline]
+    fn note_write_dispatched(&self, raw_response: uws::AnyResponse, state: uws::State) {
+        // Node holds a write back behind one that is pending, so a peer that stopped reading still times out. The progress of the pending one counts instead.
+        if state.tracks_node_activity() && !self.has_unflushed_write() {
+            refresh_inactivity_timer(raw_response);
+        }
+    }
+}
+
 fn handle_ended_if_necessary(state: uws::State, global_object: &JSGlobalObject) -> JsResult<()> {
     if !state.is_response_pending() {
         return err_throw(
@@ -1010,6 +1034,9 @@ impl NodeHTTPResponse {
             }
         }
 
+        if state.tracks_node_activity() {
+            self.update_flags(|f| f.insert(Flags::HEAD_UNDER_INACTIVITY_TIMER));
+        }
         Ok(())
     }
 
@@ -1314,6 +1341,7 @@ impl NodeHTTPResponse {
         ) {
             return None;
         }
+        self.note_write_dispatched(raw_response, state);
 
         self.resume_socket();
         self.bytes_written.set(bytes_written);
@@ -1380,6 +1408,7 @@ impl NodeHTTPResponse {
         let state = raw_response.state();
         handle_ended_if_necessary(state, global_object)?;
 
+        self.note_write_dispatched(raw_response, state);
         raw_response.write_continue();
         Ok(())
     }
@@ -1413,7 +1442,9 @@ impl NodeHTTPResponse {
         let Some(raw_response) = self.writer() else {
             return Ok(());
         };
-        handle_ended_if_necessary(raw_response.state(), global_object)?;
+        let state = raw_response.state();
+        handle_ended_if_necessary(state, global_object)?;
+        self.note_write_dispatched(raw_response, state);
         raw_response.write_informational(string_or_buffer.slice());
         Ok(())
     }
@@ -2012,8 +2043,14 @@ impl NodeHTTPResponse {
         // sibling `flushed == 0 && RECEIVED_FIN` close in HttpContext::
         // onWritable decides; without FIN (SSL WANT_READ, ENOBUFS) retries.
         let pinned_before = self.pending_pinned_write.get().remaining.len();
-        if self.drain_pending_pinned_write(response) {
-            if self.pending_pinned_write.get().remaining.len() < pinned_before {
+        let still_pinned = self.drain_pending_pinned_write(response);
+        let pinned_progress = self.pending_pinned_write.get().remaining.len() < pinned_before;
+        // The zero-copy tail is not in the uWS buffer, whose flush HttpContext::onWritable counts.
+        if pinned_progress && response.state().tracks_node_activity() {
+            refresh_inactivity_timer(response);
+        }
+        if still_pinned {
+            if pinned_progress {
                 return false;
             }
             if response.state().is_node_received_fin() {
@@ -2184,6 +2221,18 @@ impl NodeHTTPResponse {
             }
             // -0 would not read as negative (backpressure) in JS.
             return Ok(JSValue::js_number_from_int32(-1));
+        }
+
+        if state.tracks_node_activity() {
+            // Node sends nothing for a chunk that a response without a body discards, nor for an end() behind a complete body.
+            let sends_bytes = if IS_END {
+                !bytes.is_empty() || !state.is_http_write_called() || state.is_chunked_body()
+            } else {
+                !bytes.is_empty() || !state.is_no_body_status()
+            };
+            if sends_bytes {
+                self.note_write_dispatched(self.writer().unwrap(), state);
+            }
         }
 
         // A previous zero-copy write's tail must hit the wire before this one;
@@ -2516,6 +2565,14 @@ impl NodeHTTPResponse {
         let flags = self.flags.get();
         if !flags.contains(Flags::UPGRADED) && !self.is_socket_closed_or_closing() {
             if let Some(raw_response) = self.writer() {
+                // Only the call that sends the head: write() with a callback calls this behind every chunk.
+                if flags.contains(Flags::HEAD_UNDER_INACTIVITY_TIMER) {
+                    self.update_flags(|f| f.remove(Flags::HEAD_UNDER_INACTIVITY_TIMER));
+                    let state = raw_response.state();
+                    if !state.is_http_write_called() {
+                        self.note_write_dispatched(raw_response, state);
+                    }
+                }
                 // Don't flush immediately; queue a microtask to uncork the socket.
                 raw_response.flush_headers(false);
                 if raw_response.is_corked() {

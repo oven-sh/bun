@@ -1966,13 +1966,18 @@ function getNodeHTTPServerSocket() {
 
     _onTimeout() {
       const handle = this[kHandle];
-      const response = handle?.response;
-      // If there is a response, and it has pending data,
-      // we suppress the timeout because a write is in progress.
-      if (response && response.writableLength > 0) {
-        // Re-arm so the timeout still fires once the write actually stalls.
-        this._unrefTimer();
-        return;
+      if (handle) {
+        // The connection has closed, and 'close' comes next.
+        if (handle.closed) return;
+        // Node looks at the write queue here: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
+        // Not under the keep-alive timeout: nothing writes there, and the native connection does not have that timer.
+        if (
+          !this[kKeepAliveTimeoutSet] &&
+          handle.holdTimeoutBackOnce(this.writableLength > 0 || (handle.response?.bufferedAmount ?? 0) > 0)
+        ) {
+          this._unrefTimer();
+          return;
+        }
       }
       this.emit("timeout");
     }
@@ -2187,6 +2192,7 @@ function getNodeHTTPServerSocket() {
         if (existingTimer) {
           clearTimeout(existingTimer);
           this[kSocketTimeoutTimer] = undefined;
+          this[kHandle]?.setInactivityTimer(undefined);
         }
         if (callback !== undefined) {
           validateFunction(callback, "callback");
@@ -2202,6 +2208,10 @@ function getNodeHTTPServerSocket() {
           const timer = setTimeout(onSocketTimeoutTimerExpired, msecs, this);
           timer.unref();
           this[kSocketTimeoutTimer] = timer;
+        }
+        // Server writes refresh it there (Node: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1019). Never the keep-alive timer: nothing writes under it.
+        if (!this[kKeepAliveTimeoutSet]) {
+          this[kHandle]?.setInactivityTimer(this[kSocketTimeoutTimer]);
         }
         if (callback !== undefined) {
           validateFunction(callback, "callback");
@@ -2755,13 +2765,18 @@ function onResponseFinishHandleSocket(server, socket, res) {
     // budget if the timer fires early, so the socket still closes after
     // exactly `total` ms of idle.
     const timer = socket[kSocketTimeoutTimer];
-    if (timer !== undefined && timer._idleTimeout === total) {
+    // The native connection has the timer of a timeout that was armed for this request. Nothing writes under the keep-alive one.
+    const armed = socket.timeout !== 0;
+    if (armed) socket[kHandle]?.setInactivityTimer(undefined);
+    // Before setTimeout(), which hands any other timer to the native connection.
+    socket[kKeepAliveTimeoutSet] = true;
+    // The timer of an armed timeout can have fired, with a 'timeout' listener that kept the socket: setTimeout() starts it again.
+    if (!armed && timer !== undefined && timer._idleTimeout === total) {
       socket.timeout = total;
     } else {
       socket.setTimeout(total);
     }
     socket[kKeepAliveIdleStart] = DateNow();
-    socket[kKeepAliveTimeoutSet] = true;
   }
 }
 

@@ -39,6 +39,7 @@
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__touchInactivityTimer(int ssl, struct us_socket_t *s);
 
 namespace uWS {
 
@@ -896,9 +897,15 @@ private:
 
         /* Attempt to drain the socket buffer before triggering onWritable callback */
         size_t bufferedAmount = asyncSocket->getBufferedAmount();
+        /* Try to flush pending data from the socket's buffer to the network */
+        size_t flushed = bufferedAmount > 0 ? asyncSocket->flush() : 0;
+        if constexpr (IsNodeHttp) {
+            /* node:http compat: bytes of a pending write left, in this flush or in a write() before it. That is activity for an armed socket inactivity timeout. */
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TRACKS_ACTIVITY) && httpResponseData->backlogMoved) [[unlikely]] {
+                Bun__NodeHTTP__touchInactivityTimer(SSL, s);
+            }
+        }
         if (bufferedAmount > 0) {
-            /* Try to flush pending data from the socket's buffer to the network */
-            size_t flushed = asyncSocket->flush();
             /* Check if there's still data waiting to be sent after flush attempt */
             if (asyncSocket->getBufferedAmount() > 0) {
                 /* onEnd deferred close for these bytes; a writable event that

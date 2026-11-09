@@ -921,7 +921,12 @@ public:
         bool chunked = !(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER | HttpResponseData<SSL>::HTTP_ANCIENT_REQUEST | HttpResponseData<SSL>::HTTP_CLOSE_DELIMITED));
 
         if (!data.empty()) {
+            /* With nothing buffered the tail is sent directly, which AsyncSocket::write() does not record. */
+            size_t bufferedBefore = Super::getBufferedAmount();
             Super::write(data.data(), data.length());
+            if (Super::getBufferedAmount() < bufferedBefore + data.length()) {
+                httpResponseData->backlogMoved = true;
+            }
         }
         if (chunked) {
             Super::write("\r\n", 2);

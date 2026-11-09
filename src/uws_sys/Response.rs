@@ -1227,8 +1227,12 @@ bitflags::bitflags! {
         const HTTP_RESPONSE_PENDING            = 8;
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
+        const HTTP_ANCIENT_REQUEST             = 1 << 8;
+        const HTTP_NO_BODY_STATUS              = 1 << 9;
+        const HTTP_CLOSE_DELIMITED             = 1 << 10;
         const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
         const HTTP_NODE_CLOSE_AFTER_MESSAGE    = 1 << 20;
+        const HTTP_NODE_TRACKS_ACTIVITY        = 1 << 24;
     }
 }
 
@@ -1272,6 +1276,30 @@ impl State {
     #[inline]
     pub fn is_node_close_after_message(self) -> bool {
         self.bits() & State::HTTP_NODE_CLOSE_AFTER_MESSAGE.bits() != 0
+    }
+
+    /// node:http: the connection holds the Timeout of an armed socket inactivity timeout, which the writes of the server refresh (see HttpResponseData.h).
+    #[inline]
+    pub fn tracks_node_activity(self) -> bool {
+        self.bits() & State::HTTP_NODE_TRACKS_ACTIVITY.bits() != 0
+    }
+
+    /// A response without a body: HEAD, 1xx, 204, 304.
+    #[inline]
+    pub fn is_no_body_status(self) -> bool {
+        self.bits() & State::HTTP_NO_BODY_STATUS.bits() != 0
+    }
+
+    /// The body ends with a terminating chunk, so `end()` still has bytes to send after the last `write()`.
+    #[inline]
+    pub fn is_chunked_body(self) -> bool {
+        self.bits()
+            & (State::HTTP_WROTE_CONTENT_LENGTH_HEADER
+                | State::HTTP_ANCIENT_REQUEST
+                | State::HTTP_CLOSE_DELIMITED
+                | State::HTTP_NO_BODY_STATUS)
+                .bits()
+            == 0
     }
 }
 

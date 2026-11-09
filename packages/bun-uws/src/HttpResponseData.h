@@ -178,11 +178,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * word (resetResponseState) - these have to survive that. */
         /* node:http: call Bun__NodeHTTP__onReadParsed once the read being parsed is consumed. */
         HTTP_NODE_NOTIFY_READ_PARSED = 1 << 19,
+        /* node:http: JSNodeHTTPServerSocket holds the Timeout of an armed socket inactivity timeout. Server writes and their progress refresh it (Bun__NodeHTTP__touchInactivityTimer). */
+        HTTP_NODE_TRACKS_ACTIVITY = 1 << 24,
 
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
             | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
-            | HTTP_NODE_HALF_CLOSED,
+            | HTTP_NODE_HALF_CLOSED | HTTP_NODE_TRACKS_ACTIVITY,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is

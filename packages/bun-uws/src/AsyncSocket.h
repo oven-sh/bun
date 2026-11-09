@@ -274,6 +274,7 @@ public:
 
             /* Attempt to write data to the socket */
             int written = us_socket_write((us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len);
+            asyncSocketData->backlogMoved |= written > 0;
             total_written += written;
 
             /* Check if we couldn't write the entire buffer */
@@ -354,6 +355,7 @@ public:
 
             /* Write off as much as we can */
             int written = us_socket_write((us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len);
+            asyncSocketData->backlogMoved |= written > 0;
             /* On failure return, otherwise continue down the function */
             if ((unsigned int) written < buffer_len) {
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */

@@ -179,7 +179,13 @@ struct AsyncSocketData {
     /* Whether it has fired the filter with -3 (HttpResponse::setNodeHttpTunnelIdle).
      * +3 undoes it, and an idle socket fires -4 in place of -2. */
     bool filteredIdleTunnel = false;
+    /* Bytes of a write that was pending have reached the kernel: the sends of `buffer` in
+     * AsyncSocket::flush() and write() set it. node:http reads and clears it at a writable
+     * event and when a socket inactivity timeout fires. */
+    bool backlogMoved = false;
 };
+
+static_assert(sizeof(AsyncSocketData<false>) == 48 && sizeof(AsyncSocketData<true>) == 48, "the flags fit in the padding behind peerCertVerifyErrorCode");
 
 }
 

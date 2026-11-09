@@ -1806,12 +1806,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `Host::new_local` appends the locals of the compiled function here.
             let generated_len = p.current_scope().generated.len();
             let outlined_len = rc.outlined_len();
-            let outlined_place = p.react_compiler_place_of_outlined(pending.is_top_level);
+            let outlined_place = p.react_compiler_place_of_outlined(&pending);
             let compiled = {
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
-                if matches!(outlined_place, OutlinedPlace::OwnBody) {
-                    host.outlines_into_body_of(pending.own_name);
-                }
                 bun_react_compiler::maybe_compile_pending(
                     &mut rc,
                     host,
@@ -1823,7 +1820,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if let Some((new_body, result)) = compiled {
                 stmts.clear();
                 stmts.extend(new_body);
-                if !matches!(outlined_place, OutlinedPlace::ModuleEnd) {
+                if !matches!(outlined_place, OutlinedPlace::ModuleEnd)
+                    && rc.outlined_len() > outlined_len
+                {
                     p.declare_outlined_from_nested(&mut rc, outlined_len, outlined_place, stmts);
                 }
                 p.react_compiler_result = Some(result);

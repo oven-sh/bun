@@ -2245,10 +2245,29 @@ describe.concurrent("--react-compiler", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // These print which components ask the compiler runtime for a cache when they are called. In a run with --aot the
+  // text of a function is its source, so `printCompiled` finds nothing there.
+  const countsCaches = {
+    "node_modules/react/compiler-runtime.js": `
+      export const c = size => {
+        globalThis.caches = (globalThis.caches ?? 0) + 1;
+        return Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+    `,
+  };
+  const printAsksForACache = `
+    console.log("compiled: " + Object.keys(all).filter(name => {
+      const before = globalThis.caches ?? 0;
+      all[name]({ depth: 1, item: "leaf" });
+      return (globalThis.caches ?? 0) > before;
+    }).join(" "));
+  `;
+
   // The callback is moved out of the component. It was declared in `compare`: "ReferenceError: _temp is not defined".
   test("a component that is nested in a function calls its callback", async () => {
     const result = await compiled(
       {
+        ...countsCaches,
         "src/Rows.tsx": `
           const prefix = "clicked ";
           export function makeRow(colour: string) {
@@ -2269,7 +2288,7 @@ describe.concurrent("--react-compiler", () => {
           import { makeRow, makeRowInABlock } from "./src/Rows";
           test("which are compiled", () => {
             const all = { Row: makeRow("red"), InABlock: makeRowInABlock("red") };
-            ${printCompiled}
+            ${printAsksForACache}
             const clicked = Object.values(all).map(Row => Row({ depth: 1 }).props).map(props => props.onClick() + props.title());
             expect(clicked).toEqual(["clicked redclicked ", "clicked dark redclicked "]);
           });
@@ -2282,11 +2301,12 @@ describe.concurrent("--react-compiler", () => {
   });
 
   // In a head that declares a name the callback is declared in the component itself, whose cache would be named `$`
-  // too. No renamer runs here, so the cache gets another name, and `printCompiled` doesn't find it. The name that the
-  // last component gives itself has to stay: it renders itself by that name.
+  // too. No renamer runs here, so the cache gets another name. The name that the last component gives itself has to
+  // stay: it renders itself by that name.
   test("a component in a head calls a callback that reads a `$` around it", async () => {
     const result = await compiled(
       {
+        ...countsCaches,
         "node_modules/react/index.js": `export const memo = component => component;`,
         "src/Rows.tsx": `
           import { memo } from "react";
@@ -2323,7 +2343,7 @@ describe.concurrent("--react-compiler", () => {
             const Tree = rendersItself();
             const rows = { besideAModuleVariable: besideAModuleVariable("red"), besideAParameter: besideAParameter("red"), inAForHead: inAForHead("red"), besideAGlobal: besideAGlobal() };
             const all = { ...rows, Tree };
-            console.log("compiled: " + Object.keys(all).filter(name => /= _c\\(\\d+\\)/.test(String(all[name]))).join(" "));
+            ${printAsksForACache}
             const clicked = Object.values(rows).map(Row => Row({ depth: 1 }).props.onClick());
             expect(clicked).toEqual(["red module", "parameter red", "for red", "global jQuery"]);
             expect(Tree({ item: ["root", "leaf"] }).props.children.map(child => child.type === Tree)).toEqual([true]);

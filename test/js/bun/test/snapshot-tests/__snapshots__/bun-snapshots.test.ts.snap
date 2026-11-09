@@ -75,3 +75,139 @@ exports[`it will create a snapshot file if it doesn't exist 7`] = `
   "j": Any<RegExp>,
 }
 `;
+
+exports[`property matchers on a class whose Symbol.toStringTag getter reads a private field 1`] = `T 
+Tagged {
+  "a": Any<Number>,
+  "b": 2,
+}
+`;
+
+exports[`property matchers on a bun:sqlite Statement 1`] = `"select 1 as a" 
+Statement {
+  "all": [Function: #allNoArgs],
+  "columnNames": Any<Array>,
+  "get": [Function: #getNoArgs],
+  "iterate": [Function: #iterateNoArgs],
+  "raw": [Function: #rawNoArgs],
+  "run": [Function: #runNoArgs],
+  "values": [Function: #valuesNoArgs],
+}
+`;
+
+exports[`property matchers a getter runs on the received object, which stays as it is 1`] = `
+{
+  "a": Any<Number>,
+  "total": 2,
+}
+`;
+
+exports[`property matchers a getter runs on the received object, which stays as it is 2`] = `
+{
+  "list": [
+    Any<Number>,
+    2,
+    Any<Number>,
+  ],
+}
+`;
+
+exports[`property matchers on a tree whose children link back to the root 1`] = `
+{
+  "children": [
+    {
+      "id": Any<Number>,
+      "parent": [Circular],
+    },
+    {
+      "id": Any<Number>,
+      "parent": [Circular],
+    },
+  ],
+  "name": "root",
+}
+`;
+
+exports[`property matchers on a tree whose children link back to the root 2`] = `
+{
+  "children": [
+    {
+      "id": Any<Number>,
+      "meta": {
+        "parent": [Circular],
+      },
+    },
+    {
+      "id": Any<Number>,
+      "meta": {
+        "parent": [Circular],
+      },
+    },
+  ],
+  "name": "root",
+}
+`;
+
+exports[`property matchers on a Headers or a FormData with a property of its own 1`] = `Headers 
+Headers {
+  "id": Any<String>,
+}
+`;
+
+exports[`property matchers on a Headers or a FormData with a property of its own 2`] = `FormData (entries) FormData 
+FormData {
+  "a": "1",
+}
+`;
+
+exports[`property matchers on a URL 1`] = `URL 
+URL {
+  "href": Any<String>,
+}
+`;
+
+exports[`property matchers on a URL 2`] = `
+{
+  "n": 1,
+  "u": URL URL {
+    "href": Any<String>,
+  },
+}
+`;
+
+exports[`property matchers on an Event 1`] = `Event 
+Event {
+  "isTrusted": false,
+  "timeStamp": Any<Number>,
+}
+`;
+
+exports[`property matchers on a CryptoHasher 1`] = `CryptoHasher 
+CryptoHasher {
+  "algorithm": Any<String>,
+}
+`;
+
+exports[`property matchers on a MessageEvent 1`] = `MessageEvent {
+  type: "message",
+  data: Any<String>, 
+}`;
+
+exports[`property matchers on a MessageEvent 2`] = `MessageEvent {
+  type: "message",
+  data: {
+    "id": Any<Number>,
+    "k": 2,
+  }, 
+}`;
+
+exports[`property matchers on an ErrorEvent 1`] = `ErrorEvent {
+  type: "error",
+  message: "m", 
+  error: Any<Error>
+}`;
+
+exports[`property matchers on an ErrorEvent 2`] = `ErrorEvent {
+  type: "error",
+  error: Any<Error>
+}`;

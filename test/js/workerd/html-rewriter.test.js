@@ -1821,7 +1821,36 @@ describe("HTMLRewriter", () => {
       "<svg><style>a{}i&gt;b{} &lt;img src=x onerror=alert(1)&gt;</style></svg>" +
         "<style>b{}i>b{} <img src=x onerror=alert(1)></style>",
     );
-    expect(namespaces).toEqual(["http://www.w3.org/2000/svg", "http://www.w3.org/1999/xhtml"]);
+
+    // The JSON selector matches an <svg> script too. The parser decodes character
+    // references there, so the documented route is the default escaping.
+    expect(
+      insert('script[type="application/json"]', '<svg><script type="application/json"></script></svg>', el => {
+        namespaces.push(el.namespaceURI);
+        el.setInnerContent(JSON.stringify({ a: "&lt;<" }));
+      }),
+    ).toBe('<svg><script type="application/json">{"a":"&amp;lt;&lt;"}</script></svg>');
+    expect(namespaces).toEqual([
+      "http://www.w3.org/2000/svg",
+      "http://www.w3.org/1999/xhtml",
+      "http://www.w3.org/2000/svg",
+    ]);
+
+    // Two { html: true } insertions into one element land back to back. A check of
+    // each string alone misses a sequence that the two form together, which is why
+    // the docs say to join the strings and check the result.
+    const parts = ["b{}</sty", "le><p>"];
+    expect({
+      eachPartPasses: parts.every(part => !/<\/style/i.test(part)),
+      joinedIsCaught: /<\/style/i.test(parts.join("")),
+      output: insert("style", "<style>a{}</style>", el => {
+        for (const part of parts) el.append(part, { html: true });
+      }),
+    }).toEqual({
+      eachPartPasses: true,
+      joinedIsCaught: true,
+      output: "<style>a{}b{}</style><p></style>",
+    });
   });
 
   it("handles element class properties", async () => {

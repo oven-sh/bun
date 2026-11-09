@@ -57,8 +57,9 @@ declare namespace HTMLRewriterTypes {
      * does not decode entities. To insert script or style source there, pass
      * `{ html: true }` and first reject (ASCII case-insensitively) a string
      * that contains `</style` for a `<style>`, or any of `</script`,
-     * `<script` or `<!--` for a `<script>`. For JSON, write
-     * `JSON.stringify(v).replaceAll("<", "\\u003c")`.
+     * `<script` or `<!--` for a `<script>`. To insert more than one string
+     * into the same element, join the strings and check the result. For
+     * JSON, write `JSON.stringify(v).replaceAll("<", "\\u003c")`.
      *
      * This applies to HTML elements only
      * (`el.namespaceURI === "http://www.w3.org/1999/xhtml"`). Inside `<svg>`

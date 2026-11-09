@@ -3691,6 +3691,28 @@ declare module "bun" {
       factory?: string;
       fragment?: string;
       sideEffects?: boolean;
+      /**
+       * For the automatic runtime, which runtime the JSX calls. It has no effect
+       * with `runtime: "classic"`.
+       *
+       * - `true`: `jsxDEV` from `<importSource>/jsx-dev-runtime`.
+       * - `false`: `jsx` and `jsxs` from `<importSource>/jsx-runtime`.
+       *
+       * When not set, `"jsx": "react-jsx"` in `tsconfig.json` means `false`. A
+       * `tsconfig.json` that says something else, or no `tsconfig.json`, means
+       * `true`. Bun reads the `tsconfig.json` of the working directory, or the
+       * file that the `tsconfig` option names. A `tsconfig.json` in a parent
+       * directory or in `references` does not count.
+       *
+       * `NODE_ENV` goes before this option and before `tsconfig.json`, in this
+       * order. A `define` of `process.env.NODE_ENV` to `"development"` means
+       * `true`. `"production"`, in that `define` or in the environment, means
+       * `false`. `NODE_ENV=development` in the environment means `true` when no
+       * `define` sets `process.env.NODE_ENV`.
+       *
+       * With `env` set, a `tsconfig.json` that says `"react-jsx"` or
+       * `"react-jsxdev"` also goes before this option.
+       */
       development?: boolean;
     };
 

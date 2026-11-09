@@ -483,6 +483,16 @@ bun build ./app.tsx --outdir ./out
 
 </CodeGroup>
 
+**Development or production runtime** (`development`):
+
+With the automatic runtime, `development: true` makes `Bun.build()` emit `jsxDEV` calls and import `<importSource>/jsx-dev-runtime`. `development: false` makes it emit `jsx` calls and import `<importSource>/jsx-runtime`. The option has no effect with `runtime: "classic"`.
+
+When you do not set `development`, `Bun.build()` reads `"jsx"` from the `tsconfig.json` of the working directory, or from the file that the `tsconfig` option names. `"react-jsx"` selects the production runtime. Every other value selects the development runtime, and so does a directory without a `tsconfig.json`. A `tsconfig.json` in a parent directory or in `references` does not count.
+
+`NODE_ENV` goes before `development` and before `tsconfig.json`, in this order. A `define` of `process.env.NODE_ENV` to `"development"` selects the development runtime. `"production"`, in that `define` or in the environment, selects the production runtime. `NODE_ENV=development` in the environment selects the development runtime when no `define` sets `process.env.NODE_ENV`. With `env` set, a `tsconfig.json` that says `"react-jsx"` or `"react-jsxdev"` also goes before `development`.
+
+On the command line, `bun build --production` selects the production runtime.
+
 ### splitting
 
 Whether to enable code splitting.
@@ -1866,7 +1876,7 @@ interface BuildConfig {
     factory?: string;
     fragment?: string;
     sideEffects?: boolean;
-    development?: boolean;
+    development?: boolean; // default: false when the tsconfig.json of the working directory has "jsx": "react-jsx", else true
   };
   naming?:
     | string
@@ -2005,7 +2015,8 @@ interface BuildConfig {
   dts?: boolean;
 
   /**
-   * Custom tsconfig.json file path to use for path resolution.
+   * Custom tsconfig.json file path. The build reads it in place of every tsconfig.json it
+   * would otherwise find, for `paths`, JSX and decorator settings.
    * Equivalent to `--tsconfig-override` in the CLI.
    */
   tsconfig?: string;

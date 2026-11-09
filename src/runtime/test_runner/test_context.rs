@@ -391,7 +391,7 @@ impl TestContext {
 pub(crate) fn expect(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, received: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
     let this = TestContext::of_call(global, this_value)?;
-    Expect::call_in(global, received.to_js(), message.to_js(), this.state_data(this_value.to_js()), this.flavor)
+    Expect::call_with(global, received.to_js(), message.to_js(), this.state_data(this_value.to_js()), this.flavor, 0)
 }
 
 #[optimize(size)]

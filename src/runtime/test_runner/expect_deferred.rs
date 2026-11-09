@@ -1091,7 +1091,7 @@ impl Expect {
         let expect = Expect {
             flags: Cell::new(Flags(self.flags.get().0 & Flags::NOT_MASK)),
             matcher_ran: Cell::new(false),
-            flavor: self.flavor,
+            flavor: self.flavor.clone(),
             parent: None,
             custom_label: self.custom_label.clone(),
         }
@@ -1179,7 +1179,7 @@ impl Expect {
         let copy = Expect {
             flags: Cell::new(self.flags.get()),
             matcher_ran: Cell::new(false),
-            flavor: self.flavor,
+            flavor: self.flavor.clone(),
             parent: self.parent.clone(),
             custom_label: self.custom_label.clone(),
         }

@@ -666,6 +666,87 @@ const cases: Case[] = [
     loose: false,
     looseBug: "reports equal",
   },
+  {
+    name: "regexps with the same source written with and without an escaped slash",
+    a: () => new RegExp("^/users/(\\d+)$"),
+    b: () => /^\/users\/(\d+)$/,
+    strict: true,
+    loose: true,
+  },
+  {
+    name: "regexps with the same source written with a raw and an escaped line terminator",
+    a: () => new RegExp("a\nb\u2028c"),
+    b: () => /a\nb\u2028c/,
+    strict: true,
+    loose: true,
+  },
+  { name: "an empty regexp and /(?:)/", a: () => new RegExp(""), b: () => /(?:)/, strict: true, loose: true },
+  {
+    name: "regexps with the same source and different flags",
+    a: () => new RegExp("a/b", "g"),
+    b: () => /a\/b/i,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "regexps with different sources that match the same strings",
+    a: () => new RegExp("a/b"),
+    b: () => /a[/]b/,
+    strict: false,
+    loose: false,
+  },
+  {
+    name: "regexps with the same source, written two ways, and different lastIndex",
+    a: () => Object.assign(new RegExp("a/b", "g"), { lastIndex: 3 }),
+    b: () => /a\/b/g,
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "regexps with the same source, written two ways, one with an extra own property",
+    a: () => withExtraProperty(new RegExp("a/b")),
+    b: () => /a\/b/,
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  // https://github.com/oven-sh/bun/issues/34830
+  {
+    name: "maps with two keys that are one regexp source written two ways",
+    a: () =>
+      new Map([
+        [new RegExp("a/b"), 1],
+        [/a\/b/, 2],
+      ]),
+    b: () =>
+      new Map([
+        [new RegExp("a/b"), 1],
+        [/a\/b/, 2],
+      ]),
+    strict: true,
+    loose: true,
+    strictBug: "reports not equal",
+    looseBug: "reports not equal",
+  },
+  // https://github.com/oven-sh/bun/issues/28760
+  {
+    name: "a set with one regexp source written two ways and a set with two sources",
+    a: () => new Set([new RegExp("a/b"), /a\/b/]),
+    b: () => new Set([new RegExp("a/b"), /x/]),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "sets of three regexps that have two sources, in other numbers",
+    a: () => new Set([new RegExp("a/b"), /a\/b/, /x\/y/]),
+    b: () => new Set([new RegExp("a/b"), /x\/y/, new RegExp("x/y")]),
+    strict: false,
+    loose: false,
+    strictBug: "reports equal",
+    looseBug: "reports equal",
+  },
 
   // Error.
   {

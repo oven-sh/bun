@@ -110,11 +110,11 @@ describe("tsconfig compilerOptions.jsx", () => {
   );
 });
 
-// A bunfig.toml can have no `jsx` key, or `jsx = "react"`. `Bun.build()` can have no `jsx.development`. Neither says
-// development or production. In a build, what says it is NODE_ENV, `define`, --production, a --jsx-* flag
-// (production), "jsx": "react-jsx" or "react-jsxdev" in the tsconfig.json of the working directory,
-// `jsx = "react-jsx"` or "react-jsxDEV" in bunfig.toml, and `jsx.development` or the runtime "react-jsx" or
-// "react-jsxdev" of `Bun.build()`.
+// A bunfig.toml can have no `jsx` key, or `jsx = "react"`. `Bun.build()` can have no `jsx.development`. A --jsx-* flag
+// of `bun build` names a factory, a fragment, an import source or a runtime. None of these says development or
+// production. In a build, what says it is NODE_ENV, `define`, --production, "jsx": "react-jsx" or "react-jsxdev" in
+// the tsconfig.json of the working directory, `jsx = "react-jsx"` or "react-jsxDEV" in bunfig.toml, and
+// `jsx.development` or the runtime "react-jsx" or "react-jsxdev" of `Bun.build()`.
 describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.development leave dev or prod open", () => {
   type Files = Record<string, string>;
   type Env = Record<string, string>;
@@ -254,6 +254,69 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
     expect(await bothIn(files, env, {})).toEqual({ cli: imports(cli), api: imports(api) });
   });
 
+  test.each<[string, string[], string, Files?, Env?]>([
+    ["no tsconfig.json", [importSource], "shim/jsx-dev-runtime"],
+    ["no tsconfig.json", ["--jsx-import-source="], "react/jsx-dev-runtime"],
+    ["no tsconfig.json", ["--jsx-runtime=automatic"], "react/jsx-dev-runtime"],
+    ["no tsconfig.json", ["--jsx-factory=h"], "react/jsx-dev-runtime"],
+    ["no tsconfig.json", ["--jsx-fragment=F"], "react/jsx-dev-runtime"],
+    ["no tsconfig.json", ["--no-bundle", importSource], "shim/jsx-dev-runtime"],
+    ["no tsconfig.json", [importSource, "--production"], "shim/jsx-runtime"],
+    ['tsconfig.json "react-jsxdev"', [importSource], "shim/jsx-dev-runtime", tsconfig("react-jsxdev")],
+    ['tsconfig.json "react-jsx"', [importSource], "shim/jsx-runtime", tsconfig("react-jsx")],
+    ['tsconfig.json "react-jsx"', ["--no-bundle", importSource], "shim/jsx-runtime", tsconfig("react-jsx")],
+    // Only "production" and "development" are a choice.
+    ["NODE_ENV=test", [importSource], "shim/jsx-dev-runtime", {}, { NODE_ENV: "test" }],
+    ["NODE_ENV=production", [importSource], "shim/jsx-runtime", {}, production],
+    [
+      'NODE_ENV=production, tsconfig.json "react-jsxdev"',
+      [importSource],
+      "shim/jsx-runtime",
+      tsconfig("react-jsxdev"),
+      production,
+    ],
+    // The file has a tsconfig.json of its own that does not choose, so --no-bundle reads what NODE_ENV chose.
+    [
+      'NODE_ENV=development, tsconfig.json "react-jsx", sub/tsconfig.json without jsx',
+      ["--no-bundle", importSource],
+      "shim/jsx-dev-runtime",
+      { ...tsconfig("react-jsx"), "sub/tsconfig.json": "{}", "sub/m.jsx": shimFiles["m.jsx"] },
+      { NODE_ENV: "development" },
+    ],
+    ['bunfig.toml jsx = "react-jsxDEV"', [importSource], "shim/jsx-dev-runtime", bunfig("react-jsxDEV")],
+    ['bunfig.toml jsx = "react-jsx"', [importSource], "shim/jsx-runtime", bunfig("react-jsx")],
+    ["bunfig.toml without jsx", [importSource], "shim/jsx-dev-runtime", bunfigWithoutJsx],
+    [
+      'bunfig.toml without jsx, tsconfig.json "react-jsx"',
+      [importSource],
+      "shim/jsx-runtime",
+      { ...bunfigWithoutJsx, ...tsconfig("react-jsx") },
+    ],
+  ])("%s: bun build %j imports %s", async (_, flags, expected, files = {}, env = {}) => {
+    const entry = "sub/m.jsx" in files ? "sub/m.jsx" : "m.jsx";
+    const { stdout, stderr, exitCode } = await spawned(["build", "--external", "*", ...flags, entry], files, env);
+    expect({ imported: runtimesImportedBy(stdout), stderr, exitCode }).toEqual(imports(expected));
+  });
+
+  test.each<[string, string, string, Files?]>([
+    ["no tsconfig.json", "dev jsxDEV", "shim/jsx-dev-runtime"],
+    ['tsconfig.json "react-jsx"', "prod jsx", "shim/jsx-runtime", tsconfig("react-jsx")],
+  ])(
+    "%s: bun build --jsx-import-source runs JSX in a macro with %j, as the bundle",
+    async (_, ofMacro, expected, files = {}) => {
+      const macro = {
+        "macro.jsx": `export function made() {\n  globalThis.b = <b />;\n  return 1;\n}\n`,
+        "entry.jsx": `import { made } from "./macro.jsx" with { type: "macro" };\nglobalThis.s = [made(), <a />];\n`,
+      };
+      const cmd = ["build", "--external", "shim/*", importSource, "entry.jsx"];
+      const { stdout, stderr, exitCode } = await spawned(cmd, { ...macro, ...files }, {});
+      expect({ ofMacro: stdout.split("\n")[0], imported: runtimesImportedBy(stdout), stderr, exitCode }).toEqual({
+        ofMacro,
+        ...imports(expected),
+      });
+    },
+  );
+
   const nodeEnv = (value: string) => `{ define: { "process.env.NODE_ENV": '"${value}"' } }`;
   const stated = "{ jsx: { development: true } }";
   test.each<[string, string, string, Files?, Env?]>([
@@ -388,20 +451,13 @@ describe.concurrent("a bunfig.toml without jsx and Bun.build() without jsx.devel
   );
 
   const testFile = `import { test } from "bun:test";\ntest("jsx", () => {\n  globalThis.s = <div p="1">x</div>;\n});\n`;
-  // A --jsx-* flag selects the production runtime, as it has since 1.2.3. `bun run <file>` reads bunfig.toml after the
-  // flags, and the bunfig.toml then decides.
+  // Outside `bun build` a --jsx-* flag selects the production runtime, as it has since 1.2.3. `bun run <file>` reads
+  // bunfig.toml after the flags, and the bunfig.toml then decides.
   test.each<[string, string[], string, Files?]>([
     ["no bunfig.toml", [importSource, "m.jsx"], "prod jsx\n"],
     ["no bunfig.toml", ["run", importSource, "m.jsx"], "prod jsx\n"],
-    ["no bunfig.toml", ["build", "--no-bundle", importSource, "m.jsx"], `"shim/jsx-runtime"`],
     ["bunfig.toml without jsx", [importSource, "m.jsx"], "prod jsx\n", bunfigWithoutJsx],
     ["bunfig.toml without jsx", ["run", importSource, "m.jsx"], "dev jsxDEV\n", bunfigWithoutJsx],
-    [
-      "bunfig.toml without jsx",
-      ["build", "--external=*", importSource, "m.jsx"],
-      `"shim/jsx-runtime"`,
-      bunfigWithoutJsx,
-    ],
     ["a test file", ["test", importSource], "prod jsx\n", { "a.test.jsx": testFile }],
   ])("%s: bun %j prints %j", async (_, cmd, expected, files = {}) => {
     const { stdout, exitCode } = await spawned(cmd, files, {});

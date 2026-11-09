@@ -83,9 +83,8 @@ impl Handler for Finder {
     }
 }
 
-/// oxlint goes by how a character is written in the file. It has to be the character itself (since oxlint 1.91), or
-/// written as `\x1b` or `\u001b`, also in a string, or the first character after the backslashes has to be the value as
-/// a hexadecimal digit, which is true of `\1` without a group and of `\cL`. It labels each of them.
+/// oxlint goes by how a character is written, also in a string: the character itself, `\x1b`, `\u001b`, or an escape
+/// whose first character after the backslashes is the value as a hexadecimal digit (`\1` without a group, `\cL`).
 fn check_as_oxlint<'a>(e: Expr<'a>, cx: &Cx<'a, NoControlRegex>) {
     let Some(pattern) = run_on_regex_node(e) else {
         return;

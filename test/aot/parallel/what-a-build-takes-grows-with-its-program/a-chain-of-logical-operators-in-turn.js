@@ -4,6 +4,7 @@
 // Sizes: 1000 4000 16000
 // Passes: 1
 // Grows: the build, linear
+// Room of the peak: 64 MB: a link of five bytes costs about 3 KB of the peak: 84 | 91 | 132 MB.
 const size = Number(process.env.SIZE ?? 48);
 let chain = "a";
 for (let link = 0; link < size; link++) {

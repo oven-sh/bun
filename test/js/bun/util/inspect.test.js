@@ -1160,6 +1160,58 @@ describe("Bun.inspect array with non-indexed properties and sorted", () => {
   });
 });
 
+describe("Bun.inspect sorted, keys with the same text", () => {
+  const sorted = value => Bun.inspect(value, { sorted: true, compact: true });
+  const name = index => "k" + String(index).padStart(2, "0");
+
+  // `count` string keys, and a symbol with the description of the key at `pair`.
+  function withPair(target, count, pair) {
+    for (let i = 0; i < count; i++) target[name(i)] = i;
+    target[Symbol(name(pair))] = "symbol";
+    return target;
+  }
+  function entries(count, pair) {
+    const list = [];
+    for (let i = 0; i < count; i++) {
+      list.push(`${name(i)}: ${i}`);
+      if (i === pair) list.push(`[Symbol(${name(i)})]: "symbol"`);
+    }
+    return list.join(", ");
+  }
+
+  // Up to 16 elements, std::sort of libstdc++ keeps keys that compare equal in the listed order.
+  it.each([15, 16, 17, 40])("prints the string key before the symbol, with %d string keys", count => {
+    for (let pair = 0; pair < count; pair++) {
+      expect(sorted(withPair({}, count, pair))).toBe(`{ ${entries(count, pair)} }`);
+      expect(sorted(withPair([0], count, pair))).toBe(`[ 0, ${entries(count, pair)} ]`);
+    }
+  });
+
+  it("prints symbols with the same description in the order of their insertion", () => {
+    function object(count) {
+      const target = {};
+      for (let i = 0; i < count; i++) target[name(i)] = i;
+      target[Symbol("k03")] = "first";
+      target[Symbol("k03")] = "second";
+      target[Symbol()] = "third";
+      target[Symbol()] = "fourth";
+      return target;
+    }
+    const symbols = text => text.match(/\[Symbol\(\w*\)\]: "\w+"/g);
+    const inOrder = [
+      '[Symbol()]: "third"',
+      '[Symbol()]: "fourth"',
+      '[Symbol(k03)]: "first"',
+      '[Symbol(k03)]: "second"',
+    ];
+
+    expect({ few: symbols(sorted(object(5))), many: symbols(sorted(object(40))) }).toEqual({
+      few: inOrder,
+      many: inOrder,
+    });
+  });
+});
+
 describe.skipIf(!isASAN)("object mutated while being formatted", () => {
   it("does not read freed property tables", async () => {
     const fixture = `

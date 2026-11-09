@@ -16,6 +16,8 @@ extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalO
 
 namespace Bun {
 class JSModuleGraph;
+// The requests the resolver reads as relative to a directory instead of as a package name.
+bool isRelativeRequest(const WTF::String& request);
 }
 
 namespace Zig {

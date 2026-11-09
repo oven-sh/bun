@@ -12,12 +12,14 @@ const isBun = typeof Bun !== "undefined";
 let test, expect;
 let childEnv = process.env;
 let childExe = process.execPath;
+let nodeForTheseTests = null;
 
 if (isBun) {
   ({ test, expect } = await import("bun:test"));
   const harness = await import("harness");
   childEnv = harness.bunEnv;
   childExe = harness.bunExe();
+  nodeForTheseTests = harness.nodeExeAtLeast("26.3.0");
 } else {
   // Node.js
   const { createRequire } = await import("module");
@@ -248,7 +250,7 @@ test("Module._resolveFilename reads options.paths one entry at a time for a rela
   }
 });
 
-test("a non-string options.paths entry throws the error of path.resolve(entry)", () => {
+test("a non-string options.paths entry throws Node's error", () => {
   const { path: dir, cleanup } = createTempDir("module-resolve-paths-entry-type", {
     "node_modules/resolve-test-pkg/index.js": "",
     "target.js": "",
@@ -274,6 +276,11 @@ test("a non-string options.paths entry throws the error of path.resolve(entry)",
       // An absolute request does not use the entries. Node checks them all the same.
       errorOf(() => Module._resolveFilename(join(dir, "target.js"), fakeParent, false, { paths: [dir, dir, 5] })),
     ]).toEqual([invalid("null"), invalid("null"), invalid("type number (5)")]);
+
+    // A relative request reads the entries one at a time, so Node's text there is for the list.
+    expect(errorOf(() => require.resolve("./target.js", { paths: [5] }))).toBe(
+      `ERR_INVALID_ARG_TYPE: The "paths" argument must be array of strings. Received an instance of Array`,
+    );
 
     // A request object that converts to a string gets no path either. Node 26.12 names the request
     // in the message, and Node 26.3 names the entry, so only the code is the same.
@@ -337,6 +344,45 @@ async function resolveRowsInChild(order) {
     "deps/node_modules/vue-router/dist/volar/sfc-route-blocks.cjs": "",
     "deps/node_modules/@scope/pkg/package.json": JSON.stringify({ name: "@scope/pkg", main: "lib/main.js" }),
     "deps/node_modules/@scope/pkg/lib/main.js": "",
+    // Two copies of one package. The "exports" of the copy under `plugins` leave private.js out.
+    "node_modules/plugsealed/private.js": "",
+    "plugins/node_modules/plugsealed/package.json": JSON.stringify({ name: "plugsealed", exports: "./index.js" }),
+    "plugins/node_modules/plugsealed/index.js": "",
+    "plugins/node_modules/plugsealed/private.js": "",
+    // The "exports" of this copy name a file that does not exist.
+    "node_modules/plugsealed-gone/sub.js": "",
+    "plugins/node_modules/plugsealed-gone/package.json": JSON.stringify({ exports: { "./sub.js": "./dist/sub.js" } }),
+    // The entry `nested` is a package of the same name as a copy in node_modules. Its "exports" leave lib.js out.
+    "nested/package.json": JSON.stringify({ name: "plugnested", exports: "./main.js" }),
+    "nested/main.js": "",
+    "nested/lib.js": "",
+    "node_modules/plugnested/lib.js": "",
+    // A package in a directory of its own name, as in a workspace, with another copy in node_modules.
+    "packages/plugsame/package.json": JSON.stringify({ name: "plugsame", exports: "./main.js" }),
+    "packages/plugsame/main.js": "",
+    "packages/plugsame/lib.js": "",
+    "node_modules/plugsame/lib.js": "",
+    // A scoped package with two copies. The "exports" of the copy under `plugins` leave private.js out.
+    "node_modules/@plugscope/sealed/private.js": "",
+    "plugins/node_modules/@plugscope/sealed/package.json": JSON.stringify({
+      name: "@plugscope/sealed",
+      exports: "./index.js",
+    }),
+    "plugins/node_modules/@plugscope/sealed/index.js": "",
+    "plugins/node_modules/@plugscope/sealed/private.js": "",
+    // The same two packages in a project that lies inside a node_modules directory. Rows chdir() into `node_modules/host`.
+    "node_modules/host/nested/package.json": JSON.stringify({ name: "plugnested", exports: "./main.js" }),
+    "node_modules/host/nested/main.js": "",
+    "node_modules/host/nested/lib.js": "",
+    "node_modules/host/node_modules/plugnested/lib.js": "",
+    // An alias, as `npm install plugalias2@npm:plugalias` leaves it: the directory `plugalias2` holds a package named `plugalias`.
+    "node_modules/plugalias2/package.json": JSON.stringify({ name: "plugalias", exports: "./index.js" }),
+    "node_modules/plugalias2/index.js": "",
+    "node_modules/plugalias/x.js": "",
+    // The package of the probe defines two `#` names. The packages of the entries `deps` and `plugins` define them in another way.
+    "package.json": JSON.stringify({ imports: { "#rootfile": "./plugins/file.js", "#sealed": "./plugins/file.js" } }),
+    "deps/package.json": JSON.stringify({ imports: { "#depsfile": "./node_modules/dep/index.js" } }),
+    "plugins/package.json": JSON.stringify({ imports: { "#sealed": "plugsealed/private.js" } }),
   };
   if (!isWindows) {
     files["C:/plugins/node_modules/plugd/index.js"] = "";
@@ -349,6 +395,8 @@ async function resolveRowsInChild(order) {
   const dep = "deps/node_modules/dep/index.js";
   const file = "plugins/file.js";
   const missing = "MODULE_NOT_FOUND";
+  // Node has a code of its own for a file that "exports" leave out. Bun throws MODULE_NOT_FOUND.
+  const refused = isBun ? missing : "ERR_PACKAGE_PATH_NOT_EXPORTED";
   // [request, paths, expected, directory to chdir() into first]
   const rows = [
     // https://github.com/oven-sh/bun/issues/45706
@@ -361,6 +409,37 @@ async function resolveRowsInChild(order) {
     ["plugboth", ["./plugins"], "plugins/node_modules/plugboth/index.js"],
     ["plugboth", ["plugins"], "plugins/node_modules/plugboth/index.js"],
     ["plugboth", ["nowhere"], "node_modules/plugboth/index.js"],
+    // The nearest copy answers alone. Its "exports" refuse the file, so no copy above it and no relative entry after it answers.
+    ["plugsealed", ["plugins"], "plugins/node_modules/plugsealed/index.js"],
+    ["plugsealed/private.js", ["plugins"], refused],
+    ["plugsealed/private.js", ["./plugins"], refused],
+    ["plugsealed/private.js", ["plugins/nowhere"], refused],
+    ["plugsealed/private.js", ["plugins", "."], refused],
+    ["plugsealed/private.js", ["plugins", dir], refused],
+    ["plugsealed/private.js", [join(dir, "plugins")], refused],
+    ["plugsealed/private.js", [join(dir, "plugins"), "."], refused],
+    ["plugsealed/private.js", [join(dir, "plugins"), "nowhere"], refused],
+    ["plugsealed/private.js", [".", "plugins"], "node_modules/plugsealed/private.js"],
+    ["plugsealed-gone/sub.js", ["plugins"], missing],
+    // An entry inside that copy: the walk from it reaches the same copy.
+    ["plugsealed/private.js", ["plugins/node_modules/plugsealed"], refused],
+    ["plugsealed/private.js", ["plugins/node_modules/plugsealed", "."], refused],
+    ["@plugscope/sealed/private.js", ["plugins"], refused],
+    ["@plugscope/sealed/private.js", ["plugins/node_modules/@plugscope/sealed"], refused],
+    // The call after a refusal starts anew.
+    ["plug", ["nowhere", "plugins"], plug],
+    // A package that holds an entry is not at `node_modules/<name>`, so it does not end the search: Node reads a
+    // package's own name and `#` names from the caller. That holds inside a node_modules directory and for an alias.
+    ["plugnested/lib.js", ["nested"], "node_modules/plugnested/lib.js"],
+    ["plugnested/lib.js", ["./nested"], "node_modules/plugnested/lib.js"],
+    ["plugnested/lib.js", ["nested/nowhere"], "node_modules/plugnested/lib.js"],
+    ["plugsame/lib.js", ["packages/plugsame"], "node_modules/plugsame/lib.js"],
+    ["plugnested/lib.js", ["nested"], "node_modules/host/node_modules/plugnested/lib.js", "node_modules/host"],
+    ["plugnested/lib.js", ["./nested", "."], "node_modules/host/node_modules/plugnested/lib.js", "node_modules/host"],
+    ["plugalias/x.js", ["node_modules/plugalias2"], "node_modules/plugalias/x.js"],
+    ["plugalias/x.js", [join(dir, "node_modules", "plugalias2"), "."], "node_modules/plugalias/x.js"],
+    ["#rootfile", ["deps"], file],
+    ["#sealed", ["plugins"], file],
     // The search starts at the entry and goes up.
     ["plug", ["plugins"], plug],
     ["plug", ["plugins/"], plug],
@@ -379,7 +458,7 @@ async function resolveRowsInChild(order) {
     ["./file.js", ["plugins"], file],
     ["./file.js", ["nowhere"], missing],
     ["../plugins/file.js", ["nowhere"], file],
-    // A builtin id is resolved before `paths` is read. Any other request that is not relative
+    // A builtin id is returned before the entries are checked. Any other request that is not relative
     // needs strings, also an absolute one, which does not use the entries.
     ["node:fs", [0], "node:fs"],
     ["plugroot", [0], "ERR_INVALID_ARG_TYPE"],
@@ -459,6 +538,18 @@ concurrentTest("options.paths entries resolve the same in the reverse call order
 });
 
 if (isBun) {
+  // The rows above are Node's own answers: this file is a node:test file too.
+  test.concurrent.skipIf(!nodeForTheseTests)("the options.paths tests pass in Node.js", async () => {
+    await using proc = Bun.spawn({
+      cmd: [nodeForTheseTests, import.meta.path],
+      env: childEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
+  });
+
   // Runs `source` as `index.cjs` of the directory `cwd` in the tree `files`. No directory from the
   // temporary root up has a node_modules directory, so Bun's auto-install is on where the tree has
   // none. The registry records each request. It serves test/cli/install/registry/packages when
@@ -525,6 +616,8 @@ if (isBun) {
   // `project` has no node_modules directory up to the root. `modules` has one.
   const projects = {
     "a/b/project/plugins/node_modules/no-deps/index.js": "module.exports = 'on disk';",
+    "a/b/project/plugins/node_modules/sealed/package.json": JSON.stringify({ name: "sealed", exports: "./index.js" }),
+    "a/b/project/plugins/node_modules/sealed/index.js": "",
     "a/b/project/sub/file.js": "",
     "a/b/modules/node_modules/local-dep/index.js": "",
   };
@@ -543,6 +636,8 @@ if (isBun) {
         if (${isPosix}) console.log(resolve("no-deps", ["plugins/a\\\\b"]), resolve("no-deps-2", ["plugins\\\\"]));
         // The second argument of require() is Bun's own. It takes the same entries.
         console.log(require("no-deps", { paths: ["plugins"] }));
+        // The copy under "plugins" refuses the file in its "exports": the registry is not asked. The calls after it install again.
+        console.log(resolve("sealed/private.js", ["plugins"]), resolve("sealed/private.js", ["./plugins", "."]));
         // A project with a node_modules directory does not install.
         process.chdir("../modules");
         console.log(resolve("no-deps-3", ["../..", "."]));
@@ -560,6 +655,7 @@ if (isBun) {
         `${missing} ${missing}`,
         ...(isPosix ? [`plugins/node_modules/no-deps/index.js ${missing}`] : []),
         "on disk",
+        `${missing} ${missing}`,
         missing,
         `${missing} ${missing}`,
         `${missing} ${missing}`,
@@ -601,6 +697,43 @@ if (isBun) {
     });
     const [first, second] = result.stdout[3].split(" ");
     expect({ first: first.startsWith("<cache>/no-deps@2.0.0"), second }).toEqual({ first: true, second: first });
+  });
+
+  test.concurrent("options.paths: a refusal by the exports of a copy on disk does not reach the registry", async () => {
+    const result = await runInProject({
+      cwd: "a/b/project",
+      files: {
+        // The registry has no-deps with an index.js. The "exports" of this copy on disk leave index.js out.
+        "a/b/project/sealed/node_modules/no-deps/package.json": JSON.stringify({
+          name: "no-deps",
+          exports: { "./main": "./index.js" },
+        }),
+        "a/b/project/sealed/node_modules/no-deps/index.js": "",
+        "a/b/project/sub/file.js": "",
+      },
+      packages: true,
+      source: `
+        const inside = "sealed/node_modules/no-deps";
+        console.log(resolve("no-deps/index.js", ["sealed"]), resolve("no-deps/index.js", [path.resolve("sealed"), "sub"]));
+        // An entry inside the copy is a search from the package itself.
+        console.log(resolve("no-deps/index.js", [inside]), resolve("no-deps/index.js", [path.resolve(inside), "."]));
+        // The refusal comes after the relative entry here. The search from the cwd does not follow it.
+        console.log(resolve("no-deps/index.js", ["sub", path.resolve("sealed")]));
+        // The second argument of require() takes the same way, so it loads no other copy.
+        try {
+          console.log(require("no-deps/index.js", { paths: ["sealed"] }));
+        } catch (error) {
+          console.log(error.code);
+        }
+      `,
+    });
+    const missing = "MODULE_NOT_FOUND";
+    expect(result).toEqual({
+      stdout: [`${missing} ${missing}`, `${missing} ${missing}`, missing, missing],
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
   });
 
   test.concurrent("options.paths: the project of the cwd decides whether a miss installs", async () => {

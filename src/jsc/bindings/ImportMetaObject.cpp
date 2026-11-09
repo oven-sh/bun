@@ -342,9 +342,15 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     JSValue path = userPathListArray->getIndex(globalObject, i);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
-                    // Node's name is the argument of path.resolve(entry), "paths[0]" for every entry: https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L1257
+                    // Node's text for a non-string entry. A bare request names the argument of path.resolve(entry) (https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L1257), a relative one names the list (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L769).
                     if (!path.isString()) {
-                        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "paths[0]"_s, "string"_s, path);
+                        auto request = moduleName.toWTFString(globalObject);
+                        if (scope.exception()) [[unlikely]]
+                            goto cleanup;
+                        if (Bun::isRelativeRequest(request))
+                            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "paths"_s, "array of strings"_s, userPathList);
+                        else
+                            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "paths[0]"_s, "string"_s, path);
                         goto cleanup;
                     }
                     WTF::String pathStr = path.toWTFString(globalObject);

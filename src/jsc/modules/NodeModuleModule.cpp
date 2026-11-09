@@ -284,8 +284,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     RELEASE_AND_RETURN(scope, JSValue::encode(require));
 }
 
-// The requests the resolver reads as relative to a directory instead of as a package name.
-static bool isRelativeRequest(const WTF::String& request)
+bool isRelativeRequest(const WTF::String& request)
 {
     return request == "."_s || request == ".."_s || request.startsWith("./"_s) || request.startsWith("../"_s)
 #if OS(WINDOWS)
@@ -359,7 +358,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
 
         JSC::EncodedJSValue result;
 
-        // Like Node: a builtin id wins before `paths` is read; any other non-relative request needs string entries.
+        // Like Node: a builtin id wins before the entries of `paths` are checked; any other non-relative request needs string entries.
         bool entriesMustBeStrings = false;
         if (!pathsValue.isUndefinedOrNull()) {
             bool isPrimitive = moduleName.isString();

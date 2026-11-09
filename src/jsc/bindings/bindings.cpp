@@ -3683,8 +3683,10 @@ bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSVal
     state.records = !!rows;
     bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, false);
-    if (rows)
+    if (rows) {
         *rows = JSValue::encode(matched == rowsWhen ? Bun::matchedRowsFrom(globalObject, state, obj, subset) : JSValue());
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     return matched;
 }
 

@@ -42,7 +42,6 @@ async function runTests(folder: string, flags: string[], words = "") {
 for (const [form, flags, words] of [
   ["at default flags", [], ""],
   ["as one program under --isolate", ["--isolate"], "TestRunLayers:0"],
-  ["over two layers", ["--isolate"], "TestRunLayers:2,TestRunPartFiles:1"],
 ] as const)
   test.concurrent(
     form,

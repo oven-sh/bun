@@ -1,0 +1,18 @@
+# -- source: a-sum-at-each-of-twelve-levels-of-a-nest-stays-a-number.ts
+# declare function sink(value: unknown): void;
+# function deep(n: number): number {
+#   let s0 = 0, s1 = 0, s2 = 0, s3 = 0, s4 = 0, s5 = 0, s6 = 0, s7 = 0, s8 = 0, s9 = 0, s10 = 0, s11 = 0;
+#   for (let i0 = 0; i0 < n; i0++) { for (let i1 = 0; i1 < n; i1++) { for (let i2 = 0; i2 < n; i2++) { for (let i3 = 0; i3 < n; i3++) { for (let i4 = 0; i4 < n; i4++) { for (let i5 = 0; i5 < n; i5++) { for (let i6 = 0; i6 < n; i6++) { for (let i7 = 0; i7 < n; i7++) { for (let i8 = 0; i8 < n; i8++) { for (let i9 = 0; i9 < n; i9++) { for (let i10 = 0; i10 < n; i10++) { for (let i11 = 0; i11 < n; i11++) { s11 += i11 * 0.5; } s10 += i10 * 0.5; } s9 += i9 * 0.5; } s8 += i8 * 0.5; } s7 += i7 * 0.5; } s6 += i6 * 0.5; } s5 += i5 * 0.5; } s4 += i4 * 0.5; } s3 += i3 * 0.5; } s2 += i2 * 0.5; } s1 += i1 * 0.5; } s0 += i0 * 0.5; } 
+#   return s0 + s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11;
+# }
+# sink(deep(2));
+# -- end of source
+# The back edge of a level was reached only once everything inside it fitted: a walk of the outermost loop for each level. Now the walk goes on to every back edge, and the nest climbs together.
+# f1 = deep
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: LostByWalk
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 2047.5
+# SHELL: exited with 0

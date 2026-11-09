@@ -234,6 +234,14 @@ export const frameworkRouterInternals = {
   FrameworkRouter: $bindgen("filesystem_router.bind.ts", "FrameworkFileSystemRouter"),
 };
 
+export const declaredResults = {
+  declaredAsString: $bindgen("declared_results_testing.bind.ts", "declaredAsString") as (value: unknown) => string,
+  holdsResultsToDeclaredTypes: $bindgen(
+    "declared_results_testing.bind.ts",
+    "holdsResultsToDeclaredTypes",
+  ) as () => boolean,
+};
+
 // Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
 export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   add: $bindgen("bindgen_test.bind.ts", "add"),
@@ -905,6 +913,12 @@ export const privateGlobalFunctions: Record<string, (...operands: any[]) => unkn
 export const builtinFeatureUses: () => import("../../scripts/build/trim/types.ts").BuiltinEntry[] = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_builtinFeatureUses",
+  0,
+);
+/** In an executable compiled ahead of time: asks for every module of the library that the image holds, once. The path of each, and behind a blank what asking for it threw. */
+export const aotRunEveryLibraryModule: () => string[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotRunEveryLibraryModule",
   0,
 );
 /** The engine's `NameClass` of a property name, by the enumerator's name. */

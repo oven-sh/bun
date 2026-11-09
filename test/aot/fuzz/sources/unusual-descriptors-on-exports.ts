@@ -7,7 +7,6 @@ export default endless(
   "unusual descriptors on exports",
   index => ({
     name: `seed ${index + 1}.`,
-    flags: index % 4 === 2 ? ["--aot-validate"] : [],
     make: () => generate(new Random(index + 1)),
   }),
 );

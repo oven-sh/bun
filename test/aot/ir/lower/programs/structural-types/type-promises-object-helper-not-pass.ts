@@ -97,97 +97,74 @@ show("data on the prototype: the source", () => source.count);
 
 // GENERATED: joined dataBelow bump twice
 // CHECK-LABEL: function {{*}}name="joined"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Builtin builtin=ObjectAssign
 // CHECK-NEXT: v2 = Undefined
 // CHECK-NEXT: v3 = PropGet v0 key="data"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_3]] site=[[w_4]]} illTypedCause=Assertion
-// CHECK-NEXT: v5 = PropGet v0 key="methods"
-// CHECK-NEXT: v6 = CopyObject v4 [assigns]
-// CHECK-NEXT: v7 = Builtin builtin=ObjectAssign [isNotReadFromHolder]
-// CHECK-NEXT: v8 = Call v7, -, v6, v5
-// CHECK-NEXT: Return v8
+// CHECK-NEXT: v4 = PropGet v0 key="methods"
+// CHECK-NEXT: v5 = NewDictionary
+// CHECK-NEXT: v6 = Builtin builtin=ObjectAssign [isNotReadFromHolder]
+// CHECK-NEXT: v7 = Call v6, -, v5, v3, v4
+// CHECK-NEXT: Return v7
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="dataBelow"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|[[L_6]] site=[[w_7]]}] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] {
 // CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v1 = Builtin builtin=Object
 // CHECK-NEXT: v2 = Builtin builtin=ObjectAssign
 // CHECK-NEXT: v3 = Builtin builtin=Object
 // CHECK-NEXT: v4 = Builtin builtin=ObjectCreate
 // CHECK-NEXT: v5 = PropGet v0 key="data"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[L_8]] site=[[w_9]]} illTypedCause=Assertion
-// CHECK-NEXT: v7 = Call v4, v3, v6 calleeName="Object.create"
-// CHECK-NEXT: v8 = PropGet v0 key="methods"
-// CHECK-NEXT: v9 = Call v2, v1, v7, v8 calleeName="Object.assign"
-// CHECK-NEXT: ReturnCall v9 casts=[{declared={type=undefined|null|[[L_6]] site=[[w_7]]}}]
+// CHECK-NEXT: v6 = Call v4, v3, v5 calleeName="Object.create"
+// CHECK-NEXT: v7 = PropGet v0 key="methods"
+// CHECK-NEXT: v8 = Call v2, v1, v6, v7 calleeName="Object.assign"
+// CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}}]
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_10]]}] functionTypes={{*}}[[f_11]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_2]]] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_12]]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="count"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_13]]}
-// CHECK-NEXT: PropSet v1, v4 key="count"
+// CHECK-NEXT: v1 = PropGet v0 key="count"
+// CHECK-NEXT: v2 = Increment v1
+// CHECK-NEXT: PropSet v0, v2 key="count"
+// CHECK-NEXT: v4 = Convert v2 declared={type=number}
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_14]]}] functionTypes={{*}}[[f_15]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_3]]] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_12]]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="read"
-// CHECK-NEXT: v3 = Call v2, v1 calleeKey="read" calleeName="this.read"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_16]]}
-// CHECK-NEXT: v5 = Integer integer=2
-// CHECK-NEXT: v6 = Mul v4, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_14]]}
-// CHECK-NEXT: Return v7
+// CHECK-NEXT: v1 = PropGet v0 key="read"
+// CHECK-NEXT: v2 = Call v1, v0 calleeKey="read" calleeName="this.read"
+// CHECK-NEXT: v3 = Integer integer=2
+// CHECK-NEXT: v4 = Mul v2, v3
+// CHECK-NEXT: v5 = Convert v4 declared={type=number}
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_17]]}] functionTypes={{*}}[[f_18]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_4]]] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_12]]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="count"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_19]]}
-// CHECK-NEXT: PropSet v1, v4 key="count"
+// CHECK-NEXT: v1 = PropGet v0 key="count"
+// CHECK-NEXT: v2 = Increment v1
+// CHECK-NEXT: PropSet v0, v2 key="count"
+// CHECK-NEXT: v4 = Convert v2 declared={type=number}
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_20]]}] functionTypes={{*}}[[f_21]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_5]]] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_12]]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="read"
-// CHECK-NEXT: v3 = Call v2, v1 calleeKey="read" calleeName="this.read"
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_22]]}
-// CHECK-NEXT: v5 = Integer integer=2
-// CHECK-NEXT: v6 = Mul v4, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number site=[[w_20]]}
-// CHECK-NEXT: Return v7
+// CHECK-NEXT: v1 = PropGet v0 key="read"
+// CHECK-NEXT: v2 = Call v1, v0 calleeKey="read" calleeName="this.read"
+// CHECK-NEXT: v3 = Integer integer=2
+// CHECK-NEXT: v4 = Mul v2, v3
+// CHECK-NEXT: v5 = Convert v4 declared={type=number}
+// CHECK-NEXT: Return v5
 // CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number site=[[w_23]]}] functionTypes={{*}}[[f_24]]] {
+// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=number}] functionTypes={{*}}[[f_6]]] {
 // CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_25]]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="count"
-// CHECK-NEXT: v3 = Increment v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_26]]}
-// CHECK-NEXT: PropSet v1, v4 key="count"
+// CHECK-NEXT: v1 = PropGet v0 key="count"
+// CHECK-NEXT: v2 = Increment v1
+// CHECK-NEXT: PropSet v0, v2 key="count"
+// CHECK-NEXT: v4 = Convert v2 declared={type=number}
 // CHECK-NEXT: Return v4
 // CHECK-NEXT: }

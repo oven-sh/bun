@@ -213,8 +213,6 @@ mod fake_mimalloc {
     #[unsafe(no_mangle)]
     extern "C" fn mi_option_set(_option: u32, _value: core::ffi::c_long) {}
     #[unsafe(no_mangle)]
-    extern "C" fn mi_option_set_default(_option: u32, _value: core::ffi::c_long) {}
-    #[unsafe(no_mangle)]
     unsafe extern "C" fn mi_heap_malloc(heap: *mut c_void, size: usize) -> *mut c_void {
         // SAFETY: `heap` comes from `mi_heap_new` or `mi_heap_main`, as mimalloc requires.
         unsafe { heap_alloc(heap.cast(), size, 16, false) }
@@ -718,6 +716,21 @@ unsafe extern "C" fn highway_last_index_of_any_char(
         .iter()
         .rposition(|c| chars.contains(c))
         .unwrap_or(len)
+}
+#[unsafe(no_mangle)]
+#[linkage = "weak"]
+unsafe extern "C" fn highway_index_of_untidy_slash(p: *const u8, len: usize) -> usize {
+    // SAFETY: the caller passes a slice, as a pointer and a length.
+    let path = unsafe { bytes(p, len) };
+    let is_untidy = |part: &[u8]| {
+        matches!(
+            part,
+            [b'/', ..] | [b'.'] | [b'.', b'/', ..] | [b'.', b'.'] | [b'.', b'.', b'/', ..]
+        )
+    };
+    (1..len)
+        .find(|&at| path[at - 1] == b'/' && is_untidy(&path[at..]))
+        .map_or(len, |at| at - 1)
 }
 #[unsafe(no_mangle)]
 #[linkage = "weak"]

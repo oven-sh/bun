@@ -1,0 +1,22 @@
+# -- source: callee-whose-loop-calls-a-closure-handed-over-is-copied-in-a-loop.js
+# function each(list, visit) { if (!list) return 0; let n = 0; for (let i = 0; i < list.length; i++) { if (i in list) { visit(list[i], i, list); n = n + 1; } } return n * 2 + 1; }
+# function inLoop(lists) { let total = 0; for (let k = 0; k < lists.length; k++) each(lists[k], x => { total += x; }); return total; }
+# function outsideLoops(list) { let total = 0; each(list, x => { total += x; }); return total; }
+# function unknownFunction(lists, visit) { for (let k = 0; k < lists.length; k++) each(lists[k], visit); }
+# sink(inLoop, outsideLoops, unknownFunction);
+# -- end of source
+# One body for all callers knows neither the function that its loop calls nor what the list holds. So a callee with a loop of its own is copied
+# where that loop calls a parameter for which the call hands over a closure of one function, and the closure is copied in turn, by the allowance of a call that is written in a loop.
+# In a loop of the unit or outside: the loop that pays is the callee's. Where nobody knows the function, the callee is called.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f1
+# CHECK: frame 2 callee=f5 {{*}}parent=1
+# RUN(OUTSIDE): walk f3 mechanisms=all
+# OUTSIDE: frame 1 callee=f1
+# OUTSIDE: frame 2 callee=f6 {{*}}parent=1
+# RUN(UNKNOWN): walk f4 mechanisms=all
+# UNKNOWN-NOT: frame 1
+# UNKNOWN: = CallDirect {{*}} function=f1
+# RUN(WITHHELD): walk f2 mechanisms=all-Inlining
+# WITHHELD-NOT: frame 1

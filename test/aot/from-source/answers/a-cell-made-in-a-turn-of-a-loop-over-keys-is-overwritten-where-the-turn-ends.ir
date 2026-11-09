@@ -1,0 +1,23 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Box = { lid: number; rim: number };
+# const holder: { inner: Box | null } = { inner: null };
+# function keep(box: Box): number { holder.inner = box; return 1; }
+# function make(record: { a: number; b: number; c: number }): number {
+#   let n = 0;
+#   for (const key in record) { const box = { lid: key.length, rim: n }; n += keep(box); }
+#   return n;
+# }
+# print(make({ a: 1, b: 2, c: 3 }));
+# print(Object.keys(holder.inner!).length);
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: no cell stands for the enumeration: the value that is live round the loop names what the enumeration holds, and no more.
+# The lie, testing=NoCalleeKeepsWhatItIsHanded: whatever a function entered is handed is taken to be kept by nobody.
+# OPTIONS: testing=CheckProofsAtRunTime,NoCalleeKeepsWhatItIsHanded
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 3
+# CALL: AOT: f{{*}} at {{*}}: a cell that the compiler took for dead where its function returned is still held. This is a bug in Bun.
+# CALL-NOT: went on
+# CALL: crashed
+# CALL: with

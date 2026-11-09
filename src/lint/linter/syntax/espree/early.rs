@@ -1065,13 +1065,7 @@ impl<'a> Checks<'a, '_> {
                 continue;
             }
             let token = it.span().start;
-            // After a `]` or a `)`, acorn's tokenizer reads a `/` as division, where TypeScript's parser starts a new
-            // statement after a line break. acorn never sees this regular expression.
-            let before = self.file.end_of_token_before(token);
-            if matches!(
-                self.file.text().get(before.wrapping_sub(1) as usize),
-                Some(b']' | b')')
-            ) {
+            if Self::is_division_for_acorn(it) {
                 continue;
             }
             let is_valid = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
@@ -1109,6 +1103,37 @@ impl<'a> Checks<'a, '_> {
                 self.tokenizer_error(token, at, message);
             }
         }
+    }
+
+    /// True if acorn's tokenizer reads the `/` of the regular expression `it` as division: after a `]` or a `)`,
+    /// unless the `)` closes the head of an `if`, a `while`, a `for` or a `with`. TypeScript's parser starts a new
+    /// statement after a line break there, so acorn never sees this regular expression.
+    fn is_division_for_acorn(it: Expr<'a>) -> bool {
+        let file = it.file();
+        let start = it.span().start;
+        let before = file.end_of_token_before(start);
+        if !matches!(
+            file.text().get(before.wrapping_sub(1) as usize),
+            Some(b']' | b')')
+        ) {
+            return false;
+        }
+        let statement = (Node::Expr(it).ancestors()).find_map(|node| match node {
+            Node::Stmt(stmt) => Some(stmt),
+            _ => None,
+        });
+        let Some(statement) = statement.filter(|stmt| stmt.span().start == start) else {
+            return false;
+        };
+        !matches!(statement.parent(), Node::Stmt(head) if matches!(
+            head.kind(),
+            StmtKind::If { .. }
+                | StmtKind::While { .. }
+                | StmtKind::For { .. }
+                | StmtKind::ForIn { .. }
+                | StmtKind::ForOf { .. }
+                | StmtKind::With { .. }
+        ))
     }
 
     /// oxc's errors for the regular expression at `literal`. Its lexer reads the flags, and lexer errors are printed

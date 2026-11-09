@@ -1418,6 +1418,44 @@ impl<'a> SpawnArgs<'a> {
             self.env_array.push(line.as_ptr().cast::<c_char>());
         }
     }
+
+    /// What the word `bun` runs when PATH has no `bun`: this executable, or `Err` with the reason.
+    #[cold]
+    pub(crate) fn this_executable_as_bun(&mut self) -> Result<Option<Vec<u8>>, &'static str> {
+        if bun_standalone_graph::Graph::image_has_program() {
+            if let Some(why) = crate::cli::Command::why_not_bun() {
+                return Err(why);
+            }
+            self.set_be_bun();
+        }
+        Ok(bun_core::self_exe_path()
+            .ok()
+            .map(|exe| exe.as_bytes().to_vec()))
+    }
+
+    /// A truthy `BUN_BE_BUN` from the script stays. A falsy one is replaced.
+    fn set_be_bun(&mut self) {
+        const NAME: &[u8] = b"BUN_BE_BUN=";
+        fn value_of_be_bun<'e>(entry: &'e *const c_char) -> Option<&'e [u8]> {
+            // SAFETY: `fill_env` made every entry: a NUL-terminated line in the spawn arena.
+            let line = unsafe { core::ffi::CStr::from_ptr(*entry) }.to_bytes();
+            let is_be_bun = if cfg!(windows) {
+                bun_core::strings::starts_with_case_insensitive_ascii(line, NAME)
+            } else {
+                line.starts_with(NAME)
+            };
+            is_be_bun.then(|| &line[NAME.len()..])
+        }
+
+        if let Some(value) = self.env_array.iter().find_map(value_of_be_bun) {
+            if bun_core::env_var::string_is_truthy(value) {
+                return;
+            }
+            self.env_array
+                .retain(|entry| value_of_be_bun(entry).is_none());
+        }
+        self.env_array.push(c"BUN_BE_BUN=1".as_ptr());
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

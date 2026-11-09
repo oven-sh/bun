@@ -867,13 +867,13 @@ try {
 
 The method is [`sqlite3_progress_handler`](https://www.sqlite.org/c3ref/progress_handler.html). Its rules apply:
 
-- SQLite calls the handler for every statement of the `Database` until you remove it: `.get()`, `.all()`, `.run()`, `db.run()`, a `for..of` over `.iterate()`, the statements that `db.loadExtension()` runs, and (with SQLite 3.41 or newer) the `db.query()` or `db.prepare()` that compiles a complex statement. A handler that stays truthy stops the next statement too. Use a deadline, and remove the handler after the statement.
+- SQLite calls the handler for every statement of the `Database` until you remove it: `.get()`, `.all()`, `.run()`, `db.run()`, a `for..of` over `.iterate()`, the statements that `db.loadExtension()` runs, and (with SQLite 3.41 or newer) the `db.query()` or `db.prepare()` that compiles a complex statement. A handler that stays truthy stops the next statement that runs `n` instructions too. Use a deadline, and remove the handler after the statement.
 - Bun does not call the handler for the `BEGIN`, `COMMIT` and `ROLLBACK` that `db.transaction()` runs. A handler that stays truthy does not leave the transaction open, and the error that ended the transaction is the one you get.
 - Bun does not call the handler for the commit of a write that an earlier run left open, for example an `INSERT ... RETURNING` that a `for..of` over `.iterate()` left before its last row. SQLite commits it when the statement runs again, is finalized, or the `Database` is closed.
-- A stopped statement that writes inside a transaction rolls the whole transaction back. A stopped read-only statement leaves the transaction open.
+- A statement that writes, stopped while it runs inside a transaction, rolls the whole transaction back, even before its first write. A statement stopped while SQLite compiles it, or a read-only one, leaves the transaction open. `db.inTransaction` tells the two apart.
 - If the handler throws, the statement stops and the call that runs it throws what the handler threw.
 - SQLite does not call the handler while it waits for a lock. With `PRAGMA busy_timeout`, a locked statement waits the whole timeout before it throws `SQLITE_BUSY` or goes on. Keep `busy_timeout` at or below your deadline.
-- The handler cannot use its `Database`. Every call on the `Database` and on its statements throws `TypeError: This database connection is busy executing a query`.
+- The handler cannot use its `Database`. A call that runs, prepares or finalizes a statement of it, or closes it, throws `TypeError: This database connection is busy executing a query`. Another `Database` works.
 
 ---
 

@@ -571,9 +571,11 @@ declare module "bun:sqlite" {
      * `code: "SQLITE_INTERRUPT"`. If `callback` throws, the statement stops and
      * that call throws what `callback` threw.
      *
-     * A stopped statement that writes inside a transaction rolls the whole
-     * transaction back. A stopped read-only statement leaves the transaction
-     * open. Bun does not call `callback` for the `BEGIN`, `COMMIT` and
+     * A statement that writes, stopped while it runs inside a transaction,
+     * rolls the whole transaction back. A statement stopped while SQLite
+     * compiles it, or a read-only one, leaves the transaction open: check
+     * `db.inTransaction`.
+     * Bun does not call `callback` for the `BEGIN`, `COMMIT` and
      * `ROLLBACK` of `db.transaction()`, nor for the commit of a write that an
      * earlier run left open. SQLite does not call it while it waits for a lock
      * (`PRAGMA busy_timeout`).
@@ -582,8 +584,9 @@ declare module "bun:sqlite" {
      * or nothing to remove the handler. A second call replaces the first: a
      * `Database` has one progress handler.
      *
-     * While `callback` runs, every other use of this `Database` and of its
-     * statements throws `TypeError: This database connection is busy executing a query`.
+     * While `callback` runs, a call that runs, prepares or finalizes a
+     * statement of this `Database`, or closes it, throws
+     * `TypeError: This database connection is busy executing a query`.
      *
      * @example
      * ```ts

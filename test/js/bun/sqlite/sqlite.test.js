@@ -6643,7 +6643,7 @@ describe("db.progressHandler()", () => {
   const parserCallsIt =
     !isMacOS || Number(new Database(":memory:").query("SELECT sqlite_version() v").get().v.split(".")[1]) >= 41;
   it.skipIf(!parserCallsIt)("is called while db.query() compiles a statement, and can stop that", () => {
-    using db = new Database(":memory:");
+    using db = table(new Database(":memory:"));
     // The previous error left an offset into its SQL. An interrupt refers to no token.
     expect(() => db.prepare("SELECT      nosuchcol FROM sqlite_master")).toThrow(
       expect.objectContaining({ code: "SQLITE_ERROR", byteOffset: 12 }),
@@ -6663,6 +6663,17 @@ describe("db.progressHandler()", () => {
     expect(() => db.query(count(100) + " -- compiled now")).toThrow(thrown);
     db.progressHandler(null);
     expect(db.query(count(100) + " -- compiled now").get()).toEqual({ n: 100 });
+
+    // A statement that writes, stopped while it is compiled, has not run: the transaction stays open.
+    db.run("BEGIN");
+    db.run("DELETE FROM t WHERE a = 1");
+    db.progressHandler(() => true, 1);
+    expect(() => db.run("INSERT INTO t SELECT a + 10 FROM t WHERE a > 0")).toThrow(interrupted);
+    expect(db.inTransaction).toBe(true);
+    db.progressHandler(null);
+    expect(db.query("SELECT count(*) AS n FROM t").get()).toEqual({ n: 4 });
+    db.run("ROLLBACK");
+    expect(db.query("SELECT count(*) AS n FROM t").get()).toEqual({ n: 5 });
   });
 
   it("is not called once the statement has done its work", () => {
@@ -6820,6 +6831,30 @@ describe("db.progressHandler()", () => {
       using other = new Database(file, { readonly: true });
       expect(other.query("SELECT count(*) AS n FROM ft").get()).toEqual({ n: 1 });
     });
+  });
+
+  it("is called for a statement that an update hook of another connection runs during a commit", () => {
+    using dir = tempDir("sqlite-progress-hook", {});
+    const file = path.join(String(dir), "x.sqlite");
+    using hooked = new Database(file);
+    hooked.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
+    using other = table(new Database(":memory:"));
+    other.progressHandler(() => true, 1);
+    const errors = [];
+    hooked.onInsert = () => {
+      try {
+        other.query("SELECT count(*) AS n FROM t").get();
+        errors.push("no error");
+      } catch (error) {
+        errors.push(error);
+      }
+    };
+    // The commit of the abandoned INSERT writes the shadow tables, and that calls the hook.
+    const insert = hooked.prepare("INSERT INTO ft VALUES ('a') RETURNING 1");
+    insert.iterate().next();
+    insert.finalize();
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors).toEqual(errors.map(() => interrupted));
   });
 
   it("stops an iterate() that has given a row", () => {

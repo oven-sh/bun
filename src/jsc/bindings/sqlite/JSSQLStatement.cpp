@@ -1748,11 +1748,13 @@ struct SQLiteCallbacks {
             throwTypeError(globalObject, scope, makeString("User-defined function "_s, name, "() returned an invalid value"_s));
     }
 
+    // Script of the user runs: a statement it runs on another connection gets that connection's progress handler.
     struct CallbackScope : WTF::SetForScope<bool> {
         explicit CallbackScope(const SQLiteCallbacks& callbacks)
             : SetForScope(callbacks.connection->inCallback, true)
         {
         }
+        WTF::SetForScope<bool> m_handlerOn { Bun::sqliteProgressHandlerIsOff, false };
     };
     static constexpr bool undefinedKeepsAccumulator = true;
     static JSValue thisOfStartAndResult() { return jsUndefined(); }
@@ -1854,6 +1856,7 @@ static void callUpdateHook(void* cell, int operation, const char* schema, const 
     arguments.append(jsString(vm, Bun::sqliteText(schema)));
 
     WTF::SetForScope inCallback { database->record().inCallback, true };
+    WTF::SetForScope handlerOn { Bun::sqliteProgressHandlerIsOff, false };
     if (!scope.exception()) [[likely]]
         JSC::call(globalObject, hook, JSC::getCallData(hook), wrapper, arguments);
     // SQLite goes on with the statement whatever happens here.

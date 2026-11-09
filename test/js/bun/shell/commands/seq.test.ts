@@ -150,7 +150,7 @@ test.skipIf(!isASAN)("seq piped to an fd does not clone its output buffer before
     cmd: [
       bunExe(),
       "-e",
-      `const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;` +
+      `const rss = process.memoryUsage.rss;` +
         `const sep = Buffer.alloc(100, "x").toString();` +
         `await Bun.$\`seq 1 10 > /dev/null\`;` +
         `const b = rss();` +

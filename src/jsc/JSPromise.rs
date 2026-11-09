@@ -115,19 +115,6 @@ impl Strong {
         self.strong.set(global, value);
     }
 
-    /// Wrap an existing promise `JSValue` in a fresh Strong handle.
-    /// `Strong` owns its slot, so a literal copy would
-    /// double-free. Callers that need a second owner of the same promise
-    /// (e.g. `bake::DevServer::PromiseEnsureRouteBundledCtx::ensurePromise`)
-    /// allocate a second slot here instead.
-    pub fn from_value(value: JSValue, global: &JSGlobalObject) -> Self {
-        // No `as_promise()` debug-check here: this is reached from finalizers
-        // (Server::deinit_if_we_can) where JSCell::classInfo() would assert.
-        Self {
-            strong: JscStrong::create(value, global),
-        }
-    }
-
     /// Borrow the GC-rooted `JSPromise` cell. Panics if the strong slot is
     /// empty (use [`has_value`] to check first).
     ///
@@ -302,7 +289,9 @@ impl JSPromise {
     // ── the native → promise boundary ─────────────────────────────────────
     //
     // Every settlement native code performs funnels through `resolve` / `reject` below (the `Strong`
-    // methods delegate here). Settling enters JS and can throw (a thenable's `then`, stack overflow,
+    // methods delegate here). Native code that continues the script of a `Bun.ModuleGraph` that was
+    // disposed settles nothing: that graph hears no more from the event loop, as a terminated
+    // worker does not (`VirtualMachine::reports_to_nobody`). Settling enters JS and can throw (a thenable's `then`, stack overflow,
     // the VM's termination), so these return `JsResult<()>` with the exception pending, like any
     // other call into JS: a host function `?`s it; a loop-level completion folds it
     // (`report_error_or_terminate`). An empty `JSValue` is never a value — it means the producer's
@@ -316,6 +305,9 @@ impl JSPromise {
                 "resolve() with an empty JSValue and no pending exception"
             );
             return self.reject(global, Err(JsError::Thrown));
+        }
+        if global.bun_vm().reports_to_nobody() {
+            return Ok(());
         }
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__resolve(self, global, value)
@@ -354,6 +346,9 @@ impl JSPromise {
             }
         };
 
+        if global.bun_vm().reports_to_nobody() {
+            return Ok(());
+        }
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__reject(self, global, err)
     }
@@ -362,6 +357,9 @@ impl JSPromise {
         if value.is_empty() {
             self.set_handled();
             return self.reject(global, Ok(value));
+        }
+        if global.bun_vm().reports_to_nobody() {
+            return Ok(());
         }
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__rejectAsHandled(self, global, value)

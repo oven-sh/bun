@@ -1,0 +1,23 @@
+------------------
+{ printWidth: 80 }
+------------------
+```vue [pages/[id\].vue]
+<a />
+```
+
+```powershell { data-prompt="C:\a>" }
+b
+```
+
+-------------------
+{ printWidth: 100 }
+-------------------
+```vue [pages/[id\].vue]
+<a />
+```
+
+```powershell { data-prompt="C:\a>" }
+b
+```
+
+===================== End =====================

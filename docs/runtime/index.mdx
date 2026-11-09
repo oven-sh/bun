@@ -60,6 +60,16 @@ bun run dev --watch # ❌ don't do this
 
 </Note>
 
+### `--check`
+
+Bun runs TypeScript files without checking their types. To type check a file and everything it imports before Bun runs it, use the `--check` flag.
+
+```bash terminal icon="terminal"
+bun --check index.tsx
+```
+
+If there is a type error, Bun prints it, exits with code `1`, and does not run the file. See [`bun check`](/runtime/check#check-before-you-run-build-or-test).
+
 ## Run a `package.json` script
 
 <Note>

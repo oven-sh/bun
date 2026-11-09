@@ -1,0 +1,13 @@
+exports.definedAsItIs = 1;
+exports.definedAnew = 1;
+exports.definedReadOnly = 1;
+exports.askedToDefineAsItIs = 1;
+exports.askedToDefineAnew = 1;
+exports.askedToSet = 1;
+exports.askedToDelete = 1;
+exports.storedByStrictCode = 1;
+exports.storedBySloppyCode = 1;
+exports.deletedByStrictCode = 1;
+exports.deletedBySloppyCode = 1;
+exports.described = 1;
+exports.lookedFor = 1;

@@ -1,0 +1,19 @@
+# `digest` gets out, so `s` is tested in front of the loop and the loop is built twice. In the typed copy `s.charCodeAt(i)` is 0 to 65535, so `h` begins as that, is widened upward alone,
+# brings an int32 and goes to the top of its kind, under which the look holds. All that ever comes round is an int32, and that is what the head is typed by:
+# the looks at the closed copy, which assumed less on their way, do not stand around the typed one, and a preview is held to the looks around by what it hands the walk.
+# f1 = digest
+# -- source: second-copy-of-a-loop-has-looks-of-its-own.ts
+# // @ts-expect-error
+# function digest(s: string | null | undefined): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h; }
+# (globalThis as any).kept = digest;
+# console.log(digest("abcdefghij"));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: ({{*}}: i32 @Int32, {{*}}: int[0, 2147483647] @Int32) frequency=Rare isLoopHead=true
+# CHECK: ({{*}}: i32 @Int32, {{*}}: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true
+# CHECK-NOT: CheckedIntegers
+# CHECK-NOT: form=Numbers
+# CHECK: = Mul {{*}}form=Integers
+# CHECK: = Add {{*}}form=Integers

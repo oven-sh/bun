@@ -1,0 +1,19 @@
+# -- source: an-element-that-is-read-twice-in-a-turn-goes-round-as-a-number.js
+# function largestOf(list, start) { let largest = start; for (let i = 0; i < list.length; i++) { if (list[i] > largest) largest = list[i]; } return largest; }
+# print(largestOf([1, 5, 9, 3], 0)); print(largestOf([1.5, , 9.75], 0)); print(largestOf(new Float64Array(3), 0));
+# -- end of source
+# The list is asked in front of the loop for storage that holds numbers alone, so `list[i]` gives a number or, at a hole, undefined. The second `list[i]` goes round as `largest`, and
+# the walk answers it by what the first read gave. What goes round has to fit what the head of the loop was built for: once the head was built for a number while undefined|number came
+# round, the function was walked again, and the check of the walk stopped the build. The element is read once, asked for a number once, and a raw number goes round.
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double
+# CHECK: : number @Double, {{*}}isInLoop=true isLoopHead=true
+# CHECK: = GetArrayElement {{*}}arrayStorage=Double
+# CHECK-NOT: = GetArrayElement
+# CHECK: = TypeTest {{*}}testedType=number
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 9
+# ANSWERS-NEXT: 9.75
+# ANSWERS-NEXT: 0

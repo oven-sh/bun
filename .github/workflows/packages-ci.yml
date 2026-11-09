@@ -39,6 +39,8 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ env.BUN_VERSION }}
+          # The action's default bucket can be many commits behind for canary.
+          download-url: https://github.com/oven-sh/bun/releases/download
 
       - name: Install dependencies
         run: |
@@ -47,8 +49,8 @@ jobs:
 
       - name: Lint
         run: |
-          bunx oxlint@0.15 --format github --deny-warnings
-          bunx prettier --config ../../.prettierrc --check .
+          bun lint --format=github --deny-warnings
+          bun fmt --config ../../.prettierrc --check .
         working-directory: ./packages/bun-plugin-svelte
 
       - name: Check types

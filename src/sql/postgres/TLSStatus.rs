@@ -7,6 +7,5 @@ pub enum TLSStatus {
     /// Since we may send a partial message, we need to know how many bytes were sent.
     MessageSent(u8),
 
-    SslNotAvailable,
     SslOk,
 }

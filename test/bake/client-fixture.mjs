@@ -560,8 +560,9 @@ process.on("message", async message => {
       const buildErrors = overlay.shadowRoot.querySelectorAll(".b-msg");
       for (const message of buildErrors) {
         const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
-        const label = message.querySelector(".log-label").textContent;
-        const text = message.querySelector(".log-text").textContent;
+        // Errors of the same kind share a card; each one still carries its level and message.
+        const label = message.dataset.level;
+        const text = message.dataset.message;
 
         const lineNumElem = message.querySelector(".gutter");
         const spaceElem = message.querySelector(".highlight-wrap > .space");

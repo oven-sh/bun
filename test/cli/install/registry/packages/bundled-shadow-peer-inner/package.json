@@ -1,0 +1,30 @@
+{
+  "_id": "bundled-shadow-peer-inner",
+  "name": "bundled-shadow-peer-inner",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shadow-peer-inner",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-shadow-peer-leaf": "1.0.0"
+      },
+      "peerDependencies": {
+        "bundled-shadow-shared": "*"
+      },
+      "peerDependenciesMeta": {
+        "bundled-shadow-shared": {
+          "optional": true
+        }
+      },
+      "_id": "bundled-shadow-peer-inner@1.0.0",
+      "dist": {
+        "integrity": "sha512-9WVtLLR333oOU/3JH65YiSFv5AcBi3fVnlfCXxN2bOKOuIyqiTTJUZ3Pnm2zhYWeYmtfCv8jCL0BQamya58d+A==",
+        "shasum": "e86fb60082902406bd3b88240bda768635c6d9f9",
+        "tarball": "http://localhost:4873/bundled-shadow-peer-inner/-/bundled-shadow-peer-inner-1.0.0.tgz"
+      }
+    }
+  }
+}

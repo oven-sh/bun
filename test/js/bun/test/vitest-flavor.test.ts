@@ -2284,6 +2284,50 @@ describe.concurrent("aroundEach and aroundAll", () => {
     });
   });
 
+  test("a hook whose thenable resolves with a promise ends when that promise settles", async () => {
+    const { log, results, errors, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, describe, aroundEach, aroundAll } from "vitest";
+        const turn = () => new Promise(resolve => setImmediate(resolve));
+        // then() gives resolve() the promise of the rest of the hook.
+        const lazy = (name, last = () => {}) => run => ({
+          then(resolve) {
+            console.log(name, ">");
+            resolve(run().then(turn).then(() => { console.log(name, "<"); last(); }));
+          },
+        });
+        describe("suite", () => {
+          aroundAll(lazy("aroundAll"));
+          aroundEach(lazy("aroundEach"));
+          test("first", () => console.log("first"));
+          test("second", () => console.log("second"));
+        });
+        describe("the promise rejects", () => {
+          aroundEach(lazy("aroundEach", () => { throw new Error("from the hook"); }));
+          test("test", () => console.log("test"));
+        });
+      `,
+    });
+    expect({ log, results, errors, exitCode }).toEqual({
+      log: [
+        "aroundAll >",
+        "aroundEach >",
+        "first",
+        "aroundEach <",
+        "aroundEach >",
+        "second",
+        "aroundEach <",
+        "aroundAll <",
+        "aroundEach >",
+        "test",
+        "aroundEach <",
+      ],
+      results: ["(pass) suite > first", "(pass) suite > second", "(fail) the promise rejects > test"],
+      errors: ["error: from the hook"],
+      exitCode: 1,
+    });
+  });
+
   test("in a preload script, aroundAll goes around every file", async () => {
     const { log, exitCode } = await runTests(
       {

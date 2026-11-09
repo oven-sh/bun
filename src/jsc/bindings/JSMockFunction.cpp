@@ -1380,14 +1380,19 @@ static InternalFieldTuple* cover(Zig::GlobalObject* globalObject, JSObject* targ
     return link;
 }
 
-// The one store of what a spy, a stub or a fake timer puts back, where another spy or a stub is or was under that one.
-// If it puts back what a live stub put, that is the value of the stub again, whatever vi.stubGlobal() put since.
+// What a live stub put is on the property again. That is the value of the stub then, whatever vi.stubGlobal() put since.
+static void didPutBack(Zig::GlobalObject* globalObject, InternalFieldTuple* link, JSValue value)
+{
+    if (link && globalObject->mockModule.stubbedGlobals.get() == link->getInternalField(0))
+        uncheckedDowncast<InternalFieldTuple>(link->getInternalField(1))->putInternalField(JSC::getVM(globalObject), 1, value);
+}
+
+// Puts back what a spy or a fake timer replaced, where another spy or a stub is or was under that one.
 static NEVER_INLINE void putBack(JSGlobalObject* lexicalGlobalObject, JSObject* target, const Identifier& key, SlotContent content, InternalFieldTuple* link, bool isOpaque)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     SlotContent toPut = whatStandsFor(globalObject, target, key, content, link);
-    if (link && globalObject->mockModule.stubbedGlobals.get() == link->getInternalField(0))
-        uncheckedDowncast<InternalFieldTuple>(link->getInternalField(1))->putInternalField(JSC::getVM(globalObject), 1, toPut.storage);
+    didPutBack(globalObject, link, toPut.storage);
     putContent(lexicalGlobalObject, target, key, toPut, isOpaque);
 }
 
@@ -1403,9 +1408,12 @@ bool putBackForStub(Zig::GlobalObject* globalObject, const Identifier& key, cons
     if (!mayHaveSpy(descriptor))
         return false;
     SlotContent content = contentOfDescriptor(globalObject, descriptor);
-    if (!lastSpyIn(content, globalObject, key))
+    InternalFieldTuple* link = nullptr;
+    SlotContent toPut = whatStandsFor(globalObject, globalObject, key, content, link);
+    // No spy in it is undone: the caller defines the property.
+    if (toPut.storage == content.storage)
         return false;
-    putBack(globalObject, globalObject, key, content, nullptr, false);
+    putContent(globalObject, globalObject, key, toPut, false);
     return true;
 }
 
@@ -1437,8 +1445,8 @@ struct EntryOfFake {
 };
 
 // What an uninstalled fake timer function stands for: what it replaced. That can be another one, which a spy or a stub put back later.
-// `link` is set to that of what this returns.
-static SlotContent whatFakeStandsFor(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& key, JSC::EncodedJSValue originals, JSValue entryOfFake, InternalFieldTuple*& link)
+// An uninstalled fake is on `target[key]`, where a spy or a stub put it back after useRealTimers(). Puts what it stands for in its place.
+static void takeOffUninstalledFake(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& key, JSC::EncodedJSValue originals, JSValue entryOfFake)
 {
     while (true) {
         EntryOfFake entry(JSC::getVM(globalObject), target, key, entryOfFake);
@@ -1446,15 +1454,30 @@ static SlotContent whatFakeStandsFor(Zig::GlobalObject* globalObject, JSObject* 
         bool isValue = content.storage && !(content.attributes & PropertyAttribute::Accessor);
         JSValue next = isValue ? JSValue::decode(Bun__FakeTimers__originalOf(originals, JSValue::encode(content.storage))) : JSValue();
         if (!next) {
-            link = entry.link;
-            return content;
+            didPutBack(globalObject, entry.link, content.storage);
+            return putContent(globalObject, target, key, content, false);
         }
         entryOfFake = next;
     }
 }
 
-// useFakeTimers() is about to replace `owner[name]` with a fake timer function. Returns the value that the fake replaces: what script reads there, or what an
-// uninstalled fake that is there stands for. `entry` is set if a spy or a stub can take that value off the property while the clock is on: see EntryOfFake.
+// Reads `target[key]` as script reads it. Sets `accessor` if it is an own accessor.
+static JSValue readForFake(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& key, SlotContent& accessor)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(target, PropertySlot::InternalMethodType::Get);
+    bool exists = Bun::getNonIndexPropertySlotPrototypePollutionMitigation(vm, target, globalObject, key, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!exists)
+        return jsUndefined();
+    if (slot.isAccessor() && slot.slotBase() == target) [[unlikely]]
+        accessor = { slot.getterSetter(), slot.attributes() };
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, key));
+}
+
+// useFakeTimers() is about to replace `owner[name]` with a fake timer function. Returns the value that the fake replaces.
+// `entry` is set if a spy or a stub can take that value off the property while the clock is on: see EntryOfFake.
 extern "C" JSC::EncodedJSValue JSMock__readForFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue originals, JSC::EncodedJSValue* entry)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1462,50 +1485,35 @@ extern "C" JSC::EncodedJSValue JSMock__readForFake(Zig::GlobalObject* globalObje
     JSObject* target = asObject(JSValue::decode(owner));
     auto key = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
 
-    PropertySlot slot(target, PropertySlot::InternalMethodType::Get);
-    bool exists = Bun::getNonIndexPropertySlotPrototypePollutionMitigation(vm, target, globalObject, key, slot);
+    SlotContent accessor;
+    JSValue value = readForFake(globalObject, target, key, accessor);
     RETURN_IF_EXCEPTION(scope, {});
-    JSValue value = exists ? slot.getValue(globalObject, key) : jsUndefined();
-    RETURN_IF_EXCEPTION(scope, {});
-
-    SlotContent content { value, 0 };
-    InternalFieldTuple* link = nullptr;
-    JSValue ofFake = JSValue::decode(Bun__FakeTimers__originalOf(originals, JSValue::encode(value)));
-    if (ofFake) [[unlikely]] {
-        content = whatFakeStandsFor(globalObject, target, key, originals, ofFake, link);
-    } else if (exists && slot.isAccessor() && slot.slotBase() == target) [[unlikely]] {
-        // An accessor that has a spy goes back as it is. The fake would put back what its getter returned, which the restore of the spy leaves alone.
-        SlotContent accessor { slot.getterSetter(), slot.attributes() };
-        if (lastSpyIn(accessor, target, key))
-            content = accessor;
+    if (JSValue ofFake = JSValue::decode(Bun__FakeTimers__originalOf(originals, JSValue::encode(value)))) [[unlikely]] {
+        takeOffUninstalledFake(globalObject, target, key, originals, ofFake);
+        accessor = {};
+        value = readForFake(globalObject, target, key, accessor);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // What an uninstalled fake stands for can be what a live stub put before its last value. That keeps its link.
+    // An accessor that has a spy goes back as it is. The fake would put back what its getter returned, which the restore of the spy leaves alone.
+    SlotContent content { value, 0 };
+    if (accessor.storage && lastSpyIn(accessor, target, key)) [[unlikely]]
+        content = accessor;
     bool hasSpy = false;
-    if (auto* linkOfValue = cover(globalObject, target, key, content, hasSpy))
-        link = linkOfValue;
-    bool isValue = content.storage && !(content.attributes & PropertyAttribute::Accessor);
-    if (isValue && !link) {
-        *entry = hasSpy ? JSValue::encode(content.storage) : JSC::EncodedJSValue {};
-    } else {
+    auto* link = cover(globalObject, target, key, content, hasSpy);
+    if (link || content.storage != value) [[unlikely]] {
         auto* pair = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure());
         pair->putInternalField(vm, 0, content.storage);
         pair->putInternalField(vm, 1, link ? JSValue(link) : jsNumber(content.attributes));
         *entry = JSValue::encode(pair);
+    } else {
+        *entry = hasSpy ? JSValue::encode(value) : JSC::EncodedJSValue {};
     }
-    if (!ofFake)
-        return JSValue::encode(value);
-    // The fake timers take a value. For an accessor that is what its getter returns, and for no property it is undefined.
-    if (isValue)
-        return JSValue::encode(content.storage);
-    auto* accessor = content.storage ? uncheckedDowncast<GetterSetter>(content.storage) : nullptr;
-    if (!accessor || accessor->isGetterNull())
-        return JSValue::encode(jsUndefined());
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::profiledCall(globalObject, ProfilingReason::API, accessor->getter(), JSC::getCallData(accessor->getter()), target, ArgList())));
+    return JSValue::encode(value);
 }
 
 // Puts back what a fake timer function with this entry replaced on `owner[name]`: for useRealTimers(), or at the end of a test file for an uninstalled one
-// that is still there (`isUninstalled`), which can stand for another uninstalled one. Runs no script.
+// that is still there (`isUninstalled`). Runs no script.
 extern "C" void JSMock__putBackForFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue originals, JSC::EncodedJSValue entryOfFake, bool isUninstalled)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1513,8 +1521,7 @@ extern "C" void JSMock__putBackForFake(Zig::GlobalObject* globalObject, JSC::Enc
     JSObject* target = asObject(JSValue::decode(owner));
     auto key = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
     if (isUninstalled) {
-        InternalFieldTuple* link = nullptr;
-        putContent(globalObject, target, key, whatFakeStandsFor(globalObject, target, key, originals, JSValue::decode(entryOfFake), link), false);
+        takeOffUninstalledFake(globalObject, target, key, originals, JSValue::decode(entryOfFake));
     } else {
         EntryOfFake entry(vm, target, key, JSValue::decode(entryOfFake));
         putBack(globalObject, target, key, entry.content, entry.link, false);

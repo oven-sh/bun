@@ -1701,8 +1701,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                     CommonJs
                 };
                 assert_eq!(
-                    analysis.module_format,
-                    format,
+                    analysis.module_format, format,
                     "{}; builds_executable={builds_executable}",
                     files[0].1
                 );

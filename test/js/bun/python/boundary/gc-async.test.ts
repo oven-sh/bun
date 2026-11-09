@@ -10,7 +10,10 @@ if (isDebug || isASAN) setDefaultTimeout(120_000);
 const globals = dict([["__name__", "fixture"]]);
 exec(
   `
+import asyncio, weakref
+
 log = []
+watchers = []
 
 async def waits(name, awaitable):
     try:
@@ -25,6 +28,10 @@ async def generator(name):
     finally:
         log.append("finally " + name)
 
+def watch_tasks():
+    for task in asyncio.all_tasks():
+        watchers.append(weakref.ref(task, lambda reference: log.append("the task is gone")))
+
 def take():
     taken = list(log)
     log.clear()
@@ -32,7 +39,7 @@ def take():
 `,
   globals,
 );
-const { waits, generator, take, log } = globals;
+const { waits, generator, take, log, watch_tasks } = globals;
 
 async function collectUntil(condition: () => boolean) {
   for (let i = 0; i < 100 && !condition(); i++) {
@@ -72,7 +79,11 @@ test("and so is a coroutine, which says nothing but runs its `finally`", async (
   expect(await collectUntil(() => log.length > 0)).toBe(true);
   expect(take()).toEqual(["finally for ever"]);
   // What has a finalizer is freed by the collection after the one that found it.
-  expect(await collectUntil(() => len(asyncio.all_tasks()) === 0)).toBe(true);
+  // Whoever waits for that does not ask all_tasks() round after round: the set that it makes holds the Task, and what the last call has left on the stack may be seen by the collection that follows.
+  watch_tasks();
+  expect(await collectUntil(() => log.length > 0)).toBe(true);
+  expect(take()).toEqual(["the task is gone"]);
+  expect(len(asyncio.all_tasks())).toBe(0);
 });
 
 test("nothing is left of coroutines that are done", async () => {

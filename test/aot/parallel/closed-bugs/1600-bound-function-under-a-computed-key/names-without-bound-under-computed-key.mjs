@@ -87,8 +87,6 @@ for (const [maker, make] of Object.entries(makers)) {
       const b = make(2);
       const said = run(a, b);
       const line = [said.join(" "), firstFrame(a()), firstFrame(b()), nameOf(a), nameOf(b), Object.hasOwn(a, "name"), Object.hasOwn(b, "name")].join(" | ");
-      // Plain Bun names a bound function under a computed key "bound " where the specification says "bound made": another row, closed as not ours.
-      if (maker === "a function under a computed key" && (step === "read, bound" || step === "displayed, bound")) continue;
       if (round === 2) console.log(maker + ", " + step + ": " + line);
     }
   }

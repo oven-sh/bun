@@ -101,8 +101,7 @@ impl Folder<'_, '_> {
         }
     }
 
-    /// The item at `position` and the number of items, as the parser has them: where a list that is spread has items, the
-    /// items of every such list stand in the list itself.
+    /// The item at `position` and the number of items as the parser has them: the items of spread lists stand in the list.
     fn find_item(&self, items: IdList<ExprId>, position: usize) -> Option<(ExprId, usize, bool)> {
         let hir = self.hir;
         let has_items = |item: ExprId| {
@@ -235,8 +234,7 @@ impl Folder<'_, '_> {
         matches!(parent, Some(ExprKind::Call(call)) if self.hir[call].callee == callee)
     }
 
-    /// Whether `e` is a link of a `?.` chain that the parser keeps: it starts none behind what is never null or undefined by
-    /// the way it is written.
+    /// The parser starts no `?.` chain behind what is never null or undefined by the way it is written.
     fn is_link_of_kept_chain(&self, e: ExprId) -> bool {
         let hir = self.hir;
         let mut link = e;

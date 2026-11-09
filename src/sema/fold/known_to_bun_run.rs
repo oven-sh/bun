@@ -271,8 +271,7 @@ impl<'s> Folder<'_, 's> {
         (self.minifies_syntax() && self.is_boolean_by_shape(inner)).then_some(inner)
     }
 
-    /// `"" + x` and `x + ""` are `x` to the parser where `x` is a text by the way it is written. A text that it holds itself
-    /// it joins in front of "" only where it holds it in 8 bits.
+    /// To the parser `"" + x` is `x` where `x` is a text by its shape, and so is `x + ""` unless it holds the text of `x`.
     pub(super) fn find_text_joined_with_no_text(&self, sum: ExprId) -> Option<ExprId> {
         let ExprKind::Binary {
             op: BinOp::Add,
@@ -387,8 +386,7 @@ impl<'s> Folder<'_, 's> {
         true
     }
 
-    /// What `fold_string_addition` of the parser has of `e`: a text that it knows, a template that it joins such texts to, or
-    /// neither.
+    /// What `fold_string_addition` of the parser has of `e`: a text it knows, a template it joins such texts to, or neither.
     fn find_text_shape(&self, e: ExprId) -> TextShape {
         let hir = self.hir;
         let e = self.seen_by_bun_run(e);
@@ -674,8 +672,7 @@ impl<'s> Folder<'_, 's> {
         }
     }
 
-    /// Whether the parser leaves nothing of the left side of a comma. It has the right side alone in place of a comma that
-    /// stands there.
+    /// Whether the parser leaves nothing of the left side of a comma: the right side then stands in place of the comma.
     pub(super) fn removes_left_of_comma(&self, left: ExprId) -> bool {
         let left = self.as_written(left);
         match self.hir[left].kind {

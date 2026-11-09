@@ -2,8 +2,7 @@ use super::folder::Folder;
 use crate::hir::{BinOp, ExprId, ExprKind, File};
 use crate::util::FxHashMap;
 
-/// The node that the parser has where another is written: the member of a literal in place of a read, the operand in place of an
-/// operator that it decides. `ExprId::NONE`: the node stays as it is written.
+/// The node that the parser has where another is written. `ExprId::NONE`: the node stays as it is written.
 #[derive(Copy, Clone)]
 struct InPlace {
     node: ExprId,
@@ -40,8 +39,7 @@ impl SeenByBunRun {
 }
 
 impl Folder<'_, '_> {
-    /// The node as the program writes it. The parser asks it so before it puts anything in place: whether `?.` starts a chain,
-    /// whether a key stands in brackets, whether `typeof` stands over a name, whether a read is one of the listed globals.
+    /// The node as written: what the parser asks before it puts anything in place (a `?.`, a key, `typeof` of a name).
     #[inline]
     pub(super) fn as_written(&self, e: ExprId) -> ExprId {
         self.hir.skip_type_assertions(e)
@@ -89,8 +87,7 @@ impl Folder<'_, '_> {
         self.note_in_place(read, member, |folder| is_in_place(folder).then_some(member));
     }
 
-    /// `operand` stands where `operator` is written, where the parser leaves nothing else of it: for `bun run` where `is_in_place`
-    /// holds, and for the build where it holds under minify syntax.
+    /// `operand` stands where `operator` is written, for `bun run` where `is_in_place` holds: nothing else is left of it.
     pub(super) fn note_operand_in_place(
         &mut self,
         operator: ExprId,
@@ -100,8 +97,7 @@ impl Folder<'_, '_> {
         self.note_seen_in_place(operator, |folder| is_in_place(folder).then_some(operand));
     }
 
-    /// What `find` gives stands where `e` is written: for `bun run` with the flags that it is asked under, and for the build
-    /// what it gives under minify syntax.
+    /// What `find` gives stands where `e` is written, for `bun run` with the flags that it is asked under.
     pub(super) fn note_seen_in_place(&mut self, e: ExprId, find: impl Fn(&Self) -> Option<ExprId>) {
         self.note_in_place(e, ExprId::NONE, find);
     }
@@ -124,7 +120,8 @@ impl Folder<'_, '_> {
             true => (node, in_bun_run),
             false => self.holds_under_minify_syntax(seen),
         };
-        let Some(node) = node.or(node_under_minify_syntax).or(read_by_build.some()) else {
+        let node = node.or(node_under_minify_syntax);
+        let Some(node) = node.or_else(|| read_by_build.some()) else {
             return;
         };
         let read_by_build = read_by_build.some().or(node_under_minify_syntax);

@@ -1,0 +1,24 @@
+status: 0
+oracle: none
+---
+a reader that is past its checks when __init__() is called
+ __init__(raw, 16): RuntimeError(reentrant call inside)
+ the raw stream is returned 'the first'
+ the other thread: returned (5000, 5000, 0)
+ the other thread: ValueError(I/O operation on uninitialized object)
+ flush(): ValueError(I/O operation on uninitialized object) | the raw stream has taken 0
+ afterwards: returned None | returned True
+a writer: an __init__() within makes the stream fit for use while the outer one waits
+ __init__(raw, 16): RuntimeError(reentrant call inside)
+ the raw stream is returned 'the first'
+ the other thread: returned True
+ the other thread: returned 100
+ the other thread: BlockingIOError, 8092 written
+ flush(): returned None | the raw stream has taken 8192
+ afterwards: returned None | returned True
+a reader that takes the lock while __init__() asks another raw stream where it is
+ __init__(raw, 16): RuntimeError(reentrant call inside)
+ the raw stream is returned 'the first'
+ the other thread: returned (5000, 5000, 0)
+ flush(): ValueError(I/O operation on uninitialized object) | the raw stream has taken 0
+ afterwards: returned None | returned True

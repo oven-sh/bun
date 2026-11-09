@@ -409,6 +409,10 @@ impl ExtractTarball {
                     // installed from GitHub. package.json version becomes sort of
                     // meaningless in cases like this.
                     if !resolved.is_empty() {
+                        let destination_fd = extract_destination.fd();
+                        crate::published_files::prune_to_published_files(sys::Dir::borrow(
+                            &destination_fd,
+                        ))?;
                         // Create/truncate `.bun-tag`, then write the resolved tag.
                         if sys::File::openat(
                             extract_destination.fd(),

@@ -949,6 +949,9 @@ impl TarballStream {
                 if self.extraction.resolved_github_dirname.is_empty() {
                     break 'insert_tag;
                 }
+                if let Some(dest) = &self.extraction.dest {
+                    crate::published_files::prune_to_published_files(bun_sys::Dir::borrow(dest))?;
+                }
                 if bun_sys::File::openat(
                     self.extraction.dest.unwrap(),
                     bun_core::zstr!(".bun-tag"),

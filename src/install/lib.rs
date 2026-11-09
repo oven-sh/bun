@@ -125,6 +125,7 @@ pub mod package_installer;
 pub mod patch_install;
 pub mod pnpm;
 pub mod prune;
+pub mod published_files;
 #[path = "repository.rs"]
 pub mod repository_real;
 pub(crate) mod retry_timer;

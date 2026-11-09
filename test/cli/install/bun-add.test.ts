@@ -8,6 +8,7 @@ import {
   bunEnv as env,
   hostedGitRepository,
   isWindows,
+  normalizeBunSnapshot,
   readdirSorted,
   tempDir,
   tmpdirSync,
@@ -1327,6 +1328,81 @@ it.each([
   expect(exitCode).toBe(0);
 });
 
+for (const streaming of [true, false]) {
+  it(`installs only the published files of a GitHub dependency (${streaming ? "streaming" : "buffered"} extraction)`, async () => {
+    await setGithubRepository("published", "files-demo", "abc1234", ["main"], {
+      "package.json": JSON.stringify({ name: "files-demo", version: "1.0.0", main: "lib/main.js", files: ["src"] }),
+      "lib/main.js": "",
+      "src/a.js": "",
+      "docs/guide.md": "",
+      "node_modules/dep/index.js": "",
+      "readme.md": "",
+    });
+    const urls: string[] = [];
+    setHandler(dummyRegistry(urls));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { "files-demo": "published/files-demo#main" } }),
+    );
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env: { ...githubEnv(), ...(streaming ? {} : { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" }) },
+    });
+    const err = await stderr.text();
+    expect(normalizeBunSnapshot(err)).toMatchInlineSnapshot(`
+      "Resolving dependencies
+      Resolved, downloaded and extracted [2]
+      Saved lockfile"
+    `);
+    expect(await exited).toBe(0);
+    const installed = join(package_dir, "node_modules", "files-demo");
+    const tree = async (dir: string): Promise<string[]> =>
+      (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: dir, dot: true, onlyFiles: true }))).sort();
+    expect(await tree(installed)).toEqual([".bun-tag", "lib/main.js", "package.json", "readme.md", "src/a.js"]);
+  });
+}
+
+// The script may run a tool committed to node_modules, so a package that has one keeps its files.
+it("keeps the committed node_modules of a GitHub dependency with a prepare script", async () => {
+  await setGithubRepository("published", "prepare-demo", "abc1234", ["main"], {
+    "package.json": JSON.stringify({
+      name: "prepare-demo",
+      version: "1.0.0",
+      files: ["dist"],
+      scripts: { prepare: "node node_modules/tool/cli.js" },
+    }),
+    "node_modules/tool/cli.js": "",
+    "dist/a.js": "",
+  });
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { "prepare-demo": "published/prepare-demo#main" } }),
+  );
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: githubEnv(),
+  });
+  expect(normalizeBunSnapshot(await stderr.text())).toMatchInlineSnapshot(`
+    "Resolving dependencies
+    Resolved, downloaded and extracted [2]
+    Saved lockfile"
+  `);
+  expect(await exited).toBe(0);
+  const installed = join(package_dir, "node_modules", "prepare-demo");
+  const tree = (await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: installed, dot: true, onlyFiles: true }))).sort();
+  expect(tree).toEqual([".bun-tag", "dist/a.js", "node_modules/tool/cli.js", "package.json"]);
+});
+
 it("should add dependency (GitHub)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -1367,7 +1443,6 @@ it("should add dependency (GitHub)", async () => {
     ".bun-tag",
     ".gitattributes",
     ".github",
-    ".gitignore",
     "CONTRIBUTING.md",
     "LICENSE",
     "README.md",
@@ -1789,7 +1864,6 @@ it("should add aliased dependency (GitHub)", async () => {
     ".bun-tag",
     ".gitattributes",
     ".github",
-    ".gitignore",
     "CONTRIBUTING.md",
     "LICENSE",
     "README.md",
@@ -2209,7 +2283,6 @@ it("should handle Git URL in dependencies (SCP-style)", async () => {
     ".bun-tag",
     ".gitattributes",
     ".github",
-    ".gitignore",
     "CONTRIBUTING.md",
     "LICENSE",
     "README.md",
@@ -2570,7 +2643,6 @@ it("should add dependency without duplication (GitHub)", async () => {
     ".bun-tag",
     ".gitattributes",
     ".github",
-    ".gitignore",
     "CONTRIBUTING.md",
     "LICENSE",
     "README.md",
@@ -2631,7 +2703,6 @@ it("should add dependency without duplication (GitHub)", async () => {
     ".bun-tag",
     ".gitattributes",
     ".github",
-    ".gitignore",
     "CONTRIBUTING.md",
     "LICENSE",
     "README.md",

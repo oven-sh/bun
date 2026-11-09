@@ -471,15 +471,31 @@ impl From<JsError> for Stop {
     }
 }
 
+/// Who set up the current mock. `on_test_file_end` ends the mock of a test file and keeps the mock of a preload.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Owner {
+    TestFile,
+    Preload,
+    /// A hook that runs once for all test files. Its fakes are kept only while each one is on its global.
+    PreloadHook,
+}
+
+impl Owner {
+    fn of_caller(vm: &VirtualMachine) -> Owner {
+        match (bun_test::is_preload_for_the_run(vm), vm.is_in_preload) {
+            (false, _) => Owner::TestFile,
+            (true, true) => Owner::Preload,
+            (true, false) => Owner::PreloadHook,
+        }
+    }
+}
+
 pub(crate) struct FakeTimers {
     active: bool,
     /// Empty while inactive.
     faked: ApiSet,
     fakes_abort_signal_timeout: bool,
-    /// A preload script set up the current mock, so `on_test_file_end` keeps it.
-    from_preload: bool,
-    /// A hook of the preload installed the fakes, so `on_test_file_end` keeps them only while each one is on its global.
-    from_hook: bool,
+    owner: Owner,
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
     installs: u32,
     firing: u32,
@@ -510,8 +526,7 @@ impl Default for FakeTimers {
             active: false,
             faked: ApiSet::default(),
             fakes_abort_signal_timeout: false,
-            from_preload: false,
-            from_hook: false,
+            owner: Owner::TestFile,
             installs: 0,
             firing: 0,
             timers: TimerHeap::default(),
@@ -539,7 +554,7 @@ const AUTO_STEP: u32 = 0;
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
 /// instead of the stale activation-time offset. `performance.now()` does not
 /// move, so `performance.timeOrigin` follows the rebased offset. While fake
-/// timers are inactive it only records `from_preload`. A NaN `ms` is the "clear override" sentinel:
+/// timers are inactive it only records `owner`. A NaN `ms` is the "clear override" sentinel:
 /// `Date.now()` is real again until the next tick, so the mocked wall clock
 /// and `performance.timeOrigin` go back to real as well.
 #[unsafe(no_mangle)]
@@ -548,7 +563,7 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     let this = unsafe { &mut (*timer_all()).fake_timers };
     let vm = global.bun_vm().as_mut();
     if !this.active {
-        this.from_preload = bun_test::is_preload_for_the_run(vm);
+        this.owner = Owner::of_caller(vm);
         return;
     }
     if ms.is_nan() {
@@ -731,9 +746,7 @@ impl FakeTimers {
         self.active = true;
         self.faked = options.faked;
         self.fakes_abort_signal_timeout = options.fakes_abort_signal_timeout;
-        let vm = global.bun_vm();
-        self.from_preload = bun_test::is_preload_for_the_run(vm);
-        self.from_hook = self.from_preload && !vm.is_in_preload;
+        self.owner = Owner::of_caller(global.bun_vm());
         self.installs = self.installs.wrapping_add(1);
         self.loop_limit = options.loop_limit;
         self.now = Timespec::EPOCH;
@@ -755,8 +768,7 @@ impl FakeTimers {
         Self::hide_clock(global);
         self.active = false;
         self.faked = ApiSet::default();
-        self.from_preload = false;
-        self.from_hook = false;
+        self.owner = Owner::TestFile;
         self.installs = self.installs.wrapping_add(1);
         self.tick_mode = TickMode::Manual;
         if self.tick_timer.state == EventLoopTimerState::ACTIVE {
@@ -1769,12 +1781,16 @@ fn advance(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
 
 pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     // SAFETY: per-thread `timer::All`; field reads only.
-    let (active, from_preload, from_hook) = unsafe {
+    let (active, owner) = unsafe {
         let this = &(*timer_all()).fake_timers;
-        (this.active, this.from_preload, this.from_hook)
+        (this.active, this.owner)
     };
-    // A hook's fakes go over what the first file left on the globals, and any file can take one off again.
-    let kept = from_preload && (!from_hook || FakeTimers::is_whole(global));
+    let kept = match owner {
+        Owner::TestFile => false,
+        Owner::Preload => true,
+        // Its fakes went over what the first file left on the globals, and any file can take one off again.
+        Owner::PreloadHook => FakeTimers::is_whole(global),
+    };
     let mocked = active || !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan();
     if mocked && !kept {
         // SAFETY: the live event loop of the per-thread VM.

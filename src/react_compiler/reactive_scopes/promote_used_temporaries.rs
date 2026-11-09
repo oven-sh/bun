@@ -702,8 +702,28 @@ impl<'a> InterState<'a> {
     }
 }
 
+/// The statements that print in front of an instruction: those of its block, then those around the scope of that block.
+#[derive(Clone, Copy)]
+struct Before<'a> {
+    statements: &'a [ReactiveStatement],
+    outer: Option<&'a Before<'a>>,
+}
+
 fn promote_interposed_block(
     block: &ReactiveBlock,
+    state: &mut State,
+    inter_state: &mut InterState<'_>,
+    consts: &mut IdBitSet<IdentifierId>,
+    globals: &mut IdBitSet<IdentifierId>,
+    env: &mut Environment,
+) {
+    promote_interposed_statements(block, None, state, inter_state, consts, globals, env);
+}
+
+/// `outer` is what prints in front of the statements when they are those of a scope.
+fn promote_interposed_statements(
+    block: &ReactiveBlock,
+    outer: Option<&Before<'_>>,
     state: &mut State,
     inter_state: &mut InterState<'_>,
     consts: &mut IdBitSet<IdentifierId>,
@@ -715,11 +735,15 @@ fn promote_interposed_block(
     }
 
     for (index, stmt) in block.iter().enumerate() {
+        let before = Before {
+            statements: &block[..index],
+            outer,
+        };
         match stmt {
             ReactiveStatement::Instruction(instr) => {
                 promote_interposed_instruction(
                     instr,
-                    &block[..index],
+                    &before,
                     state,
                     inter_state,
                     consts,
@@ -730,8 +754,9 @@ fn promote_interposed_block(
             ReactiveStatement::Scope(scope) => {
                 // The memo block compares its dependencies first, and what writes must not print in it: it may not run.
                 inter_state.statement(Effect::Read);
-                promote_interposed_block(
+                promote_interposed_statements(
                     &scope.instructions,
+                    Some(&before),
                     state,
                     inter_state,
                     consts,
@@ -740,8 +765,9 @@ fn promote_interposed_block(
                 );
             }
             ReactiveStatement::PrunedScope(scope) => {
-                promote_interposed_block(
+                promote_interposed_statements(
                     &scope.instructions,
+                    Some(&before),
                     state,
                     inter_state,
                     consts,
@@ -931,10 +957,10 @@ fn instruction_effect(
 }
 
 /// Returns the effect of the expression that the instruction prints as.
-/// `before` holds the statements of the block in front of the instruction. A value block has none.
+/// `before` holds the statements in front of the instruction. A value block has none.
 fn promote_interposed_instruction(
     instr: &ReactiveInstruction,
-    before: &[ReactiveStatement],
+    before: &Before<'_>,
     state: &mut State,
     inter_state: &mut InterState<'_>,
     consts: &mut IdBitSet<IdentifierId>,
@@ -1068,7 +1094,10 @@ fn promote_interposed_value(
             for instr in instructions {
                 effect = effect.max(promote_interposed_instruction(
                     instr,
-                    &[],
+                    &Before {
+                        statements: &[],
+                        outer: None,
+                    },
                     state,
                     inter_state,
                     consts,
@@ -1114,7 +1143,7 @@ fn promote_interposed_value(
 #[allow(clippy::too_many_arguments)]
 fn promote_late_method(
     call: &InstructionValue,
-    before: &[ReactiveStatement],
+    before: &Before<'_>,
     temporary: Temporary,
     state: &mut State,
     inter_state: &mut InterState<'_>,
@@ -1150,7 +1179,12 @@ fn promote_late_method(
         is_mutated: false,
         load: None,
     };
-    behind.walk(before);
+    let mut before = Some(before);
+    while let Some(&Before { statements, outer }) = before
+        && !behind.walk(statements)
+    {
+        before = outer;
+    }
     let Behind {
         is_mutated, load, ..
     } = behind;

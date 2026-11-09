@@ -4093,6 +4093,9 @@ describe("bundler", () => {
       "EarlierArgumentIsAChainOfMethods=A:olda | A:olda | C:oldc",
       "EarlierArgumentIsAMethodOfAProp=A:oldA:old | A:oldA:old | C:oldC:old",
       "EarlierArgumentOverAnotherLocal=A:old1 | A:old1 | C:old1",
+      "KeyAheadOfAMemoBlock=B:oldalt;1i | B:oldalt;1i | B:oldalt;1i",
+      "KeyAheadOfAScopeThatAHookPrunes=A:old;2 | A:old;2 | C:old;2",
+      "KeyAheadOfAScopeThatALoopPrunes=A:old;2A:old;2 | A:old;2A:old;2 | C:old;2C:old;2",
       "KeyInAScopeThatAHookPrunes=A:old 0,key,statement | A:old 0,key,statement | C:old 0,key,statement",
       "KeyIsAConversionOfAMemberThatIsUpdated=A:first | A:first | C:first",
       "KeyIsAMemberThatIsUpdated=A:first | A:first | C:first",
@@ -4101,7 +4104,11 @@ describe("bundler", () => {
       "LaterArgumentBehindADependency=A:old | A:old | C:old",
       "LaterArgumentBehindAStatement=A:old | A:old | C:old",
       "MemoBlocksAheadOfTheReceiver=A:old16 | A:old16 | C:old16",
+      "MethodAheadOfAMemoBlock=A:old;1 | A:old;1 | C:old;1",
+      "MethodAheadOfAScopeThatAHookPrunes=A:old;2 | A:old;2 | C:old;2",
+      "MethodAheadOfAScopeThatALoopPrunes=A1:old;2A2:old;2 | A1:old;2A2:old;2 | C1:old;2C2:old;2",
       "MethodHasItsOwnCall=A:old | A:old | C:old",
+      "MethodInAMemoBlockAheadOfTheCall=A:old;1 | A:old;1 | C:old;1",
       "MethodIsAProxy=A:old | A:old | C:old",
       "MethodIsMissing=TypeError after statement,argument | TypeError after statement,argument | TypeError after statement,argument",
       "MethodOfAPropBehindAStatement=A:old | A:old | C:old",
@@ -4231,7 +4238,7 @@ describe("bundler", () => {
             ` + cells.map(cell => cell.source).join(""),
           "/forms.jsx": /* jsx */ `
             import { useState } from "react";
-            import { make, other, pick, replace, size, tick, who } from "./helpers";
+            import { make, other, pick, replace, same, size, tick, who } from "./helpers";
 
             const withGetter = o =>
               Object.defineProperty(o, "who", {
@@ -4370,6 +4377,77 @@ describe("bundler", () => {
               const result = p.api[pick(log)]((() => { log.push("statement"); return ""; })());
               return <div>{result + " " + log}</div>;
             }
+            // The result of the call is a primitive and no argument is mutable, so the call is a member of no scope.
+            // It stands in the scope of \`last\`, which the loop prunes, and the load of its method ahead of that scope.
+            export function MethodAheadOfAScopeThatALoopPrunes(p) {
+              let out = "";
+              for (const suffix of ["1", "2"]) {
+                const o = make(p.name + suffix);
+                let last;
+                const result = o.who((() => { o.who = other; return <i>{o}</i>; })(), (last = [suffix], "")) + ";";
+                last.push(result);
+                out += result + last.length;
+              }
+              return <div>{out}</div>;
+            }
+            export function KeyAheadOfAScopeThatALoopPrunes(p) {
+              let out = "";
+              for (const suffix of ["1", "2"]) {
+                let key = "who";
+                let last;
+                const result = p.api[key]((() => { key = "alt"; return ""; })(), (last = [suffix], "")) + ";";
+                last.push(result);
+                out += result + last.length;
+              }
+              return <div>{out}</div>;
+            }
+            // One hook prunes the scope that holds the load, and one the scope that holds the call.
+            export function MethodAheadOfAScopeThatAHookPrunes(p) {
+              const o = make(p.name);
+              const [n] = useState(0);
+              let last;
+              const result = o.who((() => { o.who = other; return <i>{o}{n}</i>; })(), (last = [], "")) + ";";
+              const [m] = useState(0);
+              last.push(result, m);
+              return <div>{result + last.length}</div>;
+            }
+            export function KeyAheadOfAScopeThatAHookPrunes(p) {
+              let key = "who";
+              const [n] = useState(0);
+              let last;
+              const result = p.api[key]((() => { key = "alt"; return n; })(), (last = [], "")) + ";";
+              const [m] = useState(0);
+              last.push(result, m);
+              return <div>{result + last.length}</div>;
+            }
+            // The memo block of \`last\` holds the call. The scope ahead of it holds the load, and a hook prunes that scope.
+            export function MethodAheadOfAMemoBlock(p) {
+              const o = make(p.name);
+              const [n] = useState(0);
+              let last;
+              const result = o.who((() => { o.who = other; return <i>{o}{n}</i>; })(), (last = [], "")) + ";";
+              last.push(result);
+              return <div>{result + last.length}</div>;
+            }
+            // Without a hook the memo block of \`o\` holds the load of the method, and codegen cannot print the call behind it.
+            export function MethodInAMemoBlockAheadOfTheCall(p) {
+              const o = make(p.name);
+              let last;
+              const result = o.who((() => { o.who = other; return <i>{o}</i>; })(), (last = [], "")) + ";";
+              last.push(result);
+              return <div>{result + last.length}</div>;
+            }
+            // Nothing here is reactive, so the memo block of \`last\` does not depend on the method. That block holds the
+            // call, and the load of the method stands ahead of it.
+            export function KeyAheadOfAMemoBlock(p) {
+              const o = make("B");
+              const frozen = <i>{o}</i>;
+              let key = same("who");
+              let last;
+              const result = o[key]((key = "alt"), (last = [], "")) + ";";
+              last.push(result);
+              return <div>{result + last.length + frozen.type}</div>;
+            }
             export function MethodOfAPropBehindAStatement(p) {
               const local = { n: 0 };
               return <div>{p.api.who((() => { local.n = 1; return ""; })())}</div>;
@@ -4473,11 +4551,12 @@ describe("bundler", () => {
             [],
           );
           if (name !== "browser") return;
-          // A compiled function starts with its memo cache. In these two the load of the method is in the memo block
-          // of `log` and the call is behind that block, which codegen cannot print.
+          // A compiled function starts with its memo cache. In these three the load of the method is in a memo block
+          // and the call is behind that block, which codegen cannot print.
           expect(Object.keys(bodies).filter(form => !/^\s*let \$ = c\(\d+\);/.test(bodies[form]))).toEqual([
             "KeyIsACallOfAPropBehindAnInlinedFunction",
             "KeyIsACallOfAPropBehindADependencyOfAMemoBlock",
+            "MethodInAMemoBlockAheadOfTheCall",
           ]);
         },
         run: { stdout: [...expectedOfCells, ...expectedOfForms].join("\n") },

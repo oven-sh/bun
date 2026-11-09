@@ -4847,6 +4847,37 @@ describe("bundler", () => {
     });
   }
 
+  // A block that holds a direct `eval` keeps its function declarations as they are written. There the callback stayed
+  // a function declaration, which is a variable of the whole cjs bundle too, and `Top` called it.
+  for (const runtime of ["bun", "node"] as const) {
+    itBundled(`react-compiler/NestedComponentInABlockWithADirectEval-cjs-${runtime}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { Top } from "./top.jsx";
+          let InABlock;
+          {
+            eval("");
+            const Leaf = ({ x }) => <i x={x} on={() => "mine"} />;
+            InABlock = Leaf;
+          }
+          const called = [InABlock, Top].map(Component => {
+            const { on } = Component({ x: 1 }).props;
+            return on() + (on.name === "on" ? " (in place)" : "");
+          });
+          console.log(called.join(" "));
+        `,
+        "/top.jsx": /* jsx */ `
+          export const Top = ({ x }) => <u x={x} on={() => "top"} />;
+        `,
+        ...reactWithMemo,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      format: "cjs",
+      run: { runtime, stdout: "mine top" },
+    });
+  }
+
   // A local whose name ends in "Ref" is taken for a ref once its `.current` is read. Listing it in an effect's dependencies
   // used to be reported as reading a ref during render, unless it was initialized in one of a few ways. The expected sizes
   // come from babel-plugin-react-compiler 0.0.0-experimental-a1856f3-20260507, which only refuses `pier.bollard`.

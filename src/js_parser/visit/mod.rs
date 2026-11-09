@@ -1619,8 +1619,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_and_append_stmt(list, stmt)?;
             }
             p.react_compiler_list_scope = prev_list_scope;
-            // Outlined functions can use variables from this scope, so they can't go at the end of the module. A
-            // function declaration is visible in all of its list, so they go to its end and not behind a statement.
+            // Outlined functions can use variables from this scope: they go to the end of its list.
             if p.react_compiler_outlined_from_nested.len() > outlined_start {
                 p.append_outlined_from_nested(outlined_start, &mut visited, &mut before);
             }

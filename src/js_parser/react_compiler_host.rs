@@ -29,8 +29,7 @@ pub(crate) enum OutlinedPlace {
     ModuleEnd,
     /// At the end of the statement list of this scope.
     List(js_ast::StoreRef<js_ast::Scope>),
-    /// In the body of the function itself. Its locals are the names that its body scope lists from `first_local` on.
-    /// `own_name` is the name that the function gives itself.
+    /// In the body of the function itself, whose scope lists its locals from `first_local` on.
     OwnBody {
         first_local: usize,
         own_name: Option<js_ast::Ref>,
@@ -207,19 +206,12 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
-    /// The scope that holds the function being compiled. `current_scope` is the body of that function, and its parent
-    /// holds the arguments.
+    /// `current_scope` is the body of the function being compiled, and its parent holds the arguments.
     fn scope_around_compiled_function(&self) -> Option<js_ast::StoreRef<js_ast::Scope>> {
         self.current_scope().parent.and_then(|args| args.parent)
     }
 
-    /// Where what is outlined from the function being compiled is declared. It is the statement list being visited, if
-    /// that list is in the scope that holds the function, or if every scope between the two declares nothing (a label,
-    /// the head of a `for` or the block of a `switch` with no `let`). The statement of a label is no list: a block
-    /// around it would take the label from a loop, so the list around the label declares them. A name at the top
-    /// level of the module has to be a declared symbol of a part, so the list of the module is the end of the module.
-    /// A function in a head that has names of its own (a parameter list, a `catch` binding, a `for` that declares)
-    /// has no list.
+    /// Where what is outlined from the function being compiled is declared. src/react_compiler/DESIGN.md has the rule.
     pub(crate) fn react_compiler_place_of_outlined(
         &self,
         pending: &bun_react_compiler::PendingCompile,
@@ -233,9 +225,11 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         while let Some(scope) = around {
             is_in_list |= scope == self.react_compiler_list_scope;
             if is_in_list {
+                // Only a part can declare a name of the module.
                 if scope == self.module_scope {
                     return OutlinedPlace::ModuleEnd;
                 }
+                // A block around the statement of a label would take the label from a loop.
                 if scope.kind != Kind::Label {
                     return OutlinedPlace::List(scope);
                 }
@@ -262,9 +256,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         false
     }
 
-    /// What is outlined into the body of the function being compiled reads the variables around that function from
-    /// inside it. With no renamer, a local of the function that has the name of one of them gets another name. A read
-    /// of `own_name` is a local that nothing declares: it keeps its spelling.
+    /// With no renamer, a local would hide a variable of the same name that a function outlined into this body reads.
     fn rename_locals_named_like_a_variable_around(
         &mut self,
         first_local: usize,
@@ -277,6 +269,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         for at in first_local..self.current_scope().generated.len() {
             let local = self.current_scope().generated[at];
             let name = self.load_name_from_ref(local);
+            // A read of the function's own name is a local that nothing declares: it keeps its spelling.
             if own_name != Some(name) && self.is_declared_around_compiled_function(name) {
                 let renamed = self.temp_var_name(name);
                 self.symbols[local.inner_index() as usize].original_name =
@@ -285,9 +278,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Declares what the compiler outlined, since it had `outlined_len` functions, from the nested function it just
-    /// compiled. `place` is where that function can reach it, and where it can reach the variables around that
-    /// function: a statement list, or else `body`, the function's own.
+    /// Declares in `place` what the nested function that was just compiled outlined. `body` is that function's own.
     #[cold]
     #[inline(never)]
     pub(crate) fn declare_outlined_from_nested(
@@ -312,8 +303,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
             if let js_ast::StmtData::SFunction(function) = stmt.data
                 && let Some(name) = function.func.name
             {
-                // `Host::new_generated` listed the name in the module scope. The renamer numbers a name with the scope
-                // that lists it, and no part declares this one at the top level.
+                // The renamer numbers a name with the scope that lists it: take it out of the module scope.
                 let in_module_scope = &mut self.module_scope_mut().generated;
                 if let Some(at) = in_module_scope
                     .iter()
@@ -331,9 +321,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         }
     }
 
-    /// Moves what [`Self::declare_outlined_from_nested`] left since `start` into the statement list that was visited:
-    /// to the end of `visited`, or into `before` for a block, where `visit_stmts` makes a `let` of each like of the
-    /// block's own function declarations. The statement of a label leaves them to the list around the label.
+    /// Moves what was outlined since `start` into the visited list: to its end, or as a `let` each to the start of a block.
     #[cold]
     #[inline(never)]
     pub(crate) fn append_outlined_from_nested(
@@ -343,15 +331,43 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
         before: &mut bun_alloc::ArenaVec<'a, js_ast::Stmt>,
     ) {
         let scope = self.current_scope();
+        // The list around the label takes them.
         if scope.kind == js_ast::scope::Kind::Label {
             return;
         }
-        let list = if scope.kind_stops_hoisting() {
-            visited
-        } else {
-            before
+        if scope.kind_stops_hoisting() {
+            visited.extend(self.react_compiler_outlined_from_nested.drain(start..));
+            return;
+        }
+        // Where the code is not strict, a function declared in a block is a variable of the function around it too.
+        for at in start..self.react_compiler_outlined_from_nested.len() {
+            let stmt = self.react_compiler_outlined_from_nested[at];
+            before.push(self.let_of_function_declaration(stmt));
+        }
+        self.react_compiler_outlined_from_nested.truncate(start);
+    }
+
+    fn let_of_function_declaration(&mut self, stmt: js_ast::Stmt) -> js_ast::Stmt {
+        let js_ast::StmtData::SFunction(mut declaration) = stmt.data else {
+            return stmt;
         };
-        list.extend(self.react_compiler_outlined_from_nested.drain(start..));
+        let Some(name) = declaration.func.name.take() else {
+            return stmt;
+        };
+        let func = core::mem::take(&mut declaration.func);
+        let value = self.new_expr(js_ast::E::Function { func }, stmt.loc);
+        let binding = self.b(js_ast::B::Identifier { r#ref: name.ref_ }, name.loc);
+        self.s(
+            js_ast::S::Local {
+                kind: js_ast::s::Kind::KLet,
+                decls: js_ast::G::DeclList::init_one(js_ast::G::Decl {
+                    binding,
+                    value: Some(value),
+                }),
+                ..Default::default()
+            },
+            stmt.loc,
+        )
     }
 
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.

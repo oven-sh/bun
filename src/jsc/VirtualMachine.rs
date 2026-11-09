@@ -454,6 +454,8 @@ pub struct TestIsolationState {
     pub synthetic_allocation_limit: Option<usize>,
     /// `--isolate=modules`: all files share one global object, and each gets its own `Bun.ModuleGraph`.
     pub shares_global: bool,
+    /// `--isolate=modules`: the snapshot of the globals is taken. Each later file starts with a restore of it.
+    pub has_globals_snapshot: bool,
     /// The context of the running file's graph. Its callbacks run in this context.
     pub file_context: crate::ContextId,
     /// What the outgoing file gives back once its realm is retired. See
@@ -6565,17 +6567,34 @@ impl VirtualMachine {
     }
 
     /// `--isolate=modules`: creates the graph for the test file that's about to run.
-    pub fn enter_module_graph_for_test_isolation(&mut self) -> JsResult<()> {
+    ///
+    /// Returns what the restore of the globals threw, for the caller to report. The file still
+    /// runs, with the globals that could not be put back as the files before it left them.
+    pub fn enter_module_graph_for_test_isolation(&mut self) -> JsResult<Option<JSValue>> {
         let state = &self.test_isolation_state;
-        if state.shares_global && state.file_context == crate::ContextId::NONE {
-            // The first call snapshots the globals. Later calls restore them.
-            let global = self.global();
-            let restore_globals = crate::cpp::Bun__TestGlobals__getRestoreFunction(global)?;
-            restore_globals.call(global, JSValue::UNDEFINED, &[])?;
-            self.test_isolation_state.file_context =
-                crate::ContextId::from_raw(Bun__TestFile__enterModuleGraph(global));
+        if !state.shares_global || state.file_context != crate::ContextId::NONE {
+            return Ok(None);
         }
-        Ok(())
+        let global = self.global();
+        let restore_globals = crate::cpp::Bun__TestGlobals__getRestoreFunction(global)?;
+        // The first call snapshots the globals. Later calls restore them.
+        let thrown = match restore_globals.call(global, JSValue::UNDEFINED, &[]) {
+            Ok(_) => None,
+            // With half a snapshot, the next restore would delete what the snapshot lacks.
+            // A termination keeps unwinding.
+            Err(err)
+                if !self.test_isolation_state.has_globals_snapshot
+                    || err == crate::JsError::Terminated
+                    || global.has_pending_termination_exception() =>
+            {
+                return Err(err);
+            }
+            Err(err) => Some(global.take_exception(err)),
+        };
+        self.test_isolation_state.has_globals_snapshot = true;
+        self.test_isolation_state.file_context =
+            crate::ContextId::from_raw(Bun__TestFile__enterModuleGraph(global));
+        Ok(thrown)
     }
 
     /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.

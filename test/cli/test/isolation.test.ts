@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, Heap, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, Heap, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -1527,6 +1527,52 @@ describe.concurrent("bun test --isolate=modules", () => {
       },
       2,
     );
+  });
+
+  // The restore can't put `process.env` back on the frozen `process`, and throws before every file that follows.
+  test.each(["", "--rerun-each=2", "--parallel=2 --parallel-delay=600000"])(
+    "an error that the restore of the globals throws is reported, and the next files run: %s",
+    async flags => {
+      using dir = tempDir("isolate-modules-restore-throws", {
+        // With --rerun-each, the second run finds `process` as the first run left it.
+        "a.test.js": `test("a", () => {
+          if (!Object.isExtensible(process)) return;
+          Object.defineProperty(process, "env", { get() { throw new Error("the getter that a left ran"); } });
+          Object.freeze(process);
+        });`,
+        "b.test.js": `test("b", () => {});`,
+        "c.test.js": `test("c", () => {});`,
+      });
+      const junit = join(String(dir), "junit.xml");
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate=modules", "--reporter=junit", "--reporter-outfile=" + junit, ...flags.split(" ").filter(Boolean)],
+        ["./a.test.js", "./b.test.js", "./c.test.js"],
+      );
+      const runs = flags.includes("rerun") ? 2 : 1;
+      expect(stderr.match(/^\(pass\) [abc]/gm)?.sort(), stderr).toEqual(
+        ["a", "b", "c"].flatMap(name => Array(runs).fill("(pass) " + name)),
+      );
+      expect(stderr).toContain("Unhandled error between tests");
+      expect(stderr).not.toContain("worker crashed");
+      expect(stderr).toMatch(/ 0 fail\n \d+ errors?\n/);
+      expect(exitCode).toBe(1);
+      // The report of a structured reporter fails too.
+      const xml = await Bun.file(junit).text();
+      expect(xml).toContain(`<testcase name="(unhandled error)"`);
+      expect(xml).not.toMatch(/<testsuites [^>]*failures="0"/);
+    },
+  );
+
+  // The stack is too small for the walk over the globals. Linux only: the size that the walk needs was measured there.
+  test.skipIf(!isLinux)("an error while the snapshot of the globals is taken is printed", async () => {
+    using dir = tempDir("isolate-modules-snapshot-throws", { "a.test.js": `test("a", () => {});` });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], ["./a.test.js"], {
+      ...bunEnv,
+      BUN_JSC_maxPerThreadStackUsage: "60000",
+    });
+    expect(stderr).toContain("Maximum call stack size exceeded");
+    expect(exitCode).toBe(1);
   });
 
   test("every file finds the builtins as the first one did, whatever the files before it did to them", async () => {

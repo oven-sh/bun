@@ -3969,7 +3969,14 @@ impl TestCommand {
 
         let file_path = Self::resolve_test_file(vm, file_name)?;
         vm.clear_entry_point()?;
-        vm.enter_module_graph_for_test_isolation()?;
+        let mut restore_error = match vm.enter_module_graph_for_test_isolation() {
+            Ok(error) => error,
+            Err(err) => {
+                // The caller exits on this error without a word, so print it here.
+                let _ = jsc::task::report_error_or_terminate(vm.global(), err);
+                return Err(err.into());
+            }
+        };
 
         run_compiled::will_run_test_file(resolve_path::relative(
             FileSystem::get().top_level_dir(),
@@ -4049,6 +4056,17 @@ impl TestCommand {
             if let Some(junit) = reporter.reporters.junit.as_mut() {
                 junit.file_start_ns = bun::Timespec::now(bun::TimespecMockMode::ForceRealTime).ns();
                 junit.file_start_unix_ms = bun::time::milli_timestamp();
+            }
+            // This file is the first to run with the globals that the restore could not put back.
+            if let Some(error) = restore_error.take()
+                && let Some(buntest) = bun_test_root.clone_active_file()
+            {
+                buntest.get().on_uncaught_exception(
+                    global,
+                    Some(error),
+                    false,
+                    &bun_test::RefDataValue::Start,
+                );
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();

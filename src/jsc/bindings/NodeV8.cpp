@@ -141,6 +141,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8_deserialize, (JSGlobalObject * lexical
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue value = callFrame->argument(0);
+    // The bytes that v8.ts has read in front of the value: the mark of its envelope for Buffers.
+    size_t skipped = callFrame->argument(1).isUInt32() ? callFrame->argument(1).asUInt32() : 0;
     RefPtr<JSC::ArrayBuffer> arrayBuffer;
     size_t byteOffset = 0;
     size_t byteLength = 0;
@@ -156,7 +158,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeV8_deserialize, (JSGlobalObject * lexical
         return Bun::throwError(lexicalGlobalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "buffer must be a TypedArray or a DataView"_s);
     }
 
-    auto deserialized = WebCore::SerializedScriptValue::tryFromArrayBuffer(*lexicalGlobalObject, lexicalGlobalObject, arrayBuffer.get(), byteOffset, byteLength);
+    skipped = std::min(skipped, byteLength);
+    auto deserialized = WebCore::SerializedScriptValue::tryFromArrayBuffer(*lexicalGlobalObject, lexicalGlobalObject, arrayBuffer.get(), byteOffset + skipped, byteLength - skipped);
     EXCEPTION_ASSERT(!scope.exception() || deserialized.hasException());
     if (deserialized.hasException()) {
         auto exception = deserialized.releaseException();

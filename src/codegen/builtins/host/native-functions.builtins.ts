@@ -340,13 +340,13 @@ export default b.declarations(
     writes: heapsWrittenByClone,
     implementation: b.hostCall,
   }),
-  // v8.deserialize() of node:v8. It reads the bytes as deserialize() of bun:jsc does.
+  // v8.deserialize() of node:v8. It reads the bytes as deserialize() of bun:jsc does, behind as many of them as the second operand says.
   b.static(cpp("NodeV8.cpp", "jsFunctionNodeV8_deserialize"), {
-    args: { bytes: b.any.optional },
+    args: { bytes: b.any.optional, skipped: b.any.optional },
     returns: b.any.fresh,
     capability: "heap",
     throws: true,
-    uses: { bytes: [b.readsContents()] },
+    uses: { bytes: [b.readsContents()], skipped: b.inspected },
     reads: ["TypedArrayStorage", "TypedArrayElements", ...externalState],
     writes: externalState,
     implementation: b.hostCall,

@@ -31,8 +31,9 @@ const {
 
 const setNewContextsHaveGC = $newCppFunction("NodeVM.cpp", "jsFunctionSetNewContextsHaveGC", 1);
 const serializeToBuffer = $newCppFunction("NodeV8.cpp", "jsFunctionNodeV8_serialize", 1) as (value: unknown) => Buffer;
-const deserializeBytes = $newCppFunction("NodeV8.cpp", "jsFunctionNodeV8_deserialize", 1) as (
+const deserializeBytes = $newCppFunction("NodeV8.cpp", "jsFunctionNodeV8_deserialize", 2) as (
   bytes: unknown,
+  skipped?: number,
 ) => unknown;
 
 const DateNow = Date.now;
@@ -348,14 +349,8 @@ function deserialize(value) {
     // The ArrayBuffer is detached, or the view is out of its bounds: there are no bytes to look at.
   }
   if (view !== undefined && hasBufferEnvelopeMagic(view)) {
-    // Not subarray(): it asks the constructor property of the view, which a program can replace, for the class of its result.
-    const envelope = deserializeBytes(
-      new Uint8ArrayCtor(
-        TypedArrayPrototypeGetBuffer.$call(view),
-        TypedArrayPrototypeGetByteOffset.$call(view) + kBufferEnvelopeMagic.length,
-        TypedArrayPrototypeGetByteLength.$call(view) - kBufferEnvelopeMagic.length,
-      ),
-    );
+    // The native entry skips the mark. A subarray() here would ask the constructor property of the view, which a program can replace.
+    const envelope = deserializeBytes(value, kBufferEnvelopeMagic.length);
     return require("internal/serialization_buffers").restoreBuffers(envelope);
   }
   // The native entry refuses what is no buffer, and a buffer that has no bytes.

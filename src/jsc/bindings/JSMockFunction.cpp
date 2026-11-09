@@ -1448,16 +1448,22 @@ struct EntryOfFake {
 // An uninstalled fake is on `target[key]`, where a spy or a stub put it back after useRealTimers(). Puts what it stands for in its place.
 static void takeOffUninstalledFake(Zig::GlobalObject* globalObject, JSObject* target, const Identifier& key, JSC::EncodedJSValue originals, JSValue entryOfFake)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     while (true) {
-        EntryOfFake entry(JSC::getVM(globalObject), target, key, entryOfFake);
+        EntryOfFake entry(vm, target, key, entryOfFake);
         SlotContent content = whatStandsFor(globalObject, target, key, entry.content, entry.link);
         bool isValue = content.storage && !(content.attributes & PropertyAttribute::Accessor);
         JSValue next = isValue ? JSValue::decode(Bun__FakeTimers__originalOf(originals, JSValue::encode(content.storage))) : JSValue();
-        if (!next) {
-            didPutBack(globalObject, entry.link, content.storage);
-            return putContent(globalObject, target, key, content, false);
+        if (next) {
+            entryOfFake = next;
+            continue;
         }
-        entryOfFake = next;
+        didPutBack(globalObject, entry.link, content.storage);
+        putContent(globalObject, target, key, content, false);
+        // It is an own property of the global object, `process`, `Date` or `performance`, and the key is not an index.
+        scope.assertNoException();
+        return;
     }
 }
 
@@ -1520,13 +1526,11 @@ extern "C" void JSMock__putBackForFake(Zig::GlobalObject* globalObject, JSC::Enc
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* target = asObject(JSValue::decode(owner));
     auto key = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
-    if (isUninstalled) {
-        takeOffUninstalledFake(globalObject, target, key, originals, JSValue::decode(entryOfFake));
-    } else {
-        EntryOfFake entry(vm, target, key, JSValue::decode(entryOfFake));
-        putBack(globalObject, target, key, entry.content, entry.link, false);
-    }
-    // These are own properties of the global object, `process`, `Date` and `performance`, and no key is an index.
+    if (isUninstalled)
+        return takeOffUninstalledFake(globalObject, target, key, originals, JSValue::decode(entryOfFake));
+    EntryOfFake entry(vm, target, key, JSValue::decode(entryOfFake));
+    putBack(globalObject, target, key, entry.content, entry.link, false);
+    // As in takeOffUninstalledFake().
     scope.assertNoException();
 }
 

@@ -4750,8 +4750,7 @@ impl<'a> Resolver<'a> {
         self.dir_info_cached_miss(enable_logging, input_path, top_result)
     }
 
-    /// A DirInfo under a link keeps the target as its real path. Drops it, and the ancestors under
-    /// the link, when the link points somewhere else now: all they hold is of the old target.
+    /// Drops a DirInfo under a link, and its ancestors under the link, when the link points somewhere else now.
     fn drop_if_retargeted(&mut self, info: DirInfoRef) -> bool {
         if info.abs_real_path.is_empty() {
             return false;

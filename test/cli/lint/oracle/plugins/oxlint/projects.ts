@@ -1039,8 +1039,7 @@ const hand: Project[] = [
   },
   {
     name: "no-cycle/exports-itself-on-the-way",
-    about:
-      "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
+    about: "Request::may_reexport_itself: a module on the way that imports a name of its own and exports it: that is no step",
     config: noCycle({ maxDepth: 2 }),
     files: {
       "a.ts": `import { bar } from "./m";\nexport const a = bar;\n`,

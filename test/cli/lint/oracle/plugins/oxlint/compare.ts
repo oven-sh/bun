@@ -6,7 +6,8 @@
 // Without OXLINT_BIN, oxlint's reports are read from expected.json, which `--record` writes. It was recorded with
 // oxlint 1.87.0 and tsgolint 7.0.2003, except `no-control-regex/place`, `/written` and `/calls`, which were recorded with
 // oxlint 1.92.0: since 1.91.0 the rule reports a control character that is written as itself, and `bun lint` follows
-// that. A report is `file:line:column+length rule`. Duplicates are kept, because two
+// that. To record everything again, run `--record` with oxlint 1.87.0 and no names, then `--record` with oxlint 1.92.0
+// and those three names. A report is `file:line:column+length rule`. Duplicates are kept, because two
 // reports can start at the same position. labels.json likewise has `file rule line:column+length "text" | ..` for each
 // report with more than one label or with label text.
 

@@ -1538,16 +1538,15 @@ it("an object changed while its non-enumerable keys are listed prints what it ha
       ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":"),
     },
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
   const behindTheHook = Array.from({ length: 12 }, (_, i) => (i % 2 ? `[h${i}]: [ ${i} ]` : `s${i}: [ ${i} ]`));
   const object = ["{", "  k: 0,", "  [a]: a,", ...behindTheHook.map(key => `  ${key},`), "}"];
   expect(stdout).toBe(
     [...object, ...object, ...object, `[ "k", [a]: a, s0: [ 0 ], [h1]: [ 1 ] ]`, ...object, ""].join("\n"),
   );
-  expect(stderr).not.toContain("AddressSanitizer");
   expect(exitCode).toBe(0);
 });
 

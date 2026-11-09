@@ -288,7 +288,14 @@ const client = new RedisClient("redis://localhost:6379", {
 
 ### Raw Commands
 
-Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name, and the second is an array of string arguments.
+Use the `send` method to run any Redis command, including ones without a dedicated method. The first argument is the command name. The second is an array of arguments. Bun sends each element as one argument:
+
+- a string as UTF-8
+- a number as the string that `String(value)` returns
+- a typed array, a `DataView`, an `ArrayBuffer`, or a `SharedArrayBuffer` as its bytes
+- a `Blob` as its bytes
+
+Bun does not read a `Blob` that is backed by a file, such as `Bun.file()`. To send the content of a file, pass `await file.bytes()`.
 
 ```ts redis.ts icon="/icons/typescript.svg"
 // Run any Redis command
@@ -299,7 +306,20 @@ await redis.send("LPUSH", ["mylist", "value1", "value2"]);
 
 // Get list range
 const list = await redis.send("LRANGE", ["mylist", "0", "-1"]);
+
+// Pass a number. Bun sends it as the string "60".
+await redis.send("EXPIRE", ["mylist", 60]);
+
+// Pass a Uint8Array or a Buffer. Bun sends its bytes.
+await redis.send("SET", ["mykey", new Uint8Array([0xff, 0xfe])]);
+
+// Redis 8.0 or later: pass a Float32Array and a number to the vector set commands.
+const vector = new Float32Array([0.1, 0.2, 0.3]);
+await redis.send("VADD", ["docs", "FP32", vector, "doc:1"]);
+const nearest = await redis.send("VSIM", ["docs", "FP32", vector, "COUNT", 5]);
 ```
+
+Bun converts the reply as [Type Conversion](#type-conversion) describes, so a bulk string reply becomes a string. To read a value as bytes, use `getBuffer`.
 
 ### Connection Events
 

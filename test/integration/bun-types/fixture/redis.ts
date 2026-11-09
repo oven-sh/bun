@@ -1,3 +1,4 @@
+import { spyOn } from "bun:test";
 import { expectType } from "./utilities";
 
 expectType(Bun.redis.publish("hello", "world")).is<Promise<number>>();
@@ -104,6 +105,52 @@ expectType(redis.client("KILL", "ID", 42)).is<Promise<any>>();
 expectType(redis.config("GET", "maxmemory")).is<Promise<any>>();
 expectType(redis.debug("OBJECT", "k")).is<Promise<any>>();
 expectType(redis.command("COUNT")).is<Promise<any>>();
+
+// Raw commands: `send` takes each kind of argument that the client sends, in an array that it only reads.
+expectType(redis.send("PING", [])).is<Promise<any>>();
+redis.send("SET", ["k", "v"]);
+redis.send("SET", ["k", 0, "EX", 60]);
+redis.send("SET", [buf, new Uint8Array(1)]);
+redis.send("VSIM", ["docs", "FP32", new Float32Array(3), "COUNT", 5]);
+redis.send("SET", ["k", new DataView(new ArrayBuffer(1))]);
+redis.send("SET", ["k", new ArrayBuffer(1)]);
+redis.send("SET", ["k", new SharedArrayBuffer(1)]);
+redis.send("SET", ["k", new Blob(["v"])]);
+const readonlyArgs: readonly string[] = ["k", "v"];
+redis.send("SET", readonlyArgs);
+const tupleArgs = ["k", 0, "EX", 60] as const;
+redis.send("SET", tupleArgs);
+redis.send("SET", Object.freeze(["k", "v"]));
+// `send` has one signature, so code typed from its parameter sees each kind that the client sends.
+expectType<Parameters<Bun.RedisClient["send"]>[1]>().is<
+  readonly (string | number | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob)[]
+>();
+// A fake, an override and a bun:test mock of `send` can keep `string[]` for the arguments that they read.
+const fakeSend: Pick<Bun.RedisClient, "send"> = { send: async (command, args: string[]) => args.join(" ") };
+class StringSender extends Bun.RedisClient {
+  override send(command: string, args: string[]): Promise<any> {
+    return super.send(command, args);
+  }
+}
+spyOn(redis, "send").mockImplementation(async (command, args: string[]) => args.join(" "));
+// @ts-expect-error - a bigint throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", 10n]);
+// @ts-expect-error - a boolean throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", true]);
+// @ts-expect-error - null throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", null]);
+// @ts-expect-error - undefined throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", undefined]);
+// @ts-expect-error - a nested array throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", ["v"]]);
+// @ts-expect-error - a plain object throws ERR_INVALID_ARG_TYPE
+redis.send("SET", ["k", {}]);
+// @ts-expect-error - a Set throws "Arguments must be an array"
+redis.send("SET", new Set(["k", "v"]));
+// @ts-expect-error - a string throws "Arguments must be an array"
+redis.send("SET", "k");
+// @ts-expect-error - a call with no `args` throws "Arguments must be an array"
+redis.send("PING");
 
 // Generic
 expectType(redis.object("ENCODING", "k")).is<Promise<any>>();

@@ -98,10 +98,21 @@ inline bool sqliteCommitsWhenFinalized(sqlite3_stmt* stmt)
 // on. They check it before anything else.
 inline thread_local bool sqliteScriptIsForbidden = false;
 
+// A reset or finalize commits what a run of the statement wrote, and its result code reaches no caller who could act
+// on it. The progress handler is not called while one runs: a stop then would roll the write back in silence.
+inline thread_local bool sqliteProgressHandlerIsOff = false;
+
 inline void sqliteFinalize(sqlite3_stmt* stmt, bool mayCallScript)
 {
     WTF::SetForScope forbidScript { sqliteScriptIsForbidden, !mayCallScript };
+    WTF::SetForScope handlerOff { sqliteProgressHandlerIsOff, true };
     sqlite3_finalize(stmt);
+}
+
+inline int sqliteReset(sqlite3_stmt* stmt)
+{
+    WTF::SetForScope handlerOff { sqliteProgressHandlerIsOff, true };
+    return sqlite3_reset(stmt);
 }
 
 // The statement that called the function fails, so a commit that needs it is rolled back.

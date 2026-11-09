@@ -566,7 +566,7 @@ declare module "bun:sqlite" {
      *
      * If `callback` returns a truthy value, SQLite stops the statement and the
      * call that runs it (`.get()`, `.all()`, `.run()`, `db.run()`, a `for..of`
-     * over `.iterate()`, `db.serialize()`, or with SQLite 3.41 or newer the
+     * over `.iterate()`, or with SQLite 3.41 or newer the
      * `db.query()`/`db.prepare()` that compiles it) throws a `SQLiteError` with
      * `code: "SQLITE_INTERRUPT"`. If `callback` throws, the statement stops and
      * that call throws what `callback` threw.
@@ -574,8 +574,9 @@ declare module "bun:sqlite" {
      * A stopped statement that writes inside a transaction rolls the whole
      * transaction back. A stopped read-only statement leaves the transaction
      * open. Bun does not call `callback` for the `BEGIN`, `COMMIT` and
-     * `ROLLBACK` of `db.transaction()`. SQLite does not call it while it waits
-     * for a lock (`PRAGMA busy_timeout`).
+     * `ROLLBACK` of `db.transaction()`, nor for the commit of a write that an
+     * earlier run left open. SQLite does not call it while it waits for a lock
+     * (`PRAGMA busy_timeout`).
      *
      * A later statement on this `Database` calls `callback` again. Pass `null`
      * to remove the handler. A second call replaces the first: a `Database` has

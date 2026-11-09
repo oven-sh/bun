@@ -3407,22 +3407,25 @@ declare module "bun" {
      *   file to link the two.
      * - `"inline"` - an inline source map is appended to the output file.
      * - `"external"` - Generate a separate source map file for each JavaScript
-     *   output file. No `//# sourceMappingURL` comment is added to the output
-     *   file.
+     *   entry point and chunk. No `//# sourceMappingURL` comment is added to
+     *   the output file.
      *
-     * Only JavaScript output files (entry points and chunks) get a source
-     * map. CSS and HTML output files do not.
-     *
-     * `true` is an alias for `"linked"` when `outdir` is set, and for `"inline"`
-     * when it is not. `false` is an alias for `"none"`.
+     * Only JavaScript entry points and chunks get a source map. CSS and HTML
+     * do not.
      *
      * Each `"linked"` or `"external"` map is a separate {@link BuildArtifact}
-     * in `outputs` with `kind: "sourcemap"`. Without `outdir`, Bun does not
-     * write it to disk.
+     * in `outputs` with `kind: "sourcemap"`.
+     *
+     * In a build without `compile`:
+     * - `true` is an alias for `"linked"` when `outdir` is set, and for
+     *   `"inline"` when it is not. `false` is an alias for `"none"`.
+     * - Without `outdir`, Bun does not write a `"linked"` or `"external"` map
+     *   to disk.
      *
      * @default "none"
      *
      * @see {@link publicPath} to customize the base url of linked source maps
+     * @see [Standalone executables](https://bun.com/docs/compiler/executables) for source maps with `compile`
      */
     sourcemap?: "none" | "linked" | "inline" | "external" | boolean;
 
@@ -3558,8 +3561,8 @@ declare module "bun" {
     /**
      * Add a banner to the bundled code such as "use client";
      *
-     * The banner is added to every JavaScript output (entry points and
-     * chunks). CSS and HTML outputs do not get it.
+     * The banner is added to every JavaScript entry point and chunk. It is
+     * not added to CSS or HTML.
      */
     banner?: string;
 
@@ -3568,8 +3571,8 @@ declare module "bun" {
      *
      * `// made with bun!`
      *
-     * The footer is added to every JavaScript output (entry points and
-     * chunks). CSS and HTML outputs do not get it.
+     * The footer is added to every JavaScript entry point and chunk. It is
+     * not added to CSS or HTML.
      */
     footer?: string;
 

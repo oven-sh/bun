@@ -740,7 +740,9 @@ Disables environment variable injection entirely.
 
 Specifies the type of sourcemap to generate.
 
-`Bun.build` also accepts a boolean. `true` means `"linked"` when `outdir` is set and `"inline"` when it is not. `false` means `"none"`.
+`Bun.build` also accepts a boolean. `false` means `"none"`. `true` means `"linked"` when `outdir` is set and `"inline"` when it is not.
+
+`Bun.build` does not need `outdir` for `"linked"` or `"external"`. It returns each sourcemap in [`outputs`](#outputs), and without `outdir` it writes nothing to disk. A build with `compile` is different: see [standalone executables](/compiler/executables).
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1228,7 +1230,7 @@ A map of file extensions to built-in loader names. Use this to customize how cer
 
 A banner added to the final bundle. This can be a directive like `"use client"` for React, or a comment block such as a license.
 
-Bun adds the banner to every JavaScript output file (entry points and chunks). CSS and HTML output files do not get it.
+Bun adds the banner to every JavaScript entry point and chunk. It does not add it to CSS or HTML.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1251,7 +1253,7 @@ Bun adds the banner to every JavaScript output file (entry points and chunks). C
 
 A footer added to the final bundle. This can be a comment block for a license or a fun easter egg.
 
-Bun adds the footer to every JavaScript output file (entry points and chunks). CSS and HTML output files do not get it.
+Bun adds the footer to every JavaScript entry point and chunk. It does not add it to CSS or HTML.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1971,7 +1973,7 @@ interface BuildConfig {
   /**
    * Add a banner to the bundled code such as "use client";
    *
-   * Added to every JavaScript output (entry points and chunks), not to CSS or HTML outputs.
+   * Added to every JavaScript entry point and chunk, not to CSS or HTML.
    */
   banner?: string;
   /**
@@ -1979,7 +1981,7 @@ interface BuildConfig {
    *
    * `// made with bun!`
    *
-   * Added to every JavaScript output (entry points and chunks), not to CSS or HTML outputs.
+   * Added to every JavaScript entry point and chunk, not to CSS or HTML.
    */
   footer?: string;
 

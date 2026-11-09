@@ -6,7 +6,7 @@ import { tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const dts = readFileSync(join(import.meta.dir, "../../../packages/bun-types/bun.d.ts"), "utf8");
+const dts = readFileSync(join(import.meta.dir, "../../packages/bun-types/bun.d.ts"), "utf8");
 
 /** The JSDoc block directly above `member?:` in bun.d.ts, as one line of prose. */
 function jsdocOf(member: string): string {
@@ -75,22 +75,26 @@ describe.concurrent("BuildConfig JSDoc matches the runtime", () => {
       expect(build.success).toBe(true);
 
       const maps = build.outputs.filter(output => output.kind === "sourcemap").map(output => output.path);
-      const observed = build.outputs
-        .filter(output => output.kind !== "sourcemap")
-        .map(output => ({
-          ext: extensionOf(output.path),
-          kind: output.kind,
-          map: maps.includes(output.path + ".map"),
-        }))
-        .sort((a, b) => (a.ext + a.kind).localeCompare(b.ext + b.kind));
+      const observed = await Promise.all(
+        build.outputs
+          .filter(output => output.kind !== "sourcemap")
+          .map(async output => ({
+            ext: extensionOf(output.path),
+            kind: output.kind,
+            map: maps.includes(output.path + ".map"),
+            comment: sourcemapCommentKind(await output.text()),
+          })),
+      );
+      observed.sort((a, b) => (a.ext + a.kind).localeCompare(b.ext + b.kind));
+      const comment = sourcemap === "linked" ? "linked" : "none";
       expect({ sourcemap, maps: maps.length, observed }).toEqual({
         sourcemap,
         maps: 2,
         observed: [
-          { ext: ".css", kind: "asset", map: false },
-          { ext: ".html", kind: "entry-point", map: false },
-          { ext: ".js", kind: "chunk", map: true },
-          { ext: ".js", kind: "entry-point", map: true },
+          { ext: ".css", kind: "asset", map: false, comment: "none" },
+          { ext: ".html", kind: "entry-point", map: false, comment: "none" },
+          { ext: ".js", kind: "chunk", map: true, comment },
+          { ext: ".js", kind: "entry-point", map: true, comment },
         ],
       });
     }

@@ -11,7 +11,7 @@ import { serialize } from "bun:jsc";
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tls } from "harness";
 import { EventEmitter, getEventListeners } from "node:events";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, constants, openSync } from "node:fs";
 import { join, posix, win32 } from "node:path";
 import { domainToASCII, domainToUnicode } from "node:url";
 import { MIMEParams, MIMEType, parseEnv } from "node:util";
@@ -172,13 +172,17 @@ function seeChannel(): Promise<Channel> {
   })());
 }
 
-function withDescriptors<Answer>(use: (open: number, closed: number) => Answer): Answer {
+// The second descriptor is one that a read fails on. It is open, for writing only, and not closed: the number of a closed descriptor goes
+// to the next file that is opened, and with a sanitizer the cases run beside one another (../supported.ts), so such a read can succeed.
+function withDescriptors<Answer>(use: (open: number, writeOnly: number) => Answer): Answer {
   using folder = tempDir("aot-rows-by-hand", { file: "text" });
   const open = openSync(join(String(folder), "file"), "r");
-  const closed = openSync(join(String(folder), "file"), "r");
-  closeSync(closed);
-  const answer = use(open, closed);
-  Promise.resolve(answer).finally(() => closeSync(open));
+  const writeOnly = openSync(join(String(folder), "file"), constants.O_WRONLY);
+  const answer = use(open, writeOnly);
+  Promise.resolve(answer).finally(() => {
+    closeSync(open);
+    closeSync(writeOnly);
+  });
   return answer;
 }
 
@@ -740,7 +744,7 @@ const cases: Case[] = [
       mode: "Call",
       place: "the reason of the promise",
       typesIn: settledWith("PromiseReason"),
-      see: () => withDescriptors((open, closed) => reasonOf(readsIntoBuffer(method)(closed))),
+      see: () => withDescriptors((open, writeOnly) => reasonOf(readsIntoBuffer(method)(writeOnly))),
     },
     {
       row: `%NodeJSFS%.prototype.${method}Cb`,

@@ -32,9 +32,8 @@ pub trait Text {
 }
 
 /// A resolved path, as an entry keeps it and a hit hands it out.
-pub trait Answer: Sized {
-    fn of(path: &[u8]) -> Option<Self>;
-    fn is(&self, path: &[u8]) -> bool;
+pub trait Answer {
+    fn is(&self, other: &Self) -> bool;
     fn share(&self) -> Self;
 }
 
@@ -203,16 +202,8 @@ impl<T: Text + ?Sized, A: Answer> Memo<T, A> {
             .collect();
     }
 
-    /// After `Lookup::Repeated` or `Lookup::New`: keeps the answer over the less recently used entry, and hands it out.
-    pub fn put(
-        &mut self,
-        slot: Slot,
-        specifier: &T,
-        source: &T,
-        kind: Kind,
-        path: &[u8],
-    ) -> Option<A> {
-        let path = A::of(path)?;
+    /// After `Lookup::Repeated` or `Lookup::New`: keeps the answer, over the less recently used entry.
+    pub fn put(&mut self, slot: Slot, specifier: &T, source: &T, kind: Kind, path: &A) {
         if self.buckets.is_empty() {
             self.build();
         }
@@ -226,18 +217,21 @@ impl<T: Text + ?Sized, A: Answer> Memo<T, A> {
         ways[0].epoch = slot.epoch;
         ways[0].tag = slot.tag;
         ways[0].kind = kind;
-        Some(path)
     }
 
-    /// After `Lookup::Stale`: the entry answers again, with `path`. Most often that is the path it has.
-    pub fn refresh(&mut self, slot: Slot, path: &[u8]) -> Option<A> {
-        let Bucket([way, _]) = self.buckets.get_mut(slot.bucket as usize)?;
-        let entry = way.entry.as_mut().filter(|_| way.tag == slot.tag)?;
+    /// After `Lookup::Stale`: the entry answers again, with `path`. Most often that is the path it has, and then it
+    /// keeps the string it has.
+    pub fn refresh(&mut self, slot: Slot, path: &A) {
+        let Some(Bucket([way, _])) = self.buckets.get_mut(slot.bucket as usize) else {
+            return;
+        };
+        let Some(entry) = way.entry.as_mut().filter(|_| way.tag == slot.tag) else {
+            return;
+        };
         if !entry.path.is(path) {
-            entry.path = A::of(path)?;
+            entry.path = path.share();
         }
         way.epoch = slot.epoch;
-        Some(entry.path.share())
     }
 
     /// After any `Lookup` with a slot: the pair is one that is never kept, so the next `get` says `Refused`.
@@ -348,21 +342,10 @@ impl Text for WTFStringImplStruct {
 }
 
 impl Answer for WTFString {
-    fn of(path: &[u8]) -> Option<Self> {
-        let path = bun_core::String::clone_utf8(path).leak_wtf_impl();
-        // SAFETY: not null, it is a live impl whose ref `leak_wtf_impl` handed over.
-        (!path.is_null()).then(|| unsafe { WTFString::adopt(path) })
-    }
-
-    fn is(&self, path: &[u8]) -> bool {
-        if self.is_8bit()
-            && self.byte_slice() == path
-            && bun_core::strings::first_non_ascii(path).is_none()
-        {
-            return true;
-        }
-        // Other characters are not the same bytes in UTF-8.
-        bun_core::String::retain_wtf_impl(self.get()).eql_utf8(path)
+    #[inline]
+    fn is(&self, other: &Self) -> bool {
+        core::ptr::eq(&raw const **self, &raw const **other)
+            || (self.is_8bit() == other.is_8bit() && self.byte_slice() == other.byte_slice())
     }
 
     #[inline]
@@ -406,11 +389,8 @@ mod tests {
     }
 
     impl Answer for Rc<str> {
-        fn of(path: &[u8]) -> Option<Self> {
-            core::str::from_utf8(path).ok().map(Rc::from)
-        }
-        fn is(&self, path: &[u8]) -> bool {
-            self.as_bytes() == path
+        fn is(&self, other: &Self) -> bool {
+            self == other
         }
         fn share(&self) -> Self {
             self.clone()
@@ -421,7 +401,7 @@ mod tests {
     const CJS: Kind = Kind(0);
     const ESM: Kind = Kind(1);
 
-    /// What a resolution does with the memo: what `get` said, and the answer that the memo gave or kept.
+    /// What a resolution does with the memo: what `get` said, and the answer if the memo gave it.
     fn resolve(
         memo: &mut TestMemo,
         specifier: &Name,
@@ -432,11 +412,14 @@ mod tests {
     ) -> (&'static str, Option<Rc<str>>) {
         match memo.get(specifier, source, kind, epoch) {
             Lookup::Kept(answer) => ("kept", Some(answer)),
-            Lookup::Stale(slot) => ("stale", memo.refresh(slot, path.as_bytes())),
-            Lookup::Repeated(slot) => (
-                "repeated",
-                memo.put(slot, specifier, source, kind, path.as_bytes()),
-            ),
+            Lookup::Stale(slot) => {
+                memo.refresh(slot, &Rc::from(path));
+                ("stale", None)
+            }
+            Lookup::Repeated(slot) => {
+                memo.put(slot, specifier, source, kind, &Rc::from(path));
+                ("repeated", None)
+            }
             Lookup::New(_) => ("new", None),
             Lookup::Refused => ("refused", None),
         }
@@ -550,16 +533,16 @@ mod tests {
         for _ in 0..3 {
             resolve(&mut memo, &specifier, &source, CJS, 5, "/app/a.js");
         }
-        let (step, answer) = resolve(&mut memo, &specifier, &source, CJS, 6, "/app/a.js");
-        assert_eq!((step, answer.as_deref()), ("stale", Some("/app/a.js")));
+        let (_, kept) = resolve(&mut memo, &specifier, &source, CJS, 5, "");
         let (step, _) = resolve(&mut memo, &specifier, &source, CJS, 6, "/app/a.js");
+        assert_eq!(step, "stale");
+        // The same answer: the entry keeps the string it has.
+        let (step, answer) = resolve(&mut memo, &specifier, &source, CJS, 6, "");
         assert_eq!(step, "kept");
+        assert!(Rc::ptr_eq(&answer.unwrap(), &kept.unwrap()));
         // The new answer can be another one.
-        let (step, answer) = resolve(&mut memo, &specifier, &source, CJS, 7, "/app/a/index.js");
-        assert_eq!(
-            (step, answer.as_deref()),
-            ("stale", Some("/app/a/index.js"))
-        );
+        let (step, _) = resolve(&mut memo, &specifier, &source, CJS, 7, "/app/a/index.js");
+        assert_eq!(step, "stale");
         let (step, answer) = resolve(&mut memo, &specifier, &source, CJS, 7, "");
         assert_eq!((step, answer.as_deref()), ("kept", Some("/app/a/index.js")));
     }
@@ -608,8 +591,8 @@ mod tests {
             resolve(&mut memo, &specifier, &source, CJS, 5, "/app/a.js");
         }
         memo.forget();
-        let (step, answer) = resolve(&mut memo, &specifier, &source, CJS, 5, "/app/a.cjs");
-        assert_eq!((step, answer.as_deref()), ("stale", Some("/app/a.cjs")));
+        let (step, _) = resolve(&mut memo, &specifier, &source, CJS, 5, "/app/a.cjs");
+        assert_eq!(step, "stale");
         let (step, answer) = resolve(&mut memo, &specifier, &source, CJS, 5, "");
         assert_eq!((step, answer.as_deref()), ("kept", Some("/app/a.cjs")));
         // Also when the epoch moves on.

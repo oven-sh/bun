@@ -44,3 +44,10 @@ impl ResolutionMemo {
 pub(crate) fn into_string(answer: bun_core::WTFString) -> String {
     String::adopt_wtf_impl(answer.into_raw())
 }
+
+/// Another reference to the string of an answer.
+#[inline]
+pub(crate) fn retain(answer: &bun_core::WTFStringImplStruct) -> bun_core::WTFString {
+    // SAFETY: `answer` is a live impl, and the new ref keeps it alive.
+    unsafe { bun_core::WTFString::clone_from_raw(core::ptr::from_ref(answer).cast_mut()) }
+}

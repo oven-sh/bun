@@ -5855,11 +5855,6 @@ impl VirtualMachine {
             )?));
         }
 
-        let mut result = ResolveFunctionResult::default();
-        let jsc_vm_ptr = global.bun_vm_ptr();
-        // SAFETY: per-thread VM is live (caller is on the JS thread).
-        let jsc_vm = unsafe { &mut *jsc_vm_ptr };
-
         // Bare/`node:` builtins: answer from the alias table before paying for UTF-8 copies and the resolver.
         // (Alias names are ASCII, so the Latin-1 bytes are the UTF-8 bytes whenever they can match.)
         if specifier.is_8bit() {
@@ -5878,34 +5873,46 @@ impl VirtualMachine {
             }
         }
 
-        use crate::resolution_memo::{Kind, Lookup, Ticket};
-        let memo_keys = jsc_vm.resolution_memo_keys(specifier, source);
-        let memo_kind = Kind::new(mode.is_esm(), IS_A_FILE_PATH, global_cache);
-        let mut memo_watch = None;
-        let mut memo_epoch = 0;
-        let mut memo_ticket = Ticket::None;
-        let mut memo_answer = None;
-        if let Some((specifier, source)) = memo_keys {
-            if bun_core::Environment::CI_ASSERT {
-                memo_watch = Some(bun_resolver::resolution_epoch::watch());
-            }
-            memo_epoch = bun_resolver::resolution_epoch::get();
-            let answers = &mut jsc_vm.resolution_memo.answers;
-            match answers.get(specifier, source, memo_kind, memo_epoch) {
-                Lookup::Kept(path) => {
-                    let path = crate::resolution_memo::into_string(path);
-                    if !bun_core::Environment::CI_ASSERT {
-                        return Ok(Ok(path));
-                    }
-                    // With assertions on, the resolver runs as well, and it has to agree.
-                    memo_answer = Some(path);
-                }
-                Lookup::Stale(slot) => memo_ticket = Ticket::Refresh(slot),
-                Lookup::Repeated(slot) => memo_ticket = Ticket::Put(slot),
-                Lookup::New(_) | Lookup::Refused => {}
-            }
+        // SAFETY: per-thread VM is live (caller is on the JS thread).
+        let jsc_vm = unsafe { &mut *global.bun_vm_ptr() };
+        if let Some(keys) = jsc_vm.resolution_memo_keys(specifier, source) {
+            return Self::resolve_with_memo::<IS_A_FILE_PATH>(
+                global,
+                keys,
+                (specifier, source),
+                query_string,
+                mode,
+                global_cache,
+            );
         }
-        let resolver_reads = jsc_vm.resolver_reads();
+        Self::resolve_with_resolver::<IS_A_FILE_PATH>(
+            global,
+            specifier,
+            source,
+            query_string,
+            mode,
+            global_cache,
+            true,
+            &mut ResolverFacts::default(),
+        )
+    }
+
+    /// `resolve_without_on_resolve` for what the table of built-in names and the memo do not answer.
+    /// `retry_on_not_found`: a lookup that fails drops the directory from the cache and is made once more.
+    fn resolve_with_resolver<const IS_A_FILE_PATH: bool>(
+        global: &JSGlobalObject,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
+        query_string: Option<&mut bun_core::String>,
+        mode: ResolveMode,
+        global_cache: bun_resolver::GlobalCache,
+        retry_on_not_found: bool,
+        facts: &mut ResolverFacts,
+    ) -> JsResult<Result<bun_core::String, JSValue>> {
+        let mut result = ResolveFunctionResult::default();
+        let jsc_vm_ptr = global.bun_vm_ptr();
+        // SAFETY: per-thread VM is live (caller is on the JS thread).
+        let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
@@ -5933,10 +5940,6 @@ impl VirtualMachine {
             && names_an_on_load_namespace(&specifier_utf8)
             && global.has_on_load(&specifier_utf8)?
         {
-            debug_assert!(
-                memo_answer.is_none(),
-                "the resolution memo answers \"{specifier}\", which an onLoad serves"
-            );
             return Ok(Ok(specifier.clone()));
         }
 
@@ -6005,26 +6008,8 @@ impl VirtualMachine {
             mode.is_esm(),
             IS_A_FILE_PATH,
             global_cache,
-            // A retry drops a directory, and the check below must see the caches as the memo saw them.
-            memo_answer.is_none(),
+            retry_on_not_found,
         );
-        if let Some(answer) = memo_answer {
-            // Another thread can change the resolver's caches during the check.
-            if memo_watch.is_some_and(|watch| watch.is_undisturbed()) {
-                let resolved: &[u8] = if resolve_result.is_ok() {
-                    result.path
-                } else {
-                    b""
-                };
-                // As strings: bytes that are not UTF-8 do not come back out of the memo's copy.
-                debug_assert!(
-                    answer.eql(&bun_core::String::clone_utf8(resolved)),
-                    "the resolution memo answers \"{answer}\" for \"{specifier}\" from \"{source}\", and the resolver \"{}\"",
-                    bstr::BStr::new(resolved),
-                );
-            }
-            return Ok(Ok(answer));
-        }
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
@@ -6086,40 +6071,101 @@ impl VirtualMachine {
             )?));
         }
 
-        let mut kept = None;
-        if let Some((specifier_impl, source_impl)) = memo_keys {
-            let is_from_the_caches =
-                jsc_vm.resolver_reads().cache_misses == resolver_reads.cache_misses;
-            if !matches!(memo_ticket, Ticket::None) && is_from_the_caches {
-                kept = jsc_vm.remember_resolution(
-                    memo_ticket,
-                    specifier_impl,
-                    source_impl,
-                    memo_kind,
-                    &result,
-                    specifier_utf8.slice(),
-                );
-            }
-            if let Some(watch) = memo_watch {
-                jsc_vm.hold_against_last_answer(
-                    &watch,
-                    resolver_reads,
-                    (specifier, specifier_impl),
-                    (source, source_impl),
-                    (memo_kind, memo_epoch),
-                    &result,
-                    specifier_utf8.slice(),
-                );
-            }
-        }
-
         if let Some(query) = query_string {
             *query = bun_core::String::clone_utf8(result.query_string);
         }
 
-        Ok(Ok(kept.unwrap_or_else(|| {
-            bun_core::String::clone_utf8(result.path)
-        })))
+        *facts = ResolverFacts {
+            found_by_resolver: result.found_by_resolver,
+            has_query: !result.query_string.is_empty(),
+        };
+        Ok(Ok(bun_core::String::clone_utf8(result.path)))
+    }
+
+    /// `resolve_without_on_resolve` for two strings that the memo can have an answer for: that answer, or what the
+    /// resolver answers now, which the memo keeps from the second time on that the pair comes.
+    fn resolve_with_memo<const IS_A_FILE_PATH: bool>(
+        global: &JSGlobalObject,
+        keys: (
+            &bun_core::WTFStringImplStruct,
+            &bun_core::WTFStringImplStruct,
+        ),
+        (specifier, source): (&bun_core::String, &bun_core::String),
+        query_string: Option<&mut bun_core::String>,
+        mode: ResolveMode,
+        global_cache: bun_resolver::GlobalCache,
+    ) -> JsResult<Result<bun_core::String, JSValue>> {
+        use crate::resolution_memo::{Kind, Lookup, Ticket};
+        use bun_core::Environment::CI_ASSERT;
+        // SAFETY: per-thread VM is live (caller is on the JS thread).
+        let jsc_vm = unsafe { &mut *global.bun_vm_ptr() };
+        let kind = Kind::new(mode.is_esm(), IS_A_FILE_PATH, global_cache);
+        let watch = CI_ASSERT.then(bun_resolver::resolution_epoch::watch);
+        let epoch = bun_resolver::resolution_epoch::get();
+        let mut ticket = Ticket::None;
+        let mut memo_answer = None;
+        match jsc_vm
+            .resolution_memo
+            .answers
+            .get(keys.0, keys.1, kind, epoch)
+        {
+            Lookup::Kept(path) => {
+                let path = crate::resolution_memo::into_string(path);
+                if !CI_ASSERT {
+                    return Ok(Ok(path));
+                }
+                // With assertions on, the resolver runs as well, and it has to agree.
+                memo_answer = Some(path);
+            }
+            Lookup::Stale(slot) => ticket = Ticket::Refresh(slot),
+            Lookup::Repeated(slot) => ticket = Ticket::Put(slot),
+            Lookup::New(_) | Lookup::Refused => {}
+        }
+        let reads = jsc_vm.resolver_reads();
+        let mut facts = ResolverFacts::default();
+        let resolved = Self::resolve_with_resolver::<IS_A_FILE_PATH>(
+            global,
+            specifier,
+            source,
+            query_string,
+            mode,
+            global_cache,
+            // A retry drops a directory, and the check below must see the caches as the memo saw them.
+            memo_answer.is_none(),
+            &mut facts,
+        )?;
+        // SAFETY: as above. The resolver had the VM meanwhile.
+        let jsc_vm = unsafe { &mut *global.bun_vm_ptr() };
+        if let Some(answer) = memo_answer {
+            // Another thread can change the resolver's caches during the check.
+            if watch.is_some_and(|watch| watch.is_undisturbed()) {
+                debug_assert!(
+                    resolved.as_ref().is_ok_and(|resolved| answer.eql(resolved)),
+                    "the resolution memo answers \"{answer}\" for \"{specifier}\" from \"{source}\", and the resolver \"{}\"",
+                    resolved.as_ref().unwrap_or(&bun_core::String::EMPTY),
+                );
+            }
+            return Ok(Ok(answer));
+        }
+        let Ok(path) = &resolved else {
+            return Ok(resolved);
+        };
+        let is_from_the_caches = jsc_vm.resolver_reads().cache_misses == reads.cache_misses;
+        if !matches!(ticket, Ticket::None) && is_from_the_caches {
+            jsc_vm.remember_resolution(ticket, keys, kind, facts, specifier, path);
+        }
+        if let Some(watch) = watch {
+            jsc_vm.hold_against_last_answer(
+                &watch,
+                reads,
+                keys,
+                (kind, epoch),
+                facts,
+                (specifier, source),
+                path,
+            );
+        }
+        Ok(resolved)
     }
 
     /// The two keys of the memo for a resolution, unless something besides them, the kind of the resolution and
@@ -6178,21 +6224,20 @@ impl VirtualMachine {
         }
     }
 
-    /// Whether the memo can keep what the resolver answered for `specifier_utf8`. A pair that has an entry has a name
-    /// that no `onLoad` serves.
+    /// Whether the memo can keep what the resolver answered for `specifier`. A pair that has an entry has a name that
+    /// no `onLoad` serves.
     fn is_resolution_to_remember(
         &self,
-        result: &ResolveFunctionResult<'_>,
-        specifier_utf8: &[u8],
+        facts: ResolverFacts,
+        specifier: &bun_core::String,
         has_entry: bool,
     ) -> bool {
-        result.found_by_resolver
-            && result.query_string.is_empty()
+        facts.found_by_resolver
+            && !facts.has_query
             // This resolution can be the one that made the package manager.
-            && !(self.transpiler.resolver.package_manager.is_some()
-                && bun_resolver::is_package_path(specifier_utf8))
+            && !(self.transpiler.resolver.package_manager.is_some() && may_name_a_package(specifier))
             // An `onLoad` can serve such a name itself, also one that is registered later.
-            && (has_entry || !names_an_on_load_namespace(specifier_utf8))
+            && (has_entry || !names_an_on_load_namespace(&specifier.to_utf8()))
     }
 
     /// Out of line: most resolutions that the memo does not answer are the first of their pair.
@@ -6201,29 +6246,32 @@ impl VirtualMachine {
     fn remember_resolution(
         &mut self,
         ticket: crate::resolution_memo::Ticket,
-        specifier: &bun_core::WTFStringImplStruct,
-        source: &bun_core::WTFStringImplStruct,
+        (specifier_impl, source_impl): (
+            &bun_core::WTFStringImplStruct,
+            &bun_core::WTFStringImplStruct,
+        ),
         kind: crate::resolution_memo::Kind,
-        result: &ResolveFunctionResult<'_>,
-        specifier_utf8: &[u8],
-    ) -> Option<bun_core::String> {
+        facts: ResolverFacts,
+        specifier: &bun_core::String,
+        path: &bun_core::String,
+    ) {
         use crate::resolution_memo::Ticket;
         let (slot, has_entry) = match ticket {
-            Ticket::None => return None,
+            Ticket::None => return,
             Ticket::Put(slot) => (slot, false),
             Ticket::Refresh(slot) => (slot, true),
         };
-        let is_to_remember = self.is_resolution_to_remember(result, specifier_utf8, has_entry);
-        let answers = &mut self.resolution_memo.answers;
-        if !is_to_remember {
-            answers.refuse(slot);
-            return None;
-        }
-        let kept = match has_entry {
-            true => answers.refresh(slot, result.path),
-            false => answers.put(slot, specifier, source, kind, result.path),
+        let path = match path.as_wtf_impl() {
+            Some(path) if self.is_resolution_to_remember(facts, specifier, has_entry) => {
+                crate::resolution_memo::retain(path)
+            }
+            _ => return self.resolution_memo.answers.refuse(slot),
         };
-        kept.map(crate::resolution_memo::into_string)
+        let answers = &mut self.resolution_memo.answers;
+        match has_entry {
+            true => answers.refresh(slot, &path),
+            false => answers.put(slot, specifier_impl, source_impl, kind, &path),
+        }
     }
 
     /// Builds with assertions: the resolver answers what it answered for the pair before, unless the epoch moved in
@@ -6235,34 +6283,37 @@ impl VirtualMachine {
         &mut self,
         watch: &bun_resolver::resolution_epoch::Watch,
         reads_before: ResolverReads,
-        (specifier, specifier_impl): (&bun_core::String, &bun_core::WTFStringImplStruct),
-        (source, source_impl): (&bun_core::String, &bun_core::WTFStringImplStruct),
+        (specifier_impl, source_impl): (
+            &bun_core::WTFStringImplStruct,
+            &bun_core::WTFStringImplStruct,
+        ),
         (kind, epoch): (crate::resolution_memo::Kind, u64),
-        result: &ResolveFunctionResult<'_>,
-        specifier_utf8: &[u8],
+        facts: ResolverFacts,
+        (specifier, source): (&bun_core::String, &bun_core::String),
+        path: &bun_core::String,
     ) {
         use crate::resolution_memo::Lookup;
         if self.resolver_reads().unrecorded != reads_before.unrecorded
             || !watch.is_undisturbed()
-            || !self.is_resolution_to_remember(result, specifier_utf8, false)
+            || !self.is_resolution_to_remember(facts, specifier, false)
         {
             return;
         }
+        let Some(answer) = path.as_wtf_impl().map(crate::resolution_memo::retain) else {
+            return;
+        };
         let last_answers = self.resolution_memo.last_answers.get_or_insert_default();
         match last_answers.get(specifier_impl, source_impl, kind, epoch) {
             Lookup::Kept(last) => {
                 let last = crate::resolution_memo::into_string(last);
                 debug_assert!(
-                    last.eql(&bun_core::String::clone_utf8(result.path)),
-                    "the resolver answers \"{}\" for \"{specifier}\" from \"{source}\". It answered \"{last}\" before, and nothing since then has moved bun_resolver::resolution_epoch or called VirtualMachine::forget_resolutions()",
-                    bstr::BStr::new(result.path),
+                    last.eql(path),
+                    "the resolver answers \"{path}\" for \"{specifier}\" from \"{source}\". It answered \"{last}\" before, and nothing since then has moved bun_resolver::resolution_epoch or called VirtualMachine::forget_resolutions()",
                 );
             }
-            Lookup::Stale(slot) => {
-                last_answers.refresh(slot, result.path);
-            }
+            Lookup::Stale(slot) => last_answers.refresh(slot, &answer),
             Lookup::Repeated(slot) | Lookup::New(slot) => {
-                last_answers.put(slot, specifier_impl, source_impl, kind, result.path);
+                last_answers.put(slot, specifier_impl, source_impl, kind, &answer);
             }
             Lookup::Refused => {}
         }
@@ -8591,6 +8642,15 @@ fn may_name_a_package(specifier: &bun_core::String) -> bool {
 struct ResolverReads {
     cache_misses: u32,
     unrecorded: u32,
+}
+
+/// What `resolve_with_resolver` says of an answer besides the path.
+#[derive(Clone, Copy, Default)]
+struct ResolverFacts {
+    /// `ResolveFunctionResult::found_by_resolver`
+    found_by_resolver: bool,
+    /// The specifier has a `?query`, which is not part of the path.
+    has_query: bool,
 }
 
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.

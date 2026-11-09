@@ -2810,8 +2810,10 @@ describe.concurrent("resetModules", () => {
             const loading = import("./alone.ts");
             expect(cached("alone.ts")).toEqual([null]);
             jest.resetModules();
-            await loading;
+            const alone = await loading;
             expect(cached("alone.ts")).toEqual([null]);
+            // The reset doesn't start that import again, so its module is the one that is loaded now.
+            expect(await import("./alone.ts")).toBe(alone);
           });
         `,
       },

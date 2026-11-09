@@ -64,6 +64,24 @@ Bun implements most of Jest's matchers, but compatibility isn't 100%. See the co
 
 ---
 
+Jest loads a file in the `__mocks__` directory next to `node_modules` in place of the package with the same name, even if no test calls `jest.mock()`. Bun loads it only after a `jest.mock()` call. To mock those packages in every test file, call `jest.mock()` for each one in a preload script.
+
+```ts title="mocks.preload.ts" icon="/icons/typescript.svg"
+import { jest } from "bun:test";
+
+jest.mock("axios"); // __mocks__/axios
+jest.mock("@scope/package"); // __mocks__/@scope/package
+```
+
+```toml bunfig.toml icon="settings"
+[test]
+preload = ["./mocks.preload.ts"]
+```
+
+Bun looks for the `__mocks__` directory where `bun test` runs. See [Mocking Without a Factory](/test/mocks#mocking-without-a-factory).
+
+---
+
 Replace `testEnvironment: "jsdom"` in your Jest config with `environment` in `bunfig.toml`, and install `jsdom` itself (`bun add -d jsdom`). [`happy-dom`](https://github.com/capricorn86/happy-dom) is a leaner and faster alternative.
 
 ```toml bunfig.toml icon="settings"

@@ -491,6 +491,16 @@ test("automock", () => {
 
 `vi.importMock(path)`, `jest.requireMock(path)` and `jest.createMockFromModule(path)` return the same kind of mock without mocking the module.
 
+Bun loads a `__mocks__` file only for a module that one of these calls names, as in Vitest. Jest also loads `__mocks__/<package>` for a package that no call names. To get that, call `jest.mock()` for each such package in a `--preload` script (see "Hoisting & Preloading" below):
+
+```ts title="mocks.preload.ts" icon="/icons/typescript.svg"
+import { jest } from "bun:test";
+
+jest.mock("axios"); // every test file gets __mocks__/axios
+```
+
+A test file that calls `jest.unmock("axios")` gets the real package.
+
 ### Removing a Mock
 
 | Function                                                   | What it does                                                   |

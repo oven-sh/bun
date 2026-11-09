@@ -1481,7 +1481,7 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2353,
-          line: "globals.ts:322:5",
+          line: "globals.ts:316:5",
           message: "Object literal may only specify known properties, and 'headers' does not exist in type 'string[]'.",
         },
         {

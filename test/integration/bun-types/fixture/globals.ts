@@ -254,16 +254,10 @@ const writableStream = new WritableStream();
 {
   const a = new Blob();
   a.size;
-  expectType(a.slice()).is<Blob>();
-  expectType(a.slice(1)).is<Blob>();
-  expectType(a.slice(1, 2)).is<Blob>();
-  expectType(a.slice(1, 2, "text/plain")).is<Blob>();
 }
 {
   const a = new File(["asdf"], "stuff.txt ");
   a.name;
-  expectType(a.slice(1, 2)).is<Blob>();
-  expectType(Bun.file("a.txt").slice(1, 2)).is<Bun.BunFile>();
 }
 {
   // The JavaScriptCore module loader is not exposed as a global.

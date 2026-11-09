@@ -360,15 +360,6 @@ function createJSDOM({ requireFromTest }: Package, exports: any, options: any): 
   return { ...globals, forgetLastFile, close: () => win.close() };
 }
 
-async function closeHappyDOM(win: any) {
-  if (win.close && win.happyDOM.abort) {
-    await win.happyDOM.abort();
-    win.close();
-  } else {
-    win.happyDOM.cancelAsync();
-  }
-}
-
 function createHappyDOM(_: Package, exports: any, options: any): Environment | string {
   const Window = exports.GlobalWindow || exports.Window;
   if (typeof Window !== "function") return "the package does not export Window";
@@ -384,7 +375,17 @@ function createHappyDOM(_: Package, exports: any, options: any): Environment | s
     "URLSearchParams", "FormData",
   ]);
   addReportError(win, globals);
-  return { ...globals, close: () => closeHappyDOM(win) };
+  return {
+    ...globals,
+    async close() {
+      if (win.close && win.happyDOM.abort) {
+        await win.happyDOM.abort();
+        win.close();
+      } else {
+        win.happyDOM.cancelAsync();
+      }
+    },
+  };
 }
 
 // Without --isolate, modules outlive a file and hold on to DOM nodes, so the window has to outlive it too.
@@ -404,20 +405,26 @@ function restoreClassesOfPackages() {
   for (let i = 0; i < savedClassesOfPackages.length; i++) savedClassesOfPackages[i].restore();
 }
 
-function ignore() {}
+// Calls `use` with a window that is no test file's, and closes it before the next window is made. It has no task to wait for.
+function withOwnHappyDOM(Window: any, use: (win: any) => void) {
+  const win = new Window({ console, settings: { disableErrorCapturing: true } });
+  try {
+    use(win);
+  } finally {
+    if (win.close && win.happyDOM.abort) win.close();
+    else win.happyDOM.cancelAsync();
+  }
+}
 
-// Two windows that are no test file's tell the package's classes from what a window makes for itself.
+// Two windows tell the package's classes from what a window makes for itself. What is saved is their state with no window open.
 function saveClassesOfHappyDOM(exports: any) {
   try {
     const Window = exports.GlobalWindow || exports.Window;
-    const first = new Window({ console, settings: { disableErrorCapturing: true } });
-    const second = new Window({ console, settings: { disableErrorCapturing: true } });
     const saved = new SavedProperties(isNotConsole, builtinsOfSharedGlobal);
-    saved.save(first);
-    saved.keepReachableFrom(second);
+    withOwnHappyDOM(Window, win => saved.save(win));
+    withOwnHappyDOM(Window, win => saved.keepReachableFrom(win));
+    saved.saveChanges();
     $arrayPush(savedClassesOfPackages, saved);
-    closeHappyDOM(first).$then(ignore, ignore);
-    closeHappyDOM(second).$then(ignore, ignore);
   } catch {}
 }
 

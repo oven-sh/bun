@@ -1569,6 +1569,27 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify([false, false, "function", true, false])));
   });
 
+  test("an attribute or a prototype that a file changes on a builtin is undone too", async () => {
+    const state = `JSON.stringify([Object.getOwnPropertyDescriptor(Math, "max").writable, Object.getOwnPropertyDescriptor(Array.prototype, "map").enumerable, Object.getPrototypeOf(Map.prototype) === Object.prototype, Object.getPrototypeOf(Math.min) === Function.prototype, "inherited" in new Map(), Object.isFrozen(JSON), typeof JSON.parse])`;
+    const files = {
+      "a.test.js": `test("a", () => {
+        console.log(${state});
+        Object.defineProperty(Math, "max", { writable: false });
+        Object.defineProperty(Array.prototype, "map", { enumerable: true });
+        Object.setPrototypeOf(Map.prototype, { inherited: 1 });
+        Object.setPrototypeOf(Math.min, null);
+        Object.freeze(JSON);
+      });`,
+      "b.test.js": `test("b", () => { console.log(${state}); });`,
+    };
+    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual([
+      JSON.stringify([true, false, true, true, false, false, "function"]),
+      // A frozen object can't be made extensible again. It keeps its properties.
+      JSON.stringify([true, false, true, true, false, true, "function"]),
+    ]);
+  });
+
   test("restores a global that a file redefined as writable but not configurable, and the properties after it", async () => {
     const state = `JSON.stringify([fetch.name, Object.getOwnPropertyDescriptor(globalThis, "fetch").configurable, "addedLater" in globalThis])`;
     const files = {

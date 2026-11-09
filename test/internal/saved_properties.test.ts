@@ -224,21 +224,47 @@ describe("SavedProperties", () => {
     expect(objects[0].added).toBe(1);
   });
 
-  // The caller restores first. What is written after that is the package's own, such as what a window's constructor writes.
-  test("keepReachableFrom leaves what changed since the last restore, until that object changes again", () => {
+  // Such as what a package writes when one window is closed and the next one is made.
+  test("keepReachableFrom saves what changed since the save as it is now", () => {
     class Shared {}
+    class First {}
+    const saved = new SavedProperties(everyKey);
+    saved.save({ Shared, First });
+    Shared.current = "second";
+    Object.setPrototypeOf(Shared.prototype, null);
+    First.current = "second";
+    saved.keepReachableFrom({ Shared });
+
+    Shared.current = "third";
+    Shared.added = 1;
+    Object.setPrototypeOf(Shared.prototype, Object.prototype);
+    First.added = 1;
+    saved.restore();
+    expect(Shared.current).toBe("second");
+    expect("added" in Shared).toBe(false);
+    expect(Object.getPrototypeOf(Shared.prototype)).toBe(null);
+    expect({ current: First.current, added: First.added }).toEqual({ current: "second", added: 1 });
+  });
+
+  // Such as a count of open windows, which is saved while a window is open and has to be put back as with none.
+  test("saveChanges saves what changed since the save as it is now", () => {
+    class Shared {
+      static open = 1;
+      static untouched = 1;
+    }
     const saved = new SavedProperties(everyKey);
     saved.save({ Shared });
+    Shared.open = 0;
+    Shared.closed = true;
+    saved.saveChanges();
     saved.restore();
-    Shared.current = "second";
-    saved.keepReachableFrom({ Shared });
-    expect(Shared.current).toBe("second");
-    saved.restore();
-    expect(Shared.current).toBe("second");
+    expect({ open: Shared.open, closed: Shared.closed }).toEqual({ open: 0, closed: true });
 
+    Shared.open = 1;
+    Shared.untouched = 2;
     Shared.added = 1;
+    delete Shared.closed;
     saved.restore();
-    expect("current" in Shared).toBe(false);
-    expect("added" in Shared).toBe(false);
+    expect({ ...Shared }).toEqual({ open: 0, untouched: 1, closed: true });
   });
 });

@@ -70,11 +70,11 @@ element instanceof HTMLElement; // true
 
 With [`--isolate=modules`](/test/parallel#--isolate) there is one global object, the package is loaded into it, and these are ordinary arrays.
 
-In both modes, the files' windows share that one copy of the package. Every happy-dom window has the package's own DOM classes, such as `HTMLElement`. Before Bun makes a file's window, it puts back the classes that are properties of the window, and the classes that those inherit from, to what they were when the package was loaded. So a method that one file patches on `HTMLElement.prototype` is the original again in the next file.
+In both modes, the files' windows share that one copy of the package. Every happy-dom window has the package's own DOM classes, such as `HTMLElement`, and some of its objects, such as `NodeFilter`. Before Bun makes a file's window, it puts back the classes and objects that are properties of every window, and the classes that those inherit from, to what they were when the package was loaded. So a method that one file patches on `HTMLElement.prototype` is the original again in the next file.
 
 The restore has limits:
 
-- Bun can't tell who changed a class. What happy-dom itself writes on its classes while a file runs, such as a method that it installs on first use, is undone as well, and happy-dom doesn't install it again.
+- Bun can't tell who made a change. What happy-dom itself writes on those classes and objects while a file runs, such as a method that it installs on first use, is undone as well, and happy-dom doesn't install it again.
 - A class that a file reaches only through an object is not put back. The prototypes of `element.classList`, `element.dataset` and `document.implementation` keep what a file wrote on them.
 - jsdom makes most of its classes for each window, and Bun puts none of them back. jsdom 28 and older share their CSS classes, such as `CSSStyleSheet`, between windows.
 

@@ -112,8 +112,9 @@ const throwingJSDOM = {
   `,
 };
 
-// Like the real happy-dom, every window of this one has the classes that the package made when it was loaded.
-const packagesWithSharedClasses = {
+// Like the real happy-dom, every window of this one has the classes and objects that the package made when it was loaded.
+// Unlike it, it allows one open window at a time, which it counts in the module and on a class.
+const packagesWithSharedClasses = (allowsManyWindows = false) => ({
   "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
   "node_modules/happy-dom/index.js": `
     class HTMLElement {
@@ -121,14 +122,19 @@ const packagesWithSharedClasses = {
         return "first";
       }
     }
+    const registry = {};
     let count = 0;
+    let open = 0;
     let installed = false;
     exports.Window = class Window {
       // With --isolate, Bun first opens two windows of its own, without a url.
       constructor({ console, url }) {
+        if (!${allowsManyWindows} && (open || HTMLElement.open)) throw new Error("one window at a time");
+        HTMLElement.open = ++open;
         HTMLElement.currentWindow = this;
         this.environment = url ? "happy-dom#" + ++count : "the runner's";
         this.HTMLElement = HTMLElement;
+        this.registry = registry;
         // Bun's own. Reading its _stdout opens the stream, so the runner has to leave it alone.
         this.console = new Proxy(console, {
           ownKeys(target) {
@@ -142,16 +148,21 @@ const packagesWithSharedClasses = {
             if (!installed) {
               installed = true;
               HTMLElement.prototype.lazy = function () {};
+              registry.ready = "yes";
             }
             return new HTMLElement();
           },
         };
         this.happyDOM = { async abort() {} };
-        this.close = () => void (this.closed = true);
+        this.close = () => {
+          if (this.closed) return;
+          this.closed = true;
+          HTMLElement.open = --open;
+        };
       }
     };
   `,
-};
+});
 
 function summary(stderr: string) {
   return stderr.match(/^ *\d+ (?:pass|fail|error)s?$/gm)?.map(line => line.trim());
@@ -1134,8 +1145,11 @@ describe.concurrent("test environment", () => {
         const values = [
           // What the constructor of a window wrote is there in that window's file.
           `HTMLElement.currentWindow.environment === environment`,
+          // Bun closes each of its own two windows before the next window is made, and saves the classes when both are closed.
+          `HTMLElement.open`,
           // The limit that docs/test/dom.mdx states: Bun can't tell who wrote a property, and the package is not loaded again.
           `typeof document.createElement().lazy`,
+          `String(registry.ready)`,
           // Like zone.js, which keeps the original beside the patch and doesn't patch what has that key.
           `(() => {
             const prototype = HTMLElement.prototype;
@@ -1148,19 +1162,19 @@ describe.concurrent("test environment", () => {
           })()`,
         ];
         using dir = tempDir("test-environment", {
-          ...packagesWithSharedClasses,
+          ...packagesWithSharedClasses(),
           "a.test.js": file(values.join(", ")),
           "b.test.js": file(values.join(", ")),
           "c.test.js": file(values.join(", ")),
         });
         const { printed, results, exitCode } = await run(String(dir), flags);
-        // Only the first file to run has the method that the package puts on its class on first use.
+        // Only the first file to run has what the package puts on its class and on its object on first use.
         expect(printed.map(line => line.slice(2)).sort()).toEqual([
-          "true function patched first",
-          "true undefined patched first",
-          "true undefined patched first",
+          "true 1 function yes patched first",
+          "true 1 undefined undefined patched first",
+          "true 1 undefined undefined patched first",
         ]);
-        if (!flags.includes("--parallel")) expect(printed[0]).toBe("a true function patched first");
+        if (!flags.includes("--parallel")) expect(printed[0]).toBe("a true 1 function yes patched first");
         expect({ results, exitCode }).toEqual({ results: ["3 pass", "0 fail"], exitCode: 0 });
       },
     );
@@ -1168,7 +1182,9 @@ describe.concurrent("test environment", () => {
     test.each(["--isolate", "--isolate=modules"])("%s: each copy of the package has its own classes", async flags => {
       const left = file(`HTMLElement.prototype.left, (HTMLElement.prototype.left = "left")`);
       const packageFiles = (path: string) =>
-        Object.fromEntries(Object.entries(packagesWithSharedClasses).map(([name, text]) => [`${path}/${name}`, text]));
+        Object.fromEntries(
+          Object.entries(packagesWithSharedClasses()).map(([name, text]) => [`${path}/${name}`, text]),
+        );
       using dir = tempDir("test-environment", {
         ...packageFiles("a"),
         ...packageFiles("b"),
@@ -1187,7 +1203,7 @@ describe.concurrent("test environment", () => {
       "%s: --rerun-each keeps what a file's preload and modules wrote when the file closed its window",
       async flags => {
         using dir = tempDir("test-environment", {
-          ...packagesWithSharedClasses,
+          ...packagesWithSharedClasses(),
           "preload.js": `HTMLElement.prototype.fromPreload = "preload";`,
           "module.js": `HTMLElement.prototype.fromModule = "module";`,
           "a.test.js": `// ${VITEST} happy-dom
@@ -1213,7 +1229,7 @@ describe.concurrent("test environment", () => {
       const names = ["a", "b", "c", "d", "e"];
       const isDictionary = file(`describeValue(HTMLElement.prototype).includes("Dictionary")`);
       using dir = tempDir("test-environment", {
-        ...packagesWithSharedClasses,
+        ...packagesWithSharedClasses(),
         "preload.js": stubs,
         ...Object.fromEntries(names.map(name => [`${name}.test.js`, isDictionary])),
       });
@@ -1237,7 +1253,7 @@ describe.concurrent("test environment", () => {
         if (globalThis.HTMLElement) HTMLElement.prototype._left = name;
       });`;
     using dir = tempDir("test-environment", {
-      ...packagesWithSharedClasses,
+      ...packagesWithSharedClasses(),
       "a.test.js": file("happy-dom"),
       "b.test.js": file("node"),
       "c.test.js": file("happy-dom"),
@@ -1259,7 +1275,8 @@ describe.concurrent("test environment", () => {
         console.log(basename(import.meta.path), HTMLElement.prototype.fromPreload, HTMLElement.prototype.fromModule, environment);
       });`;
     using dir = tempDir("test-environment", {
-      ...packagesWithSharedClasses,
+      // A file with other options has a window of its own beside the kept one.
+      ...packagesWithSharedClasses(true),
       "preload.js": `HTMLElement.prototype.fromPreload = "preload";`,
       "module.js": `HTMLElement.prototype.fromModule = "module";`,
       // The preload runs once, in the project's environment.
@@ -1668,8 +1685,8 @@ describe.concurrent("test environment with the real", () => {
     },
   );
 
-  // Both packages are loaded into the one global that outlives the files, so their classes share its Object.prototype.
-  test("with --isolate a file's change to the builtins behind the packages' classes is undone for both packages", async () => {
+  // Both packages are loaded into the one global that outlives the files. happy-dom's saved classes reach its Object.prototype.
+  test("with --isolate a file's change to the builtins behind happy-dom's classes is undone before a jsdom file too", async () => {
     const happyDom = (body: string) => `// ${VITEST} happy-dom\ntest("happy-dom", () => {
       const builtin = Object.getPrototypeOf(EventTarget.prototype);
       ${body}

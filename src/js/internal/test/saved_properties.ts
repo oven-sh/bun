@@ -80,6 +80,18 @@ function walk(
   visit(root);
 }
 
+function ownProperties(object: object, isTracked: KeyFilter) {
+  const properties: Properties = new $Map();
+  const keys = ownKeys(object);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (!isTracked(object, key)) continue;
+    const descriptor = getDescriptor(object, key);
+    if (descriptor) properties.$set(key, descriptor);
+  }
+  return properties;
+}
+
 // Returns whether it deleted a property.
 function restoreProperties(
   object: object,
@@ -153,10 +165,11 @@ class SavedProperties {
     return seen;
   }
 
-  // Forgets what isn't reachable from `root`. The rest keeps its saved properties. What changed since the last restore() stays.
+  // Forgets what isn't reachable from `root`. Of the rest, what changed since the last save or restore is saved as it is now.
   keepReachableFrom(root: object) {
     const reachable: Objects = new $Map();
     walk(root, this.#isTracked, this.#others, reachable, () => undefined);
+    this.#saveChanged(reachable);
     const objects = this.#objects;
     const properties = this.#properties;
     const prototypes = this.#prototypes;
@@ -172,6 +185,12 @@ class SavedProperties {
     objects.length = kept;
     properties.length = kept;
     prototypes.length = kept;
+    this.#saveShapes();
+  }
+
+  // Saves what changed since the last save or restore as it is now.
+  saveChanges() {
+    this.#saveChanged();
     this.#saveShapes();
   }
 
@@ -191,6 +210,21 @@ class SavedProperties {
     }
     // A property that was put back can be in another slot. A class also gets another structure when it is first used.
     if (lostProperties || changed.length !== this.#alwaysComparedCount) this.#saveShapes(lostProperties);
+  }
+
+  #saveChanged(only?: Objects) {
+    const objects = this.#objects;
+    const changed = indexesOfChanged(objects, this.#shapes);
+    for (let i = 0; i < changed.length; i++) {
+      const index = changed[i];
+      const object = objects[index];
+      if (only && !only.$has(object)) continue;
+      try {
+        const properties = ownProperties(object, this.#isTracked);
+        this.#prototypes[index] = getPrototypeOf(object);
+        this.#properties[index] = properties;
+      } catch {}
+    }
   }
 
   #saveShapes(lostProperties?: number[]) {

@@ -73,6 +73,22 @@ const rewriter = new HTMLRewriter().on("p", {
 });
 const response = rewriter.transform(new Response("<p>response</p>", { status: 201 }));
 console.log(typeof response, response.status, await response.text());
+const ofBlob = rewriter.transform(new Response(new Blob(["<p>blob</p>"]), { status: 202 }));
+console.log(ofBlob.status, await ofBlob.text());
+//// the-response-of-a-file-that-a-rewriter-of-HTML-answers
+//@ file cwd/page.html "<p>from a file</p>\n"
+//@ removes Bun.build
+//@ removes bun:test
+//@ removes Bun.Cookie
+//@ removes SubtleCrypto
+const rewriter = new HTMLRewriter().on("p", {
+  element(element) {
+    element.setAttribute("seen", "yes");
+  },
+});
+const read = () => rewriter.transform(new Response(Bun.file("page.html")));
+console.log(await read().text());
+console.log((await read().arrayBuffer()).byteLength, (await read().blob()).size, (await read().bytes()).length);
 //// what-a-rewriter-of-HTML-refuses
 //@ removes Bun.build
 //@ removes bun:test

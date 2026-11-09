@@ -197,11 +197,23 @@ function inCommandLines(paths: string[]) {
   return lists.filter(list => list.length);
 }
 
+// Each takes as long as two hundred others, and `testaot run` ends a process of sixteen that has printed nothing for 300 seconds. The n-th has ir-alone-n.test.ts.
+const alone = [
+  "link/regexp-texts/a-chain-of-prototypes-is-paid-for-by-its-length.ir",
+  "link/regexp-texts/a-name-that-a-long-chain-lacks-is-paid-for.ir",
+];
+
+export function irTestAlone(nth: number) {
+  if (whyNoEngineTests) return void skipOrFail(whyNoEngineTests);
+  test(alone[nth - 1]!, async () => void (await expectEveryTestPasses(["run", alone[nth - 1]!], engineTests)), 600_000);
+}
+
 /** Every `parts`-th IR test, from the `part`-th on. A new test needs no list: it is in one of the parts. */
 export function irTests(part: number, parts: number) {
   if (whyNoEngineTests) return void skipOrFail(whyNoEngineTests);
+  expect(alone.filter((_, at) => !existsSync(join(import.meta.dir, `ir-alone-${at + 1}.test.ts`)))).toEqual([]);
   const mine = readdirSync(engineTests!, { recursive: true, encoding: "utf8" })
-    .filter(path => path.endsWith(".ir"))
+    .filter(path => path.endsWith(".ir") && !alone.includes(path.replaceAll("\\", "/")))
     .sort()
     .filter((_, index) => index % parts === part - 1);
   test(`${mine.length} IR tests of the engine`, async () => {

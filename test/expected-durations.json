@@ -16,6 +16,18 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/engine/ir-alone-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/ir-alone-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/the-tests-that-run-as-users-build-were-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-late-failure-of-a-factory-is-reported-as-often-as-under-bun-test.test.ts": {
     "default": 60000,
     "asan": 240000

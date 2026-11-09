@@ -73,7 +73,9 @@ export const holdSuitesOffSanitizers = (...parts: string[]) =>
 function hold(title: string, preloaded: string, list: string, parts: string[]) {
   const preload = join(import.meta.dir, preloaded);
   const known = listOf(list);
-  // One after another: each keeps every processor busy by itself.
+  // One after another: each keeps every processor busy by itself. With a sanitizer the cases of a file run beside one another (../supported.ts), so there the parts share the
+  // processors. Each with all of them to itself, five parts start forty child runs at once on eight processors, and a test of a suite runs into the suite's own time limit.
+  const processors = isASAN ? Math.max(2, Math.ceil(availableParallelism() / parts.length)) : availableParallelism();
   describe(title, () => {
     test.each(parts)(
       "%s",
@@ -98,7 +100,7 @@ function hold(title: string, preloaded: string, list: string, parts: string[]) {
             "--preload",
             preload,
             "--timeout=300000",
-            `--max-concurrency=${Math.min(Number(atATime), availableParallelism())}`,
+            `--max-concurrency=${Math.min(Number(atATime), processors)}`,
             ...(of > 1 ? ["-t", `^(?:[^]{${of}})*[^]{${nth - 1}}$`] : []),
             suite,
           ],

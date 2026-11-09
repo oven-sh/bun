@@ -501,7 +501,7 @@ test("automock", () => {
 
 Mocked modules stay mocked after `resetModules()`. After `jest.resetModules()`, the next import also calls the factory again. Existing imports keep their values.
 
-After a reset, the next `import()` or `require()` of a module reads its file again. That also holds with [`--isolate` and `--parallel`](/test/parallel#--isolate), which otherwise reuse the source that an earlier load transpiled, so a suite that resets before every test transpiles its modules again for every test. With [`bun test --aot`](/compiler/debugging#run-your-tests-compiled), a compiled module runs again as it was compiled.
+After a reset, the next `import()` or `require()` of a module reads its file again. That also holds with [`--isolate` and `--parallel`](/test/parallel#--isolate), which otherwise reuse the source that an earlier load transpiled, so a suite that resets before every test transpiles its modules again for every test. If a test writes to a file again after that load, for example to put back its old text, reset once more. Otherwise a later test file can still run the text that was loaded.
 
 As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a module imported again still shares its copy of `react` with the rest of the test. It does load the `.js` files again that Vitest loads like your own code (see [Mocking a Package](#mocking-a-package)). As in Jest, `jest.resetModules()` loads them again too.
 

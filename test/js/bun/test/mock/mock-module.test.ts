@@ -2643,6 +2643,46 @@ describe.concurrent("resetModules", () => {
     );
   });
 
+  test.each(everyMode)("a later test file reads a file that was written before the last reset %j", async args => {
+    await expectFixturesToPass(
+      {
+        "esm.ts": `export const text = "v1";`,
+        "cjs.cjs": `exports.text = "v1";`,
+        "reset.test.ts": `
+          import { afterAll, expect, jest, test } from "bun:test";
+          import { writeFileSync } from "node:fs";
+          import { join } from "node:path";
+
+          const write = text => {
+            writeFileSync(join(import.meta.dir, "esm.ts"), 'export const text = "' + text + '";');
+            writeFileSync(join(import.meta.dir, "cjs.cjs"), 'exports.text = "' + text + '";');
+          };
+          const load = async () => [(await import("./esm.ts")).text, require("./cjs.cjs").text];
+
+          test("loads a text that it replaces afterwards", async () => {
+            expect(await load()).toEqual(["v1", "v1"]);
+            write("v2");
+            jest.resetModules();
+            expect(await load()).toEqual(["v2", "v2"]);
+          });
+          // Without this reset, the next test file runs v2.
+          afterAll(() => {
+            write("v3");
+            jest.resetModules();
+          });
+        `,
+        "the-next.test.ts": `
+          import { expect, test } from "bun:test";
+          import { text } from "./esm.ts";
+          test("reads both", () => expect([text, require("./cjs.cjs").text]).toEqual(["v3", "v3"]));
+        `,
+      },
+      2,
+      args,
+      oneWorkerEnv,
+    );
+  });
+
   test.each(withSourceCache)("vi.resetModules() keeps the sources of the packages that stay loaded %j", async args => {
     await expectFixturesToPass(
       {

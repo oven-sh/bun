@@ -242,6 +242,7 @@ pub fn load_program<'s>(
         is_checker_freed: AtomicBool::new(false),
         cycles_entered: Default::default(),
         origins,
+        origins_behind_reach: Default::default(),
         project_origin: request.project_origin,
         diagnostics,
         bun_types,

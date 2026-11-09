@@ -1778,6 +1778,7 @@
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",
     "aot/asking-the-global-object-for-a-written-name-hands-it-to-nobody.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
-    "aot/typescript-that-tsc-rejects.test.ts"
+    "aot/typescript-that-tsc-rejects.test.ts",
+    "aot/two-calls-left-in-flight-where-the-mock-is-taken-away-share-one-run-of-the-file.test.ts"
   ]
 }

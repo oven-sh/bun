@@ -83,26 +83,23 @@ console.log(await ask(new Worker(job), 1), two);\n`,
     },
     says: "TS2322",
   },
-  // Known: these two ought to build, as they do where no Worker starts out of sight. Nothing reaches the mention, and which
-  // functions are reached isn't known when the files are loaded.
-  "known: a start in a function that nothing reaches names the file": {
-    files: {
-      "main.mjs": `import "./first.js";\n${holdsTyped}`,
-      "first.js": `export function sure() {\n  return new Worker(new URL("./node_modules/@made-up/screen/typed.js", import.meta.url));\n}\n`,
-    },
-    says: "TS8010",
+};
+
+// Nothing reaches these mentions of the file, so the program itself does not load it.
+const mentioned: Record<string, Record<string, string>> = {
+  "a start in a function that nothing reaches names the file": {
+    "main.mjs": `import "./first.js";\n${holdsTyped}`,
+    "first.js": `export function sure() {\n  return new Worker(new URL("./node_modules/@made-up/screen/typed.js", import.meta.url));\n}\n`,
   },
-  "known: a require() in a function that nothing calls names the file": {
-    files: {
-      "main.mjs": `import "./helper.cjs";\n${holdsTyped}`,
-      "helper.cjs": `exports.load = () => require("@made-up/screen/typed.js");\n`,
-    },
-    says: "TS8010",
+  "a require() in a function that nothing calls names the file": {
+    "main.mjs": `import "./helper.cjs";\n${holdsTyped}`,
+    "helper.cjs": `exports.load = () => require("@made-up/screen/typed.js");\n`,
   },
 };
 
-test.concurrent.each(Object.keys(cases))("%s", async name => {
-  using sources = tempDir("aot-a-worker-file-in-a-package", { ...ofPackage, "main.mjs": cases[name] });
+test.concurrent.each([...Object.keys(cases), ...Object.keys(mentioned)])("%s", async name => {
+  const own = mentioned[name] ?? { "main.mjs": cases[name] };
+  using sources = tempDir("aot-a-worker-file-in-a-package", { ...ofPackage, ...own });
   using elsewhere = tempDir("aot-a-worker-file-in-a-package-run", {});
   const executable = join(String(elsewhere), isWindows ? "program.exe" : "program");
   const plain = await run([bunExe(), "main.mjs"], String(sources), bunEnv);

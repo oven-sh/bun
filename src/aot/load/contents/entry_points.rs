@@ -143,6 +143,8 @@ struct FoundSoFar {
     entry_points: Vec<(Vec<u8>, FoundEntryPoint)>,
     merely_guessed: FxHashSet<Vec<u8>>,
     named_for_more_than_a_worker_that_may_start: FxHashSet<Vec<u8>>,
+    named_by_more_than_workers: FxHashSet<Vec<u8>>,
+    named_as_what_a_worker_may_start: FxHashSet<Vec<u8>>,
     names_written: Vec<EntryPointPaths>,
 }
 
@@ -1245,6 +1247,14 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             };
             for path in paths {
                 keys_of_answer.push(self.key_of(&path));
+                if !because.is_for_worker() {
+                    let named = &mut found.named_by_more_than_workers;
+                    named.insert(self.key_of(&path));
+                }
+                if because == FoundBecause::MayStartWorker {
+                    let named = &mut found.named_as_what_a_worker_may_start;
+                    named.insert(self.key_of(&path));
+                }
                 if because != FoundBecause::MayStartWorker {
                     let named = &mut found.named_for_more_than_a_worker_that_may_start;
                     named.insert(self.key_of(&path));
@@ -1409,7 +1419,18 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             }
         }
         for (key, entry_point) in keys.iter().zip(entry_points) {
-            if !entry_point.because.is_for_worker() || found.named_otherwise.contains(key) {
+            // A package's file that is held as a file and that sure starts name too waits for those starts. The reach seeds it
+            // behind them, as what a Worker may start.
+            let waits_though_held = entry_point.because.is_for_worker()
+                && found.named_as_what_a_worker_may_start.contains(key)
+                && is_in_node_modules(&entry_point.source_path)
+                && !found.named_by_more_than_workers.contains(key);
+            if waits_though_held {
+                // Of two mentions of one file either reason may have stayed.
+                entry_point.because = FoundBecause::MayStartWorker;
+            }
+            let is_named_otherwise = found.named_otherwise.contains(key) && !waits_though_held;
+            if !entry_point.because.is_for_worker() || is_named_otherwise {
                 entry_point.starts.clear();
             }
         }

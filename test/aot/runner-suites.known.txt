@@ -102,6 +102,8 @@ test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module th
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing
+# The next one's fixture writes and deletes a name of a mocked namespace 30,000 times in one test, which has the 5 s that a test has by default. With a sanitizer, beside the other jobs of a lane, it took 6.6 s.
+~ASAN test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > writes and deletes aren't cached by the JIT
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > gets the original if the factory has no source file either
 test/js/bun/test/mock/mock-module.test.ts: a module that a factory loads while it runs > with import() and require()
 test/js/bun/test/mock/mock-module.test.ts: a module that is evicted while it is still loading > and fails to load

@@ -676,7 +676,7 @@ pub fn read_file_contents_in_arena(
     file: &bun_sys::File,
     path: &[u8],
     arena: &bun_alloc::Arena,
-    keeps_byte_order_mark: bool,
+    byte_order_mark: ByteOrderMark,
 ) -> crate::CrateResult<(core::ptr::NonNull<u8>, usize)> {
     let _ = path;
     crate::fs::FileSystem::set_max_fd(file.handle().native());
@@ -697,7 +697,7 @@ pub fn read_file_contents_in_arena(
             arena,
             buf,
             read_count,
-            keeps_byte_order_mark,
+            byte_order_mark,
         ));
     }
     let initial_len = read_count;
@@ -733,12 +733,7 @@ pub fn read_file_contents_in_arena(
     let total = read_count + initial_len;
     debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
-    Ok(finish_arena_contents(
-        arena,
-        buf,
-        total,
-        keeps_byte_order_mark,
-    ))
+    Ok(finish_arena_contents(arena, buf, total, byte_order_mark))
 }
 
 /// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill),
@@ -761,6 +756,15 @@ fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) }
 }
 
+/// What becomes of a byte order mark at the start of a file that is read.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum ByteOrderMark {
+    /// The bytes are handed on as they are on disk.
+    Kept,
+    /// The mark goes, and UTF-16 becomes UTF-8.
+    Converted,
+}
+
 /// Strip BOM in-place (UTF-8) or via a fresh arena copy (UTF-16), write the
 /// trailing NUL, and return `(ptr, len)`. `buf.len() >= total + 1`.
 #[inline]
@@ -768,9 +772,10 @@ fn finish_arena_contents(
     arena: &bun_alloc::Arena,
     buf: &mut [u8],
     mut total: usize,
-    keeps_byte_order_mark: bool,
+    byte_order_mark: ByteOrderMark,
 ) -> (core::ptr::NonNull<u8>, usize) {
-    if let Some(bom) = BOM::detect(&buf[..total]).filter(|_| !keeps_byte_order_mark) {
+    let is_converted = byte_order_mark == ByteOrderMark::Converted;
+    if let Some(bom) = BOM::detect(&buf[..total]).filter(|_| is_converted) {
         debug!("Convert {} BOM", bom.tag_name());
         match bom {
             BOM::Utf8 => {

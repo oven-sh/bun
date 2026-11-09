@@ -1595,7 +1595,7 @@ pub mod fs {
     /// `bun_bundler::cache`) routes through ONE body instead of inlining a
     /// subset of `readFileWithHandleAndAllocator`.
     pub use super::fs_full::{
-        BOM, PathContentsPair, read_file_contents, read_file_contents_in_arena,
+        BOM, ByteOrderMark, PathContentsPair, read_file_contents, read_file_contents_in_arena,
         read_file_with_handle_impl,
     };
 
@@ -2181,13 +2181,14 @@ pub mod cache {
             file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
+            let mark = fs_mod::ByteOrderMark::Converted;
             self.read_file(
                 path,
                 dirname_fd,
                 use_shared_buffer,
                 file_handle,
                 arena,
-                false,
+                mark,
             )
         }
 
@@ -2199,7 +2200,8 @@ pub mod cache {
             file_handle: Option<Fd>,
             arena: &bun_alloc::Arena,
         ) -> crate::CrateResult<Entry> {
-            self.read_file(path, dirname_fd, false, file_handle, Some(arena), true)
+            let mark = fs_mod::ByteOrderMark::Kept;
+            self.read_file(path, dirname_fd, false, file_handle, Some(arena), mark)
         }
 
         fn read_file(
@@ -2209,7 +2211,7 @@ pub mod cache {
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
-            keeps_byte_order_mark: bool,
+            byte_order_mark: fs_mod::ByteOrderMark,
         ) -> crate::CrateResult<Entry> {
             let will_close =
                 fs_mod::FileSystem::get().fs.need_to_close_files() && _file_handle.is_none();
@@ -2273,7 +2275,7 @@ pub mod cache {
                 // segment in the worker thread's default heap.
                 (false, Some(arena)) => {
                     let read = fs_mod::read_file_contents_in_arena;
-                    match read(file_handle, path, arena, keeps_byte_order_mark) {
+                    match read(file_handle, path, arena, byte_order_mark) {
                         Ok((_, 0)) => Contents::Empty,
                         Ok((ptr, len)) => Contents::Arena { ptr, len },
                         Err(err) => {

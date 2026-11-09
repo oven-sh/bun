@@ -71,6 +71,7 @@ pub struct LoadedProgram<'s> {
     is_checker_freed: AtomicBool,
     cycles_entered: Guarded<Vec<(u32, u32, usize, CyclesEntered)>>,
     origins: Vec<FileOrigin>,
+    origins_behind_reach: OnceLock<Vec<FileOrigin>>,
     project_origin: FileOrigin,
     pub diagnostics: Vec<BuildDiagnostic>,
     bun_types: BunTypes,
@@ -108,7 +109,24 @@ impl<'s> LoadedProgram<'s> {
     }
 
     pub fn origin(&self, file: FileId) -> FileOrigin {
-        self.origins[file.idx()]
+        self.origins()[file.idx()]
+    }
+
+    fn origins(&self) -> &[FileOrigin] {
+        self.origins_behind_reach.get().unwrap_or(&self.origins)
+    }
+
+    /// `files` are in the program only through entry points that are evaluated text: the code of the program that names
+    /// them is reached by nothing.
+    pub fn hold_as_evaluated_text(&self, files: &[FileId]) {
+        if files.is_empty() {
+            return;
+        }
+        let mut origins = self.origins.clone();
+        for file in files {
+            origins[file.idx()] = FileOrigin::EvaluatedText;
+        }
+        let _ = self.origins_behind_reach.set(origins);
     }
 
     pub fn leave_files_to_loader(&self, mut files: Vec<FileId>) {
@@ -193,7 +211,7 @@ impl<'s> LoadedProgram<'s> {
     fn program_origins(&self) -> ProgramOrigins<'_, 's> {
         ProgramOrigins {
             files: Some(self.files),
-            origins: &self.origins,
+            origins: self.origins(),
             project_origin: self.project_origin,
             bun_types: &self.bun_types,
             has_configuration_file: self.has_configuration_file,

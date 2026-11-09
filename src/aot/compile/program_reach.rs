@@ -2597,6 +2597,7 @@ impl<'a, 's> Walk<'a, 's> {
         &self,
         found: &mut Found,
         loads: &mut LoadsByUnknownNames<'a>,
+        seeded_last: &[FileId],
     ) {
         let input = self.input;
         let mut reacher = Reacher { walk: self, found };
@@ -2635,6 +2636,9 @@ impl<'a, 's> Walk<'a, 's> {
             }
         }
         for entry_point in input.sources.entry_points() {
+            if seeded_last.contains(&entry_point.file) {
+                continue;
+            }
             if !waits_for_start.contains(&entry_point.file) {
                 reacher.reach_every_export(ModuleRef::File(entry_point.file));
             }
@@ -2674,11 +2678,45 @@ impl<'a, 's> Walk<'a, 's> {
         found_lists
     }
 
-    fn run(&mut self, in_parallel: InParallel<'_>) -> (Found, LoadsByUnknownNames<'a>, [usize; 3]) {
+    fn reach_entry_points_seeded_last(&self, found: &mut Found, seeded_last: &[FileId]) {
+        let input = self.input;
+        let mut reacher = Reacher { walk: self, found };
+        let files = input.files.compiled_files().iter();
+        let hands_on_module_objects = !input.files_started_by_runner.is_empty()
+            || files
+                .filter_map(|&file| parsed_source(input.files, file))
+                .any(|source| source.builtins.mentions_evaluator());
+        for &file in seeded_last {
+            reacher.reach_every_export(ModuleRef::File(file));
+            if hands_on_module_objects {
+                let owner = ModuleObjectOwner::EntryPoint;
+                reacher.reach_module_object(file, owner, ModuleObjectUse::HandedOn);
+            }
+        }
+    }
+
+    fn list_files_not_alive(&self) -> Vec<FileId> {
+        let files = self.files.iter().enumerate();
+        let scanned = files.filter_map(|(index, units)| Some((index, units.as_ref()?)));
+        scanned
+            .filter(|(_, units)| !is_marked(&units.is_region_reached[TOP_LEVEL as usize]))
+            .map(|(index, _)| FileId(index as u32))
+            .collect()
+    }
+
+    /// One walk. `seeded_last` are seeded when everything else has run dry, and the last of the answer lists the files that
+    /// were not alive then. The marks only ever get set, so what is alive at the end does not hang on the order.
+    fn run(
+        &mut self,
+        in_parallel: InParallel<'_>,
+        seeded_last: &[FileId],
+    ) -> (Found, LoadsByUnknownNames<'a>, [usize; 3], Vec<FileId>) {
+        let mut not_alive_in_front: Vec<FileId> = Vec::new();
+        let mut to_seed = Some(seeded_last).filter(|it| !it.is_empty());
         let (mut found, mut loads) = (Found::default(), LoadsByUnknownNames::default());
         let [mut rounds, mut steps_of_rounds, mut other_steps] = [0; 3];
         let mut lists: Vec<Vec<Step>> = Vec::new();
-        self.reach_where_the_program_starts(&mut found, &mut loads);
+        self.reach_where_the_program_starts(&mut found, &mut loads, seeded_last);
         loop {
             self.keep_what_waits(&mut found, &mut loads);
             let count = found.steps.len() + lists.iter().map(Vec::len).sum::<usize>();
@@ -2697,7 +2735,12 @@ impl<'a, 's> Walk<'a, 's> {
                 };
                 reacher.take_step(step);
             } else {
-                return (found, loads, [rounds, steps_of_rounds, other_steps]);
+                let Some(last) = to_seed.take() else {
+                    let counts = [rounds, steps_of_rounds, other_steps];
+                    return (found, loads, counts, not_alive_in_front);
+                };
+                not_alive_in_front = self.list_files_not_alive();
+                self.reach_entry_points_seeded_last(&mut found, last);
             }
         }
     }
@@ -3905,6 +3948,8 @@ pub(crate) struct LeftOutCode {
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     bound_variables: SharedSet<Sym>,
     pub holds_every_load_by_unknown_name: bool,
+    /// Sorted. In the program, and not yet when the entry points that are seeded last were still to come.
+    pub files_alive_through_last_seeds_alone: Vec<FileId>,
 }
 
 impl LeftOutCode {
@@ -4057,13 +4102,23 @@ fn fingerprint(
         .wrapping_add(u64::from(left_out.holds_every_load_by_unknown_name))
 }
 
+#[cfg(test)]
 pub(crate) fn find_left_out_code(
     input: &ProgramReachInput<'_, '_>,
     in_parallel: InParallel<'_>,
 ) -> (LeftOutCode, ReachedModules) {
+    find_left_out_code_seeding_last(input, &[], in_parallel)
+}
+
+pub(crate) fn find_left_out_code_seeding_last(
+    input: &ProgramReachInput<'_, '_>,
+    seeded_last: &[FileId],
+    in_parallel: InParallel<'_>,
+) -> (LeftOutCode, ReachedModules) {
     let mut walk = Walk::new(input, in_parallel);
     let mut steps = StepClock::new(Stage::BindModules);
-    let (found, loads, [rounds, steps_of_rounds, other_steps]) = walk.run(in_parallel);
+    let (found, loads, [rounds, steps_of_rounds, other_steps], not_alive_in_front) =
+        walk.run(in_parallel, seeded_last);
     let loads_isolated_code = found.loads_isolated_code;
     steps.end("reach: walk");
     steps.end_with(|| {
@@ -4220,6 +4275,9 @@ pub(crate) fn find_left_out_code(
     left_out.holds_every_load_by_unknown_name = !loads.is_any_reached
         && !loads_isolated_code
         && !input.files.compiled_files().iter().any(loads_outside_units);
+    left_out.files_alive_through_last_seeds_alone = (not_alive_in_front.into_iter())
+        .filter(|file| left_out.files.binary_search(file).is_err())
+        .collect();
     steps.end("reach: list what is left out");
     steps.end_with(|| {
         let scanned = walk.files.iter().flatten();

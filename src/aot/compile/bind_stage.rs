@@ -1,7 +1,7 @@
 use super::lower_stage::may_fail_where_loaded;
 use super::program_reach::{
-    LeftOutCode, ProgramReachInput, ReachedModules, ReplacedLoaderHook, find_left_out_code,
-    find_root_folders_spelled,
+    LeftOutCode, ProgramReachInput, ReachedModules, ReplacedLoaderHook,
+    find_left_out_code_seeding_last, find_root_folders_spelled,
 };
 use super::summary::{collect_names_followed, collect_program_file_paths};
 use super::{BoundBuild, BoundProject, Build, LoadedBuild};
@@ -585,6 +585,22 @@ impl Build<'_> {
                     .collect();
                 starts_of_workers
                     .sort_unstable_by_key(|&(file, at, entry_point)| (file, at.0, entry_point));
+                // What the build compiles only because a Worker may start it is no root of the program's own.
+                let host = loaded.project(project).host;
+                let found_entry_points = view.files().entry_points().iter().copied();
+                let seeded_last: Vec<FileId> = found_entry_points
+                    .skip(written_entry_point_count)
+                    .zip(&contents.found_entry_points)
+                    .filter(|&(file, found)| {
+                        let name = view.files().module(file).file_name();
+                        let may_start = crate::load::contents::FoundBecause::MayStartWorker;
+                        let waits_for_sure_starts = found.because == may_start
+                            && !found.starts.is_empty()
+                            && crate::load::is_in_node_modules(name);
+                        host.is_evaluated_text(name) || waits_for_sure_starts
+                    })
+                    .map(|(file, _)| file)
+                    .collect();
                 let input = ProgramReachInput {
                     files: view.files(),
                     sources: view.sources,
@@ -613,8 +629,10 @@ impl Build<'_> {
                         true => collect_program_file_paths(view.files(), view.sources),
                         false => Vec::new(),
                     },
-                    || find_left_out_code(&input, &in_parallel),
+                    || find_left_out_code_seeding_last(&input, &seeded_last, &in_parallel),
                 );
+                let alone = &left_out.files_alive_through_last_seeds_alone;
+                loaded.project(project).loaded.hold_as_evaluated_text(alone);
                 let held = program_files.into_iter();
                 let held = held.filter(|(file, _)| left_out.files.binary_search(file).is_err());
                 self.started_workers.program_files = held.map(|(_, paths)| paths).collect();

@@ -123,10 +123,7 @@ export function pathToUpperSnakeCase(filepath: string) {
     .toUpperCase();
 }
 
-/**
- * The entries of a list option: `a,b,c`, or `@<file>` with one entry per line, for a list that does not fit a command
- * line (writeBindgenSources in scripts/build/codegen.ts).
- */
+/** The entries of a list option: `a,b,c`, or `@<file>` with one entry per line (scripts/build/codegen.ts writes one). */
 export function listOption(value: string): string[] {
   const entries = value.startsWith("@") ? fs.readFileSync(value.slice(1), "utf8").split(/\r?\n/) : value.split(",");
   return entries.filter(entry => entry.length > 0);

@@ -90,6 +90,8 @@ pub enum VariableKey {
     MockOfRuntimeModule(RuntimeModule),
     RequiresMadeForOwnFile(FileId),
     RequiresMadeForOtherFolders(FileId),
+    /// The requires that the real createRequire() made in the file for a written path other than the file's own.
+    RequiresMadeForPaths(FileId),
 }
 
 impl FunctionKey {
@@ -180,6 +182,7 @@ impl VariableKey {
             | VariableKey::InstantiationState(file)
             | VariableKey::RequiresMadeForOwnFile(file)
             | VariableKey::RequiresMadeForOtherFolders(file)
+            | VariableKey::RequiresMadeForPaths(file)
             | VariableKey::EnvironmentMadeAhead(file) => Some(file),
             VariableKey::InnerModuleExports(callback) => Some(callback.file),
             VariableKey::PrivateState { state, .. } => Some(state.file),

@@ -733,12 +733,15 @@ export function createOnWarning(
     writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
-      // The native path.basename(): what a program has stored under that name of node:path is not asked.
-      const program = (
-        process.platform === "win32"
-          ? $bindgen("node_path.bind.ts", "basenameWin32")
-          : $bindgen("node_path.bind.ts", "basenamePosix")
-      )(processObject.argv0 || "node");
+      const argv0 = processObject.argv0 || "node";
+      // A string goes to the native path.basename(), so a path.basename() that the program replaced is not called.
+      // Anything else goes to node:path, which throws unless the program replaced basename().
+      const program =
+        typeof argv0 !== "string"
+          ? require("node:path").basename(argv0)
+          : (process.platform === "win32"
+              ? $bindgen("node_path.bind.ts", "basenameWin32")
+              : $bindgen("node_path.bind.ts", "basenamePosix"))(argv0);
       writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
     }
   };

@@ -50,7 +50,7 @@ unsafe extern "C" {
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
     safe fn Bun__isCompiledProgramFileInSomeForm(path: &bun_core::String) -> bool;
-    safe fn Bun__AOT__willRunEntryPointAgain(global: &JSGlobalObject, path: &bun_core::String);
+    safe fn Bun__AOT__willReevaluateEntryPoint(global: &JSGlobalObject, path: &bun_core::String);
     safe fn Bun__AOT__willRunPreloads(global: &JSGlobalObject);
     safe fn Bun__AOT__didRunPreloads(global: &JSGlobalObject);
     safe fn Bun__AOT__mayHoldPathStartingWith(start: FfiSlice<'_>) -> bool;
@@ -136,7 +136,7 @@ pub extern "C" fn Bun__compiledProgramNamesPlugin() -> bool {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__AOT__onResolveAnswersFor(
+pub extern "C" fn Bun__AOT__resolveWithPlugins(
     global: &JSGlobalObject,
     name: &bun_core::String,
     importer: &bun_core::String,
@@ -207,7 +207,7 @@ fn find_without_plugins(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__AOT__findWithoutPlugins(
+pub extern "C" fn Bun__AOT__resolveWithoutPlugins(
     global: &JSGlobalObject,
     name: &bun_core::String,
     importer: &bun_core::String,
@@ -247,7 +247,7 @@ pub extern "C" fn Bun__AOT__pathOfDefaultForm(path: &bun_core::String) -> bun_co
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__AOT__stampOfFile(path: *const u8, length: usize) -> u64 {
+pub unsafe extern "C" fn Bun__AOT__computeFileStamp(path: *const u8, length: usize) -> u64 {
     // SAFETY: the caller hands `length` readable bytes at `path`. No zero byte is asked for behind them.
     let path = unsafe { core::slice::from_raw_parts(path, length) };
     let stat = |file: &[u8]| bun_sys::stat(&bun_core::ZBox::from_bytes(file)).ok();
@@ -387,7 +387,7 @@ fn entry_module_key_in<'a>(graph: &'static dyn StandaloneModuleGraph, path: &'a 
 /// `bun test --rerun-each`: the next load of the test file runs its body again, over what it imports as that stands.
 pub fn will_run_entry_point_again(global: &JSGlobalObject, key: &[u8]) {
     if compiled_program().is_some() {
-        Bun__AOT__willRunEntryPointAgain(global, &bun_core::StringView::from_bytes(key));
+        Bun__AOT__willReevaluateEntryPoint(global, &bun_core::StringView::from_bytes(key));
     }
 }
 

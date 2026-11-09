@@ -354,8 +354,8 @@ fn find_forms_given_to_several_types(
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Spelling {
     WithoutExtension,
-    UnderAnotherExtension,
-    AsFolder,
+    WithOtherExtension,
+    AsDirectory,
 }
 
 fn without_extension_of_file(path: &[u8]) -> &[u8] {
@@ -381,9 +381,9 @@ pub(super) fn find_spelling(
     match &written[..] {
         written if written == path => None,
         written if written == without_extension_of_file(path) => Some(Spelling::WithoutExtension),
-        written if Some(written) == folder => Some(Spelling::AsFolder),
+        written if Some(written) == folder => Some(Spelling::AsDirectory),
         written if without_extension_of_file(written) == without_extension_of_file(path) => {
-            Some(Spelling::UnderAnotherExtension)
+            Some(Spelling::WithOtherExtension)
         }
         _ => None,
     }

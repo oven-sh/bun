@@ -23,6 +23,10 @@ const commonJsAbove = (floor: string) => ({
   "panel.cjs": commonJs["panel.cjs"],
 });
 const lay = (file: string) => `  vi.doMock("./${file}", () => ({ level: "deep" }));\n`;
+// `bun test` links what a factory loads to the original of the file that it mocks, and takes it out when the factory ends.
+const layBehindLoadOf = (file: string) =>
+  `  vi.doMock("./floor.mjs", async () => {\n    await import("./${file}");\n    return { level: "deep" };\n  });\n` +
+  `  console.log("SAID", "mock", (await import("./floor.mjs")).level);\n`;
 // The test holds the door, so the second call reaches the panel by the require() in it and by nothing else.
 const door = { "door.cjs": `exports.show = () => require("./panel.cjs").show();\n` };
 const throughDoor = (body: string) => inTest(`  const door = await import("./door.cjs");\n` + body);
@@ -221,6 +225,27 @@ const runs = {
     files: { ...kiln, "b.test.mjs": inTest(fire("first") + `  vi.doMock("./kiln.mjs");\n`) },
     named: [],
   },
+  "a factory loads a module above the file that it mocks, and the test asks for that module behind the end of the factory":
+    {
+      files: { ...esModules, "b.test.mjs": inTest(layBehindLoadOf("panel.mjs") + ask("second", "panel.mjs")) },
+      named: ["meter.mjs, while b.test.mjs ran", "panel.mjs, while b.test.mjs ran"],
+    },
+  "a factory loads a module above the file that it mocks, and nobody asks for that module again": {
+    files: { ...esModules, "b.test.mjs": inTest(layBehindLoadOf("panel.mjs")) },
+    named: [],
+  },
+  "a factory loads a module that no mock lies below, and the test asks for that module again": {
+    files: { ...esModules, "b.test.mjs": inTest(layBehindLoadOf("aside.mjs") + ask("second", "aside.mjs")) },
+    named: [],
+  },
+  "a factory loads a module above the file that it mocks, the modules are reset, and the test asks for that module, which runs again":
+    {
+      files: {
+        ...esModules,
+        "b.test.mjs": inTest(layBehindLoadOf("panel.mjs") + `  vi.resetModules();\n` + ask("second", "panel.mjs")),
+      },
+      named: [],
+    },
   "nobody asks again": {
     files: { ...esModules, "b.test.mjs": inTest(lay("floor.mjs") + ask("first", "panel.mjs")) },
     named: [],
@@ -249,7 +274,7 @@ test.each(Object.entries(runs))(
     using directory = tempDir("files-that-did-not-run-again", { "package.json": `{ "name": "made-up" }`, ...files });
     const { stdout, stderr, exitCode } = await run([bunExe(), "test", "--aot", ...flags], String(directory), bunEnv);
     const lines = (stdout + "\n" + stderr).split("\n");
-    const rows = lines.filter(line => / ran$/.test(line) && line.includes(", while ")).map(line => line.trim());
+    const rows = lines.filter(line => /^\s*\S+, while .+ ran$/.test(line)).map(line => line.trim());
     const listed = flags.length ? rows.map(row => row.split(",")[0]) : rows;
     expect(listed.sort()).toEqual(named);
     expect(lines.some(line => line.includes("didn't run again"))).toBe(named.length > 0);

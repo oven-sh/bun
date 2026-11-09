@@ -197,7 +197,7 @@ fn the_names_other_than_exports_are_slots_only_where_the_wrapper_is_kept() {
 }
 
 #[test]
-fn a_name_that_is_never_stored_is_no_slot_of_a_wrapper_kept_for_another_name() {
+fn unstored_name_gets_no_slot() {
     let source = format!(
         "{KEEPS_WRAPPER} module.exports.b = function () {{ \
          return [require, module, exports, __dirname, __filename]; }};"

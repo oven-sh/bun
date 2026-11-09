@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c21c44ea067564fdbb28b3b4df0412ec0a0dd5893d2ffd1cfc6eece3b0f0708d.
+// Written against that file with the SHA-256 34b28730976f3729b1f08385ac19a7f622a31d5c76459e81ae77e00f2e40eba8.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -761,12 +761,24 @@ export function createOnWarning(
     writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
-      // The native path.basename(): what a program has stored under that name of node:path is not asked.
-      const program = (
-        process.platform === "win32"
-          ? $bindgen("node_path.bind.ts", "basenameWin32")
-          : $bindgen("node_path.bind.ts", "basenamePosix")
-      )(processObject.argv0 || "node");
+      const argv0: unknown = processObject.argv0 || "node";
+      let program: string;
+      // A string goes to the native path.basename(), so a path.basename() that the program replaced is not called.
+      // Anything else goes to node:path, which throws unless the program replaced basename().
+      if (typeof argv0 !== "string" && CAN_LOAD_NODE_PATH) {
+        program = require("node:path").basename(argv0);
+      } else {
+        // Nothing can have replaced basename(), so the module stays out of the executable. Object lists a member from when it is first read,
+        // and node:path reads these three when it loads.
+        if (typeof argv0 !== "string") {
+          const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
+        }
+        program = (
+          process.platform === "win32"
+            ? $bindgen("node_path.bind.ts", "basenameWin32")
+            : $bindgen("node_path.bind.ts", "basenamePosix")
+        )(argv0 as string);
+      }
       writeOut(`(Use \`${program} --trace-warnings ...\` to show where the warning was created)`);
     }
   };

@@ -1312,10 +1312,10 @@ impl RecordBuilder<'_, '_, '_> {
         if graph.is_reached_by(module, Spelling::WithoutExtension) {
             flags |= ModuleFlags::IS_REACHED_WITHOUT_EXTENSION;
         }
-        if graph.is_reached_by(module, Spelling::UnderAnotherExtension) {
+        if graph.is_reached_by(module, Spelling::WithOtherExtension) {
             flags |= ModuleFlags::IS_REACHED_UNDER_ANOTHER_EXTENSION;
         }
-        if graph.is_reached_by(module, Spelling::AsFolder) {
+        if graph.is_reached_by(module, Spelling::AsDirectory) {
             flags |= ModuleFlags::IS_REACHED_AS_FOLDER;
         }
         if matches!(module, ModuleRef::File(file) if graph.runs_again(file)) {

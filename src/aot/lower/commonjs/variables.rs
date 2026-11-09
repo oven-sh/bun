@@ -207,7 +207,7 @@ impl FileLowering<'_, '_, '_, '_> {
         self.body_form() == BodyForm::Plain && self.inputs.modules.runs_again(self.file)
     }
 
-    pub(super) fn is_handed_to_wrapped_body(&self, variable: CommonJsVariable) -> bool {
+    pub(super) fn is_passed_by_wrapper(&self, variable: CommonJsVariable) -> bool {
         variable == CommonJsVariable::Exports
             || self.scopes.arguments_object(CodeUnit::File) != ArgumentsObject::None
     }
@@ -977,7 +977,7 @@ pub(super) fn emit_entry_value(
         FunctionKey::WrappedModuleBody(lowering.file.file),
         "the wrapper's parameters are entry values of the function that holds the text"
     );
-    let value = match lowering.file.is_handed_to_wrapped_body(variable) {
+    let value = match lowering.file.is_passed_by_wrapper(variable) {
         true => {
             let index = wrapper_parameter_index(variable);
             lowering.builder.parameter(index)

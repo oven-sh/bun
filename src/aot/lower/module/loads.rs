@@ -545,24 +545,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let require_call = matches!(site.kind, ImportSiteKind::Require(_))
             .then(|| find_require_call(hir, bound, decisions, callee, arguments))
             .flatten();
-        let replaced = self.file.inputs.replaced_builtins;
         let made = require_call.map_or(callee, |found| found.require);
-        let is_replaced = |builtin: BuiltinId| replaced.binary_search(&(builtin as u32)).is_ok();
         let modules = self.file.inputs.modules;
-        let is_maker_replaced = self.may_tests_replace_what_was_made()
-            || is_replaced(BuiltinId::FunctionPrototypeCall)
-            || is_replaced(BuiltinId::NodeModuleCreateRequire)
-                && !is_made_by_imported_name(hir, bound, made);
-        if is_maker_replaced
+        let is_maker_replaced = self.may_maker_be_replaced(made);
+        let own_require = find_own_require(hir, bound, decisions, made);
+        let is_checked_by_identity = is_maker_replaced
+            && modules.is_closed_world()
             && matches!(site.kind, ImportSiteKind::Require(_))
             && matches!(
-                find_own_require(hir, bound, decisions, made),
+                own_require,
+                Some(OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::MadeForChoice(_))
+            )
+            && require_call.is_none_or(|found| matches!(found.form, RequireCallForm::Direct));
+        if is_maker_replaced
+            && !is_checked_by_identity
+            && matches!(site.kind, ImportSiteKind::Require(_))
+            && matches!(
+                own_require,
                 Some(OwnRequire::Made | OwnRequire::MadeForPath(_) | OwnRequire::MadeForChoice(_))
             )
         {
             return None;
         }
-        let own_require = find_own_require(hir, bound, decisions, made);
         let is_of_other_file = matches!(
             own_require,
             Some(OwnRequire::OfOtherFile(_) | OwnRequire::MadeInOtherFile(_))
@@ -619,6 +623,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             _ => None,
         };
         let test_of_value = match (maker_of_asked_require, test_of_value) {
+            _ if is_checked_by_identity => match own_require {
+                Some(OwnRequire::MadeForPath(_)) => CalleeTest::IsMadeForPathIn(self.file.file),
+                _ => CalleeTest::IsMadeIn(self.file.file),
+            },
             (Some(_), CalleeTest::IsFilled) => CalleeTest::IsTruthy,
             _ => test_of_value,
         };
@@ -692,7 +700,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             RequireCallForm::Apply => Some((found, BuiltinId::FunctionPrototypeApply)),
         });
         let test = if let Some((found, expected)) = method {
-            if matches!(test_of_value, CalleeTest::IsMadeIn(_)) {
+            if matches!(
+                test_of_value,
+                CalleeTest::IsMadeIn(_) | CalleeTest::IsMadeForPathIn(_)
+            ) {
                 return None;
             }
             CalleeTest::Method {
@@ -715,7 +726,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         } else {
             match self.file.classify_callee(callee) {
                 CalleeKnowledge::Unresolved if is_require_made_for_own_file(hir, bound, callee) => {
-                    if other_values != OtherValues::None || maker_of_asked_require.is_some() {
+                    if other_values != OtherValues::None
+                        || maker_of_asked_require.is_some()
+                        || is_checked_by_identity
+                    {
                         return Some(lower_tested_call(
                             self,
                             call,
@@ -766,11 +780,22 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let own_require = find_own_require(hir, bound, Some(decisions), call);
         let is_behind_test = is_create_require_behind_get_builtin_module(hir, bound, written);
         let modules = self.file.inputs.modules;
-        let is_imported = own_require == Some(OwnRequire::Made)
-            && modules.is_require_made_by_file_imported(self.file.file);
+        let is_checked_by_identity = modules.is_closed_world() && self.may_maker_be_replaced(call);
+        let kept = match own_require {
+            Some(OwnRequire::Made)
+                if is_checked_by_identity
+                    || modules.is_require_made_by_file_imported(self.file.file) =>
+            {
+                Some(VariableKey::RequiresMadeForOwnFile(self.file.file))
+            }
+            Some(OwnRequire::MadeForPath(_)) if is_checked_by_identity => {
+                Some(VariableKey::RequiresMadeForPaths(self.file.file))
+            }
+            _ => None,
+        };
         let choice = find_holder_of_require_made_for_choice(hir, bound, call);
         let question = self.find_question_on_base(call, arguments, own_require);
-        if !is_behind_test && !is_imported && choice.is_none() && question.is_none() {
+        if !is_behind_test && kept.is_none() && choice.is_none() && question.is_none() {
             return None;
         }
         let mut callee = self.lower_callee(written, chain_exit, None);
@@ -792,8 +817,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let given = Arguments::Values(values.clone());
         let made = self.emit_call_expression(call, callee, given, Tail::No);
-        if is_imported {
-            self.keep_require_made_for_own_file(maker, made);
+        if let Some(kept) = kept {
+            self.keep_require_of_real_maker(maker, made, kept);
         }
         if let Some((_, place)) = choice {
             self.keep_require_if_base_is_own_file(maker, values[place], made);
@@ -950,7 +975,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.continue_in(matched);
     }
 
-    fn keep_require_made_for_own_file(&mut self, maker: ValueId, made: ValueId) {
+    fn keep_require_of_real_maker(&mut self, maker: ValueId, made: ValueId, kept: VariableKey) {
         let real = self.emit_builtin_itself(BuiltinId::NodeModuleCreateRequire);
         let is_real = self.builder.strict_eq(maker, real);
         let by_real = self.create_block();
@@ -959,7 +984,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .branch(is_real, Edge::to(by_real), Edge::to(done));
 
         self.continue_in(by_real);
-        let kept = VariableKey::RequiresMadeForOwnFile(self.file.file);
         self.add_to_set_of_requires(kept, made);
         self.jump(done);
 
@@ -986,7 +1010,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .branch(is_url, Edge::to(for_own_file), Edge::to(done));
 
         self.continue_in(for_own_file);
-        self.keep_require_made_for_own_file(maker, made);
+        let kept = VariableKey::RequiresMadeForOwnFile(self.file.file);
+        self.keep_require_of_real_maker(maker, made, kept);
         self.jump(done);
 
         self.continue_in(done);
@@ -1138,6 +1163,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         modules.runs_tests()
             && (modules.may_be_mocked(ModuleRef::Runtime(RuntimeModule::NodeModule))
                 || modules.holds_replaceable_variable(self.file.file))
+    }
+
+    fn may_maker_be_replaced(&self, made: ExprId) -> bool {
+        let replaced = self.file.inputs.replaced_builtins;
+        let is_replaced = |builtin: BuiltinId| replaced.binary_search(&(builtin as u32)).is_ok();
+        self.may_tests_replace_what_was_made()
+            || is_replaced(BuiltinId::FunctionPrototypeCall)
+            || is_replaced(BuiltinId::NodeModuleCreateRequire)
+                && !is_made_by_imported_name(self.file.hir, self.file.bound, made)
     }
 
     fn may_loader_be_replaced(&self, alias: Option<LoaderAlias>) -> bool {
@@ -2872,6 +2906,7 @@ enum CalleeTest {
         exporter: Option<FileId>,
     },
     IsMadeIn(FileId),
+    IsMadeForPathIn(FileId),
 }
 
 fn lower_tested_call(
@@ -2942,6 +2977,10 @@ fn lower_tested_call(
             let kept = VariableKey::RequiresMadeForOwnFile(file);
             lowering.emit_test_of_set_of_requires(kept, callee.function)
         }
+        CalleeTest::IsMadeForPathIn(file) => {
+            let kept = VariableKey::RequiresMadeForPaths(file);
+            lowering.emit_test_of_set_of_requires(kept, callee.function)
+        }
     };
     let result = lowering.builder.create_variable(None);
     let matched = lowering.create_block();
@@ -2957,7 +2996,8 @@ fn lower_tested_call(
         CalleeTest::IsTruthy
         | CalleeTest::IsRequireOf(_)
         | CalleeTest::Method { .. }
-        | CalleeTest::IsMadeIn(_) => (Edge::to(matched), Edge::to(other)),
+        | CalleeTest::IsMadeIn(_)
+        | CalleeTest::IsMadeForPathIn(_) => (Edge::to(matched), Edge::to(other)),
     };
     lowering.builder.branch(condition, if_true, if_false);
 
@@ -2975,9 +3015,10 @@ fn lower_tested_call(
         lowering.continue_in(made_for_own_folder);
     }
     let (is_other_arm_read, specifier) = match test {
-        CalleeTest::Expected(_) | CalleeTest::IsRequireOf(_) | CalleeTest::IsMadeIn(_) => {
-            (true, values.first().copied())
-        }
+        CalleeTest::Expected(_)
+        | CalleeTest::IsRequireOf(_)
+        | CalleeTest::IsMadeIn(_)
+        | CalleeTest::IsMadeForPathIn(_) => (true, values.first().copied()),
         CalleeTest::IsFilled | CalleeTest::IsTruthy => (false, values.first().copied()),
         CalleeTest::Method { form, .. } => (
             true,

@@ -13,11 +13,11 @@
 # CHECK: 4,1
 # CHECK-NEXT: went on
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Array.prototype.reverse/HoldersOfResult
+# RUN(LIE): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Array.prototype.reverse/FreshnessOfResult
 # LIE: 4,4
 # LIE-NEXT: went on
 # LIE-NEXT: exited with 0
-# RUN(CAUGHT): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Array.prototype.reverse/HoldersOfResult,CheckProofsAtRunTime
+# RUN(CAUGHT): run-in-shell mechanisms=all testing=RowSaysLess:Builtin/Array.prototype.reverse/FreshnessOfResult,CheckProofsAtRunTime
 # CAUGHT: what memory holds where the compiler remembers another value
 # CAUGHT-NOT: went on
 # CAUGHT: crashed

@@ -1,6 +1,6 @@
 // Where definitions alone give a field its values, its slot is planned in the form that a definition creates: { writable: false } on a name that is not there creates a property that is
 // read-only, not enumerable and not configurable. A birth creates the plain form. --aot-check=Validate refuses a birth, a store and a copy of own keys that fill such a slot.
-// THE LIE: --aot-testing=WhatBirthsLayIsTakenToBeLaidByDefinitions: what a literal holds at its birth does not count as written without a definition. Without the check the executable
+// THE LIE: --aot-testing=TreatLiteralFieldsAsDefined: what a literal holds at its birth does not count as written without a definition. Without the check the executable
 // loses the key in silence. Where bodies are written straight nothing is verified: the straight allocation leaves such a birth to the walk.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
@@ -19,7 +19,7 @@ function start(opts: Options = {}) {
 }
 console.log(start());
 `;
-const lie = "WhatBirthsLayIsTakenToBeLaidByDefinitions";
+const lie = "TreatLiteralFieldsAsDefined";
 
 describe.skipIf(!!unsupported)("a birth that fills a slot planned in the form that definitions create", () => {
   test("stops the build under the check, walked or written straight", () =>

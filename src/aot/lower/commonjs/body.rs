@@ -47,7 +47,7 @@ impl FileLowering<'_, '_, '_, '_> {
         for variable in WRAPPER_PARAMETERS {
             values.push(match variable {
                 CommonJsVariable::Exports => first_exports,
-                _ if lowering.file.is_handed_to_wrapped_body(variable) => {
+                _ if lowering.file.is_passed_by_wrapper(variable) => {
                     lowering.emit_passed_value(variable)
                 }
                 _ => lowering.builder.undefined(),

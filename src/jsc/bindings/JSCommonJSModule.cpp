@@ -1583,8 +1583,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     // An ES module of an executable runs here. A stack that is taken meanwhile lists the function that loads an ES module from disk.
     if (Bun::hasCompiledModules() && !child->moduleGraph()) [[unlikely]] {
-        String pathOfAsker = Bun::pathOfRequirer(child, referrer);
-        JSC::AOT::AskerOfModule asker(globalObject, pathOfAsker);
+        String requesterPath = Bun::requesterForRequire(child, referrer);
+        JSC::AOT::ModuleRequesterScope asker(globalObject, requesterPath);
         JSObject* loader = Bun::loaderOfCompiledESModule(globalObject, specifier, !typeAttribute.isEmpty());
         REQUIRE_CJS_RETURN_IF_EXCEPTION;
         if (loader)

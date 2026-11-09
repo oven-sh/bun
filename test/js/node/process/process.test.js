@@ -3322,6 +3322,20 @@ describe("default 'warning' listener is registered at startup", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: "0\n", exitCode: 0 });
   });
 
+  it.concurrent("the first warning passes an argv0 that is not a string to path.basename", async () => {
+    const { stderr, exitCode } = await run([
+      "-e",
+      `const path = require("node:path");
+       path.basename = function (name) {
+         return this === path && name === 5 ? "REPLACED" : "WRONG";
+       };
+       process.argv0 = 5;
+       process.emitWarning("made up");`,
+    ]);
+    expect(stderr).toMatch(/^\(node:\d+\) Warning: made up\n\(Use `REPLACED --trace-warnings/);
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("a bare process.emit('warning') with no prior emitWarning() still prints", async () => {
     const { stdout, stderr, exitCode } = await run(["-e", `process.emit("warning", new Error("bare"));`]);
     expect(stderr).toMatch(/^\(node:\d+\) Error: bare\n\(Use `.*--trace-warnings/);

@@ -17,6 +17,7 @@ BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryResolve);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionFactoryOfCompiledMockSettled);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionFactoryOfCompiledMockFailed);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionDecideWhetherFailureIsKept);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionFetchInFlightEndedByRequireThatFailed);
 #endif
 BUN_DECLARE_HOST_FUNCTION(jsFunctionMockModuleFactoryReject);
 
@@ -196,7 +197,7 @@ public:
             numberOfFactoriesSetAside = 0;
             fetchesThatStandForWaitingMocks.clear();
             compiledFetchesHeldBehindFactories.clear();
-            compiledImportersLinkedAheadOfMocks.clear();
+            compiledImportersLinkedBeforeMocks.clear();
             mocksLaidByBodies.clear();
             modulesThatLaidMocksInBodies.clear();
 #endif
@@ -238,11 +239,11 @@ public:
         WTF::Vector<String, 1> compiledFetchesHeldBehindFactories;
         // The mocked module, and a compiled importer that had yet to run when the mock was laid and whose record the loader held, linked to the record of the module, which had run. It stays linked to that one
         // up to a reset: behind it the importer is loaded anew, and gets the mock.
-        struct CompiledImporterLinkedAheadOfMock {
+        struct CompiledImporterLinkedBeforeMock {
             WTF::String mocked;
             WTF::String importer;
         };
-        WTF::Vector<CompiledImporterLinkedAheadOfMock> compiledImportersLinkedAheadOfMocks;
+        WTF::Vector<CompiledImporterLinkedBeforeMock> compiledImportersLinkedBeforeMocks;
         uint64_t callsOfFactoriesOfCompiledMocks { 0 };
         // By module, whether or not the call is still in the list above.
         WTF::Vector<std::pair<uint32_t, uint64_t>> newestCallsOfFactoriesOfCompiledMocks;

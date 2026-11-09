@@ -40,9 +40,8 @@ use crate::load::sources::{ParsedSource, SourceKind, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
     Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
-    KnownObjects, Member, ModuleExport, ModuleGraph, ModuleKind, ModuleRef, ModuleRequest,
-    RequiredName, Shape, Site, SiteAnswer, SyntheticExportId, Validity, View, directory_of,
-    is_enum,
+    KnownObjects, Member, ModuleExport, ModuleGraph, ModuleKind, ModuleRef, ModuleRequest, Shape,
+    Site, SiteAnswer, SyntheticExportId, Validity, View, directory_of, is_enum,
 };
 use crate::options::RemovableOptions;
 use crate::statistics::{Stage, StepClock};
@@ -1516,14 +1515,6 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
-    fn has_found(&self, required: &RequiredName) -> bool {
-        let graph = self.input.graph;
-        let has_record = matches!(required.module, ModuleRef::File(file) if graph.has_record(file));
-        required.is_found_unless_mocked
-            || (has_record
-                && graph.lists_export(required.module, required.name, &self.input.files.atoms))
-    }
-
     fn add_requests(&mut self) {
         let graph = self.input.graph;
         let started_by_runner = self.input.files_started_by_runner;
@@ -1566,7 +1557,7 @@ impl<'a, 's> FileScan<'a, 's> {
                 let interest = Interest::RequiredName(exporter, required.name);
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             }
-            if !self.has_found(required) {
+            if !required.is_found_unless_mocked {
                 let interest = Interest::Request(required.module);
                 self.units.interests[TOP_LEVEL as usize].push(interest);
             }

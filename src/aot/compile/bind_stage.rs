@@ -593,6 +593,9 @@ impl Build<'_> {
         if project == ProjectId::Application && contents.stores_loader_functions {
             graph.set_asks_loader_functions();
         }
+        if self.stays_in_compiled_files {
+            graph.set_closed_world();
+        }
         if crate::load::contents::load_names::does_some_file_answer_for_names(view.files()) {
             graph.set_answers_for_names_itself();
         }

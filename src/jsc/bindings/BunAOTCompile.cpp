@@ -132,7 +132,7 @@ extern "C" BunAOTResult* Bun__AOT__compile(BunAOTBytes program, const JSC::AOT::
 
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t* description, size_t size, uint8_t* message, size_t capacity)
 {
-    std::optional<JSC::AOT::RuntimeDifference> difference = JSC::AOT::findDifferenceFromThisRuntime({ description, size });
+    std::optional<JSC::AOT::RuntimeDifference> difference = JSC::AOT::findRuntimeDifference({ description, size });
     if (!difference)
         return 0;
 
@@ -158,24 +158,24 @@ extern "C" void Bun__AOT__relocateImage(uint8_t* image, size_t size, uint64_t ad
 
 extern "C" uint32_t Bun__AOT__readStoredStrings(const uint8_t* file, size_t size, void* stored, void (*take)(void* stored, const uint8_t* strings, size_t sizeOfStrings, const uint8_t* report, size_t sizeOfReport))
 {
-    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, Bun::openCompressedText);
+    JSC::AOT::StoredStrings read = JSC::AOT::readStoredStrings({ file, size }, Bun::decompressText);
     take(stored, read.strings.span().data(), read.strings.size(), read.report.span().data(), read.report.size());
     return static_cast<uint32_t>(read.verdict);
 }
 
 extern "C" size_t Bun__AOT__peakResidentMegabytesOfProcess()
 {
-    return JSC::AOT::peakResidentMegabytesOfProcess();
+    return JSC::AOT::processPeakResidentMegabytes();
 }
 
 extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t* buffer, size_t capacity)
 {
-    return JSC::AOT::describeWhereThisThreadStopped({ reinterpret_cast<char*>(buffer), capacity });
+    return JSC::AOT::describeCurrentThreadWork({ reinterpret_cast<char*>(buffer), capacity });
 }
 
 extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, size_t capacity)
 {
-    return JSC::AOT::describeWhatThreadsAreCompiling({ reinterpret_cast<char*>(buffer), capacity });
+    return JSC::AOT::describeAllThreadsWork({ reinterpret_cast<char*>(buffer), capacity });
 }
 
 // What the parser of JavaScript says of a regular expression literal, which it refuses the whole file for. How deep a pattern may be nested depends on the thread, so that is left to where the literal is evaluated. The front end reads the flags itself.

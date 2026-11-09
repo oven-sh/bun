@@ -63,7 +63,8 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             VariableKey::RequiredAnswer(_)
             | VariableKey::RequiresMadeForOwnFile(_)
-            | VariableKey::RequiresMadeForOtherFolders(_) => {
+            | VariableKey::RequiresMadeForOtherFolders(_)
+            | VariableKey::RequiresMadeForPaths(_) => {
                 let mut declared = DeclaredType::untyped();
                 declared.ty = self.fragment.types.union(declared.ty, TypeTable::ABSENT);
                 Variable {
@@ -108,6 +109,7 @@ impl FileLowering<'_, '_, '_, '_> {
             VariableKey::RequiresMadeForOwnFile(_) => one_a_file + 4,
             VariableKey::RequiresMadeForOtherFolders(_) => one_a_file + 5,
             VariableKey::ModulePath { variable, .. } => one_a_file + 6 + variable as u32,
+            VariableKey::RequiresMadeForPaths(_) => one_a_file + 12,
             VariableKey::Symbol(symbol) => match self.scopes.place_at_module_level(symbol.id) {
                 Some(place) => place,
                 None => by_number(symbol.id.idx(), 0),

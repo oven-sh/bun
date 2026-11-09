@@ -215,12 +215,12 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
     auto resolved = resolvedPath.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, );
     if (auto module = Bun::compiledModuleForPath(resolved)) {
-        WTF::String pathOfAsker = from.isString() ? from.toWTFString(globalObject) : WTF::String();
+        WTF::String requesterPath = from.isString() ? from.toWTFString(globalObject) : WTF::String();
         RETURN_IF_EXCEPTION(scope, );
         // The asker chooses the words of the refusal alone.
-        JSC::AOT::AskerOfModule asker(globalObject, Bun::askerOfImport(pathOfAsker));
+        JSC::AOT::ModuleRequesterScope asker(globalObject, Bun::requesterForImporter(requesterPath));
         scope.release();
-        JSC::AOT::willAnswerWithModule(globalObject, *module);
+        JSC::AOT::checkModuleAccess(globalObject, *module);
         return;
     }
     // Module._resolveFilename() answers with where the file lay when the program was built.

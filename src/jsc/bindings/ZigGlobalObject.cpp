@@ -501,7 +501,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             if (Bun::isCodeGenerationFromStringsStrict()) [[unlikely]]
                 JSC::Options::disallowNonStaticCode() = true;
             if (Bun::isCodeGenerationStrictOnlyBesideCompiledProgram()) [[unlikely]]
-                JSC::Options::disallowNonStaticCodeOnlyBesideCompiledCode() = true;
+                JSC::Options::disallowNonStaticCodeOnlyWithCompiledCode() = true;
             if (JSC::isFeatureRemoved(JSC::RemovableFeature::Interpreter)) [[unlikely]] {
                 JSC::Options::functionOverrides() = nullptr;
                 JSC::Options::validateBytecode() = false;
@@ -1014,7 +1014,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
 #if ENABLE(AOT)
     // A compiled module that another imports by a statement is in no registry.
     if (Bun::hasCompiledModules()) {
-        JSC::AOT::forEachFileAwaitingAtTopLevel(globalObject, [&](int64_t order, const String& specifier) {
+        JSC::AOT::forEachTLASuspendedModule(globalObject, [&](int64_t order, const String& specifier) {
             if (awaiting.containsIf([&](auto& entry) { return entry.second == specifier; }))
                 return;
             size_t index = awaiting.size();
@@ -3079,7 +3079,7 @@ void GlobalObject::finishCreation(VM& vm)
              init.set(bunObject);
              // As for `process` below: require("bun") comes to the object without the name.
              if (init.vm.hasCompiledCode()) [[unlikely]]
-                 JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "Bun"_s).impl(), bunObject);
+                 JSC::AOT::hostDidCreateGlobalMember(init.owner, JSC::Identifier::fromString(init.vm, "Bun"_s).impl(), bunObject);
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSBunRequestParamsPrototype), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              init.set(Bun::createJSBunRequestParamsPrototype(init.vm, static_cast<Zig::GlobalObject*>(init.owner)));
@@ -3245,7 +3245,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(process);
             // The global object adds its `process` at the first read of the name. A program may come to the object without it: import process from "node:process".
             if (init.vm.hasCompiledCode()) [[unlikely]]
-                JSC::AOT::hostDidCreateObjectOfGlobal(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
+                JSC::AOT::hostDidCreateGlobalMember(init.owner, JSC::Identifier::fromString(init.vm, "process"_s).impl(), process);
         });
 
     m_streamsRuntime.initialize(this);
@@ -4372,10 +4372,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
 
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
-        Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadByName::Import);
+        Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadKind::Import);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-        JSC::AOT::AskerOfModule asker(globalObject, Bun::askerOfImportCallInCodeThatIsNotCompiled(sourceOriginStringHolder));
+        JSC::AOT::ModuleRequesterScope asker(globalObject, Bun::requesterForUncompiledImportCall(sourceOriginStringHolder));
         JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
@@ -4440,7 +4440,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
         // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
         bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
-        JSC::AOT::AskerOfModule asker(globalObject, Bun::askerOfImport(referrer));
+        JSC::AOT::ModuleRequesterScope asker(globalObject, Bun::requesterForImporter(referrer));
         JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes ? parameters.get() : nullptr);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (compiled)

@@ -1,6 +1,8 @@
 // Draws graphs of four to ten files, CommonJS and ES mixed, without a ring and without a load at run time: each file loads some of those behind it, by a statement or by require(), and hands on one text made of theirs.
 // Only the entry prints, one line, so in which order the files run is not a matter of time. The number of a program is the seed of its draw: the same number is the same program.
 // The second million are the graphs of the first with loads at run time besides: some files hold an import() in a function that nobody calls, or begin one; what those come to is sorted and printed in a second line.
+// The third million are the graphs of the first with names handed on besides: some files hand on what a file behind them exports (by a star, by name, or member by member in a CommonJS file), and who loads them reads that
+// through them too. The fourth million have both.
 //
 //   bun write-drawn-graph-sweep.ts <folder> [from] [count] [stride]      writes <folder>/<n>-<files>-files--<commonjs>-commonjs--<loads>-loads--<entry>.mjs or .cjs
 //   bun write-drawn-graph-sweep.ts count
@@ -8,7 +10,7 @@
 import { mkdirSync, writeFileSync } from "fs";
 
 const plain = 1_000_000;
-const all = 2 * plain;
+const all = 4 * plain;
 
 function drawer(seed: number) {
   let state = (seed * 2654435761 + 12345) >>> 0;
@@ -25,7 +27,9 @@ const builtIns = ["node:crypto", "node:os", "node:path", "node:events"];
 
 function write(seed: number): { name: string; text: string } {
   const draw = drawer(seed % plain);
-  const besides = seed >= plain ? drawer(seed ^ 0x5bd1e995) : undefined;
+  const kind = Math.floor(seed / plain);
+  const besides = kind & 1 ? drawer((plain + (seed % plain)) ^ 0x5bd1e995) : undefined;
+  const through = kind & 2 ? drawer(seed % plain ^ 0x2545f491) : undefined;
   let atRunTime = 0;
   const count = 4 + draw.below(7);
   const isCommonJS = Array.from({ length: count }, () => draw.chance(0.5));
@@ -35,19 +39,32 @@ function write(seed: number): { name: string; text: string } {
   for (let at = 0; at < count - 1; at++)
     for (let turn = draw.below(4); turn > 0; turn--) loads[at].add(at + 1 + draw.below(count - at - 1));
   for (let at = 1; at < count; at++) if (!loads.some(set => set.has(at))) loads[draw.below(at)].add(at);
+  // Which of the files that a file loads it hands on, and how. A name is handed on one step: who loads the file reads it through the file.
+  const handedOn: [number, number][][] = loads.map((set, at) =>
+    at === 0 || !through ? [] : [...set].filter(() => through.chance(0.4)).map(to => [to, through.below(2)]),
+  );
   const files = loads.map((set, at) => {
     const lines: string[] = [];
     const parts: string[] = [];
+    const closes: string[] = [];
+    for (const [to, way] of handedOn[at]) {
+      if (isCommonJS[at]) closes.push(`module.exports.t${to} = require("./${path(to)}").t${to};`);
+      else lines.push(way ? `export * from "./${path(to)}";` : `export { t${to} } from "./${path(to)}";`);
+    }
     for (const to of [...set].sort((a, b) => (draw.chance(0.2) ? b - a : a - b))) {
       const [from, text] = [`"./${path(to)}"`, "t" + to];
       const way = draw.below(4);
+      const more = handedOn[to].map(([name]) => name);
+      const member = (of: string) => parts.push(`${of}.${text}`, ...more.map(name => `${of}.t${name}`));
+      const names = (as: string) => [text, ...more.map(name => `t${name}${as}h${to}_${name}`)].join(", ");
+      const named = () => parts.push(text, ...more.map(name => `h${to}_${name}`));
       if (isCommonJS[at]) {
-        if (way === 0) (lines.push(`const { ${text} } = require(${from});`), parts.push(text));
-        else (lines.push(`const r${to} = require(${from});`), parts.push(`r${to}.${text}`));
+        if (way === 0) (lines.push(`const { ${names(": ")} } = require(${from});`), named());
+        else (lines.push(`const r${to} = require(${from});`), member("r" + to));
       } else if (way === 0 && at === 0) lines.push(`import ${from};`);
-      else if (way === 1) (lines.push(`import * as n${to} from ${from};`), parts.push(`n${to}.${text}`));
-      else if (isCommonJS[to] && way === 2) (lines.push(`import r${to} from ${from};`), parts.push(`r${to}.${text}`));
-      else (lines.push(`import { ${text} } from ${from};`), parts.push(text));
+      else if (way === 1) (lines.push(`import * as n${to} from ${from};`), member("n" + to));
+      else if (isCommonJS[to] && way === 2) (lines.push(`import r${to} from ${from};`), member("r" + to));
+      else (lines.push(`import { ${names(" as ")} } from ${from};`), named());
     }
     if (draw.chance(0.15)) {
       const builtIn = builtIns[draw.below(builtIns.length)];
@@ -67,11 +84,11 @@ function write(seed: number): { name: string; text: string } {
     if (at === 0) return lines.join("\n");
     if (!isCommonJS[at]) lines.push(`export const t${at} = ${made};`);
     else lines.push(draw.chance(0.3) ? `module.exports = { t${at}: ${made} };` : `exports.t${at} = ${made};`);
-    return lines.join("\n");
+    return [...lines, ...closes].join("\n");
   });
   const edges = loads.reduce((sum, set) => sum + set.size, 0);
   return {
-    name: `${count}-files--${isCommonJS.filter(Boolean).length}-commonjs--${edges}-loads--${besides ? atRunTime + "-at-run-time--" : ""}${isCommonJS[0] ? "a-commonjs-entry.cjs" : "an-es-entry.mjs"}`,
+    name: `${count}-files--${isCommonJS.filter(Boolean).length}-commonjs--${edges}-loads--${besides ? atRunTime + "-at-run-time--" : ""}${through ? handedOn.flat().length + "-handed-on--" : ""}${isCommonJS[0] ? "a-commonjs-entry.cjs" : "an-es-entry.mjs"}`,
     text:
       [
         `// @entry: ./${path(0)}`,

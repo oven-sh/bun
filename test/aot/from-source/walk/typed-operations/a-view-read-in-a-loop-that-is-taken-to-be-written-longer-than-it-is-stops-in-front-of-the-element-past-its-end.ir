@@ -12,7 +12,7 @@
 # CHECK: 7
 # CHECK-NEXT: went on
 # CHECK-NEXT: exited with 0
-# RUN(LIE): run-in-shell mechanisms=all testing=ViewsAreTakenToBeWrittenOneLonger
+# RUN(LIE): run-in-shell mechanisms=all testing=OverstateTypedArrayLength
 # LIE: what a container holds is not of the type that the compiler has proven of it. It is: nothing. This is a bug in Bun.
 # LIE-NOT: went on
 # LIE: crashed

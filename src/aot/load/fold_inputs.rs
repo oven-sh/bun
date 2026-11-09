@@ -33,6 +33,7 @@ pub(crate) struct ProgramFacts {
     pub can_replace_builtin_functions: bool,
     pub process_reaches_code_on_its_prototypes: bool,
     pub warnings_load_events: bool,
+    pub can_load_node_path: bool,
     pub takes_first_texts: bool,
 }
 
@@ -145,6 +146,7 @@ pub(crate) fn create_runtime_fold_inputs<'s>(
             facts.process_reaches_code_on_its_prototypes,
         ),
         define_fact(b"WARNINGS_LOAD_NODE_EVENTS", facts.warnings_load_events),
+        define_fact(b"CAN_LOAD_NODE_PATH", facts.can_load_node_path),
         define_fact(b"IS_COMPILED_AHEAD_OF_TIME", !facts.takes_first_texts),
     ]);
     let held_in_every_run = collect_defines_held_in_every_run(platform, arena, atoms);
@@ -302,6 +304,7 @@ mod tests {
         can_replace_builtin_functions: false,
         process_reaches_code_on_its_prototypes: false,
         warnings_load_events: false,
+        can_load_node_path: false,
         takes_first_texts: false,
     };
 
@@ -545,6 +548,17 @@ mod tests {
             "if (WARNINGS_LOAD_NODE_EVENTS) import('./events');",
             |warnings_load_events| ProgramFacts {
                 warnings_load_events,
+                ..NO_FACTS
+            },
+        );
+    }
+
+    #[test]
+    fn node_path_fact_decides_import() {
+        assert_fact_decides_import(
+            "if (CAN_LOAD_NODE_PATH) import('./path');",
+            |can_load_node_path| ProgramFacts {
+                can_load_node_path,
                 ..NO_FACTS
             },
         );

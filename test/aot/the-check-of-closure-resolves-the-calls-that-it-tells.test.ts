@@ -1,6 +1,6 @@
 // --aot-check=FlowFixpoint runs every rule of Link's flow once more over the solved sets. A call that is told is only listed, and what climbs where objects meet is folded in later:
 // the check resolves what it has listed and notes what the fold raises.
-// THE LIE: --aot-testing=CallsThatEnteredUnseenCodeDoNotHearTheUnknownCome: a call of super() that has entered unseen code passes over the telling that its new.target has come to hold the
+// THE LIE: --aot-testing=IgnoreEscapeAfterUnknownCall: a call of super() that has entered unseen code passes over the telling that its new.target has come to hold the
 // unknown. Neither program has a call whose members sleep, so nothing else stirs the flow; in the second no class has a field, so nothing climbs but where objects meet.
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -60,7 +60,7 @@ describe.skipIf(!!unsupported)("the check of closure", () => {
         });
         const right = await spawned([join(folder, isWindows ? "right.exe" : "right")], folder, env);
         expect({ stdout: right.stdout, exitCode: right.exitCode }).toEqual({ stdout: printed, exitCode: 0 });
-        const lied = await build("lied", "--aot-testing=CallsThatEnteredUnseenCodeDoNotHearTheUnknownCome");
+        const lied = await build("lied", "--aot-testing=IgnoreEscapeAfterUnknownCall");
         expect(lied.stderr).toContain("FlowEndedTooEarly");
         expect(lied.exitCode).toBe(1);
       }),

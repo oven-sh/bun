@@ -345,6 +345,7 @@ pub(super) struct Plan {
     reaches_entries_of_cache: Option<bool>,
     library_modules_stored_in_cache: Vec<RuntimeModule>,
     asks_loader_functions: bool,
+    is_closed_world: bool,
     computed_names_ask_loader_functions: bool,
     answers_for_names_itself: bool,
     lists_names_of_statements: bool,
@@ -399,6 +400,7 @@ impl Plan {
             reaches_entries_of_cache: None,
             library_modules_stored_in_cache: Vec::new(),
             asks_loader_functions: false,
+            is_closed_world: false,
             computed_names_ask_loader_functions: false,
             answers_for_names_itself: false,
             lists_names_of_statements: false,
@@ -489,10 +491,10 @@ impl Plan {
             Spelling::WithoutExtension => {
                 self.add(|plan| &mut plan.is_reached_without_extension, module);
             }
-            Spelling::UnderAnotherExtension => {
+            Spelling::WithOtherExtension => {
                 self.add(|plan| &mut plan.is_reached_under_another_extension, module);
             }
-            Spelling::AsFolder => self.add(|plan| &mut plan.is_reached_as_folder, module),
+            Spelling::AsDirectory => self.add(|plan| &mut plan.is_reached_as_folder, module),
         }
     }
 
@@ -956,8 +958,8 @@ impl ModuleGraph {
     pub fn is_reached_by(&self, module: ModuleRef, spelling: Spelling) -> bool {
         let set = match spelling {
             Spelling::WithoutExtension => &self.plan.is_reached_without_extension,
-            Spelling::UnderAnotherExtension => &self.plan.is_reached_under_another_extension,
-            Spelling::AsFolder => &self.plan.is_reached_as_folder,
+            Spelling::WithOtherExtension => &self.plan.is_reached_under_another_extension,
+            Spelling::AsDirectory => &self.plan.is_reached_as_folder,
         };
         self.plan.has(set, module)
     }
@@ -1207,6 +1209,14 @@ impl ModuleGraph {
 
     pub fn set_asks_loader_functions(&mut self) {
         self.plan.asks_loader_functions = true;
+    }
+
+    pub fn is_closed_world(&self) -> bool {
+        self.plan.is_closed_world
+    }
+
+    pub fn set_closed_world(&mut self) {
+        self.plan.is_closed_world = true;
     }
 
     pub fn computed_names_ask_loader_functions(&self) -> bool {

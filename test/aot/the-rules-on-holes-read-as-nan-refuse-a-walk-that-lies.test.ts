@@ -1,17 +1,17 @@
 // A read off a list of fractions may take NaN for a hole where the program only reckons with the value: undefined would become NaN in the arithmetic anyway. The walk asks that of every user.
 // --aot-check=Validate asks it again: of the body ("the program does more with the value than arithmetic") and of the code ("an operation that tells NaN from undefined").
-// THE LIE: --aot-testing=EveryUserOfAnElementIsTakenToReckonWithIt: the walk's own question answers yes whatever the users are.
+// THE LIE: --aot-testing=AssumeArithmeticElementUsers: the walk's own question answers yes whatever the users are.
 // In each program the store into another row stands between two products with `held`, so the arms of its read meet in a parameter and the second product tests that parameter for a number to
 // choose its form. The check lets such a test pass; what the program does with the value besides must still be refused.
 import { describe, expect } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { slot, spawned, unsupported } from "./harness/commands";
 import { test } from "./harness/default-timeout";
 import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
-const lie = "--aot-testing=EveryUserOfAnElementIsTakenToReckonWithIt";
+const lie = "--aot-testing=AssumeArithmeticElementUsers";
 const program = (inFront: string, behind: string) => `"use strict";
 const told = [];
 function turn(rows, at, sine, cosine) { let held; for (let k = 0; k < rows.length; k++) { held = rows[k][at + 1]; ${inFront}rows[k][at + 1] = sine * rows[k][at] + cosine * held; rows[k + 1][at] = cosine * rows[k][at] - sine * held; ${behind}} }
@@ -74,8 +74,15 @@ describe.skipIf(!!unsupported)("a walk that takes every user of an element to re
         expect((await build("right", "--aot-check=Validate")).exitCode).toBe(0);
         expect(await said("right")).toBe(printed);
         if (isWrongInSilence) {
-          expect((await build("silent", lie)).exitCode).toBe(0);
-          expect(await said("silent")).not.toBe(printed);
+          const silent = await build("silent", lie);
+          // A Bun built with assertions or a sanitizer always runs the check, so it rejects this build too.
+          if (isASAN || isDebug) {
+            expect(silent.stderr).toContain(words);
+            expect(silent.exitCode).toBe(1);
+          } else {
+            expect(silent.exitCode).toBe(0);
+            expect(await said("silent")).not.toBe(printed);
+          }
         }
         const stopped = await build("stopped", "--aot-check=Validate", lie);
         expect(stopped.stderr).toContain(words);

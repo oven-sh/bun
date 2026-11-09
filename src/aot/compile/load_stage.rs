@@ -858,6 +858,9 @@ impl<'a> Build<'a> {
                         || contents.loads_by_unknown_name
                         || contents.inspects_prototype_chain_of_process
                         || roots.loads_events,
+                    can_load_node_path: can_load_code_at_run_time
+                        || contents.loads_by_unknown_name
+                        || roots.loads_path,
                     takes_first_texts: options.aot.takes_first_texts,
                 },
             ),

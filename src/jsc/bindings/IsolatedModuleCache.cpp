@@ -11,7 +11,7 @@
 namespace Bun {
 
 #if ENABLE(AOT)
-void didKeepText(JSC::VM&, const WTF::String& key, bool isOfPlugin);
+void didCacheSource(JSC::VM&, const WTF::String& key, bool isPluginSource);
 #endif
 
 bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAttribute)
@@ -57,7 +57,7 @@ void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::Sourc
     provider.m_madeFromHash = madeFromHash(vm, key, pluginContents);
     WebCore::clientData(vm)->isolationSourceProviderCache.set(key, &provider);
 #if ENABLE(AOT)
-    didKeepText(vm, key, !!pluginContents);
+    didCacheSource(vm, key, !!pluginContents);
 #endif
 }
 

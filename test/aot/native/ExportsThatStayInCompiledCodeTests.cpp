@@ -95,7 +95,7 @@ static void checkRecordIsFrozenAtDoor(LoadedProgram& program)
     uint32_t registryID = *modulesOf(program.instance()).data(internalFile).registryID();
     AOT_TEST_CHECK(table.recordOfRuntimeSourceIsHandedOutFrozen(registryID));
     AOT_TEST_CHECK(table.valueOfRuntimeSourceStaysWithCompiledCode(registryID));
-    willHandBuiltinModuleToNativeCode(program.realm(), registryID);
+    willExposeBuiltinModuleToNativeCode(program.realm(), registryID);
     JSObject* record = recordHandedToWhoeverAsksRegistry(program);
     AOT_TEST_CHECK(isFrozenForTest(program, record));
     AOT_TEST_CHECK(record->get(program.realm(), Identifier::fromString(program.vm(), "size"_s)) == jsNumber(3));

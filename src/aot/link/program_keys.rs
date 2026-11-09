@@ -376,6 +376,7 @@ impl OrderedKey for ProgramVariableKey {
             VariableKey::MockOfRuntimeModule(_) => (13, 0, 0),
             VariableKey::RequiresMadeForOwnFile(file) => (14, file.0, 0),
             VariableKey::RequiresMadeForOtherFolders(file) => (15, file.0, 0),
+            VariableKey::RequiresMadeForPaths(file) => (16, file.0, 0),
         };
         join_rank(declared.project, variant, [first, second, 0])
     }

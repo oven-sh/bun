@@ -1226,14 +1226,15 @@ static std::array<JSMockFunction*, 2> spiesIn(SlotContent content, JSObject* tar
     std::array<JSMockFunction*, 2> spies { nullptr, nullptr };
     if (!content.storage || !content.storage.isCell())
         return spies;
+    // A mock is an InternalFunction.
+    auto mockOf = [](JSValue value) { return value.isCell() && value.asCell()->type() == InternalFunctionType ? dynamicDowncast<JSMockFunction>(value.asCell()) : nullptr; };
     if (auto* accessor = dynamicDowncast<GetterSetter>(content.storage.asCell())) {
         // A spy on a method that a getter returns is installed as a bound getter that returns the spy.
         auto* bound = dynamicDowncast<JSBoundFunction>(accessor->getter());
-        JSValue getter = bound ? bound->boundThis() : JSValue(accessor->getter());
-        spies[0] = getter.isCell() ? dynamicDowncast<JSMockFunction>(getter.asCell()) : nullptr;
-        spies[1] = dynamicDowncast<JSMockFunction>(accessor->setter());
+        spies[0] = mockOf(bound ? bound->boundThis() : JSValue(accessor->getter()));
+        spies[1] = mockOf(accessor->setter());
     } else {
-        spies[0] = dynamicDowncast<JSMockFunction>(content.storage.asCell());
+        spies[0] = mockOf(content.storage);
     }
     for (auto*& spy : spies) {
         if (spy && !spy->isSpyOf(target, key))
@@ -3616,7 +3617,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     mock->didInstall(object, propertyKey, storage, spyAttributes | JSMockFunction::SpyAttributeAccessor | (isOpaque ? JSMockFunction::SpyAttributeOpaque : 0));
     if (keepSpiesIn(mock->replaced(), object, propertyKey))
         mock->didReplaceSpy();
-    if (!propertyKey.isSymbol()) {
+    // The fake timers replace functions of the global object, `process`, `Date` and `performance`: none is an object literal or a class instance.
+    if (object->type() != FinalObjectType && !propertyKey.isSymbol()) {
         BunString name = Bun::toString(propertyKey.impl());
         if (Bun__FakeTimers__apisOfProperty(&name, object == globalObject))
             globalObject->mockModule.hasSpyOnAccessorOfFakeTimer = true;

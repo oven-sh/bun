@@ -133,18 +133,29 @@ impl Api {
         ("Temporal", None),
     ];
 
-    fn name(self) -> &'static str {
+    const fn name(self) -> &'static str {
         Self::NAMES[self as usize].0
     }
 
     /// The property of `owner()` that holds the function.
-    fn property(self) -> &'static str {
+    const fn property(self) -> &'static str {
         match self {
             Api::Date | Api::Performance => "now",
             Api::PerformanceObject => "performance",
             _ => self.name(),
         }
     }
+
+    /// Bit `n` is set if the `property()` of a function has `n` bytes.
+    const PROPERTY_LENGTHS: u32 = {
+        let mut lengths = 0;
+        let mut index = 0;
+        while index < Self::FUNCTIONS.len() {
+            lengths |= 1 << Self::FUNCTIONS[index].property().len();
+            index += 1;
+        }
+        lengths
+    };
 
     fn put(self, global: &JSGlobalObject, function: JSValue) {
         let owner = self.owner(global);
@@ -1661,13 +1672,20 @@ extern "C" fn Bun__FakeTimers__isFake(_global: &JSGlobalObject, value: JSValue) 
 /// The bits of the functions whose property has this name, on the global object or on another object.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__apisOfProperty(name: &bun_core::String, is_on_global: bool) -> u32 {
-    Api::FUNCTIONS
-        .iter()
-        .filter(|api| {
-            is_on_global != matches!(api, Api::NextTick | Api::Date | Api::Performance)
-                && name.eq_ascii(api.property().as_bytes())
-        })
-        .fold(0, |bits, api| bits | 1 << *api as u32)
+    let length = name.length();
+    // Most names are out here. A spy on a getter asks for each one.
+    if length >= 32 || Api::PROPERTY_LENGTHS & (1 << length) == 0 {
+        return 0;
+    }
+    let mut apis = 0;
+    for api in Api::FUNCTIONS {
+        if is_on_global != matches!(api, Api::NextTick | Api::Date | Api::Performance)
+            && name.eq_ascii(api.property().as_bytes())
+        {
+            apis |= 1 << api as u32;
+        }
+    }
+    apis
 }
 
 fn original_of(originals: JSValue, value: JSValue) -> Option<JSValue> {

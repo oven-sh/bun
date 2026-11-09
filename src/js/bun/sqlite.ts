@@ -4,6 +4,8 @@ import type * as SqliteTypes from "bun:sqlite";
 const kSafeIntegersFlag = 1 << 1;
 const kStrictFlag = 1 << 2;
 const kOwnedByDatabaseFlag = 1 << 3;
+// A BEGIN, COMMIT or ROLLBACK of db.transaction(): the progress handler is not called for it.
+const kTransactionControlFlag = 1 << 4;
 const kPrepareOwned = Symbol("prepareOwned");
 
 const enum UpdateHook {
@@ -565,9 +567,9 @@ class Database implements SqliteTypes.Database {
     );
   }
 
-  [kPrepareOwned](query: string, flags: number) {
+  [kPrepareOwned](query: string, flags: number, internalFlags: number = 0) {
     return new Statement(
-      SQL.prepare(this.#handle, query, undefined, flags, this.#internalFlags | kOwnedByDatabaseFlag),
+      SQL.prepare(this.#handle, query, undefined, flags, this.#internalFlags | kOwnedByDatabaseFlag | internalFlags),
     );
   }
 
@@ -648,20 +650,20 @@ const getController = (db: Database, _self: unknown): TransactionController => {
   let controller = (controllers ||= new WeakMap()).get(db);
   if (!controller) {
     const shared = {
-      commit: db[kPrepareOwned]("COMMIT", 0),
-      rollback: db[kPrepareOwned]("ROLLBACK", 0),
-      savepoint: db[kPrepareOwned]("SAVEPOINT `\t_bs3.\t`", 0),
-      release: db[kPrepareOwned]("RELEASE `\t_bs3.\t`", 0),
-      rollbackTo: db[kPrepareOwned]("ROLLBACK TO `\t_bs3.\t`", 0),
+      commit: db[kPrepareOwned]("COMMIT", 0, kTransactionControlFlag),
+      rollback: db[kPrepareOwned]("ROLLBACK", 0, kTransactionControlFlag),
+      savepoint: db[kPrepareOwned]("SAVEPOINT `\t_bs3.\t`", 0, kTransactionControlFlag),
+      release: db[kPrepareOwned]("RELEASE `\t_bs3.\t`", 0, kTransactionControlFlag),
+      rollbackTo: db[kPrepareOwned]("ROLLBACK TO `\t_bs3.\t`", 0, kTransactionControlFlag),
     };
 
     controllers.set(
       db,
       (controller = {
-        default: Object.assign({ begin: db[kPrepareOwned]("BEGIN", 0) }, shared),
-        deferred: Object.assign({ begin: db[kPrepareOwned]("BEGIN DEFERRED", 0) }, shared),
-        immediate: Object.assign({ begin: db[kPrepareOwned]("BEGIN IMMEDIATE", 0) }, shared),
-        exclusive: Object.assign({ begin: db[kPrepareOwned]("BEGIN EXCLUSIVE", 0) }, shared),
+        default: Object.assign({ begin: db[kPrepareOwned]("BEGIN", 0, kTransactionControlFlag) }, shared),
+        deferred: Object.assign({ begin: db[kPrepareOwned]("BEGIN DEFERRED", 0, kTransactionControlFlag) }, shared),
+        immediate: Object.assign({ begin: db[kPrepareOwned]("BEGIN IMMEDIATE", 0, kTransactionControlFlag) }, shared),
+        exclusive: Object.assign({ begin: db[kPrepareOwned]("BEGIN EXCLUSIVE", 0, kTransactionControlFlag) }, shared),
       }),
     );
   }

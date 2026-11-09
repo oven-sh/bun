@@ -562,17 +562,20 @@ declare module "bun:sqlite" {
      * Call `callback` about every `n` [virtual machine instructions](https://www.sqlite.org/opcode.html)
      * while a statement of this `Database` runs, with
      * [`sqlite3_progress_handler`](https://www.sqlite.org/c3ref/progress_handler.html).
-     * Use it to put a time limit on a statement. `n` defaults to 1000.
+     * Use it to bound the work a statement does. `n` defaults to 1000.
      *
      * If `callback` returns a truthy value, SQLite stops the statement and the
      * call that runs it (`.get()`, `.all()`, `.run()`, `db.run()`, a `for..of`
-     * over `.iterate()`, or the `db.query()`/`db.prepare()` that compiles it)
-     * throws a `SQLiteError` with `code: "SQLITE_INTERRUPT"`. If `callback`
-     * throws, the statement stops and that call throws what `callback` threw.
+     * over `.iterate()`, `db.serialize()`, or with SQLite 3.41 or newer the
+     * `db.query()`/`db.prepare()` that compiles it) throws a `SQLiteError` with
+     * `code: "SQLITE_INTERRUPT"`. If `callback` throws, the statement stops and
+     * that call throws what `callback` threw.
      *
      * A stopped statement that writes inside a transaction rolls the whole
      * transaction back. A stopped read-only statement leaves the transaction
-     * open.
+     * open. Bun does not call `callback` for the `BEGIN`, `COMMIT` and
+     * `ROLLBACK` of `db.transaction()`. SQLite does not call it while it waits
+     * for a lock (`PRAGMA busy_timeout`).
      *
      * A later statement on this `Database` calls `callback` again. Pass `null`
      * to remove the handler. A second call replaces the first: a `Database` has

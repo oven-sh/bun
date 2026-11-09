@@ -6382,6 +6382,18 @@ describe("db.onInsert, db.onUpdate and db.onDelete", () => {
       expect(calls).toEqual([]);
     });
 
+    it("is committed when it's collected, and doesn't call a progress handler that would stop it", () => {
+      using db = new Database(":memory:");
+      db.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
+      (() => void db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1").iterate().next())();
+      let calls = 0;
+      db.progressHandler(() => (calls++, true), 1);
+      Bun.gc(true);
+      expect(calls).toBe(0);
+      db.progressHandler(null);
+      expect(db.query("SELECT count(*) AS n FROM ft").get()).toEqual({ n: 1 });
+    });
+
     it.each([
       ["it's", false],
       ["it and a SELECT that was still iterating are", true],
@@ -6508,8 +6520,14 @@ describe("db.onInsert, db.onUpdate and db.onDelete", () => {
 
 describe("db.progressHandler()", () => {
   const busy = "This database connection is busy executing a query";
-  const interrupted = expect.objectContaining({ name: "SQLiteError", code: "SQLITE_INTERRUPT", errno: 9 });
-  // About 17 virtual machine instructions per row.
+  const interrupted = expect.objectContaining({
+    name: "SQLiteError",
+    code: "SQLITE_INTERRUPT",
+    errno: 9,
+    message: "interrupted",
+    byteOffset: -1,
+  });
+  // 17 virtual machine instructions per row.
   const count = rows =>
     `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ${rows}) SELECT count(*) AS n FROM c`;
   const table = db => {
@@ -6619,10 +6637,18 @@ describe("db.progressHandler()", () => {
     });
   });
 
-  it("is called while db.query() compiles a statement, and can stop that", () => {
+  // The parser calls the handler since SQLite 3.41. macOS 13 has 3.39.
+  const parserCallsIt =
+    !isMacOS || Number(new Database(":memory:").query("SELECT sqlite_version() v").get().v.split(".")[1]) >= 41;
+  it.skipIf(!parserCallsIt)("is called while db.query() compiles a statement, and can stop that", () => {
     using db = new Database(":memory:");
+    // The previous error left an offset into its SQL. An interrupt refers to no token.
+    expect(() => db.prepare("SELECT      nosuchcol FROM sqlite_master")).toThrow(
+      expect.objectContaining({ code: "SQLITE_ERROR", byteOffset: 12 }),
+    );
     let calls = 0;
     db.progressHandler(() => void calls++, 1);
+    // The WHERE makes the planner call it.
     db.prepare(count(100));
     expect(calls).toBeGreaterThan(0);
 
@@ -6635,6 +6661,37 @@ describe("db.progressHandler()", () => {
     expect(() => db.query(count(100) + " -- compiled now")).toThrow(thrown);
     db.progressHandler(null);
     expect(db.query(count(100) + " -- compiled now").get()).toEqual({ n: 100 });
+  });
+
+  it("is not called once the statement has done its work", () => {
+    using db = table(new Database(":memory:"));
+    const rows = () => db.query("SELECT count(*) AS n FROM t").get().n;
+    const stopAt = at => {
+      let calls = 0;
+      db.progressHandler(() => ++calls >= at, 1);
+      return () => calls;
+    };
+    // SQLite checks once more after the statement halted, with the write committed. A truthy return then would
+    // report the committed write as stopped. So the handler is not called for that check.
+    const calls = stopAt(Infinity);
+    db.run("INSERT INTO t VALUES (6)");
+    const last = calls();
+    expect(last).toBeGreaterThan(1);
+    const insert = db.prepare("INSERT INTO t VALUES (6)");
+    for (const run of [() => db.run("INSERT INTO t VALUES (6)"), () => insert.run()]) {
+      for (let at = 1; at <= last; at++) {
+        const before = rows();
+        stopAt(at);
+        expect(run).toThrow(interrupted);
+        db.progressHandler(null);
+        expect(rows()).toBe(before);
+      }
+      const before = rows();
+      stopAt(last + 1);
+      run();
+      db.progressHandler(null);
+      expect(rows()).toBe(before + 1);
+    }
   });
 
   it("a Database.deserialize() connection has its own handler", () => {
@@ -6683,6 +6740,54 @@ describe("db.progressHandler()", () => {
     db.progressHandler(null);
     expect(db.inTransaction).toBe(false);
     expect(db.query("SELECT count(*) AS n FROM t").get()).toEqual({ n: 6 });
+  });
+
+  it("is not called for the BEGIN, COMMIT and ROLLBACK of db.transaction()", () => {
+    using db = table(new Database(":memory:"));
+    const rows = () => db.query("SELECT count(*) AS n FROM t").get().n;
+    // A handler that stays truthy, like a deadline that has passed.
+    db.progressHandler(() => true, 1);
+    const readOnly = db.transaction(() => db.query("SELECT count(*) AS n FROM t").get());
+    expect(readOnly).toThrow(interrupted);
+    expect(db.inTransaction).toBe(false);
+    const thrown = new RangeError("thrown by the transaction");
+    const throws = db.transaction(() => {
+      throw thrown;
+    });
+    expect(throws).toThrow(thrown);
+    expect(db.inTransaction).toBe(false);
+    const nested = db.transaction(() => readOnly());
+    expect(nested).toThrow(interrupted);
+    expect(db.inTransaction).toBe(false);
+    db.progressHandler(null);
+    expect(() => db.run("RELEASE `\t_bs3.\t`")).toThrow("no such savepoint");
+    expect(rows()).toBe(5);
+
+    // Its own statements run, the statements inside it are stopped.
+    let inside = 0;
+    db.progressHandler(() => void inside++, 1);
+    db.transaction(() => {})();
+    expect(inside).toBe(0);
+    db.transaction(() => db.run("INSERT INTO t VALUES (6)"))();
+    expect(inside).toBeGreaterThan(0);
+    expect(rows()).toBe(6);
+    // A BEGIN or COMMIT that the caller runs is a statement like any other.
+    db.progressHandler(() => true, 1);
+    expect(() => db.run("BEGIN")).toThrow(interrupted);
+    expect(db.inTransaction).toBe(false);
+  });
+
+  it("db.serialize() reports the statement that the handler stopped, and an unknown name", () => {
+    using db = table(new Database(":memory:"));
+    const unknown = new Error("unknown database nope");
+    expect(() => db.serialize("nope")).toThrow(unknown);
+    expect(() => db.run("bad sql")).toThrow(expect.objectContaining({ code: "SQLITE_ERROR" }));
+    expect(() => db.serialize("nope")).toThrow(unknown);
+    db.progressHandler(() => true, 1);
+    expect(() => db.serialize()).toThrow(interrupted);
+    db.progressHandler(null);
+    expect(() => db.serialize("nope")).toThrow(unknown);
+    expect(db.serialize().length).toBeGreaterThan(0);
   });
 
   describe("while the handler runs, every call on its connection throws", () => {

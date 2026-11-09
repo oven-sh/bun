@@ -51,6 +51,8 @@
 static constexpr int32_t kSafeIntegersFlag = 1 << 1;
 static constexpr int32_t kStrictFlag = 1 << 2;
 static constexpr int32_t kOwnedByDatabaseFlag = 1 << 3;
+// A BEGIN, COMMIT or ROLLBACK of db.transaction(): the progress handler is not called for it.
+static constexpr int32_t kTransactionControlFlag = 1 << 4;
 
 /* ******************************************************************************** */
 // Lazy Load SQLite on macOS
@@ -203,6 +205,12 @@ public:
     bool inCallback = false;
     // True if the connection has ever had an update hook.
     bool hasUpdateHook = false;
+    // The statement that a call on the connection is stepping (StatementRun, runStatements). Null while SQLite runs
+    // one of its own: a prepare, db.serialize(), the init of an extension, a finalize.
+    struct Running {
+        sqlite3_stmt* stmt = nullptr;
+        bool transactionControl = false;
+    } running;
 
     sqlite3* handle() const { return closed ? nullptr : db; }
 
@@ -382,10 +390,12 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, int code, co
 // sqlite3_error_offset counts from the pointer that sqlite3_prepare_v3 got. `byteOffsetBase` is how far that pointer is into the caller's SQL text.
 static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db, int64_t byteOffsetBase = 0)
 {
-    int64_t byteOffset = sqlite3_error_offset(db);
+    int code = sqlite3_extended_errcode(db);
+    // An interrupt refers to no token. SQLite leaves the offset of the last error that did.
+    int64_t byteOffset = code == SQLITE_INTERRUPT ? -1 : sqlite3_error_offset(db);
     if (byteOffset >= 0)
         byteOffset += byteOffsetBase;
-    return createSQLiteError(globalObject, sqlite3_extended_errcode(db), sqlite3_errmsg(db), byteOffset);
+    return createSQLiteError(globalObject, code, sqlite3_errmsg(db), byteOffset);
 }
 
 struct SQLiteParameterName {
@@ -619,6 +629,8 @@ public:
     bool useBigInt64 : 1 = false;
     // Created by db.query(); close(false) finalizes these but leaves db.prepare() statements usable.
     bool ownedByDatabase : 1 = false;
+    // kTransactionControlFlag
+    bool transactionControl : 1 = false;
     bool finalizedByClose : 1 = false;
 
 protected:
@@ -1269,6 +1281,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         return {};
     }
 
+    // sqlite3_serialize() returns null for a name it does not know, with no error on the connection.
+    if (!sqlite3_db_filename(db, attachedName.legacyCStringPointer())) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, makeString("unknown database "_s, String::fromUTF8(attachedName.legacyCStringPointer()))));
+        return {};
+    }
+
     sqlite3_int64 length = -1;
     unsigned char* data = sqlite3_serialize(db, attachedName.legacyCStringPointer(), &length, 0);
     if (data == nullptr && length) [[unlikely]] {
@@ -1320,6 +1338,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
 
     char* error;
     int rc = sqlite3_load_extension(db, extensionPath.legacyCStringPointer(), entryPoint.isEmpty() ? nullptr : entryPoint.legacyCStringPointer(), &error);
+    // The init of the extension can run statements, and so call the progress handler.
+    RETURN_IF_EXCEPTION(scope, {});
 
     // TODO: can we disable loading extensions after this?
     if (rc != SQLITE_OK) {
@@ -1423,9 +1443,12 @@ static std::optional<int64_t> runStatements(JSC::JSGlobalObject* lexicalGlobalOb
             const bool canWrite = !sqlite3_stmt_readonly(statement.stmt);
             const int64_t totalChangesBefore = canWrite ? sqlite3_total_changes64(db) : 0;
 
-            do {
-                rc = sqlite3_step(statement.stmt);
-            } while (rc == SQLITE_ROW);
+            {
+                WTF::SetForScope running { versionDB->running, VersionSqlite3::Running { statement.stmt, false } };
+                do {
+                    rc = sqlite3_step(statement.stmt);
+                } while (rc == SQLITE_ROW);
+            }
 
             if (rc == SQLITE_DONE) [[likely]] {
                 rc = SQLITE_OK;
@@ -1611,6 +1634,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         sqlStatement->m_bindingNames.strict = (internalFlags & kStrictFlag) != 0;
         sqlStatement->useBigInt64 = (internalFlags & kSafeIntegersFlag) != 0;
         sqlStatement->ownedByDatabase = (internalFlags & kOwnedByDatabaseFlag) != 0;
+        sqlStatement->transactionControl = (internalFlags & kTransactionControlFlag) != 0;
     }
 
     if (!bindings.isUndefined() && !SQLiteBinder { lexicalGlobalObject, scope, versionDB, statement, sqlStatement, sqlStatement->m_bindingNames, sqlStatement->useBigInt64 }.bind(bindings, true)) {
@@ -1901,11 +1925,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetUpdateHookFunction, (JSC::JSGlobalObje
 // handler throws stays pending, and the call throws that instead (throwStepError, runStatements, prepare).
 static int callProgressHandler(void* cell)
 {
+    // At GC or exit time there is no call to throw to, and a rollback then would lose a write.
     if (Bun::sqliteScriptIsForbidden) [[unlikely]]
         return 0;
     auto* database = static_cast<JSSQLDatabase*>(cell);
     JSObject* handler = database->m_progressHandler.get();
     if (!handler) [[unlikely]]
+        return 0;
+    // Not for a BEGIN, COMMIT or ROLLBACK of db.transaction(): a handler that stays truthy would leave the transaction
+    // open and hide what ended it. Not once the statement has halted either: SQLite checks once more on its way out,
+    // after it committed the write, and an interrupt then would report a committed write as stopped.
+    const auto& running = database->record().running;
+    if (running.stmt && (running.transactionControl || !sqlite3_stmt_busy(running.stmt)))
         return 0;
 
     auto* globalObject = database->globalObject();
@@ -2218,11 +2249,20 @@ public:
     // Null once there is nothing to end.
     sqlite3_stmt* stmt;
 
+    explicit StatementRun(JSSQLStatement* statement)
+        : stmt(statement->stmt)
+        , m_running(statement->version_db->running, VersionSqlite3::Running { statement->stmt, statement->transactionControl })
+    {
+    }
+
     ~StatementRun()
     {
         if (stmt) [[unlikely]]
             sqlite3_reset(stmt);
     }
+
+private:
+    WTF::SetForScope<VersionSqlite3::Running> m_running;
 };
 
 // Not inline: the registers that this needs would be saved and restored for every row.
@@ -2317,7 +2357,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionIterate, (JSC::JS
     if (!castedThis)
         return {};
 
-    StatementRun run { castedThis->stmt };
+    StatementRun run { castedThis };
     JSC::EncodedJSValue row = stepIterator<true>(lexicalGlobalObject, scope, castedThis);
     RETURN_IF_EXCEPTION(scope, {});
     // iterateNext() goes on from this row.
@@ -2341,7 +2381,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionIterateNext, (JSC::JSGlobalObject
         return {};
     }
 
-    StatementRun run { stmt };
+    StatementRun run { castedThis };
     JSC::EncodedJSValue row = stepIterator<false>(lexicalGlobalObject, scope, castedThis);
     RETURN_IF_EXCEPTION(scope, {});
     run.stmt = nullptr;
@@ -2378,7 +2418,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
     if (!castedThis)
         return {};
 
-    StatementRun run { castedThis->stmt };
+    StatementRun run { castedThis };
     int status = step(lexicalGlobalObject, scope, castedThis->stmt);
     RETURN_IF_EXCEPTION(scope, {});
     if (status == SQLITE_ROW) {
@@ -2404,7 +2444,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
         return {};
 
     auto* stmt = castedThis->stmt;
-    StatementRun run { stmt };
+    StatementRun run { castedThis };
     JSC::EncodedJSValue row = stepIterator<true>(lexicalGlobalObject, scope, castedThis);
     RETURN_IF_EXCEPTION(scope, {});
     if (JSValue::decode(row).isNull()) {
@@ -2431,7 +2471,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     if (!castedThis)
         return {};
 
-    StatementRun run { castedThis->stmt };
+    StatementRun run { castedThis };
     JSC::EncodedJSValue rows = castedThis->useBigInt64
         ? collectArrays<toJS<true, Bun::SqliteColumn>>(lexicalGlobalObject, scope, castedThis)
         : collectArrays<toJS<false, Bun::SqliteColumn>>(lexicalGlobalObject, scope, castedThis);
@@ -2448,7 +2488,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
     if (!castedThis)
         return {};
 
-    StatementRun run { castedThis->stmt };
+    StatementRun run { castedThis };
     JSC::EncodedJSValue rows = collectArrays<toJSAsBuffer>(lexicalGlobalObject, scope, castedThis);
     RETURN_IF_EXCEPTION(scope, {});
     run.stmt = nullptr;
@@ -2469,7 +2509,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     const bool canWrite = !sqlite3_stmt_readonly(stmt);
     const int64_t totalChangesBefore = canWrite ? sqlite3_total_changes64(db) : 0;
 
-    StatementRun run { stmt };
+    StatementRun run { castedThis };
     int status;
     do {
         status = step(lexicalGlobalObject, scope, stmt);
@@ -2577,7 +2617,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexical
         return {};
     }
 
-    StatementRun run { stmt };
+    StatementRun run { castedThis };
     int status = step(lexicalGlobalObject, scope, stmt);
     RETURN_IF_EXCEPTION(scope, {});
 

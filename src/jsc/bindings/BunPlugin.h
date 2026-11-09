@@ -146,8 +146,7 @@ public:
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
         VirtualModuleMap moduleMocksBeingLoaded = {};
-        // The mocks of modules that a load in flight had asked for when they were mocked, oldest first. The modules of that load are
-        // linked to such a module, so its mock patches it: an ES module once the loader has run its body, another once it has loaded.
+        // Mocks of modules that a load in flight had asked for, oldest first. Each patches its module: an ES module once its body has run, another once it has loaded.
         Vector<JSC::Strong<JSC::JSObject>> moduleMocksWaitingForModule = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
@@ -304,8 +303,7 @@ void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& ke
 void patchImportsThatHaveLoaded(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
 // The loader has run the body of an ES module, to the end or to its first await. Patches the module if a mock waited for that.
 void patchModuleWhoseBodyHasRun(Zig::GlobalObject*, JSC::JSModuleLoader*, JSC::JSValue moduleRecord);
-// The loader has made the record of the module under `key` of the module object that `requireMap` has for it. A mock that waits for
-// the module has no original in that record if the module object was the mock's.
-void didMakeRecordOfModuleObject(Zig::GlobalObject*, JSC::JSMap* requireMap, const JSC::Identifier& key);
+// The loader has made the record of `key` of the module object in `requireMap`, which had run before (`hadRun`) or not. If that was a waiting mock's, the record has no original.
+void didMakeRecordOfModuleObject(Zig::GlobalObject*, JSC::JSMap* requireMap, const JSC::Identifier& key, bool hadRun);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

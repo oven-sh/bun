@@ -1836,7 +1836,8 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
-                        if (!moduleObject->hasEvaluated) {
+                        bool hadRun = moduleObject->hasEvaluated;
+                        if (!hadRun) {
                             evaluateCommonJSModuleOnce(
                                 vm,
                                 globalObject,
@@ -1861,7 +1862,7 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                         moduleObject->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
                         RETURN_IF_EXCEPTION(scope, void());
                         if (!globalObject->onLoadPlugins.moduleMocksWaitingForModule.isEmpty()) [[unlikely]]
-                            JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::didMakeRecordOfModuleObject>(globalObject, requireMap, moduleKey);
+                            JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::didMakeRecordOfModuleObject>(globalObject, requireMap, moduleKey, hadRun);
                     }
                 } else {
                     // require map was cleared of the entry

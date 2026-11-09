@@ -7356,6 +7356,7 @@ describe.concurrent("a module that is mocked while a module which imports it has
       imports = "",
       seen = "",
       required = false,
+      ranAtMost = 1,
     } = {},
   ) {
     const graph = `
@@ -7364,8 +7365,8 @@ describe.concurrent("a module that is mocked while a module which imports it has
       import { ${exported} as rate } from ${JSON.stringify(specifier)};
       import { atLoad, now } from "./cart.js";
     `;
-    // Where the transpiler threads decide whether the body of the module runs, it still never runs twice.
-    const sees = `(expect(${counted(name)}).toBeLessThanOrEqual(1), expect([rate, atLoad, now(), ${counted(name)}${seen && ", " + seen}]).toEqual(${expected}))`;
+    // Where the transpiler threads decide whether the body of the module runs, it still never runs twice for one test file.
+    const sees = `(expect(${counted(name)}).toBeLessThanOrEqual(${ranAtMost}), expect([rate, atLoad, now(), ${counted(name)}${seen && ", " + seen}]).toEqual(${expected}))`;
     const files: Record<string, string> = {
       [`${name}/mocks.cjs`]: `const { jest, mock, vi } = require("bun:test");\n${mocks}`,
       [`${name}/cart.js`]: `import { ${exported} as rate } from ${JSON.stringify(specifier)}; export const atLoad = rate; export const now = () => rate;`,
@@ -7674,6 +7675,17 @@ describe.concurrent("a module that is mocked while a module which imports it has
           { seen: "globalThis.required" },
         ),
       };
+      // A module object that the loader has to run is the file's own, whatever require() had for the module before.
+      if (which === "first")
+        Object.assign(
+          files,
+          asked(
+            "and taken out of require.cache again",
+            `${requires("./tax.cjs")} delete require.cache[require.resolve("./tax.cjs")];`,
+            `["mock", "mock", "mock", 1, "mock"]`,
+            { ...commonJS("and taken out of require.cache again"), seen: "globalThis.required" },
+          ),
+        );
       if (delivery.handsBack)
         Object.assign(
           files,
@@ -7911,11 +7923,12 @@ describe.concurrent("a module that is mocked while a module which imports it has
     },
   );
 
-  // Every test file is asked.test.js under a name of its own.
+  // Every test file is asked.test.js under a name of its own. Without isolation they count the runs of the module in one process.
   const shared = (name: string, mocks: string, expected: (file: number) => string, options = {}, last = 3) => {
     const files: Record<string, string> = {};
     for (let file = 1; file <= last; file++) {
-      const { [`${name}/asked.test.js`]: test, ...others } = asked(name, mocks, expected(file), options);
+      const fixture = asked(name, mocks, expected(file), { ...options, ranAtMost: file });
+      const { [`${name}/asked.test.js`]: test, ...others } = fixture;
       Object.assign(files, others, { [`${name}/${file}.test.js`]: test });
     }
     return files;
@@ -8158,8 +8171,8 @@ describe.concurrent("a module that is mocked while a module which imports it has
             expect([...seen, ${counted("stock.js")}, calls]).toEqual(["mock", "mock", "mock", 1, 1]);
           });
         `,
-        // The module that asked for it has failed on another import, and the fetch that it asked for is still in flight. What that
-        // fetches stays in the registry, for the next module that asks.
+        // The module that asked for it has failed on another import, and the fetch that it asked for is still out. Nothing that
+        // can still run is linked to what that fetch makes: once it has settled, the next import loads the mock, and the file never runs.
         "rates.js": `export const rate = "real";`,
         "till.js": `import { rate } from "./rates.js"; import "./absent.js"; export { rate };`,
         "desk.js": `import { rate } from "./rates.js"; export const now = () => rate;`,
@@ -8183,9 +8196,12 @@ describe.concurrent("a module that is mocked while a module which imports it has
             await expect(failed).rejects.toThrow();
             let calls = 0;
             mock.module("./rates.js", () => (calls++, { rate: "mock" }));
-            const next = import("./rates.js");
             mayLoad.resolve();
-            expect([(await next).rate, (await import("./desk.js")).now(), ${counted("rates.js")}, calls]).toEqual(["mock", "mock", 1, 1]);
+            // The loader makes a module of the file in promise jobs.
+            await new Promise(resolve => setImmediate(resolve));
+            await new Promise(resolve => setImmediate(resolve));
+            const seen = [(await import("./desk.js")).now(), (await import("./rates.js")).rate, require("./rates.js").rate];
+            expect([...seen, ${counted("rates.js")}, calls]).toEqual(["mock", "mock", "mock", 0, 1]);
           });
         `,
       },
@@ -8384,7 +8400,7 @@ describe.concurrent("a module that is mocked while a module which imports it has
 
   // A reset takes a module that has loaded out of the registry, and the mock that waits for the module patches it first. What the
   // factory throws then is for nobody up the stack, as when the mock patches the module in a turn of its own. Here a require()
-  // that fails to link ends the load: it throws its own error, and the factory's is reported beside it.
+  // that fails to link ends the load: it throws its own error, and the factory's is reported beside it, also through toThrow().
   test("and the factory throws while a reset takes the module out of the registry", async () => {
     using dir = tempDir("mock-module", {
       "mocks.cjs": `
@@ -8398,14 +8414,7 @@ describe.concurrent("a module that is mocked while a module which imports it has
       "reset.test.js": `
         import { expect, test } from "bun:test";
         test("the graph fails to link", () => {
-          let thrown;
-          // Not expect().toThrow(), which takes a promise that is rejected meanwhile for its own.
-          try {
-            require("./shop.mjs");
-          } catch (error) {
-            thrown = error;
-          }
-          expect(String(thrown)).toContain("Export named 'absent' not found");
+          expect(() => require("./shop.mjs")).toThrow("Export named 'absent' not found");
           console.error("require() threw its own error");
         });
       `,
@@ -8557,51 +8566,181 @@ describe.concurrent("a module that is mocked while a module which imports it has
     });
   });
 
-  // A preload that begins a load and doesn't wait for it leaves its mock waiting when the first test file starts. A mock that the
-  // file makes of the same module takes its place, and the next file has the preload's again.
-  test("in a preload, and a test file mocks the module while the preload's mock still waits for it", async () => {
+  // A preload that begins a load and doesn't wait for it leaves its mock waiting when the first test file starts. The wait ends
+  // with that file at the latest. From then on the mock is what the next import loads, as on main, and what the preload began to
+  // load keeps the module that it is linked to.
+  describe("in a preload that does not wait for what it loads", () => {
+    const preload = (factory: string, held = "gate.js") => ({
+      "stock.js": `export const left = "real";`,
+      "shelf.js": `import { left } from "./stock.js"; import "./gate.js"; export const atLoad = left; export const now = () => left;`,
+      "gate.js": `export {};`,
+      "cart.js": `import { left } from "./stock.js"; ${count("cart.js")}; export const atLoad = left;`,
+      "preload.js": `
+        import { mock } from "bun:test";
+        import { readFileSync } from "node:fs";
+        const requested = Promise.withResolvers();
+        const mayLoad = Promise.withResolvers();
+        globalThis.letItLoad = mayLoad.resolve;
+        Bun.plugin({
+          name: "holds the load of a file open",
+          setup(build) {
+            build.onLoad({ filter: new RegExp(${JSON.stringify(held.replace(".", "[.]") + "$")}) }, async ({ path }) => {
+              requested.resolve();
+              await mayLoad.promise;
+              return { contents: readFileSync(path, "utf8"), loader: "js" };
+            });
+          },
+        });
+        globalThis.inFlight = import("./shelf.js");
+        await requested.promise;
+        mock.module("./stock.js", ${factory});
+      `,
+    });
+    const ofPreload = `() => ({ left: "preload" })`;
+    // [the module as the file imports it, as a module that the file imports read it, how often that module has run]
+    const reads = (expected: string) => `
+      import { expect, test } from "bun:test";
+      import { left } from "./stock.js";
+      import { atLoad } from "./cart.js";
+      test("a file that reads the module", () => expect([left, atLoad, ${counted("cart.js")}]).toEqual(${expected}));
+    `;
+    const run = (files: Record<string, string>, ...testFiles: string[]) =>
+      expectFixturesToPass(files, testFiles.length, [
+        "--preload",
+        "./preload.js",
+        ...testFiles.map(file => `./${file}`),
+      ]);
+
+    test("and a test file mocks the module while the preload's mock still waits for it", async () => {
+      await run(
+        {
+          ...preload(ofPreload),
+          "first.test.js": `
+            import { expect, mock, test } from "bun:test";
+            test("the mock of the file takes the place of the preload's", async () => {
+              mock.module("./stock.js", () => ({ left: "file" }));
+              globalThis.letItLoad();
+              const shelf = await globalThis.inFlight;
+              expect([shelf.atLoad, shelf.now()]).toEqual(["file", "file"]);
+            });
+          `,
+          "second.test.js": `
+            import { expect, test } from "bun:test";
+            import { left } from "./stock.js";
+            test("the next file has the preload's mock", async () =>
+              expect([left, (await globalThis.inFlight).now()]).toEqual(["preload", "real"]));
+          `,
+          "third.test.js": reads(`["preload", "preload", 1]`),
+        },
+        "first.test.js",
+        "second.test.js",
+        "third.test.js",
+      );
+    });
+
+    // What the file loaded while the mock was gone runs again for the next file.
+    test("and a test file removes the mock while it waits", async () => {
+      await run(
+        {
+          ...preload(ofPreload),
+          "first.test.js": `
+            import { expect, jest, test } from "bun:test";
+            test("the file has the original", async () => {
+              jest.unmock("./stock.js");
+              globalThis.letItLoad();
+              const shelf = await globalThis.inFlight;
+              expect([shelf.atLoad, (await import("./cart.js")).atLoad]).toEqual(["real", "real"]);
+            });
+          `,
+          "second.test.js": reads(`["preload", "preload", 2]`),
+        },
+        "first.test.js",
+        "second.test.js",
+      );
+    });
+
+    test("and a test file removes the mock while the module is still being fetched", async () => {
+      await run(
+        {
+          ...preload(ofPreload, "stock.js"),
+          "first.test.js": `
+            import { jest, test } from "bun:test";
+            test("removes the mock", () => void jest.unmock("./stock.js"));
+          `,
+          "second.test.js": reads(`["preload", "preload", 1]`),
+          "third.test.js": reads(`["preload", "preload", 1]`),
+        },
+        "first.test.js",
+        "second.test.js",
+        "third.test.js",
+      );
+    });
+
+    test("and the first test file leaves the module alone", async () => {
+      await run(
+        {
+          ...preload(ofPreload),
+          "first.test.js": `import { test } from "bun:test"; test("imports nothing", () => {});`,
+          "second.test.js": `
+            import { expect, test } from "bun:test";
+            test("the load of the preload goes on, and an import of the module loads the mock", async () => {
+              globalThis.letItLoad();
+              const shelf = await globalThis.inFlight;
+              expect([shelf.atLoad, (await import("./stock.js")).left]).toEqual(["real", "preload"]);
+            });
+          `,
+          "third.test.js": reads(`["preload", "preload", 1]`),
+        },
+        "first.test.js",
+        "second.test.js",
+        "third.test.js",
+      );
+    });
+
+    // No factory is called when a test file ends: the import that loads the mock calls it, and gets what it throws.
+    test("and the factory of its mock throws", async () => {
+      const fails = `
+        import { expect, test } from "bun:test";
+        test("the import of the module fails", async () => {
+          await expect(import("./stock.js")).rejects.toThrow("thrown by the factory of the preload");
+        });
+      `;
+      await run(
+        {
+          ...preload(`() => { throw new Error("thrown by the factory of the preload"); }`),
+          "first.test.js": `
+            import { expect, mock, test } from "bun:test";
+            test("the mock of the file takes the place of the preload's", async () => {
+              mock.module("./stock.js", () => ({ left: "file" }));
+              globalThis.letItLoad();
+              expect((await globalThis.inFlight).atLoad).toBe("file");
+            });
+          `,
+          "second.test.js": fails,
+          "third.test.js": fails,
+        },
+        "first.test.js",
+        "second.test.js",
+        "third.test.js",
+      );
+    });
+  });
+
+  // In a graph that require() loads no promise job runs. A module of the graph that resets the modules takes the mocked module out of
+  // the registry before the reaction of its mock has run: the mock patches it first, for the modules that have yet to run.
+  test("in a graph that require() loads, ahead of a module that resets the modules", async () => {
+    const ofJSON = mocks("./tax.json", "mock.module", `{ default: { rate: "mock" }, rate: "mock" }`);
     await expectFixturesToPass(
       {
-        "stock.js": `export const left = "real";`,
-        "shelf.js": `import { left } from "./stock.js"; import "./gate.js"; export const atLoad = left; export const now = () => left;`,
-        "gate.js": `export {};`,
-        "preload.js": `
-          import { mock } from "bun:test";
-          const requested = Promise.withResolvers();
-          const mayLoad = Promise.withResolvers();
-          globalThis.letGateLoad = mayLoad.resolve;
-          Bun.plugin({
-            name: "holds the load of gate.js open",
-            setup(build) {
-              build.onLoad({ filter: /gate\\.js$/ }, async () => {
-                requested.resolve();
-                await mayLoad.promise;
-                return { contents: "export {};", loader: "js" };
-              });
-            },
-          });
-          globalThis.inFlight = import("./shelf.js");
-          await requested.promise;
-          mock.module("./stock.js", () => ({ left: "preload" }));
-        `,
-        "first.test.js": `
-          import { expect, mock, test } from "bun:test";
-          test("the mock of the file takes the place of the preload's", async () => {
-            mock.module("./stock.js", () => ({ left: "file" }));
-            globalThis.letGateLoad();
-            const shelf = await globalThis.inFlight;
-            expect([shelf.atLoad, shelf.now()]).toEqual(["file", "file"]);
-          });
-        `,
-        "second.test.js": `
-          import { expect, test } from "bun:test";
-          import { left } from "./stock.js";
-          test("the next file has the preload's mock, and so has what the preload began to load", async () =>
-            expect([left, (await globalThis.inFlight).now()]).toEqual(["preload", "preload"]));
-        `,
+        ...asked("a module that resets the modules", ofJSON, `["mock", "mock", "mock", 0]`, {
+          specifier: "./tax.json",
+          tax: `{ "rate": "real" }`,
+          required: true,
+          then: `import "./setup.mjs";`,
+        }),
+        "a module that resets the modules/setup.mjs": `import { jest } from "bun:test"; jest.resetModules();`,
       },
-      2,
-      ["--preload", "./preload.js", "./first.test.js", "./second.test.js"],
+      1,
     );
   });
 

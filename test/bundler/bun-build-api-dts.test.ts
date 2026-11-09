@@ -29,6 +29,20 @@ const described = (root: string, outputs: Bun.BuildArtifact[]) =>
   outputs
     .map(({ path, kind, loader }) => [path.replace(root, "").replaceAll("\\", "/").replace(/^\.\//, ""), kind, loader])
     .sort();
+// The typed file of `src/index.ts`, from a build that has nothing to say.
+async function typed(files: Record<string, string>, options: Partial<Bun.BuildConfig> = {}) {
+  using dir = tempDir("build-api-dts-typed", { "tsconfig.json": project["tsconfig.json"], ...files });
+  const root = String(dir);
+  const built = await Bun.build({
+    entrypoints: [join(root, "src/index.ts")],
+    outdir: join(root, "out"),
+    tsconfig: join(root, "tsconfig.json"),
+    dts: true,
+    ...options,
+  });
+  expect(built.logs).toEqual([]);
+  return readFileSync(join(root, "out/index.aot.ts"), "utf8");
+}
 
 describe("Bun.build({ dts: true })", () => {
   test("writes the bundle, its declaration files and the bundle with its types kept to outdir", async () => {
@@ -150,6 +164,133 @@ export { join };
     });
     expect(built.logs).toEqual([]);
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
+  });
+
+  // The bundle has `0` for `Unit.Px`, and the typed file has `0 as Unit.Px`. That does not widen to `Unit` as `Unit.Px`
+  // does, so a place without an annotation takes `: Unit`. Under an `as`, the place has the type of the `as`.
+  describe.each([
+    ["", {}],
+    [", with minify.syntax", { minify: { syntax: true } }],
+  ])("an enum member under a cast%s", (_, options) => {
+    const enums = `export enum Unit {
+  Px,
+  Em,
+}
+export enum Color {
+  Red = "red",
+}
+`;
+    const variableAndValues = `let current = Color.Red as string;
+export function paint(color: string): string {
+  current = color;
+  return current;
+}
+export function inObject() {
+  return { unit: Unit.Px as const };
+}
+export function returned() {
+  return Unit.Em as const;
+}
+const px: Unit.Px = inObject().unit;
+const em: Unit.Em = returned();
+console.log(paint("blue"), px, em);
+`;
+    const parametersAndProperty = `export function useIt(first = 1, unit = Unit.Px as Unit | null) {
+  unit = null;
+  return [first, unit];
+}
+export function only(unit = Unit.Px as Unit | null) {
+  return unit;
+}
+export class Box {
+  unit = Unit.Px as Unit | undefined;
+  clear(): void {
+    this.unit = undefined;
+  }
+}
+export function constant(unit = Unit.Em as const): Unit.Em {
+  return unit;
+}
+export function widened(unit = Unit.Px, other = Unit.Px satisfies Unit, third = Unit.Px!) {
+  unit = Unit.Em;
+  other = Unit.Em;
+  third = Unit.Em;
+  return [unit, other, third];
+}
+console.log(useIt(), useIt(1, null), useIt(1, Unit.Em), only(null), new Box().unit, constant(), widened());
+`;
+    const fromAnotherFile = `import { Color, Unit } from "./enums";\n`;
+    // The name of an enum can have a number behind it, and each value has the name of its member in a comment.
+    const typedFile = async (files: Record<string, string>) =>
+      (await typed(files, { target: "bun", ...options }))
+        .replace(/\b(Unit|Color)\d+/g, "$1")
+        .replace(/ \/\* \w+ \*\//g, "");
+    const expectVariableAndValues = (text: string) => {
+      expect(text).toContain(`current = "red" as Color.Red as string;`);
+      // `0 as Unit.Px` is what `Unit.Px as const` is.
+      expect(text).toContain("return { unit: 0 as Unit.Px };");
+      expect(text).toContain("return 1 as Unit.Em;");
+    };
+    const expectParametersAndProperty = (text: string) => {
+      expect(text).toContain("function useIt(first = 1, unit = 0 as Unit.Px as Unit | null) {");
+      expect(text).toContain("function only(unit = 0 as Unit.Px as Unit | null) {");
+      expect(text).toContain("  unit = 0 as Unit.Px as Unit | undefined;");
+      expect(text).toContain("function constant(unit: Unit.Em = 1 as Unit.Em): Unit.Em {");
+      expect(text).toContain(
+        "function widened(unit: Unit = 0 as Unit.Px, other: Unit = 0 as Unit.Px satisfies Unit, third: Unit = (0 as Unit.Px)!) {",
+      );
+    };
+
+    test("in each place, with the enum in the same file", async () => {
+      const text = await typedFile({ "src/index.ts": enums + variableAndValues + parametersAndProperty });
+      expectVariableAndValues(text);
+      expectParametersAndProperty(text);
+    });
+
+    test("in a variable, an object and a return, with the enum in another file", async () => {
+      expectVariableAndValues(
+        await typedFile({ "src/enums.ts": enums, "src/index.ts": fromAnotherFile + variableAndValues }),
+      );
+    });
+
+    // Observed: `function useIt(first = 1, unit = 0) {`, and TS2322 for `unit = null`. The bundle has the value of a
+    // member of another file with no source mapping, so the default of a parameter or a property has no place for a cast.
+    test.todo("in a parameter and a class property, with the enum in another file", async () => {
+      expectParametersAndProperty(
+        await typedFile({ "src/enums.ts": enums, "src/index.ts": fromAnotherFile + parametersAndProperty }),
+      );
+    });
+  });
+
+  // A constant that only a type names is not in the bundle. The typed file declares it with what the type checker says.
+  test("a constant that only a type names is declared with a type that names nothing", async () => {
+    const text = await typed({
+      "src/flag.ts": `type Flag = true | false;
+declare const stored: Flag;
+export const on = stored;
+`,
+      "src/index.ts": `import { on } from "./flag";
+type Flag = "yes" | "no";
+const big = 1e999;
+const small = -1e999;
+const word = "a";
+export type On = typeof on;
+export type Sizes = [typeof big, typeof small, typeof word];
+export function pick(flag: Flag): On {
+  return flag === "yes";
+}
+export function sizes(): Sizes {
+  return [1e999, -1e999, "a"];
+}
+`,
+    });
+    // `Flag` of the other file is `boolean`, and no type is `Infinity`.
+    expect(text.match(/^declare const .*$/gm)?.sort()).toEqual([
+      "declare const big: number;",
+      "declare const on: boolean;",
+      "declare const small: number;",
+      `declare const word: "a";`,
+    ]);
   });
 
   test("two builds at once keep their files apart", async () => {

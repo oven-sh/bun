@@ -3,8 +3,8 @@ use bun_ast::op::Level;
 use bun_sema::atom::Interner;
 use bun_sema::check::Checker;
 use bun_sema::check::services::{
-    Child, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable, TypeFlags,
-    TypeFormatFlags,
+    Child, LiteralValue, NodeRef, Services, SymbolFlags, SymbolOp, SymbolRef, SymbolTable,
+    TypeFlags, TypeFormatFlags,
 };
 use bun_sema::check::spans::{compute_ecma_line_starts, skip_trivia, skip_trivia_back, token_end};
 use bun_sema::config::find_config_of_package;
@@ -3447,20 +3447,35 @@ impl<'a> Transfer<'_, 'a, '_> {
                     Level::Member
                 };
                 let (mut opens, mut suffix) = (0usize, Vec::new());
+                let is_member = member.is_some();
                 if let Some(member) = member {
                     suffix.extend_from_slice(&member);
                     level = Level::Compare;
+                    let kinds = || chain.casts.iter().map(|&cast| &syntax.file[cast].kind);
+                    // Under an `as` the place has the type of the `as`. Without one it has the enum, which `0 as E.M` does not widen to.
+                    let is_asserted = kinds().any(|kind| matches!(kind, ExprKind::As { .. }));
+                    let is_const = kinds().any(|kind| matches!(kind, ExprKind::AsConst(_)));
                     let declared = widened
                         .get(&chain.outermost)
+                        .filter(|_| !is_asserted)
                         .and_then(|&(place, key)| output_places.get(&(place, index as u32, key)));
                     if let (Some(&declared), Some(name)) = (
                         declared,
                         linked.enum_names.get(&(index as u32, source_position)),
                     ) {
+                        // `E.M as const` is the member, and does not widen to the enum.
+                        let name = match is_const {
+                            true => &member[b" as ".len()..],
+                            false => &name[..],
+                        };
                         insertions.add(declared, Order::Slot, [&b": "[..], name].concat());
                     }
                 }
                 for &cast in &chain.casts {
+                    // `0 as E.M` has the type of `E.M as const`, and is no operand of an `as const` (TS1355).
+                    if is_member && matches!(syntax.file[cast].kind, ExprKind::AsConst(_)) {
+                        continue;
+                    }
                     if level.lt(syntax.level_required_by_cast(cast)) {
                         opens += 1;
                         suffix.push(b')');
@@ -4234,6 +4249,29 @@ fn target_of_declaration(
     })
 }
 
+/// The text of `ty` where it names nothing: a keyword, or a literal that is no member of an enum.
+fn text_that_names_nothing(services: &mut Services<'_, '_, '_>, ty: TypeId) -> Option<Box<[u8]>> {
+    let flags = services.type_flags(ty);
+    let names_nothing = TypeFlags::STRING_LITERAL
+        | TypeFlags::NUMBER_LITERAL
+        | TypeFlags::BIG_INT_LITERAL
+        | TypeFlags::INTRINSIC;
+    if !flags.intersects(names_nothing) || flags.contains(TypeFlags::ENUM_LITERAL) {
+        return None;
+    }
+    let value = services.literal_value(ty);
+    Some(if flags.contains(TypeFlags::BOOLEAN) {
+        // The printer names an alias of `true | false`.
+        b"boolean"[..].into()
+    } else if matches!(value, Some(LiteralValue::Number(value)) if !value.is_finite()) {
+        // The printer says `Infinity`, which is a value and no type.
+        b"number"[..].into()
+    } else {
+        let format = TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION;
+        services.type_to_string(ty, None, format).into()
+    })
+}
+
 pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<ModuleTypes> {
     if !is_project_source(checker, file) {
         return None;
@@ -4393,23 +4431,10 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 node: hir.node(id),
             });
             let flags = services.type_flags(ty);
-            let names_nothing = TypeFlags::STRING_LITERAL
-                | TypeFlags::NUMBER_LITERAL
-                | TypeFlags::BIG_INT_LITERAL
-                | TypeFlags::INTRINSIC;
             if flags.contains(TypeFlags::UNIQUE_ES_SYMBOL) {
                 constants.push((hir[declaration.pat].pos, b"unique symbol"[..].into()));
-            } else if flags.intersects(names_nothing) && !flags.contains(TypeFlags::ENUM_LITERAL) {
-                constants.push((
-                    hir[declaration.pat].pos,
-                    services
-                        .type_to_string(
-                            ty,
-                            None,
-                            TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION,
-                        )
-                        .into(),
-                ));
+            } else if let Some(text) = text_that_names_nothing(services, ty) {
+                constants.push((hir[declaration.pat].pos, text));
             }
         }
         let mut functions_returning_undefined = Vec::new();

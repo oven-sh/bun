@@ -129,6 +129,28 @@ export function area(shape: Shape): Sizes.Size {
     expect(await compile(String(dir))).toEqual(USED);
   });
 
+  test("a member of an enum under a cast is written into an .aot.ts file that compiles", async () => {
+    using dir = tempDir("aot-library-typed-file-enum-cast", {
+      ...library,
+      "library/src/area.ts": `import type { Shape } from "./index";
+enum Scale {
+  One = 1,
+  Three = 3,
+}
+let scale = Scale.One as Scale | null;
+function unit() {
+  return { scale: Scale.One as const };
+}
+export function area(shape: Shape): number {
+  scale = shape.kind === "circle" ? Scale.Three : null;
+  return (scale ?? unit().scale) * shape.size ** 2;
+}
+`,
+    });
+    await install(String(dir));
+    expect(await compile(String(dir))).toEqual(USED);
+  });
+
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {
     using dir = tempDir("aot-library-typed-file-patched", library);
     await install(String(dir));

@@ -395,8 +395,11 @@ impl Folder<'_, '_> {
             }
             _ => return Folded::UNKNOWN,
         };
+        let is_kept_by_its_form = index.is_none() && self.is_link_of_kept_chain(access);
         self.note_who_writes_in_place(access, object, |folder| {
-            folder.minifies_syntax() && index.is_none_or(|index| folder.is_folded_by_bun_run(index))
+            !is_kept_by_its_form
+                && folder.minifies_syntax()
+                && index.is_none_or(|index| folder.is_folded_by_bun_run(index))
         });
         let effects_of_index = index.map_or(Effects::None, |index| self.folded(index).effects);
         Folded::new(Value::from(member), effects.min(effects_of_index))

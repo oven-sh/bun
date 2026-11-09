@@ -330,6 +330,26 @@ export default b.declarations(
     reads: externalState,
     implementation: b.hostCall,
   }),
+  // It holds the function weakly (the module that sets it keeps it alive), or lets go of the realm's one when it gets undefined. On a later tick the function is called once for each collection: with the start, the duration, and whether it was full and forced.
+  b.static(cpp("GCPerformanceEntries.cpp", "jsFunctionSetGCPerformanceEntryListener"), {
+    args: { listener: b.union(b.callable, b.undefined) },
+    returns: b.undefined,
+    capability: "none",
+    uses: {
+      listener: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "PerEvent",
+          this: b.undefined,
+          args: [b.f64, b.f64, b.bool, b.bool],
+          result: "Ignored",
+        }),
+      ],
+    },
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
   b.static(cpp("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled"), {
     args: { enabled: b.any },
     returns: b.undefined,

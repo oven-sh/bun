@@ -259,6 +259,7 @@ const moduleNamespaces = [
 
 const nativeFiles = [
   "CallSite.cpp",
+  "GCPerformanceEntries.cpp",
   "InternalForTesting.cpp",
   "InternalModuleRegistry.cpp",
   "IsolatedModuleCache.cpp",

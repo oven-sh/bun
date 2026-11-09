@@ -221,6 +221,8 @@ pub struct VirtualMachine {
     /// (POSIX only; on Windows that path calls `loop_dec()` instead and the
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
+    /// Records of collections wait for `EventLoop::tick_immediate_tasks` to give them to `node:perf_hooks`. `GCPerformanceEntries` (C++) keeps it.
+    pub gc_performance_entries_wait: core::cell::Cell<bool>,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s

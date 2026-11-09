@@ -32,6 +32,7 @@
 #include "ModuleGraph.h"
 #include "StrongRootBlock.h"
 #include "IsolatedModuleCache.h"
+#include "GCPerformanceEntries.h"
 
 namespace WebCore {
 using namespace JSC;

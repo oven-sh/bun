@@ -5622,6 +5622,14 @@ static NEVER_INLINE SUPPRESS_ASAN void clearStackBelowCaller()
         dead[i] = 0;
 }
 
+// The collection that Bun.gc(true) and gc() ask for. The tag is what the 'gc' entries of node:perf_hooks report as the forced flag (GCPerformanceEntries.cpp).
+static ALWAYS_INLINE JSC::GCRequest forcedFullCollection()
+{
+    JSC::GCRequest request(JSC::CollectionScope::Full);
+    request.isForced = true;
+    return request;
+}
+
 size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
@@ -5641,7 +5649,7 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         // What the call above left on the stack must not be scanned by the collection below; see the helper's comment.
         clearStackBelowCaller();
-        vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+        vm->heap.collectNow(JSC::Sync, forcedFullCollection());
 #if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
         malloc_zone_pressure_relief(nullptr, 0);
 #endif

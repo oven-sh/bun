@@ -1149,6 +1149,8 @@ impl EventLoop {
         // recursion check and the trailing `= to_run_now` store, dropping any
         // immediates JS queued during this tick. ASM-verified PROVEN_CACHED.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        // SAFETY: per the caller contract. Before the batch is taken: the hand-off queues the immediate that calls the observers.
+        unsafe { Self::hand_off_gc_performance_entries(virtual_machine) };
         // SAFETY: `this` is the unique live `EventLoop`; each access below is a
         // short-lived `&mut` that does not overlap re-entry.
         let mut to_run_now = core::mem::take(unsafe { &mut (*this).immediate_tasks });
@@ -1192,6 +1194,33 @@ impl EventLoop {
 
         // SAFETY: as above.
         unsafe { (*this).next_immediate_tasks = to_run_now };
+    }
+
+    /// Gives the records of collections to `node:perf_hooks`, under the rule of an unref'd `setImmediate`: a collection keeps no loop alive.
+    #[inline]
+    unsafe fn hand_off_gc_performance_entries(virtual_machine: *mut VirtualMachine) {
+        // SAFETY: `virtual_machine` is the live VM of this thread, as for `tick_immediate_tasks`.
+        let vm = unsafe { &*virtual_machine };
+        if !vm.gc_performance_entries_wait.get() {
+            return;
+        }
+        bun_core::hint::cold();
+        // A macro runs on a loop of its own, which ends with the macro: what the hand-off queues there would never run.
+        if vm.macro_mode || !vm.is_event_loop_alive_excluding_immediates() {
+            return;
+        }
+        let global = vm.global();
+        // Not with a termination pending (the deadline of a `node:vm` run in a nested wait): the records wait.
+        let EnterJs::Entered(_) = Self::enter_js(crate::ContextId::NONE, global) else {
+            return;
+        };
+        // The loop that the VM runs on now, as for an immediate.
+        let event_loop = vm.event_loop();
+        // SAFETY: the VM's current loop is live.
+        unsafe { (*event_loop).enter() };
+        let _ = crate::cpp::Bun__GCPerformanceEntries__handOff(global);
+        // SAFETY: as above. Read again behind the call, which runs script.
+        unsafe { (*core::hint::black_box(event_loop)).exit() };
     }
 
     pub fn ensure_waker(&mut self) {

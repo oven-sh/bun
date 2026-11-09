@@ -26,6 +26,11 @@ pub fn script_execution_status(this: &VirtualMachine) -> i32 {
     this.script_execution_status() as i32
 }
 
+// HOST_EXPORT(Bun__VM__setGCPerformanceEntriesWait, c)
+pub fn set_gc_performance_entries_wait(this: &VirtualMachine, wait: bool) {
+    this.gc_performance_entries_wait.set(wait);
+}
+
 // HOST_EXPORT(Bun__getVM, c)
 pub fn get_vm() -> *mut VirtualMachine {
     VirtualMachine::get_mut_ptr()
@@ -37,6 +42,11 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
     }
+    read_origin_timer_without_fake_timers(vm)
+}
+
+// HOST_EXPORT(Bun__readOriginTimerWithoutFakeTimers, c)
+pub fn read_origin_timer_without_fake_timers(vm: &VirtualMachine) -> u64 {
     vm.origin_timer.elapsed().as_nanos() as u64
 }
 

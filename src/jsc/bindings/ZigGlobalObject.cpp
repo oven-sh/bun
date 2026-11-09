@@ -5,6 +5,7 @@
 #include "BunModuleRegistry.h"
 #include "BuiltinModuleKeys.h"
 #include "IsolatedModuleCache.h"
+#include "GCPerformanceEntries.h"
 #include "MessagePort.h"
 #include "helpers.h"
 #include "JavaScriptCore/AOTHost.h"
@@ -5253,6 +5254,9 @@ void GlobalObject::prepareForDestruction()
     // separately because finalizers during the final collection and ~VM both reach scheduleWorkSoon().
     context->markTerminating();
     WebCore::clientData(vm)->deferredWorkTimer.markShuttingDown();
+    // The collections of the teardown are no 'gc' performance entries.
+    if (auto gcPerformanceEntries = std::exchange(WebCore::clientData(vm)->gcPerformanceEntries, nullptr))
+        gcPerformanceEntries->stop();
 
     // WorkerOrWorkletGlobalScope::prepareForDestruction(): stop every ActiveDOMObject (workers are
     // asked to terminate, ports/channels/sockets close without dispatching) and strip listeners,
@@ -5349,6 +5353,19 @@ static void stopActiveDOMObjectsOfDerivedRealms(Zig::GlobalObject* globalObject)
     }
 }
 
+static void retireDerivedRealms(Zig::GlobalObject* globalObject)
+{
+    auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get();
+    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
+        if (!derived)
+            continue;
+        derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+        // Nothing disconnects the 'gc' observers of a retired realm.
+        if (gcPerformanceEntries)
+            gcPerformanceEntries->setListener(derived.get(), nullptr);
+    }
+}
+
 // `bun test --isolate`: the file that just finished is being retired on a live VM. Its contexts'
 // workers, ports, channels and sockets are stopped before anything else of the file is swept.
 extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::GlobalObject* globalObject)
@@ -5367,9 +5384,11 @@ extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* glo
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
     // Again, to catch realms that close handlers created since the first pass.
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
-    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
-        if (derived)
-            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
+    retireDerivedRealms(globalObject);
+    // As for a derived realm. What the finished file collected is also not for the observers of the next file.
+    if (auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get()) {
+        gcPerformanceEntries->setListener(globalObject, nullptr);
+        gcPerformanceEntries->discardRecords();
     }
 }
 
@@ -5378,10 +5397,10 @@ extern "C" void Zig__GlobalObject__retireDerivedRealmsForTestIsolation(Zig::Glob
 {
     Bun::retireWebViewsForTestIsolation(globalObject);
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
-    for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
-        if (derived)
-            derived->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
-    }
+    retireDerivedRealms(globalObject);
+    // The global object stays, and so does its listener. What the finished file collected is not for the observers of the next file.
+    if (auto* gcPerformanceEntries = WebCore::clientData(globalObject->vm())->gcPerformanceEntries.get())
+        gcPerformanceEntries->discardRecords();
 }
 
 extern "C" bool Bun__JSValue__isFromRetiredTestIsolationRealm(JSC::EncodedJSValue encodedValue)

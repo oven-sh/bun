@@ -37,6 +37,7 @@ var constants = {
   NODE_PERFORMANCE_GC_INCREMENTAL: 8,
   NODE_PERFORMANCE_GC_MAJOR: 4,
   NODE_PERFORMANCE_GC_MINOR: 1,
+  NODE_PERFORMANCE_GC_MINOR_MARK_SWEEP: 2,
   NODE_PERFORMANCE_GC_WEAKCB: 16,
   NODE_PERFORMANCE_MILESTONE_BOOTSTRAP_COMPLETE: 7,
   NODE_PERFORMANCE_MILESTONE_ENVIRONMENT: 2,
@@ -156,8 +157,15 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
     if (requested) {
       const nodeTypes = requested.filter(type => kNodeEntryTypes.has(type));
       let registration = this[kNodeObserver];
-      if (nodeTypes.length > 0 && !registration) {
-        registration = this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
+      let webTypes: string[] | undefined;
+      let namesGC = false;
+      if (nodeTypes.length > 0) {
+        webTypes = requested.filter(type => !kNodeEntryTypes.has(type));
+        namesGC = nodeTypes.includes("gc");
+        // The native class knows no 'gc' type. It makes its checks for a request that names 'gc' once, before anything here changes: with the web types of the request, or with the request as it is where it has none.
+        if (namesGC) super.observe(webTypes.length > 0 ? { ...options, entryTypes: webTypes } : options);
+        registration ??= this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
+        if (namesGC) require("internal/perf_hooks/gc").observeGC(registration);
       }
       if (registration) {
         if (isTypeMode) {
@@ -171,8 +179,7 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
         }
       }
       if (nodeTypes.length > 0) {
-        const webTypes = requested.filter(type => !kNodeEntryTypes.has(type));
-        if (webTypes.length === 0) {
+        if (webTypes!.length === 0) {
           // observe({entryTypes}) replaces the whole observed set: a
           // previously-subscribed web type must stop firing when the new set
           // is node-only. The native impl rejects an empty entryTypes array,
@@ -187,7 +194,7 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
         // A non-empty webTypes set alongside a node type is only possible in
         // entryTypes mode (observe({type}) requests exactly one type), so the
         // forwarded subscription is always an entryTypes one.
-        return super.observe({ ...options, entryTypes: webTypes });
+        return namesGC ? undefined : super.observe({ ...options, entryTypes: webTypes });
       }
     }
     return super.observe(options);

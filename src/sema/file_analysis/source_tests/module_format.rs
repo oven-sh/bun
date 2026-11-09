@@ -1860,6 +1860,105 @@ fn what_and_and_or_give_decides_the_format_where_bun_run_knows_the_left_operand(
     }
 }
 
+const REMOVED_BEHIND_WHAT_STANDS_IN_PLACE: &[&str] = &[
+    "if ({ b: function named() {} }.b) {} else module.exports = 1;",
+    "if ({ b: class Named {} }.b) {} else module.exports = 1;",
+    "var v = { a: function named() {} }.a ?? module.exports;",
+    "if ({ b: /x/ }.b) {} else module.exports = 1;",
+    "if ([() => {}][0]) {} else module.exports = 1;",
+    "if ([function () {}][0]) {} else module.exports = 1;",
+    "if ([class {}][0]) {} else module.exports = 1;",
+    "if ([typeof a][0]) {} else module.exports = 1;",
+    "if ([new Object()][0]) {} else module.exports = 1;",
+    "if ([(0, () => {})][0]) {} else module.exports = 1;",
+    "if ([true ? () => {} : 0][0]) {} else module.exports = 1;",
+    "if ([[() => {}]][0][0]) {} else module.exports = 1;",
+    "if ({ a: { b: function named() {} } }.a.b) {} else module.exports = 1;",
+    "if ([1, () => {}][1]) {} else module.exports = 1;",
+    "if ([1, class {}][0]) {} else module.exports = 1;",
+    "if ([1 + 1, 0][1]) module.exports = 1;",
+    "if ([...[1, 0]][1]) module.exports = 1;",
+    "if ([...(0, [1, 0])][1]) module.exports = 1;",
+    "if ([[() => {}]]?.[0][0]) {} else module.exports = 1;",
+    "if ({ \"a-b\": 0 }[\"a-\" + \"b\"]) module.exports = 1;",
+    "if (new Array(1, 0)[1]) module.exports = 1;",
+    "if (new Object({ b: 0 }).b) module.exports = 1;",
+    "if ((0, [0])[0]) module.exports = 1;",
+    "if ((true ? [() => {}] : 0)[0]) {} else module.exports = 1;",
+    "var v = [[]][0] ?? module.exports;",
+    "var v = { a: {} }.a ?? module.exports;",
+    "var v = [0x1n][0] ?? module.exports;",
+    "var b; var v = [b + 1][0] ?? module.exports;",
+    "var v = (true ? () => {} : 0) ?? module.exports;",
+    "var v = (new Object() ?? 1) ?? module.exports;",
+    "[function () {}][0] || (module.exports = 1);",
+    "[class {}][0] ? 1 : (module.exports = 1);",
+    "if (![() => {}][0]) module.exports = 1;",
+    "if (([function () {}][0] && 1) === 1) {} else module.exports = 1;",
+    "if (typeof [function () {}][0] === \"function\") {} else module.exports = 1;",
+    "if (typeof [/x/][0] === \"object\") {} else module.exports = 1;",
+    "if (typeof (true ? function () {} : 0) === \"function\") {} else module.exports = 1;",
+    "if (typeof [0x1n][0] === \"bigint\") {} else module.exports = 1;",
+    "if ([0x1n][0] === 0x1n) {} else module.exports = 1;",
+    "if (new Object([{}][0])) {} else module.exports = 1;",
+    "[function () {}][0], module;",
+    "[[]][0], module;",
+    "({ b: function named() {} }).b, module;",
+    "var x; [x][0], module;",
+    "var x; typeof [x][0], module;",
+    "[module, () => {}][1];",
+    "[module, 1 + 1];",
+    "[[1][0], module];",
+    "new Set((0, [1])), module;",
+    "\"\" + [typeof a][0], module;",
+];
+
+const LEFT_BEHIND_WHAT_STAYS_AS_WRITTEN: &[&str] = &[
+    "if ({ b() {} }.b) {} else module.exports = 1;",
+    "if ({ b: function named() {} }.b()) {} else module.exports = 1;",
+    "if ({ b: function named() {}, c: 1 }.b) {} else module.exports = 1;",
+    "if ({ __proto__: function named() {} }.__proto__) {} else module.exports = 1;",
+    "if ({ [\"b\"]: function named() {} }.b) {} else module.exports = 1;",
+    "if ([...[], () => {}][0]) {} else module.exports = 1;",
+    "if ([a(), () => {}][1]) {} else module.exports = 1;",
+    "const f = [() => {}][0]; if (f) {} else module.exports = 1;",
+    "let i = 0; if ([[0]][i][0]) module.exports = 1;",
+    "let i = 0; if ([{ b: 0 }][i].b) module.exports = 1;",
+    "if ([{ b: 0 }][0]?.b) module.exports = 1;",
+    "if (({ a: { b: 0 } }).a?.b) module.exports = 1;",
+    "if ((1 ? \"ab\" : 2)?.length === 3) module.exports = 1;",
+    "if ({ k: 0 }[\"\" + \"k\"]) module.exports = 1;",
+    "if (({ \"é\": 0 }).é) module.exports = 1;",
+    "if (({ é: 0 })[\"é\"]) module.exports = 1;",
+    "if (([0x0n || \"x\"][0] && 1) === 1) {} else module.exports = 1;",
+    "function g() {} if (([(g(), () => {})][0] && 1) === 1) {} else module.exports = 1;",
+    "var b; var v = ((b || \"x\") ?? 0) ? 0 : module.exports;",
+    "var b; var v = [!!(!b || !b)][0] ?? module.exports;",
+    "var v = [!import.meta.main][0] ?? module.exports;",
+    "var v = { p: `${a()}` + 1 }.p ?? module.exports;",
+    "var b; var v = [\"\" + (b = \"x\")][0] ?? module.exports;",
+    "if ([0x10n][0] == (a(), null)) module.exports = 1;",
+    "[module, [\"é\"][0] + \"\"];",
+    "[a][0], module;",
+    "typeof [a][0], module;",
+    "[Math][0].PI, module;",
+    "[class { static a = b(); }][0], module;",
+];
+
+#[test]
+fn what_bun_run_has_in_place_of_a_read_or_an_operator_decides_the_format() {
+    for text in REMOVED_BEHIND_WHAT_STANDS_IN_PLACE {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, Esm, "{text}");
+        });
+    }
+    for text in LEFT_BEHIND_WHAT_STAYS_AS_WRITTEN {
+        analyzed("a.js", text, |s| {
+            assert_eq!(s.analysis.module_format, CommonJs, "{text}");
+        });
+    }
+}
+
 const REMOVED_BEHIND_BIGINTS_WITH_A_RADIX: &[&str] = &[
     "if (0x1n === 0x1n) {} else { module.exports = 1; }",
     "if (0x1_0n === 0x10n) {} else { module.exports = 1; }",

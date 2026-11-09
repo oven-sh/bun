@@ -1298,6 +1298,58 @@ fn bun_build_computes_less_without_minify_syntax() {
     }
 }
 
+const READS_OF_MEMBERS_WITHOUT_A_VALUE: &[&str] = &[
+    "if ([() => 1][0]) {} else other();",
+    "if ({ b: function named() {} }.b) {} else other();",
+    "if ([/a/][0]) {} else other();",
+    "if ([class {}][0]) {} else other();",
+    "if ([typeof unknown][0]) {} else other();",
+    "if ([[() => 1]][0][0]) {} else other();",
+    "if (typeof [function () {}][0] === \"function\") {} else other();",
+    "[() => 1][0] ?? other();",
+    "[() => 1][0] || other();",
+];
+
+#[test]
+fn member_without_a_value_stands_in_place_of_its_read_under_minify_syntax_alone() {
+    for &text in READS_OF_MEMBERS_WITHOUT_A_VALUE {
+        analyzed("a.mjs", text, |s| {
+            let [other] = calls_of(s, "other")[..] else {
+                panic!("calls of other");
+            };
+            let decisions = &s.analysis.decisions;
+            assert!(decisions.is_dead_expr(other), "{text}");
+            assert!(
+                !decisions.as_folded_by_bun_run().is_dead_expr(other),
+                "{text}"
+            );
+            let under_minify_syntax = decisions.as_folded_under_minify_syntax();
+            assert!(under_minify_syntax.is_dead_expr(other), "{text}");
+        });
+        folded("a.mjs", text, Fold::MINIFIED, |s| {
+            let [other] = calls_of(s, "other")[..] else {
+                panic!("calls of other");
+            };
+            let decisions = &s.analysis.decisions;
+            assert!(
+                decisions.as_folded_by_bun_run().is_dead_expr(other),
+                "{text}"
+            );
+        });
+    }
+    for text in ["v([() => 1][0]);", "v({ b: [] }.b);", "v([/a/][0]);"] {
+        analyzed("a.mjs", text, |s| {
+            let e = probe(s);
+            assert_eq!(constant(s, e), FoldedValue::Unknown, "{text}");
+            let decisions = &s.analysis.decisions;
+            assert!(
+                !decisions.is_constant_under_minify_syntax(&s.hir, e),
+                "{text}"
+            );
+        });
+    }
+}
+
 const COMPUTED_BEHIND_IMPORT: &[&str] = &[
     r#"() => import("./b"); v(1 + 2);"#,
     r#"() => import("./b"); v(~1);"#,

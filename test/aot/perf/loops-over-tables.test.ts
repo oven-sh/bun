@@ -2,8 +2,8 @@
 // Before the fix every step read the collection's storage again, tested what kind of table it is and how wide its keys and values are, computed where the keys
 // and the values lie and set the mark of a walked table: 69 instructions a step of `for (const [id, value] of map)` and 33 of `for (const v of set)`, where the
 // compiler before the rewrite took 19 and 12.
-// Each row names a loop of ./loops-over-tables/main.ts and how many instructions one entry of one walk may take. The allowances are those of x64. Elsewhere the
-// numbers are printed and not judged. The program also prints its sums, which must be those of plain Bun.
+// Each row names a loop of ./loops-over-tables/main.ts and how many instructions one entry of one walk may take. The allowances are those of x64, and the
+// rows are skipped elsewhere. The program also prints its sums, which must be those of plain Bun.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
@@ -22,6 +22,7 @@ const withSteadyCollections = {
 };
 
 const root = join(import.meta.dir, "loops-over-tables");
+// The program builds its Map and its Set with as many entries as it is told.
 const entries = 2000;
 
 const rows: [loop: string, instructionsPerEntry: number][] = [
@@ -30,8 +31,8 @@ const rows: [loop: string, instructionsPerEntry: number][] = [
 ];
 const [few, many] = [200, 800];
 
-// A debug or ASAN build counts other instructions.
-const isSlowBuild = isDebug || isASAN;
+// A debug or ASAN build counts other instructions, and the allowances are those of x64.
+const isJudged = !isDebug && !isASAN && process.arch === "x64";
 
 describe("compile/aot/perf/loops-over-tables", () => {
   const folder = String(tempDir("aot-loops-over-tables", {}));
@@ -59,28 +60,32 @@ describe("compile/aot/perf/loops-over-tables", () => {
 
   for (const loop of ["map-iter", "set-iter", "map-get"]) {
     test(`${loop}: the sums are those of plain Bun`, async () => {
-      const compiled = await spawned([executable, loop, "3"], root, bunEnv);
-      const plain = await spawned([bunExe(), "run", join(root, "main.ts"), loop, "3"], root, bunEnv);
-      expect(compiled.stdout).toBe(plain.stdout);
+      const words = [loop, "3", String(entries)];
+      const compiled = await spawned([executable, ...words], root, bunEnv);
+      const plain = await spawned([bunExe(), "run", join(root, "main.ts"), ...words], root, bunEnv);
+      expect({ stdout: compiled.stdout, stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({
+        stdout: plain.stdout,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(plain.stdout).toStartWith(`${loop} `);
     }, 300_000);
   }
 
   async function costOfEntry(loop: string) {
-    const less = await measureCommand(root, [executable, loop, String(few)], 300_000, env);
-    const more = await measureCommand(root, [executable, loop, String(many)], 300_000, env);
-    if (less.instructions === undefined || more.instructions === undefined) return undefined;
+    const less = await measureCommand(root, [executable, loop, String(few), String(entries)], 300_000, env);
+    const more = await measureCommand(root, [executable, loop, String(many), String(entries)], 300_000, env);
+    if (less.instructions === undefined || more.instructions === undefined)
+      throw new Error(`${loop}: the instructions were not counted, where a counter is declared`);
     return (more.instructions - less.instructions) / ((many - few) * entries);
   }
 
   for (const [loop, instructions] of rows) {
-    test.skipIf(isSlowBuild || !!without("a counter of instructions"))(
+    test.skipIf(!isJudged || !!without("a counter of instructions"))(
       `${loop}: at most ${instructions} instructions an entry`,
       async () => {
-        const cost = await costOfEntry(loop);
-        if (cost === undefined) return void console.error(`SKIPPED: ${loop}: instructions cannot be counted here`);
-        const perEntry = Math.round(cost * 10) / 10;
+        const perEntry = Math.round((await costOfEntry(loop)) * 10) / 10;
         console.error(`A WALK OF A TABLE ${loop}\tinstructions an entry\t${perEntry}`);
-        if (process.arch !== "x64") return;
         expect({ loop, perEntry, isWithinAllowance: perEntry <= instructions }).toEqual({
           loop,
           perEntry,

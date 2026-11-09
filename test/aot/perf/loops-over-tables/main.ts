@@ -1,5 +1,6 @@
-// Each loop walks a Map or a Set of 2,000 entries `n` times and writes nothing to any collection: oven-sh/bun#48283. The table is read once in
-// front of each walk, and every step reads only the entry. The Map is keyed by numbers and holds objects of one layout, as a search index does.
+// Each loop walks a Map or a Set of as many entries as the third argument says `n` times and writes nothing to any collection: oven-sh/bun#48283.
+// The table is read once in front of each walk, and every step reads only the entry. The Map is keyed by numbers and holds objects of one layout,
+// as a search index does.
 type Value = { score: number; terms: string[] };
 
 function makeMap(count: number): Map<number, Value> {
@@ -26,7 +27,7 @@ function getMap(map: Map<number, Value>, count: number): number {
   return sum;
 }
 
-const count = 2000;
+const [loop, turns, count] = [process.argv[2], Number(process.argv[3]), Number(process.argv[4])];
 const map = makeMap(count);
 const set = new Set<number>();
 for (let i = 0; i < count; i++) set.add(i);
@@ -49,7 +50,7 @@ const loops: Record<string, (n: number) => number> = {
   },
 };
 
-const [loop, turns] = [process.argv[2], Number(process.argv[3])];
 const run = loops[loop];
-if (!run) throw new Error(`usage: main <${Object.keys(loops).join("|")}> <turns>`);
+if (!run || !(turns > 0) || !(count > 0))
+  throw new Error(`usage: main <${Object.keys(loops).join("|")}> <turns> <entries>`);
 console.log(loop, run(turns));

@@ -1,6 +1,7 @@
 // A loop over a Map or a Set whose body writes no collection and calls nothing reads the table once, in front of the loop, and steps it on what it read.
 // Every shape of table must answer as plain Bun does: an empty one, one with deleted entries in front, one whose keys are not what the type says,
 // one that the engine made outside compiled code (Map.groupBy, eval), one written as a literal, a huge one, nested loops, and a loop left by break.
+// A loop whose turns let other code run (a yield, an await, a getter) steps the table as it is written, and sees what that code writes to it.
 type Box = { score: number; terms: string[] };
 const unseen = <T>(x: T): T => [x][JSON.parse("0")];
 
@@ -119,3 +120,45 @@ console.log("filled", filled.size, sumSet(filled));
 // A huge table.
 const huge = fill(unseen(70000));
 console.log("huge", sumMap(huge), sumKeys(huge));
+
+// A generator whose consumer deletes the key it was handed and adds enough keys to grow the table between two steps.
+function* keysOf(map: Map<number, Box>): Generator<number> {
+  for (const [key] of map) yield key;
+}
+const grown = fill(4);
+let handed = "";
+for (const key of keysOf(grown)) {
+  handed += key + " ";
+  grown.delete(key);
+  if (key < 4) for (let i = 0; i < 40; i++) grown.set(100 * (key + 1) + i, { score: i, terms: [] });
+}
+console.log("generator", handed.length, grown.size, sumKeys(grown));
+
+// An async loop whose await lets a microtask write the table.
+async function sumWhileWritten(set: Set<number>): Promise<number> {
+  let sum = 0;
+  for (const v of set) {
+    sum += v;
+    await Promise.resolve().then(() => {
+      set.delete(v);
+      if (v < 100) set.add(v + 1000);
+    });
+  }
+  return sum;
+}
+const awaited = new Set<number>([1, 2, 3, 4, 5]);
+console.log("awaited", await sumWhileWritten(awaited), awaited.size, sumSet(awaited));
+
+// A getter that clears the table under the loop.
+class Clearing {
+  constructor(private table: Map<number, Clearing>) {}
+  get score(): number {
+    this.table.clear();
+    return 1;
+  }
+}
+const clearing = new Map<number, Clearing>();
+for (let i = 0; i < 5; i++) clearing.set(i, new Clearing(clearing));
+let cleared = 0;
+for (const [, value] of clearing) cleared += value.score;
+console.log("clearing", cleared, clearing.size);

@@ -480,8 +480,9 @@ struct MatchedRow {
 JSC::Structure* createMatchedRowsStructure(JSC::VM&, JSC::JSGlobalObject*);
 // The rows cell for what `state` recorded, or the empty value if the root leads to no matched matcher. Takes the names out of `state`.
 JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject*, DeepMatchState&, JSC::JSValue root, JSC::JSValue rootPattern);
-// `value` is empty if the place has no row of that name: the printer then reads the property from the object.
-MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, const JSC::Identifier& name);
+// `value` is empty if the place has no row of that name or index: the printer then reads the property from the object.
+MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::PropertyName);
+MatchedRow matchedRowAtIndex(JSC::JSCell* rows, uint32_t place, uint32_t index);
 // Appends to `missing` the names of the rows of the place that are not among `names`, in the order of the walk.
 void appendMissingMatchedRowNames(JSC::JSCell* rows, uint32_t place, std::span<const JSC::Identifier> names, WTF::Vector<JSC::Identifier>& missing);
 }

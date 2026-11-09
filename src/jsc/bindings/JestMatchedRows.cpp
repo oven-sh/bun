@@ -3,6 +3,7 @@
 #include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
+#include "headers.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <wtf/BitVector.h>
 #include <wtf/FixedVector.h>
@@ -18,9 +19,11 @@ public:
     using Base = JSC::JSDestructibleObject;
     static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
     static constexpr uint32_t notAnIndex = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t rootPlace = 1;
 
-    // One object can meet a different pattern in each place it appears, so a place is the pair. The rows that lead to it hold the object.
+    // One object can meet a different pattern in each place it appears, so a place is the pair.
     struct Place {
+        JSC::WriteBarrier<JSC::JSObject> holder;
         JSC::WriteBarrier<JSC::JSObject> pattern;
         JSC::WriteBarrier<JSC::Unknown> merged;
         unsigned firstRow { 0 };
@@ -61,9 +64,22 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
+    // Null unless `rows` is a cell that matchedRowsFrom() made.
+    static JestMatchedRows* from(JSC::EncodedJSValue rows)
+    {
+        JSC::JSValue value = JSC::JSValue::decode(rows);
+        return value ? dynamicDowncast<JestMatchedRows>(value) : nullptr;
+    }
+
     Place* placeAt(uint32_t place)
     {
         return place && place <= m_places.size() ? &m_places[place - 1] : nullptr;
+    }
+
+    static Place* placeOf(JSC::EncodedJSValue rows, uint32_t place)
+    {
+        auto* cell = from(rows);
+        return cell ? cell->placeAt(place) : nullptr;
     }
 
     std::span<const Row> rowsOf(uint32_t place) const
@@ -92,9 +108,14 @@ public:
         return std::to_address(row);
     }
 
-    const Row* find(uint32_t place, const JSC::Identifier& name) const
+    const Row* find(uint32_t place, JSC::PropertyName name) const
     {
-        return find(place, JSC::parseIndex(name).value_or(notAnIndex), name.impl());
+        return find(place, JSC::parseIndex(name).value_or(notAnIndex), name.uid());
+    }
+
+    static MatchedRow toMatchedRow(const Row* row)
+    {
+        return row ? MatchedRow { row->value.get(), row->childPlace } : MatchedRow {};
     }
 
 private:
@@ -121,6 +142,7 @@ void JestMatchedRows::visitChildrenImpl(JSC::JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     for (auto& place : thisObject->m_places) {
+        visitor.append(place.holder);
         visitor.append(place.pattern);
         visitor.append(place.merged);
     }
@@ -226,8 +248,10 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* cell = JestMatchedRows::create(vm, zigGlobal->mockModule.matchedRowsStructure.getInitializedOnMainThread(zigGlobal), placeCount, rowCount);
     for (auto& entry : numbers) {
-        if (unsigned place = handleOf[entry.value])
+        if (unsigned place = handleOf[entry.value]) {
+            cell->m_places[place - 1].holder.set(vm, cell, JSC::asObject(entry.key.first));
             cell->m_places[place - 1].pattern.set(vm, cell, JSC::asObject(entry.key.second));
+        }
     }
     for (unsigned i = 0; i < rowCount; i++) {
         unsigned record = pending[i].record;
@@ -245,10 +269,14 @@ JSC::JSValue matchedRowsFrom(JSC::JSGlobalObject* globalObject, DeepMatchState& 
     return cell;
 }
 
-MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, const JSC::Identifier& name)
+MatchedRow matchedRow(JSC::JSCell* rows, uint32_t place, JSC::PropertyName name)
 {
-    auto* row = uncheckedDowncast<JestMatchedRows>(rows)->find(place, name);
-    return row ? MatchedRow { row->value.get(), row->childPlace } : MatchedRow {};
+    return JestMatchedRows::toMatchedRow(uncheckedDowncast<JestMatchedRows>(rows)->find(place, name));
+}
+
+MatchedRow matchedRowAtIndex(JSC::JSCell* rows, uint32_t place, uint32_t index)
+{
+    return JestMatchedRows::toMatchedRow(uncheckedDowncast<JestMatchedRows>(rows)->find(place, index, nullptr));
 }
 
 void appendMissingMatchedRowNames(JSC::JSCell* cell, uint32_t place, std::span<const JSC::Identifier> names, WTF::Vector<JSC::Identifier>& missing)
@@ -275,38 +303,51 @@ void appendMissingMatchedRowNames(JSC::JSCell* cell, uint32_t place, std::span<c
 
 } // namespace Bun
 
-// For the functions below, `rows` is a cell that JSC__JSValue__jestDeepMatch handed out. None of them enters JavaScript.
+// The functions below answer for any `rows` and `place`: a value that is not a rows cell has no place. None of them enters JavaScript.
+extern "C" [[ZIG_EXPORT(nothrow)]] uint32_t Bun__JestMatchedRows__root(JSC::EncodedJSValue rows)
+{
+    return Bun::JestMatchedRows::from(rows) ? Bun::JestMatchedRows::rootPlace : 0;
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JestMatchedRows__holder(JSC::EncodedJSValue rows, uint32_t place)
+{
+    auto* found = Bun::JestMatchedRows::placeOf(rows, place);
+    return JSC::JSValue::encode(found ? JSC::JSValue(found->holder.get()) : JSC::JSValue());
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JestMatchedRows__pattern(JSC::EncodedJSValue rows, uint32_t place)
+{
+    auto* found = Bun::JestMatchedRows::placeOf(rows, place);
+    return JSC::JSValue::encode(found ? JSC::JSValue(found->pattern.get()) : JSC::JSValue());
+}
+
+// Rust declares the two that take pointers by hand, with references. cppbind would hand out raw pointers.
 extern "C" JSC::EncodedJSValue Bun__JestMatchedRows__get(JSC::EncodedJSValue rows, uint32_t place, const BunString* name, uint32_t* childPlace)
 {
-    auto* cell = uncheckedDowncast<Bun::JestMatchedRows>(JSC::JSValue::decode(rows));
-    auto* row = cell->find(place, Bun::toIdentifier(cell->vm(), *name));
-    *childPlace = row ? row->childPlace : 0;
-    return JSC::JSValue::encode(row ? row->value.get() : JSC::JSValue());
+    auto* cell = Bun::JestMatchedRows::from(rows);
+    auto row = cell ? Bun::matchedRow(cell, place, Bun::toIdentifier(cell->vm(), *name)) : Bun::MatchedRow {};
+    *childPlace = row.childPlace;
+    return JSC::JSValue::encode(row.value);
 }
 
 extern "C" JSC::EncodedJSValue Bun__JestMatchedRows__getIndex(JSC::EncodedJSValue rows, uint32_t place, uint32_t index, uint32_t* childPlace)
 {
-    auto* row = uncheckedDowncast<Bun::JestMatchedRows>(JSC::JSValue::decode(rows))->find(place, index, nullptr);
-    *childPlace = row ? row->childPlace : 0;
-    return JSC::JSValue::encode(row ? row->value.get() : JSC::JSValue());
-}
-
-extern "C" JSC::EncodedJSValue Bun__JestMatchedRows__pattern(JSC::EncodedJSValue rows, uint32_t place)
-{
-    auto* found = uncheckedDowncast<Bun::JestMatchedRows>(JSC::JSValue::decode(rows))->placeAt(place);
-    return JSC::JSValue::encode(found ? JSC::JSValue(found->pattern.get()) : JSC::JSValue());
+    auto* cell = Bun::JestMatchedRows::from(rows);
+    auto row = cell ? Bun::matchedRowAtIndex(cell, place, index) : Bun::MatchedRow {};
+    *childPlace = row.childPlace;
+    return JSC::JSValue::encode(row.value);
 }
 
 // The empty value until Bun__JestMatchedRows__setMerged.
-extern "C" JSC::EncodedJSValue Bun__JestMatchedRows__merged(JSC::EncodedJSValue rows, uint32_t place)
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JestMatchedRows__merged(JSC::EncodedJSValue rows, uint32_t place)
 {
-    auto* found = uncheckedDowncast<Bun::JestMatchedRows>(JSC::JSValue::decode(rows))->placeAt(place);
+    auto* found = Bun::JestMatchedRows::placeOf(rows, place);
     return JSC::JSValue::encode(found ? found->merged.get() : JSC::JSValue());
 }
 
-extern "C" void Bun__JestMatchedRows__setMerged(JSC::EncodedJSValue rows, uint32_t place, JSC::EncodedJSValue merged)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__JestMatchedRows__setMerged(JSC::EncodedJSValue rows, uint32_t place, JSC::EncodedJSValue merged)
 {
-    auto* cell = uncheckedDowncast<Bun::JestMatchedRows>(JSC::JSValue::decode(rows));
-    if (auto* found = cell->placeAt(place))
+    auto* cell = Bun::JestMatchedRows::from(rows);
+    if (auto* found = cell ? cell->placeAt(place) : nullptr)
         found->merged.set(cell->vm(), cell, JSC::JSValue::decode(merged));
 }

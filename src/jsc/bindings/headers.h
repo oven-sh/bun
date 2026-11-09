@@ -252,6 +252,16 @@ CPP_DECL JSC::JSString* JSC__JSValue__toJSStringView(JSC::EncodedJSValue JSValue
 CPP_DECL uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue JSValue0);
 CPP_DECL void JSC__JSValue__toZigException(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigException* arg2);
 
+#pragma mark - Bun::JestMatchedRows
+
+CPP_DECL uint32_t Bun__JestMatchedRows__root(JSC::EncodedJSValue rows);
+CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__holder(JSC::EncodedJSValue rows, uint32_t place);
+CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__pattern(JSC::EncodedJSValue rows, uint32_t place);
+CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__get(JSC::EncodedJSValue rows, uint32_t place, const BunString* name, uint32_t* childPlace);
+CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__getIndex(JSC::EncodedJSValue rows, uint32_t place, uint32_t index, uint32_t* childPlace);
+CPP_DECL JSC::EncodedJSValue Bun__JestMatchedRows__merged(JSC::EncodedJSValue rows, uint32_t place);
+CPP_DECL void Bun__JestMatchedRows__setMerged(JSC::EncodedJSValue rows, uint32_t place, JSC::EncodedJSValue merged);
+
 #pragma mark - JSC::VM
 
 CPP_DECL size_t JSC__VM__blockBytesAllocated(JSC::VM* arg0);

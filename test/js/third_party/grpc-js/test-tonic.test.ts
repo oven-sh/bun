@@ -2,27 +2,10 @@ import grpc from "@grpc/grpc-js";
 import protoLoader from "@grpc/proto-loader";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { chmod, cp, mkdir, rename } from "fs/promises";
+import { cp } from "fs/promises";
 import { tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import path, { join } from "path";
-import unzipper from "unzipper";
-
-const protoVersion = "31.0";
-
-const releases = {
-  "win32_x86_32": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-win32.zip`,
-  "win32_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-win64.zip`,
-  "linux_x86_32": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-linux-x86_32.zip`,
-  "linux_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-linux-x86_64.zip`,
-  "darwin_x86_64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-osx-x86_64.zip`,
-  "darwin_arm64": `https://github.com/protocolbuffers/protobuf/releases/download/v${protoVersion}/protoc-${protoVersion}-osx-aarch_64.zip`,
-};
-
-const platform = process.platform;
-const arch = process.arch === "arm64" ? "arm64" : process.arch === "x64" ? "x86_64" : "x86_32";
-const release = platform + "_" + arch;
-const binPath = join("bin", platform === "win32" ? "protoc.exe" : "protoc");
 
 // Load proto
 const packageDefinition = protoLoader.loadSync(join(import.meta.dir, "fixtures/tonic-server/proto/helloworld.proto"), {
@@ -37,40 +20,19 @@ type Server = { address: string; kill: () => Promise<void> };
 
 const cargoBin = Bun.which("cargo") as string;
 
-// Stable per-machine cache so persistent CI agents don't re-download protoc and
-// re-compile the entire tonic/tokio dependency tree (~50s) on every run.
+// Stable per-machine cache so persistent CI agents don't re-compile the
+// entire tonic/tokio dependency tree (~50s) on every run.
 const cacheDir = join(tmpdir(), "bun-test-tonic-cache");
 
-async function getProtocZipBytes(): Promise<Uint8Array> {
-  const cachedPath = join(cacheDir, `protoc-${protoVersion}-${release}.zip`);
-  const cached = Bun.file(cachedPath);
-  if (await cached.exists()) {
-    return await cached.bytes();
-  }
-  const bytes = await fetch(releases[release]).then(res => res.bytes());
-  await mkdir(cacheDir, { recursive: true });
-  // Write-then-rename so a concurrent/crashed run never leaves a truncated zip behind.
-  const partial = `${cachedPath}.${process.pid}.tmp`;
-  await Bun.write(partial, bytes);
-  await rename(partial, cachedPath);
-  return bytes;
-}
-
+// The server needs no protoc: src/helloworld.rs is the checked-in output of
+// tonic-build for proto/helloworld.proto.
 async function startServer(): Promise<Server> {
   const tmpDir = tmpdirSync();
   await cp(join(import.meta.dir, "fixtures/tonic-server"), tmpDir, { recursive: true });
-  const protocZip = await unzipper.Open.buffer(await getProtocZipBytes());
-
-  const protocPath = join(tmpDir, "protoc");
-  await mkdir(protocPath, { recursive: true });
-  await protocZip.extract({ path: protocPath });
-  const protocExec = join(protocPath, binPath);
-  await chmod(protocExec, 0o755);
 
   const server = Bun.spawn([cargoBin, "run", "--quiet", path.join(tmpDir, "server")], {
     cwd: tmpDir,
     env: {
-      PROTOC: protocExec,
       PATH: process.env.PATH,
       CARGO_HOME: process.env.CARGO_HOME,
       RUSTUP_HOME: process.env.RUSTUP_HOME,
@@ -121,7 +83,7 @@ async function startServer(): Promise<Server> {
   }
 }
 
-describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
+describe.skipIf(!cargoBin)("test tonic server", () => {
   let server: Server;
 
   beforeAll(async () => {

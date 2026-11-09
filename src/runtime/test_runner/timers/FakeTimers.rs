@@ -1672,9 +1672,9 @@ extern "C" fn Bun__FakeTimers__isFake(_global: &JSGlobalObject, value: JSValue) 
 /// The bits of the functions whose property has this name, on the global object or on another object.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__apisOfProperty(name: &bun_core::String, is_on_global: bool) -> u32 {
-    let length = name.length();
+    let name = name.to_encoded_slice();
     // Most names are out here. A spy on a getter asks for each one.
-    if length >= 32 || Api::PROPERTY_LENGTHS & (1 << length) == 0 {
+    if name.len >= 32 || Api::PROPERTY_LENGTHS & (1 << name.len) == 0 {
         return 0;
     }
     let mut apis = 0;

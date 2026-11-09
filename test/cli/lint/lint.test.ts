@@ -1313,6 +1313,9 @@ describe.concurrent("bun lint", () => {
         "1:62: Parsing error: Duplicate export 'a'",
       ],
       ["export { missing }; var f = (a, a) => a", "1:33: Parsing error: Argument name clash"],
+      ["export { missing }; const a", "2:1: Parsing error: Unexpected token"],
+      // After a `]`, acorn reads a `/` as division, and never sees a regular expression there.
+      ["let [a]\n/a/gg", "1:8: Parsing error: Complex binding patterns require an initialization value"],
       // Two errors deferred to one token come in source order.
       ["export var a; export var b; export var b, a;", "1:40: Parsing error: Duplicate export 'b'"],
       [

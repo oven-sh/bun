@@ -68,6 +68,8 @@ enum Phase {
     Tokenizer,
     Deferred,
     Parser,
+    /// After the whole program, at the end of the file.
+    End,
 }
 
 /// Prefixes of the acorn messages for errors that Babel also has, that Babel either doesn't recover from or Prettier
@@ -786,7 +788,7 @@ impl<'a, 'c> Checks<'a, 'c> {
     fn end_of_file(&mut self) {
         let len = self.file.text().len() as u32;
         for (at, message) in std::mem::take(&mut self.at_end) {
-            self.when_read_to(len, |checks| checks.fail(at, message));
+            self.record((len, Phase::End), Span::new(at, 0), message);
         }
     }
 

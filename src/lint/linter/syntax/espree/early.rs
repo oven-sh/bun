@@ -1065,6 +1065,15 @@ impl<'a> Checks<'a, '_> {
                 continue;
             }
             let token = it.span().start;
+            // After a `]` or a `)`, acorn's tokenizer reads a `/` as division, where TypeScript's parser starts a new
+            // statement after a line break. acorn never sees this regular expression.
+            let before = self.file.end_of_token_before(token);
+            if matches!(
+                self.file.text().get(before.wrapping_sub(1) as usize),
+                Some(b']' | b')')
+            ) {
+                continue;
+            }
             let is_valid = |flag: &u8| strings::contains_char(b"dgimsuvy", *flag);
             if !flags.iter().all(is_valid) {
                 self.tokenizer_error(token, at, "Invalid regular expression flag");

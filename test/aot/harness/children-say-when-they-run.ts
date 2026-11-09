@@ -99,8 +99,13 @@ function parting(...lists: Parameters<typeof hold>) {
 
 type List = Parameters<typeof hold>[0];
 
-/** Whether the second plain run has the list of the compiled run. One that was cut off has no list, which listRuns() has noted: the first verdict stands. */
-const agrees = (again: List | undefined, compiled: List) => again !== undefined && !parting(again, compiled);
+/** The first verdict stands where the second plain run was cut off, and its second line says why. listRuns() has noted that run too. */
+function withSecondRunCutOff(parted: unknown, cutOff: unknown) {
+  if (!(parted instanceof Error)) return parted;
+  const [summary, ...lists] = parted.message.split("\n");
+  const why = cutOff instanceof Error ? cutOff.message.split("\n")[0] : String(cutOff);
+  return new Error([summary, `plain was asked again on one thread: ${why}`, ...lists].join("\n"), { cause: cutOff });
+}
 
 // Not through console.error(), which a suite may have replaced. ./runner-suites.ts prints the line.
 function sayThatPlainWavered({ cmd, cwd }: Options, bun: number) {
@@ -139,10 +144,12 @@ Bun.spawn = function (this: unknown, first: string[] | Options, second?: Omit<Op
     .then(async ([code, plain, compiled]) => {
       const parted = parting(plain, compiled);
       if (!parted) return code;
-      const again = await listOf({ ...spare, env: { ...spare.env, ...withoutReadingThread } }, []).catch(
-        () => undefined,
+      const again = await listOf({ ...spare, env: { ...spare.env, ...withoutReadingThread } }, []).then(
+        list => ({ list }),
+        (cutOff: unknown) => ({ cutOff }),
       );
-      if (!agrees(again, compiled)) throw parted;
+      if ("cutOff" in again) throw withSecondRunCutOff(parted, again.cutOff);
+      if (parting(again.list, compiled)) throw parted;
       sayThatPlainWavered(options, bun);
       return code;
     })
@@ -165,13 +172,13 @@ Bun.spawnSync = function (this: unknown, first: string[] | Options, second?: Omi
   const [plain, compiled] = [[], ["--aot"]].map(flags => listOf(flags));
   const parted = parting(plain, compiled);
   if (parted) {
-    let again: List | undefined;
+    let again: List;
     try {
       again = listOf([], withoutReadingThread);
-    } catch {
-      again = undefined;
+    } catch (cutOff) {
+      throw withSecondRunCutOff(parted, cutOff);
     }
-    if (!agrees(again, compiled)) throw parted;
+    if (parting(again, compiled)) throw parted;
     sayThatPlainWavered(options, bun);
   }
   return spawnSync.call(this, first as never, second as never);

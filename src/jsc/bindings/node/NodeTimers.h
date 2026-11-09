@@ -17,5 +17,9 @@ JSC_DECLARE_HOST_FUNCTION(functionClearImmediate);
 JSC::JSValue createSetTimeoutFunction(JSC::VM&, JSC::JSObject* globalObject);
 JSC::JSValue createSetIntervalFunction(JSC::VM&, JSC::JSObject* globalObject);
 JSC::JSValue createSetImmediateFunction(JSC::VM&, JSC::JSObject* globalObject);
+// The callbacks of the three functions that clear a timer. All six give the one function that `@natives` has for the realm.
+JSC::JSValue createClearTimeoutFunction(JSC::VM&, JSC::JSObject* globalObject);
+JSC::JSValue createClearIntervalFunction(JSC::VM&, JSC::JSObject* globalObject);
+JSC::JSValue createClearImmediateFunction(JSC::VM&, JSC::JSObject* globalObject);
 
 } // namespace Bun

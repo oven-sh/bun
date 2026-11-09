@@ -231,10 +231,13 @@ static Identifier promisifyCustomSymbol(VM& vm)
     return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.promisify.custom"_s));
 }
 
-static JSValue createTimerFunction(VM& vm, JSObject* owner, ASCIILiteral name, NativeFunction function, NativeFunction promisifyCustomGetter)
+static JSValue createTimerFunction(VM& vm, JSObject* owner, ASCIILiteral name, NativeFunction function, NativeFunction promisifyCustomGetter = nullptr)
 {
-    auto* globalObject = owner->globalObject();
-    auto* timerFunction = JSFunction::create(vm, globalObject, 1, name, function, ImplementationVisibility::Public);
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(owner->globalObject());
+    bool isNew = false;
+    auto* timerFunction = globalObject->nativeFunction(name, function, &isNew);
+    if (!isNew || !promisifyCustomGetter)
+        return timerFunction;
     // Node's lib/timers.js shape: an enumerable, non-configurable, getter-only accessor. A CustomAccessor getter is cached per Structure, so each timer needs its own GetterSetter.
     auto* getter = JSFunction::create(vm, globalObject, 0, "get"_s, promisifyCustomGetter, ImplementationVisibility::Public);
     timerFunction->putDirectAccessor(globalObject,
@@ -257,6 +260,21 @@ JSValue createSetIntervalFunction(VM& vm, JSObject* globalObject)
 JSValue createSetImmediateFunction(VM& vm, JSObject* globalObject)
 {
     return createTimerFunction(vm, globalObject, "setImmediate"_s, functionSetImmediate, setImmediatePromisifyCustomGetter);
+}
+
+JSValue createClearTimeoutFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "clearTimeout"_s, functionClearTimeout);
+}
+
+JSValue createClearIntervalFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "clearInterval"_s, functionClearInterval);
+}
+
+JSValue createClearImmediateFunction(VM& vm, JSObject* globalObject)
+{
+    return createTimerFunction(vm, globalObject, "clearImmediate"_s, functionClearImmediate);
 }
 
 // jest.useFakeTimers() installs these. A reference kept after jest.useRealTimers() behaves like the real function.
@@ -483,19 +501,6 @@ extern "C" void Bun__FakeTimers__markBuiltinForCompiledCode(Zig::GlobalObject* g
     }
     DeletePropertySlot slot;
     JSObject::deleteProperty(function, globalObject, clock, slot);
-}
-
-// node:timers and node:timers/promises capture the globals when first loaded, so load them before installing fakes.
-extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__FakeTimers__loadNodeTimers(Zig::GlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (Bun::DeclaredModuleLoad::canLoad(globalObject, Bun::InternalModuleRegistry::Field::NodeTimers))
-        BUN_LOAD_INTERNAL_MODULE(globalObject, NodeTimers, "node:timers");
-    RETURN_IF_EXCEPTION(scope, );
-    if (Bun::DeclaredModuleLoad::canLoad(globalObject, Bun::InternalModuleRegistry::Field::NodeTimersPromises))
-        BUN_LOAD_INTERNAL_MODULE(globalObject, NodeTimersPromises, "node:timers/promises");
-    RETURN_IF_EXCEPTION(scope, );
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__FakeTimers__processObject(Zig::GlobalObject* globalObject)

@@ -54,8 +54,10 @@ import { beginGuardedBody, endGuardedBody, removableFeatures } from "./removable
 import {
   applyGlobalReplacements,
   assertNoDestructuredGlobalThis,
+  assertNoNativeFunctionOfGlobalThis,
   assertNoStoredFunctionBehindComma,
   define,
+  nativeFunctions,
 } from "./replacements";
 
 const PARALLEL = false;
@@ -358,6 +360,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     }
     let output = (await build.outputs[0].text()).replaceAll("// @bun\n", "");
     assertNoDestructuredGlobalThis(output, `${basename}.ts (${fn.name})`);
+    assertNoNativeFunctionOfGlobalThis(output, `${basename}.ts (${fn.name})`, "js");
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
@@ -926,6 +929,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     }
   }
 
+  dts += `\n/** The functions of nativeFunctions in src/codegen/replacements.ts, which script cannot replace. globalThis starts with the same ones. */\ndeclare const $natives: Pick<typeof globalThis, ${nativeFunctions.map(name => JSON.stringify(name)).join(" | ")}>;\n`;
   dts += getJS2NativeDTS();
 
   writeIfNotChanged(path.join(typesDir, "WebCoreJSBuiltins.d.ts"), dts);

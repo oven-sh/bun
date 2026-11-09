@@ -42,3 +42,117 @@ test("http.client.request span is closed when the proxy CONNECT tunnel fails", a
   const phases = events.filter(e => e.name === "http.client.request").map(e => e.ph);
   expect({ phases: phases.sort(), exitCode }).toEqual({ phases: ["b", "e"], exitCode: 0 });
 });
+
+// A builtin module calls the timer functions that script cannot replace, so the tracing has to wrap those.
+test.each([
+  ["--trace-event-categories", ["--trace-event-categories", "node.async_hooks", "main.cjs"]],
+  ["createTracing().enable() before node:net is loaded", ["main.cjs", "enable-first"]],
+  ["createTracing().enable() after node:net is loaded", ["main.cjs", "load-first"]],
+])("Timeout events of a timer that node:net sets for itself, with %s", async (_, args) => {
+  using dir = tempDir("trace-events-builtin-timer", {
+    "main.cjs": `
+      const enable = () => require("node:trace_events").createTracing({ categories: ["node.async_hooks"] }).enable();
+      if (process.argv[2] === "enable-first") enable();
+      const net = require("node:net");
+      if (process.argv[2] === "load-first") enable();
+      const socket = new net.Socket();
+      socket.setTimeout(60_000);
+      socket.setTimeout(0);
+      console.log(socket.timeout);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+
+  const events = JSON.parse(readFileSync(join(String(dir), "node_trace.1.log"), "utf8")).traceEvents;
+  expect(events.filter(e => e.name === "Timeout").map(e => e.ph)).toEqual(["b", "e"]);
+});
+
+// The timers of node:timers and node:timers/promises are the ones that are traced, not what script has put on globalThis.
+test.each([
+  ["--trace-event-categories", ["--trace-event-categories", "node.async_hooks", "main.cjs"]],
+  ["createTracing().enable()", ["main.cjs", "enable"]],
+])(
+  "Timeout events of node:timers and node:timers/promises after script replaced the globals, with %s",
+  async (_, args) => {
+    using dir = tempDir("trace-events-timers", {
+      "main.cjs": `
+      const fakes = [];
+      for (const name of ["setTimeout", "setInterval", "clearTimeout", "clearInterval"]) {
+        globalThis[name] = () => void fakes.push(name);
+      }
+      if (process.argv[2] === "enable") {
+        require("node:trace_events").createTracing({ categories: ["node.async_hooks"] }).enable();
+      }
+      const timers = require("node:timers");
+      const fired = [];
+      timers.setTimeout(() => fired.push("node:timers"), 1);
+      require("node:timers/promises").setTimeout(1).then(() => fired.push("node:timers/promises"));
+      require("node:util").promisify(timers.setTimeout)(1).then(() => fired.push("util.promisify"));
+      process.on("exit", () => console.log(JSON.stringify({ fired: fired.sort(), fakes })));
+    `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ fired: ["node:timers", "node:timers/promises", "util.promisify"], fakes: [] }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const events = JSON.parse(readFileSync(join(String(dir), "node_trace.1.log"), "utf8")).traceEvents;
+    const phases = events.filter(e => e.name === "Timeout").map(e => e.ph);
+    expect(phases.sort()).toEqual(["b", "b", "b", "e", "e", "e"]);
+  },
+);
+
+// A global that nothing has read yet is made from what node:timers exports: the tracing wraps it once, not twice.
+test.each([
+  ["--trace-event-categories", ["--trace-event-categories", "node.async_hooks", "main.cjs"]],
+  ["createTracing().enable()", ["main.cjs", "enable"]],
+])("one Timeout span for a timer of a global that nothing had read, with %s", async (_, args) => {
+  using dir = tempDir("trace-events-unread-globals", {
+    "main.cjs": `
+      if (process.argv[2] === "enable") {
+        require("node:trace_events").createTracing({ categories: ["node.async_hooks"] }).enable();
+      }
+      const nodeTimers = require("node:timers");
+      const names = ["setTimeout", "setInterval", "clearTimeout", "clearInterval"];
+      console.log(names.filter(name => nodeTimers[name] === globalThis[name]).join());
+      clearInterval(setInterval(() => {}, 60_000));
+      clearTimeout(setTimeout(() => {}, 60_000));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "setTimeout,setInterval,clearTimeout,clearInterval\n",
+    stderr: "",
+    exitCode: 0,
+  });
+
+  const events = JSON.parse(readFileSync(join(String(dir), "node_trace.1.log"), "utf8")).traceEvents;
+  expect(events.filter(e => e.name === "Timeout").map(e => e.ph)).toEqual(["b", "e", "b", "e"]);
+});

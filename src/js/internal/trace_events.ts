@@ -422,10 +422,28 @@ const kTimerSpan = Symbol("traceTimerSpan");
 function installTimerInstrumentation() {
   if (timersInstrumented) return;
   timersInstrumented = true;
-  globalThis.setTimeout = wrapTimerFunction(globalThis.setTimeout, false);
-  globalThis.setInterval = wrapTimerFunction(globalThis.setInterval, true);
-  globalThis.clearTimeout = wrapClearFunction(globalThis.clearTimeout);
-  globalThis.clearInterval = wrapClearFunction(globalThis.clearInterval);
+  // Builtin modules take their timers from `$natives`, and node:timers exports them. globalThis gets the same wrapper, or one of its own if script has put another function there. Every name is written out: under a computed key the AOT compiler takes every global for read and for replaced.
+  const nativeSetTimeout = $natives.setTimeout;
+  const nativeSetInterval = $natives.setInterval;
+  const nativeClearTimeout = $natives.clearTimeout;
+  const nativeClearInterval = $natives.clearInterval;
+  // Read before `$natives` gets the wrappers: a global that nothing has read yet is made from what `$natives` has.
+  const setTimeoutOfScript = globalThis.setTimeout;
+  const setIntervalOfScript = globalThis.setInterval;
+  const clearTimeoutOfScript = globalThis.clearTimeout;
+  const clearIntervalOfScript = globalThis.clearInterval;
+  const tracedSetTimeout = ($natives.setTimeout = wrapTimerFunction(nativeSetTimeout, false));
+  const tracedSetInterval = ($natives.setInterval = wrapTimerFunction(nativeSetInterval, true));
+  const tracedClearTimeout = ($natives.clearTimeout = wrapClearFunction(nativeClearTimeout));
+  const tracedClearInterval = ($natives.clearInterval = wrapClearFunction(nativeClearInterval));
+  globalThis.setTimeout =
+    setTimeoutOfScript === nativeSetTimeout ? tracedSetTimeout : wrapTimerFunction(setTimeoutOfScript, false);
+  globalThis.setInterval =
+    setIntervalOfScript === nativeSetInterval ? tracedSetInterval : wrapTimerFunction(setIntervalOfScript, true);
+  globalThis.clearTimeout =
+    clearTimeoutOfScript === nativeClearTimeout ? tracedClearTimeout : wrapClearFunction(clearTimeoutOfScript);
+  globalThis.clearInterval =
+    clearIntervalOfScript === nativeClearInterval ? tracedClearInterval : wrapClearFunction(clearIntervalOfScript);
 }
 
 /** Whatever function is wrapped so that its calls leave events: the arguments are passed on as they come. */

@@ -16,7 +16,7 @@ import { readBuiltinUses } from "../../scripts/build/trim/builtin-uses.ts";
 import { featureNamed } from "../../scripts/build/trim/features.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
-import { nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
+import { locate, nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
 import { Guards } from "./builtins/guards.ts";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeCPP } from "./generate-js2native";
@@ -24,7 +24,12 @@ import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChan
 import { createInternalModuleRegistry, idToEnumName } from "./internal-module-registry-scanner";
 import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
 import { recordedPointer, removableFeatures } from "./removable-entry-points.ts";
-import { assertNoDestructuredGlobalThis, assertNoStoredFunctionBehindComma, define } from "./replacements";
+import {
+  assertNoDestructuredGlobalThis,
+  assertNoNativeFunctionOfGlobalThis,
+  assertNoStoredFunctionBehindComma,
+  define,
+} from "./replacements";
 
 const builtinUsesFlag = "--builtin-uses=";
 const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
@@ -272,6 +277,16 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   // Checks the input, since --minify-syntax turns `var a = globalThis.a; var b = globalThis.b;` into a destructuring.
   assertNoDestructuredGlobalThis(fs.readFileSync(entrypoint, "utf8"), file_path);
   const written = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
+  assertNoNativeFunctionOfGlobalThis(written, moduleList[i], moduleList[i].endsWith(".ts") ? "ts" : "js");
+  // A compiled program reads a second text of some modules.
+  const readByCompiler = locate(moduleList[i]);
+  if (readByCompiler !== path.join(BASE, moduleList[i])) {
+    assertNoNativeFunctionOfGlobalThis(
+      fs.readFileSync(readByCompiler, "utf8"),
+      moduleList[i],
+      moduleList[i].endsWith(".ts") ? "ts" : "js",
+    );
+  }
   assertNoStoredFunctionBehindComma(written, moduleList[i]);
   let captured = `(function (){${output.replace("// @bun\n", "").trim()}})`;
   let usesDebug = output.includes("$debug_log");

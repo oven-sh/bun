@@ -425,9 +425,7 @@ pub(crate) fn writable_stream(
     ) -> JsResult<()> {
         // `global_this` is a `BackRef` set at construction; copy it so the
         // re-borrow does not hold `&sink` across the `&mut sink` calls below.
-        let global = sink
-            .global_this
-            .expect("NetworkSink.global_this set at construction");
+        let global = sink.global_this;
         let global = global.get();
         if sink.end_promise.has_value() || sink.flush_promise.has_value() {
             // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
@@ -534,14 +532,12 @@ pub(crate) fn writable_stream(
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, cx.context()) };
 
-    let response_stream: *mut NetworkSink =
-        bun_core::heap::into_raw(NetworkSink::new(NetworkSink {
-            // SAFETY: adopts one of `task_ptr`'s two initial refs (released in `detach_writable`).
-            task: Some(unsafe { RefPtr::from_raw(task_ptr) }),
-            global_this: Some(bun_ptr::BackRef::new(cx.global())),
-            writer_holders: Cell::new(2),
-            ..Default::default()
-        }));
+    let response_stream: *mut NetworkSink = bun_core::heap::into_raw(NetworkSink::new(
+        cx.global(),
+        // SAFETY: adopts one of `task_ptr`'s two initial refs (released in `detach_writable`).
+        unsafe { RefPtr::from_raw(task_ptr) },
+        2, // `writer_holders`: the JS wrapper and the completion callback
+    ));
 
     task.callback_context.set(response_stream.cast::<c_void>());
 
@@ -939,12 +935,12 @@ pub(crate) fn upload_stream(
     // controller created by `assign_to_stream` detaches via
     // `controller.end()/close()` before GC so its `Drop` never calls
     // `finalize` on this allocation.
-    let sink: &mut NetworkSink = Box::leak(NetworkSink::new(NetworkSink {
+    let sink: &mut NetworkSink = Box::leak(NetworkSink::new(
+        cx.global(),
         // SAFETY: `task_ptr` is live; the sink's ref is released in `detach_writable`.
-        task: Some(unsafe { RefPtr::init_ref(task_ptr) }),
-        global_this: Some(bun_ptr::BackRef::new(cx.global())),
-        ..Default::default()
-    }));
+        unsafe { RefPtr::init_ref(task_ptr) },
+        0, // `writer_holders`: `ctx` owns the sink
+    ));
     let sink_handle = crate::webcore::SinkHandle::S3Upload(bun_ptr::BackRef::new_mut(sink));
     ctx.sink = Some(NonNull::from(&mut *sink));
 

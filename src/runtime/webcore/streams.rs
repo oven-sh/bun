@@ -2107,7 +2107,7 @@ pub struct NetworkSink {
     pub task: Option<RefPtr<bun_s3::MultiPartUpload>>,
     pub(crate) source: SourceHandle,
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
-    pub global_this: Option<BackRef<JSGlobalObject>>,
+    pub global_this: BackRef<JSGlobalObject>,
     /// Pending `flush()` promise. Serves both the user `s3file.writer().flush()`
     /// API and the `readDirectStream` / `BunAsyncIterableSource` pump, which
     /// parks on `controller.flush(true)` (not the sink's onReady) on backpressure.
@@ -2131,34 +2131,11 @@ pub struct NetworkSink {
     pub(crate) writer_holders: core::cell::Cell<u8>,
 }
 
-impl Default for NetworkSink {
-    fn default() -> Self {
-        Self {
-            task: None,
-            source: SourceHandle::default(),
-            global_this: None,
-            flush_promise: JSPromiseStrong::default(),
-            pending: WritablePending::default(),
-            end_promise: JSPromiseStrong::default(),
-            upstream_error: jsc::strong::Optional::empty(),
-            ended: false,
-            done: false,
-            writer_holders: core::cell::Cell::new(0),
-        }
-    }
-}
-
 impl NetworkSink {
     /// Borrow the JS global stored at construction.
-    ///
-    /// Invariant: `global_this` is set at construction and the VM-owned global
-    /// outlives this sink (JSC_BORROW). Never `None` once set.
     #[inline]
     pub fn global_this(&self) -> &JSGlobalObject {
-        self.global_this
-            .as_ref()
-            .expect("NetworkSink.global_this used before init")
-            .get()
+        self.global_this.get()
     }
 
     /// Shared borrow of the upload task, if attached.
@@ -2167,8 +2144,23 @@ impl NetworkSink {
         self.task.as_deref()
     }
 
-    pub(crate) fn new(init: NetworkSink) -> Box<NetworkSink> {
-        Box::new(init)
+    pub(crate) fn new(
+        global_this: &JSGlobalObject,
+        task: RefPtr<bun_s3::MultiPartUpload>,
+        writer_holders: u8,
+    ) -> Box<NetworkSink> {
+        Box::new(NetworkSink {
+            task: Some(task),
+            source: SourceHandle::default(),
+            global_this: BackRef::new(global_this),
+            flush_promise: JSPromiseStrong::default(),
+            pending: WritablePending::default(),
+            end_promise: JSPromiseStrong::default(),
+            upstream_error: jsc::strong::Optional::empty(),
+            ended: false,
+            done: false,
+            writer_holders: core::cell::Cell::new(writer_holders),
+        })
     }
 
     pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
@@ -2235,9 +2227,7 @@ impl NetworkSink {
         // before the re-entrant wake below.
         let mut source = unsafe {
             if (*this).flush_promise.has_value() {
-                let global = (*this)
-                    .global_this
-                    .expect("global_this set at construction");
+                let global = (*this).global_this;
                 let flushed = (*this)
                     .flush_promise
                     .resolve(&global, JSValue::js_number(flushed as f64));
@@ -2463,9 +2453,7 @@ impl NetworkSink {
                 .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
             if let Some(err) = &err {
                 (*this).done = true;
-                let global = (*this)
-                    .global_this
-                    .expect("NetworkSink.global_this set at construction");
+                let global = (*this).global_this;
                 let js_err = err.to_js(&global);
                 if !js_err.is_empty_or_undefined_or_null() {
                     (*this).upstream_error.set(&global, js_err);

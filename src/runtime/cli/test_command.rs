@@ -4143,9 +4143,6 @@ impl TestCommand {
                         continue;
                     }
                     vm.event_loop_ref().auto_tick_asleep();
-                    if buntest.phase == bun_test::Phase::Done {
-                        break;
-                    }
                     vm.event_loop_ref().tick();
 
                     while prev_unhandled_count < vm.unhandled_error_counter {

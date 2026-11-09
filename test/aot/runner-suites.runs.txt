@@ -84,6 +84,10 @@ test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module
 test/js/bun/test/mock/mock-module.test.ts: import cycles through a mocked module > the original re-exports a module that is not evaluated yet
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
 test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that is still evaluating, and the running test file
+test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again ["--parallel=2"]
+test/js/bun/test/mock/mock-module.test.ts: resetModules > a module that was being transpiled at the reset is read again []
 test/js/bun/test/mock/mock-module.test.ts: the next --rerun-each run gets the original after a factory resets modules while patching a loaded one
 test/js/bun/test/mock/mock-module.test.ts: the next file gets the originals after mock.module mocks a loaded module and one of its imports
 test/js/bun/test/mock/mock-module.test.ts: the next file gets the originals after vi.doMock mocks a loaded module and one of its imports

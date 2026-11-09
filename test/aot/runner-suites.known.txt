@@ -3,6 +3,7 @@
 # `! ` before a line: in a Bun built with assertions one of them stops that test's child run.
 # `x64 ` or `arm64 ` before a line: that test fails on that architecture alone.
 test/cli/test/bun-test.test.ts: --react-compiler > a compiled file is cached whatever its size ["--react-compiler"]
+test/cli/test/bun-test.test.ts: --react-compiler > a function that binds Function keeps a method call that a statement of an argument could change
 test/cli/test/bun-test.test.ts: --react-compiler > a pattern
 test/cli/test/bun-test.test.ts: --react-compiler > exclude alone
 test/cli/test/bun-test.test.ts: --react-compiler > false, and the flag

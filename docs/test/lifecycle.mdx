@@ -142,7 +142,7 @@ aroundAll(async runSuite => {
 
 - **Order.** Hooks nest. The first hook you register is the outermost one. The hooks of an outer `describe` block go around the hooks of an inner one.
 - **Arguments.** `aroundEach` calls the hook with `(runTest, context, suite)`. `context` is the [test context](/test/writing-tests#test-context). `aroundAll` calls it with `(runSuite, {}, suite)`.
-- **Retries.** `aroundEach` runs again for each retry and each repeat. It doesn't run for a skipped or todo test. `aroundAll` doesn't run if every test in its block is skipped.
+- **Retries.** `aroundEach` runs again for each retry and each repeat. It doesn't run for a skipped or todo test. `aroundAll` doesn't run if every test in its block is skipped. The `beforeAll` and `afterAll` hooks inside that block then don't run either.
 - **Failures.** The test fails if the hook throws, or if it finishes without calling `runTest()`. If the hook fails before it calls `runTest()`, Bun skips everything inside, and the hooks around it still finish. A second `runTest()` call returns a rejected promise.
 - **Timeout.** The second argument is a timeout in milliseconds: `aroundEach(fn, 1000)`. It applies to the time before `runTest()` is called, and again to the time after its promise resolves. Bun doesn't count the time in between.
 

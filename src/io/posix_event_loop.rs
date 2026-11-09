@@ -1,6 +1,8 @@
 #[cfg(unix)]
 use core::ffi::c_int;
+#[cfg(not(windows))]
 use core::ffi::c_void;
+#[cfg(not(windows))]
 use core::fmt;
 #[cfg(unix)]
 use core::ptr;
@@ -10,22 +12,6 @@ use bun_sys::{self as sys, Fd};
 use bun_uws_sys::Loop as UwsLoop;
 
 pub type Loop = UwsLoop;
-
-// Note: `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
-// `active` counter is a public field, so inline the saturating math here until
-// `bun_uws_sys` grows `add_active`/`sub_active`. On Windows the uws loop has no
-// such counter (libuv tracks active handles itself); `posix_event_loop` is only
-// reachable from non-Windows `Loop` consumers, so the Windows arm is a no-op.
-#[cfg(not(windows))]
-#[inline]
-fn loop_add_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_add(value);
-}
-#[cfg(not(windows))]
-#[inline]
-fn loop_sub_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_sub(value);
-}
 
 #[cfg(not(windows))]
 use bun_sys::syslog;
@@ -278,6 +264,8 @@ pub enum AllocatorType {
     #[default]
     Js,
     Mini,
+    /// The loop `Bun.spawnSync` waits on. Only what that call makes for its own child lives there.
+    SpawnSync,
 }
 
 // `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
@@ -322,17 +310,15 @@ impl FilePoll {
         if flags.contains(Flags::Socket) {
             return FileType::Socket;
         }
+        if flags.contains(Flags::Tty) {
+            return FileType::File;
+        }
         if flags.contains(Flags::Nonblocking) {
             return FileType::NonblockingPipe;
         }
         FileType::Pipe
     }
 
-    // Note: these handlers take no loop parameter: holding a
-    // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
-    // that downstream `__bun_run_file_poll` handlers conjure via
-    // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
-    // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
         self.update_flags(Flags::from_kqueue_event(kqueue_event));
@@ -383,10 +369,7 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        // `loop_mut()` is the crate-private nonnull-asref accessor (single
-        // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
-        // and dropped before any `&mut Store` is materialised.
-        let _ = self.unregister(vm.loop_mut(), force_unregister);
+        let _ = self.unregister(vm.platform_event_loop(), force_unregister);
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
@@ -468,22 +451,19 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn deactivate(&mut self, loop_: &mut Loop) {
+    fn deactivate(&mut self, loop_: &Loop) {
         if self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.dec();
         }
         self.flags.remove(Flags::HasIncrementedPollCount);
 
-        loop_sub_active(
-            loop_,
-            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
-        );
+        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn activate(&mut self, loop_: &mut Loop) {
+    fn activate(&mut self, loop_: &Loop) {
         self.flags.remove(Flags::Closed);
 
         if !self.flags.contains(Flags::HasIncrementedPollCount) {
@@ -492,10 +472,7 @@ impl FilePoll {
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
-            loop_add_active(
-                loop_,
-                (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
-            );
+            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }
@@ -515,7 +492,7 @@ impl FilePoll {
             flags,
             owner,
             next_to_free: ptr::null_mut(),
-            allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
+            allocator_type: vm.allocator_type(),
             #[cfg(all(target_os = "macos", debug_assertions))]
             // Single-threaded event loop so `Relaxed` ordering is sufficient.
             generation_number: MAX_GENERATION_NUMBER
@@ -540,7 +517,7 @@ impl FilePoll {
         poll
     }
 
-    pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
+    pub fn register(&mut self, loop_: &Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
         self.register_with_fd(
             loop_,
             flag,
@@ -555,7 +532,7 @@ impl FilePoll {
 
     pub fn register_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
@@ -587,12 +564,12 @@ impl FilePoll {
     ))]
     fn register_with_fd_impl(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        let watcher_fd = loop_.fd;
+        let watcher_fd = loop_.fd();
 
         syslog!(
             "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
@@ -638,7 +615,7 @@ impl FilePoll {
             }
 
             // Note: libc::epoll_event flattens the data union to a single `u64` field.
-            let mut event = linux::epoll_event {
+            let event = linux::epoll_event {
                 events: flags,
                 u64: Pollable::init(self).ptr() as u64,
             };
@@ -649,8 +626,11 @@ impl FilePoll {
                 EPOLL::CTL_ADD
             };
 
-            // SAFETY: FFI syscall; `event` is a stack-local valid for the call.
-            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), &raw mut event) };
+            // SAFETY: `watcher_fd` is the epoll instance of `loop_`, whose dispatch decodes a
+            // `Pollable`. `deinit` removes the entry, or leaves one that `EPOLLONESHOT` disarmed
+            // when it fired, which is not reported again. `Store::put` then holds the slot back,
+            // marked `IgnoreUpdates`, until a tick returns, when no event fetched for it is left.
+            let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), Some(&event)) };
             self.flags.insert(Flags::WasEverRegistered);
             if let Some(errno) = errno_sys(ctl, sys::Tag::epoll_ctl) {
                 self.deactivate(loop_);
@@ -856,13 +836,13 @@ impl FilePoll {
         sys::Result::Ok(())
     }
 
-    pub fn unregister(&mut self, loop_: &mut Loop, force_unregister: bool) -> sys::Result<()> {
+    pub fn unregister(&mut self, loop_: &Loop, force_unregister: bool) -> sys::Result<()> {
         self.unregister_with_fd(loop_, self.fd, force_unregister)
     }
 
     pub(crate) fn unregister_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
@@ -897,28 +877,29 @@ impl FilePoll {
     ))]
     fn unregister_with_fd_impl(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
         debug_assert!(fd.native() >= 0 && fd != INVALID_FD);
 
-        if !(self.flags.contains(Flags::PollReadable)
+        let registered = self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollWritable)
             || self.flags.contains(Flags::PollProcess)
             || self.flags.contains(Flags::PollMachport)
-            || self.flags.contains(Flags::PollMemoryPressure))
-        {
-            // no-op
+            || self.flags.contains(Flags::PollMemoryPressure);
+        // The `needs_rearm` skip below keeps the disarmed kernel registration, so teardown must still delete it.
+        let disarmed_only = !registered && self.flags.contains(Flags::NeedsRearm);
+        if !registered && !(disarmed_only && force_unregister) {
             return sys::Result::Ok(());
         }
 
-        debug_assert!(fd != INVALID_FD);
-        let watcher_fd = loop_.fd;
-        let both_directions =
-            self.flags.contains(Flags::PollReadable) && self.flags.contains(Flags::PollWritable);
+        let watcher_fd = loop_.fd();
+        let both_directions = disarmed_only
+            || (self.flags.contains(Flags::PollReadable)
+                && self.flags.contains(Flags::PollWritable));
         let flag: Flags = 'brk: {
-            if self.flags.contains(Flags::PollReadable) {
+            if disarmed_only || self.flags.contains(Flags::PollReadable) {
                 break 'brk Flags::Readable;
             }
             if self.flags.contains(Flags::PollWritable) {
@@ -963,10 +944,8 @@ impl FilePoll {
         {
             use bun_sys::linux::{self, EPOLL};
             // CTL_DEL keys on fd alone, so both directions are removed together.
-            // SAFETY: FFI syscall; null event is valid for CTL_DEL on Linux ≥2.6.9.
-            let ctl = unsafe {
-                linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), ptr::null_mut())
-            };
+            // SAFETY: CTL_DEL registers nothing.
+            let ctl = unsafe { linux::epoll_ctl(watcher_fd, EPOLL::CTL_DEL, fd.native(), None) };
 
             match sys::get_errno(ctl) {
                 sys::E::SUCCESS => {}
@@ -1209,6 +1188,7 @@ pub enum Flags {
     IgnoreUpdates,
 
     Socket,
+    Tty,
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
@@ -1269,9 +1249,10 @@ impl Flags {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(not(windows))]
 pub(crate) struct FlagsFormatter(pub FlagsSet);
 
+#[cfg(not(windows))]
 impl fmt::Display for FlagsFormatter {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut is_first = true;
@@ -1342,6 +1323,24 @@ impl Store {
         self.pending_free_tail = ptr::null_mut();
     }
 
+    /// Counts fired one-shot polls awaiting rearm. They're still in the JS loop's `num_polls` but can't fire.
+    pub fn disarmed_count(&self) -> i32 {
+        let mut count = 0;
+        let mut used = self.hive.hive.used.iter_set();
+        while let Some(index) = used.next() {
+            let poll = self.hive.hive.ptr_at(index);
+            // SAFETY: slots are only claimed through `get_init`, so a used slot is initialized; this only reads `Copy` fields.
+            let (flags, allocator_type) = unsafe { ((*poll).flags, (*poll).allocator_type) };
+            count += i32::from(
+                allocator_type == AllocatorType::Js
+                    && flags.contains(Flags::HasIncrementedPollCount)
+                    && flags.contains(Flags::NeedsRearm)
+                    && !flags.contains(Flags::HasIncrementedActiveCount),
+            );
+        }
+        count
+    }
+
     /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
     /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
     /// as `&mut FilePoll` while `&mut self` is live would retag overlapping
@@ -1399,6 +1398,15 @@ impl Store {
     }
 }
 
+/// Polls whose free is still deferred may be heap slots of the hive's fallback,
+/// which only the pending list names.
+#[cfg(not(windows))]
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.process_deferred_frees();
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // onTick (exported)
 // ──────────────────────────────────────────────────────────────────────────
@@ -1410,19 +1418,18 @@ impl Store {
 // `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
 // on a tuple). Since the union has exactly one variant, wrap the raw
 // `TaggedPtr` directly with the same tag scheme (`1024 - index`).
+#[cfg(not(windows))]
 #[derive(Copy, Clone)]
-#[allow(dead_code)]
 pub(crate) struct Pollable {
     repr: bun_collections::TaggedPtr,
 }
 
+#[cfg(not(windows))]
 impl Pollable {
     /// Tag value for `FilePoll` (index 0 → `1024 - 0`).
-    #[allow(dead_code)]
     pub(crate) const FILE_POLL_TAG: u16 = 1024;
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn init(ptr: *const crate::FilePoll) -> Self {
         Self {
             repr: bun_collections::TaggedPtr::init(ptr, Self::FILE_POLL_TAG),
@@ -1430,7 +1437,6 @@ impl Pollable {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn from(val: *mut c_void) -> Self {
         Self {
             repr: bun_collections::TaggedPtr::from(val),
@@ -1438,19 +1444,16 @@ impl Pollable {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn tag(self) -> u16 {
         self.repr.data()
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn as_file_poll(self) -> *mut crate::FilePoll {
         self.repr.get::<crate::FilePoll>()
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn ptr(self) -> *mut c_void {
         self.repr.to()
     }
@@ -1469,10 +1472,7 @@ impl Pollable {
 /// # Safety
 /// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
 /// was registered via `Pollable::init` in `register_with_fd`.
-unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
-    loop_: *mut Loop,
-    tagged_pointer: *mut c_void,
-) {
+unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
 
     if tag.tag() != Pollable::FILE_POLL_TAG {
@@ -1485,14 +1485,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
         return;
     }
 
-    // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
-    // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
-    // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
-    // protected `&mut Loop` spanning that call would be SB-UB. Take a short-lived
-    // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
-    // accessor returns by value), then drop the borrow before dispatching so the
-    // handler is free to form its own `&mut Loop`.
-    let ev = unsafe { &*loop_ }.current_ready_event();
+    let ev = loop_.current_ready_event();
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     file_poll.on_kqueue_event(&ev);

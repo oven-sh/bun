@@ -1,0 +1,12 @@
+# f1 = fill, f2 = elsewhere
+# -- source: the-word-left-in-a-cell-is-the-same-where-thong-is-read-off-another-object.ts
+# declare function sink(...values: unknown[]): void;
+# interface Links { flags: unknown; target: unknown; sooner?: unknown; later?: unknown; }
+# const LinksMaker = function (this: Links) { this.flags = 0; this.target = "none"; } as unknown as new () => Links;
+# function fill(links: Links, n: number) { if (n & 1) links.sooner = n; if (n & 2) links.later = n; }
+# function elsewhere(bag: any) { return "" + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong + bag.thong; }
+# sink(fill, elsewhere, new LinksMaker());
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: "sooner" appended {{*}}Inline
+# CHECK: "later" appended {{*}}OutOfLine

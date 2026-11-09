@@ -1,0 +1,21 @@
+# -- source: copy-knows-of-its-parameters-what-link-has-proven.ts
+# declare function sink(...values: unknown[]): void;
+# const xs: number[] = [];
+# for (let i = 0; i < 10; i++) xs.push(i);
+# function twice(v: any) { return v * 2; }
+# function run() { let t = 0; for (let i = 0; i < xs.length; i++) t += twice(xs.at(i)); return t; }
+# sink(run());
+# -- end of source
+# What Link has proven of a parameter holds of whatever a call hands over, and the Body of the callee is typed by it. The walk's own type of the operand may say less: here a method of a list gives it.
+# Code has no way to state a type. So in front of a copy the type is tested for, and the failing side traps: it has no closed arm, and only a false claim of Link takes it.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: frame 1 callee=f1
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: [[element]]: anything{{*}} = Call
+# CHECK: [[test]]: boolean {{*}} = TypeTest [[element]] testedType=
+# CHECK: = Narrowed [[element]], [[test]]
+# CHECK: = Mul {{*}} form=Numbers
+# CHECK: Unreachable
+# RUN(WITHHELD): walk f2 mechanisms=all-Arrivals
+# WITHHELD-NOT: Unreachable

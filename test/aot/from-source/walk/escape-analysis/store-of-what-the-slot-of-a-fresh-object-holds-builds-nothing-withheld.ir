@@ -1,0 +1,13 @@
+# the same program without folding, and so without what is known of fresh objects: both stores of `same` are there
+# RUN: walk f1 mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewObject
+# CHECK: key="value"
+# CHECK: key="count"
+# -- source: store-of-what-the-slot-of-a-fresh-object-holds-builds-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# function same(value: unknown) { const box = { value, count: 1 }; box.value = value; box.count = 1; return box; }
+# function other(value: unknown, next: unknown) { const box = { value, count: 1 }; box.value = next; box.count = 2; return box; }
+# sink(same, other);
+# -- end of source
+# f1 = same, f2 = other

@@ -6,7 +6,7 @@ use crate::shell::states::base::Base;
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
-pub struct If {
+pub(crate) struct If {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::If>,
     pub(crate) io: IO,
@@ -47,7 +47,7 @@ impl Exec {
     }
 }
 
-pub enum ExecBranch {
+pub(crate) enum ExecBranch {
     Cond,
     Then,
     Elif { idx: u32 },
@@ -158,8 +158,7 @@ impl If {
                             let i = exec.stmt_idx;
                             exec.stmt_idx += 1;
                             // `i` was bounds-checked against `stmts_len()`.
-                            let stmt_node: *const ast::Stmt = &raw const exec.stmts()[i as usize];
-                            Action::SpawnStmt(stmt_node)
+                            Action::SpawnStmt(&exec.stmts()[i as usize])
                         }
                     }
                 }
@@ -204,7 +203,7 @@ impl If {
     }
 }
 
-pub(crate) enum Action {
+pub(crate) enum Action<'a> {
     Done(ExitCode),
-    SpawnStmt(*const ast::Stmt),
+    SpawnStmt(&'a ast::Stmt),
 }

@@ -1,0 +1,58 @@
+A CommonJS file that threw under an import runs again once it is taken out of require.cache.
+#### a.test.mjs
+import { test } from "bun:test";
+globalThis.runs = {};
+globalThis.say = (...words) => console.log("| CASE", ...words);
+const show = value => JSON.stringify(value) + " " + Object.prototype.toString.call(value);
+
+try {
+  require("./imported/module.mjs");
+  say("imported: loaded");
+} catch (error) {
+  say("imported: threw", error.message);
+}
+for (const round of [1, 2]) {
+  delete require.cache[require.resolve("./imported/file.cjs")];
+  try {
+    say("imported: required", round, show(require("./imported/file.cjs")));
+  } catch (error) {
+    say("imported: require threw", round, error.message);
+  }
+}
+say("imported: imported", Object.keys(await import("./imported/file.cjs")).join());
+
+
+try {
+  await import("./awaited/file.cjs");
+  say("awaited: loaded");
+} catch (error) {
+  say("awaited: threw", error.message);
+}
+for (const round of [1, 2]) {
+  delete require.cache[require.resolve("./awaited/file.cjs")];
+  try {
+    say("awaited: required", round, show(require("./awaited/file.cjs")));
+  } catch (error) {
+    say("awaited: require threw", round, error.message);
+  }
+}
+say("awaited: imported", Object.keys(await import("./awaited/file.cjs")).join());
+
+test("end", () => {});
+#### awaited/file.cjs
+runs.awaited = (runs.awaited ?? 0) + 1;
+say("awaited: the file runs", runs.awaited);
+exports.value = runs.awaited;
+
+if (runs.awaited < 3) throw new Error("awaited throws " + runs.awaited);
+#### imported/file.cjs
+runs.imported = (runs.imported ?? 0) + 1;
+say("imported: the file runs", runs.imported);
+exports.value = runs.imported;
+
+if (runs.imported < 3) throw new Error("imported throws " + runs.imported);
+#### imported/module.mjs
+import * as names from "./file.cjs";
+say("imported: the module runs", JSON.stringify(Object.keys(names)));
+#### package.json
+{}

@@ -1,6 +1,6 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
@@ -20,10 +20,17 @@ const skip = !fault.available() || isWindows;
 // The explicit timeout is required: a bare `bun bd test <file>` applies Bun's
 // 5000ms default, and each fixture spawns two Bun processes and takes a few
 // seconds on a debug+ASAN build.
+//
+// On macOS the fixtures get a directory for unix sockets, because TCP loopback
+// does not deliver inside write() there (see tls-fixture-transport.ts). The
+// low-prio fixture does not use it. It needs fault injection, so on macOS only
+// a local debug build runs it and no CI lane does: a change of its transport
+// could not be checked there.
 async function runFixture(name: string) {
+  using unixDir = isMacOS ? tempDir("tlsq", {}) : undefined;
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, name)],
-    env: bunEnv,
+    env: { ...bunEnv, TLS_FIXTURE_UNIX_DIR: unixDir && String(unixDir) },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -116,6 +123,38 @@ test.concurrent(
     });
     expect(await runFixture("tls-close-all-sibling-fixture.ts")).toEqual({
       summary: { scenarios: [scenario("walk", 0), scenario("parked", 5)] },
+      signalCode: null,
+      exitCode: 0,
+      stderrTail: "",
+    });
+  },
+  60_000,
+);
+
+// us_socket_pause on a socket that is parked in the low-priority handshake
+// queue only sets is_paused (parking switched its reads off already), and the
+// queue drain used to switch the reads back on without looking at the flag:
+// the handshake ran, and `handshake` and `data` reached a socket whose pause()
+// had returned. This fixture keeps its clients in its own process, so it needs
+// no grandchild. It parks 27 of 32 accepted sockets, pauses all 32, and turns
+// the loop until the queue has drained several times over.
+// `clientHandshakesWhilePaused` counts the clients that completed their
+// handshake in that time: exactly the 5-per-iteration budget, read before the
+// pause, which also proves that the other 27 were parked. resume() then brings
+// all 32 back.
+test.concurrent(
+  "TLS low-prio queue: the drain does not resume a socket that was paused while parked",
+  async () => {
+    expect(await runFixture("tls-pause-parked-handshake-fixture.ts")).toEqual({
+      summary: {
+        opened: 32,
+        whilePaused: { handshake: 0, data: 0 },
+        clientHandshakesWhilePaused: 5,
+        serverHandshakes: 32,
+        serverData: 32,
+        pongs: 32,
+        errors: 0,
+      },
       signalCode: null,
       exitCode: 0,
       stderrTail: "",
@@ -293,6 +332,56 @@ test.concurrent.skipIf(!fault.available() || !isLinux)(
 // wait on child processes; `serialized` chains them behind one another. The
 // time a test spends waiting in that chain counts against its own timeout, so
 // each one gets an explicit timeout instead of Bun's 5000ms default.
+// The peer stays half-open and never answers the FIN, so only the writer can close the socket.
+// The close does not read for a paused socket: a peer that keeps sending would hold the loop.
+test.skipIf(skip).each(["reading", "paused"] as const)(
+  "send → more bytes than it was given: a %s Bun.connect socket sends nothing more and closes",
+  async state => {
+    let received = "";
+    let read = "";
+    const peerOpened = Promise.withResolvers<void>();
+    const peerEnded = Promise.withResolvers<void>();
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open(peer) {
+          peer.write("unread");
+          peerOpened.resolve();
+        },
+        data: (_, chunk) => void (received += chunk),
+        end: () => peerEnded.resolve(),
+      },
+    });
+    try {
+      const closed = Promise.withResolvers<string | undefined>();
+      const socket = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        socket: {
+          data: (_, chunk) => void (read += chunk),
+          close: (_, error) => closed.resolve((error as NodeJS.ErrnoException | undefined)?.code),
+        },
+      });
+      if (state === "paused") socket.pause();
+      await peerOpened.promise;
+      fault.set({ syscall: "send", action: "excess", fd: (socket as any).fd });
+      const writes = [socket.write("hello"), socket.write("again")];
+      const code = await closed.promise;
+      await peerEnded.promise;
+      expect({ writes, code, received, read }).toEqual({
+        writes: [-1, -1],
+        code: "ECONNRESET",
+        received: "",
+        read: state === "paused" ? "" : expect.any(String),
+      });
+    } finally {
+      listener.stop(true);
+    }
+  },
+);
+
 describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOTYPE)", () => {
   const H2_TIMEOUT_MS = 30_000;
   let chain: Promise<unknown> = Promise.resolve();
@@ -314,7 +403,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       socket.on("error", () => {});
       let buf = Buffer.alloc(0);
       let sawPreface = false;
-      socket.on("data", d => {
+      socket.on("data", (d: Buffer) => {
         buf = Buffer.concat([buf, d]);
         if (!sawPreface && buf.length >= 24) {
           buf = buf.subarray(24);
@@ -359,7 +448,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       // Recorded rather than asserted here: a throw inside the listener would
       // not reach the test body, while an unexpected event fails its toEqual.
       if (fd < 0) events.push("connect:no-fd");
-      fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", after: 0, repeat, fd });
+      fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE" as any, after: 0, repeat, fd });
     });
     const req = client.request({ ":path": "/" });
     req.on("error", e => events.push(`stream-error:${(e as any).code ?? e.message}`));

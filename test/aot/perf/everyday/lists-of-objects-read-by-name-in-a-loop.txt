@@ -1,0 +1,188 @@
+//// one-name-of-each-object-of-a-list-nobody-knows.for-of
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ id: n, rank: n * 3, label: "m" + n }));
+function turn(i: number): number {
+  let sum = i;
+  for (const item of (globalThis as any).list) sum = (sum + item.rank) | 0;
+  return sum;
+}
+//// three-names-of-each-object-of-a-list-nobody-knows.for
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ id: n, rank: n * 3, label: "m" + n }));
+function turn(i: number): number {
+  const list = (globalThis as any).list;
+  let sum = i;
+  for (let n = 0; n < list.length; n++) {
+    const item = list[n];
+    sum = (sum + item.id + item.rank + item.label.length) | 0;
+  }
+  return sum;
+}
+//// a-chain-of-links-nobody-knows.while
+let head: any = null;
+for (let n = 0; n < 32; n++) head = { next: head, weight: n };
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "head"] = head;
+function turn(i: number): number {
+  let sum = i;
+  let link = (globalThis as any).head;
+  while (link) {
+    sum = (sum + link.weight) | 0;
+    link = link.next;
+  }
+  return sum;
+}
+//// one-object-nobody-knows-read-in-every-turn-between-calls.while
+const state: any = { limit: 32, step: 1, total: 0 };
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "state"] = state;
+(globalThis as any)[process.argv.length > 99 ? process.argv[8] : "bump"] = (n: number) => n + 1;
+function turn(i: number): number {
+  const held = (globalThis as any).state;
+  const bump = (globalThis as any).bump;
+  let n = 0;
+  let sum = i;
+  while (n < held.limit) {
+    sum = (sum + held.step) | 0;
+    n = bump(n);
+  }
+  return sum;
+}
+//// the-last-object-with-a-text-under-a-name.findLastIndex
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "messages"] = Array.from({ length: 32 }, (_, n) => ({ type: "user", uuid: "u-" + n, text: "t" }));
+const wanted = ["u-0", "u-1", "u-2", "u-3"];
+function turn(i: number): number {
+  const uuid = wanted[i & 3];
+  return (globalThis as any).messages.findLastIndex((m: any) => m.uuid === uuid);
+}
+//// the-objects-with-a-number-under-a-name.filter
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ kind: n & 3, value: n }));
+function turn(i: number): number {
+  const kind = i & 3;
+  return (globalThis as any).list.filter((item: any) => item.kind === kind).length;
+}
+//// objects-in-the-order-of-a-number-under-a-name.sort
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 16 }, (_, n) => ({ rank: (n * 7) & 15, value: n }));
+function turn(i: number): number {
+  const sorted = (globalThis as any).list.slice().sort((a: any, b: any) => a.rank - b.rank);
+  return sorted[i & 15].value;
+}
+//// the-sum-of-a-number-under-a-name.reduce
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ cost: n, note: "" }));
+function turn(i: number): number {
+  return (globalThis as any).list.reduce((sum: number, item: any) => (sum + item.cost) | 0, i);
+}
+//// a-callback-nobody-knows-reads-a-name-of-each.forEach
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ cost: n, note: "" }));
+let total = 0;
+(globalThis as any)[process.argv.length > 99 ? process.argv[8] : "visit"] = (item: any) => { total = (total + item.cost) | 0; };
+function turn(i: number): number {
+  total = i;
+  (globalThis as any).list.forEach((globalThis as any).visit);
+  return total;
+}
+//// objects-of-two-kinds-in-turn.for-of
+class Ranked { rank: number; id: number; constructor(n: number) { this.rank = n; this.id = n; } }
+class Labeled { label = "x"; extra = 1; rank: number; constructor(n: number) { this.rank = n; } }
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => (n & 1 ? new Ranked(n) : new Labeled(n)));
+function turn(i: number): number {
+  let sum = i;
+  for (const item of (globalThis as any).list) sum = (sum + item.rank) | 0;
+  return sum;
+}
+//// objects-of-four-kinds-in-turn.for-of
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => [{ rank: n }, { a: 1, rank: n }, { a: 1, b: 2, rank: n }, { a: 1, b: 2, c: 3, rank: n }][n & 3]);
+function turn(i: number): number {
+  let sum = i;
+  for (const item of (globalThis as any).list) sum = (sum + item.rank) | 0;
+  return sum;
+}
+//// one-kind-and-then-another.for-of
+class Ranked { rank: number; id: number; constructor(n: number) { this.rank = n; this.id = n; } }
+class Labeled { label = "x"; extra = 1; rank: number; constructor(n: number) { this.rank = n; } }
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => (n < 16 ? new Ranked(n) : new Labeled(n)));
+function turn(i: number): number {
+  let sum = i;
+  for (const item of (globalThis as any).list) sum = (sum + item.rank) | 0;
+  return sum;
+}
+//// a-list-of-two-objects.for-of
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = [{ rank: 1, id: 1 }, { rank: 2, id: 2 }];
+function turn(i: number): number {
+  let sum = i;
+  for (const item of (globalThis as any).list) sum = (sum + item.rank) | 0;
+  return sum;
+}
+//// a-list-of-one-object.for-of
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = [{ rank: 1, id: 1 }];
+function turn(i: number): number {
+  let sum = i;
+  for (const item of (globalThis as any).list) sum = (sum + item.rank) | 0;
+  return sum;
+}
+//// lists-of-three-in-a-list-of-eight.for-of-in-for-of
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "groups"] = Array.from({ length: 8 }, (_, g) => ({ items: [{ rank: g }, { rank: g + 1 }, { rank: g + 2 }] }));
+function turn(i: number): number {
+  let sum = i;
+  for (const group of (globalThis as any).groups) for (const item of group.items) sum = (sum + item.rank) | 0;
+  return sum;
+}
+//// a-text-a-fraction-and-a-flag-under-names.for-of
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ name: "n" + n, share: n / 4, open: (n & 1) === 0 }));
+function turn(i: number): number {
+  let sum = i;
+  for (const item of (globalThis as any).list) sum = (sum + item.name.length + (item.open ? 1 : 0) + (item.share > 2 ? 1 : 0)) | 0;
+  return sum;
+}
+//// objects-out-of-parsed-text.for-of
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = JSON.parse(JSON.stringify(Array.from({ length: 32 }, (_, n) => ({ id: n, rank: n * 3 }))));
+function turn(i: number): number {
+  let sum = i;
+  for (const item of (globalThis as any).list) sum = (sum + item.rank) | 0;
+  return sum;
+}
+//// instances-of-a-class-nobody-knows.for-of
+class Point { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } }
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => new Point(n, n * 2));
+function turn(i: number): number {
+  let sum = i;
+  for (const point of (globalThis as any).list) sum = (sum + point.x + point.y) | 0;
+  return sum;
+}
+//// a-name-stored-in-each-object-of-a-list-nobody-knows.for-of
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ id: n, seen: 0 }));
+function turn(i: number): number {
+  for (const item of (globalThis as any).list) item.seen = i;
+  return (globalThis as any).list[i & 31].seen;
+}
+//// whether-each-object-has-a-name.in
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ id: n, rank: n }));
+function turn(i: number): number {
+  let sum = i;
+  for (const item of (globalThis as any).list) if ("rank" in item) sum = (sum + 1) | 0;
+  return sum;
+}
+//// a-method-of-each-instance-nobody-knows.for-of
+class Shape { side: number; constructor(side: number) { this.side = side; } area(): number { return this.side * this.side; } }
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => new Shape(n));
+function turn(i: number): number {
+  let sum = i;
+  for (const shape of (globalThis as any).list) sum = (sum + shape.area()) | 0;
+  return sum;
+}
+//// one-key-nobody-knows-of-each-object.for-of
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ id: n, rank: n * 3 }));
+(globalThis as any)[process.argv.length > 99 ? process.argv[8] : "key"] = "rank";
+function turn(i: number): number {
+  const key = (globalThis as any).key;
+  let sum = i;
+  for (const item of (globalThis as any).list) sum = (sum + item[key]) | 0;
+  return sum;
+}
+//// a-function-nobody-knows-called-for-each-object-reads-two-names.for
+(globalThis as any)[process.argv.length > 99 ? process.argv[9] : "list"] = Array.from({ length: 32 }, (_, n) => ({ id: n, rank: n * 3 }));
+function weigh(item: any): number {
+  return (item.id + item.rank) | 0;
+}
+function turn(i: number): number {
+  const list = (globalThis as any).list;
+  let sum = i;
+  for (let n = 0; n < list.length; n++) sum = (sum + weigh(list[n])) | 0;
+  return sum;
+}

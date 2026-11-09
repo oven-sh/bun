@@ -36,7 +36,7 @@ test("CSS bundler doesn't over-allocate SmallList when growing past the first he
   const lastSel = `.r${numRules - 1}-s${selectorsPerRule - 1}`;
 
   const fixture = /* js */ `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     const baseline = rss();
     const result = await Bun.build({
       entrypoints: [${JSON.stringify(path.join(String(dir), "wide.css"))}],

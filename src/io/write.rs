@@ -155,25 +155,10 @@ impl<B: AsRef<[u8]>> FixedBufferStream<B> {
     }
 
     /// Read a POD struct.
-    ///
-    /// SAFETY: caller is responsible for `T` being `#[repr(C)]` POD with no
-    /// padding-sensitive invariants.
-    pub fn read_struct<T: Copy>(&mut self) -> Result<T> {
-        let buf = self.buffer.as_ref();
-        let n = core::mem::size_of::<T>();
-        let end = self
-            .pos
-            .checked_add(n)
-            .ok_or(bun_core::Error::EndOfStream)?;
-        if end > buf.len() {
-            return Err(bun_core::Error::EndOfStream);
-        }
-        // SAFETY: `buf[pos..end]` is exactly `size_of::<T>()` initialized
-        // bytes from the safe slice borrow; caller contract guarantees `T` is
-        // `#[repr(C)]` POD where every byte pattern is valid.
-        // `read_unaligned` tolerates any source alignment.
-        let out = unsafe { core::ptr::read_unaligned(buf[self.pos..end].as_ptr().cast::<T>()) };
-        self.pos = end;
+    pub fn read_struct<T: bun_core::AnyBitPattern>(&mut self) -> Result<T> {
+        let rest = self.buffer.as_ref().get(self.pos..).unwrap_or_default();
+        let out = bun_core::read_prefix(rest).ok_or(bun_core::Error::EndOfStream)?;
+        self.pos += core::mem::size_of::<T>();
         Ok(out)
     }
 }
@@ -225,6 +210,22 @@ impl<W: fmt::Write + ?Sized> fmt::Write for FmtAdapter<'_, W> {
     }
 }
 
+/// Invalid UTF-8 cannot enter a `fmt::Write` sink losslessly; replacement chars
+/// are the price of bridging (same output as from_utf8_lossy, without the
+/// allocation).
+#[cold]
+#[inline(never)]
+fn write_lossy(sink: &mut dyn fmt::Write, buf: &[u8]) -> fmt::Result {
+    buf.utf8_chunks().try_for_each(|chunk| {
+        sink.write_str(chunk.valid())?;
+        if chunk.invalid().is_empty() {
+            Ok(())
+        } else {
+            sink.write_str("\u{FFFD}")
+        }
+    })
+}
+
 // `W: Sized` (no `?Sized`) — together with [`AsFmt`] (the inverse adapter),
 // `?Sized` here would let rustc probe the infinite tower
 // `FmtAdapter<AsFmt<FmtAdapter<AsFmt<…>>>>` when checking `dyn Write: Write`,
@@ -235,17 +236,7 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
         // Fast path: valid UTF-8 (overwhelmingly the case for our printers).
         let r = match bun_core::str_utf8(buf) {
             Some(s) => self.inner.write_str(s),
-            // Invalid UTF-8 cannot enter a `fmt::Write` sink losslessly;
-            // replacement chars are the price of bridging (same output as
-            // from_utf8_lossy, without the allocation).
-            None => buf.utf8_chunks().try_for_each(|chunk| {
-                self.inner.write_str(chunk.valid())?;
-                if chunk.invalid().is_empty() {
-                    Ok(())
-                } else {
-                    self.inner.write_str("\u{FFFD}")
-                }
-            }),
+            None => write_lossy(self.inner, buf),
         };
         r.map_err(|_| bun_core::Error::FmtError)
     }

@@ -1,0 +1,20 @@
+# `function declare<T extends Named>(kind) { const node = base(kind); node.a = undefined; node.b = 1; return node; }`, copied into `deed`, with `base()` copied into it: of `node` the helper writes `Mutable<T>`, a mapped type over its own type parameter, which says nothing.
+# It is the one value that every return of the copy hands back, and whoever called has written what he expects of the answer (`declare<Leaf>(i)`): that is tested inside the copy, and the two stores are typed behind the test.
+# f1 = base, f2 = declare, f3 = deed
+# -- source: what-a-copy-hands-back-is-expected-to-be-what-the-caller-expects.ts
+# declare function sink(...values: unknown[]): void;
+# declare const factory: { base(kind: number): any };
+# type Mutable<T extends object> = { -readonly [K in keyof T]: T[K] };
+# interface Named { readonly kind: number; a?: number; b?: number }
+# class Leaf implements Named { kind = 0; a?: number; b?: number; c = 0; }
+# class Other implements Named { kind = 1; a?: number; b?: number; d = ""; }
+# function base<T extends Named>(kind: T["kind"]) { return factory.base(kind) as Mutable<T>; }
+# function declare<T extends Named>(kind: T["kind"]) { const node = base(kind); node.a = undefined; node.b = 1; return node; }
+# function deed(i: number): Leaf { const node = declare<Leaf>(i); node.c = i; return node; }
+# sink(deed, declare, base, new Leaf(), new Other());
+# -- end of source
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = ShapeTest
+# CHECK: PutSlot{{*}}key="a"
+# CHECK: PutSlot{{*}}key="b"

@@ -3878,6 +3878,52 @@ console.log(typeof outmost.inner);
         `  return sum;\n}\nconsole.log(run(JSON.parse("21")));\n`,
     }),
   },
+  // Half of the files start a Worker from a name that goes through Bun.fileURLToPath(), the other half hand a name that goes through URL.parse() to the
+  // function of another file. The name is read in the file that writes it, and all of them name one file: the program at size 0 holds one file of each
+  // half, so that every size has paid for what the first Worker brings of the library.
+  {
+    name: "files that name the file of a Worker through a function of the library",
+    counted: "files",
+    size: 600,
+    entry: "main.js",
+    write: size => {
+      const files: Record<string, string> = {
+        "w.js": `postMessage("up");\n`,
+        "pool.js": `export const spawn = file => new Worker(file);\n`,
+      };
+      const count = size + 2;
+      for (let index = 0; index < count; index++) {
+        files[`p/p${index}.js`] =
+          index % 2 === 0
+            ? `export const start${index} = () => new Worker(Bun.fileURLToPath(new URL("../w.js", import.meta.url)));\n`
+            : `import { spawn } from "../pool.js";\nexport const start${index} = () => spawn(URL.parse("../w.js", import.meta.url));\n`;
+      }
+      files["main.js"] =
+        lines(count, index => `import { start${index} } from "./p/p${index}.js";`) +
+        `const all = [${upTo(count, index => `start${index}`).join(", ")}];\n` +
+        `if (process.argv.length > 9) all[0]();\n` +
+        `console.log(all.length);\n`;
+      return files;
+    },
+  },
+  // The same names in one file, each handed to the one function that starts a Worker: the start is followed to what each caller passes, and each of
+  // those goes through a function of the library.
+  {
+    name: "names of the file of a Worker that go through a function of the library on their way to one start",
+    counted: "names",
+    size: 2000,
+    entry: "main.js",
+    write: size => ({
+      "w.js": `postMessage("up");\n`,
+      "main.js":
+        `function spawn(file) { return new Worker(file); }\n` +
+        `if (process.argv.length > 9) {\n  spawn(Bun.fileURLToPath(new URL("./w.js", import.meta.url)));\n  spawn(URL.parse("./w.js", import.meta.url));\n` +
+        lines(size, index =>
+          index % 2 === 0 ? `  spawn(Bun.fileURLToPath(new URL("./w.js", import.meta.url)));` : `  spawn(URL.parse("./w.js", import.meta.url));`,
+        ) +
+        `}\nconsole.log(typeof spawn);\n`,
+    }),
+  },
 ];
 
 if (import.meta.main) {

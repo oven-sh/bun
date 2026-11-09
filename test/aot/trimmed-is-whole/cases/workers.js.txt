@@ -75,5 +75,30 @@ listen(new Worker(new URL("./w.js", import.meta.url).href));
 //@ build ./w.js
 console.log("started");
 listen(new Worker("./w.js"));
+//// file-named-through-a-function-of-node-url
+//@ alone
+//@ file w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
+import { fileURLToPath } from "node:url";
+{
+  const worker = new Worker(fileURLToPath(new URL("./w.js", import.meta.url)));
+  listen(worker);
+  worker.addEventListener("error", () => process.exit(1));
+}
+//// file-named-through-a-function-of-bun
+//@ alone
+//@ file w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
+{
+  const worker = new Worker(Bun.fileURLToPath(new URL("./w.js", import.meta.url)));
+  listen(worker);
+  worker.addEventListener("error", () => process.exit(1));
+}
+//// file-named-through-url-parse
+//@ alone
+//@ file w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
+{
+  const worker = new Worker(URL.parse("./w.js", import.meta.url));
+  listen(worker);
+  worker.addEventListener("error", () => process.exit(1));
+}
 //// typeof-Worker
 console.log(typeof Worker, Worker.name, Worker.length);

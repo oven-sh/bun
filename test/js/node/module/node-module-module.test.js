@@ -1175,7 +1175,8 @@ console.log("survived", require("./late.js"));`,
           JSON.stringify(require("./amd.zzx")),
         );
       `,
-      "lib.zzx": "this.x = 1;\nexports.y = 2;\n",
+      // `exports = {}` detaches the `exports` binding; `this` still points at module.exports.
+      "lib.zzx": "this.x = 0;\nexports.y = 2;\nexports = {};\nthis.x = 1;\n",
       "umd.zzx": /* js */ `
         (function (root, factory) {
           root.Lib = factory();

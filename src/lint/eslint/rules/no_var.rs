@@ -303,9 +303,9 @@ fn oxlint_is_written_to(pat: Pat) -> bool {
 fn markup_may_write(declaration: VarDecl<'_>) -> bool {
     let mut may_write = false;
     declaration.pat().for_each_binding(&mut |pat| {
-        may_write |= pat.symbol().is_some_and(|it| {
-            matches!(it.scope().kind(), ScopeKind::Global | ScopeKind::Module)
-        });
+        may_write |= pat
+            .symbol()
+            .is_some_and(|it| matches!(it.scope().kind(), ScopeKind::Global | ScopeKind::Module));
     });
     may_write
 }
@@ -348,7 +348,9 @@ fn fix_as_oxlint<'a>(
     }
     let markup_assigns = fixer.file().markup_assigns_bindings();
     let is_let = declarations.iter().any(|it| {
-        it.init().is_none() || oxlint_is_written_to(it.pat()) || markup_assigns && markup_may_write(it)
+        it.init().is_none()
+            || oxlint_is_written_to(it.pat())
+            || markup_assigns && markup_may_write(it)
     });
     let (file, span) = (fixer.file(), statement.span_without_export());
     let before = file.slice(Span::before(span.start, var));

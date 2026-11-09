@@ -21,8 +21,7 @@ using namespace JSC;
 
 class BunPlugin {
 public:
-    // What a name loads without a file: the function that build.module() was given, a mock of the name, or both.
-    // With both, the name loads the mock, and the function is there for when the mock is removed.
+    // The function that build.module() was given, a mock of the name, or both. With both, the name loads the mock.
     struct VirtualModule {
         JSC::Strong<JSC::JSObject> provider;
         JSC::Strong<JSC::JSObject> mock;

@@ -1340,11 +1340,11 @@ static SlotContent replacedByStub(Zig::GlobalObject* globalObject, JSValue entry
 static JSValue stubOf(Zig::GlobalObject* globalObject, const Identifier& key)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue stubs = globalObject->mockModule.stubbedGlobals.get();
     if (!stubs)
         return {};
     // The key is a string or a symbol, so the map runs no script for it.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* map = uncheckedDowncast<JSMap>(stubs);
     JSValue name = identifierToJSValue(vm, key);
     bool isStubbed = map->has(globalObject, name);
@@ -1557,20 +1557,26 @@ extern "C" JSC::EncodedJSValue JSMock__readForFake(Zig::GlobalObject* globalObje
 extern "C" void JSMock__putBackForFake(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name, JSC::EncodedJSValue originals, JSC::EncodedJSValue entryOfFake, bool isUninstalled)
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* target = asObject(JSValue::decode(owner));
     auto key = Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy));
     if (isUninstalled) {
         InternalFieldTuple* link = nullptr;
-        return putContent(globalObject, target, key, whatFakeStandsFor(globalObject, target, key, originals, JSValue::decode(entryOfFake), link), false);
+        putContent(globalObject, target, key, whatFakeStandsFor(globalObject, target, key, originals, JSValue::decode(entryOfFake), link), false);
+    } else {
+        EntryOfFake entry(vm, target, key, JSValue::decode(entryOfFake));
+        putBack(globalObject, target, key, entry.content, entry.link, false);
     }
-    EntryOfFake entry(vm, target, key, JSValue::decode(entryOfFake));
-    putBack(globalObject, target, key, entry.content, entry.link, false);
+    // These are own properties of the global object, `process`, `Date` and `performance`, and no key is an index.
+    scope.assertNoException();
 }
 
 // The end of a test file has undone its spies, its stubs and its fake timers. Nothing has a restored spy of that file as what it replaced any more.
 extern "C" void JSMock__didUndoTestFile(Zig::GlobalObject* globalObject)
 {
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
     JSMockFunction::forgetRestored(globalObject);
+    scope.assertNoException();
 }
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };

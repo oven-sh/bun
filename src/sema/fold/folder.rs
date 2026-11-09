@@ -1,3 +1,4 @@
+use super::children::TreeNode;
 use super::dead_code::{DeadRoots, mark_nodes_below};
 use super::evaluate::{Evaluator, Value};
 use super::feature_flags::find_feature_import;
@@ -393,13 +394,22 @@ impl<'s> Folder<'_, 's> {
         self.paths_from_own_directory.shared_sort_unstable();
         self.paths_made_by_calls.shared_sort_unstable();
         (self.names_made_by_calls).shared_sort_unstable_by_key(|entry| entry.0);
-        let DeadRoots { all, in_bun_run } = self.find_dead_roots();
+        let DeadRoots {
+            mut all,
+            in_bun_run,
+        } = self.find_dead_roots();
         let folds_more_under_minify_syntax =
             self.folded_under_minify_syntax.iter().next().is_some()
                 || (self.conditions_told_under_minify_syntax.iter().next()).is_some()
                 || self.seen_by_bun_run.differs_under_minify_syntax();
-        let dead_under_minify_syntax = folds_more_under_minify_syntax
-            .then(|| self.holds_under_minify_syntax(|folder| folder.find_dead_roots().in_bun_run))
+        let under_minify_syntax = folds_more_under_minify_syntax
+            .then(|| self.holds_under_minify_syntax(|folder| folder.find_dead_roots()));
+        let dead_under_minify_syntax = under_minify_syntax
+            .map(|under_minify_syntax| {
+                let statements = under_minify_syntax.all.into_iter();
+                all.extend(statements.filter(|root| matches!(root, TreeNode::Stmt(_))));
+                under_minify_syntax.in_bun_run
+            })
             .filter(|under_minify_syntax| *under_minify_syntax != in_bun_run)
             .map(|under_minify_syntax| {
                 let dead = mark_nodes_below(self.hir, under_minify_syntax);

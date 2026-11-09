@@ -19,7 +19,7 @@ enum Continuation {
 
 type CResult = core::result::Result<Continuation, Error>;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     fn sfx_handle_typescript_as(p: &mut Self, level: Level) -> CResult {
         if Self::IS_TYPESCRIPT_ENABLED
             && level.lt(Level::Compare)
@@ -186,6 +186,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 );
+                if p.scan_only {
+                    p.scan_call(left);
+                }
             }
             T::TLessThan | T::TLessThanLessThan => {
                 // "a?.<T>()"
@@ -216,6 +219,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 );
+                if p.scan_only {
+                    p.scan_call(left);
+                }
             }
             _ => {
                 if p.lexer.token == T::TPrivateIdentifier && p.allow_private_identifiers {
@@ -400,6 +406,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             loc,
         );
+        if p.scan_only {
+            p.scan_call(left);
+        }
         *optional_chain = old_optional_chain;
         Ok(Continuation::Next)
     }

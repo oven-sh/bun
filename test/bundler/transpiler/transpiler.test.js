@@ -3196,6 +3196,43 @@ console.log(<div {...obj} key="after" />);`),
       expect(imports.filter(({ path }) => path === "react")).toHaveLength(1);
       expect(imports).toHaveLength(2);
     });
+
+    const scan = (code, loader = "ts") =>
+      new Bun.Transpiler({ loader: "ts", trimUnusedImports: true })
+        .scanImports(code, loader)
+        .map(({ kind, path }) => `${kind} ${path}`);
+
+    it.each(["js", "jsx", "ts", "tsx"])("reports require() and import() in %s", loader => {
+      const code = `const a = require("a"); require?.("b"); (require)("c"); import("d");
+        x.require("no"); require("no", 1); require(no); new require("no"); new_require("no");`;
+      expect(scan(code, loader)).toEqual(["require-call a", "require-call b", "require-call c", "dynamic-import d"]);
+    });
+
+    it("reports require() in the syntax of TypeScript", () => {
+      const code = `require<T>("a"); require?.<T>("b"); import c = require("c"); @require("d") class X {}`;
+      expect(scan(code)).toEqual(["require-call a", "require-call b", "require-call c", "require-call d"]);
+    });
+
+    it("trims the imports whose names TypeScript doesn't use", () => {
+      expect(
+        scan(
+          `import { foo, type T } from "used"; import { fab } from "unused"; import { ofb } from "other"; foo(ofb);`,
+        ),
+      ).toEqual(["import-statement used", "import-statement other"]);
+      const defaultAndNamespace = `import fab from "a"; import * as foo from "b"; import { x as fob } from "c"; foo;`;
+      expect(scan(defaultAndNamespace)).toEqual(["import-statement b"]);
+      expect(scan(defaultAndNamespace, "js")).toEqual([
+        "import-statement a",
+        "import-statement b",
+        "import-statement c",
+      ]);
+      expect(scan(`import { \\u0061b } from "escaped"; import { ac } from "unused"; ab;`)).toEqual([
+        "import-statement escaped",
+      ]);
+      expect(
+        scan(`export * from "x"; export * as ns from "y"; import z from "z"; export { z }; import { q } from "q";`),
+      ).toEqual(["import-statement x", "import-statement y", "import-statement z"]);
+    });
   });
 
   const parsed = (code, trim = true, autoExport = false, transpiler_ = transpiler) => {

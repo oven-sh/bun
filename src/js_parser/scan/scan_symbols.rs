@@ -4,7 +4,7 @@ use crate::parser::FindSymbolResult;
 use bun_ast as js_ast;
 use bun_ast::{Ref, Scope};
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool> P<'a, TYPESCRIPT> {
     pub(crate) fn find_symbol(
         &mut self,
         loc: bun_ast::Loc,

@@ -1,0 +1,570 @@
+---
+title: "Upgrade from Bun 1.4"
+description: "Changes to bun test since Bun 1.4.4 that can let a test pass over broken code, with a search for each one"
+---
+
+After Bun 1.4.4, `bun test` changed many behaviors to match Jest and Vitest. Some of the changes make a passing test fail, and you see those the first time you run the suite. The changes on this page work the other way. With each of them, a test that failed on Bun 1.4.4 can pass with the same files while the code it tests has a fault.
+
+These changes don't make a test fail, so the suite looks the same after you upgrade. A test that caught a fault on Bun 1.4.4 stops catching it. This page doesn't list the changes that make a passing test fail.
+
+## How to use this page
+
+Each entry describes a pattern, says why a test with that pattern can pass now, and gives a `grep` command that finds it.
+
+- Run the commands from the root of your project, and add `--exclude-dir=node_modules`.
+- A match is a place to read. Most matches need no change.
+- The commands find the usual spelling on one line. They miss a call that spans several lines or goes through a helper, so a search that finds nothing doesn't prove that the suite is unaffected.
+- The page has the changes for which such a test is known. There can be more.
+- The entries apply to every test file unless they name an API. The entries under [Tests that use the Vitest API](#tests-that-use-the-vitest-api) apply to the files that section describes.
+
+## Matchers
+
+### `.resolves`, `.rejects` and async `toThrow()` without `await`
+
+Without `await`, `expect(promise).rejects.toThrow()` returns a promise at once, and the next statement runs before `promise` settles. Bun 1.4.4 waited inside the matcher, so the next statement ran after the promise settled. The test still waits for the matcher before it ends.
+
+An assertion on the lines after the matcher now sees the state from before the code under test finished. After an un-awaited `expect(save(settings)).rejects.toThrow()`, the check `expect(store.write).not.toHaveBeenCalled()` passes because the write hasn't happened yet.
+
+The same applies to `expect(asyncFunction).toThrow()` and to an async custom matcher. Outside a test, at the top level of a file or in a `describe` body, the rest of the file, its tests and its `afterAll` hooks run before the promise settles.
+
+```sh terminal icon="terminal"
+grep -rnE '^[[:space:]]*expect\((async |.*\)\.(resolves|rejects)\.)' .
+```
+
+Put `await` before each `expect(` that the search finds without one.
+
+### `expect.stringMatching()` with a string
+
+`expect.stringMatching("Total: 12.50 USD")` compiles the string as a regular expression, as Jest and Vitest do. Bun 1.4.4 looked for the string as text. Now `.` matches any character, so the matcher accepts `Total: 12,50 USD`. `"[ERROR]"` matches any text that has an `E`, an `R` or an `O`. `expect.not.stringMatching("${")` can't fail, because that pattern matches nothing.
+
+```sh terminal icon="terminal"
+grep -rnE 'stringMatching\([[:space:]]*([^/[:space:]]|$)' .
+```
+
+To look for literal text, use `expect.stringContaining()`.
+
+### An `expect()` kept in a variable, and `.not`
+
+Every read of `.not` on a kept `expect()` negates the matcher, as in Jest and Vitest. On Bun 1.4.4 each read flipped the negation. In `const kept = expect(value); kept.not.toBe(a); kept.not.toBe(b);` the second call ran as `toBe(b)`.
+
+A loop such as `for (const field of privateFields) kept.not.toHaveProperty(field)` failed on Bun 1.4.4 when it ran a second time, because the second pass wasn't negated. It passes now.
+
+```sh terminal icon="terminal"
+grep -rnE '(^|[^.)[:alnum:]_$])[[:alpha:]_$][[:alnum:]_$]*\.not\.to[A-Z]' .
+```
+
+If a test relied on the call that wasn't negated, write that check with its own `expect()`.
+
+### `expect.extend()` with a module namespace
+
+`expect.extend()` skips a `default` or `__esModule` entry that isn't a function. Bun 1.4.4 threw a `TypeError` for such an entry, for example when you passed `import * as matchers` or the result of `require()`.
+
+A test that relied on the error passes now. `expect(() => expect.extend(matchers)).not.toThrow()` no longer checks those two entries. Bun doesn't register matchers that exist only inside the skipped `default` object, so a built-in matcher of the same name answers in their place.
+
+```sh terminal icon="terminal"
+grep -rn 'expect\.extend(' .
+```
+
+Pass the object that holds the matcher functions. To check a matcher module, assert on each entry: `for (const matcher of Object.values(matchers)) expect(matcher).toBeFunction();`.
+
+### Getters in snapshots and failure messages
+
+When Bun prints an object for a snapshot or a failure message, it calls the object's own enumerable getters and prints what they return. Bun 1.4.4 printed `[Getter]` or `[native code]` and didn't call them. Bun doesn't call the getters of a class.
+
+If a getter loads data when it's read, the test now loads the data itself:
+
+- A snapshot matches although the code under test never loaded the value.
+- `await waitFor(() => expect(inbox).toMatchObject({ status: "ready" }))` passes on its second attempt, because the failure message of the first attempt ran the getter.
+- The getter counts as covered.
+
+```sh terminal icon="terminal"
+grep -rnE '(^|[{,])[[:space:]]*get [[:alpha:]_$][[:alnum:]_$]*\(\)|enumerable:[[:space:]]*true' .
+```
+
+Assert on the property that the code must set, such as `expect(inbox.status).toBe("ready")`, not on the whole object.
+
+## Mock functions
+
+### A mock or spy that several test files import
+
+Without `--isolate`, when a test file ends, Bun restores every spy that is still installed and clears the recorded calls of every mock function. Bun doesn't run the module that created them again. On Bun 1.4.4 a spy from a shared module stayed installed and kept its calls for the whole run.
+
+If a helper module exports `spyOn(console, "info")` and two test files import it, the second file gets a spy that is no longer installed. `expect(infoSpy).not.toHaveBeenCalledWith(...)` in the second file passes because the spy records nothing. If the spy silenced the output, the second file now prints that output.
+
+```sh terminal icon="terminal"
+grep -rnE '^(export .*)?(spyOn|mock|(jest|vi)\.(fn|spyOn))\(' .
+```
+
+List the helper module under `preload` in `bunfig.toml`. What a preload creates stays for every test file.
+
+### `vi.spyOn()` and `restoreAllMocks()`
+
+`vi.restoreAllMocks()`, `jest.restoreAllMocks()` and `mock.restore()` put the original method back. A spy made with `vi.spyOn()` now keeps its recorded calls and its `mockReturnValue()` or `mockImplementation()`. Bun 1.4.4 cleared both. Spies made with `spyOn()` and `jest.spyOn()` are cleared as before.
+
+This matters when something still uses the spy after the restore: a spy variable that several tests share, or code that kept a reference to the spied function. Then `expect(spy).toHaveBeenCalled()` passes on a call from an earlier test, and the kept function still returns the mocked value.
+
+```sh terminal icon="terminal"
+grep -rnE 'restoreAllMocks\(|mock\.restore\(' .
+```
+
+Call `vi.resetAllMocks()` before the restore.
+
+### `getMockName()`
+
+Unless you set a name with `mockName()`, `getMockName()` returns `"vi.fn()"` for a mock made with `vi.fn()`, and `"jest.fn()"` for a mock made with `jest.fn()` or `jest.spyOn()`. Bun 1.4.4 returned the name of the implementation or of the spied method. `mockReset()`, `mockRestore()` and `resetAllMocks()` now remove a name that you set with `mockName()`. `mock()` and `spyOn()` from `bun:test` keep their names.
+
+A test that tells mocks apart by this name sees the same name for each of them. A check that a name is absent, such as `expect(calledNames).not.toContain("deleteInvoice")`, passes whatever the code called.
+
+```sh terminal icon="terminal"
+grep -rn 'getMockName' .
+```
+
+Call `mockName()` on each mock after the last reset.
+
+### An entry of `mock.results` that a test reads during the call
+
+When a call ends, Bun completes its entry in `fn.mock.results` in place, as Jest does. An entry that a test read while the call was running changes from `incomplete` to `return` or `throw`. On Bun 1.4.4 that entry stayed `incomplete`, and a new object took its place in the array.
+
+Some tests keep the entry to prove that a second function started after the first one returned, and later expect `{ type: "return", ... }`. Such a test passes now when the second function started during the call.
+
+```sh terminal icon="terminal"
+grep -rn 'mock\.results' .
+```
+
+Copy the entry when you read it: `{ ...fn.mock.results[0] }`.
+
+### The name of a `vi.fn()` mock
+
+A mock made with `vi.fn()` has the name `Mock`, as in Vitest, whatever implementation you pass. On Bun 1.4.4 its `name` was the name of the implementation, or `""` for an arrow function. `mock()` and `jest.fn()` keep the implementation's name.
+
+Code under test that reads `fn.name` now takes its path for a function named `Mock`. A registry that exposes functions by name registers the mock as `Mock`, and a fallback for a function without a name doesn't run.
+
+```sh terminal icon="terminal"
+grep -rnE 'vi\.fn\((async )?(function|class) [[:alpha:]_$]|(fn|func|callback|handler|listener)\.name([^[:alnum:]_$]|$)' .
+```
+
+The second half of the pattern guesses at the variable names in your code. To give the mock the implementation's name, make it with `mock()` from `bun:test`.
+
+## Module mocks
+
+### `mock.module()` and an import of a missing name
+
+When code imports a name that a `mock.module()` factory doesn't return, the name is `undefined`. On Bun 1.4.4, if the mock came before the module's first load, that import was a `SyntaxError` and the test file failed.
+
+Code that imports a name that the real module no longer exports now loads without an error while the module is mocked. The test passes if it never calls the missing function, or if the code only tests the value, as in `if (AUDIT_ON)`.
+
+```sh terminal icon="terminal"
+grep -rn 'mock\.module(' .
+```
+
+Import the real module above the mock and spread it into the factory: `import * as api from "./api"`, then `mock.module("./api", () => ({ ...api, fetchUser: fake }))`. Bun then changes the loaded module in place, and an import of a missing name is a `SyntaxError` again.
+
+### Top-level `jest.mock()` and `vi.mock()` with a partial factory
+
+Bun hoists a top-level `jest.mock()` or `vi.mock()` above the imports and loads the module as the mock. The module has only the exports that the factory returns. On Bun 1.4.4 the call ran after the imports and changed the loaded module, so the exports that the factory left out kept their real values.
+
+A constant that the factory leaves out is `undefined` with `jest.mock()`, and a comparison with it is always false. A class that the factory leaves out makes `new` throw a `TypeError`, which a `toThrow()` without an argument accepts. With `vi.mock()`, reading a name that the factory left out throws.
+
+```sh terminal icon="terminal"
+grep -rnE '^(jest|vi)\.mock\(' .
+```
+
+Keep the real exports with the factory's `importOriginal` argument. See [Keeping part of the original module](/test/mocks#keeping-part-of-the-original-module).
+
+### `vi.mock()` and a module that a preload loaded
+
+`vi.mock()` and `vi.doMock()` in a test file no longer change a module that a `--preload` script has loaded. The test file's own imports get the mock. Code that the preload loaded keeps the real module. On Bun 1.4.4 the mock replaced the module for every importer. `mock.module()` and `jest.mock()` still do that.
+
+If the preload imports the code under test, that code calls the real module. `expect(saveToken).not.toHaveBeenCalled()` passes because nothing calls the mock.
+
+```sh terminal icon="terminal"
+grep -rnE 'vi\.(mock|doMock)\(' .
+```
+
+Compare the matches with the modules that your `preload` files import. To replace the module for every importer, use `mock.module()`.
+
+### A test file that another test file imports
+
+After a test file that mocks a module ends, a later import of that file gets a copy of its exports as they were at the end. The values in the copy don't change. On Bun 1.4.4 the later file got the live module. This applies without `--isolate`, when the imported file runs first.
+
+If the first file exports a variable with `let` that a fake or a hook assigns again, the second file reads the old value. Then `expect(requestCount).toBe(before)` or `expect(outbox).toEqual([])` passes whatever the code does.
+
+```sh terminal icon="terminal"
+grep -rnE "from ['\"][^'\"]*\.(test|spec)(\.[cm]?[jt]sx?)?['\"]" .
+```
+
+Move the shared state, fakes and hooks to a module that isn't a test file.
+
+### A file imported with and without a `type` attribute
+
+Some projects import one file in two ways: `import coupons from "./coupons.json"` in one module and `import coupons from "./coupons.json" with { type: "json" }` in another. When both are loaded, `mock.module()` no longer changes what those modules see. Only a later `import()` gets the mock. Bun 1.4.4 changed the import without the attribute in place.
+
+A test that mocks the file after it imported the code under test now runs that code against the real file. A check such as `not.toContain("Roadmap")` passes against the real data.
+
+```sh terminal icon="terminal"
+grep -rnE "with[[:space:]]*\{[[:space:]]*type[[:space:]]*:" .
+```
+
+Import the file the same way everywhere.
+
+## Fake timers
+
+### Timers from `node:timers`
+
+`setTimeout` and `setInterval` from `node:timers` and `node:timers/promises` stay real under `useFakeTimers()`, as in Vitest and Jest. Bun 1.4.4 faked them. `getTimerCount()` doesn't count these timers, and the fake clock doesn't fire them.
+
+A test that checks that no timer is left, or that a callback wasn't called after `advanceTimersByTime()`, passes whatever the code does. If the run ends before the real delay is over, the timer never fires.
+
+```sh terminal icon="terminal"
+grep -rnE "[\"'](node:)?timers(/promises)?[\"']" .
+```
+
+To put the timers of the code under test on the fake clock, send them through the global functions:
+
+```ts title="debounce.test.ts" icon="/icons/typescript.svg"
+mock.module("node:timers", () => ({
+  setTimeout: (...args: Parameters<typeof setTimeout>) => globalThis.setTimeout(...args),
+  clearTimeout: (timer?: NodeJS.Timeout) => globalThis.clearTimeout(timer),
+}));
+```
+
+### `advanceTimersByTime(0)`
+
+`advanceTimersByTime(0)` leaves the fake clock where it is and runs only the timers that are due. On Bun 1.4.4 it moved the clock by 1 ms and fired a `setTimeout(fn, 1)`.
+
+A test that steps by 0 and then checks that something hasn't happened yet passes when the code waits 1 ms where a longer delay is right, for example when it passes seconds to `setTimeout()`.
+
+```sh terminal icon="terminal"
+grep -rnE 'advanceTimersByTime(Async)?\([[:space:]]*0[[:space:]]*\)' .
+```
+
+To get the old step, write `advanceTimersByTime(1)`.
+
+### A timer callback that throws
+
+`advanceTimersByTime()`, `runAllTimers()`, `runOnlyPendingTimers()` and `advanceTimersToNextTimer()` throw what a timer callback threw. On Bun 1.4.4 the call returned, and Bun reported an uncaught error that failed the test.
+
+If the call is inside a `try` block, the `catch` block gets the callback's error and can take it for the rejection that the test expects. `runAllTimers()` with a `setInterval` that never stops throws when it reaches the loop limit, and a `catch` block accepts that error too. Bun 1.4.4 never returned from that call.
+
+```sh terminal icon="terminal"
+grep -rnE '(advanceTimersByTime|advanceTimersToNextTimer|runAllTimers|runOnlyPendingTimers)\(' .
+```
+
+Call the timer function before the `try` block, and keep only the `await` of the promise inside it.
+
+`advanceTimersToNextTimer()` also changed: it runs every timer that is due at the next instant, where Bun 1.4.4 ran one. After it, `expect(search).toHaveBeenLastCalledWith("bun")` passes when three timers fired where one is right. Count the calls with `toHaveBeenCalledTimes(1)`.
+
+### Promise jobs during a timer call
+
+`advanceTimersByTime()`, `runAllTimers()`, `runOnlyPendingTimers()` and `advanceTimersToNextTimer()` return without running promise jobs. On Bun 1.4.4 these calls ran every pending promise job after each timer callback, but only in the first tests of a file.
+
+A test that calls one of them and then checks that something hasn't happened passes when the code does that thing after an `await`. The code after the `await` hasn't run yet when the assertion runs.
+
+Use the same search as for [a timer callback that throws](#a-timer-callback-that-throws).
+
+Put `await Promise.resolve()` between the call and the assertion, or `await` the `...Async` form of the call, such as `await jest.advanceTimersByTimeAsync(ms)`. Bun 1.4.4 doesn't have the `...Async` functions.
+
+### A second `useFakeTimers()`
+
+A second `useFakeTimers()` call starts a new clock and drops the timers that are pending on the first one. On Bun 1.4.4 they stayed, and they fired when the test advanced the clock.
+
+Some tests call `useFakeTimers()` again after the code under test set a timer, in a helper or to pass `{ now }`. That timer no longer fires. `expect(notify).toHaveBeenCalledTimes(1)` passes when the code left a second timer running.
+
+```sh terminal icon="terminal"
+grep -rn 'useFakeTimers' .
+```
+
+Call `useFakeTimers()` once, before the code under test sets its timers. To change the date, use `setSystemTime()`.
+
+### `runOnlyPendingTimers()` and the clock
+
+After `runOnlyPendingTimers()`, the fake clock is at the deadline of the last timer that was pending at the call, even if a callback cleared that timer. On Bun 1.4.4 the clock stopped at the last timer that fired.
+
+When a callback clears a long timer, such as a deadline that the code cancels once the work is done, the clock ends at that deadline. A check that enough time has passed, or that a lock or a cache entry has run out, holds whatever the code did.
+
+```sh terminal icon="terminal"
+grep -rn 'runOnlyPendingTimers(' .
+```
+
+Use `advanceTimersToNextTimer()`, or `advanceTimersByTime()` with the time that the work takes.
+
+### Where `vi.useFakeTimers()` starts the clock
+
+`vi.useFakeTimers()` starts the fake clock at the time of an earlier `setSystemTime()`. Without one, it starts at what `Date.now()` returns, which can be the value of a spy or the time of a fake clock that is still on. Bun 1.4.4 started at the real time. `jest.useFakeTimers()` starts at the real time.
+
+A test that sets no time now runs at the time that an earlier test set, if that test didn't call `vi.useRealTimers()`. A fault that shows only at today's date stays hidden.
+
+```sh terminal icon="terminal"
+grep -rnE 'setSystemTime\(|useFakeTimers\(' .
+```
+
+Call `vi.useRealTimers()` in `afterEach`.
+
+### `requestAnimationFrame` with a DOM
+
+When `requestAnimationFrame` exists on `globalThis`, `useFakeTimers()` replaces it and `cancelAnimationFrame` with fakes. It exists when happy-dom or jsdom is registered, or when you define it yourself. A frame callback runs only when the test advances the fake clock by a frame, which is 16 ms. On Bun 1.4.4 the frame ran by itself.
+
+A test that checks that nothing happened in a frame, and never advances the clock, passes whatever the code does.
+
+```sh terminal icon="terminal"
+grep -rnE '(request|cancel)AnimationFrame' .
+```
+
+To keep real frames, call `useFakeTimers({ doNotFake: ["requestAnimationFrame", "cancelAnimationFrame"] })`.
+
+## Snapshots
+
+### Titles of `test.each` and `describe.each`
+
+Some titles changed:
+
+- `%o` and `%p` print an object on one line. On Bun 1.4.4, `%o` printed JSON and `%p` printed the object over several lines.
+- Bun fills in `%s`, `%d`, `%i` and `%f` for a value of another type. Bun 1.4.4 left the placeholder as written.
+- In a file that uses the [Vitest API](#tests-that-use-the-vitest-api), Bun cuts a long string that the title prints through `$key`, `%%` takes a value, and `%p` stays as written.
+
+The title is the key of the test's snapshot. With a new title, `toMatchSnapshot()` finds no stored snapshot. Outside CI, Bun writes a new snapshot from the current output, and the test passes whatever that output is. The summary reports the new entries, for example `snapshots: +3 added`. In CI, Bun doesn't write new snapshots, so the test fails there.
+
+A `-t` pattern that you wrote for the old title no longer selects the test.
+
+```sh terminal icon="terminal"
+grep -rnE '\.each[[:space:]]*[(`]' .
+```
+
+After you upgrade, run the suite once on a commit that passed on Bun 1.4.4. If the summary reports added snapshots, check that each new entry in the `.snap` files holds the same value as the old entry. `%j` prints the JSON that `%o` printed on Bun 1.4.4.
+
+### Inline snapshots in the format of Jest or Vitest
+
+An inline snapshot also passes when it holds what Jest or Vitest writes for the value. Bun 1.4.4 accepted only its own format. Now `"5 EUR"` matches an object whose `toJSON()` returns that string, `[Function]` matches any class or function, and an error message matches a thrown plain object that has that `message`.
+
+A test that failed on Bun 1.4.4 because the code returned the wrong kind of value passes now.
+
+```sh terminal icon="terminal"
+grep -rnE 'to(Match|ThrowErrorMatching)InlineSnapshot\(' .
+```
+
+Check the kind of the value with a matcher, such as `toBe("5 EUR")` or `toThrow(Error)`.
+
+### Several `.resolves.toMatchSnapshot()` calls at once
+
+When several `.resolves.toMatchSnapshot()` or `.rejects.toMatchSnapshot()` calls are pending at the same time, Bun numbers their snapshots in the order in which the promises settle, as Jest does. Bun 1.4.4 numbered them in the order of the calls.
+
+If a fault makes two calls return each other's result, and the promises then settle in the other order, each result meets the other's stored entry and both match.
+
+```sh terminal icon="terminal"
+grep -rnE '\.(resolves|rejects)\.toMatchSnapshot' .
+```
+
+Await each matcher before you start the next one.
+
+## Runner and configuration
+
+### `--rerun-each`
+
+Between the runs of a file under `--rerun-each`, Bun removes module mocks, restores spies, clears mock calls, and ends fake timers and the mocked system time. It loads the modules that import a mocked module again. On Bun 1.4.4 the second run started with what the first run left.
+
+A second run that failed on what the code under test left behind passes now. An example is a module that still caches a connection after it closed the connection.
+
+```sh terminal icon="terminal"
+grep -rnE 'rerun-each|rerunEach' .
+```
+
+Check the cleanup inside one run: after the code closes the connection, ask for a connection again and assert on it.
+
+### Keys in `bunfig.toml` that Bun 1.4.4 ignored
+
+Bun 1.4.4 ignored `clearMocks`, `mockReset`, `restoreMocks`, `unstubEnvs`, `unstubGlobals`, `environment` and `globals` under `[test]`. Bun applies them now. If your `bunfig.toml` already has one of them, the suite behaves differently:
+
+- `clearMocks = true` clears the calls of every mock before each test, after `beforeAll` ran. `expect(log).not.toHaveBeenCalledWith(...)` passes for a call that `beforeAll` made.
+- `restoreMocks = true` restores every spy before each test, also a spy that the top of the file installed. The code under test calls the real method, and `expect(send).not.toHaveBeenCalled()` passes.
+- `environment = "happy-dom"` or `"jsdom"` gives every test file a DOM. Code that reads `window` without a check no longer throws in tests.
+- `globals = "vitest"` puts every test file that doesn't import the test API under [Tests that use the Vitest API](#tests-that-use-the-vitest-api).
+
+```sh terminal icon="terminal"
+grep -nE '^[[:space:]]*(clearMocks|mockReset|restoreMocks|unstubEnvs|unstubGlobals|environment|globals)[[:space:]]*=' bunfig.toml
+```
+
+To get the behavior of Bun 1.4.4, set `clearMocks`, `mockReset` or `restoreMocks` to `false`. For `environment`, put `// @vitest-environment node` on the first line of a test file that must run without a DOM.
+
+### `--environment` and `--reporter-junit-suites`
+
+Both flags take a value. Bun 1.4.4 ignored them, and the word after the flag was a file filter. For `bun test --environment node tests/unit`, Bun 1.4.4 ran the files that match `node` or `tests/unit`. Now `node` is the environment, and only `tests/unit` selects files. A test file that only the word selected no longer runs. The summary then reports fewer files than it did on Bun 1.4.4.
+
+`--environment=jsdom` and `--environment=happy-dom` now give every test file a DOM. Code that checks `typeof document` takes its browser branch, and a test no longer covers the other branch.
+
+```sh terminal icon="terminal"
+grep -rnE -- '--(environment|reporter-junit-suites)' package.json
+```
+
+Search your CI configuration too. Name the files that the word selected as a filter of their own: `bun test --environment node tests/unit tests/node`.
+
+### `done(error)` in a concurrent test
+
+In a group of two or more concurrent tests, `done(error)` fails the test that called it. Bun 1.4.4 printed the error as an "Unhandled error between tests", exited with code 1, and counted the test as passed.
+
+Now `retry`, `test.failing` and `test.todo` see the failure. With `retry`, a test whose first attempt hands an error to `done()` passes when a later attempt succeeds. `test.failing`, and `test.todo` under `--todo`, take the error for the failure that they expect.
+
+```sh terminal icon="terminal"
+grep -rnE '[^[:alnum:]_$.]done\([^)]' .
+```
+
+Where an error on the first attempt must fail the run, set `{ retry: 0 }` on the test.
+
+### `console.timeStamp`
+
+`console.timeStamp` is `undefined` in tests, as in Jest and Vitest. On Bun 1.4.4 it was a function. Code that checks `typeof console.timeStamp === "function"` before it does work skips that work in tests, and a fault in that work goes unnoticed.
+
+The development build of React 19.2 and later is such code. When `console.timeStamp` exists, it reads the props of a component that renders again. A prop with a getter that throws failed the render on Bun 1.4.4 and doesn't now.
+
+```sh terminal icon="terminal"
+grep -rn 'timeStamp' .
+```
+
+To get the old checks, define the function in a [preload](/test/configuration#preload-scripts): `console.timeStamp ??= () => {};`.
+
+### `import.meta.env`
+
+Under `bun test`, `import.meta.env.DEV` is `true`, `MODE` is `"test"`, and `PROD`, `SSR` and `BASE_URL` have values too. On Bun 1.4.4 all five were `undefined` unless the environment set them.
+
+Code that returns early in development, such as `if (import.meta.env.DEV) return;`, returns early in tests. A test of the code after that line passes because the code doesn't run.
+
+```sh terminal icon="terminal"
+grep -rnE 'import\.meta\.env\.(DEV|PROD|SSR|MODE|BASE_URL)' .
+```
+
+Set the value that the test is about. `process.env.DEV = ""` in `beforeEach` makes `import.meta.env.DEV` falsy. Delete the variable in `afterEach`.
+
+## Tests that use the Vitest API
+
+On Bun 1.4.4, `"vitest"` was another name for `"bun:test"`. Now a test file that imports from `"vitest"` gets the behavior of Vitest. With `globals = "vitest"` under `[test]` in `bunfig.toml`, every test file that doesn't import the test API gets it too. A file that imports from `"bun:test"` or `"@jest/globals"` behaves as on Bun 1.4.4 for the entries in this section.
+
+This command lists the files that import from `"vitest"`:
+
+```sh terminal icon="terminal"
+grep -rlE "from ['\"]vitest['\"]" .
+```
+
+[Importing from `vitest`](/test/writing-tests#importing-from-vitest) has the full table of differences.
+
+### `done` callbacks
+
+The first parameter of a test is the test context, not a `done` callback. The test ends when its function returns. Bun doesn't wait for a timer, an event or an I/O callback.
+
+A failing `expect()` in such a callback no longer fails the test. Neither does a `done(error)` or a `done` that the code never calls. If the run ends before the callback runs, nothing reports it. If the callback calls `done` while a later test runs, that test fails with `done() callback is deprecated, use promise instead`. When the checks of a test no longer run, the summary counts fewer `expect() calls` than it did on Bun 1.4.4.
+
+```sh terminal icon="terminal"
+grep -rnE '[(,][[:space:]]*done[[:space:]]*(\)|=>)' .
+```
+
+Return a promise, and reject it where the test called `done(error)`.
+
+### An import of a name that the module doesn't export
+
+In a test file or a preload that has two or more imports besides those of the test API, a name that the module doesn't export is `undefined`. On Bun 1.4.4 such an import was a `SyntaxError`, and the file failed.
+
+A test that only passes the name on succeeds or is skipped. `toThrow(MissingClass)` accepts any error, and `test.skipIf(!MISSING_FLAG)` skips the test.
+
+```sh terminal icon="terminal"
+grep -rnE 'toThrow\([A-Z][[:alnum:]_$]*\)|(skip|run)If\(' .
+```
+
+Assert on the imported name itself: `expect(ConfigError).toBeDefined()`.
+
+### The order of `afterEach` and `afterAll` hooks
+
+The `afterEach` hooks of one scope run in reverse order of registration, and so do its `afterAll` hooks. On Bun 1.4.4 they ran in registration order.
+
+If one hook checks for leftovers and another hook clears them, the check now runs after the cleanup. A setup file that registers `expect(consoleError).not.toHaveBeenCalled()` first and `consoleError.mockRestore()` second restores first, and the check sees no calls.
+
+```sh terminal icon="terminal"
+grep -rnE 'after(Each|All)\(' .
+```
+
+Put the check and the cleanup in one hook, in the order that you mean.
+
+### Mock calls before each test
+
+Bun clears the calls and results of every mock function before each test. It does that before the `beforeEach` hooks and before each retry. On Bun 1.4.4 a mock kept its calls until the test code cleared it.
+
+`expect(db.findOrders).not.toHaveBeenCalled()` passes for a call that `beforeAll`, an earlier test or the top level of the file made.
+
+```sh terminal icon="terminal"
+grep -rnE '\.not\.toHaveBeenCalled|toHaveBeenCalledTimes\(' .
+```
+
+To keep the calls, set `clearMocks = false` under `[test]` in `bunfig.toml`.
+
+### Hook timeouts
+
+A hook has 10 seconds, or the value of `--timeout` if that is longer. On Bun 1.4.4 a hook had the test timeout, which is 5 seconds by default.
+
+A `beforeEach` or `afterEach` that waits 6 seconds failed on Bun 1.4.4 and passes now. Such a wait can be the only sign of a fault, for example a lock that the code under test never releases.
+
+```sh terminal icon="terminal"
+grep -rnE '(before|after)(Each|All)\(' .
+```
+
+Pass the limit to the hook as its second argument: `afterEach(fn, 5000)`.
+
+### `vi.useFakeTimers()` and `setImmediate`
+
+`vi.useFakeTimers()` also fakes `setImmediate` and `clearImmediate`. A callback that the code under test schedules with `setImmediate` runs only when the test advances the fake clock. On Bun 1.4.4 it ran on the next turn of the event loop.
+
+A test that doesn't advance the clock passes when it checks that something didn't happen, or when its `expect()` calls are inside that callback. In the second case the summary counts fewer `expect() calls` than it did on Bun 1.4.4.
+
+```sh terminal icon="terminal"
+grep -rn 'setImmediate' .
+```
+
+To keep `setImmediate` real, call `vi.useFakeTimers({ toNotFake: ["setImmediate", "clearImmediate"] })`.
+
+### `.not.toMatchObject()` on a value that isn't an object
+
+`expect(value).not.toMatchObject({ role: "admin" })` passes when `value` is `undefined`, `null`, a string or a number. On Bun 1.4.4 it failed with a matcher error. The test no longer notices that the code returned nothing.
+
+```sh terminal icon="terminal"
+grep -rn '\.not\.toMatchObject(' .
+```
+
+Assert what the value is, for example with `expect(value).toMatchObject({ role: "member" })`.
+
+### Arrays of different lengths
+
+Arrays of different lengths are never equal. On Bun 1.4.4, `[undefined]` equaled `[]`, and `["a"]` equaled `["a", undefined]`.
+
+A negated check such as `expect(errors).not.toEqual([])` passes when `errors` is `[undefined]`.
+
+```sh terminal icon="terminal"
+grep -rnE '\.not\.(toEqual|toStrictEqual|toContainEqual|toHaveBeenCalledWith)\(' .
+```
+
+Assert the value that you expect, such as `expect(errors).toEqual(["Use at least 8 characters"])`.
+
+### The `cause` of an error
+
+When Bun compares two errors, it compares `cause` only if the expected error has one. On Bun 1.4.4 a `cause` on the received error alone failed the matcher.
+
+`expect(error).toEqual(new Error("Unexpected Server Error"))` passes when the code attached the original error as `cause`. The same applies to `toStrictEqual()`, `.rejects.toEqual()` and `toHaveBeenCalledWith()`.
+
+```sh terminal icon="terminal"
+grep -rnE '(Equal|CalledWith)\(.*new [[:alnum:]_$.]*Error\(' .
+```
+
+Assert on the cause itself: `expect(error.cause).toBeUndefined()`.
+
+### Code that checks for a global `jest`
+
+`jest`, `xit`, `xtest` and `xdescribe` are not defined in a module that Bun first loads for a test file in this section. On Bun 1.4.4 every module saw them. Code that checks `typeof jest !== "undefined"` takes its other branch.
+
+`@testing-library/dom` has such a check. When it finds `jest` and fake timers are on, `waitFor()` and `findBy*` advance the fake clock while they wait. Without `jest` they leave the clock alone. A short timer in the code under test no longer fires during the wait. An example is a request timeout of 10 ms where 10 seconds is right.
+
+```sh terminal icon="terminal"
+grep -rnE 'typeof jest|useFakeTimers' .
+```
+
+In your own code, check for `vi` too: `typeof jest !== "undefined" || typeof vi !== "undefined"`. To let Testing Library advance the clock again, define `jest` in the setup file or the test file:
+
+```ts title="setup.ts" icon="/icons/typescript.svg"
+import { vi } from "vitest";
+
+globalThis.jest = { advanceTimersByTime: (ms: number) => vi.advanceTimersByTime(ms) };
+```

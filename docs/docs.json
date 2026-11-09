@@ -317,7 +317,7 @@
           {
             "group": "Getting Started",
             "icon": "circle-play",
-            "pages": ["/test/index", "/test/writing-tests", "/test/configuration"]
+            "pages": ["/test/index", "/test/writing-tests", "/test/configuration", "/test/upgrade-from-1.4"]
           },
           {
             "group": "Test Execution",

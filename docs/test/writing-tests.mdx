@@ -522,6 +522,8 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 
 In a file that imports from `"vitest"`, the globals (`test`, `describe`, `beforeEach`, ...) come from `"vitest"` too. Set [`globals = "vitest"`](/test/configuration#globals) in `bunfig.toml` to do that for every file.
 
+In Bun 1.4.4 and earlier, `"vitest"` was another name for `"bun:test"`. If your suite ran on one of those versions, see [Upgrade from Bun 1.4](/test/upgrade-from-1.4#tests-that-use-the-vitest-api) for the differences that can let a failing test pass.
+
 ### Types
 
 TypeScript reads the types for `"vitest"` from the `vitest` package. Once you uninstall it, use the ones in `bun-types`:

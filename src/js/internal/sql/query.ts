@@ -1,17 +1,11 @@
 import type { DatabaseAdapter, SQLHelper } from "./shared.ts";
 
-const _resolve = Symbol("resolve");
-const _reject = Symbol("reject");
 const _handle = Symbol("handle");
-const _queryStatus = Symbol("status");
-const _handler = Symbol("handler");
 const _strings = Symbol("strings");
 const _values = Symbol("values");
 const _flags = Symbol("flags");
 const _results = Symbol("results");
-const _adapter = Symbol("adapter");
 const _waiter = Symbol("waiter");
-const _settled = Symbol("settled");
 const _copy = Symbol("copy");
 
 const PublicPromise = Promise;
@@ -24,24 +18,95 @@ export interface BaseQueryHandle<Connection> {
 
 export type { Query, SQLQueryResultMode };
 export type QueryStrings = string | TemplateStringsArray | SQLHelper<any> | Query<any, any>;
-class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
-  public [_resolve]: (value: T) => void;
-  public [_reject]: (reason?: Error) => void;
-  public [_handle]: Handle | null;
-  public [_handler]: (query: Query<T, Handle>, handle: Handle | null) => unknown;
-  public [_queryStatus]: SQLQueryStatus;
-  public [_strings]: QueryStrings;
-  public [_values]: any[];
-  public [_flags]: SQLQueryFlags;
-  public [_waiter]: ((err: Error | null, connection: any) => void) | null;
-  public [_settled]: Promise<void> | null;
-  /// What is behind the stream of a query with SQLQueryFlags.copy. No other query has the property.
-  declare public [_copy]: { attach(handle: Handle): void; abandon(why: string): void };
 
-  public readonly [_adapter]: DatabaseAdapter<any, any, Handle>;
+/// The query that `value` is, or that a Proxy of one wraps. Undefined for every other object: one that only inherits
+/// from `Query.prototype` has the methods of a query and none of its state.
+let queryOf: (value: object) => Query<any, any> | undefined;
+/// Calls `callback` in a microtask once the query has settled, before the reactions of the caller.
+let onQuerySettled: (query: Query<any, any>, callback: () => void) => void;
+/// For "bun:internal-for-testing".
+let adapterOf: (query: Query<any, any>) => DatabaseAdapter<any, any, any>;
+
+class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
+  // Private fields: what lists the own properties of a query, as `util.inspect()` with `customInspect: false` and a
+  // failed `node:assert` do, then finds nothing that leads to the adapter and its connection options. The adapters
+  // and the pool go through the accessors below.
+  #resolve: (value: T) => void;
+  #reject: (reason?: Error) => void;
+  #handle: Handle | null = null;
+  #handler: (query: Query<T, Handle>, handle: Handle | null) => unknown;
+  #status: SQLQueryStatus = SQLQueryStatus.none;
+  #strings: QueryStrings;
+  #values: any[];
+  #flags: SQLQueryFlags;
+  #waiter: ((err: Error | null, connection: any) => void) | null = null;
+  #settled: Promise<void> | null = null;
+  #results: any = null;
+  /// What is behind the stream of a query with SQLQueryFlags.copy. It is undefined in every other query.
+  #copy!: { attach(handle: Handle): void; abandon(why: string): void };
+  readonly #adapter: DatabaseAdapter<any, any, Handle>;
+
+  static {
+    queryOf = value => {
+      if (!$isObject(value)) return undefined;
+      while (!(#status in value)) {
+        if (!$isProxyObject(value)) return undefined;
+        value = $getProxyInternalField(value, $proxyFieldTarget);
+        // a revoked Proxy
+        if (value === null) return undefined;
+      }
+      return value;
+    };
+    onQuerySettled = (query, callback) => {
+      // A query that is only started, sql`...`.execute(), does not end the process when it fails. What the caller
+      // makes of it with then() or catch() is a promise like any other.
+      $pokePromiseAsHandled(query);
+      let settled = query.#settled;
+      if (settled === null) {
+        settled = query.#settled = $newPromise<void>();
+        if (!$isPromisePending(query)) {
+          $resolvePromise(settled, undefined);
+        }
+      }
+      settled.$then(callback);
+    };
+    adapterOf = query => query.#adapter;
+  }
+
+  get [_handle]() {
+    return this.#handle;
+  }
+  get [_strings]() {
+    return this.#strings;
+  }
+  get [_values]() {
+    return this.#values;
+  }
+  get [_flags]() {
+    return this.#flags;
+  }
+  get [_results]() {
+    return this.#results;
+  }
+  set [_results](results) {
+    this.#results = results;
+  }
+  get [_waiter]() {
+    return this.#waiter;
+  }
+  set [_waiter](waiter) {
+    this.#waiter = waiter;
+  }
+  get [_copy]() {
+    return this.#copy;
+  }
+  set [_copy](copy) {
+    this.#copy = copy;
+  }
 
   [Symbol.for("nodejs.util.inspect.custom")](): `Query { ${string} }` {
-    const status = this[_queryStatus];
+    const receiver = queryOf(this);
+    const status = receiver === undefined ? SQLQueryStatus.none : receiver.#status;
 
     let query = "";
     if ((status & SQLQueryStatus.active) != 0) query += "active ";
@@ -54,18 +119,18 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   #createHandle(): Handle | null {
     try {
-      const adapter = this[_adapter];
-      const flags = this[_flags];
-      const [sql, values] = adapter.normalizeQuery(this[_strings], this[_values]);
+      const adapter = this.#adapter;
+      const flags = this.#flags;
+      const [sql, values] = adapter.normalizeQuery(this.#strings, this.#values);
       const handle = adapter.createQueryHandle(sql, values, flags);
       const mode = (flags >> resultModeShift) & 3;
       if (mode !== SQLQueryResultMode.objects) {
         handle.setMode(mode);
       }
       if (flags & SQLQueryFlags.copy) {
-        this[_copy].attach(handle);
+        this.#copy.attach(handle);
       }
-      return (this[_handle] = handle);
+      return (this.#handle = handle);
     } catch (err) {
       this.reject(err as Error);
       return null;
@@ -73,8 +138,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   #setMode(mode: SQLQueryResultMode) {
-    this[_flags] = (this[_flags] & ~(3 << resultModeShift)) | (mode << resultModeShift);
-    this[_handle]?.setMode(mode);
+    this.#flags = (this.#flags & ~(3 << resultModeShift)) | (mode << resultModeShift);
+    this.#handle?.setMode(mode);
     return this;
   }
 
@@ -92,7 +157,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       reject_ = reject;
     });
 
-    this[_adapter] = adapter;
+    this.#adapter = adapter;
 
     if (typeof strings === "string" && !(flags & SQLQueryFlags.unsafe)) {
       // identifier (cannot be executed in safe mode); the adapter that runs the statement quotes it
@@ -102,40 +167,36 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
       flags |= SQLQueryFlags.notTagged;
     }
 
-    this[_resolve] = resolve_!;
-    this[_reject] = reject_!;
-    this[_handle] = null;
-    this[_handler] = handler;
-    this[_queryStatus] = SQLQueryStatus.none;
-    this[_strings] = strings;
-    this[_values] = values;
-    this[_flags] = flags;
-    this[_waiter] = null;
-    this[_settled] = null;
-
-    this[_results] = null;
+    this.#resolve = resolve_!;
+    this.#reject = reject_!;
+    this.#handler = handler;
+    this.#strings = strings;
+    this.#values = values;
+    this.#flags = flags;
   }
 
   #run() {
-    const { [_handler]: handler, [_queryStatus]: status, [_flags]: flags } = this;
+    const handler = this.#handler;
+    const status = this.#status;
+    const flags = this.#flags;
 
     if (status & (SQLQueryStatus.executed | SQLQueryStatus.error)) {
       return;
     }
 
     if (flags & SQLQueryFlags.notTagged) {
-      this.reject(this[_adapter].notTaggedCallError());
+      this.reject(this.#adapter.notTaggedCallError());
       return;
     }
 
     if (status & SQLQueryStatus.cancelled) {
       // as in onQuerySettled()
       $pokePromiseAsHandled(this);
-      this.reject(this[_adapter].queryCancelledError());
+      this.reject(this.#adapter.queryCancelledError());
       return;
     }
 
-    this[_queryStatus] |= SQLQueryStatus.executed;
+    this.#status |= SQLQueryStatus.executed;
     let handle: Handle | null = null;
     if (!(flags & SQLQueryFlags.deferredText)) {
       handle = this.#createHandle();
@@ -152,38 +213,40 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   setText(text: string): Handle | null {
-    if (this[_queryStatus] & SQLQueryStatus.error) {
+    if (this.#status & SQLQueryStatus.error) {
       return null;
     }
-    this[_strings] = text;
-    this[_flags] &= ~SQLQueryFlags.deferredText;
+    this.#strings = text;
+    this.#flags &= ~SQLQueryFlags.deferredText;
     return this.#createHandle();
   }
 
   get active() {
-    return (this[_queryStatus] & SQLQueryStatus.active) != 0;
+    const query = queryOf(this);
+    return query !== undefined && (query.#status & SQLQueryStatus.active) != 0;
   }
 
   set active(value) {
-    const status = this[_queryStatus];
-    if (status & (SQLQueryStatus.cancelled | SQLQueryStatus.error)) {
+    const query = queryOf(this);
+    if (query === undefined || query.#status & (SQLQueryStatus.cancelled | SQLQueryStatus.error)) {
       return;
     }
 
     if (value) {
-      this[_queryStatus] |= SQLQueryStatus.active;
+      query.#status |= SQLQueryStatus.active;
     } else {
-      this[_queryStatus] &= ~SQLQueryStatus.active;
+      query.#status &= ~SQLQueryStatus.active;
     }
   }
 
   get cancelled() {
-    return (this[_queryStatus] & SQLQueryStatus.cancelled) !== 0;
+    const query = queryOf(this);
+    return query !== undefined && (query.#status & SQLQueryStatus.cancelled) !== 0;
   }
 
   #settling() {
-    this[_queryStatus] &= ~SQLQueryStatus.active;
-    const settled = this[_settled];
+    this.#status &= ~SQLQueryStatus.active;
+    const settled = this.#settled;
     if (settled !== null && $isPromisePending(settled)) {
       $resolvePromise(settled, undefined);
     }
@@ -192,40 +255,46 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   resolve(x: T) {
     this.#settling();
 
-    return this[_resolve](x);
+    return this.#resolve(x);
   }
 
   reject(x: Error) {
-    this[_queryStatus] |= SQLQueryStatus.error;
+    this.#status |= SQLQueryStatus.error;
     this.#settling();
 
-    return this[_reject](x);
+    return this.#reject(x);
   }
 
-  cancel() {
-    const status = this[_queryStatus];
+  #cancel() {
+    const status = this.#status;
     if (status & SQLQueryStatus.cancelled) {
-      return this;
+      return;
     }
 
-    this[_queryStatus] |= SQLQueryStatus.cancelled;
-    if (this[_flags] & SQLQueryFlags.copy) {
-      this[_copy].abandon("Query cancelled");
+    this.#status |= SQLQueryStatus.cancelled;
+    if (this.#flags & SQLQueryFlags.copy) {
+      this.#copy.abandon("Query cancelled");
     }
 
-    const waiter = this[_waiter];
-    const handle = this[_handle];
+    const waiter = this.#waiter;
+    const handle = this.#handle;
     if (waiter) {
-      this[_waiter] = null;
-      this[_adapter].cancelConnect(waiter);
-      this.reject(this[_adapter].queryCancelledError());
+      this.#waiter = null;
+      this.#adapter.cancelConnect(waiter);
+      this.reject(this.#adapter.queryCancelledError());
     } else if (handle) {
       handle.cancel?.();
     } else if (status & SQLQueryStatus.executed) {
       // it waits for its text
-      this.reject(this[_adapter].queryCancelledError());
+      this.reject(this.#adapter.queryCancelledError());
     }
+  }
 
+  cancel() {
+    const query = queryOf(this);
+    if (query !== undefined) {
+      query.#cancel();
+    }
     return this;
   }
 
@@ -236,8 +305,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   /// then() rejects what these throw.
   #runTagged() {
-    if (this[_flags] & SQLQueryFlags.notTagged) {
-      throw this[_adapter].notTaggedCallError();
+    if (this.#flags & SQLQueryFlags.notTagged) {
+      throw this.#adapter.notTaggedCallError();
     }
     this.#run();
   }
@@ -252,7 +321,10 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 
   simple() {
-    this[_flags] |= SQLQueryFlags.simple;
+    const query = queryOf(this);
+    if (query !== undefined) {
+      query.#flags |= SQLQueryFlags.simple;
+    }
     return this;
   }
 
@@ -262,17 +334,17 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   /// The server takes no parameters in a COPY, so nothing is lost with the simple protocol.
   #copyStream(writable: boolean) {
-    const adapter = this[_adapter];
-    if (this[_flags] & SQLQueryFlags.notTagged) {
+    const adapter = this.#adapter;
+    if (this.#flags & SQLQueryFlags.notTagged) {
       throw adapter.notTaggedCallError();
     }
     if (adapter.copyStream === undefined) {
       throw new Error("readable() and writable() are not supported by this adapter (PostgreSQL only)");
     }
-    if (this[_queryStatus] & SQLQueryStatus.executed) {
+    if (this.#status & SQLQueryStatus.executed) {
       throw $ERR_INVALID_STATE("readable() and writable() must be called before the query starts");
     }
-    this[_flags] |= SQLQueryFlags.simple | SQLQueryFlags.copy;
+    this.#flags |= SQLQueryFlags.simple | SQLQueryFlags.copy;
     return adapter.copyStream(this, writable);
   }
 
@@ -312,21 +384,6 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   }
 }
 
-/// Calls `callback` in a microtask once the query has settled, before the reactions of the caller.
-function onQuerySettled(query: Query<any, any>, callback: () => void) {
-  // A query that is only started, sql`...`.execute(), does not end the process when it fails. What the caller makes
-  // of it with then() or catch() is a promise like any other.
-  $pokePromiseAsHandled(query);
-  let settled = query[_settled];
-  if (settled === null) {
-    settled = query[_settled] = $newPromise<void>();
-    if (!$isPromisePending(query)) {
-      $resolvePromise(settled, undefined);
-    }
-  }
-  settled.$then(callback);
-}
-
 Object.defineProperty(Query, Symbol.species, { value: PublicPromise });
 Object.defineProperty(Query, Symbol.toStringTag, { value: "Query" });
 
@@ -362,7 +419,9 @@ const enum SQLQueryStatus {
 
 export default {
   Query,
+  queryOf,
   onQuerySettled,
+  adapterOf,
   SQLQueryFlags,
   SQLQueryResultMode,
 

@@ -1,5 +1,7 @@
 // `await import(path)` and `require(path)` where `path` is no constant: the build embeds the files that the written parts of the path name, however the
 // program puts the path together. `"./plugins/".concat(name, ".ts")` and `path += name` name the files that `"./plugins/" + name + ".ts"` names.
+// A default that is stored with `||=`, `??=` or in an `if`, or that stands in a destructuring pattern or at a parameter, names the file that
+// `process.env.PLUGIN || "./plugins/a.ts"` names.
 //
 // One build for all spellings. Each spelling loads from a folder of its own, so that no spelling finds a file that another one has embedded. The executable
 // runs in an empty folder, and each row holds it to what `bun <the main file>` prints. The stored programs under
@@ -47,6 +49,46 @@ const spellings: Record<string, Spelling> = {
     text: `${name}let path = "./plugins/";\npath += name;\nexports.mark = require(path + ".cjs").mark;\n`,
     names: "each file of the folder",
   },
+  "a default behind ||": {
+    file: "load.mjs",
+    text: `${imported}import(process.env.PATH_OF_PLUGIN || "./plugins/a.ts");\n`,
+    names: "the default",
+  },
+  "a default stored with ||=": {
+    file: "load.mjs",
+    text: `let path = process.env.PATH_OF_PLUGIN;\npath ||= "./plugins/a.ts";\n${imported}import(path);\n`,
+    names: "the default",
+  },
+  "a default stored with ??=": {
+    file: "load.mjs",
+    text: `let path = process.env.PATH_OF_PLUGIN;\npath ??= "./plugins/a.ts";\n${imported}import(path);\n`,
+    names: "the default",
+  },
+  "a default stored in an if": {
+    file: "load.mjs",
+    text: `let path = process.env.PATH_OF_PLUGIN;\nif (!path) path = "./plugins/a.ts";\n${imported}import(path);\n`,
+    names: "the default",
+  },
+  "a default in a destructuring pattern": {
+    file: "load.mjs",
+    text: `const { PATH_OF_PLUGIN = "./plugins/a.ts" } = process.env;\n${imported}import(PATH_OF_PLUGIN);\n`,
+    names: "the default",
+  },
+  "a default of a parameter": {
+    file: "load.mjs",
+    text: `const load = (path = "./plugins/a.ts") => import(path);\n${imported}load(process.env.PATH_OF_PLUGIN);\n`,
+    names: "the default",
+  },
+  "require() of a default stored with ||=": {
+    file: "load.cjs",
+    text: `let path = process.env.PATH_OF_PLUGIN;\npath ||= "./plugins/a.cjs";\nexports.mark = require(path).mark;\n`,
+    names: "the default",
+  },
+  "require() of a default that a function stores in its parameter": {
+    file: "load.cjs",
+    text: `function load(path) {\n  path = path || "./plugins/a.cjs";\n  return require(path);\n}\nexports.mark = load(process.env.PATH_OF_PLUGIN).mark;\n`,
+    names: "the default",
+  },
 };
 
 const titles = Object.keys(spellings);
@@ -59,7 +101,8 @@ titles.forEach((title, index) => {
   const { file, text } = spellings[title];
   files[`s${index}/${file}`] = text;
   for (const plugin of ["a", "b"]) {
-    if (file === "load.mjs") files[`s${index}/plugins/${plugin}.ts`] = `export const mark: string = "${plugin} of ${index}";\n`;
+    if (file === "load.mjs")
+      files[`s${index}/plugins/${plugin}.ts`] = `export const mark: string = "${plugin} of ${index}";\n`;
     else files[`s${index}/plugins/${plugin}.cjs`] = `exports.mark = "${plugin} of ${index}";\n`;
   }
 });
@@ -82,7 +125,10 @@ const printed = () =>
       [bunExe(), ...compileCommand, withThreads(1), "main.mjs", "--outfile", executable],
       String(sources),
     );
-    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({
+      stderr: "",
+      exitCode: 0,
+    });
     const linesOf = async (command: string[], cwd: string, plugin: string) => {
       const ran = await run(command, cwd, { ...bunEnv, NAME_OF_PLUGIN: plugin });
       expect({ stderr: ran.exitCode ? ran.stderr : "", exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });

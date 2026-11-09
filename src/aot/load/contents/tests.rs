@@ -949,6 +949,231 @@ fn written_arm_of_a_name_that_is_unknown_otherwise_is_an_entry_point() {
     }
 }
 
+const CONF: &[&str] = &["conf.cjs WrittenInArm"];
+const CONF_AND_OTHER: &[&str] = &["conf.cjs WrittenInArm", "other.cjs WrittenInArm"];
+
+const DEFAULTS_BESIDE_AN_UNKNOWN_NAME: &[(&str, &str, &[&str])] = &[
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF; name ||= "./conf.cjs"; require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF; name ??= "./conf.cjs"; require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF; name &&= "./conf.cjs"; require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF; if (!name) name = "./conf.cjs"; require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF; name = name || "./conf.cjs"; import(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"const fallback = "./conf.cjs"; let name; name = process.env.CONF ?? fallback; require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF; function fill() { name ||= "./conf.cjs"; } fill(); require(name);"#,
+        CONF,
+    ),
+    (
+        "main.ts",
+        r#"let name = process.env.CONF; (name as string) ||= "./conf.cjs"; import(name!);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"const { CONF = "./conf.cjs" } = process.env; require(CONF);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"const [name = "./conf.cjs"] = process.argv.slice(2); require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"const { name = "./conf.cjs" } = require("./settings.cjs"); require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"const load = (name = "./conf.cjs") => require(name); load(process.env.CONF);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"exports.load = (name = "./conf.cjs") => require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"module.exports = class { load(name = "./conf.cjs") { return require(name); } };"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"function load({ name = "./conf.cjs" } = {}) { return require(name); } load({ name: process.env.CONF });"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"function load(name) { name ||= "./conf.cjs"; return require(name); } load(process.env.CONF);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF || "./conf.cjs"; if (false) name = process.argv[2]; require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"let fallback = "./conf.cjs"; if (false) fallback = process.argv[3]; let name = process.env.CONF; name ||= fallback; require(name);"#,
+        CONF,
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF || "./conf.cjs"; name = process.argv[2] || "./other.cjs"; require(name);"#,
+        CONF_AND_OTHER,
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF || "./conf.cjs"; if (process.argv[3]) name = process.argv[2] || "./other.cjs"; require(name);"#,
+        CONF_AND_OTHER,
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF; name ||= "./conf.cjs"; name = process.argv[2]; require(name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF; name = name && "./conf.cjs"; require(name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF || "./conf.cjs"; name += process.argv[2]; require(name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF || "./conf.cjs"; name++; require(name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF || "./conf.cjs"; [name] = process.argv; require(name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF || "./conf.cjs"; for (name of process.argv) require(name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"let fallback; fallback = "./conf.cjs"; let name = process.env.CONF; name ||= fallback; require(name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"function load(name) { name ||= "./conf.cjs"; arguments; return require(name); } load(process.env.CONF);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"for (const turn of [1]) { var name = process.env.CONF || "./conf.cjs"; require(name); }"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"require(process.env.CONF || require("node:path").join(__dirname, "conf.cjs"));"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"let name = process.env.CONF; name ||= require("node:path").join(__dirname, "conf.cjs"); require(name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"const load = (name = require("node:path").join(__dirname, "conf.cjs")) => require(name); load(process.env.CONF);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"require(process.env.CONF || "./co" + process.argv[2] + ".cjs");"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"const defaults = { name: "./conf.cjs" }; require(process.env.CONF || defaults.name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"const fallback = () => "./conf.cjs"; require(process.env.CONF || fallback());"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"var name = process.env.CONF; var name = name || "./conf.cjs"; require(name);"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"function load(name) { name ||= "./absent.cjs"; return require(name); } load("./conf.cjs");"#,
+        &[],
+    ),
+    (
+        "main.cjs",
+        r#"let name = "./conf.cjs"; name ||= "./other.cjs"; require(process.argv[2] ? "./co" + process.argv[2] + ".cjs" : name);"#,
+        &["conf.cjs NamedByData", "other.cjs NamedByData"],
+    ),
+];
+
+fn describe_found_by(file: &str, text: &str) -> Vec<String> {
+    let project = executable(&[
+        (file, text),
+        ("conf.cjs", "exports.name = 1;"),
+        ("other.cjs", "exports.name = 2;"),
+        ("settings.cjs", "exports.port = 1;"),
+    ]);
+    load(&project, |loaded| {
+        describe_found(&loaded.contents.found_entry_points)
+    })
+}
+
+#[test]
+fn default_that_is_stored_or_declared_beside_a_name_that_is_unknown_is_an_entry_point() {
+    for &(file, text, found) in DEFAULTS_BESIDE_AN_UNKNOWN_NAME {
+        assert_eq!(describe_found_by(file, text), found, "{text}");
+    }
+}
+
+#[test]
+fn name_that_is_stored_to_more_often_than_the_walk_reads_is_not_followed() {
+    let stored = |times: usize| {
+        let stores = r#"name ||= "./conf.cjs"; "#.repeat(times);
+        format!("let name = process.env.CONF; {stores}require(name);")
+    };
+    assert_eq!(describe_found_by("main.cjs", &stored(16)), CONF);
+    assert!(describe_found_by("main.cjs", &stored(17)).is_empty());
+}
+
 #[test]
 fn worker_start_with_an_unknown_name_is_recorded() {
     let project = executable(&[("main.ts", "new Worker(process.argv[2]);")]);

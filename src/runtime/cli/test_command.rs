@@ -4199,7 +4199,7 @@ impl TestCommand {
                 next_load_shares_global,
                 runs_again && !failed_to_load,
             );
-            if next_load_shares_global {
+            if repeat_count > 1 && next_load_shares_global {
                 crate::test_runner::Expect::on_run_end(vm.global(), runs_again && !failed_to_load);
             }
             // Must run after the cleanup above, so rejections from JS it runs are reported in this file.

@@ -116,7 +116,7 @@ pub(crate) mod js_fns {
         signature: Signature<'_>,
     ) -> JsResult<BunTestPtr> {
         let bun_test_root = get_test_root(global_this, signature)?;
-        if crate::test_runner::module_mock::registers_for_run(global_this.bun_vm()) {
+        if crate::test_runner::module_mock::registers_for_preload(global_this.bun_vm()) {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} during preload.",
                 signature
@@ -680,7 +680,7 @@ impl BunTestRoot {
     }
 
     pub(crate) fn get_active_file_unless_in_preload(&mut self, vm: &VirtualMachine) -> Option<&mut BunTest> {
-        if crate::test_runner::module_mock::registers_for_run(vm) {
+        if crate::test_runner::module_mock::registers_for_preload(vm) {
             return None;
         }
         // SAFETY: single-threaded; caller (js_fns::generic_hook) holds the only

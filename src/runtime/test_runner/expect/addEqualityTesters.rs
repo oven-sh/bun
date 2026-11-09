@@ -155,13 +155,15 @@ impl Expect {
                 }
             }
             all.put_index(global, count, tester)?;
-            if let Some(module) = &module {
-                utils.testers_of_modules.with_mut(|of_modules| of_modules.push((count as usize, module.clone())));
-            }
             count += 1;
         }
         if count == registered {
             return Ok(());
+        }
+        if let Some(module) = module {
+            utils.testers_of_modules.with_mut(|of_modules| {
+                of_modules.extend((registered..count).map(|index| (index as usize, module.clone())));
+            });
         }
 
         js::equality_testers_set_cached(utils_value, global, all);

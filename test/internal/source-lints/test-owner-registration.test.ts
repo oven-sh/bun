@@ -3,7 +3,7 @@
 // stays loaded, so a module whose top level registers something for the file has to be noted, and the end of the run evicts it.
 //
 // The places that register something for a test file ask through one of these, which note the module:
-//   Rust: `module_mock::registers_for_run(vm)`, or `module_mock::did_register_for_file(vm)` where nothing asks about preloads
+//   Rust: `module_mock::registers_for_preload(vm)`, or `module_mock::did_register_for_file(vm)` where nothing asks about preloads
 //   C++:  `JSMock__registersForPreload(globalObject)`, or `Bun__TestFile__didRegister(globalObject)`
 //
 // A new place that reads the owner in another way is not noted, and what it registers is missing from runs 2..N of
@@ -15,7 +15,7 @@ import path from "path";
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 
-test("test runner code that registers for a test file asks module_mock::registers_for_run()", async () => {
+test("test runner code that registers for a test file asks module_mock::registers_for_preload()", async () => {
   const reads: string[] = [];
   for (const name of new Bun.Glob("src/runtime/test_runner/**/*.rs").scanSync({ cwd: root })) {
     const rel = name.replaceAll(path.sep, "/");

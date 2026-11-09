@@ -544,7 +544,7 @@ extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     let this = unsafe { &mut (*timer_all()).fake_timers };
     let vm = global.bun_vm().as_mut();
     if !this.active {
-        this.from_preload = crate::test_runner::module_mock::registers_for_run(vm);
+        this.from_preload = crate::test_runner::module_mock::registers_for_preload(vm);
         return;
     }
     if ms.is_nan() {
@@ -727,7 +727,7 @@ impl FakeTimers {
         self.active = true;
         self.faked = options.faked;
         self.fakes_abort_signal_timeout = options.fakes_abort_signal_timeout;
-        self.from_preload = crate::test_runner::module_mock::registers_for_run(global.bun_vm());
+        self.from_preload = crate::test_runner::module_mock::registers_for_preload(global.bun_vm());
         self.installs = self.installs.wrapping_add(1);
         self.loop_limit = options.loop_limit;
         self.now = Timespec::EPOCH;

@@ -112,7 +112,7 @@ fn number_option(
 fn commit(global: &JSGlobalObject, config: Config) {
     if let Some(runner) = Jest::runner() {
         runner.vi_config = config;
-        if super::module_mock::registers_for_run(global.bun_vm()) {
+        if super::module_mock::registers_for_preload(global.bun_vm()) {
             runner.vi_config_of_preload = config;
         }
     }

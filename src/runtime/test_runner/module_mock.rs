@@ -53,7 +53,7 @@ fn is_in_hook_of_preload(vm: &VirtualMachine) -> bool {
 /// file again for each run and keeps what the file imports, so it learns here which of those
 /// modules registered something and must be evaluated again.
 #[inline]
-pub(crate) fn registers_for_run(vm: &VirtualMachine) -> bool {
+pub(crate) fn registers_for_preload(vm: &VirtualMachine) -> bool {
     match vm.test_owner {
         TestOwner::File => false,
         TestOwner::Preload => true,

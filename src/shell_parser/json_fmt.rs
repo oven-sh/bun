@@ -77,7 +77,10 @@ fn write_stmt(w: &mut impl Write, s: &Stmt<'_>) -> fmt::Result {
     w.write_char('}')
 }
 
-fn write_stmt_smol<const N: usize>(w: &mut impl Write, s: &SmolList<Stmt<'_>, N>) -> fmt::Result {
+fn write_stmt_smol<const N: usize>(
+    w: &mut impl Write,
+    s: &SmolList<'_, Stmt<'_>, N>,
+) -> fmt::Result {
     write_array(w, s.slice(), write_stmt)
 }
 

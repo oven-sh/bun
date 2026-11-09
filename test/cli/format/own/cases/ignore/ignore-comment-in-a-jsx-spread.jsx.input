@@ -1,0 +1,11 @@
+const a = <a {/* prettier-ignore */ ...b   .c} />;
+
+const d = <a {
+  // prettier-ignore
+  ...b
+  // 1
+  .c} />;
+
+const e = <a>{
+  // prettier-ignore
+  ...b   (  c  )}</a>;

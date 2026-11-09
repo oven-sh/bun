@@ -56,8 +56,10 @@
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
 #include "CryptoKeyRSA.h"
+#include "BunString.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
+#include "VectorSizeLimit.h"
 #include "node/crypto/CryptoUtil.h"
 #include <openssl/bytestring.h>
 #include <openssl/err.h>
@@ -329,7 +331,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             JSObject* newValue = constructEmptyObject(&state);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
-            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+            Bun::putDirectNamed(vm, newValue, "publicKey"_s, publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -345,7 +347,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             JSObject* newValue = constructEmptyObject(&state);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
             newValue->putDirect(vm, vm.propertyNames->name, nameValue);
-            newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
+            Bun::putDirectNamed(vm, newValue, "publicKey"_s, publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmX25519Params>(state, newValue);
             RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
@@ -549,6 +551,13 @@ CryptoKeyUsageBitmap SubtleCrypto::toCryptoKeyUsageBitmap(const Vector<CryptoKey
 // Maybe we want more specific error messages?
 static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionCode ec, const String& msg)
 {
+    // createDOMException() turns this code into JavaScript's own SyntaxError.
+    if (ec == SyntaxError) {
+        passedPromise->rejectWithCallback([&](JSDOMGlobalObject& globalObject) {
+            return createDOMExceptionObject(&globalObject, ec, msg.isEmpty() ? "A required parameter was missing or out-of-range"_s : msg);
+        });
+        return;
+    }
     if (!msg.isEmpty()) {
         passedPromise->reject(ec, msg);
         return;
@@ -556,9 +565,6 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
     switch (ec) {
     case NotSupportedError:
         passedPromise->reject(ec, "The algorithm is not supported"_s);
-        return;
-    case SyntaxError:
-        passedPromise->reject(ec, "A required parameter was missing or out-of-range"_s);
         return;
     case InvalidStateError:
         passedPromise->reject(ec, "The requested operation is not valid for the current state of the provided key"_s);
@@ -1023,6 +1029,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
             rejectWithException(promise.releaseNonNull(), ec, msg);
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     // The 26 January 2017 version of the specification suggests we should perform the following task asynchronously
     // regardless what kind of keys it produces: https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-generateKey
     // That's simply not efficient for AES, HMAC and EC keys. Therefore, we perform it as an async task only for RSA keys.
@@ -1285,6 +1292,7 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
             rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
     };
 
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
     // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-importKey
     // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
@@ -1431,16 +1439,21 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                         promise->reject(Exception { ExistingExceptionError });
                         return;
                     }
-                    CString jwkUTF8String = jwkString.utf8(StrictConversion);
-                    bytes.append(jwkUTF8String.span());
-
                     // AES-KW (RFC 3394) can only wrap plaintext whose length is a multiple of
                     // 8 bytes. A serialized JWK usually isn't, so pad it with trailing spaces,
                     // which JSON.parse ignores when the key is unwrapped. This matches Node.js.
-                    if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW) {
-                        while (bytes.size() % 8)
-                            bytes.append(' ');
+                    auto jwkUTF8 = Bun::UTF8View::tryCreate(jwkString);
+                    size_t paddedSize = jwkUTF8 ? jwkUTF8->bytes().size() : 0;
+                    if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW)
+                        paddedSize = roundUpToMultipleOf(8, paddedSize);
+                    if (!jwkUTF8 || paddedSize > Bun::maxVectorSize<uint8_t>() || !bytes.tryReserveInitialCapacity(paddedSize)) [[unlikely]] {
+                        weakThis->m_pendingPromises.remove(index);
+                        promise->reject(OperationError, "Input data is too large"_s);
+                        return;
                     }
+                    bytes.append(jwkUTF8->bytes());
+                    while (bytes.size() < paddedSize)
+                        bytes.append(' ');
                 }
                 }
 
@@ -1557,7 +1570,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     keyData = bytes;
                     break;
                 case SubtleCrypto::KeyFormat::Jwk: {
-                    String jwkString(bytes.span());
+                    String jwkString(byteCast<Latin1Character>(bytes.span()));
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (scope.exception()) [[unlikely]] {
                         weakThis->m_pendingPromises.remove(index);
@@ -1599,6 +1612,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                         rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
                 };
 
+                ncrypto::ClearErrorOnReturn clearErrorOnReturn;
                 // The following operation should be performed synchronously.
                 RELEASE_AND_RETURN(scope, importAlgorithm->importKey(format, WTF::move(keyData), *unwrappedKeyAlgorithm, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
             }

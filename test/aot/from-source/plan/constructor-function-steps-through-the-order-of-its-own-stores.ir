@@ -1,0 +1,25 @@
+# -- source: constructor-function-steps-through-the-order-of-its-own-stores.ts
+# declare function report(value: unknown): void;
+# function Base(this: any) { this.base1 = 1; this.base2 = 2; }
+# function Made(this: any, x: number) { this.a = x; this.b = 2; report(x); this.c = 3; this.base1 = 4; this.base2 = 5; }
+# Made.prototype = Object.create(Base.prototype);
+# export function make(x: number) { return new (Made as any)(x); }
+# export function base() { return new (Base as any)(); }
+# export const leaked = [Made, Base];
+# report(make(1).c + base().base1);
+# -- end of source
+# The body of a constructor function need not begin with what the classes above declare. What it stores on `this`, each name once, as the stores are written, is an order of the layout,
+# so a row of stores is a test of the order word and then, for each store, the value and the word that lists the field next. Whatever has run between two rows, the second is expected to go on where the first ended.
+# RUN: plan orders mechanisms=all
+# CHECK: orders L1
+# CHECK-NEXT: order 0: "a" "b" "c" "base1" "base2"
+# CHECK-NEXT: order 1: "base1" "base2" "a" "b" "c"
+# RUN(WALK): walk f4 mechanisms=-Inlining
+# WALK-LABEL: code f4:Body
+# WALK: = HasKeyOrder {{*}}layout=L1 traits
+# WALK: PutSlotOrAdd {{*}}key="a" {{*}}orderWordAfter=32768
+# WALK: PutSlotOrAdd {{*}}key="b" {{*}}orderWordAfter=65536
+# WALK: = HasKeyOrder {{*}}layout=L1 fields=[0, 1]
+# WALK: PutSlotOrAdd {{*}}key="c" {{*}}orderWordAfter=98304
+# WALK: PutSlotOrAdd {{*}}key="base1" {{*}}orderWordAfter=131072
+# WALK: PutSlotOrAdd {{*}}key="base2" {{*}}orderWordAfter=163840

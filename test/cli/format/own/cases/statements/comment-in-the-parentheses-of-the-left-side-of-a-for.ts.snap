@@ -1,0 +1,41 @@
+------------------
+{ printWidth: 80 }
+------------------
+// comment
+for ((let) of a);
+/* comment */
+for (b in c) d;
+// comment
+for (e as f of g);
+for (
+  [h]
+  // comment
+  ;
+  ;
+);
+/* comment */
+for ((let) of i /**
+ * comment
+ */);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+// comment
+for ((let) of a);
+/* comment */
+for (b in c) d;
+// comment
+for (e as f of g);
+for (
+  [h]
+  // comment
+  ;
+  ;
+);
+/* comment */
+for ((let) of i /**
+ * comment
+ */);
+
+===================== End =====================

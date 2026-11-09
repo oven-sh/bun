@@ -1,0 +1,41 @@
+{
+  "binary-trees": {
+    "millionInstructions": 2037
+  },
+  "direct-and-indirect-calls": {
+    "millionInstructions": 820
+  },
+  "fannkuch": {
+    "millionInstructions": 1587
+  },
+  "fibonacci": {
+    "millionInstructions": 27
+  },
+  "lexer": {
+    "millionInstructions": 45
+  },
+  "n-body": {
+    "millionInstructions": 3635
+  },
+  "spectral": {
+    "millionInstructions": 3523
+  },
+  "string-build-loop": {
+    "millionInstructions": 10
+  },
+  "tokens-maps-objects": {
+    "millionInstructions": 63
+  },
+  "tokens-maps-objects-2": {
+    "millionInstructions": 1987
+  },
+  "tokens-maps-objects-3": {
+    "millionInstructions": 1982
+  },
+  "two-small-functions": {
+    "millionInstructions": 1220
+  },
+  "untyped-property-access": {
+    "millionInstructions": 818
+  }
+}

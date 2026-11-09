@@ -1,0 +1,26 @@
+--- a/src/liblsquic/lsquic_send_ctl.c
++++ b/src/liblsquic/lsquic_send_ctl.c
+@@ -2459,6 +2459,7 @@ send_ctl_allocate_packet (struct lsquic_
+         [PNS_APP]   = HETY_SHORT,
+     };
+     lsquic_packet_out_t *packet_out;
++    unsigned token_sz;
+ 
+     packet_out = lsquic_packet_out_new(&ctl->sc_enpub->enp_mm,
+                     ctl->sc_conn_pub->packet_out_malo,
+@@ -2486,8 +2487,13 @@ send_ctl_allocate_packet (struct lsquic_
+             if (ctl->sc_token)
+             {
+                 (void) send_ctl_set_packet_out_token(ctl, packet_out);
+-                if (packet_out->po_n_alloc > packet_out->po_token_len)
+-                    packet_out->po_n_alloc -= packet_out->po_token_len;
++                /* bun: po_n_alloc leaves one byte for the length of the token.
++                 * A length of 64 or more takes two, and a packet filled to
++                 * po_n_alloc was one byte over the packet size. */
++                token_sz = packet_out->po_token_len
++                            + (1u << vint_val2bits(packet_out->po_token_len)) - 1;
++                if (packet_out->po_n_alloc > token_sz)
++                    packet_out->po_n_alloc -= token_sz;
+                 else
+                 {
+                     /* XXX fail earlier: when retry token is parsed out */

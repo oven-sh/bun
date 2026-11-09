@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { WebSocket } from "ws";
 
 describe("ws.once() multiple calls", () => {
-  let server: Bun.Server;
+  let server: Bun.Server<undefined>;
   let port: number;
 
   beforeAll(() => {
@@ -23,7 +23,7 @@ describe("ws.once() multiple calls", () => {
         },
       },
     });
-    port = server.port;
+    port = server.port!;
   });
 
   afterAll(() => {

@@ -74,7 +74,7 @@ const closedMsg = "Controller is already closed";
 const lateCloseResults: string[] = [];
 for (let i = 0; i < 3; i++) {
   const { started, releaseProducer, outcome } = armRequest();
-  const s = net.connect(server.port, "127.0.0.1", () => {
+  const s = net.connect(server.port!, "127.0.0.1", () => {
     s.write("GET /x HTTP/1.1\r\nHost: x\r\n\r\n");
   });
   s.on("error", () => {});

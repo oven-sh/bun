@@ -1,0 +1,6 @@
+function run(times: number): number {
+  let total = 0; let last = "";
+  for (let round = 0; round < times; round++) { for (const value of [1, 2]) total += value; total += last.length; last += round & 1 ? "ab" : "c"; }
+  return total;
+}
+console.log(run(3), run(10));

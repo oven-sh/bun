@@ -72,8 +72,6 @@ const _: () = assert!(
 // SAFETY: all-zero is a valid SocketGroup — every field is a raw pointer
 // (null), `Option<&'static _>` (None via NPO), or an integer (0).
 unsafe impl bun_core::ffi::Zeroable for SocketGroup {}
-// SAFETY: all-zero is a valid VTable — every field is `Option<fn>` (None via NPO).
-unsafe impl bun_core::ffi::Zeroable for VTable {}
 
 impl Default for SocketGroup {
     fn default() -> Self {
@@ -298,16 +296,6 @@ impl SocketGroup {
             )
         }
     }
-
-    pub fn pair(
-        &mut self,
-        kind: SocketKind,
-        ext_size: c_int,
-        fds: &mut [LIBUS_SOCKET_DESCRIPTOR; 2],
-    ) -> *mut us_socket_t {
-        // SAFETY: forwarding to C; `fds` is a valid 2-element array.
-        unsafe { us_socket_pair(self, kind as u8, ext_size, fds.as_mut_ptr().cast()) }
-    }
 }
 
 unsafe extern "C" {
@@ -385,11 +373,5 @@ unsafe extern "C" {
         fd: LIBUS_SOCKET_DESCRIPTOR,
         options: c_int,
         ipc: c_int,
-    ) -> *mut us_socket_t;
-    fn us_socket_pair(
-        group: *mut SocketGroup,
-        kind: u8,
-        ext_size: c_int,
-        fds: *mut [LIBUS_SOCKET_DESCRIPTOR; 2],
     ) -> *mut us_socket_t;
 }

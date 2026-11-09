@@ -10175,9 +10175,7 @@ impl LowerUsingDeclarationsContext {
             loc,
         );
         let stack_init = p.new_expr(E::Array::default(), loc);
-        // The error slots are block-scoped next to the stack, so a loop body that contains the
-        // lowered block starts every iteration with `_hasErr` unset. A function-scoped `var` in the
-        // catch keeps the first iteration's error and the next iteration's finally rethrows it.
+        // Block-scoped with the stack: a loop iteration must not see the previous iteration's error.
         let err_binding = p.b(B::Identifier { r#ref: err_ref }, loc);
         let has_err_binding = p.b(B::Identifier { r#ref: has_err_ref }, loc);
         let mut block_decls = bun_alloc::AstAlloc::vec();

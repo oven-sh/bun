@@ -2155,9 +2155,6 @@ impl<'a> Repl<'a> {
         // hoisted `var` + assignment for cross-input persistence, which would
         // silently discard disposal semantics if `using` declarations survived
         // until that pass. Lowering wraps the declaration in `try/finally` first.
-        // The lowered block's own `let` slots are hoisted like any other top-level
-        // `let` and reassigned on every input, so they never carry state between
-        // inputs.
 
         // Initialize macro context from transpiler (required for import processing).
         if vm.transpiler.macro_context.is_none() {

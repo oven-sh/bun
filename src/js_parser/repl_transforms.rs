@@ -134,9 +134,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     for decl in local.decls.slice() {
                         let value = match decl.value {
                             Some(value) => value,
-                            // `let x;` starts at undefined on every entry. The hoisted `var`
-                            // persists across inputs, so the reset has to be explicit. A bare
-                            // `var x;` keeps the earlier value, as it does in a script.
+                            // `let x;` resets the persistent hoisted var; a bare `var x;` keeps it.
                             None if local.kind != S::Kind::KVar => {
                                 self.new_expr(E::Undefined, decl.binding.loc)
                             }

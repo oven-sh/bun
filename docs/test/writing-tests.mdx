@@ -512,6 +512,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `toHaveProperty()` on `undefined` or `null`               | fails, so it passes with `.not`      | throws a `TypeError`, with `.not` too                                |
 | `toContain()` on a string with a value that isn't one     | an error                             | converts the value to a string                                       |
 | `.resolves.toThrow()` on a promise resolved to an error   | passes                               | fails                                                                |
+| `toThrow(expect.any(Number))` when `0` is thrown          | passes                               | fails: no matcher is asked about a falsy thrown value                |
 | `.not.not`                                                | cancels out                          | still negates                                                        |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 | `performance` while fake timers are on                    | the same object, on the fake clock   | a new object; the one it replaces still reads the real clock         |
@@ -863,7 +864,7 @@ test("the count is odd", () => {
 });
 ```
 
-Like in Jest and Vitest, you can also use any object with an `asymmetricMatch(value)` method as a matcher:
+Like in Jest and Vitest, you can also use an object with an `asymmetricMatch(value)` method as a matcher:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 const anyFunction = { asymmetricMatch: (value: unknown) => typeof value === "function" };
@@ -872,6 +873,25 @@ test("the callback is a function", () => {
   expect({ callback: () => {} }).toEqual({ callback: anyFunction });
 });
 ```
+
+`toThrow()` calls the method with the thrown value:
+
+```ts title="example.test.ts" icon="/icons/typescript.svg"
+const hasCode = (code: string) => ({ asymmetricMatch: (error: any) => error?.code === code });
+
+test("the file is missing", () => {
+  const read = () => {
+    throw Object.assign(new Error("no such file"), { code: "ENOENT" });
+  };
+  expect(read).toThrow(hasCode("ENOENT"));
+  expect(read).not.toThrow(hasCode("EACCES"));
+});
+```
+
+Bun looks for the method on plain objects and on instances of your own classes:
+
+- A function, an array, an `Error`, a `Map`, a `Date` or a `Proxy` isn't a matcher. Neither is an instance of a class that extends `Array`, `Error` or `Map`.
+- `asymmetricMatch` has to be a method. Bun doesn't call a getter to read it.
 
 ## Best Practices
 

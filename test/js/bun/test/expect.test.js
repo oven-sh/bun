@@ -1240,6 +1240,65 @@ describe("expect()", () => {
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
   });
 
+  test("toThrow() applies an asymmetric matcher to the thrown value, with and without .not", () => {
+    expect.extend({
+      toHaveCode(/** @type {any} */ received, /** @type {string} */ code) {
+        return { pass: received?.code === code, message: () => `expected the code ${code}` };
+      },
+    });
+    const error = Object.assign(new TypeError("foo"), { code: "ERR_BAR" });
+    /** @type {[thrown: unknown, matcher: unknown, matches: boolean][]} */
+    const cases = [
+      [error, expect.anything(), true],
+      [error, expect.any(TypeError), true],
+      [error, expect.any(RangeError), false],
+      [error, expect.objectContaining({ code: "ERR_BAR" }), true],
+      [error, expect.objectContaining({ code: "ERR_BAZ" }), false],
+      [error, expect.not.objectContaining({ code: "ERR_BAZ" }), true],
+      [error, expect.not.objectContaining({ code: "ERR_BAR" }), false],
+      [error, ANY(expect).toHaveCode("ERR_BAR"), true],
+      [error, ANY(expect).toHaveCode("ERR_BAZ"), false],
+      [error, ANY(expect).not.toHaveCode("ERR_BAZ"), true],
+      [[1, 2], expect.arrayContaining([2]), true],
+      [[1, 2], expect.arrayContaining([3]), false],
+      ["boom", expect.stringContaining("oo"), true],
+      ["boom", expect.stringContaining("aa"), false],
+      ["boom", expect.stringMatching(/^b/), true],
+      ["boom", expect.stringMatching(/^c/), false],
+      ["boom", expect.any(String), true],
+      ["boom", expect.any(Number), false],
+      [1.26, expect.closeTo(1.3, 1), true],
+      [1.26, expect.closeTo(1.4, 1), false],
+    ];
+    if (isBun) {
+      cases.push(
+        [error, ANY(expect).not.any(RangeError), true],
+        [error, ANY(expect).not.any(TypeError), false],
+        [null, ANY(expect).not.anything(), true],
+        [error, ANY(expect).toSatisfy((/** @type {any} */ value) => value.code === "ERR_BAR"), true],
+        [error, ANY(expect).toSatisfy((/** @type {any} */ value) => value.code === "ERR_BAZ"), false],
+        [Promise.resolve(1), ANY(expect).resolvesTo.any(Number), true],
+        [Promise.resolve(1), ANY(expect).resolvesTo.any(String), false],
+        // An error that is thrown is not a promise that rejects.
+        [error, ANY(expect).rejectsTo.any(TypeError), false],
+      );
+    }
+    for (const [thrown, matcher, matches] of cases) {
+      const throws = () => {
+        throw thrown;
+      };
+      const positive = () => expect(throws).toThrow(ANY(matcher));
+      const negated = () => expect(throws).not.toThrow(ANY(matcher));
+      if (matches) {
+        positive();
+        expect(negated).toThrow(isBun ? "Expected value: not " : undefined);
+      } else {
+        negated();
+        expect(positive).toThrow(isBun ? "Expected value: " : undefined);
+      }
+    }
+  });
+
   test("toThrow", () => {
     expect(() => {
       throw new Error("hello");
@@ -5383,6 +5442,216 @@ describe("expect()", () => {
       test("toBe() ignores asymmetricMatch()", () => {
         expect(2).not.toBe(isEven);
         expect(isEven).toBe(isEven);
+      });
+
+      describe("toThrow()", () => {
+        const rangeError = new RangeError("out of range");
+        const throwsRangeError = () => {
+          throw rangeError;
+        };
+        const isRangeError = { asymmetricMatch: (/** @type {unknown} */ value) => value instanceof RangeError };
+        const isTypeError = { asymmetricMatch: (/** @type {unknown} */ value) => value instanceof TypeError };
+        /** What a failed `toThrow(matcher)` says in Bun. Jest and Vitest word it differently. */
+        const failure = (/** @type {string} */ text) => (isBun ? text : undefined);
+
+        test("calls asymmetricMatch() once, on the matcher, with the thrown value", () => {
+          for (const thrown of [rangeError, "text", Symbol("symbol"), { code: 1 }, new Response("body"), isEven]) {
+            /** @type {{ self: unknown, args: unknown[] }[]} */
+            const calls = [];
+            const matcher = {
+              asymmetricMatch(/** @type {unknown[]} */ ...args) {
+                calls.push({ self: this, args });
+                return true;
+              },
+            };
+            expect(() => {
+              throw thrown;
+            }).toThrow(matcher);
+            expect(calls.length).toBe(1);
+            expect(calls[0].self).toBe(matcher);
+            expect(calls[0].args[0]).toBe(thrown);
+          }
+        });
+
+        test("passes or fails by what asymmetricMatch() returns, with and without .not", () => {
+          expect(throwsRangeError).toThrow(isRangeError);
+          expect(throwsRangeError).not.toThrow(isTypeError);
+          expect(() => expect(throwsRangeError).toThrow(isTypeError)).toThrow(failure("Expected value: "));
+          expect(() => expect(throwsRangeError).not.toThrow(isRangeError)).toThrow(failure("Expected value: not "));
+          if (!isJest) {
+            // Jest 30 has no toThrowError().
+            expect(throwsRangeError).toThrowError(isRangeError);
+            expect(() => expect(throwsRangeError).not.toThrowError(isRangeError)).toThrow(
+              failure("Expected value: not "),
+            );
+          }
+        });
+
+        test("doesn't call asymmetricMatch() if nothing is thrown", () => {
+          let calls = 0;
+          const matcher = { asymmetricMatch: () => ++calls > 0 };
+          expect(() => {}).not.toThrow(matcher);
+          expect(() => expect(() => {}).toThrow(matcher)).toThrow(failure("Received function did not throw"));
+          expect(calls).toBe(0);
+        });
+
+        test("an error thrown by asymmetricMatch() propagates", () => {
+          const throws = {
+            asymmetricMatch() {
+              throw new SyntaxError("thrown by the matcher");
+            },
+          };
+          expect(() => expect(throwsRangeError).toThrow(throws)).toThrow(new SyntaxError("thrown by the matcher"));
+          expect(() => expect(throwsRangeError).not.toThrow(throws)).toThrow(new SyntaxError("thrown by the matcher"));
+        });
+
+        test("asymmetricMatch() can be inherited, or be on an object without a prototype", () => {
+          class InstanceOf {
+            constructor(/** @type {Function} */ constructor) {
+              this.class = constructor;
+            }
+            asymmetricMatch(/** @type {unknown} */ value) {
+              return value instanceof this.class;
+            }
+          }
+          const inherits = Object.create(isRangeError);
+          const withoutPrototype = Object.assign(Object.create(null), isRangeError);
+          for (const matcher of [new InstanceOf(RangeError), inherits, withoutPrototype]) {
+            expect(throwsRangeError).toThrow(matcher);
+            expect(() => expect(throwsRangeError).not.toThrow(matcher)).toThrow(failure("Expected value: not "));
+            expect(() => expect(() => {}).toThrow(matcher)).toThrow(failure("Received function did not throw"));
+          }
+          expect(throwsRangeError).not.toThrow(new InstanceOf(TypeError));
+        });
+
+        test("the matcher decides, whatever its message property is", () => {
+          expect(throwsRangeError).toThrow({ ...isRangeError, message: "another message" });
+          expect(throwsRangeError).not.toThrow({ ...isTypeError, message: "out of range" });
+        });
+
+        test("a class and a RegExp with an asymmetricMatch() are still a class and a pattern", () => {
+          let calls = 0;
+          const asymmetricMatch = () => {
+            calls++;
+            return false;
+          };
+          class Matches extends RangeError {
+            static asymmetricMatch = asymmetricMatch;
+          }
+          expect(() => {
+            throw new Matches("out of range");
+          }).toThrow(Matches);
+          expect(throwsRangeError).toThrow(Object.assign(/of range$/, { asymmetricMatch }));
+          expect(calls).toBe(0);
+        });
+
+        test("asymmetricMatch is ignored if it isn't a function", () => {
+          expect(throwsRangeError).not.toThrow({ asymmetricMatch: true });
+          expect(() => expect(throwsRangeError).toThrow({ asymmetricMatch: true })).toThrow();
+        });
+
+        test("an object is a matcher for toThrow() if it is one for toEqual()", () => {
+          let calls = 0;
+          const asymmetricMatch = () => {
+            calls++;
+            return true;
+          };
+          const isCalledBy = (/** @type {() => void} */ assertion) => {
+            calls = 0;
+            try {
+              assertion();
+            } catch {}
+            return calls > 0;
+          };
+          const objects = [
+            { asymmetricMatch },
+            Object.assign(new RangeError("out of range"), { asymmetricMatch }),
+            Object.assign([], { asymmetricMatch }),
+            Object.assign(new Map(), { asymmetricMatch }),
+            Object.defineProperty({}, "asymmetricMatch", { get: () => asymmetricMatch }),
+            new Proxy({ asymmetricMatch }, {}),
+          ];
+          for (const object of objects) {
+            expect(isCalledBy(() => expect(throwsRangeError).toThrow(object))).toBe(
+              isCalledBy(() => expect(rangeError).toEqual(object)),
+            );
+          }
+        });
+
+        test(".rejects and .resolves call asymmetricMatch()", async () => {
+          const rejected = () => Promise.reject(rangeError);
+          await expect(rejected()).rejects.toThrow(isRangeError);
+          await expect(rejected()).rejects.not.toThrow(isTypeError);
+          await expect((async () => expect(rejected()).rejects.toThrow(isTypeError))()).rejects.toThrow(
+            failure("Expected value: "),
+          );
+          await expect((async () => expect(rejected()).rejects.not.toThrow(isRangeError))()).rejects.toThrow(
+            failure("Expected value: not "),
+          );
+
+          /** @type {(reason: unknown) => void} */
+          let reject = () => {};
+          const pending = new Promise((_, rejectPending) => (reject = rejectPending));
+          const matchers = [
+            expect(pending).rejects.toThrow(isRangeError),
+            expect(pending).rejects.not.toThrow(isTypeError),
+          ];
+          reject(rangeError);
+          await Promise.all(matchers);
+
+          await expect(Promise.resolve(throwsRangeError)).resolves.toThrow(isRangeError);
+          await expect(Promise.resolve(throwsRangeError)).resolves.not.toThrow(isTypeError);
+        });
+
+        if (isBun) {
+          test("waits for a function that returns a promise, then calls asymmetricMatch() once", async () => {
+            let calls = 0;
+            const matcher = {
+              asymmetricMatch(/** @type {unknown} */ value) {
+                calls++;
+                return value === rangeError;
+              },
+            };
+            const { promise, reject } = Promise.withResolvers();
+            const matched = expect(() => promise).toThrow(matcher);
+            expect(calls).toBe(0);
+            reject(rangeError);
+            await matched;
+            expect(calls).toBe(1);
+          });
+
+          test("says what the matcher is and what was thrown when it fails", () => {
+            const message = (/** @type {() => void} */ assertion) => {
+              try {
+                assertion();
+              } catch (error) {
+                return stripVTControlCharacters(ANY(error).message);
+              }
+              return "passed";
+            };
+            const throwsText = () => {
+              throw "text";
+            };
+            const isNumber = { asymmetricMatch: (/** @type {unknown} */ value) => typeof value === "number" };
+            const isString = { asymmetricMatch: (/** @type {unknown} */ value) => typeof value === "string" };
+            const printed = "{\n  asymmetricMatch: [Function: asymmetricMatch],\n}";
+            expect([
+              message(() => expect(throwsText).toThrow(isNumber)),
+              message(() => expect(throwsText).not.toThrow(isString)),
+              message(() => expect(() => 1).toThrow(isString)),
+              message(() => expect(throwsText).toThrow(expect.any(Number))),
+              message(() => expect(throwsText).not.toThrow(expect.any(String))),
+              message(() => expect(() => 1).toThrow(expect.any(String))),
+            ]).toEqual([
+              `expect(received).toThrow(expected)\n\nExpected value: ${printed}\nReceived value: "text"\n`,
+              `expect(received).not.toThrow(expected)\n\nExpected value: not ${printed}\nReceived value: "text"\n`,
+              `expect(received).toThrow(expected)\n\nExpected value: ${printed}\n\nReceived function did not throw\nReceived value: 1\n`,
+              `expect(received).toThrow(expected)\n\nExpected value: Any<Number>\nReceived value: "text"\n`,
+              `expect(received).not.toThrow(expected)\n\nExpected value: not Any<String>\nReceived value: "text"\n`,
+              `expect(received).toThrow(expected)\n\nExpected value: Any<String>\n\nReceived function did not throw\nReceived value: 1\n`,
+            ]);
+          });
+        }
       });
     });
   });

@@ -768,6 +768,16 @@ static JSValue asymmetricMatchMethod(JSGlobalObject* globalObject, JSValue value
     return {};
 }
 
+// `matcher.asymmetricMatch(other)`, for a `method` that asymmetricMatchMethod() found on `matcher`.
+static ALWAYS_INLINE bool callAsymmetricMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSValue method, JSValue matcher, JSValue other)
+{
+    MarkedArgumentBuffer arguments;
+    arguments.append(other ? other : jsUndefined());
+    JSValue matched = JSC::call(globalObject, method, JSC::getCallData(method), matcher, arguments);
+    RETURN_IF_EXCEPTION(scope, false);
+    return matched.toBoolean(globalObject);
+}
+
 // Jest and Vitest treat any object with an asymmetricMatch() method as a matcher. Returns nullopt if neither or both are.
 static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObject* globalObject, ThrowScope& scope, JSValue a, JSValue b)
 {
@@ -776,12 +786,38 @@ static NEVER_INLINE std::optional<bool> matchUserAsymmetricMatcher(JSGlobalObjec
     if (!methodOfA == !methodOfB) [[likely]]
         return std::nullopt;
     JSValue method = methodOfA ? methodOfA : methodOfB;
-    JSValue other = methodOfA ? b : a;
-    MarkedArgumentBuffer arguments;
-    arguments.append(other ? other : jsUndefined());
-    JSValue matched = JSC::call(globalObject, method, JSC::getCallData(method), methodOfA ? a : b, arguments);
-    RETURN_IF_EXCEPTION(scope, false);
-    return matched.toBoolean(globalObject);
+    return callAsymmetricMatch(globalObject, scope, method, methodOfA ? a : b, methodOfA ? b : a);
+}
+
+// Out of line, so that the early return of its one caller needs no stack frame.
+static NEVER_INLINE int8_t applyAsymmetricMatcher(JSGlobalObject* globalObject, JSValue matcher, JSValue received)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (mayBeAsymmetricMatcher(matcher)) {
+        AsymmetricMatcherResult result = matchAsymmetricMatcher(globalObject, matcher, received, scope);
+        RELEASE_AND_RETURN(scope, result == AsymmetricMatcherResult::NOT_MATCHER ? -1 : result == AsymmetricMatcherResult::PASS);
+    }
+    JSValue method = asymmetricMatchMethod(globalObject, matcher);
+    if (!method)
+        return -1;
+    return callAsymmetricMatch(globalObject, scope, method, matcher, received);
+}
+
+// `matcher.asymmetricMatch(received)`, as Jest and Vitest ask a matcher that is the whole argument of `toThrow()`.
+// Unlike deep equality, `received` is never read as a matcher. Returns -1 if `matcher` isn't a matcher.
+extern "C" int8_t JSC__JSValue__jestAsymmetricMatch(JSC::EncodedJSValue encodedMatcher, JSC::EncodedJSValue encodedReceived, JSC::JSGlobalObject* globalObject)
+{
+    JSValue matcher = JSValue::decode(encodedMatcher);
+    // An error, the usual argument of `toThrow()`, returns here.
+    if (!mayBeAsymmetricMatcher(matcher) && !mayHaveAsymmetricMatchMethod(globalObject, matcher))
+        return -1;
+    return applyAsymmetricMatcher(globalObject, matcher, JSValue::decode(encodedReceived));
+}
+
+// Whether `value` is an object whose asymmetricMatch() deep equality and `toThrow()` call. Runs no JS.
+extern "C" bool JSC__JSValue__hasAsymmetricMatchMethod(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject)
+{
+    return !!asymmetricMatchMethod(globalObject, JSValue::decode(value));
 }
 
 // jsdom and happy-dom nodes are class instances, sometimes wrapped in a Proxy.

@@ -2,6 +2,7 @@ mod alternatives;
 mod call_sites;
 mod changed_files;
 mod encoders;
+mod file_calls;
 mod import_uses;
 mod jsx;
 mod macro_calls;
@@ -27,6 +28,7 @@ pub use changed_files::{
     TextsOfFile, find_texts_of_exports, write_from_other_folder, write_start_from_other_folder,
 };
 pub use encoders::{ENCODERS, Encoder};
+pub use file_calls::{FILE_CALLS, FileCall, HolderOfFileCalls};
 pub use import_uses::find_imports_of_unused_names;
 pub use jsx::{
     AutomaticJsx, JsxCallee, JsxImport, JsxImportSet, JsxMode, KeyAttribute, find_key_attribute,

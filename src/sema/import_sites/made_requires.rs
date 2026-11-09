@@ -2,6 +2,7 @@ use super::call_sites::{
     expr_kind, find_module_printed_as_require, find_request_of_exports, is_free_common_js,
     is_free_name,
 };
+use super::file_calls::{FileCall, HolderOfFileCalls, find_listed_call, find_member_of_global};
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl,
@@ -116,6 +117,12 @@ enum ModuleFace {
 }
 
 #[derive(Copy, Clone)]
+struct ExportOfModule {
+    specifier: Atom,
+    export: Atom,
+}
+
+#[derive(Copy, Clone)]
 pub(super) struct Text<'a, 'h, 'b, 'd> {
     pub(super) hir: &'a File<'h>,
     pub(super) bound: &'a Bound<'b>,
@@ -205,12 +212,11 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
         None
     }
 
-    fn find_export_read_off_module(
+    fn find_export_read_off_some_module(
         self,
         e: ExprId,
         left: StepsLeft,
-        modules: [Atom; 2],
-    ) -> Option<Atom> {
+    ) -> Option<ExportOfModule> {
         let (specifier, face, names) = self.find_names_read_off_module(e, left)?;
         let (&export, before) = names.split_first()?;
         let is_export = match *before {
@@ -218,7 +224,27 @@ impl<'a, 'h, 'b, 'd> Text<'a, 'h, 'b, 'd> {
             [first] => face == ModuleFace::Namespace && first == known::default,
             _ => false,
         };
-        (is_export && modules.contains(&specifier)).then_some(export)
+        is_export.then_some(ExportOfModule { specifier, export })
+    }
+
+    fn find_export_read_off_module(
+        self,
+        e: ExprId,
+        left: StepsLeft,
+        modules: [Atom; 2],
+    ) -> Option<Atom> {
+        let ExportOfModule { specifier, export } =
+            self.find_export_read_off_some_module(e, left)?;
+        modules.contains(&specifier).then_some(export)
+    }
+
+    fn find_file_call(self, callee: ExprId, left: StepsLeft) -> Option<FileCall> {
+        if let Some((holder, name)) = find_member_of_global(self.hir, self.bound, callee) {
+            return find_listed_call(holder, name);
+        }
+        let ExportOfModule { specifier, export } =
+            self.find_export_read_off_some_module(callee, left)?;
+        find_listed_call(HolderOfFileCalls::of_specifier(specifier)?, export)
     }
 
     fn is_create_require(self, e: ExprId, left: StepsLeft) -> bool {
@@ -365,11 +391,10 @@ fn is_written_as_own_file(
         return settled_chain(hir, bound, url).any(|url| {
             let makes_url = match expr_kind(hir, url) {
                 Some(ExprKind::New(_)) => true,
-                Some(ExprKind::Call(call)) => {
-                    let export =
-                        text.find_export_read_off_module(hir[call].callee, left, URL_MODULES);
-                    export == Some(known::pathToFileURL)
-                }
+                Some(ExprKind::Call(call)) => matches!(
+                    text.find_file_call(hir[call].callee, left),
+                    Some(FileCall::UrlOfPath | FileCall::Url)
+                ),
                 _ => false,
             };
             makes_url && is_written_as_own_file(text, url, conversions_left, left)
@@ -390,12 +415,13 @@ fn is_written_as_own_file(
     let (call, is_conversion) = match expr_kind(hir, e) {
         Some(ExprKind::Call(call)) => {
             let call = hir[call];
-            let export = text.find_export_read_off_module(call.callee, left, URL_MODULES);
-            if export == Some(known::pathToFileURL) {
+            let file_call = text.find_file_call(call.callee, left);
+            if matches!(file_call, Some(FileCall::UrlOfPath | FileCall::SamePath)) {
                 return call.args.len() == 1
                     && settled_chain(hir, bound, hir.id_at(call.args, 0)).any(is_path);
             }
-            (call, export == Some(known::fileURLToPath))
+            let is_conversion = matches!(file_call, Some(FileCall::PathOfUrl | FileCall::Url));
+            (call, is_conversion)
         }
         Some(ExprKind::New(call)) => {
             let callee = hir.skip_type_assertions(hir[call].callee);
@@ -418,17 +444,16 @@ fn is_path_of_own_file(
     let is_url = matches!(hir.member_key(e), Some((_, MemberKey::Name(name)))
         if name == known::url || name == known::href);
     let is_path = match expr_kind(hir, e) {
-        Some(ExprKind::Call(call)) => {
-            let export = text.find_export_read_off_module(hir[call].callee, left, URL_MODULES);
-            export == Some(known::fileURLToPath)
-        }
+        Some(ExprKind::Call(call)) => matches!(
+            text.find_file_call(hir[call].callee, left),
+            Some(FileCall::PathOfUrl | FileCall::SamePath)
+        ),
         Some(ExprKind::New(_) | ExprKind::Binary { .. }) => false,
         _ => !is_url,
     };
     is_path && is_written_as_own_file(text, e, conversions_left, left)
 }
 
-const URL_MODULES: [Atom; 2] = [known::url, known::node_url];
 const PATH_MODULES: [Atom; 2] = [known::path, known::node_path];
 
 fn names_own_folder(text: Text<'_, '_, '_, '_>, e: ExprId, left: StepsLeft) -> bool {

@@ -133,6 +133,9 @@ impl ContentsScan<'_, '_> {
                 if builtin.is_some_and(|builtin| constructors.has(builtin)) {
                     self.look_at_name_of_worker_constructor(expression);
                 }
+                if let Some(builtin) = builtin {
+                    self.look_at_name_of_url_maker(expression, builtin);
+                }
             }
             ExprKind::Missing
             | ExprKind::PrivateIdentifier(_)

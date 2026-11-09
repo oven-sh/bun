@@ -606,6 +606,101 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         &[],
     ),
     (
+        "a.cjs",
+        r#"require("module").createRequire(Bun.pathToFileURL(__filename))("a");"#,
+        &["module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"const { pathToFileURL: toUrl } = require("bun"); require("module").createRequire(toUrl(__filename).href)("a");"#,
+        &["bun", "module", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(Bun.fileURLToPath(import.meta.url))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { fileURLToPath } from "bun"; createRequire(fileURLToPath(new URL(import.meta.url)))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(URL.parse(import.meta.url))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(URL.parse(Bun.pathToFileURL(import.meta.path).href).href)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.cjs",
+        r#"const path = require("node:path"); require("module").createRequire(path.normalize(__filename))("a");"#,
+        &["node:path", "module", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { resolve } from "node:path"; createRequire(resolve(Bun.fileURLToPath(import.meta.url)))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { normalize } from "node:path"; createRequire(Bun.pathToFileURL(normalize(import.meta.path)))("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { normalize } from "node:path"; createRequire(normalize(import.meta.url))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { resolve } from "node:path"; createRequire(resolve(import.meta.path, ".."))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; const normalize = path => path + "/../.."; createRequire(normalize(import.meta.path))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { normalize } from "./path"; createRequire(normalize(import.meta.path))("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const path = { normalize: file => file + "/../.." }; require("module").createRequire(path.normalize(__filename))("a");"#,
+        &["module"],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(Bun.pathToFileURL(import.meta.url))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(URL.parse(import.meta.url, base))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; createRequire(URL.canParse(import.meta.url))("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; export function load(Bun) { return createRequire(Bun.fileURLToPath(import.meta.url))("a"); }"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "module"; import { fileURLToPath } from "./bun"; createRequire(fileURLToPath(import.meta.url))("a");"#,
+        &[],
+    ),
+    (
         "a.mjs",
         r#"import { createRequire } from "module"; createRequire("file://" + import.meta.url)("a");"#,
         &[],
@@ -1469,6 +1564,18 @@ const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
         &["./a/*"],
     ),
     (
+        "export {}; await import(Bun.fileURLToPath(new URL(`./a/${x}.js`, import.meta.url)));",
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; require(require('path').join(Bun.fileURLToPath(import.meta.url), '..', 'a', x));",
+        &["./a/*"],
+    ),
+    (
+        "export {}; import { pathToFileURL } from 'bun'; await import(pathToFileURL(`${import.meta.dir}/a/${x}.js`).pathname);",
+        &["./a/*.js"],
+    ),
+    (
         "const names = { linux: `./a-${process.arch}`, darwin: './b' }; require(names[process.platform]);",
         &["./a-x64"],
     ),
@@ -1935,6 +2042,26 @@ const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
         ResolvedForm::Path,
         &["./a"],
     ),
+    (
+        "import(Bun.pathToFileURL(require.resolve('./a')));",
+        ResolvedForm::UrlObject,
+        &["./a"],
+    ),
+    (
+        "require(Bun.fileURLToPath(Bun.pathToFileURL(require.resolve('./a'))));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
+        "export {}; await import(URL.parse('./a.js', import.meta.url));",
+        ResolvedForm::UrlObject,
+        &["./a.js"],
+    ),
+    (
+        "export {}; await import(URL.parse('./c.js', URL.parse('../a/b.js', import.meta.url)).href);",
+        ResolvedForm::Url,
+        &["../a/c.js"],
+    ),
 ];
 
 const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
@@ -1958,6 +2085,8 @@ const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "export {}; import.meta.url = x; await import(new URL('./a.js', import.meta.url));",
     "export {}; await import(c ? new URL('./a.js', import.meta.url) : import.meta.resolve('./b'));",
     "require(require.resolve('./a').trimEnd(x));",
+    "export {}; await import(URL.parse('./a.js', x));",
+    "export {}; function load(Bun) { return import(Bun.pathToFileURL(require.resolve('./a'))); }",
     "require('file://' + __dirname + '/a%20b.js');",
     "require('file://' + __dirname + '/a.js?b');",
     "require('file://' + __dirname + '/a.js#b');",
@@ -2109,6 +2238,149 @@ fn name_of_a_worker_is_known_in_part() {
     }
     for &text in NAMES_OF_WORKERS_THAT_ARE_WHOLE_OR_UNKNOWN {
         assert_eq!(describe_name_of_worker(text), None, "{text}");
+    }
+}
+
+const OWN_FOLDER: Option<ResolvedForm> = None;
+
+const NAMES_OF_WORKERS_WRITTEN_THROUGH_CALLS_THAT_KEEP_THE_FILE: &[(
+    &str,
+    Option<ResolvedForm>,
+    &[&str],
+)] = &[
+    (
+        "export {}; import { fileURLToPath } from 'node:url'; new Worker(fileURLToPath(new URL('./w.mjs', import.meta.url)));",
+        OWN_FOLDER,
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; import { pathToFileURL } from 'node:url'; new Worker(pathToFileURL(import.meta.dir + '/w.mjs'));",
+        Some(ResolvedForm::UrlObject),
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; new Worker(Bun.fileURLToPath(new URL('./w.mjs', import.meta.url)));",
+        OWN_FOLDER,
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; const p = Bun.fileURLToPath(new URL('./w.mjs', import.meta.url)); new Worker(p);",
+        OWN_FOLDER,
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; new Worker(Bun.fileURLToPath(import.meta.resolve('./w.mjs')));",
+        OWN_FOLDER,
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; new Worker(Bun.pathToFileURL(import.meta.dir + '/w.mjs'));",
+        Some(ResolvedForm::UrlObject),
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; import { Worker } from 'node:worker_threads'; new Worker(Bun.fileURLToPath(new URL('./w.mjs', import.meta.url)));",
+        OWN_FOLDER,
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; import { fileURLToPath as toPath } from 'bun'; new Worker(toPath(new URL('./w.mjs', import.meta.url)));",
+        OWN_FOLDER,
+        &["./w.mjs"],
+    ),
+    (
+        "const { pathToFileURL } = require('bun'); new Worker(pathToFileURL(__dirname + '/w.js'));",
+        Some(ResolvedForm::UrlObject),
+        &["./w.js"],
+    ),
+    (
+        "export {}; new Worker(c ? Bun.fileURLToPath(new URL('./a.mjs', import.meta.url)) : Bun.fileURLToPath(new URL('./b.mjs', import.meta.url)));",
+        OWN_FOLDER,
+        &["./a.mjs", "./b.mjs"],
+    ),
+    (
+        "export {}; import path from 'node:path'; new Worker(path.join(path.dirname(Bun.fileURLToPath(import.meta.url)), 'w.mjs'));",
+        OWN_FOLDER,
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; new Worker(URL.parse('./w.mjs', import.meta.url));",
+        Some(ResolvedForm::UrlObject),
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; new Worker(URL.parse(`./jobs/${x}.mjs`, import.meta.url));",
+        Some(ResolvedForm::UrlObject),
+        &["./jobs/*.mjs"],
+    ),
+    (
+        "export {}; new Worker(URL.parse(import.meta.resolve('./w.mjs')));",
+        Some(ResolvedForm::UrlObject),
+        &["./w.mjs"],
+    ),
+    (
+        "export {}; new Worker(Bun.fileURLToPath(URL.parse('./w.mjs', import.meta.url)));",
+        OWN_FOLDER,
+        &["./w.mjs"],
+    ),
+    (
+        "const path = require('path'); new Worker(path.resolve(Bun.fileURLToPath(Bun.pathToFileURL(require.resolve('./w.js')))));",
+        Some(ResolvedForm::Path),
+        &["./w.js"],
+    ),
+];
+
+const NAMES_OF_WORKERS_THAT_NO_CALL_KEEPS: &[&str] = &[
+    "export {}; new Worker(Bun.pathToFileURL('./w.mjs'));",
+    "export {}; new Worker(Bun.fileURLToPath(new URL('./w.mjs', import.meta.url), options));",
+    "export {}; function start(Bun) { new Worker(Bun.fileURLToPath(new URL('./w.mjs', import.meta.url))); }",
+    "export {}; import { fileURLToPath } from './bun'; new Worker(fileURLToPath(new URL('./w.mjs', import.meta.url)));",
+    "export {}; new Worker(URL.parse('./w.mjs', base));",
+    "export {}; new Worker(URL.canParse('./w.mjs', import.meta.url));",
+    "export {}; function start(URL) { new Worker(URL.parse('./w.mjs', import.meta.url)); }",
+    "export {}; const { fileURLToPath } = Bun; new Worker(fileURLToPath(new URL('./w.mjs', import.meta.url)));",
+    "export {}; new Worker(Bun.resolveSync('./w.mjs', import.meta.dir));",
+    "export {}; new Worker(await Bun.resolve('./w.mjs', import.meta.dir));",
+    "export {}; new Worker(import.meta.resolveSync('./w.mjs'));",
+    "export {}; new Worker(require.resolve('./w.mjs', { paths: [import.meta.dir] }));",
+    "export {}; import path from 'node:path'; new Worker(path.toNamespacedPath(path.join(import.meta.dir, 'w.mjs')));",
+];
+
+fn describe_worker_and_its_form(text: &str) -> Option<(Vec<String>, Option<ResolvedForm>)> {
+    let mut described = None;
+    let path = if text.starts_with("export") {
+        "a.mjs"
+    } else {
+        "a.cjs"
+    };
+    with_workspace(|w| {
+        let s = &w.analyze(&Source::new(path, text), &w.fold_inputs(&TARGET));
+        let constructions = find_exprs(&s.hir, |kind| matches!(kind, ExprKind::New(_)));
+        described = constructions.into_iter().find_map(|construction| {
+            let ExprKind::New(call) = s.hir[construction].kind else {
+                return None;
+            };
+            let argument = s.hir.ids(s.hir[call].args).next()?;
+            let specifier = s.analysis.find_name_of_worker(argument)?;
+            let form = s.analysis.find_resolved_form(argument);
+            let is_from_own_folder = s.analysis.is_path_from_own_directory(argument);
+            assert_eq!(form.is_none(), is_from_own_folder, "{text}");
+            Some((describe_specifier(s, specifier), form))
+        });
+    });
+    described
+}
+
+#[test]
+fn name_of_a_worker_is_followed_through_a_call_that_keeps_the_file() {
+    for &(text, form, names) in NAMES_OF_WORKERS_WRITTEN_THROUGH_CALLS_THAT_KEEP_THE_FILE {
+        let (described, found_form) =
+            describe_worker_and_its_form(text).unwrap_or_else(|| panic!("{text}: not followed"));
+        assert_eq!(described, names, "{text}");
+        assert_eq!(found_form, form, "{text}");
+    }
+    for &text in NAMES_OF_WORKERS_THAT_NO_CALL_KEEPS {
+        assert_eq!(describe_worker_and_its_form(text), None, "{text}");
     }
 }
 

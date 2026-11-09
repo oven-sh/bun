@@ -981,6 +981,30 @@ mod tests {
             (
                 "",
                 (
+                    "helper.mjs",
+                    r#"export const mark = import(process.argv[2]);"#,
+                ),
+                false,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"import { fileURLToPath } from "node:url"; export const mark = import(fileURLToPath(new URL("./helper.mjs", import.meta.url)));"#,
+                ),
+                true,
+            ),
+            (
+                "",
+                (
+                    "helper.mjs",
+                    r#"export const mark = import(Bun.fileURLToPath(new URL("./helper.mjs", import.meta.url)));"#,
+                ),
+                true,
+            ),
+            (
+                "",
+                (
                     "helper.cjs",
                     r#"exports.mark = new Function("p", "return import(p)");"#,
                 ),

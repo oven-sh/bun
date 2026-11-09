@@ -1,0 +1,1 @@
+postMessage("normalized.js answers");

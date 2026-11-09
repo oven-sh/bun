@@ -516,6 +516,9 @@ known_atoms! {
     use_asm = "use asm",
     hot = "hot",
     charCodeAt = "charCodeAt",
+    Bun = "Bun",
+    bun = "bun",
+    normalize = "normalize",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

@@ -685,6 +685,13 @@ impl Expect {
         self.bun_test().is_some_and(|buntest| self.is_in_vitest_test(buntest.get()))
     }
 
+    /// Called by C++ for a Symbol in a `toHaveProperty` array path. `expect` is the matcher's `this`, or empty.
+    #[cold]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Expect__isVitest(expect: JSValue) -> bool {
+        expect.as_class_ref::<Expect>().is_some_and(Expect::is_vitest)
+    }
+
     pub(crate) fn call(cx: &mut JsScope<'_>, value: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
         Self::call_in(cx.global(), value.to_js(), message.to_js(), None)
     }
@@ -3428,7 +3435,8 @@ unsafe extern "C" {
 }
 
 // Exports: handled by #[unsafe(no_mangle)] on:
-//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute
+//   ExpectMatcherUtils_createSigleton, Expect_readFlagsAndProcessPromise, ExpectCustomAsymmetricMatcher__execute,
+//   Expect__isVitest
 
 #[cfg(test)]
 mod tests {

@@ -2648,26 +2648,153 @@ describe.concurrent("behavior depends on the module a function is imported from"
   });
 
   test("toHaveProperty() with a Symbol in an array path", async () => {
-    const { log, exitCode } = await runTests({
-      "a.test.js": `
+    const { log, results, exitCode } = await runTests(
+      {
+        "a.test.js": `
         import * as bun from "bun:test";
         import * as vitest from "vitest";
-        const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
-        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
-          test(name, () => {
-            const s = Symbol("k");
-            console.log(name, [
-              outcome(() => expect({ [s]: 1 }).toHaveProperty([s])),
-              outcome(() => expect({ [s]: 1 }).toHaveProperty([s], 1)),
-              outcome(() => expect({ a: { [s]: { b: 2 } } }).toHaveProperty(["a", s, "b"], 2)),
-              outcome(() => expect({ [s]: 1 }).not.toHaveProperty([s])),
-            ].join(" "));
+        const outcome = fn => {
+          try { fn(); return "passes"; } catch (error) { return error?.message === "boom" ? "throws boom" : "fails"; }
+        };
+        const s = Symbol("k");
+        const both = { "Symbol(k)": "string key", [s]: "symbol key" };
+        const keyFound = async assert => {
+          const found = [];
+          for (const value of ["symbol key", "string key"]) {
+            try { await assert(value); found.push(value); } catch {}
+          }
+          return found.join(" and ") || "neither";
+        };
+        for (const [name, { describe, test, expect, beforeEach }] of Object.entries({ bun, vitest })) {
+          const other = name === "bun" ? vitest : bun;
+          describe(name, () => {
+            test("path shapes", () => {
+              class Path extends Array {}
+              const shapes = {
+                "array": path => path,
+                "Proxy": path => new Proxy(path, {}),
+                "Proxy of a Proxy": path => new Proxy(new Proxy(path, {}), {}),
+                "derived Array": path => Path.from(path),
+              };
+              for (const [shape, of] of Object.entries(shapes)) {
+                console.log(name, shape + ":", [
+                  outcome(() => expect({ [s]: 1 }).toHaveProperty(of([s]))),
+                  outcome(() => expect({ [s]: 1 }).toHaveProperty(of([s]), 1)),
+                  outcome(() => expect({ a: { [s]: { b: 2 } } }).toHaveProperty(of(["a", s, "b"]), 2)),
+                  outcome(() => expect({ [s]: 1 }).not.toHaveProperty(of([s]))),
+                ].join(" "));
+              }
+            });
+
+            test("one read of the path", () => {
+              let reads = 0;
+              const changes = [];
+              Object.defineProperty(changes, 0, { get: () => (reads++ === 0 ? "x" : s) });
+              console.log(name, "element that is a Symbol from its second read:",
+                outcome(() => expect({ [s]: 1 }).toHaveProperty(changes)));
+
+              const grows = ["a", "b"];
+              const receiver = { get a() { grows[1] = s; return { [s]: 1 }; } };
+              console.log(name, "element that becomes a Symbol in the walk:",
+                outcome(() => expect(receiver).toHaveProperty(grows)));
+
+              const counts = [0, 0];
+              const counted = [];
+              Object.defineProperty(counted, 0, { get: () => (counts[0]++, "a") });
+              Object.defineProperty(counted, 1, { get: () => (counts[1]++, s) });
+              expect({ a: both }).toHaveProperty(counted);
+              console.log(name, "reads of each element:", counts.join(" "));
+
+              const throws = { get a() { throw new Error("boom"); } };
+              console.log(name, "getter in front of the Symbol:",
+                outcome(() => expect(throws).not.toHaveProperty(["a", s])));
+            });
+
+            test("string key", () => {
+              console.log(name, "string key:", [
+                outcome(() => expect({ "Symbol(k)": 1 }).toHaveProperty([s], 1)),
+                outcome(() => expect(Object.create({ "Symbol(k)": 1 })).toHaveProperty([s], 1)),
+                outcome(() => expect({ a: { "Symbol(k)": 1 } }).toHaveProperty(["a", s], 1)),
+                outcome(() => expect({ "Symbol()": 1 }).toHaveProperty([Symbol()], 1)),
+                outcome(() => expect({ "Symbol(Symbol.iterator)": 1 }).toHaveProperty([Symbol.iterator], 1)),
+                outcome(() => expect({ "Symbol(a.b)": 1 }).toHaveProperty([Symbol("a.b")], 1)),
+                outcome(() => expect({ "Symbol(k)": 1 }).not.toHaveProperty([s])),
+              ].join(" "));
+
+              const keyTypes = new Set();
+              const seen = fn => (target, key) => (keyTypes.add(typeof key), fn(target, key));
+              const traps = new Proxy(both, {
+                has: seen(Reflect.has),
+                get: seen(Reflect.get),
+                getOwnPropertyDescriptor: seen(Reflect.getOwnPropertyDescriptor),
+              });
+              expect(traps).toHaveProperty([s]);
+              console.log(name, "keys the receiver is asked for:", [...keyTypes].join(" "));
+            });
+
+            let inHook;
+            beforeEach(async () => {
+              inHook = await keyFound(value => expect(both).toHaveProperty([s], value));
+            });
+            test("every way to reach the matcher", async () => {
+              const found = {
+                "expect()": value => expect(both).toHaveProperty([s], value),
+                ".resolves": value => expect(Promise.resolve(both)).resolves.toHaveProperty([s], value),
+                ".rejects": value => expect(Promise.reject(both)).rejects.toHaveProperty([s], value),
+                "expect() of the other module": value => other.expect(both).toHaveProperty([s], value),
+              };
+              for (const [way, assert] of Object.entries(found)) console.log(name, way + ":", await keyFound(assert));
+              console.log(name, "in a hook:", inHook);
+            });
+            test("expect.soft()", () => {
+              expect.soft(both).toHaveProperty([s], name === "vitest" ? "string key" : "symbol key");
+            });
           });
         }
+        vitest.test("expect() of the test context", async ({ expect }) => {
+          console.log("vitest expect() of the test context:", await keyFound(value => expect(both).toHaveProperty([s], value)));
+        });
       `,
-    });
-    expect({ log, exitCode }).toEqual({
-      log: ["bun passes passes passes fails", "vitest fails fails fails passes"],
+      },
+      [],
+      // A debug build aborts on an exception check that the path walk misses.
+      { BUN_JSC_validateExceptionChecks: "1" },
+    );
+    expect({ log, failed: results.filter(line => !line.startsWith("(pass)")), exitCode }).toEqual({
+      log: [
+        "bun array: passes passes passes fails",
+        "bun Proxy: passes passes passes fails",
+        "bun Proxy of a Proxy: passes passes passes fails",
+        "bun derived Array: passes passes passes fails",
+        "bun element that is a Symbol from its second read: fails",
+        "bun element that becomes a Symbol in the walk: passes",
+        "bun reads of each element: 1 1",
+        "bun getter in front of the Symbol: throws boom",
+        "bun string key: fails fails fails fails fails fails passes",
+        "bun keys the receiver is asked for: symbol",
+        "bun expect(): symbol key",
+        "bun .resolves: symbol key",
+        "bun .rejects: symbol key",
+        "bun expect() of the other module: symbol key",
+        "bun in a hook: symbol key",
+        "vitest array: fails fails fails passes",
+        "vitest Proxy: fails fails fails passes",
+        "vitest Proxy of a Proxy: fails fails fails passes",
+        "vitest derived Array: fails fails fails passes",
+        "vitest element that is a Symbol from its second read: fails",
+        "vitest element that becomes a Symbol in the walk: fails",
+        "vitest reads of each element: 1 1",
+        "vitest getter in front of the Symbol: throws boom",
+        "vitest string key: passes passes passes passes passes passes fails",
+        "vitest keys the receiver is asked for: string",
+        "vitest expect(): string key",
+        "vitest .resolves: string key",
+        "vitest .rejects: string key",
+        "vitest expect() of the other module: string key",
+        "vitest in a hook: string key",
+        "vitest expect() of the test context: string key",
+      ],
+      failed: [],
       exitCode: 0,
     });
   });

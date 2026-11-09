@@ -5197,7 +5197,9 @@ static JSValue getPropertyOnPath(JSGlobalObject* globalObject, JSValue base, Pro
     RELEASE_AND_RETURN(scope, object->getIfPropertyExists(globalObject, name));
 }
 
-JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
+extern "C" bool Expect__isVitest(JSC::EncodedJSValue expectValue);
+
+JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue expectValue)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     VM& vm = globalObject->vm();
@@ -5299,19 +5301,23 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         auto* pathObject = path.toObject(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         forEachInArrayLike(globalObject, pathObject, [&](JSValue item) -> bool {
-            if (!(item.isString() || item.isNumber() || item.isSymbol())) {
-                currProp = {};
-                return false;
-            }
-
             Identifier propName;
-            if (item.isSymbol()) {
-                propName = Identifier::fromUid(asSymbol(item)->privateName());
-            } else {
+            if (item.isString() || item.isNumber()) {
                 JSString* propNameString = item.toString(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
                 propName = propNameString->toIdentifier(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
+            } else if (!item.isSymbol()) {
+                currProp = {};
+                return false;
+            } else if (Expect__isVitest(expectValue)) {
+                // Vitest reads each element of an array path as a string: String(symbol) is "Symbol(description)".
+                JSString* symbolString = asSymbol(item)->toString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                propName = symbolString->toIdentifier(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+            } else {
+                propName = Identifier::fromUid(asSymbol(item)->privateName());
             }
 
             currProp = getPropertyOnPath(globalObject, currProp, propName);

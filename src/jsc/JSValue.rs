@@ -2878,13 +2878,15 @@ impl JSValue {
     // ── Path lookup. ───────────────────────────────────
     /// `JSValue.getIfPropertyExistsFromPath` — Jest `toHaveProperty` path
     /// resolution (accepts `"a.b[0].c"` string or array path).
+    /// `expect` is the matcher's `this`, or empty. A Symbol in an array path asks it for the test flavor.
     pub fn get_if_property_exists_from_path(
         self,
         global: &JSGlobalObject,
         path: JSValue,
+        expect: JSValue,
     ) -> JsResult<JSValue> {
         crate::top_scope!(scope, global);
-        let result = JSC__JSValue__getIfPropertyExistsFromPath(self, global, path);
+        let result = JSC__JSValue__getIfPropertyExistsFromPath(self, global, path, expect);
         scope.return_if_exception()?;
         Ok(result)
     }
@@ -2934,6 +2936,7 @@ unsafe extern "C" {
         this: JSValue,
         global: &JSGlobalObject,
         path: JSValue,
+        expect: JSValue,
     ) -> JSValue;
     safe fn JSC__JSValue__stringIncludes(
         this: JSValue,

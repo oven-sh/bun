@@ -3,6 +3,20 @@ import { join } from "path";
 import { bunEnv, bunExe, fakeNodeRun, isMacOS, isWindows, tempDir } from "../../harness";
 
 describe("fake node cli", () => {
+  test("passes arguments after an eval script to the script", () => {
+    const code = "console.log(JSON.stringify(process.argv.slice(1)))";
+    for (const args of [["-e", code, "foo", "bar"], [`--eval=${code}`, "foo", "bar"], ["-p", code, "foo", "bar"]]) {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "--bun", "node", ...args],
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString().trim()).toBe('[\"foo\",\"bar\"]');
+      expect(exitCode).toBe(0);
+    }
+  });
   test("the node cli actually works", () => {
     using temp = tempDir("fake-node", {
       "index.ts": "console.log(Bun.version)",

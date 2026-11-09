@@ -3161,6 +3161,9 @@ impl RunCommand {
                 // Re-parse node flags parked in passthrough (they were never
                 // seen by clap): -e/--eval <code>, -p/--print <code>,
                 // --version, --revision, --help.
+                // Arguments after an eval/print script belong to the script, not
+                // to the target file, so they stay in passthrough.
+                let mut eval_script_seen = false;
                 while let Some(first) = ctx.passthrough.first().cloned() {
                     let first: &[u8] = &first;
                     if first == b"--" {
@@ -3168,19 +3171,30 @@ impl RunCommand {
                         break;
                     }
                     if first == b"-e" || first == b"--eval" {
+                        eval_script_seen = true;
                         ctx.passthrough.remove(0);
                         if !ctx.passthrough.is_empty() {
                             // The eval script is process-lifetime, like the CLI argv it came from.
                             ctx.runtime_options.eval.script =
                                 Box::leak(ctx.passthrough.remove(0));
                         }
+                    } else if let Some(script) = first.strip_prefix(b"--eval=") {
+                        eval_script_seen = true;
+                        ctx.runtime_options.eval.script =
+                            Box::leak(script.to_vec().into_boxed_slice());
                     } else if first == b"-p" || first == b"--print" {
+                        eval_script_seen = true;
                         ctx.passthrough.remove(0);
                         if !ctx.passthrough.is_empty() {
                             ctx.runtime_options.eval.script =
                                 Box::leak(ctx.passthrough.remove(0));
                             ctx.runtime_options.eval.eval_and_print = true;
                         }
+                    } else if let Some(script) = first.strip_prefix(b"--print=") {
+                        eval_script_seen = true;
+                        ctx.runtime_options.eval.script =
+                            Box::leak(script.to_vec().into_boxed_slice());
+                        ctx.runtime_options.eval.eval_and_print = true;
                     } else if first == b"--version" {
                         crate::cli::print_version_and_exit();
                     } else if first == b"--revision" {
@@ -3193,9 +3207,9 @@ impl RunCommand {
                         break;
                     }
                 }
-                if ctx.positionals.is_empty() && !ctx.passthrough.is_empty() {
-                    // The real target file (or remaining arg) parked in
-                    // passthrough; promote it back.
+                if !eval_script_seen && ctx.positionals.is_empty() && !ctx.passthrough.is_empty() {
+                    // The real target file parked in passthrough; promote it
+                    // back. Arguments after an eval script stay for the VM.
                     ctx.positionals.push(ctx.passthrough.remove(0));
                 }
             }

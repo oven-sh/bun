@@ -269,8 +269,8 @@ describe("bundler", () => {
       validate(ctx) {},
     },
   });
-  // `import x from "node:x"` must build for every polyfilled builtin and give
-  // the same object a CommonJS `require("x")` sees in node: the module itself.
+  // `import x from "node:x"` must build for every polyfilled builtin. `buffer` and
+  // `string_decoder` default to their class, which browser/NodeBuffer#12272 relies on.
   const polyfilled = Object.keys(nodePolyfillList).filter(name => nodePolyfillList[name] === "polyfill");
   itBundled("browser/NodePolyfillDefaultImports", {
     files: {
@@ -761,6 +761,49 @@ describe("bundler", () => {
         "microtask < tick < nested tick < timeout\n" +
         'TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received null\n' +
         'TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received object',
+    },
+  });
+  // In a browser, `({ setTimeout }).setTimeout(fn)` throws "Illegal invocation".
+  // The default export and `require("timers")` call the timers as methods.
+  itBundled("browser/NodeTimersCalledAsMethods", {
+    files: {
+      "/entry.js": /* js */ `
+        import timers from "node:timers";
+        import dep from "dep";
+        const interval = await new Promise(resolve => {
+          const id = timers.setInterval(() => { timers.clearInterval(id); resolve("interval"); }, 0);
+        });
+        const timeout = await new Promise(resolve => timers.setTimeout(resolve, 0, "timeout"));
+        timers.clearTimeout(timers.setTimeout(() => console.log("a cleared timeout ran"), 0));
+        timers.clearImmediate(timers.setImmediate(() => console.log("a cleared immediate ran")));
+        const immediate = await new Promise(resolve => timers.setImmediate(resolve, "immediate"));
+        console.log(JSON.stringify([interval, timeout, immediate, await dep]));
+      `,
+      "/node_modules/dep/package.json": `{ "name": "dep", "main": "index.js" }`,
+      "/node_modules/dep/index.js": /* js */ `
+        const timers = require("timers");
+        module.exports = new Promise(resolve => timers.setTimeout(resolve, 0, "required"));
+      `,
+    },
+    target: "browser",
+    runtimeFiles: {
+      "/exec.js": /* js */ `
+        // Give the timer globals the receiver check that a browser has, and remove the ones it lacks.
+        for (const name of ["setTimeout", "clearTimeout", "setInterval", "clearInterval"]) {
+          const real = globalThis[name];
+          globalThis[name] = function (...args) {
+            if (this !== undefined && this !== globalThis) throw new TypeError("Illegal invocation");
+            return real(...args);
+          };
+        }
+        delete globalThis.setImmediate;
+        delete globalThis.clearImmediate;
+        await import("./out.js");
+      `,
+    },
+    run: {
+      file: "/exec.js",
+      stdout: '["interval","timeout","immediate","required"]',
     },
   });
   // A stream schedules its events with process.nextTick. They must use the

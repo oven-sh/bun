@@ -15,18 +15,18 @@ test("error.cause", () => {
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
 6 |   const err2 = new Error("error 2", { cause: err });
-                       ^
+                   ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:6:20)
+      at <anonymous> ([dir]/inspect-error.test.js:6:16)
 
 1 | import { describe, expect, jest, test } from "bun:test";
 2 | import { bunEnv, bunExe, tempDir } from "harness";
 3 | 
 4 | test("error.cause", () => {
 5 |   const err = new Error("error 1");
-                      ^
+                  ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:5:19)
+      at <anonymous> ([dir]/inspect-error.test.js:5:15)
 "
 `);
 });
@@ -44,9 +44,9 @@ test("Error", () => {
 33 | 
 34 | test("Error", () => {
 35 |   const err = new Error("my message");
-                       ^
+                   ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:35:19)
+      at <anonymous> ([dir]/inspect-error.test.js:35:15)
 "
 `);
 });
@@ -103,7 +103,7 @@ test("Error inside minified file (no color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
             at <anonymous> ([dir]/inspect-error.test.js:87:5)"
     `);
@@ -132,7 +132,7 @@ test("Error inside minified file (color) ", () => {
       26 | exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};exports.forwardRef=function(a){return{$$typeof:v,render:a}};expo | ... truncated 
 
       error: error inside long minified file!
-            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
+            at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2846)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
             at <anonymous> ([dir]/inspect-error.test.js:115:5)"
     `);
@@ -417,6 +417,14 @@ describe("source map remapping of the printed stack", () => {
     expect(positions(out.presentStack)).toEqual(expected("present.ts"));
     expect(positions(out.deletedStack)).toEqual(expected("deleted.ts"));
 
+    // For a `new` with arguments, error.stack has the column of the class name
+    // and the printer's own frames have the column of `new`, four columns to
+    // the left. Frames that the printer copies from an error.stack that was
+    // read keep the columns of that string.
+    const printerColumns = text =>
+      positions(text).map(frame =>
+        frame.replace(/^(at thrower \(.*:5:)(\d+)\)$/, (_, prefix, col) => `${prefix}${col - "new ".length})`),
+      );
     expect({
       presentInspect: positions(out.presentInspect),
       presentStackThenInspect: positions(out.presentStackThenInspect),
@@ -424,9 +432,9 @@ describe("source map remapping of the printed stack", () => {
       deletedStackThenInspect: positions(out.deletedStackThenInspect),
       uncaughtAfterStack: positions(stderr),
     }).toEqual({
-      presentInspect: positions(out.presentStack),
+      presentInspect: printerColumns(out.presentStack),
       presentStackThenInspect: positions(out.presentStack),
-      deletedInspect: positions(out.deletedStack),
+      deletedInspect: printerColumns(out.deletedStack),
       deletedStackThenInspect: positions(out.deletedStack),
       uncaughtAfterStack: positions(out.presentStack),
     });

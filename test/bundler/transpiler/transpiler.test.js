@@ -348,6 +348,35 @@ describe("Bun.Transpiler", () => {
     });
   });
 
+  it("keeps new on a global constructor and still folds it into a literal", () => {
+    const asAtRunTime = new Bun.Transpiler({ target: "bun" });
+    const kept = [
+      "new Error(x)",
+      "new TypeError(x)",
+      "new SyntaxError(x)",
+      "new RangeError(x)",
+      "new ReferenceError(x)",
+      "new EvalError(x)",
+      "new URIError(x)",
+      "new AggregateError(x, y)",
+      "new Function(x)",
+      "new Object(x)",
+      "new Array(x)",
+      "new Array(7)",
+      "new Array(x * 2)",
+      "new Array(1, ...x)",
+      "new Array(...x)",
+    ];
+    for (const construction of kept) {
+      ts.expectPrintedMin_(`y = ${construction}`, `y = ${construction}`);
+      expect(asAtRunTime.transformSync(`y = ${construction}`).trim()).toBe(`y = ${construction};`);
+    }
+    ts.expectPrintedMin_("y = new Object()", "y = {}");
+    ts.expectPrintedMin_("y = new Object({ a })", "y = { a }");
+    ts.expectPrintedMin_("y = new Array()", "y = []");
+    ts.expectPrintedMin_("y = new Array(1, 2)", "y = [\n  1,\n  2\n]");
+  });
+
   describe("TypeScript", () => {
     it("import Foo = Baz.Bar", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");

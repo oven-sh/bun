@@ -559,6 +559,44 @@ declare module "bun:sqlite" {
     set onDelete(hook: UpdateHook | null | undefined);
 
     /**
+     * Call `callback` about every `n` [virtual machine instructions](https://www.sqlite.org/opcode.html)
+     * while a statement of this `Database` runs, with
+     * [`sqlite3_progress_handler`](https://www.sqlite.org/c3ref/progress_handler.html).
+     * Use it to put a time limit on a statement. `n` defaults to 1000.
+     *
+     * If `callback` returns a truthy value, SQLite stops the statement and the
+     * call that runs it (`.get()`, `.all()`, `.run()`, `db.run()`, a `for..of`
+     * over `.iterate()`, or the `db.query()`/`db.prepare()` that compiles it)
+     * throws a `SQLiteError` with `code: "SQLITE_INTERRUPT"`. If `callback`
+     * throws, the statement stops and that call throws what `callback` threw.
+     *
+     * A stopped statement that writes inside a transaction rolls the whole
+     * transaction back. A stopped read-only statement leaves the transaction
+     * open.
+     *
+     * A later statement on this `Database` calls `callback` again. Pass `null`
+     * to remove the handler. A second call replaces the first: a `Database` has
+     * one progress handler.
+     *
+     * While `callback` runs, every other use of this `Database` and of its
+     * statements throws `TypeError: This database connection is busy executing a query`.
+     *
+     * @example
+     * ```ts
+     * const deadline = performance.now() + 100;
+     * db.progressHandler(() => performance.now() > deadline);
+     * try {
+     *   db.query("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c").get();
+     * } catch (error) {
+     *   console.log(error.code); // "SQLITE_INTERRUPT"
+     * } finally {
+     *   db.progressHandler(null);
+     * }
+     * ```
+     */
+    progressHandler(callback: (() => unknown) | null, n?: number): void;
+
+    /**
      * Save the database to an in-memory {@link Buffer} object.
      *
      * Internally, this calls `sqlite3_serialize`.

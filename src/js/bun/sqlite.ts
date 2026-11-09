@@ -551,6 +551,10 @@ class Database implements SqliteTypes.Database {
     SQL.setUpdateHook(this.#handle, UpdateHook.SQLITE_DELETE, hook, this, this.#internalFlags);
   }
 
+  progressHandler(callback, n = 1000) {
+    SQL.setProgressHandler(this.#handle, callback ?? null, n);
+  }
+
   prepare<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
     query: string,
     params?: ParamsType,

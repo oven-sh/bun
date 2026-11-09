@@ -491,6 +491,7 @@ public:
         for (auto& hook : m_updateHooks)
             hook.clear();
         m_wrapper.clear();
+        m_progressHandler.clear();
     }
 
     Bun::SqliteCallbackRoots m_callbacks;
@@ -498,6 +499,8 @@ public:
     std::array<JSC::WriteBarrier<JSC::JSObject>, 3> m_updateHooks;
     // The Database, while it has a hook.
     JSC::WriteBarrier<JSC::JSObject> m_wrapper;
+    // db.progressHandler(): see callProgressHandler().
+    JSC::WriteBarrier<JSC::JSObject> m_progressHandler;
     // A hook gets the rowid as a BigInt.
     bool m_safeIntegers { false };
 
@@ -524,6 +527,7 @@ void JSSQLDatabase::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     for (auto& hook : thisObject->m_updateHooks)
         visitor.append(hook);
     visitor.append(thisObject->m_wrapper);
+    visitor.append(thisObject->m_progressHandler);
 }
 
 DEFINE_VISIT_CHILDREN(JSSQLDatabase);
@@ -1268,7 +1272,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     sqlite3_int64 length = -1;
     unsigned char* data = sqlite3_serialize(db, attachedName.legacyCStringPointer(), &length, 0);
     if (data == nullptr && length) [[unlikely]] {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory"_s));
+        // It reads the page count with a statement, which the progress handler can stop.
+        RETURN_IF_EXCEPTION(scope, {});
+        if (sqlite3_errcode(db) != SQLITE_OK)
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
+        else
+            throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory"_s));
         return {};
     }
 
@@ -1886,6 +1895,78 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetUpdateHookFunction, (JSC::JSGlobalObje
     return JSValue::encode(jsUndefined());
 }
 
+// SQLite calls this about every n virtual machine instructions of a statement of the connection, from sqlite3_step()
+// and from sqlite3_prepare() when it compiles a complex statement. What runs the statement keeps the cell alive.
+// Non-zero stops the statement: it fails with SQLITE_INTERRUPT, and the call that runs it throws. An exception the
+// handler throws stays pending, and the call throws that instead (throwStepError, runStatements, prepare).
+static int callProgressHandler(void* cell)
+{
+    if (Bun::sqliteScriptIsForbidden) [[unlikely]]
+        return 0;
+    auto* database = static_cast<JSSQLDatabase*>(cell);
+    JSObject* handler = database->m_progressHandler.get();
+    if (!handler) [[unlikely]]
+        return 0;
+
+    auto* globalObject = database->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // A throw of an earlier call, or a termination: don't run script again, let the statement fail.
+    if (scope.exception()) [[unlikely]]
+        return 1;
+
+    WTF::SetForScope inCallback { database->record().inCallback, true };
+    MarkedArgumentBuffer arguments;
+    JSValue result = JSC::call(globalObject, handler, JSC::getCallData(handler), jsUndefined(), arguments);
+    if (scope.exception()) [[unlikely]]
+        return 1;
+    return result.toBoolean(globalObject) ? 1 : 0;
+}
+
+// (handle, callback | null, n)
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetProgressHandlerFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    VersionSqlite3* versionDB = databaseForHandle(lexicalGlobalObject, scope, callFrame->argument(0));
+    if (!versionDB) [[unlikely]]
+        return {};
+    auto* database = uncheckedDowncast<JSSQLDatabase>(callFrame->argument(0));
+
+    JSValue value = callFrame->argument(1);
+    if (!value.isUndefinedOrNull() && !value.isCallable()) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, scope, "Expected a function or null"_s);
+        return {};
+    }
+
+    // SQLite disables the handler for n < 1, so the caller gets an error instead.
+    JSValue nValue = callFrame->argument(2);
+    double n = nValue.isNumber() ? nValue.asNumber() : 0;
+    if (!value.isUndefinedOrNull() && (!(n >= 1 && n <= INT32_MAX) || n != std::trunc(n))) [[unlikely]] {
+        throwRangeError(lexicalGlobalObject, scope, "Expected n to be an integer between 1 and 2147483647"_s);
+        return {};
+    }
+
+    sqlite3* db = versionDB->handle();
+    if (!db) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
+        return {};
+    }
+
+#if LAZY_LOAD_SQLITE
+    if (!lazy_sqlite3_progress_handler) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, scope, "This SQLite library was built without sqlite3_progress_handler"_s);
+        return {};
+    }
+#endif
+
+    JSObject* handler = value.getObject();
+    database->m_progressHandler.setMayBeNull(vm, database, handler);
+    sqlite3_progress_handler(db, static_cast<int>(n), handler ? callProgressHandler : nullptr, database);
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1999,6 +2080,7 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "defineFunction"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDefineFunction, 6 } },
     { "updateHook"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementGetUpdateHookFunction, 2 } },
     { "setUpdateHook"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSetUpdateHookFunction, 5 } },
+    { "setProgressHandler"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSetProgressHandlerFunction, 3 } },
 };
 
 const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };

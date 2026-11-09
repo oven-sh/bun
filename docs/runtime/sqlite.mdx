@@ -843,6 +843,37 @@ The three properties are one [`sqlite3_update_hook`](https://www.sqlite.org/c3re
 
 ---
 
+## Progress handler
+
+A statement runs on the thread that calls it, and nothing else runs until it returns. To put a time limit on a statement, call `db.progressHandler(callback, n?)`. SQLite calls `callback` about every `n` [virtual machine instructions](https://www.sqlite.org/opcode.html) of a statement of this `Database`. If `callback` returns a truthy value, SQLite stops the statement, and the call that runs it throws a `SQLiteError` with `code: "SQLITE_INTERRUPT"`.
+
+```ts db.ts icon="/icons/typescript.svg" highlight={4-5}
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:");
+const deadline = performance.now() + 100;
+db.progressHandler(() => performance.now() > deadline);
+
+try {
+  db.query("WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c").get();
+} catch (error) {
+  console.log(error.code); // "SQLITE_INTERRUPT"
+} finally {
+  db.progressHandler(null);
+}
+```
+
+`n` defaults to 1000. A smaller `n` stops a statement sooner and costs more: SQLite runs about 17 instructions per row of a simple query, and each call of `callback` is a call into JavaScript. Pass `null` to remove the handler. A `Database` has one progress handler: a second call replaces the first.
+
+The method is [`sqlite3_progress_handler`](https://www.sqlite.org/c3ref/progress_handler.html). Its rules apply:
+
+- SQLite calls the handler for every statement of the `Database` until you remove it: `.get()`, `.all()`, `.run()`, `db.run()`, a `for..of` over `.iterate()`, `db.serialize()`, and the `db.query()` or `db.prepare()` that compiles a complex statement. A handler that stays truthy stops the next statement too, for example the `COMMIT` of `db.transaction()`. Use a deadline, and remove the handler after the statement.
+- A stopped statement that writes inside a transaction rolls the whole transaction back. A stopped read-only statement leaves the transaction open.
+- If the handler throws, the statement stops and the call that runs it throws what the handler threw.
+- The handler cannot use its `Database`. Every call on the `Database` and on its statements throws `TypeError: This database connection is busy executing a query`.
+
+---
+
 ## Reference
 
 ```ts Type Reference icon="/icons/typescript.svg" expandable
@@ -887,6 +918,7 @@ class Database {
   onInsert: UpdateHook | null;
   onUpdate: UpdateHook | null;
   onDelete: UpdateHook | null;
+  progressHandler(callback: (() => unknown) | null, n?: number): void;
 
   readonly inTransaction: boolean;
   readonly filename: string;

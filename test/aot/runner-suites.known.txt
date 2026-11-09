@@ -168,6 +168,10 @@ test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name th
 test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by require()
 test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > by require.resolve()
 test/js/bun/plugin/plugins.test.ts: the registry is not asked for a bare name that onResolve answers about as well > whether or not an onLoad serves it
+# A compiled test run has no memo of resolver answers to count.
+test/js/bun/resolve/resolve.test.ts: a repeated resolution > is answered without the resolver in a later file of bun test --isolate
+# As the next one: the registry is asked in a project that has no node_modules folder above it, and these folders have one.
+test/js/bun/resolve/resolve.test.ts: a repeated resolution > of a path is answered without the resolver after a package was looked up in the registry
 test/js/bun/resolve/resolve.test.ts: auto-install init failure from an unreadable cwd is a catchable error
 # snapshot.test.ts gives each of these 5 seconds for three child runs: compiled ones keep that on a machine of their own, and not on a busy one or with a sanitizer.
 ~ test/js/bun/test/snapshot-tests/snapshots/snapshot.test.ts: inline snapshots > #16403

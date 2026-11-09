@@ -44,8 +44,11 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
   readonly #adapter: DatabaseAdapter<any, any, Handle>;
 
   static {
+    // A revoked Proxy has no handler, and $getPrototypeOf() throws for it as every operation on it does.
     const behind = (value: object): object | null =>
-      $isProxyObject(value) ? $getProxyInternalField(value, $proxyFieldTarget) : $getPrototypeOf(value);
+      $isProxyObject(value) && $getProxyInternalField(value, $proxyFieldHandler) !== null
+        ? $getProxyInternalField(value, $proxyFieldTarget)
+        : $getPrototypeOf(value);
     queryOf = value => {
       // A Proxy in a prototype chain can lead back into the chain. `slow` takes every second step and meets `value` there.
       let slow = value;

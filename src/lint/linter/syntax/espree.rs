@@ -1106,7 +1106,8 @@ impl<'a, 'c> Checks<'a, 'c> {
                 return self.tokenizer_error(token, at + 2, "Bad character escape sequence");
             }
             [b'\\', ..] => {
-                let message = "Expecting Unicode escape sequence \\uXXXX";
+                // acorn's wording, with four placeholders for the hex digits.
+                let message = concat!("Expecting Unicode escape sequence \\u", "XX", "XX");
                 return self.tokenizer_error(token, at + 1, message);
             }
             // acorn tries to read a private name.

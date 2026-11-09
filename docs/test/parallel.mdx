@@ -108,6 +108,8 @@ Use it with `--parallel` too: `bun test --parallel --isolate=modules`.
 
 Between files, Bun restores the properties of `globalThis`, of objects stored on `globalThis`, and of any function or prototype reachable from those. It doesn't restore a built-in module's exports (`fs.readFileSync = ...`) or state hidden inside a built-in object, so those changes carry over to the next file.
 
+Some changes can't be undone: `Object.freeze()`, `Object.seal()` or `Object.preventExtensions()` on `globalThis` or on one of those objects, a variable, function or class that a script declares with `vm.runInThisContext()`, and an index that is defined without `configurable`. After a file that makes such a change, Bun prints a note and gives the next files a new global object to share. Built-in modules are loaded again in it, and JIT-compiled code starts over. If the next file makes such a change too, as it does when a `--preload` script freezes a built-in, each later file gets its own global object, as with `--isolate`.
+
 ## Concurrent tests within a file
 
 `--parallel` spreads _files_ across cores. Within one file tests still run one at a time unless you opt in to concurrency, which lets `async` tests overlap while one is waiting on I/O:

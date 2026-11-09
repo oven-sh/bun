@@ -139,6 +139,9 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) vi_config: vi_utils::Config,
     pub(crate) vi_config_of_preload: vi_utils::Config,
 
+    /// The test file that ran last, for a note about the global object it left.
+    pub(crate) last_file: &'static [u8],
+
     pub(crate) test_options: &'a TestOptions,
 
     /// Used for --test-name-pattern to reduce allocations.

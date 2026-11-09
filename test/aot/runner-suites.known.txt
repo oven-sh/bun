@@ -71,9 +71,16 @@ test/cli/test/isolation.test.ts: bun test --isolate > with --isolate, cached mod
 # --isolate=modules runs like --isolate in a compiled run, as docs/compiler/debugging.mdx says: each test file gets a global object and builtin modules of its own.
 # One of them also writes to members that stay read-only, and one asks how often the JIT has compiled a function.
 test/cli/test/isolation.test.ts: bun test --isolate=modules > a file runs the code that was compiled for the files before it
+test/cli/test/isolation.test.ts: bun test --isolate=modules > after a file changes a builtin in a way that can't be undone > a file that does it to the new global object ends the sharing
+test/cli/test/isolation.test.ts: bun test --isolate=modules > after a file changes a builtin in a way that can't be undone > a file that leaves the new global object as it found it keeps the sharing
+test/cli/test/isolation.test.ts: bun test --isolate=modules > after a file changes a builtin in a way that can't be undone > the next files share a new global object and its builtin modules, and a note names the file
+test/cli/test/isolation.test.ts: bun test --isolate=modules > after a file changes a builtin in a way that can't be undone > the same when a close handler does it while the runner closes the file's sockets
+test/cli/test/isolation.test.ts: bun test --isolate=modules > after a file changes a builtin in a way that can't be undone > the same when a preload does it for every file
 test/cli/test/isolation.test.ts: bun test --isolate=modules > every file finds the builtins as the first one did, whatever the files before it did to them
 test/cli/test/isolation.test.ts: bun test --isolate=modules > no other builtin module patches a global class when it loads
 test/cli/test/isolation.test.ts: bun test --isolate=modules > the global object and the builtin modules are the same for every file
+test/cli/test/test-environment.test.ts: test environment > --isolate=modules: the files after one that makes globalThis non-extensible have a happy-dom window on a new global object
+test/cli/test/test-environment.test.ts: test environment > --isolate=modules: the files after one that makes globalThis non-extensible have a jsdom window on a new global object
 # With --isolate a test file can't require() another test file that imports from "vitest" and from two more files.
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate: a later test file can require() it
 test/cli/test/isolation.test.ts: the SourceProvider cache tells a test file that is the entry point from an import of it > --isolate=modules: a later test file can require() it

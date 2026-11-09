@@ -1,5 +1,6 @@
 // Called by VirtualMachine.rs. With `bun test --isolate=modules`, all test files share one global object,
 // so after each file we restore what it changed: globals, builtins, `process.env` and `process` listeners.
+// Some changes can't be undone, like Object.freeze(). The caller then gives the next files a new global object.
 
 const isEnvironmentGlobal: (key: PropertyKey) => boolean = require("internal/test/environment").isEnvironmentGlobal;
 const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
@@ -7,7 +8,8 @@ const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
   "jsFunctionShapesOfObjects",
   1,
 );
-const indexesOfChanged: (objects: object[], shapes: unknown[]) => number[] = $newCppFunction(
+// Null if one of the objects is not extensible, or if a script has declared a `let`, `const` or `class` since.
+const indexesOfChanged: (objects: object[], shapes: unknown[]) => number[] | null = $newCppFunction(
   "TestEnvironment.cpp",
   "jsFunctionIndexesOfChangedObjects",
   2,
@@ -109,6 +111,7 @@ function isSame(current: PropertyDescriptor, saved: PropertyDescriptor) {
   );
 }
 
+// False if a property stays that can't be deleted, like a `var` of a script or an index defined without `configurable`.
 function restoreProperties(object: object, properties: Properties, size: number) {
   const keys = ownKeys(object);
   let found = 0;
@@ -119,22 +122,23 @@ function restoreProperties(object: object, properties: Properties, size: number)
     // The next file's window replaces these.
     if (object === globalThis && isEnvironmentGlobal(key)) continue;
     if (!saved) {
-      if (isTracked(object, key)) deleteOwnProperty(object, key);
+      if (isTracked(object, key) && !deleteOwnProperty(object, key)) return false;
       continue;
     }
     const current = getOwnPropertyDescriptor(object, key)!;
     if (isSame(current, saved)) continue;
     if (!$getByIdDirect(current, "configurable")) {
-      if (saved.configurable) deleteOwnProperty(object, key);
+      if (saved.configurable && !deleteOwnProperty(object, key)) return false;
       // Some builtins have a read-only property that gives a new value each time it's read.
-      else if (!$getByIdDirect(current, "writable")) continue;
+      if (!saved.configurable && !$getByIdDirect(current, "writable")) continue;
     }
     defineProperty(object, key, saved);
   }
-  if (found === size) return;
+  if (found === size) return true;
   properties.$forEach((saved, key) => {
     if (!getOwnPropertyDescriptor(object, key)) defineProperty(object, key, saved);
   });
+  return true;
 }
 
 function restoreEnv() {
@@ -163,10 +167,12 @@ function restoreListeners() {
 
 function saveShapes() {
   shapes = shapesOf(objects);
-  alwaysComparedCount = indexesOfChanged(objects, shapes).length;
+  const alwaysCompared = indexesOfChanged(objects, shapes);
+  alwaysComparedCount = alwaysCompared ? alwaysCompared.length : 0;
 }
 
-// The first call takes the snapshot. Later calls restore it.
+// The first call takes the snapshot. Later calls restore it. False: the global object can't be put back as it was,
+// and is left as far as the restore got.
 export default function restoreGlobals() {
   if (!env) {
     saveProperties(globalThis, true);
@@ -177,17 +183,17 @@ export default function restoreGlobals() {
     listeners = new Map();
     const names = eventNames.$call(process);
     for (let i = 0; i < names.length; i++) listeners.$set(names[i], rawListeners.$call(process, names[i]));
-    return;
+    return true;
   }
   const changed = indexesOfChanged(objects, shapes);
+  if (!changed) return false;
   for (let i = 0; i < changed.length; i++) {
     const index = changed[i];
-    try {
-      restoreProperties(objects[index], savedProperties[index], savedPropertyCounts[index]);
-    } catch {}
+    if (!restoreProperties(objects[index], savedProperties[index], savedPropertyCounts[index])) return false;
   }
   // A property that was deleted and put back is in another slot.
   if (changed.length !== alwaysComparedCount) saveShapes();
   restoreEnv();
   restoreListeners();
+  return true;
 }

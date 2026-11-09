@@ -42,6 +42,9 @@ impl Expect {
 
     /// `--isolate=modules` keeps the global object. The next file's preloads and imports are evaluated again, and
     /// register their equality testers and snapshot serializers again.
+    // Not inlined: what this leaves on the stack would stay in the frame of the runner's loop, which the GC scans for the
+    // whole run. It points into the global object, and would keep one alive that the files no longer share.
+    #[inline(never)]
     #[optimize(size)]
     pub(crate) fn reset_for_test_isolation(global: &JSGlobalObject) {
         if !global.bun_vm().test_isolation_state.shares_global {

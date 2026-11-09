@@ -12,7 +12,7 @@ use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
 use bun_jsc::event_loop::TopLevelWaitError;
-use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::virtual_machine::{SharedTestGlobal, VirtualMachine};
 use bun_jsc::{self as jsc};
 use bun_options_types::aot_options::ReplacedByTests;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
@@ -2794,6 +2794,7 @@ impl TestCommand {
                 default_timeout_override: u32::MAX,
                 vi_config: Default::default(),
                 vi_config_of_preload: Default::default(),
+                last_file: b"",
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
@@ -3878,6 +3879,24 @@ impl TestCommand {
             .expect("oom"))
     }
 
+    /// `--isolate=modules`: says after which file the test files got a new global object.
+    #[cold]
+    fn note_new_global(last_file: &[u8], shared_global: SharedTestGlobal) {
+        let file = resolve_path::relative(FileSystem::get().top_level_dir(), last_file);
+        if shared_global == SharedTestGlobal::Replaced {
+            pretty_errorln!(
+                "\n<blue>note<r><d>:<r> what {} did to globalThis or a built-in can't be undone, so the next files share a new global object",
+                bun_fmt::quote(file)
+            );
+        } else {
+            pretty_errorln!(
+                "\n<blue>note<r><d>:<r> what {} did to globalThis or a built-in can't be undone either, so each file now gets its own global object, as with --isolate",
+                bun_fmt::quote(file)
+            );
+        }
+        Output::flush();
+    }
+
     fn never_settled(
         global: &jsc::JSGlobalObject,
         what: &str,
@@ -3969,7 +3988,13 @@ impl TestCommand {
 
         let file_path = Self::resolve_test_file(vm, file_name)?;
         vm.clear_entry_point()?;
-        vm.enter_module_graph_for_test_isolation()?;
+        let shared_global = vm.enter_module_graph_for_test_isolation()?;
+        if shared_global != SharedTestGlobal::Same {
+            // The file before ended as one whose global object the next file shares, which kept what its preloads configured.
+            crate::test_runner::vi_utils::on_test_file_end(vm.global(), false);
+            Self::note_new_global(reporter.jest.last_file, shared_global);
+        }
+        reporter.jest.last_file = file_path;
 
         run_compiled::will_run_test_file(resolve_path::relative(
             FileSystem::get().top_level_dir(),

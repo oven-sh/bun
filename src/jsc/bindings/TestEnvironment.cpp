@@ -7,6 +7,8 @@
 #include "InternalModuleRegistry.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/JSGlobalLexicalEnvironment.h>
+#include <JavaScriptCore/JSGlobalProxy.h>
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestEnvironment__setupFunction(Zig::GlobalObject* globalObject)
 {
@@ -83,12 +85,20 @@ static void forEachPropertySlot(JSC::JSObject* object, JSC::Structure* structure
         visit(JSC::firstOutOfLineOffset + i);
 }
 
-// For each object its structure and then its property slots, or null if those do not tell whether it has changed.
+// How many `let`, `const` and `class` declarations the scripts that ran in `globalObject` have made.
+static JSC::JSValue scriptDeclarationCount(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::jsNumber(globalObject->globalLexicalEnvironment()->symbolTable()->scopeSize());
+}
+
+// The count of script declarations. Then for each object its structure and then its property slots, or null if those do
+// not tell whether it has changed.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionShapesOfObjects, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto* objects = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(0));
     JSC::MarkedArgumentBuffer shapes;
+    shapes.append(scriptDeclarationCount(globalObject));
     for (unsigned i = 0, length = objects->length(); i < length; ++i) {
         auto* object = asObject(objects->getIndexQuickly(i));
         auto* structure = object->structure();
@@ -102,27 +112,42 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionShapesOfObjects, __attribute_
     return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), shapes));
 }
 
+// globalThis answers for the global object. Its own structure says no from the start.
+static bool isExtensible(JSC::JSObject* object)
+{
+    if (object->type() == JSC::GlobalProxyType)
+        object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
+    return object->isStructureExtensible();
+}
+
+// The indexes of the objects that have changed, or may have. Null if one of those is not extensible: nothing makes it
+// extensible again, and a property that it has lost can't be defined again. Null too if a script has declared a `let`,
+// `const` or `class` since: that is not a property, and nothing removes it.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionIndexesOfChangedObjects, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* objects = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(0));
     auto* shapes = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(1));
+    if (shapes->getIndexQuickly(0) != scriptDeclarationCount(globalObject))
+        return JSC::JSValue::encode(JSC::jsNull());
     JSC::MarkedArgumentBuffer changed;
-    unsigned next = 0;
+    unsigned next = 1;
     for (unsigned i = 0, length = objects->length(); i < length; ++i) {
-        JSC::JSValue shape = shapes->getIndexQuickly(next++);
-        if (shape.isNull()) {
-            changed.append(JSC::jsNumber(i));
-            continue;
-        }
         auto* object = asObject(objects->getIndexQuickly(i));
-        auto* structure = uncheckedDowncast<JSC::Structure>(shape.asCell());
-        unsigned slot = next;
-        next += structure->inlineSize() + structure->outOfLineSize();
-        bool isSame = object->structure() == structure;
-        if (isSame)
-            forEachPropertySlot(object, structure, [&](JSC::JSValue value) { isSame &= value == shapes->getIndexQuickly(slot++); });
-        if (!isSame)
-            changed.append(JSC::jsNumber(i));
+        JSC::JSValue shape = shapes->getIndexQuickly(next++);
+        if (!shape.isNull()) {
+            auto* structure = uncheckedDowncast<JSC::Structure>(shape.asCell());
+            unsigned slot = next;
+            next += structure->inlineSize() + structure->outOfLineSize();
+            bool isSame = object->structure() == structure;
+            if (isSame)
+                forEachPropertySlot(object, structure, [&](JSC::JSValue value) { isSame &= value == shapes->getIndexQuickly(slot++); });
+            if (isSame)
+                continue;
+        }
+        // An object that was made non-extensible has another structure since, so it is not skipped above.
+        if (!isExtensible(object))
+            return JSC::JSValue::encode(JSC::jsNull());
+        changed.append(JSC::jsNumber(i));
     }
     return JSC::JSValue::encode(JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), changed));
 }

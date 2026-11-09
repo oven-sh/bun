@@ -327,6 +327,30 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each(["jsdom", "happy-dom"])(
+    "--isolate=modules: the files after one that makes globalThis non-extensible have a %s window on a new global object",
+    async name => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "a.test.js": `// ${VITEST} ${name}
+          import { test } from "bun:test";
+          test("${name}", () => void Object.preventExtensions(globalThis));`,
+        "b.test.js": `// ${VITEST} ${name}\n${logEnvironment}`,
+        "c.test.js": logEnvironment,
+        "d.test.js": `// ${VITEST} ${name}\n${logEnvironment}`,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate=modules");
+      // The package is loaded once more, into the realm that outlives the files, so its count of windows starts again.
+      expect(stdout.filter(line => /^\w\.test\.js /.test(line))).toEqual([
+        `b.test.js ${name}#1 http://localhost:3000`,
+        "c.test.js node ",
+        `d.test.js ${name}#2 http://localhost:3000`,
+      ]);
+      expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("the package is resolved from the test file", async () => {
     using dir = tempDir("test-environment", {
       "packages/a/node_modules/happy-dom/package.json": fakePackages["node_modules/happy-dom/package.json"],

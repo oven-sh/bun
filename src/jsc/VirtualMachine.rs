@@ -438,6 +438,18 @@ pub struct VirtualMachine {
     pub test_isolation_state: TestIsolationState,
 }
 
+/// What [`VirtualMachine::enter_module_graph_for_test_isolation`] did with the global object
+/// that the test files share.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SharedTestGlobal {
+    /// It is as the first file found it, or the files share none.
+    Same,
+    /// The files from here on share a new one.
+    Replaced,
+    /// From here on each file gets its own.
+    Unshared,
+}
+
 #[derive(Default)]
 pub struct TestIsolationState {
     pub saved_cwd: Option<Box<[u8]>>,
@@ -454,6 +466,9 @@ pub struct TestIsolationState {
     pub synthetic_allocation_limit: Option<usize>,
     /// `--isolate=modules`: all files share one global object, and each gets its own `Bun.ModuleGraph`.
     pub shares_global: bool,
+    /// The shared global object took the place of one that a file left in a state that can't be
+    /// undone, and no file has left this one as it found it yet.
+    pub shared_global_is_new: bool,
     /// The context of the running file's graph. Its callbacks run in this context.
     pub file_context: crate::ContextId,
     /// What the outgoing file gives back once its realm is retired. See
@@ -529,6 +544,7 @@ unsafe extern "C" {
     safe fn Bun__TestFile__enterModuleGraph(global: &JSGlobalObject) -> u32;
     safe fn Bun__Process__resetArgv(global: &JSGlobalObject);
     safe fn Bun__TestFile__leaveModuleGraph(global: &JSGlobalObject);
+    safe fn Bun__TestFile__forgetFinishedModuleGraphs(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireDerivedRealmsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
@@ -6564,18 +6580,47 @@ impl VirtualMachine {
         self.undo_synthetic_allocation_limit();
     }
 
-    /// `--isolate=modules`: creates the graph for the test file that's about to run.
-    pub fn enter_module_graph_for_test_isolation(&mut self) -> JsResult<()> {
+    /// `--isolate=modules`: creates the graph for the test file that's about to run, in the global
+    /// object that the files share.
+    ///
+    /// That global object is first put back as the first file found it. Where the file before
+    /// left something that can't be undone, the files from here on share a new one. Where that
+    /// happens to the new one at once, something does it for every file, as a preload can: from
+    /// here on each file gets a global object of its own, as with `--isolate`.
+    pub fn enter_module_graph_for_test_isolation(&mut self) -> JsResult<SharedTestGlobal> {
         let state = &self.test_isolation_state;
-        if state.shares_global && state.file_context == crate::ContextId::NONE {
-            // The first call snapshots the globals. Later calls restore them.
-            let global = self.global();
-            let restore_globals = crate::cpp::Bun__TestGlobals__getRestoreFunction(global)?;
-            restore_globals.call(global, JSValue::UNDEFINED, &[])?;
-            self.test_isolation_state.file_context =
-                crate::ContextId::from_raw(Bun__TestFile__enterModuleGraph(global));
+        if !state.shares_global || state.file_context != crate::ContextId::NONE {
+            return Ok(SharedTestGlobal::Same);
         }
-        Ok(())
+        let mut shared_global = SharedTestGlobal::Same;
+        if self.restore_shared_global_for_test_isolation()? {
+            self.test_isolation_state.shared_global_is_new = false;
+        } else {
+            let was_new =
+                core::mem::replace(&mut self.test_isolation_state.shared_global_is_new, true);
+            // The graphs of the files that shared the old one would keep it alive.
+            Bun__TestFile__forgetFinishedModuleGraphs(self.global());
+            self.test_isolation_state.shares_global = false;
+            self.swap_global_for_test_isolation();
+            if was_new {
+                return Ok(SharedTestGlobal::Unshared);
+            }
+            self.test_isolation_state.shares_global = true;
+            self.restore_shared_global_for_test_isolation()?;
+            shared_global = SharedTestGlobal::Replaced;
+        }
+        self.test_isolation_state.file_context =
+            crate::ContextId::from_raw(Bun__TestFile__enterModuleGraph(self.global()));
+        Ok(shared_global)
+    }
+
+    /// The first call for a global object takes the snapshot of it. Later calls put it back as it
+    /// was then. `false`: it can't be put back, and is left as far as the restore got.
+    fn restore_shared_global_for_test_isolation(&mut self) -> JsResult<bool> {
+        let global = self.global();
+        let restore_globals = crate::cpp::Bun__TestGlobals__getRestoreFunction(global)?;
+        // A call that is dropped returns `undefined`.
+        Ok(restore_globals.call(global, JSValue::UNDEFINED, &[])? != JSValue::FALSE)
     }
 
     /// `setSyntheticAllocationLimitForTesting` lowers a process-wide limit.

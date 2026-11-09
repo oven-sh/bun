@@ -1418,13 +1418,20 @@ describe.concurrent("bun test --isolate", () => {
 // regexes, and compiling them while bunfig.toml loaded used to initialize JSC
 // with the default options before `bun test` could pass its own.
 describe.concurrent("bun test --isolate=modules", () => {
-  const passes = async (files: Record<string, string>, pass: number, args: string[] = []) => {
+  // `notes`: what the run says of a global object that it could not put back. Null: not held.
+  const passes = async (
+    files: Record<string, string>,
+    pass: number,
+    args: string[] = [],
+    notes: string[] | null = [],
+  ) => {
     using dir = tempDir("isolate-modules", files);
     const names = Object.keys(files)
       .filter(name => name.includes(".test."))
       .map(name => "./" + name);
     const { stdout, stderr, exitCode } = await runTests(String(dir), ["--isolate=modules", ...args], names);
     expect(stderr).toContain(` ${pass} pass\n 0 fail\n`);
+    if (notes) expect(stderr.match(/^note: what .* can't be undone.*$/gm) ?? []).toEqual(notes);
     expect(exitCode).toBe(0);
     return stdout;
   };
@@ -1583,6 +1590,210 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify(["fetch", true, false])));
   });
 
+  // The restore can't undo these. The next files get a new global object to share.
+  describe("after a file changes a builtin in a way that can't be undone", () => {
+    const state = `JSON.stringify([
+      [Date.now, Math.cbrt, Math.random, Math.trunc, Math.max, Array.of, Array.prototype.map, fetch, process.exit].map(fn => String(fn).includes("[native code]")),
+      [Date, Math, Array, Array.prototype, Array.prototype.map, Set.prototype, process, globalThis].map(object => Object.isExtensible(object)),
+      [Date, Math, Array, Array.prototype, Array.prototype.map, Set.prototype].map(object => Reflect.ownKeys(object).length),
+      Object.getOwnPropertyDescriptor(Date, "now")?.writable, Array.name, Array.prototype.map.name, new Set([1]).size, "leaked" in globalThis,
+      typeof declaredByVar, typeof declaredByFunction, typeof declaredByLet, typeof DeclaredByClass,
+    ])`;
+    const logState = `test("state", () => { console.log(${state}); });`;
+    const replaced = (file: string) =>
+      `note: what "${file}" did to globalThis or a built-in can't be undone, so the next files share a new global object`;
+    const unshared = (file: string) =>
+      `note: what "${file}" did to globalThis or a built-in can't be undone either, so each file now gets its own global object, as with --isolate`;
+
+    test.each([
+      ["replaces Date.now and freezes Date", `Date.now = () => 0; Object.freeze(Date);`],
+      [
+        "replaces three functions of Math and seals it",
+        `Math.cbrt = Math.random = Math.trunc = () => 0; Object.seal(Math);`,
+      ],
+      ["deletes Math.max and prevents extensions of Math", `delete Math.max; Object.preventExtensions(Math);`],
+      ["only freezes Date", `Object.freeze(Date);`],
+      [
+        "replaces Array.prototype.map and freezes Array.prototype",
+        `Array.prototype.map = function () {}; Object.freeze(Array.prototype);`,
+      ],
+      [
+        "redefines an accessor of Set.prototype and freezes it",
+        `Object.defineProperty(Set.prototype, "size", { get: () => -1 }); Object.freeze(Set.prototype);`,
+      ],
+      [
+        "deletes the name of a function and freezes the function",
+        `delete Array.prototype.map.name; Object.freeze(Array.prototype.map);`,
+      ],
+      [
+        "makes the name of Array non-configurable, replaces Array.of, adds a key and prevents extensions of Array",
+        `Object.defineProperty(Array, "name", { value: "fake", configurable: false }); Array.of = function fake() {}; Array.added = 1; Object.preventExtensions(Array);`,
+      ],
+      [
+        "adds a global, replaces fetch and freezes globalThis",
+        `globalThis.leaked = 1; globalThis.fetch = function stub() {}; Object.freeze(globalThis);`,
+      ],
+      [
+        "replaces process.exit and prevents extensions of process",
+        `process.exit = () => {}; Object.preventExtensions(process);`,
+      ],
+      ["defines an index of Math without configurable", `Object.defineProperty(Math, 7, { value: 1 });`],
+      [
+        "declares a var and a function in a script",
+        `require("node:vm").runInThisContext("var declaredByVar = 1; function declaredByFunction() {}");`,
+      ],
+      [
+        "declares a let, a const and a class in a script",
+        `require("node:vm").runInThisContext("let declaredByLet = 1; const fetch = 2; class DeclaredByClass {}");`,
+      ],
+    ])("the next files find the builtins as at the start, when it %s", async (_, change) => {
+      const files = {
+        "a.test.js": `test("a", () => { console.log(${state}); ${change} });`,
+        "b.test.js": logState,
+        "c.test.js": logState,
+      };
+      // A compiled run shares no global object, so it has nothing to say. The tests below hold the notes.
+      const lines = (await passes(files, 3, [], null)).split("\n").filter(line => line.startsWith("["));
+      expect(lines).toEqual(Array(3).fill(lines[0]));
+    });
+
+    test("the next files share a new global object and its builtin modules, and a note names the file", async () => {
+      const files = {
+        "a.test.js": `import fs from "node:fs"; test("a", () => { fs.arrayOfA = Array; Object.freeze(Date); });`,
+        "b.test.js": `import fs from "node:fs"; test("b", () => { console.log(fs.arrayOfA === Array, "arrayOfA" in fs); fs.arrayOfB = Array; });`,
+        "c.test.js": `import fs from "node:fs"; test("c", () => { console.log(fs.arrayOfB === Array); });`,
+      };
+      expect(await passes(files, 3, [], [replaced("a.test.js")])).toContain("false false\ntrue\n");
+    });
+
+    test("a file that does it to the new global object ends the sharing", async () => {
+      const file = (name: string, change: string) => `
+        import fs from "node:fs";
+        test("${name}", () => { console.log("${name}", Object.isExtensible(Date), Object.keys(fs).filter(key => key.startsWith("leftBy")).join()); fs.leftBy${name} = true; ${change} });
+      `;
+      const files = {
+        "a.test.js": file("A", `Object.freeze(Date);`),
+        "b.test.js": file("B", `Object.freeze(Date);`),
+        "c.test.js": file("C", ""),
+        "d.test.js": file("D", ""),
+      };
+      const stdout = await passes(files, 4, [], [replaced("a.test.js"), unshared("b.test.js")]);
+      expect(stdout).toContain("A true \nB true \nC true \nD true \n");
+    });
+
+    test("a file that leaves the new global object as it found it keeps the sharing", async () => {
+      const file = (name: string, change: string) => `
+        import fs from "node:fs";
+        test("${name}", () => { console.log("${name}", Object.isExtensible(Date), Object.keys(fs).filter(key => key.startsWith("leftBy")).join()); fs.leftBy${name} = true; ${change} });
+      `;
+      const files = {
+        "a.test.js": file("A", `Object.freeze(Date);`),
+        "b.test.js": file("B", ""),
+        "c.test.js": file("C", `Object.freeze(Date);`),
+        "d.test.js": file("D", ""),
+        "e.test.js": file("E", ""),
+      };
+      const stdout = await passes(files, 5, [], [replaced("a.test.js"), replaced("c.test.js")]);
+      expect(stdout).toContain("A true \nB true \nC true leftByB\nD true \nE true leftByD\n");
+    });
+
+    test("the same when a preload does it for every file", async () => {
+      const file = `test("has the clock of the preload", () => { expect([Date.now(), Object.isFrozen(Date)]).toEqual([0, true]); });`;
+      const files = {
+        "preload.js": `Date.now = () => 0; Object.freeze(Date);`,
+        "a.test.js": file,
+        "b.test.js": file,
+        "c.test.js": file,
+        "d.test.js": file,
+      };
+      const notes = [replaced("a.test.js"), unshared("b.test.js")];
+      await passes(files, 4, ["--preload", "./preload.js"], notes);
+    });
+
+    test("what a preload configured for a file does not reach the new global object", async () => {
+      const file = (change: string) => `
+        import { test, vi } from "bun:test";
+        const fn = vi.fn();
+        fn();
+        test("calls", () => { console.log("calls", fn.mock.calls.length); ${change} });
+      `;
+      const files = {
+        "preload.js": `import { vi } from "bun:test"; if (Bun.main.endsWith("a.test.js")) vi.setConfig({ clearMocks: true });`,
+        "a.test.js": file(`Object.freeze(Date);`),
+        "b.test.js": file(`Object.freeze(Date);`),
+        "c.test.js": file(""),
+        "d.test.js": file(""),
+      };
+      const stdout = await passes(files, 4, ["--preload", "./preload.js"], null);
+      expect(stdout.split("\n").filter(line => line.startsWith("calls"))).toEqual([
+        "calls 0",
+        ...Array(3).fill("calls 1"),
+      ]);
+    });
+
+    test("the same when a close handler does it while the runner closes the file's sockets", async () => {
+      const files = {
+        "a.test.js": `
+          import http from "node:http";
+          test("a", async () => {
+            console.log(${state});
+            const server = http.createServer(() => {}).listen(0, "127.0.0.1");
+            await new Promise(resolve => server.once("listening", resolve));
+            const request = http.get({ host: "127.0.0.1", port: server.address().port });
+            request.on("error", () => { Date.now = () => 0; Object.freeze(Date); console.log("closed"); });
+            await new Promise(resolve => server.once("request", resolve));
+          });`,
+        "b.test.js": logState,
+        "c.test.js": logState,
+      };
+      const stdout = await passes(files, 3, [], [replaced("a.test.js")]);
+      const lines = stdout.split("\n").filter(line => line.startsWith("[") || line === "closed");
+      expect(lines).toEqual([lines[0], "closed", lines[0], lines[0]]);
+    });
+
+    test("the same with --parallel", async () => {
+      // Whichever files a worker gets, each one after its first would find what the one before it left.
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 6; i++) {
+        files[`${i}.test.js`] = `test("${i}", () => {
+          expect([String(Date.now).includes("[native code]"), Object.isExtensible(Date)]).toEqual([true, true]);
+          Date.now = () => 0;
+          Object.freeze(Date);
+        });`;
+      }
+      await passes(files, 6, ["--parallel=2"], null);
+    });
+
+    test("the global object that the files shared before is collected", async () => {
+      using dir = tempDir("isolate-modules-collects-shared-global", {
+        "a.test.js": `test("a", () => {});`,
+        "b.test.js": `test("b", () => { Object.freeze(Date); });`,
+        "c.test.js": `test("c", () => {});`,
+        "counts.test.ts": `
+          import { generateHeapSnapshotForDebugging } from "bun:jsc";
+          ${Heap}
+          test("counts", async () => {
+            const heap = await new Promise(resolve => setTimeout(() => resolve(new Heap({ followers: false })), 0));
+            console.log(JSON.stringify({ globals: heap.pathsTo("GlobalObject") }));
+          }, 120_000); // A heap snapshot takes 20 s on a busy debug build.
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate=modules"],
+        ["./a.test.js", "./b.test.js", "./c.test.js", "./counts.test.ts"],
+        // An in-flight JIT compilation roots the code it compiles, which would show up in the snapshot.
+        { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      );
+      const printed = stdout.replace(/^bun test .*\n/, "");
+      expect(printed, stderr).toStartWith("{");
+      expect({ ...JSON.parse(printed), exitCode }).toEqual({
+        globals: ["root(ProtectedValues) GlobalObject"],
+        exitCode: 0,
+      });
+    });
+  });
+
   test("keeps what node:perf_hooks and node:worker_threads add to the builtins when they load", async () => {
     const file = `
       import "node:perf_hooks";
@@ -1628,7 +1839,7 @@ describe.concurrent("bun test --isolate=modules", () => {
           });
         }
         console.log(JSON.stringify(patched));
-      });`,
+      }, 90_000);`, // Loading every builtin module takes 40 s on a busy debug build.
     };
     expect((await passes(files, 1)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
   });

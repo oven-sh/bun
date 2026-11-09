@@ -824,6 +824,13 @@ extern "C" __attribute__((minsize)) void Bun__TestFile__leaveModuleGraph(Zig::Gl
     globalObject->processObject()->clearCachedCwd();
 }
 
+// The test files stop using this global object. Its finished graphs would keep it alive.
+extern "C" __attribute__((minsize)) void Bun__TestFile__forgetFinishedModuleGraphs(Zig::GlobalObject* globalObject)
+{
+    if (auto* state = globalObject->m_moduleGraphs.get())
+        state->finishedTestFiles.clear();
+}
+
 // ─── Bun.ModuleGraph ──────────────────────────────────────────────────────────
 
 static JSC_DECLARE_HOST_FUNCTION(jsModuleGraphPrototypeFunction_import);

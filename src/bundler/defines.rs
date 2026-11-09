@@ -183,10 +183,10 @@ fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
     }
 }
 
-/// Extension surface for the canonical `DefineData` — `from_input` needs
-/// `bun_parsers::json_parser` / `js_lexer::Keywords`.
+/// Extension surface for the canonical `DefineData` — `parse` / `from_input`
+/// need `bun_parsers::json_parser` / `js_lexer::Keywords`.
 pub trait DefineDataExt: Sized {
-    /// `Err` when a key or a `drop` name is not valid. The log names each one.
+    /// `Err` when a key or a `drop` name is not valid, or a value does not parse. The log says which.
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
@@ -450,7 +450,7 @@ impl DefineDataExt for DefineData {
             }
         }
 
-        // Fail after the loops so that one run names every key that is not valid.
+        // After the loops: one run names every key that is not valid. A value that does not parse returns at once.
         if log.errors != errors_before {
             return Err(crate::Error::BuildFailed);
         }

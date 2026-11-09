@@ -49,8 +49,7 @@ impl Default for BuildConfigSubset {
 }
 
 impl SplitBundlerOptions {
-    /// Parses `define` once, for every graph. Throws each key and value that is not valid.
-    /// The parsed values point into `arena`, so it has to outlive the transpilers.
+    /// The parsed values point into `arena`: it has to outlive the transpilers.
     pub(crate) fn parse_defines(
         &mut self,
         arena: &bun_alloc::Arena,

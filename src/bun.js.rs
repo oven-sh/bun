@@ -1,7 +1,7 @@
 //! Entry point for `bun run <file>` / standalone executables.
 //!
-//! Hosts `apply_standalone_runtime_flags`, `fail_with_build_error` and
-//! `exit_if_logged`; the `Run` VM driver itself lives in `crate::cli::run_command`.
+//! Hosts `apply_standalone_runtime_flags` and `fail_with_build_error`; the
+//! `Run` VM driver itself lives in `crate::cli::run_command`.
 
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;

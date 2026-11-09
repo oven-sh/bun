@@ -756,9 +756,10 @@ function execFileSync(file, args, options) {
   let retStderr;
   if (inheritStderr && (retStderr = ret.stderr)) process.stderr.write(retStderr);
 
-  // Only a failure needs the arguments, for its message.
+  // Only a failure needs the arguments, for its message. The option is read at every call, as before.
+  const argv0 = options.argv0;
   if (ret.error || ret.status !== 0) {
-    const errArgs = [options.argv0 || file];
+    const errArgs = [argv0 || file];
     ArrayPrototypePush.$apply(errArgs, args);
     const err = checkExecSyncError(ret, errArgs);
     if (err) throw err;
@@ -1181,12 +1182,14 @@ function checkExecSyncError(ret: SpawnSyncResult, args: string[] | undefined, cm
   }
   return err;
 }
-function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> | undefined {
+function parseEnvPairs(envPairs: Iterable<string> | undefined): Record<string, string> | undefined {
   if (!envPairs) return undefined;
+  // An array is read by index. Anything else is walked with its own iterator, as before.
+  const pairs = $isJSArray(envPairs) ? envPairs : [...envPairs];
   const resEnv = {};
-  for (let i = 0; i < envPairs.length; i++) {
+  for (let i = 0; i < pairs.length; i++) {
     // The value is everything behind the first "=".
-    const parts = envPairs[i].split("=");
+    const parts = pairs[i].split("=");
     resEnv[parts[0]] = joinArray(parts, 1, "=");
   }
   return resEnv;

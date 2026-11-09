@@ -219,6 +219,7 @@ describe("what a script stored on Array.prototype", () => {
         const cp = require("node:child_process");
         // The child writes to this process's stdout, so what reads that stdout to its end knows whether a child ran.
         const stdio = ["pipe", "inherit", "pipe", "pipe"].slice(0, Number(process.argv[2]));
+        const envPairs = Object.keys(env).map(name => name + "=" + env[name]);
         // The first child loads the modules of the streams.
         cp.execFile(echo, echoed("the first child ran"), { env }, () => {
           Array.prototype[Symbol.iterator] = throwing;
@@ -226,6 +227,8 @@ describe("what a script stored on Array.prototype", () => {
           try {
             cp.spawn(echo, echoed("the child ran"), { env, stdio });
             process.stdout.write("spawn() returned\\n");
+            const direct = { file: echo, args: [echo].concat(echoed("the child with envPairs ran")), envPairs, stdio };
+            new cp.ChildProcess().spawn(direct);
             promised = require("node:util").promisify(cp.execFile)(echo, echoed("the promised child ran"), { env });
           } catch (error) {
             process.stdout.write(String(error) + "\\n");
@@ -412,7 +415,7 @@ describe("what a script stored on Array.prototype", () => {
     async stdioLength => {
       const { stdout, ...rest } = await run("throwing-iterator.cjs", stdioLength);
       expect({ lines: stdout.split("\n").filter(Boolean).sort(), ...rest }).toEqual({
-        lines: ["spawn() returned", "the child ran", "the promised child ran"],
+        lines: ["spawn() returned", "the child ran", "the child with envPairs ran", "the promised child ran"],
         ...ranToItsEnd,
       });
     },
@@ -482,5 +485,40 @@ describe("what a script stored on Array.prototype", () => {
     const closed = once(child, "close");
     expect(await text(child.stdout!)).toBe("original");
     expect(await closed).toEqual([0, null]);
+  });
+
+  // parseEnvPairs() reads an array by index. What is not an array keeps its own iterator, as on main.
+  it("ChildProcess#spawn() takes envPairs that are not an array as before", async () => {
+    const pairs = Object.entries(bunEnv).map(([name, value]) => `${name}=${value}`);
+    const child = new ChildProcess();
+    child.spawn({
+      file: bunExe(),
+      args: [bunExe(), "-e", "process.stdout.write(process.env.MARK)"],
+      envPairs: new Set([...pairs, "MARK=from a Set"]) as any,
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const closed = once(child, "close");
+    expect(await text(child.stdout!)).toBe("from a Set");
+    expect(await closed).toEqual([0, null]);
+
+    // Not iterable: a TypeError, and no child.
+    const arrayLike = { length: 1, 0: "MARK=from an array-like object" } as any;
+    expect(() =>
+      new ChildProcess().spawn({ file: bunExe(), args: [bunExe()], envPairs: arrayLike, stdio: "ignore" }),
+    ).toThrow(TypeError);
+  });
+
+  // Main and Node read it three times, whether the child fails or not.
+  it("execFileSync() reads options.argv0 as often as before", () => {
+    let reads = 0;
+    const options = {
+      env: bunEnv,
+      get argv0() {
+        reads++;
+        return undefined;
+      },
+    };
+    execFileSync(bunExe(), ["-e", ""], options);
+    expect(reads).toBe(3);
   });
 });

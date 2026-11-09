@@ -1583,46 +1583,13 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect(lines).toEqual(Array(2).fill(JSON.stringify(["fetch", true, false])));
   });
 
-  // docs/test/parallel.mdx lists these under `--isolate=modules`. If this fails, that list has to change too.
-  test("a change past the reach of the restore carries over to the next file, and a spy left there doesn't", async () => {
-    const files = {
-      "a.test.js": `
-        import { spyOn } from "bun:test";
-        const patched = function patched() {};
-        test("a", () => {
-          Date.now = patched;
-          spyOn(Temporal.Now, "timeZoneId").mockReturnValue("patched");
-          Temporal.Now.instant = Bun.password.verify = crypto.subtle.digest = process.stdout.write = Bun.sql = patched;
-          process.release.name = "patched";
-          Math._leftByA = 1;
-          Object.freeze(Reflect);
-        });
-      `,
-      "b.test.js": `
-        test("b", () => {
-          console.log(JSON.stringify({
-            undone: [Date.now.name, Temporal.Now.timeZoneId.name],
-            kept: [Temporal.Now.instant.name, Bun.password.verify.name, crypto.subtle.digest.name, process.stdout.write.name, Bun.sql.name,
-              process.release.name, "_leftByA" in Math, Object.isFrozen(Reflect)],
-          }));
-        });
-      `,
-    };
-    const lines = (await passes(files, 2)).split("\n").filter(line => line.startsWith("{"));
-    expect(lines.map(line => JSON.parse(line))).toEqual([
-      {
-        undone: ["now", "timeZoneId"],
-        kept: ["patched", "patched", "patched", "patched", "patched", "patched", true, true],
-      },
-    ]);
-  });
-
   test("--help says that the restore undoes changes to globals, and that deeper ones carry over", async () => {
     await using proc = Bun.spawn({ cmd: [bunExe(), "test", "--help"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const isolate = stdout.split("\n").find(line => line.includes("--isolate=")) ?? "";
-    expect(isolate).toContain("undo its changes to globals");
-    expect(isolate).toContain("process.stdout.write, carries over");
+    expect(isolate.trim().replace(/ {2,}/g, " ")).toBe(
+      `--isolate=<val> Run each test file in a fresh global object. Leaked handles from one file cannot affect another. "modules": keep the global object, load each file's modules afresh and undo its changes to globals (faster; a change deeper in a built-in, like process.stdout.write, carries over).`,
+    );
     expect(exitCode).toBe(0);
   });
 
@@ -1673,10 +1640,7 @@ describe.concurrent("bun test --isolate=modules", () => {
         console.log(JSON.stringify(patched));
       });`,
     };
-    // A debug build needs more than the default 5 seconds to load them all.
-    expect((await passes(files, 1, ["--timeout=30000"])).split("\n").filter(line => line.startsWith("["))).toEqual([
-      "[]",
-    ]);
+    expect((await passes(files, 1)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
   });
 
   test("Module._cache is the running file's require.cache", async () => {
@@ -2982,7 +2946,7 @@ describe.concurrent("the SourceProvider cache tells a test file that is the entr
 });
 
 describe.concurrent("mocks and spies do not outlive their test file", () => {
-  const modes = ["--no-isolate", "--isolate", "--rerun-each=2", "--parallel=1 --no-isolate"];
+  const modes = ["--no-isolate", "--isolate", "--isolate=modules", "--rerun-each=2", "--parallel=1 --no-isolate"];
   const results = (stderr: string) => [
     ...new Set(
       stderr

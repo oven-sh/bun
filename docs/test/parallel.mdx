@@ -114,7 +114,7 @@ The restore stops there. These changes carry over to the next file:
 - A change to an object that only a getter or a call returns, such as `crypto.subtle` or the prototype of array iterators: `crypto.subtle.digest = ...`.
 - A change to, or a replacement of, a standard stream or a default client: `process.stdin`, `process.stdout`, `process.stderr`, the same three on `Bun`, `Bun.sql`, `Bun.postgres`, `Bun.redis`, `Bun.s3` and `Bun.secrets`. Bun creates these on first use, and the restore leaves them alone, so `process.stdout.write = ...` and `Bun.sql = ...` stay. A value assigned to `process.mainModule` stays too.
 - A property whose name starts with an underscore, on any object but `globalThis`. Bun treats it as internal state, like `process._events`.
-- `Object.freeze()`, `Object.seal()` or `Object.preventExtensions()` on a built-in.
+- `Object.freeze()`, `Object.seal()` or `Object.preventExtensions()` on a built-in. Bun can't fully restore that object afterwards: a property that the file changed can stay changed or be missing.
 - A change to a built-in module's exports (`fs.readFileSync = ...`).
 - State hidden inside a built-in object.
 

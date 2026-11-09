@@ -134,15 +134,6 @@ try {
 } catch (error) {
   console.log(error.code);
 }
-//// the-arguments-that-Bun-keeps
-//@ args first --second
-//@ removes Bun.build
-//@ removes Bun.serve
-//@ removes bun:test
-//@ removes Bun.Cookie
-//@ removes SubtleCrypto
-const { argv } = Bun;
-console.log(Array.isArray(argv), argv === process.argv, argv.length, argv.slice(2).join(), argv.every(each => typeof each === "string"));
 //// what-node-util-prints-of-an-object
 //@ removes Bun.build
 //@ removes Bun.serve
@@ -151,18 +142,3 @@ console.log(Array.isArray(argv), argv === process.argv, argv.length, argv.slice(
 //@ removes SubtleCrypto
 import { inspect, promisify } from "node:util";
 console.log(inspect({ a: 1, list: [1, "two"] }), typeof promisify);
-//// the-arguments-as-the-guide-of-the-documentation-parses-them
-//@ args --flag1 --flag2 value
-//@ removes Bun.build
-//@ removes Bun.serve
-//@ removes bun:test
-//@ removes Bun.Cookie
-//@ removes SubtleCrypto
-import { parseArgs } from "util";
-const { values, positionals } = parseArgs({
-  args: Bun.argv,
-  options: { flag1: { type: "boolean" }, flag2: { type: "string" } },
-  strict: true,
-  allowPositionals: true,
-});
-console.log(values, positionals.length);

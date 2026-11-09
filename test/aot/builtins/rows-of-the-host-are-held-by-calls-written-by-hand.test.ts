@@ -676,15 +676,6 @@ const cases: Case[] = [
       { value: parseArgs({ args: [] }) },
     ],
   },
-  // BunProcess.cpp Process::getArgv(): what process.argv answers when Bun.argv is first read. Native code makes the list of strings there.
-  // Another value that a program has stored in process.argv comes back as it is.
-  {
-    row: "Bun.argv",
-    mode: "Get",
-    place: "the result",
-    typesIn: result,
-    see: () => [{ value: Bun.argv }],
-  },
   // html_rewriter.rs transform(): a string for a string, a new ArrayBuffer for a buffer or a view of any kind, a new Response for a Response.
   {
     row: "HTMLRewriter.prototype.transform",

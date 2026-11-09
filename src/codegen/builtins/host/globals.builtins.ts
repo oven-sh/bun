@@ -1447,7 +1447,7 @@ export default b.declarations(
       main: mainModulePath,
       // What process.argv answers at the first read: the list that it keeps, which this read makes if nobody has asked for it,
       // or what the program has stored there, or what a getter of the program answers.
-      argv: b.property(b.anyMadeOf("Array"), {
+      argv: b.property(b.any, {
         createdOnFirstRead: {
           capability: "js",
           throws: true,

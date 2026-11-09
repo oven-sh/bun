@@ -140,6 +140,9 @@ describe.concurrent("test.failing and test.fails", () => {
     exitCode,
   });
   const modifiers = ["failing", "fails"];
+  /** The cause that a leftover expect.poll() gets when the test that ran beside its call ends before its timeout. */
+  const endedWithTest =
+    "error: Matcher did not succeed before the end of the test that was running when expect.poll() was called.";
 
   test("don't take a matcher that other code calls", async () => {
     const result = await runTests(`
@@ -151,7 +154,7 @@ describe.concurrent("test.failing and test.fails", () => {
           ".rejects": settled => expect(settled.then(value => Promise.reject(value))).rejects.toBe(modifier + " .rejects"),
           "a custom matcher": settled => expect(settled).toBeLater("a custom matcher"),
           "toThrow()": settled => expect(() => settled).toThrow(),
-          "expect.poll()": () => expect.poll(() => 1, { timeout: 5, interval: 1 }).toBe(modifier + " expect.poll()"),
+          "expect.poll()": () => expect.poll(() => 1, { timeout: 60_000, interval: 1 }).toBe(modifier + " expect.poll()"),
           "expect.soft()": () => expect.soft(1).toBe(modifier + " expect.soft()"),
         };
         describe(modifier, () => {
@@ -280,8 +283,8 @@ describe.concurrent("test.failing and test.fails", () => {
           `Expected: "${modifier} expect.poll()"`,
           `Expected: "${modifier} expect.soft()"`,
         ]),
-        "error: Matcher did not succeed in time.",
-        "error: Matcher did not succeed in time.",
+        endedWithTest,
+        endedWithTest,
         "error: a custom matcher",
         "error: a custom matcher",
         ...Array.from({ length: 17 }, () => "error: expect(received).toBe(expected)"),
@@ -614,7 +617,7 @@ describe.concurrent("test.failing and test.fails", () => {
       errors: [
         'Expected: "of a test that ends before its group"',
         'Expected: "of an ended test"',
-        "error: Matcher did not succeed in time.",
+        endedWithTest,
         "error: expect(received).toBe(expected)",
         "error: expect(received).toBe(expected)",
       ],
@@ -845,7 +848,7 @@ describe.concurrent("test.failing and test.fails", () => {
         'Expected: "awaited"',
         'Expected: "leftover poll"',
         'Expected: "not awaited"',
-        ...Array.from({ length: 3 }, () => "error: Matcher did not succeed in time."),
+        ...Array.from({ length: 3 }, () => endedWithTest),
         ...Array.from({ length: 3 }, () => "error: expect(received).toBe(expected)"),
       ],
       betweenTests: 3,

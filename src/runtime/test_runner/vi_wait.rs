@@ -6,7 +6,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     AbortHandle, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell, JsClass as _,
-    JsError, JsResult, JsThread, Strong,
+    JsError, JsResult, JsThread, StringJsc as _, Strong,
 };
 
 use super::expect_core::expect_deferred::RunningEntry;
@@ -33,6 +33,9 @@ impl Kind {
         }
     }
 }
+
+/// What the timeout error of an `expect.poll()` says when `ViWait::end_with_test` ends the wait before its timeout.
+const ENDED_WITH_TEST: &str = "Matcher did not succeed before the end of the test that was running when expect.poll() was called.";
 
 pub(crate) struct ViWait {
     kind: Kind,
@@ -249,6 +252,11 @@ impl ViWait {
         if !this.is_pending() {
             return Ok(());
         }
+        // The error keeps the stack of the call, where it was made.
+        if let Some(error) = js::timeout_error_get_cached(this_value) {
+            let message = BunString::static_(ENDED_WITH_TEST).to_js(global)?;
+            error.put_non_enumerable(global, b"message", message);
+        }
         this.time_out(global, this_value)
     }
 
@@ -445,7 +453,9 @@ impl ViWait {
             .context_id()
             .map(|context| vm.enter_context(context));
         let outlived = self.test.as_ref().is_some_and(RunningEntry::outlived_bystander);
-        let result = if !outlived && self.timer.get().next.order(&self.deadline.get()).is_lt() {
+        let result = if outlived {
+            Self::end_with_test(global, this_value)
+        } else if self.timer.get().next.order(&self.deadline.get()).is_lt() {
             self.poll(global, this_value, false)
         } else {
             self.time_out(global, this_value)

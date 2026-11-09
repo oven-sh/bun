@@ -3473,8 +3473,9 @@ describe.concurrent("a repeated resolution", () => {
         const resolve = i => {
           if (require.resolve("./m" + i + ".cjs") !== path.join(__dirname, "m" + i + ".cjs")) wrong++;
         };
-        // Two resolutions in a row give a pair an entry. A bucket holds two, and about 45 of the 1024 get a third pair.
-        for (let i = 0; i < count; i++) resolve(i), resolve(i);
+        // Three resolutions in a row give a pair an entry that has answered once. A bucket holds two, and about 45 of
+        // the 1024 get a third pair, which replaces one of them.
+        for (let i = 0; i < count; i++) resolve(i), resolve(i), resolve(i);
         const before = resolutionMemoHits();
         for (let i = 0; i < count; i++) resolve(i);
         const hits = resolutionMemoHits() - before;
@@ -3484,6 +3485,29 @@ describe.concurrent("a repeated resolution", () => {
     });
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ wrong: 0, answeredSome: true, replacedSome: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // A pair that comes back once is no better than one that was kept and not asked for since. To replace the one by the
+  // other at every turn costs more than the resolver does.
+  test("keeps most of its entries when every pair is resolved just twice", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "child.cjs": `module.exports = 1;`,
+      "main.cjs": `
+        const { resolutionMemoHits } = require("bun:internal-for-testing");
+        const { createRequire } = require("node:module");
+        const path = require("node:path");
+        // Each with a source of its own: 5000 pairs, which is more than twice what the memo holds.
+        const from = Array.from({ length: 5000 }, (_, i) => createRequire(path.join(__dirname, "from-" + i + ".cjs")));
+        for (const require of from) require.resolve("./child.cjs"), require.resolve("./child.cjs");
+        const before = resolutionMemoHits();
+        for (const require of from.slice(0, 1000)) require.resolve("./child.cjs");
+        console.log(resolutionMemoHits() - before);
+      `,
+    });
+    expect(stderr).toBe("");
+    // About 700 of the first 1000. About 100 if each pair that came back took the place of the oldest entry.
+    expect(Number(stdout)).toBeGreaterThan(350);
     expect(exitCode).toBe(0);
   });
 });

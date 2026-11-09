@@ -5107,6 +5107,28 @@ if (isBun) {
       }
     });
 
+    test("a resetAllMocks() that is called while a mock is reset leaves the mocks that the running one has yet to reset", () => {
+      let isArmed = false;
+      let seen = "the reset step did not run";
+      // The mock that is reset first configures the other one again. The running resetAllMocks() resets that one later.
+      const mocks = [0, 1].map(i =>
+        resettable(() => {
+          if (!isArmed) return;
+          isArmed = false;
+          mocks[1 - i].mockReturnValue("configured again");
+          vi.resetAllMocks();
+          seen = mocks[1 - i]();
+        }),
+      );
+      for (const mocked of mocks) mocked.mockReturnValue("configured");
+      isArmed = true;
+      vi.resetAllMocks();
+      expect({ seen, after: mocks.map(mocked => mocked()) }).toEqual({
+        seen: "configured again",
+        after: [undefined, undefined],
+      });
+    });
+
     test("a resetAllMocks() that is terminated leaves the mocks it did not reach to the next one", () => {
       const names = ["a", "b", "c", "d", "e", "f"];
       const reset = [];
@@ -5605,6 +5627,9 @@ if (isBun) {
             "b.test.ts": `
               import { expect, jest, spyOn, test } from "bun:test";
               test("b", () => {
+                const spied = objects => objects.filter(object => jest.isMockFunction(object.method)).length;
+                // The end of a.test.ts restored the spies of that file only.
+                expect({ ofPreload: spied(ofPreload), ofA: spied(ofA) }).toEqual({ ofPreload: 8, ofA: 0 });
                 globalThis.ofB = ["b0", "b1"].map(trapped);
                 for (const object of ofB) spyOn(object, "method");
                 isRestoring = true;

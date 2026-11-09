@@ -1291,8 +1291,7 @@ impl FormatOptions {
 // format2
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `Ok` means that no exception is pending: every exception that formatting leaves on the VM comes
-/// back as the `Err`.
+/// `Ok` means that no exception is pending: what formatting leaves on the VM comes back as the `Err`.
 #[inline]
 pub fn format2(
     level: MessageLevel,
@@ -3840,8 +3839,7 @@ pub mod formatter {
             Ok(())
         }
 
-        /// Outlined so that the converted string is not in the frame of
-        /// `print_custom_formatted_object`, which nests once per inspect hook.
+        /// Outlined: its string is not in the frame of `print_custom_formatted_object`, which nests per hook.
         #[inline(never)]
         fn print_custom_inspect_string(
             &mut self,
@@ -5697,8 +5695,7 @@ pub mod formatter {
         /// Use this instead of the `Display` adapter ([`ZigFormatter`]) when a
         /// `JsResult` caller needs the error: `Display` can only report
         /// `fmt::Error`, which panics inside `io::Write::write_fmt` when the
-        /// sink itself did not fail. As for [`format2`], `Ok` means that no
-        /// exception is pending.
+        /// sink itself did not fail.
         pub fn format_value<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             value: JSValue,

@@ -1,8 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// Inspecting a value can run user code (a custom inspect method, a getter of
-// a value that the error printer formats) that throws.
+// Inspecting a value can run user code (a custom inspect method) that throws.
 // The matcher utils must surface that as a catchable JS exception. The
 // unfixed build aborts the process instead, so the input runs in a child.
 test.concurrent.each([

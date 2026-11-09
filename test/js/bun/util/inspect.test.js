@@ -1791,8 +1791,7 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
 
 describe("a value that an Error holds throws while the error printer formats it", () => {
   it.concurrent("console.log, console.error, console.trace and Bun.inspect throw what it threw", async () => {
-    // console.log writes what it printed before the throw, so the calls run in a child and the
-    // outcomes come back on the last line of stdout.
+    // console.log writes what it printed before the throw: the child reports the outcomes on its last line.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

@@ -570,8 +570,7 @@ describe.concurrent("Bun REPL", () => {
     });
 
     test("a throwing inspect hook does not crash the loop", async () => {
-      // The hook's error is printed as the error of that line. No exception leaks
-      // (BUN_JSC_validateExceptionChecks in CI) and the loop continues.
+      // The hook's error is the error of that line. No exception leaks (BUN_JSC_validateExceptionChecks in CI).
       const { outputs, stderr, exitCode } = await runRepl([
         `globalThis.__bad = { [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("boom"); } }; __bad`,
         // Products that do not appear in the echoed input (7*6=42, 100+23=123).
@@ -995,8 +994,7 @@ describe.concurrent("Bun REPL", () => {
       });
     });
 
-    // The print of a String object starts a colour before the conversion that throws. That colour
-    // is not left open for the last line, nor for what the terminal prints next.
+    // The print of a String object starts a colour before the conversion that throws. It must not stay open.
     test.each([
       [
         "nothing visible was printed",
@@ -1082,8 +1080,7 @@ describe.concurrent("Bun REPL", () => {
         expect(exitCode).toBe(1);
       });
 
-      // The listener is a function of an ES module and reads a global. When JavaScriptCore links it
-      // for its first call, a release build asserts that no exception is pending.
+      // JavaScriptCore asserts that no exception is pending when it links an ES module function that reads a global.
       test.each(["a property of an Error throws", "an inspect hook returns a String object whose conversion throws"])(
         "with a beforeExit listener from an imported module: %s",
         async name => {

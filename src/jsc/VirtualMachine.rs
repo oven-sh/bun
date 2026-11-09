@@ -66,9 +66,7 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 enum ErrorPrinted {
     /// No exception is pending.
     Done,
-    /// The print stopped and its exception is still pending, for the caller of the console formatter.
-    /// Either a value the error holds threw while it was formatted (`allow_side_effects` is off), or
-    /// the stack limit was reached under a formatter that `can_throw_stack_overflow`.
+    /// The print stopped at a throw (a held value or the stack limit) and left it pending for the caller.
     ThrewForCaller,
 }
 
@@ -6623,8 +6621,7 @@ impl VirtualMachine {
         self.run_error_handler(value, None);
     }
 
-    /// The error printer for the reporters of uncaught errors: it clears what a print throws.
-    /// Note: takes a runtime bool and the concrete `bun_core::io::Writer`.
+    /// For the reporters of uncaught errors. Takes a runtime bool and the concrete `bun_core::io::Writer`.
     pub fn print_errorlike_object(
         &mut self,
         value: JSValue,
@@ -6643,16 +6640,12 @@ impl VirtualMachine {
             allow_ansi_color,
             true,
         );
-        // In this mode only the stack limit leaves an exception pending, and only under a formatter
-        // that `can_throw_stack_overflow`. No reporter passes one.
+        // Only a formatter that `can_throw_stack_overflow` leaves an exception here: no reporter passes one.
         debug_assert!(printed == ErrorPrinted::Done);
     }
 
-    /// The error printer for the console formatter. `Err` when the print left an exception pending,
-    /// as after any `JsResult` error: a value the error holds threw while it was formatted, or the
-    /// stack limit was reached.
-    // No frame of its own: Errors nest through here down to the stack limit.
-    #[inline(always)]
+    /// Entry for the console formatter: `Err` when the print left an exception pending.
+    #[inline(always)] // No frame of its own: Errors nest through here down to the stack limit.
     pub(crate) fn format_errorlike_object(
         &mut self,
         value: JSValue,
@@ -6831,8 +6824,7 @@ impl VirtualMachine {
         printed
     }
 
-    /// Returns whether `value` was a `BuildMessage` / `ResolveMessage` (printed from its own log message),
-    /// and what the print left pending.
+    /// Returns whether `value` was a `BuildMessage` / `ResolveMessage`, and what the print left pending.
     fn print_error_from_maybe_private_data(
         &mut self,
         value: JSValue,

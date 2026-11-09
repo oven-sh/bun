@@ -2261,8 +2261,7 @@ impl<'a> Repl<'a> {
                 ..Default::default()
             },
         ) {
-            // Formatting the error itself threw. That exception is not the one being reported:
-            // show what was formatted up to there, and say that it is cut off.
+            // Formatting the error threw: show what was formatted up to there, and say that it is cut off.
             if global.take_error(err).is_termination_exception() {
                 return;
             }
@@ -2282,8 +2281,7 @@ impl<'a> Repl<'a> {
         let _ = writer.write_all(&buf);
     }
 
-    /// An exception from the REPL's own work on a result (the print, the copy) is the last error,
-    /// as an exception that the evaluated code threw is.
+    /// An exception from the REPL's own work on a result (the print, the copy) becomes the last error.
     fn report_thrown(&mut self, err: JsError) {
         let Some(global) = self.global else {
             return;
@@ -2308,8 +2306,7 @@ impl<'a> Repl<'a> {
         }
     }
 
-    /// Format and print a JS value using Bun's console formatter (same as console.log).
-    /// Nothing is printed when formatting throws.
+    /// Format and print a JS value using Bun's console formatter (same as console.log)
     fn print_formatted_value(&self, value: JSValue) -> JsResult<()> {
         let Some(global) = self.global else {
             return Ok(());

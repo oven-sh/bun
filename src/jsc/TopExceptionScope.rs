@@ -464,13 +464,13 @@ impl ExceptionValidationScope {
         Ok(())
     }
 
-    /// For a callee whose `Ok` promises that it left no exception pending: asserts that (a termination
-    /// aside). What is behind an `Err` is only observed, which the destructor of the scope requires.
+    /// Asserts that a callee which returned `Ok` left no exception pending (a termination aside).
     pub(crate) fn assert_no_exception_after_ok(&mut self, result: JsResult<()>) {
         #[cfg(any(debug_assertions, bun_asan))]
         match result {
             Ok(()) => self.scope.assert_no_exception(),
             Err(_) => {
+                // The destructor of the scope requires that the exception was observed.
                 let _ = self.scope.has_exception();
             }
         }

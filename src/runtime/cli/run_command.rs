@@ -3180,6 +3180,7 @@ impl RunCommand {
                         }
                     } else if let Some(script) = first.strip_prefix(b"--eval=") {
                         eval_script_seen = true;
+                        ctx.passthrough.remove(0);
                         ctx.runtime_options.eval.script =
                             Box::leak(script.to_vec().into_boxed_slice());
                     } else if first == b"-p" || first == b"--print" {
@@ -3192,6 +3193,7 @@ impl RunCommand {
                         }
                     } else if let Some(script) = first.strip_prefix(b"--print=") {
                         eval_script_seen = true;
+                        ctx.passthrough.remove(0);
                         ctx.runtime_options.eval.script =
                             Box::leak(script.to_vec().into_boxed_slice());
                         ctx.runtime_options.eval.eval_and_print = true;
@@ -3248,6 +3250,12 @@ impl RunCommand {
                 return Self::exec_node_repl(ctx);
             }
             Self::exec_as_if_node_missing_script();
+        }
+
+        // `bun node -` reads the script from stdin, as `bun run -` does.
+        if ctx.positionals[0].as_ref() == b"-" {
+            Self::exec_stdin(ctx)?;
+            return Ok(());
         }
 
         // borrowck — `boot_and_handle_error` takes `&mut ctx`, so

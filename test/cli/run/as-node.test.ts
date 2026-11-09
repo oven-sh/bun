@@ -4,10 +4,19 @@ import { bunEnv, bunExe, fakeNodeRun, isMacOS, isWindows, tempDir } from "../../
 
 describe("fake node cli", () => {
   test("passes arguments after an eval script to the script", () => {
-    const code = "console.log(JSON.stringify(process.argv.slice(1)))";
-    for (const args of [["-e", code, "foo", "bar"], [`--eval=${code}`, "foo", "bar"], ["-p", code, "foo", "bar"]]) {
+    const print = "JSON.stringify(process.argv.slice(1))";
+    const log = `console.log(${print})`;
+    const forms = [
+      ["-e", log],
+      [`--eval=${log}`],
+      ["--eval", log],
+      ["-p", print],
+      [`--print=${print}`],
+      ["--print", print],
+    ];
+    for (const args of forms) {
       const { stdout, stderr, exitCode } = Bun.spawnSync({
-        cmd: [bunExe(), "--bun", "node", ...args],
+        cmd: [bunExe(), "--bun", "node", ...args, "foo", "bar"],
         env: { ...bunEnv, NODE_ENV: undefined },
         stdout: "pipe",
         stderr: "pipe",
@@ -16,6 +25,18 @@ describe("fake node cli", () => {
       expect(stdout.toString().trim()).toBe('[\"foo\",\"bar\"]');
       expect(exitCode).toBe(0);
     }
+  });
+  test("reads a script from stdin with -", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", "-"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdin: Buffer.from(`console.log("stdin")`),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("stdin");
+    expect(exitCode).toBe(0);
   });
   test("the node cli actually works", () => {
     using temp = tempDir("fake-node", {

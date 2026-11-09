@@ -248,6 +248,18 @@ describe("what a script stored on Array.prototype", () => {
       }
       Array.prototype[Symbol.iterator] = realIterator;
       process.stdout.write(out + "\\n");
+
+      // A "function" entry comes from the registry of Node's own types, whatever includes() answers.
+      const { PerformanceObserver, performance } = require("node:perf_hooks");
+      const observer = new PerformanceObserver(list => {
+        process.stdout.write("observed: " + list.getEntries()[0].entryType + "\\n");
+        observer.disconnect();
+      });
+      const realIncludes = Array.prototype.includes;
+      Array.prototype.includes = () => false;
+      observer.observe({ entryTypes: ["function"] });
+      Array.prototype.includes = realIncludes;
+      performance.timerify(function timed() {})();
     `,
     // Prints once its stdin ends, which is when the process that started it is gone.
     "outlives.cjs": `process.stdin.on("end", () => process.stdout.write("the child outlived spawn()\\n")).resume();`,
@@ -417,12 +429,15 @@ describe("what a script stored on Array.prototype", () => {
   );
 
   // internal/shared built a Set from a list while it loaded. node:perf_hooks is what uses those names.
-  it.concurrent("an array iterator that throws while node:perf_hooks first loads: the module loads", async () => {
-    expect(await run("perf-hooks-under-a-throwing-iterator.cjs")).toEqual({
-      stdout: "node:perf_hooks loaded, performance.now is a function\n",
-      ...ranToItsEnd,
-    });
-  });
+  it.concurrent(
+    "an array iterator that throws while node:perf_hooks first loads: the module loads, and still knows Node's entry types",
+    async () => {
+      expect(await run("perf-hooks-under-a-throwing-iterator.cjs")).toEqual({
+        stdout: "node:perf_hooks loaded, performance.now is a function\nobserved: function\n",
+        ...ranToItsEnd,
+      });
+    },
+  );
 
   // Without the fix the process waits for a child that nothing can reach, until the test runner stops it.
   it.concurrent.each([
@@ -464,6 +479,8 @@ describe("what a script stored on Array.prototype", () => {
         return undefined;
       },
     });
+    const closed = once(child, "close");
     expect(await text(child.stdout!)).toBe("original");
+    expect(await closed).toEqual([0, null]);
   });
 });

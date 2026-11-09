@@ -2907,6 +2907,17 @@ it("run() reports a closed database when a bound parameter's getter closes it", 
 describe("Database#status", () => {
   const dbStatusOps = Object.keys(constants).filter(name => name.startsWith("SQLITE_DBSTATUS_"));
   const filler = Buffer.alloc(120, "v").toString();
+  // toThrow(new X("m")) compares the message only. This checks the class too.
+  function expectThrows(fn, ErrorClass, message) {
+    let error;
+    try {
+      fn();
+    } catch (thrown) {
+      error = thrown;
+    }
+    expect(error).toBeInstanceOf(ErrorClass);
+    expect(error.message).toBe(message);
+  }
   function openFilled() {
     const db = new Database(":memory:");
     db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
@@ -2942,17 +2953,44 @@ describe("Database#status", () => {
     if (isMacOS) {
       // The system library reports 3.51 on some macOS versions and still does not know TEMPBUF_SPILL.
       let result;
+      let threw = false;
       try {
         result = db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL);
       } catch (error) {
+        threw = true;
         result = error;
       }
-      if (result instanceof Error) {
-        expect(result).toEqual(new RangeError("Unknown sqlite3_db_status op: 13"));
+      if (threw) {
+        expect(result).toBeInstanceOf(RangeError);
+        expect(result.message).toBe("Unknown sqlite3_db_status op: 13");
       } else {
         expect(result).toStrictEqual(shape);
       }
     }
+  });
+
+  // macOS uses the system SQLite, which does not know TEMPBUF_SPILL.
+  it.skipIf(isMacOS)("TEMPBUF_SPILL counts the bytes written to temporary files, and reset sets it to 0", () => {
+    using dir = tempDir("sqlite-tempbuf-spill", {});
+    using db = new Database(path.join(String(dir), "spill.db"));
+    // A two-page cache for the TEMP database forces a temp table onto disk.
+    db.exec("PRAGMA temp_store = FILE; PRAGMA temp.cache_size = 2;");
+    db.run("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");
+    const insert = db.prepare("INSERT INTO t (v) VALUES (?)");
+    const page = Buffer.alloc(1000, "v").toString();
+    db.run("BEGIN");
+    for (let i = 0; i < 1000; i++) insert.run(page + i);
+    db.run("COMMIT");
+    expect(db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL)).toEqual({ current: 0, highwater: 0 });
+
+    db.exec("CREATE TEMP TABLE tt AS SELECT * FROM t");
+    const spilled = db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL);
+    expect(spilled.current).toBeGreaterThan(0);
+    expect(spilled.highwater).toBe(0);
+
+    // The read with `reset` still reports the count. The next read starts from 0.
+    expect(db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL, true)).toEqual(spilled);
+    expect(db.status(constants.SQLITE_DBSTATUS_TEMPBUF_SPILL)).toEqual({ current: 0, highwater: 0 });
   });
 
   it("a cumulative counter is in `current`, and reset sets it to 0", () => {
@@ -3020,12 +3058,12 @@ describe("Database#status", () => {
 
   it("throws for an unknown op, a non-integer op, and a closed database", () => {
     using db = new Database(":memory:");
-    expect(() => db.status(999)).toThrow(new RangeError("Unknown sqlite3_db_status op: 999"));
-    expect(() => db.status(2 ** 40)).toThrow(new RangeError("Unknown sqlite3_db_status op: 1099511627776"));
-    expect(() => db.status("SQLITE_DBSTATUS_CACHE_USED")).toThrow(new TypeError("Expected op to be an integer"));
-    expect(() => db.status(1.5)).toThrow(new TypeError("Expected op to be an integer"));
-    expect(() => db.status(Infinity)).toThrow(new TypeError("Expected op to be an integer"));
-    expect(() => db.status()).toThrow(new TypeError("Expected op to be an integer"));
+    expectThrows(() => db.status(999), RangeError, "Unknown sqlite3_db_status op: 999");
+    expectThrows(() => db.status(2 ** 40), RangeError, "Unknown sqlite3_db_status op: 1099511627776");
+    expectThrows(() => db.status("SQLITE_DBSTATUS_CACHE_USED"), TypeError, "Expected op to be an integer");
+    expectThrows(() => db.status(1.5), TypeError, "Expected op to be an integer");
+    expectThrows(() => db.status(Infinity), TypeError, "Expected op to be an integer");
+    expectThrows(() => db.status(), TypeError, "Expected op to be an integer");
     db.close();
     expect(() => db.status(constants.SQLITE_DBSTATUS_CACHE_USED)).toThrow("Database has closed");
   });

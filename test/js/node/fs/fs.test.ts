@@ -4004,6 +4004,8 @@ describe("operations on the empty path", () => {
     [`fs.promises.rm("", { recursive: true })`, enoent],
     [`fs.rmSync("", { recursive: true, force: true })`, ok],
     [`fs.promises.rm("", { recursive: true, force: true })`, ok],
+    [`fs.rmdirSync("", { recursive: true })`, enoent],
+    [`fs.promises.rmdir("", { recursive: true })`, enoent],
   ];
   const untouched = ["keep.txt", "sub", "sub/inner.txt"];
 

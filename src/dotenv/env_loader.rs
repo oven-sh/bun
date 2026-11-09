@@ -213,10 +213,11 @@ impl Loader {
         !Self::is_emptyish(value) && value != b"0" && value != b"false"
     }
 
-    /// `BUN_ENV` with fallback to `NODE_ENV` — Bun's env precedence for
-    /// production/test detection.
+    /// The mode: `BUN_ENV`, else `NODE_ENV`. An empty value names no mode, so
+    /// it is skipped and never returned.
     pub fn get_node_env(&self) -> Option<&[u8]> {
-        self.get(b"BUN_ENV").or_else(|| self.get(b"NODE_ENV"))
+        let read = |name: &[u8]| self.get(name).filter(|v| !v.is_empty());
+        read(b"BUN_ENV").or_else(|| read(b"NODE_ENV"))
     }
 
     pub fn is_production(&self) -> bool {

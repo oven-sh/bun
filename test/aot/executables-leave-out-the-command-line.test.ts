@@ -1,10 +1,11 @@
 // An executable compiled ahead of time never starts the JIT and never acts as `bun`, so `bun build --compile --aot` leaves both out, with or without --trim.
 // What the program itself can use stays. Each way into what was left out answers with a sentence.
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, isWindows } from "harness";
 import { join } from "node:path";
 import { canTrim, model } from "../bundler/compile-trim-features";
 import { unsupported } from "./harness/compiler";
+import { test } from "./harness/default-timeout";
 import { run } from "./harness/run";
 import { sharedBuilds, sizeOf, type Build } from "./harness/shared-builds";
 import { readRemovedFeatures } from "./trimmed-against-whole/removed-features";
@@ -45,8 +46,9 @@ const noCommandLine =
 function removedFeaturesOf(executable: Build): string[] {
   const removed = readRemovedFeatures(executable.file);
   if (removed === undefined) throw new Error(`${executable.name} has no list of removed features`);
+  // What compiled code alone calls stays or leaves by the list of the image: ../bundler/compile-trim-operations.test.ts.
   return model.features
-    .filter(feature => removed.includes(feature.index))
+    .filter(feature => removed.includes(feature.index) && feature.enteredFrom !== "compiled-code")
     .map(feature => feature.name)
     .sort();
 }

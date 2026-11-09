@@ -1,6 +1,7 @@
 import * as b from "bun-builtins-table";
 import {
   argumentsCell,
+  bindingConstantsCell,
   closesChannelCell,
   environmentCell,
   featuresCell,
@@ -104,10 +105,11 @@ const findsOrMakesEmitter = [
   b.definesName(["_events"], b.instance("EventEmitter").fresh),
 ];
 
-const onOtherReceiver = (firstParameter: string): b.FunctionField => ({
+// JSEventEmitterCustom.cpp jsEventEmitterCastFast(): the emitter under `_events` of the receiver, or a new one that it lays there. The body is the same from there on, and so is what it answers.
+const onOtherReceiver = (firstParameter: string, returns: b.SignatureOptions["returns"]): b.FunctionField => ({
   this: b.any,
   args: { [firstParameter]: b.any.optional, operands: b.any.rest },
-  returns: b.any,
+  returns,
   capability: "js",
   throws: true,
   uses: {
@@ -120,7 +122,7 @@ const onOtherReceiver = (firstParameter: string): b.FunctionField => ({
 
 const methodOfEventEmitter = (signature: b.SignatureOptions): b.FunctionField[] => [
   { ...signature, this: nativeEmitter, implementation: b.generic },
-  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event"),
+  onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event", signature.returns),
 ];
 
 const addsListener = [
@@ -183,7 +185,8 @@ const readsListenerLists = (signature: Pick<b.SignatureOptions, "args" | "return
     reads: listenerLists,
   });
 
-const listsListeners = readsListenerLists({ args: { event: b.propertyKey.loose }, returns: newArrayOf(b.any) });
+// A new list of what the program has handed in as listeners: the row says nothing of what lies in it.
+const listsListeners = readsListenerLists({ args: { event: b.propertyKey.loose }, returns: b.instance("Array") });
 
 // It calls the listeners that were added under the event, each with the values and with the object that a listener was last added through as `this`.
 const emitsEvent = {
@@ -396,6 +399,7 @@ const ignoresValue = {
   capability: "heap",
   throws: true,
   uses: { value: b.inspected },
+  writes: externalState,
 } satisfies b.SetterOptions;
 
 // Native code makes the list of strings at the first read. From then on it is a property like any other.
@@ -458,6 +462,7 @@ const computedOnce = [
   "argv0",
   "browser",
   "config",
+  // The host replaces it and says so: marks.builtins.ts.
   "env",
   "execArgv",
   "execPath",
@@ -477,25 +482,6 @@ const computedOnce = [
 
 // Programs read these to find out which runtime they are on. The compiler folds those reads (src/aot/load/locked_builtin_defines.rs), so they are locked.
 const runtimeIdentity = ["isBun", "release", "versions"];
-
-// Every `get` and `getIfPropertyExists` on the object in BunProcess.cpp and ZigGlobalObject.cpp.
-const lookedUpByNativeCode = [
-  "_fatalException",
-  "_kill",
-  "argv",
-  "emit",
-  "env",
-  "execArgv",
-  "nextTick",
-  "noDeprecation",
-  "reallyExit",
-  "stderr",
-  "stdin",
-  "stdout",
-  "throwDeprecation",
-];
-// It asks whether _fatalException can be called, and whether each of the other two is true.
-const onlyInspectedByNativeCode = ["_fatalException", "noDeprecation", "throwDeprecation"];
 
 export default b.declarations(
   b.namespace(
@@ -628,14 +614,25 @@ export default b.declarations(
         uses: { module: [b.everything], filename: [b.runs("ToPrimitive")] },
         implementation: b.hostCall,
       },
-      binding: {
-        args: { name: b.any.optional },
-        returns: b.object,
-        capability: "js",
-        throws: true,
-        uses: { name: [b.runs("ToPrimitive")] },
-        implementation: b.hostCall,
-      },
+      binding: [
+        // Under this name it answers the one object of the realm. In front of that it may emit the deprecation warning, like any call.
+        {
+          args: { name: b.enumeration(["constants"]) },
+          returns: b.object,
+          capability: "js",
+          throws: true,
+          uses: { this: [b.returnedFrom(bindingConstantsCell)], name: b.inspected },
+          implementation: b.hostCall,
+        },
+        {
+          args: { name: b.any.optional },
+          returns: b.object,
+          capability: "js",
+          throws: true,
+          uses: { this: [b.handedOutFrom(bindingConstantsCell)], name: [b.runs("ToPrimitive")] },
+          implementation: b.hostCall,
+        },
+      ],
       assert: {
         args: { condition: b.any.optional, message: b.any.optional },
         capability: "js",
@@ -688,8 +685,6 @@ export default b.declarations(
     },
     {
       table: b.staticTable("src/jsc/bindings/BunProcess.cpp", "processObjectTable"),
-      namesReadByNativeCode: lookedUpByNativeCode,
-      namesOnlyInspectedByNativeCode: onlyInspectedByNativeCode,
     },
   ),
   b.namespace("process.report", {
@@ -725,9 +720,19 @@ export default b.declarations(
       listenerCount: readsListenerLists({ args: { event: b.propertyKey.loose }, returns: b.f64 }),
       listeners: listsListeners,
       rawListeners: listsListeners,
+      // JSEventEmitter.cpp jsEventEmitterConstructor(): the function that native code keeps for the class.
+      constructor: b.property(b.callable),
     },
   }),
+  // A function of the library's JavaScript: under `new` it queues the callback and a new object is the answer.
+  b.constructionOfFunction(
+    "process.nextTick",
+    queuesTick.map(overload => ("returns" in overload ? overload : { ...overload, returns: b.instance("Object") })),
+  ),
   b.inherits("process", "%EventEmitter%.prototype"),
+  // Object.prototype, until node:events is evaluated: jsFunctionMakeProcessInheritFrom lays its EventEmitter.prototype there.
+  // Every other name of that one lies on the native prototype too: test/aot/what-node-events-lays-above-process.test.ts.
+  b.inheritsFromUnknown("%EventEmitter%.prototype", "_eventsCount"),
   b.inherits("process.report", "Object.prototype"),
   changedByNativeCode.flatMap(name => b.extend(`process.${name}`, { mutability: "ChangesOnItsOwn" })),
   computedOnce.flatMap(name => b.extend(`process.${name}`, { mutability: "ConstantUnlessWritten" })),

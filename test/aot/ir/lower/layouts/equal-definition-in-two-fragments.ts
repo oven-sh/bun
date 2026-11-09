@@ -1,9 +1,9 @@
 // RUN: link
-// CHECK-COUNT-1: layout {{*}}name="Shape"
+// CHECK-COUNT-1: layout {{*}}fields=[{key="a"
 // CHECK-NOT: layout {{*}}name="Shape"
 
 // RUN(ALLOCATIONS): link
-// ALLOCATIONS: layout [[shape]] name="Shape"
+// ALLOCATIONS: layout [[shape]] {{*}}fields=[{key="a"
 // ALLOCATIONS-COUNT-2: = NewObject {{*}}layout=[[shape]] fields=[0]
 
 import { type Shape, createShape } from "./imports/shape";

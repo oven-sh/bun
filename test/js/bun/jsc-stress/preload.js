@@ -32,3 +32,6 @@ globalThis.fullGC = jsc.fullGC;
 globalThis.edenGC = jsc.edenGC;
 globalThis.numberOfDFGCompiles = jsc.numberOfDFGCompiles;
 globalThis.noDFG = jsc.noFTL;
+
+// drainMicrotasks: runs the queued microtasks before it returns.
+globalThis.drainMicrotasks = jsc.drainMicrotasks;

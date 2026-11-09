@@ -42,6 +42,40 @@ describe("bundler", () => {
     });
   }
 
+  // The bytecode has the constructor and not the code of its arrow functions, or their code and not the code of their
+  // eval. The cache keeps what the constructor told them: another arrow function can call super().
+  for (const bytecodeDepth of [1, 2, 3]) {
+    itBundled(`bun/bytecode-depth-${bytecodeDepth}-derived-constructor-this-in-arrow-function`, {
+      target: "bun",
+      format: "cjs",
+      bytecode: true,
+      bytecodeDepth,
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          class Base {}
+          class Derived extends Base {
+            constructor() {
+              const initialize = () => {
+                super();
+              };
+              const read = () => {
+                initialize();
+                return this;
+              };
+              const readInEval = () => eval("initialize(); this");
+              console.log(new.target === Derived ? read() === this : readInEval() === this);
+            }
+          }
+          class EvalCode extends Derived {}
+          new Derived();
+          new EvalCode();
+        `,
+      },
+      run: { stdout: "true\ntrue\n" },
+    });
+  }
+
   // https://github.com/oven-sh/bun/issues/18899
   itBundled("bun/import-bun-format-cjs", {
     target: "bun",

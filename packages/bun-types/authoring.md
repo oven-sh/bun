@@ -121,7 +121,9 @@ There is one file per preset:
 How to read a line:
 
 - `name(a: A): B` is a method, with one line per overload. `name: (a: A) => B` is a property with a function type. TypeScript compares the parameters of a method bivariantly, so a change from one form to the other is a type change.
-- `[?]`, `[readonly]` and `[static]` after a name are its modifiers.
+- Overloads are in the order in which a call tries them. The first line that accepts the arguments is the one a user gets. When an interface merges with `lib.dom.d.ts`, the signatures of the later declaration come first, and bun-types is loaded after the lib files. So in `esnext-dom` a signature that bun-types declares inline wins over the one of lib.dom.
+- `[?]`, `[readonly]` and `[static]` after a name are its modifiers. The presets set `exactOptionalPropertyTypes`, so `x [?]: T` is `x?: T` and `x [?]: T | undefined` is `x?: T | undefined`.
+- `Bun.X` is an export of the module `"bun"`. `import("bun:test").X` is an export of another module. A name with no prefix is a global.
 - `...` stands for the type literal that the line is part of (`vi.useFakeTimers(): ...`).
 - The members of a union are in alphabetical order, not in source order.
 

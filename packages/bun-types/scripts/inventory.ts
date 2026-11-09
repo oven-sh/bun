@@ -170,6 +170,9 @@ function createProgram(projectDir: string, { lib, entryPoint }: Preset) {
     jsx: ts.JsxEmit.ReactJSX,
     types: ["bun"],
     strict: true,
+    // `x?: T` and `x?: T | undefined` are one type without this flag. bun-types writes
+    // `| undefined` on purpose, for the projects that set it.
+    exactOptionalPropertyTypes: true,
     noEmit: true,
     skipLibCheck: true,
   };
@@ -257,9 +260,77 @@ function inventory(
 
   const rawTypeText = (type: ts.Type) => clean(checker.typeToString(type, undefined, typeFormat));
 
-  /** The type arguments TypeScript prints after the name of an alias, class, or interface instantiation. */
+  /**
+   * `Bun.Serve.Options`, `import("bun:test").Matchers`, `NodeJS.Dict`, `Blob`: the name of a
+   * type with the module that exports it. TypeScript prints the export of a module as the
+   * bare name, so `Matchers` of "bun:test" and `Matchers` of "vitest" would read the same.
+   */
+  function qualifiedName(symbol: ts.Symbol): string {
+    const full = checker.getFullyQualifiedName(symbol);
+    const quoted = /^"((?:[^"\\]|\\.)*)"(?:\.(.*))?$/.exec(full);
+    if (!quoted) return full;
+    const [, module, rest] = quoted;
+    // The global `Bun` is the namespace of the module "bun".
+    if (module === "bun") return rest ? `Bun.${rest}` : "Bun";
+    return clean(`import("${module}")`) + (rest ? `.${rest}` : "");
+  }
+
+  /**
+   * With exactOptionalPropertyTypes the type of `x?: T` is `T` plus a marker type for
+   * "not set", which TypeScript also prints as `undefined`. Only a written `undefined` is printed.
+   */
+  const undefinedType = checker.getUndefinedType();
+  const isNotSetMarker = (type: ts.Type) => !!(type.flags & ts.TypeFlags.Undefined) && type !== undefinedType;
+
+  /**
+   * The order in which a call tries its overloads, which is not the order of
+   * `getSignaturesOfType`: the signatures of one declaration stay in source order, a LATER
+   * declaration of the same symbol (another block of a merged interface, another
+   * `declare function`) goes first, and a signature with a literal parameter type goes before
+   * them all. This is reorderCandidates() of TypeScript's checker. With lib.dom loaded it is
+   * what makes a signature of bun-types win over the one of lib.dom.
+   */
+  function inCallOrder(signatures: readonly ts.Signature[]): ts.Signature[] {
+    const result: ts.Signature[] = [];
+    let lastParent: ts.Node | undefined;
+    let lastSymbol: ts.Symbol | undefined;
+    let cutoffIndex = 0;
+    let index = 0;
+    let specializedIndex = -1;
+    for (const signature of signatures) {
+      const declaration = signature.getDeclaration() as (ts.SignatureDeclaration & { symbol?: ts.Symbol }) | undefined;
+      const symbol = declaration?.symbol && checker.getMergedSymbol(declaration.symbol);
+      const parent = declaration?.parent;
+      if (!lastSymbol || symbol === lastSymbol) {
+        if (lastParent && parent === lastParent) {
+          index++;
+        } else {
+          lastParent = parent;
+          index = cutoffIndex;
+        }
+      } else {
+        index = cutoffIndex = result.length;
+        lastParent = parent;
+      }
+      lastSymbol = symbol;
+      const hasLiteralParameter = declaration?.parameters.some(
+        parameter => parameter.type !== undefined && ts.isLiteralTypeNode(parameter.type),
+      );
+      if (hasLiteralParameter) {
+        specializedIndex++;
+        cutoffIndex++;
+        result.splice(specializedIndex, 0, signature);
+      } else {
+        result.splice(index, 0, signature);
+      }
+    }
+    return result;
+  }
+
+  const signaturesOf = (type: ts.Type, kind: ts.SignatureKind) => inCallOrder(checker.getSignaturesOfType(type, kind));
+
+  /** The type arguments that TypeScript prints after the name of a class or an interface. */
   function referenceTypeArguments(type: ts.Type): readonly ts.Type[] | undefined {
-    if (type.aliasSymbol) return type.aliasTypeArguments;
     if (!(type.flags & ts.TypeFlags.Object) || !((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference)) {
       return undefined;
     }
@@ -303,7 +374,7 @@ function inventory(
   function methodTexts(prop: ts.Symbol, name: string): string[] | undefined {
     if (!(prop.flags & ts.SymbolFlags.Method)) return undefined;
     const type = checker.getNonNullableType(checker.getTypeOfSymbol(prop));
-    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const signatures = signaturesOf(type, ts.SignatureKind.Call);
     if (signatures.length === 0) return undefined;
     const optional = prop.flags & ts.SymbolFlags.Optional ? "?" : "";
     return signatures.map(sig => `${name}${optional}${signatureText(sig, ts.SignatureKind.Call, ": ")}`);
@@ -321,8 +392,8 @@ function inventory(
   }
 
   function typeLiteralText(type: ts.Type): string {
-    const calls = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
-    const constructs = checker.getSignaturesOfType(type, ts.SignatureKind.Construct);
+    const calls = signaturesOf(type, ts.SignatureKind.Call);
+    const constructs = signaturesOf(type, ts.SignatureKind.Construct);
     const indexes = checker.getIndexInfosOfType(type);
     const props = checker.getPropertiesOfType(type);
     if (indexes.length === 0 && props.length === 0) {
@@ -391,13 +462,23 @@ function inventory(
    */
   function typeText(type: ts.Type, expandAlias?: ts.Symbol): string {
     const expand = !type.aliasSymbol || type.aliasSymbol === expandAlias;
-    if (expand && type.isUnion()) {
+    // The alias itself, where it is not the one being defined.
+    if (type.aliasSymbol && !expand) return namedTypeText(type.aliasSymbol, type.aliasTypeArguments, type);
+    const ownText = () =>
+      type.aliasSymbol
+        ? clean(checker.typeToString(type, undefined, typeFormat | ts.TypeFormatFlags.InTypeAlias))
+        : rawTypeText(type);
+    // An enum is a union of its members. It has a name.
+    if (type.flags & ts.TypeFlags.EnumLike && type.symbol && !type.aliasSymbol) return qualifiedName(type.symbol);
+    if (type.isUnion()) {
+      const origin = (type as ts.Type & { origin?: ts.Type }).origin;
+      // `X & (A | B)` is held as `(X & A) | (X & B)`. Print what was written.
+      if (origin?.isIntersection()) return origin.types.map(t => memberText(t, t.isUnion())).join(" & ");
+      // A `keyof X` origin: TypeScript prints it as `keyof X`, keep that.
+      if (origin && !origin.isUnion()) return ownText();
       // A union built from an aliased union plus extra members (`FormDataEntryValue | null`)
       // keeps the alias in `origin`. Print through it so the alias name survives.
-      // A `keyof X` origin is not a union: TypeScript prints it as `keyof X`, keep that.
-      const origin = (type as ts.Type & { origin?: ts.Type }).origin;
-      if (origin && !origin.isUnion()) return rawTypeText(type);
-      const parts = origin?.isUnion() ? origin.types : type.types;
+      const parts = (origin?.isUnion() ? origin.types : type.types).filter(t => !isNotSetMarker(t));
       const isBooleanLiteral = (t: ts.Type, name: string) =>
         !!(t.flags & ts.TypeFlags.BooleanLiteral) && (t as ts.Type & { intrinsicName?: string }).intrinsicName === name;
       const hasTrue = parts.some(t => isBooleanLiteral(t, "true"));
@@ -408,12 +489,12 @@ function inventory(
       if (hasTrue && hasFalse) texts.push("boolean");
       return texts.sort().join(" | ");
     }
-    if (expand && type.isIntersection()) {
+    if (type.isIntersection()) {
       // TypeScript keeps intersection members in source order, so only recurse.
       return type.types.map(t => memberText(t, t.isUnion())).join(" & ");
     }
-    if (expand && checker.isTupleType(type)) return tupleText(type as ts.TupleTypeReference);
-    if (expand && isTypeLiteral(type)) {
+    if (checker.isTupleType(type)) return tupleText(type as ts.TupleTypeReference);
+    if (isTypeLiteral(type)) {
       if (printing.has(type)) return "...";
       printing.add(type);
       try {
@@ -422,45 +503,53 @@ function inventory(
         printing.delete(type);
       }
     }
-    // `Name<Arg, Arg>`: a class, interface, or alias instantiation. Print the
-    // arguments through typeText so unions inside them are sorted too. The
-    // positional mapping is only trusted when re-rendering the arguments the way
-    // TypeScript does reproduces its own text.
-    const typeArguments = type.aliasSymbol === expandAlias && expandAlias ? undefined : referenceTypeArguments(type);
-    if (typeArguments && typeArguments.length > 0) {
-      const raw = rawTypeText(type);
-      const open = raw.indexOf("<");
-      const name = open > 0 ? raw.slice(0, open) : "";
-      if (/^[\w$.]+$/.test(name)) {
-        // TypeScript drops trailing arguments that equal their defaults, so try each prefix.
-        const rawArguments = typeArguments.map(rawTypeText);
-        for (let count = rawArguments.length; count > 0; count--) {
-          if (raw === `${name}<${rawArguments.slice(0, count).join(", ")}>`) {
-            return `${name}<${typeArguments
-              .slice(0, count)
-              .map(t => typeText(t))
-              .join(", ")}>`;
-          }
-        }
+    // A class or an interface, with its type arguments.
+    if (type.flags & ts.TypeFlags.Object && type.symbol) {
+      const { objectFlags } = type as ts.ObjectType;
+      const declared =
+        objectFlags & ts.ObjectFlags.Reference ? (type as ts.TypeReference).target : (type as ts.ObjectType);
+      if (declared.objectFlags & ts.ObjectFlags.ClassOrInterface) {
+        return namedTypeText(type.symbol, referenceTypeArguments(type), type);
       }
     }
     // The type of a method or of a function declaration: one signature per overload.
-    const callSignatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const callSignatures = signaturesOf(type, ts.SignatureKind.Call);
     if (
       callSignatures.length > 0 &&
       !type.aliasSymbol &&
       type.symbol &&
       type.symbol.flags & (ts.SymbolFlags.Method | ts.SymbolFlags.Function) &&
       checker.getPropertiesOfType(type).length === 0 &&
-      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0
+      signaturesOf(type, ts.SignatureKind.Construct).length === 0
     ) {
       if (callSignatures.length === 1) return signatureText(callSignatures[0]!, ts.SignatureKind.Call, " => ");
       return `{ ${callSignatures.map(sig => signatureText(sig, ts.SignatureKind.Call, ": ")).join("; ")} }`;
     }
-    if (expandAlias && type.aliasSymbol === expandAlias) {
-      return clean(checker.typeToString(type, undefined, typeFormat | ts.TypeFormatFlags.InTypeAlias));
+    return ownText();
+  }
+
+  /**
+   * `Name<Arg, Arg>`. The arguments go through typeText, so that a union inside them is
+   * sorted too. TypeScript leaves out the trailing arguments of `Iterable`, `IterableIterator`
+   * and their async forms that equal the defaults, and so does this.
+   */
+  function namedTypeText(symbol: ts.Symbol, typeArguments: readonly ts.Type[] | undefined, type: ts.Type): string {
+    const name = qualifiedName(symbol);
+    if (!typeArguments || typeArguments.length === 0) return name;
+    let count = typeArguments.length;
+    const raw = rawTypeText(type);
+    const open = raw.indexOf("<");
+    if (open > 0 && /^[\w$.]+$/.test(raw.slice(0, open))) {
+      const rawName = raw.slice(0, open);
+      const rawArguments = typeArguments.map(rawTypeText);
+      for (let shorter = count - 1; shorter > 0; shorter--) {
+        if (raw === `${rawName}<${rawArguments.slice(0, shorter).join(", ")}>`) count = shorter;
+      }
     }
-    return rawTypeText(type);
+    return `${name}<${typeArguments
+      .slice(0, count)
+      .map(t => typeText(t))
+      .join(", ")}>`;
   }
 
   function typeParamsText(params: readonly ts.TypeParameter[] | undefined): string {
@@ -468,9 +557,16 @@ function inventory(
     return `<${params
       .map(tp => {
         let text = rawTypeText(tp);
-        const constraint = tp.getConstraint();
+        // The constraint and the default as they are declared. `tp.getConstraint()` is the
+        // base constraint: it turns `K extends keyof T` into `K extends number | string | symbol`.
+        const declaration = tp.symbol?.declarations?.find(ts.isTypeParameterDeclaration);
+        const constraint = declaration
+          ? declaration.constraint && checker.getTypeFromTypeNode(declaration.constraint)
+          : tp.getConstraint();
         if (constraint) text += ` extends ${typeText(constraint)}`;
-        const fallback = tp.getDefault();
+        const fallback = declaration
+          ? declaration.default && checker.getTypeFromTypeNode(declaration.default)
+          : tp.getDefault();
         if (fallback) text += ` = ${typeText(fallback)}`;
         return text;
       })
@@ -518,10 +614,10 @@ function inventory(
   }
 
   function emitMembers(type: ts.Type, indent: string) {
-    for (const sig of checker.getSignaturesOfType(type, ts.SignatureKind.Call)) {
+    for (const sig of signaturesOf(type, ts.SignatureKind.Call)) {
       lines.push(`${indent}call ${signatureText(sig, ts.SignatureKind.Call, ": ")}`);
     }
-    for (const sig of checker.getSignaturesOfType(type, ts.SignatureKind.Construct)) {
+    for (const sig of signaturesOf(type, ts.SignatureKind.Construct)) {
       lines.push(`${indent}construct ${signatureText(sig, ts.SignatureKind.Construct, ": ")}`);
     }
     for (const info of checker.getIndexInfosOfType(type)) {

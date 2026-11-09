@@ -391,7 +391,7 @@ test("async factory", () => {
 { "foo": "baz" }
 ```
 
-Bun doesn't update a file that your code has imported both with and without a `type` import attribute. For example, the test file has `import data from "./data.json"` and another module has `import data from "./data.json" with { type: "json" }`. Both keep the original after the `mock.module()` call. To get the mock:
+Bun doesn't update a file that your code has imported both with and without a `type` import attribute. For example, the test file has `import data from "./data.json"` and another module has `import data from "./data.json" with { type: "json" }`. Both keep the original after the `mock.module()` call. The other module can come from an earlier test file. Without `--isolate`, test files share the modules they load, so a test can pass alone and fail in a full run. To get the mock:
 
 - Import the file with the same `type` attribute everywhere, or without one everywhere. Then `mock.module()` updates the file for all its importers.
 - Use `await import()` on the file. It gets the mock, with or without the attribute.

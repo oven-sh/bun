@@ -214,7 +214,8 @@ declare module "bun:test" {
      */
     function mocked<T>(item: T, options?: unknown): Mocked<T>;
     /**
-     * Replace the module `id` with the return value of `factory`. The call is hoisted above the file's imports.
+     * Replace the module `id` with the return value of `factory`. The call is hoisted above the file's imports. In a
+     * module that a test file imports, it stays below a variable or an import of the module that `factory` reads.
      *
      * Without a factory, the module is replaced with the file of the same name in a `__mocks__` directory. If there
      * isn't one, it's replaced with a copy of the module where every function is a mock.
@@ -442,7 +443,8 @@ declare module "bun:test" {
      */
     mock<T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions): void | Promise<void>;
     /**
-     * Replace a module with the return value of `factory`. The call is hoisted above the file's imports.
+     * Replace a module with the return value of `factory`. The call is hoisted above the file's imports. In a module
+     * that a test file imports, it stays below a variable or an import of the module that `factory` reads.
      *
      * Without a factory, the module is replaced with the file of the same name in a `__mocks__` directory. If there
      * isn't one, it's replaced with a copy of the module where every function is a mock. With `{ spy: true }`, the

@@ -15,9 +15,10 @@ const differs = {
   "a compiled module stays loaded for the next test file": ["jest", "vi"].flatMap(api =>
     isolations.map(flags => `errors > a ${api}.mock() ${laterConst}: ${flags}`),
   ),
-  "the transpiler's cache holds no compiled code": isolations.map(
-    flags => `modes > a file restored from the transpiler cache: ${flags}`,
-  ),
+  "the transpiler's cache holds no compiled code": [
+    ...isolations.map(flags => `modes > a file restored from the transpiler cache: ${flags}`),
+    "a mock in a module that a test imports > a module restored from the transpiler cache",
+  ],
   "the text of a function is what the file says": [
     "imports that stay static > export from, and an import that an export clause names",
   ],
@@ -35,6 +36,7 @@ const sections = {
   "modes": 7,
   "a top-level variable in a factory of jest.mock": 18,
   "a top-level variable in a factory of vi.mock": 18,
+  "a mock in a module that a test imports": 29,
   "errors": 3,
   "source locations": 4,
 };
@@ -67,6 +69,6 @@ test.each(Object.entries(sections))(
     expect(named("fail")).toEqual(differing.sort());
     expect(named("pass")).toHaveLength(passing);
     // A section that is not listed here would run in no case.
-    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(122 + 12 - passing - differing.length);
+    expect(Number(/^ *(\d+) filtered out$/m.exec(stderr)?.[1])).toBe(122 + 12 + 30 - passing - differing.length);
   },
 );

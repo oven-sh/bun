@@ -537,7 +537,7 @@ test("hoisted", () => {
 
 As in Vitest, `vi.doMock()` leaves a module that's already imported as it is. Whatever imported it keeps the real module. The next `import()` calls the factory and gets the mock. After `vi.doUnmock()`, an `import()` gets the module that was loaded before. `mock.module()` and `jest.doMock()` update the loaded module instead, so its importers get the mock too.
 
-In a file with hoisted calls, Bun turns the other imports into `await import()` and reads them through the module namespace, so they stay live. The exceptions are imports from `bun:test`, `vitest`, `@jest/globals` and `bun`, imports with attributes, `import defer`, `export ... from`, and imports the file re-exports. Those stay static.
+In a file with hoisted calls, Bun turns the other imports into `await import()` and reads them through the module namespace, so they stay live. The exceptions are imports from `bun:test`, `vitest`, `@jest/globals` and `bun`, imports with attributes, `import defer`, `export ... from`, and imports the file re-exports. Those stay static. So does an import that a factory reads in a module that a test file imports (see below).
 
 Bun does the same in a test file or a `--preload` script that has no hoisted call, if it imports `vitest` or runs with `globals = "vitest"`. Vitest runs each import before it looks at the next one, so a module that the file imports first can mock what the next import loads:
 
@@ -547,6 +547,24 @@ import { total } from "./cart"; // imports "./tax", and gets the mock
 ```
 
 As in Vitest, an import of a name that the module doesn't export is `undefined` in such a file, and not a `SyntaxError`.
+
+A module that a test file imports, such as a shared mocks file, is different. Unless the test file runs its imports one at a time, that module is linked to the file's other imports before it runs. Bun then calls the factory at the `vi.mock()` or `jest.mock()` call, to update the mocked module in place. So in a module that is not a test file or a `--preload` script, a call stays behind what its factory reads when it runs:
+
+- If the factory reads a top-level variable that the module declares above the call, none of the module's calls are hoisted. They run where they're written, and the module's imports stay static.
+- If the factory reads an import of the module, that import stays static.
+
+```ts title="mocks.ts" icon="/icons/typescript.svg"
+import { jest } from "bun:test";
+
+export const mockSend = jest.fn();
+
+// Runs here, below mockSend, because the factory reads it.
+jest.mock("./mailer", () => ({ send: mockSend }));
+```
+
+A use inside a function that the factory returns, such as `send: (...args) => mockSend(...args)`, is not a read when the factory runs. That call is still hoisted, so the module's imports load behind the mock. The exception is a module with no import that becomes `await import()`: there, any use of such a variable in the factory keeps the calls where they're written.
+
+In a test file or a `--preload` script, the call is always hoisted. A factory that runs during the file's imports and reads a variable of the file fails there with a `ReferenceError`, as in Jest and Vitest.
 
 To mock a module for every test file, use `--preload` to load your mocks before your tests run.
 

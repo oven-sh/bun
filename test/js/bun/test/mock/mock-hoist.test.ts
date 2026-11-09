@@ -974,6 +974,367 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
   });
 });
 
+// hoist.test.ts hoists nothing, so all its imports are linked before the first of them runs. mocks.ts runs first and
+// mocks what svc.ts is linked to already: only a factory that is called during the body of mocks.ts reaches svc.ts.
+describe.concurrent("a mock in a module that a test imports", () => {
+  const graph = {
+    "dep.ts": `
+      (globalThis.events ??= []).push("dep");
+      export function nextId() { return "real"; }
+    `,
+    "svc.ts": `
+      import { nextId } from "./dep";
+      (globalThis.events ??= []).push("svc");
+      export const atLoad = nextId();
+      export const make = () => nextId();
+    `,
+    "label.ts": `
+      (globalThis.events ??= []).push("label");
+      export const label = "label";
+    `,
+  };
+  const factory = (exports: string) => `() => ((globalThis.events ??= []).push("factory"), ${exports})`;
+  const mocks = (declaration: string, exports = `{ nextId: fake }`) => `
+    import { jest } from "bun:test";
+    ${declaration}
+    jest.mock("./dep", ${factory(exports)});
+    (globalThis.events ??= []).push("mocks");
+  `;
+  const suite = (imports = `import "./mocks"; import { atLoad, make } from "./svc";`) => `
+    ${imports}
+    events.push(atLoad, make());
+    ${print}
+  `;
+  const fake = `export const fake = jest.fn(() => "fake");`;
+  // The real module runs when it is mocked, and its importer gets the mock from its first statement on.
+  const updatedInPlace = ["dep", "factory", "mocks", "svc", "fake", "fake"];
+
+  test.each([
+    [fake, `{ nextId: fake }`],
+    [`export let fake = jest.fn(() => "fake");`, `{ nextId: fake }`],
+    [`export var fake = jest.fn(() => "fake");`, `{ nextId: fake }`],
+    [`export class Fakes { static fake = jest.fn(() => "fake"); }`, `{ nextId: Fakes.fake }`],
+    [`const fakes = { fake: jest.fn(() => "fake") }; const { fake } = fakes;`, `{ nextId: fake }`],
+    [`enum Fake { Id = String("fake") as any }`, `{ nextId: (id => () => id)(Fake.Id) }`],
+    // In a function inside the factory. mocks.ts has no import to run behind its mocks, so that counts too: the
+    // factory calls the first, and an update in place reads the second.
+    [fake, `Object.fromEntries(["nextId"].map(name => [name, fake]))`],
+    [fake, `{ get nextId() { return fake; } }`],
+    [fake, `{ nextId: (...args) => fake(...args) }`],
+  ])(
+    "a factory that uses a variable declared above the call runs where it is written: %s, %s",
+    async (declaration, exports) => {
+      expect(await events({ ...graph, "mocks.ts": mocks(declaration, exports), "hoist.test.ts": suite() })).toEqual([
+        updatedInPlace,
+      ]);
+    },
+  );
+
+  test.each([
+    [`import { vi } from "bun:test";`, "vi", `import { test } from "bun:test";`],
+    [`import { jest } from "@jest/globals";`, "jest", `import { test } from "@jest/globals";`],
+    [`import { vi } from "vitest";`, "vi", `import { test } from "bun:test";`],
+    [``, "jest", ``],
+    [``, "vi", ``],
+  ])("with %s %s.mock()", async (header, api, headerOfTest) => {
+    expect(
+      await events({
+        ...graph,
+        "mocks.ts": `
+          ${header}
+          export const fake = ${api}.fn(() => "fake");
+          ${api}.mock("./dep", ${factory(`{ nextId: fake }`)});
+          (globalThis.events ??= []).push("mocks");
+        `,
+        "hoist.test.ts": suite(`${headerOfTest} import "./mocks"; import { atLoad, make } from "./svc";`),
+      }),
+    ).toEqual([updatedInPlace]);
+  });
+
+  test.each(["vitest", "bun:test"])("behind an index module, with %s in every file", async module => {
+    expect(
+      await events({
+        ...graph,
+        "mocks.ts": `
+          import { vi } from "${module}";
+          export const fake = vi.fn(() => "fake");
+          vi.mock("./dep", ${factory(`{ nextId: fake }`)});
+          (globalThis.events ??= []).push("mocks");
+        `,
+        "all.ts": `export { fake } from "./mocks"; export { atLoad, make } from "./svc";`,
+        "hoist.test.ts": suite(`import { test } from "${module}"; import { atLoad, make } from "./all";`),
+      }),
+    ).toEqual([updatedInPlace]);
+  });
+
+  test("its other imports stay static", async () => {
+    expect(
+      await events({
+        ...graph,
+        "mocks.ts": `
+          import { jest } from "bun:test";
+          import { label } from "./label";
+          ${fake}
+          jest.mock("./dep", ${factory(`{ nextId: fake }`)});
+          (globalThis.events ??= []).push("mocks " + label);
+        `,
+        "hoist.test.ts": suite(),
+      }),
+    ).toEqual([["label", "dep", "factory", "mocks label", "svc", "fake", "fake"]]);
+  });
+
+  test("every test file that imports it gets the mock", async () => {
+    const file = `
+      import "./mocks";
+      import { atLoad, make } from "./svc";
+      test("print", () => console.log(JSON.stringify([atLoad, make()])));
+    `;
+    expect(await events({ ...graph, "mocks.ts": mocks(fake), "a.test.ts": file, "b.test.ts": file }, [])).toEqual([
+      ["fake", "fake"],
+      ["fake", "fake"],
+    ]);
+  });
+
+  test("every call of such a module runs where it is written", async () => {
+    const all = (calls: string) => ({
+      ...graph,
+      "mocks.ts": `
+        import { jest, vi } from "bun:test";
+        ${calls}
+        (globalThis.events ??= []).push("mocks");
+      `,
+      "hoist.test.ts": `
+        import "./mocks";
+        import { atLoad, make } from "./svc";
+        import { other } from "./other";
+        events.push(atLoad, make(), other);
+        ${print}
+      `,
+    });
+    const marked = `jest.mock("./dep", ${factory(`{ nextId: fake }`)});`;
+    expect(
+      await Promise.all(
+        [
+          // A call that uses nothing of the module, above the variable.
+          `jest.mock("./other", () => ({ other: "mocked other" })); ${fake} ${marked}`,
+          // Of two mocks of one module the last one wins.
+          `${fake} ${marked} jest.mock("./dep", () => ({ nextId: () => "last" }));`,
+          `${fake} ${marked} jest.unmock("./dep");`,
+          `const state = vi.hoisted(() => ({ calls: 0 })); ${fake} jest.mock("./dep", () => (state.calls++, events.push("factory"), { nextId: fake }));`,
+        ].map(async calls => (await events(all(calls)))[0]),
+      ),
+    ).toEqual([
+      ["load other", "dep", "factory", "mocks", "svc", "fake", "fake", "mocked other"],
+      ["dep", "factory", "mocks", "svc", "load other", "last", "last", "other"],
+      ["dep", "factory", "mocks", "svc", "load other", "real", "real", "other"],
+      ["dep", "factory", "mocks", "svc", "load other", "fake", "fake", "other"],
+    ]);
+  });
+
+  // The test file has run what it imports by then, so nothing but an update in place reaches it.
+  test("behind the module that imports what it mocks", async () => {
+    expect(
+      await events({
+        ...graph,
+        "mocks.ts": mocks(fake),
+        "hoist.test.ts": suite(`import { atLoad, make } from "./svc"; import "./mocks";`),
+      }),
+    ).toEqual([["dep", "svc", "factory", "mocks", "real", "fake"]]);
+  });
+
+  // As in Vitest, its importers keep a package that they have run with.
+  test("behind the module that imports the package that vi.mock() mocks", async () => {
+    expect(
+      await events({
+        "node_modules/dep/package.json": `{ "name": "dep", "type": "module", "main": "index.js" }`,
+        "node_modules/dep/index.js": graph["dep.ts"],
+        "svc.ts": graph["svc.ts"].replace("./dep", "dep"),
+        "mocks.ts": `
+          import { vi } from "bun:test";
+          export const fake = vi.fn(() => "fake");
+          vi.mock("dep", ${factory(`{ nextId: fake }`)});
+          (globalThis.events ??= []).push("mocks");
+        `,
+        "hoist.test.ts": suite(`import { atLoad, make } from "./svc"; import "./mocks";`),
+      }),
+    ).toEqual([["dep", "svc", "mocks", "real", "real"]]);
+  });
+
+  describe("a factory that uses an import of the module", () => {
+    const fakes = {
+      "fakes.ts": `
+        import { jest } from "bun:test";
+        (globalThis.events ??= []).push("fakes");
+        export const makeFake = () => jest.fn(() => "fake");
+      `,
+    };
+
+    test("that import stays static, and the others are still awaited", async () => {
+      expect(
+        await events({
+          ...graph,
+          ...fakes,
+          "mocks.ts": `
+            import { jest } from "bun:test";
+            import { label } from "./label";
+            import { makeFake } from "./fakes";
+            jest.mock("./dep", ${factory(`{ nextId: makeFake() }`)});
+            (globalThis.events ??= []).push("mocks " + label);
+          `,
+          "hoist.test.ts": suite(),
+        }),
+      ).toEqual([["fakes", "dep", "factory", "svc", "label", "mocks label", "fake", "fake"]]);
+    });
+
+    // The mocks file of the Prisma guide: it imports the module that it mocks, and its factory calls an import.
+    test.each([
+      [`import { clientMock } from "./singleton"; import { atLoad, find } from "./functions";`, "fake"],
+      [`import { atLoad, find } from "./functions"; import { clientMock } from "./singleton";`, "real"],
+    ])("and imports the module that it mocks: %s", async (imports, atLoad) => {
+      expect(
+        await events({
+          "client.ts": `
+            (globalThis.events ??= []).push("client");
+            export default { find: () => "real" };
+          `,
+          "functions.ts": `
+            import client from "./client";
+            export const atLoad = client.find();
+            export const find = () => client.find();
+          `,
+          "deep.ts": `export const deep = () => ({ find: () => "fake" });`,
+          "singleton.ts": `
+            import { jest } from "bun:test";
+            import { deep } from "./deep";
+            import client from "./client";
+            jest.mock("./client", () => ({ __esModule: true, default: deep() }));
+            export const clientMock = client;
+          `,
+          "hoist.test.ts": `
+            ${imports}
+            events.push(atLoad, find(), clientMock.find());
+            ${print}
+          `,
+        }),
+      ).toEqual([["client", atLoad, "fake", "fake"]]);
+    });
+  });
+
+  // A Vitest test file runs its imports one at a time, so nothing is loaded when mocks.ts mocks it. The factory waits
+  // for the import of svc.ts wherever the call runs, and the real module never runs.
+  test("under a test file that runs its imports in turn", async () => {
+    expect(
+      await events({
+        ...graph,
+        "mocks.ts": mocks(fake),
+        "hoist.test.ts": suite(
+          `import { test } from "vitest"; import "./mocks"; import { atLoad, make } from "./svc";`,
+        ),
+      }),
+    ).toEqual([["mocks", "factory", "svc", "fake", "fake"]]);
+  });
+
+  describe("is still hoisted", () => {
+    test("when its factory uses nothing of the module, and its imports are awaited", async () => {
+      expect(
+        await events({
+          ...graph,
+          "mocks.ts": `
+            import { jest } from "bun:test";
+            import { label } from "./label";
+            export const fake = jest.fn(() => "fake");
+            jest.mock("./dep", ${factory(`{ nextId: () => "mocked" }`)});
+            (globalThis.events ??= []).push("mocks " + label);
+          `,
+          "hoist.test.ts": suite(),
+        }),
+      ).toEqual([["dep", "factory", "svc", "label", "mocks label", "mocked", "mocked"]]);
+    });
+
+    // The module mocks what its imports load, as long as its mocks run above them.
+    test("when a function inside its factory reads the variable, and its imports are awaited", async () => {
+      expect(
+        await events({
+          ...graph,
+          "mocks.ts": `
+            import { jest } from "bun:test";
+            import { label } from "./label";
+            export const fake = jest.fn(() => "fake");
+            jest.mock("./dep", ${factory(`{ nextId: (...args) => fake(...args) }`)});
+            (globalThis.events ??= []).push("mocks " + label);
+          `,
+          "hoist.test.ts": `
+            import "./mocks";
+            import { nextId } from "./dep";
+            events.push(nextId());
+            ${print}
+          `,
+        }),
+      ).toEqual([["dep", "factory", "label", "mocks label", "fake"]]);
+    });
+
+    // vi.hoisted() is the way to a variable that a hoisted factory can use.
+    test("when what its factory uses is hoisted too", async () => {
+      expect(
+        await events({
+          ...graph,
+          "mocks.ts": `
+            import { vi } from "bun:test";
+            import { label } from "./label";
+            const mocks = vi.hoisted(() => ({ fake: vi.fn(() => "fake") }));
+            const name = "nextId";
+            vi.mock("./dep", ${factory(`{ [name]: mocks.fake }`)});
+            (globalThis.events ??= []).push("mocks " + label);
+          `,
+          "hoist.test.ts": suite(),
+        }),
+      ).toEqual([["dep", "factory", "svc", "label", "mocks label", "fake", "fake"]]);
+    });
+
+    test("in a test file, where its factory can't read a variable of the file", async () => {
+      const { stderr, exitCode } = await run({
+        ...graph,
+        "hoist.test.ts": `
+          import { jest } from "bun:test";
+          import { atLoad } from "./svc";
+          const fake = jest.fn(() => "fake");
+          jest.mock("./dep", () => ({ nextId: fake }));
+          test("unreachable", () => { atLoad; });
+        `,
+      });
+      expect(stderr).toContain(
+        `ReferenceError: Cannot access 'fake' before initialization.\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables`,
+      );
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  test("a module restored from the transpiler cache", async () => {
+    using dir = tempDir("mock-hoist-cache", {
+      ...graph,
+      "mocks.ts": `
+        ${mocks(fake)}
+        // ${Buffer.alloc(8192, "x").toString()}
+      `,
+      "hoist.test.ts": suite(),
+    });
+    const results: unknown[] = [];
+    for (let i = 0; i < 2; i++) {
+      const { stdout, exitCode } = await runIn(String(dir), ["hoist.test.ts"], {
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(String(dir), "cache"),
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+      });
+      results.push({
+        stdout: stdout.trim().split("\n").at(-1),
+        exitCode,
+        entries: readdirSync(join(String(dir), "cache")).length,
+      });
+    }
+    const restored = { stdout: JSON.stringify(updatedInPlace), exitCode: 0, entries: 1 };
+    expect(results).toEqual([restored, restored]);
+  });
+});
+
 describe.concurrent("errors", () => {
   test("a factory that runs during the imports cannot read a later const", async () => {
     const { stderr, exitCode } = await run({

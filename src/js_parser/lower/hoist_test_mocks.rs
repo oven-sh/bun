@@ -5,7 +5,7 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Ref, S, Stmt};
-use bun_collections::VecExt;
+use bun_collections::{HashMap, VecExt};
 
 use crate::p::P;
 use crate::parser::{Jest, RefMap};
@@ -32,8 +32,46 @@ pub(crate) use bun_ast::import_record::is_test_module;
 pub(crate) enum MockHoistOrder {
     BeforeHoisted,
     Hoisted,
+    /// A hoisted statement that calls `mock()`.
+    HoistedMock,
     LoweredImport,
     InPlace,
+}
+
+/// For a module that a test imports: where the parts that the plan moved were written, and what its mocks read.
+pub(crate) struct WrittenPlaces<'a> {
+    /// How many parts stood in place above each hoisted part, where its `reads` end, and whether it calls `mock()`.
+    hoisted: BumpVec<'a, (u32, u32, bool)>,
+    /// The symbols that the hoisted `mock()` statements read when they run.
+    reads: BumpVec<'a, u32>,
+    /// How many parts stood in place above each lowered import.
+    imports: BumpVec<'a, u32>,
+    has_mock: bool,
+}
+
+impl<'a> WrittenPlaces<'a> {
+    pub(crate) fn new_in(arena: &'a bun_alloc::Arena) -> Self {
+        WrittenPlaces {
+            hoisted: BumpVec::new_in(arena),
+            reads: BumpVec::new_in(arena),
+            imports: BumpVec::new_in(arena),
+            has_mock: false,
+        }
+    }
+
+    pub(crate) fn has_mock(&self) -> bool {
+        self.has_mock
+    }
+}
+
+/// How many functions hold a scope.
+fn functions_around(mut scope: Option<js_ast::StoreRef<js_ast::Scope>>) -> u32 {
+    let mut functions = 0;
+    while let Some(inner) = scope {
+        functions += u32::from(inner.kind == js_ast::scope::Kind::FunctionArgs);
+        scope = inner.parent;
+    }
+    functions
 }
 
 /// Rewrites a lowered import's callee to `(0, ns.fn)`, so the call doesn't pass `ns` as `this`.
@@ -259,15 +297,212 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         for stmt in stmts {
             order.push(match stmt.data {
                 StmtData::SImport(import) => self.plan_import(&import, &exported),
-                _ if self.is_hoisted_mock_stmt(stmt)
-                    || self.is_primitive_literal_declaration(stmt) =>
-                {
-                    MockHoistOrder::Hoisted
-                }
+                _ if self.is_hoisted_mock_stmt(stmt) => match Self::calls_mock(stmt) {
+                    true => MockHoistOrder::HoistedMock,
+                    false => MockHoistOrder::Hoisted,
+                },
+                _ if self.is_primitive_literal_declaration(stmt) => MockHoistOrder::Hoisted,
                 _ => MockHoistOrder::InPlace,
             });
         }
         Some(order.into_bump_slice())
+    }
+
+    /// Of a statement that `is_hoisted_mock_stmt()`: any call of its chain is `mock()`.
+    fn calls_mock(stmt: &Stmt) -> bool {
+        let StmtData::SExpr(expr) = stmt.data else {
+            return false;
+        };
+        let mut callee = match expr.value.data {
+            ExprData::EAwait(awaited) => awaited.value,
+            _ => expr.value,
+        };
+        while let ExprData::ECall(call) = callee.data {
+            let ExprData::EDot(dot) = call.target.data else {
+                break;
+            };
+            if dot.name.slice() == b"mock" {
+                return true;
+            }
+            callee = dot.target;
+        }
+        false
+    }
+
+    /// `append_part()` for a statement that the plan moves, in a module that a test imports.
+    #[optimize(size)]
+    pub(crate) fn append_moved_part(
+        &mut self,
+        order: MockHoistOrder,
+        moved: &mut BumpVec<'a, js_ast::Part>,
+        stmts: &'a mut [Stmt],
+        parts_in_place: usize,
+        written: &mut WrittenPlaces<'a>,
+    ) -> Result<(), crate::Error> {
+        let is_mock = matches!(order, MockHoistOrder::HoistedMock);
+        let scopes = self.scope_order_to_visit;
+        let (points, spans) = (self.scope_uses.len(), self.span_uses.len());
+        // What the bundler keeps for its renamer, the scope of each use, tells a read at the call from a later one.
+        let tracked = self.track_scope_uses;
+        self.track_scope_uses |= is_mock;
+        let appended = self.append_part(moved, stmts);
+        self.track_scope_uses = tracked;
+
+        if appended? {
+            if is_mock {
+                // The factory is the one function that runs at the call. A function inside it runs when it is called.
+                let visited = &scopes[..scopes.len() - self.scope_order_to_visit.len()];
+                for point in &self.scope_uses[points..] {
+                    let mut scopes = visited.iter().map(|order| order.scope_ref());
+                    let scope = scopes.find(|scope| scope.visit_span[0] == point.scope);
+                    if functions_around(scope) < 2 {
+                        written.reads.push(point.symbol);
+                    }
+                }
+                for &(class_body, symbol) in &self.span_uses[spans..] {
+                    if functions_around(class_body) < 2 {
+                        written.reads.push(symbol);
+                    }
+                }
+            }
+            let place = parts_in_place as u32;
+            match order {
+                MockHoistOrder::Hoisted | MockHoistOrder::HoistedMock => {
+                    let reads_end = written.reads.len() as u32;
+                    written.hoisted.push((place, reads_end, is_mock));
+                    written.has_mock |= is_mock;
+                }
+                MockHoistOrder::LoweredImport => written.imports.push(place),
+                MockHoistOrder::BeforeHoisted | MockHoistOrder::InPlace => {}
+            }
+        }
+        if !tracked {
+            self.scope_uses.truncate(points);
+            self.span_uses.truncate(spans);
+        }
+        Ok(())
+    }
+
+    /// A module that a test imports is linked to its importer's other imports before its body runs. A hoisted mock
+    /// of one of those is called to update it in place, and calls its factory at once: above everything that the file
+    /// declares, and above the imports that the plan lowered. So there the plan gives way to what the statement reads
+    /// at the call. An import that it reads stays static. A variable that is declared above it keeps the whole file as
+    /// it is written, so the mocks of the file run in their written order too.
+    ///
+    /// A file with no import to lower gains nothing from the plan but that order, so there any use of such a variable
+    /// keeps it: an update in place reads the getters of what the factory returns.
+    #[optimize(size)]
+    pub(crate) fn keep_mocks_behind_what_they_read(
+        &mut self,
+        written: &WrittenPlaces<'a>,
+        parts: &mut BumpVec<'a, js_ast::Part>,
+        hoisted: &mut BumpVec<'a, js_ast::Part>,
+        imports: &mut BumpVec<'a, js_ast::Part>,
+    ) {
+        let symbols = &self.symbols;
+        let followed = |mut symbol: u32| {
+            loop {
+                let link = symbols[symbol as usize].link.get();
+                if !link.is_valid() {
+                    return symbol;
+                }
+                symbol = link.inner_index();
+            }
+        };
+
+        // The index of the lowered import that declares a symbol, or this for a variable declared above the mock.
+        const DECLARED_ABOVE: u32 = u32::MAX;
+        let mut declared: HashMap<u32, u32> = HashMap::default();
+        for (index, import) in imports.iter().enumerate() {
+            for binding in import.declared_symbols.refs() {
+                declared.insert(binding.inner_index(), index as u32);
+            }
+        }
+
+        let mut stays_static = BumpVec::with_capacity_in(imports.len(), self.arena);
+        stays_static.extend(core::iter::repeat_n(false, imports.len()));
+        let counts_every_use = imports.is_empty();
+        let mut keeps_written_order = false;
+        let (mut parts_seen, mut reads_seen) = (0, 0);
+        'mocks: for (mock, &(place, reads_end, is_mock)) in hoisted.iter().zip(&written.hoisted) {
+            let reads = &written.reads[reads_seen..reads_end as usize];
+            reads_seen = reads_end as usize;
+            if !is_mock {
+                continue;
+            }
+            for part in &parts[parts_seen..place as usize] {
+                js_ast::DeclaredSymbol::for_each_top_level_symbol(
+                    &part.declared_symbols,
+                    &mut declared,
+                    |declared, symbol| {
+                        // The engine initializes a function declaration before any statement runs, and an import
+                        // that stays in place is static.
+                        if matches!(
+                            symbols[symbol.inner_index() as usize].kind,
+                            js_ast::symbol::Kind::Hoisted
+                                | js_ast::symbol::Kind::Constant
+                                | js_ast::symbol::Kind::Other
+                                | js_ast::symbol::Kind::Class
+                                | js_ast::symbol::Kind::TsEnum
+                                | js_ast::symbol::Kind::TsNamespace
+                        ) {
+                            declared.insert(followed(symbol.inner_index()), DECLARED_ABOVE);
+                        }
+                    },
+                );
+            }
+            parts_seen = place as usize;
+            let uses = mock
+                .symbol_uses
+                .keys()
+                .iter()
+                .map(|used| used.inner_index());
+            let uses = uses.filter(|_| counts_every_use);
+            for read in reads.iter().copied().chain(uses) {
+                match declared.get(&followed(read)) {
+                    Some(&DECLARED_ABOVE) => {
+                        keeps_written_order = true;
+                        break 'mocks;
+                    }
+                    Some(&import) => stays_static[import as usize] = true,
+                    None => {}
+                }
+            }
+        }
+        if !keeps_written_order && !stays_static.contains(&true) {
+            return;
+        }
+
+        let mut back = BumpVec::<(u32, js_ast::Part)>::new_in(self.arena);
+        let lowered = core::mem::replace(imports, BumpVec::new_in(self.arena));
+        for (index, import) in lowered.into_iter().enumerate() {
+            if !keeps_written_order && !stays_static[index] {
+                imports.push(import);
+                continue;
+            }
+            for binding in import.declared_symbols.refs() {
+                self.symbols[binding.inner_index() as usize].namespace_alias = None;
+            }
+            back.push((written.imports[index], import));
+        }
+        if keeps_written_order {
+            let places = written.hoisted.iter().map(|hoisted| hoisted.0);
+            back.extend(places.zip(hoisted.drain(..)));
+        }
+        back.sort_by_key(|moved| moved.0);
+
+        let in_place = core::mem::replace(
+            parts,
+            BumpVec::with_capacity_in(parts.len() + back.len(), self.arena),
+        );
+        let mut back = back.into_iter().peekable();
+        for (index, part) in in_place.into_iter().enumerate() {
+            while let Some(moved) = back.next_if(|moved| moved.0 as usize <= index) {
+                parts.push(moved.1);
+            }
+            parts.push(part);
+        }
+        parts.extend(back.map(|moved| moved.1));
     }
 
     /// Aliases a lowered import's names to its namespace, so `a` prints as `ns.a`.

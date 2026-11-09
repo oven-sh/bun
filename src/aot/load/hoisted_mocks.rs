@@ -1,6 +1,6 @@
 use bun_ast::import_record::is_test_module;
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::bind::{Binding, Decl, SymbolId};
+use bun_sema::bind::{Binding, BindingKind, CodeUnit, Decl, Parent, SymbolId};
 use bun_sema::hir::{
     BinOp, Chain, ExportSpecId, ExprFlags, ExprId, ExprKind, FAR_IN_BRACKETS, File, FileBuilder,
     Flags, Import, ImportEqualsId, ImportId, PatKind, PropKind, ResolutionMode, Span,
@@ -178,6 +178,172 @@ impl<'a, 'r, 's> Planner<'a, 'r, 's> {
             }
             _ => false,
         }
+    }
+
+    /// Of a statement that `is_hoisted()`: any call of its chain is `mock()`.
+    fn calls_mock(&self, statement: StmtId) -> bool {
+        let StmtKind::Expr(value) = self.hir[statement].kind else {
+            return false;
+        };
+        let value = self.without_type_syntax(value);
+        let mut callee = match self.hir[value].kind {
+            ExprKind::Await(value) => self.without_type_syntax(value),
+            _ => value,
+        };
+        while let ExprKind::Call(call) = self.hir[callee].kind {
+            let call = self.hir[call];
+            let ExprKind::Dot { obj, name, .. } =
+                self.hir[self.without_type_syntax(call.callee)].kind
+            else {
+                break;
+            };
+            if name == known::mock {
+                return true;
+            }
+            callee = self.without_type_syntax(obj);
+        }
+        false
+    }
+
+    /// How many functions hold an expression. 0 where the tree does not lead to a statement or a function.
+    fn count_functions_around(&self, expression: ExprId) -> u32 {
+        let (hir, bound) = (self.hir, self.request.bound);
+        let mut child = expression;
+        let mut unit = loop {
+            let statement = match bound.parent_of_expr(child) {
+                Parent::Expr(parent) => {
+                    child = parent;
+                    continue;
+                }
+                Parent::Prop(property)
+                | Parent::PropKey(property)
+                | Parent::MethodKey(property) => {
+                    child = bound.prop_owner[property.idx()];
+                    continue;
+                }
+                Parent::Stmt(statement) => statement,
+                Parent::VarInit(declaration) => bound.var_stmt[declaration.idx()],
+                Parent::FnBody(function) => break CodeUnit::Function(function),
+                Parent::ParamDefault(parameter) => {
+                    break CodeUnit::Function(bound.param_fn[parameter.idx()]);
+                }
+                Parent::MemberInit(member) => break CodeUnit::FieldInitializer(member),
+                _ => return 0,
+            };
+            let scope = bound.scope_of_stmt(statement);
+            if scope.is_none() {
+                return 0;
+            }
+            break bound.code_unit(scope);
+        };
+        let mut functions = 0;
+        while unit != CodeUnit::File {
+            functions += u32::from(matches!(unit, CodeUnit::Function(_)));
+            let mut scope = bound.top_scope(hir, unit).some();
+            let inner = unit;
+            unit = CodeUnit::File;
+            while let Some(at) = scope {
+                if bound.code_unit(at) != inner {
+                    unit = bound.code_unit(at);
+                    break;
+                }
+                scope = bound.runtime_parent_scope(hir, at).some();
+            }
+        }
+        functions
+    }
+
+    /// Whether a statement of `above` that stays in place declares the variable by itself.
+    fn is_declared_by_one_of(&self, symbol: SymbolId, above: &[(StmtId, Place)]) -> bool {
+        let (hir, bound) = (self.hir, self.request.bound);
+        // The engine initializes a function declaration before any statement runs, and an import that stays in
+        // place is static.
+        if !matches!(
+            bound.binding_kind(symbol),
+            BindingKind::Var
+                | BindingKind::Let
+                | BindingKind::Const
+                | BindingKind::Class
+                | BindingKind::TypeScriptContainer
+        ) {
+            return false;
+        }
+        let mut declarations = bound.symbol(symbol).decls.iter();
+        declarations.any(|&declaration| {
+            let position = match declaration {
+                Decl::Var(name) | Decl::Require(name) => hir[name].pos,
+                Decl::Class(class) => hir[class].name_pos,
+                Decl::Enum(declared) => hir[declared].name_pos,
+                Decl::Module(namespace) => hir[namespace].name_pos,
+                _ => return false,
+            };
+            above.iter().any(|&(statement, place)| {
+                let node = hir[statement];
+                place == Place::InPlace
+                    && node.start <= position
+                    && position < node.loc.end
+                    && matches!(
+                        node.kind,
+                        StmtKind::Var(_)
+                            | StmtKind::Class(_)
+                            | StmtKind::Enum(_)
+                            | StmtKind::Module(_)
+                    )
+            })
+        })
+    }
+
+    /// The rule of `keep_mocks_behind_what_they_read()` in src/js_parser/lower/hoist_test_mocks.rs, for a module
+    /// that a test imports: an import that a hoisted `mock()` reads at the call stays static, and a variable that is
+    /// declared above it keeps the file as it is written. Returns false for the latter.
+    fn keep_mocks_behind_what_they_read(&self, places: &mut [(StmtId, Place)]) -> bool {
+        let (hir, bound) = (self.hir, self.request.bound);
+        let mut lowered: FxHashMap<SymbolId, usize> = FxHashMap::default();
+        for (index, &(statement, place)) in places.iter().enumerate() {
+            let StmtKind::Import(import) = hir[statement].kind else {
+                continue;
+            };
+            if place == Place::LoweredImport {
+                for (declaration, _, _) in self.names_of(import) {
+                    lowered.insert(bound.declared_symbol(declaration), index);
+                }
+            }
+        }
+        let counts_every_use = lowered.is_empty();
+        let mut stay_static = Vec::new();
+        for (index, &(statement, place)) in places.iter().enumerate() {
+            if place != Place::Hoisted || !self.calls_mock(statement) {
+                continue;
+            }
+            let (start, end) = (hir[statement].start, hir[statement].loc.end);
+            let expressions = (0..).map(ExprId).zip(hir.exprs.iter());
+            let names = expressions.filter(|(expression, node)| {
+                matches!(node.kind, ExprKind::Ident(_))
+                    && start <= node.pos
+                    && node.end <= end
+                    && bound.is_evaluated_ident(*expression)
+            });
+            for (name, _) in names {
+                let Binding::Symbol(symbol) = bound.binding(name) else {
+                    continue;
+                };
+                let is_read_at_call = self.count_functions_around(name) < 2;
+                match lowered.get(&symbol) {
+                    Some(&import) if is_read_at_call => stay_static.push(import),
+                    Some(_) => {}
+                    None if is_read_at_call || counts_every_use => {
+                        if self.is_declared_by_one_of(symbol, &places[..index]) {
+                            return false;
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+        for import in stay_static {
+            places[import].1 = Place::InPlace;
+        }
+        true
     }
 
     fn is_primitive_literal(&self, expression: ExprId) -> bool {
@@ -394,14 +560,17 @@ pub(crate) fn plan<'s>(
     let body: Vec<StmtId> = hir.ids(hir.body).collect();
     let moves = body.iter().any(|&it| planner.is_hoisted(it))
         || (is_entry_point && planner.runs_imports_in_turn(&body));
-    if !moves {
-        return (!paths_written_as_imports.is_empty()).then_some(Plan {
+    let without_moves = |paths_written_as_imports: Vec<(ExprId, ExprId)>| {
+        (!paths_written_as_imports.is_empty()).then_some(Plan {
             places: Vec::new(),
             uses: Vec::new(),
             named_implicitly: Vec::new(),
             exported_namespaces: Vec::new(),
             paths_written_as_imports,
-        });
+        })
+    };
+    if !moves {
+        return without_moves(paths_written_as_imports);
     }
     let exported = planner.find_names_in_export_clauses(&body);
     let lowers_imports = request.analysis.module_format == ModuleFormat::Esm;
@@ -422,6 +591,9 @@ pub(crate) fn plan<'s>(
             (statement, place)
         })
         .collect();
+    if !is_entry_point && !planner.keep_mocks_behind_what_they_read(&mut places) {
+        return without_moves(paths_written_as_imports);
+    }
     let import_of = |statement: StmtId| match hir[statement].kind {
         StmtKind::Import(import) => Some(import),
         _ => None,
@@ -704,7 +876,16 @@ mod tests {
         text: &str,
         then: impl FnOnce(&File<'_>, &dyn Fn(&[u8]) -> bool, &dyn Fn(ExprId) -> Option<String>) -> R,
     ) -> R {
-        let files = [&[(name, text)][..], &MODULES].concat();
+        with_tree_among(&[(name, text)], name, then)
+    }
+
+    /// The first of `files` is the test file.
+    fn with_tree_among<R>(
+        files: &[(&str, &str)],
+        name: &str,
+        then: impl FnOnce(&File<'_>, &dyn Fn(&[u8]) -> bool, &dyn Fn(ExprId) -> Option<String>) -> R,
+    ) -> R {
+        let files = [files, &MODULES].concat();
         with_loaded_test_run(&files, &default_settings(), |_, loaded| {
             let files = loaded.project(ProjectId::Application).loaded.files();
             let path = format!("/project/{name}");
@@ -730,7 +911,17 @@ mod tests {
     }
 
     fn describe(name: &str, text: &str) -> String {
-        with_tree(name, text, |hir, _, text_of| {
+        describe_among(&[(name, text)], name)
+    }
+
+    /// `text` is a module that the test file imports.
+    fn describe_imported(name: &str, text: &str) -> String {
+        let importer = format!("import \"./{name}\";");
+        describe_among(&[("a.test.js", &importer), (name, text)], name)
+    }
+
+    fn describe_among(files: &[(&str, &str)], name: &str) -> String {
+        with_tree_among(files, name, |hir, _, text_of| {
             let path_loaded = |expression: ExprId| {
                 if expression == ExprId::NONE {
                     return None;
@@ -820,6 +1011,87 @@ mod tests {
         for (name, text, expected) in rows {
             assert_eq!(describe(name, text), expected, "{text}");
         }
+    }
+
+    #[test]
+    fn a_mock_of_an_imported_module_stays_behind_what_it_reads() {
+        let head = r#"import { vi } from "bun:test"; import { captured } from "./side";"#;
+        let rows = [
+            // A variable that is declared above the call keeps the file as it is written.
+            (
+                r#"const fake = vi.fn(); vi.mock("./mod", () => ({ value: fake })); console.log(captured);"#,
+                "import 1 | import 1 | declaration | mock() | log()",
+            ),
+            (
+                r#"var fake = vi.fn(); vi.mock("./mod", () => ({ value: fake })); console.log(captured);"#,
+                "import 1 | import 1 | declaration | mock() | log()",
+            ),
+            (
+                r#"class Fakes { static fake = vi.fn(); } vi.mock("./mod", () => ({ value: Fakes.fake })); console.log(captured);"#,
+                "import 1 | import 1 | statement | mock() | log()",
+            ),
+            (
+                r#"vi.unmock("./mod"); const path = String("./mod"); vi.mock(path); console.log(captured);"#,
+                "import 1 | import 1 | unmock() | declaration | mock() | log()",
+            ),
+            // A function inside the factory reads it when it is called, and the imports still run behind the mock.
+            (
+                r#"const fake = vi.fn(); vi.mock("./mod", () => ({ value: () => fake() })); console.log(captured);"#,
+                "import 1 | mock() | const = await import ./side | declaration | log()",
+            ),
+            (
+                r#"const fake = vi.fn(); vi.mock("./mod", () => ({ get value() { return fake; } })); console.log(captured);"#,
+                "import 1 | mock() | const = await import ./side | declaration | log()",
+            ),
+            // What the engine or the plan has ready above the call keeps nothing back.
+            (
+                r#"function fake() {} vi.mock("./mod", () => ({ value: fake })); console.log(captured);"#,
+                "import 1 | mock() | const = await import ./side | statement | log()",
+            ),
+            (
+                r#"const fake = vi.hoisted(() => vi.fn()); vi.mock("./mod", () => ({ value: fake })); console.log(captured);"#,
+                "import 1 | declaration | mock() | const = await import ./side | log()",
+            ),
+            (
+                r#"vi.mock("./mod", () => ({ value: fake })); const fake = vi.fn(); console.log(captured);"#,
+                "import 1 | mock() | const = await import ./side | declaration | log()",
+            ),
+            (
+                r#"const fake = vi.fn(); const made = vi.hoisted(() => fake); console.log(captured, made);"#,
+                "import 1 | declaration | const = await import ./side | declaration | log()",
+            ),
+        ];
+        for (text, expected) in rows {
+            let text = format!("{head} {text}");
+            assert_eq!(describe_imported("mocks.js", &text), expected, "{text}");
+        }
+        let without_imports = [
+            (
+                r#"import { vi } from "bun:test"; const fake = vi.fn(); vi.mock("./mod", () => ({ get value() { return fake; } }));"#,
+                "import 1 | declaration | mock()",
+            ),
+            (
+                r#"import { vi } from "bun:test"; vi.mock("./side"); const fake = vi.fn(); vi.mock("./mod", () => ({ value: () => fake() }));"#,
+                "import 1 | mock() | declaration | mock()",
+            ),
+        ];
+        for (text, expected) in without_imports {
+            assert_eq!(describe_imported("mocks.js", text), expected, "{text}");
+        }
+        // An import that it reads stays static.
+        let text = r#"import { vi } from "bun:test"; import { call } from "./mod"; import { captured } from "./side"; vi.mock("./mod", () => ({ value: captured })); call();"#;
+        assert_eq!(
+            describe_imported("mocks.js", text),
+            "import 1 | mock() | const = await import ./mod | import 1 | expression"
+        );
+        // The test file runs its imports behind its mocks, whatever they read.
+        let text = format!(
+            r#"{head} const fake = vi.fn(); vi.mock("./mod", () => ({{ value: fake }})); console.log(captured);"#
+        );
+        assert_eq!(
+            describe("a.test.js", &text),
+            "import 1 | mock() | const = await import ./side | declaration | log()"
+        );
     }
 
     #[test]

@@ -13,7 +13,7 @@ use bun_ast::import_record::{Flags as ImportRecordFlags, ImportRecord};
 
 use crate::defines::Define;
 use crate::lexer as js_lexer;
-use crate::lower::hoist_test_mocks::MockHoistOrder;
+use crate::lower::hoist_test_mocks::{MockHoistOrder, WrittenPlaces};
 use crate::p::P;
 use crate::parser::{
     Jest, ParseStatementOptions, RuntimeFeatures, RuntimeImports, ScanPassResult, StatementScope,
@@ -1173,17 +1173,35 @@ impl<'a> Parser<'a> {
                 }
             }
 
+            // Only a module that a test imports may put a hoisted mock back where it is written.
+            let keeps_written_places = !p.options.features.is_test_entry_point;
+            let mut written_places = WrittenPlaces::new_in(arena);
+
             // When tree shaking is enabled, each top-level statement is potentially a separate part.
             for (i, stmt) in stmts.iter().enumerate() {
-                let moved_parts = match mock_hoist_order.map(|order| order[i]) {
-                    Some(MockHoistOrder::BeforeHoisted) => Some(&mut before),
-                    Some(MockHoistOrder::Hoisted) => Some(&mut hoisted_mocks),
-                    Some(MockHoistOrder::LoweredImport) => Some(&mut imports_after_hoisted_mocks),
-                    Some(MockHoistOrder::InPlace) | None => None,
+                let order = mock_hoist_order.map_or(MockHoistOrder::InPlace, |order| order[i]);
+                let moved_parts = match order {
+                    MockHoistOrder::BeforeHoisted => Some(&mut before),
+                    MockHoistOrder::Hoisted | MockHoistOrder::HoistedMock => {
+                        Some(&mut hoisted_mocks)
+                    }
+                    MockHoistOrder::LoweredImport => Some(&mut imports_after_hoisted_mocks),
+                    MockHoistOrder::InPlace => None,
                 };
                 if let Some(moved_parts) = moved_parts {
                     let sliced = arena.alloc_slice_copy(&[*stmt]);
-                    p.append_part(moved_parts, sliced)?;
+                    if keeps_written_places {
+                        let in_place = parts.len();
+                        p.append_moved_part(
+                            order,
+                            moved_parts,
+                            sliced,
+                            in_place,
+                            &mut written_places,
+                        )?;
+                    } else {
+                        p.append_part(moved_parts, sliced)?;
+                    }
                     continue;
                 }
 
@@ -1283,6 +1301,14 @@ impl<'a> Parser<'a> {
                         p.append_part(&mut parts, sliced)?;
                     }
                 }
+            }
+            if written_places.has_mock() {
+                p.keep_mocks_behind_what_they_read(
+                    &written_places,
+                    &mut parts,
+                    &mut hoisted_mocks,
+                    &mut imports_after_hoisted_mocks,
+                );
             }
         }
 

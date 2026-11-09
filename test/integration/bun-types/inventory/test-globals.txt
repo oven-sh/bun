@@ -41,7 +41,7 @@ var vi (bun-types/test-globals.d.ts)
   importActual<T = any>(id: string): Promise<T>
   importMock<T = any>(id: string): Promise<import("bun:test").Mocked<T>>
   isFakeTimers(): boolean
-  isMockFunction: (fn: unknown) => fn is Mock<(...args: any[]) => any>
+  isMockFunction: (fn: unknown) => fn is import("bun:test").jest.Mock<(...args: Array<any>) => any>
   mock<T>(module: Promise<T>, factory?: import("bun:test").ModuleMockFactory<T> | import("bun:test").ModuleMockOptions | undefined): Promise<void> | void
   mock(id: string, factory?: import("bun:test").ModuleMockFactory<any> | import("bun:test").ModuleMockOptions | undefined): Promise<void> | void
   mockObject<T>(value: T, options?: undefined | { spy?: boolean | undefined; }): import("bun:test").Mocked<T>

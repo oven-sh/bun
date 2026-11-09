@@ -115,7 +115,7 @@ For example, if you're adding types for a new API, you should just add code to `
 There is one file per preset:
 
 - `esnext`, `esnext-dom`, `es2022`, `es2022-dom`, and `no-lib` are `types: ["bun"]` with that `lib`.
-- `test-globals` and `vitest-globals` are the entry points that `index.d.ts` does not load (`/// <reference types="bun-types/test-globals" />`). Each file lists only what the entry point adds.
+- `test-globals` and `vitest-globals` are the entry points that `index.d.ts` does not load. A project loads them with `/// <reference types="bun-types/test-globals" />` or `/// <reference types="bun-types/vitest-globals" />`. Each file lists only what the entry point adds.
 - `ts7.1/` is not covered.
 
 A file has one section per module (`# module "bun:test"`), then `# globals`. The section says what an entry is: an entry under `# module "vitest"` is an export of `"vitest"`, and an entry under `# globals` is a global. The last section lists the declarations that the listed types name and that nothing exports, such as an interface that a module keeps to itself.
@@ -127,10 +127,14 @@ How to read a line:
 - `[?]`, `[readonly]`, `[static]`, `[private]`, `[protected]` and `[abstract]` after a name are its modifiers. The presets set `exactOptionalPropertyTypes`, so `x [?]: T` is `x?: T` and `x [?]: T | undefined` is `x?: T | undefined`.
 - `x [set: U]: T` is an accessor that returns `T` and accepts `U`.
 - `<const T>`, `<in T>` and `<out T>` are the modifiers of a type parameter.
+- `const x`, `let x` and `var x` are the declaration as written. Only a global `var` is also a property of `globalThis`.
+- `class X extends Y` names the base class. The list of `X` includes the members that it inherits from `Y`.
 - Inside a type, `Bun.X` is an export of the module `"bun"` and `import("bun:test").X` is an export of another module. A name with no prefix is a global, or one of the declarations in the last section.
 - `a -> Bun.b` means that `a` is another name for `Bun.b`, which has its own entry.
+- `a [type only] -> b` is `export type { b as a }` of a class, an enum or a namespace. `a` names the type and not the value.
+- `type X = unknown [written: A extends B ? C : D]` is a conditional type that TypeScript has already resolved for the preset. The text in brackets is the source. A change to the branch that no preset takes shows there.
 - `...` stands for the type literal that the line is part of (`vi.useFakeTimers(): ...`).
-- The members of a union are in alphabetical order, not in source order.
+- The members of a union are in alphabetical order, not in source order. The exception is the text of a mapped type, an indexed access type, or a conditional type with `infer`. TypeScript prints that text, and a union inside it is in the order of TypeScript, which can change when a declaration moves.
 
 `test/integration/bun-types/inventory.test.ts` fails when the files no longer match the package. After a change to `packages/bun-types`, regenerate them and commit the result:
 
@@ -138,7 +142,7 @@ How to read a line:
 bun packages/bun-types/scripts/inventory.ts
 ```
 
-Read the diff before you commit it. A line that disappears from a preset, or a member whose type changed, can break the users on that preset. Check each one: a parameter that accepts more is safe, a return type that changes is not. A change that only moves a declaration produces no diff when it stays in its file. A move to another file changes the file name in parentheses after the symbol, and nothing else.
+Read the diff before you commit it. A line that disappears from a preset, or a member whose type changed, can break the users on that preset. Check each one. A return type that changes is a change for every caller. A parameter that accepts more is safe only when no overload comes after it: a wider overload takes the calls that a later overload got before. A change that only moves a declaration produces no diff when it stays in its file. A move to another file changes the file name in parentheses after the symbol, and nothing else.
 
 ## Questions
 

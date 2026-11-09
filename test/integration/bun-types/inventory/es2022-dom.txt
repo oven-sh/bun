@@ -64,9 +64,9 @@ function $ (bun-types/shell.d.ts)
   nothrow: () => typeof Bun.$
   throws: (shouldThrow: boolean) => typeof Bun.$
 namespace $ (bun-types/shell.d.ts)
-  var $.Shell (bun-types/shell.d.ts)
+  const $.Shell (bun-types/shell.d.ts)
     construct new (): typeof Bun.$
-  class $.ShellError (bun-types/shell.d.ts)
+  class $.ShellError extends Error (bun-types/shell.d.ts)
     arrayBuffer(): ArrayBuffer
     blob(): Blob
     bytes(): Uint8Array<ArrayBuffer>
@@ -98,7 +98,7 @@ namespace $ (bun-types/shell.d.ts)
     stderr [readonly]: Buffer<ArrayBufferLike>
     stdout [readonly]: Buffer<ArrayBufferLike>
     text(encoding?: BufferEncoding | undefined): string
-  class $.ShellPromise (bun-types/shell.d.ts)
+  class $.ShellPromise extends Promise<Bun.$.ShellOutput> (bun-types/shell.d.ts)
     [Symbol.toStringTag] [readonly]: string
     arrayBuffer(): Promise<ArrayBuffer>
     blob(): Promise<Blob>
@@ -821,7 +821,7 @@ interface LibdeflateCompressionOptions (bun-types/bun.d.ts)
   level [?]: 0 | 1 | 10 | 11 | 12 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
   library [?]: "libdeflate"
 type Loader (bun-types/bun.d.ts) = "css" | "file" | "html" | "js" | "json" | "json5" | "jsonc" | "jsx" | "md" | "napi" | "text" | "toml" | "ts" | "tsx" | "wasm" | "xml" | "yaml"
-class MD4 (bun-types/bun.d.ts)
+class MD4 extends Bun.CryptoHashInterface<Bun.MD4> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
   digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
@@ -832,7 +832,7 @@ class MD4 (bun-types/bun.d.ts)
     hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.MD4
-class MD5 (bun-types/bun.d.ts)
+class MD5 extends Bun.CryptoHashInterface<Bun.MD5> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
   digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
@@ -1422,7 +1422,7 @@ interface S3Stats (bun-types/s3.d.ts)
   lastModified: Date
   size: number
   type: string
-class SHA1 (bun-types/bun.d.ts)
+class SHA1 extends Bun.CryptoHashInterface<Bun.SHA1> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
   digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
@@ -1433,7 +1433,7 @@ class SHA1 (bun-types/bun.d.ts)
     hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA1
-class SHA224 (bun-types/bun.d.ts)
+class SHA224 extends Bun.CryptoHashInterface<Bun.SHA224> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
   digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
@@ -1444,7 +1444,7 @@ class SHA224 (bun-types/bun.d.ts)
     hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA224
-class SHA256 (bun-types/bun.d.ts)
+class SHA256 extends Bun.CryptoHashInterface<Bun.SHA256> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
   digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
@@ -1455,7 +1455,7 @@ class SHA256 (bun-types/bun.d.ts)
     hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA256
-class SHA384 (bun-types/bun.d.ts)
+class SHA384 extends Bun.CryptoHashInterface<Bun.SHA384> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
   digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
@@ -1466,7 +1466,7 @@ class SHA384 (bun-types/bun.d.ts)
     hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA384
-class SHA512 (bun-types/bun.d.ts)
+class SHA512 extends Bun.CryptoHashInterface<Bun.SHA512> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
   digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
@@ -1477,7 +1477,7 @@ class SHA512 (bun-types/bun.d.ts)
     hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA512
-class SHA512_256 (bun-types/bun.d.ts)
+class SHA512_256 extends Bun.CryptoHashInterface<Bun.SHA512_256> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
   digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
@@ -1546,7 +1546,7 @@ class SQL (bun-types/sql.d.ts)
     [Symbol.asyncDispose](): PromiseLike<void>
     channel [readonly]: string
     unlisten(): Promise<void>
-  class SQL.MySQLError (bun-types/sql.d.ts)
+  class SQL.MySQLError extends Bun.SQL.SQLError (bun-types/sql.d.ts)
     cause [?]: unknown
     code [readonly]: string
     errno [? readonly]: number | undefined
@@ -1566,7 +1566,7 @@ class SQL (bun-types/sql.d.ts)
     call (name: string): string
     column [readonly]: Bun.SQL.ColumnTransform
   type SQL.Options (bun-types/sql.d.ts) = Bun.SQL.PostgresOrMySQLOptions | Bun.SQL.SQLiteOptions
-  class SQL.PostgresError (bun-types/sql.d.ts)
+  class SQL.PostgresError extends Bun.SQL.SQLError (bun-types/sql.d.ts)
     cause [?]: unknown
     code [readonly]: string
     column [? readonly]: string | undefined
@@ -1662,7 +1662,7 @@ class SQL (bun-types/sql.d.ts)
     columns: Array<Bun.SQL.ResultColumn>
     string: string
     types: Array<number>
-  class SQL.SQLError (bun-types/sql.d.ts)
+  class SQL.SQLError extends Error (bun-types/sql.d.ts)
     cause [?]: unknown
     message: string
     name: string
@@ -1675,7 +1675,7 @@ class SQL (bun-types/sql.d.ts)
       prepareStackTrace(err: Error, stackTraces: Array<NodeJS.CallSite>): any
       prototype: Bun.SQL.SQLError
       stackTraceLimit: number
-  class SQL.SQLiteError (bun-types/sql.d.ts)
+  class SQL.SQLiteError extends Bun.SQL.SQLError (bun-types/sql.d.ts)
     byteOffset [? readonly]: number | undefined
     cause [?]: unknown
     code [readonly]: string
@@ -1730,18 +1730,18 @@ class SQL (bun-types/sql.d.ts)
   interface SQL.Transform (bun-types/sql.d.ts)
     column [?]: ((name: string) => string) | Bun.SQL.ColumnTransform | undefined
     undefined [?]: unknown
-  var SQL.camel (bun-types/sql.d.ts)
+  const SQL.camel (bun-types/sql.d.ts)
     column [readonly]: Required<Bun.SQL.ColumnTransform>
-  var SQL.fromCamel (bun-types/sql.d.ts): Bun.SQL.NameTransform
-  var SQL.fromKebab (bun-types/sql.d.ts): Bun.SQL.NameTransform
-  var SQL.fromPascal (bun-types/sql.d.ts): Bun.SQL.NameTransform
-  var SQL.kebab (bun-types/sql.d.ts)
+  const SQL.fromCamel (bun-types/sql.d.ts): Bun.SQL.NameTransform
+  const SQL.fromKebab (bun-types/sql.d.ts): Bun.SQL.NameTransform
+  const SQL.fromPascal (bun-types/sql.d.ts): Bun.SQL.NameTransform
+  const SQL.kebab (bun-types/sql.d.ts)
     column [readonly]: Required<Bun.SQL.ColumnTransform>
-  var SQL.pascal (bun-types/sql.d.ts)
+  const SQL.pascal (bun-types/sql.d.ts)
     column [readonly]: Required<Bun.SQL.ColumnTransform>
-  var SQL.toCamel (bun-types/sql.d.ts): Bun.SQL.NameTransform
-  var SQL.toKebab (bun-types/sql.d.ts): Bun.SQL.NameTransform
-  var SQL.toPascal (bun-types/sql.d.ts): Bun.SQL.NameTransform
+  const SQL.toCamel (bun-types/sql.d.ts): Bun.SQL.NameTransform
+  const SQL.toKebab (bun-types/sql.d.ts): Bun.SQL.NameTransform
+  const SQL.toPascal (bun-types/sql.d.ts): Bun.SQL.NameTransform
 interface SQLArrayParameter (bun-types/sql.d.ts)
   arrayType: Bun.ArrayType | undefined
   serializedValues: string
@@ -2520,7 +2520,7 @@ type WebSocketOptionsProtocolsOrProtocol (bun-types/bun.d.ts) = { protocol?: str
 type WebSocketOptionsProxy (bun-types/bun.d.ts) = { proxy?: URL | string | { url: URL | string; headers?: Headers | import("node:http").OutgoingHttpHeaders; tls?: (Bun.TLSOptions & { servername?: string; checkServerIdentity?: ((hostname: string, cert: import("node:tls").PeerCertificate) => Error | undefined); }) | boolean | undefined; }; }
 type WebSocketOptionsTLS (bun-types/bun.d.ts) = { tls?: (Bun.TLSOptions & { servername?: string; checkServerIdentity?: ((hostname: string, cert: import("node:tls").PeerCertificate) => Error | undefined); }); }
 type WebSocketReadyState (bun-types/serve.d.ts) = 0 | 1 | 2 | 3
-class WebView (bun-types/bun.d.ts)
+class WebView extends EventTarget (bun-types/bun.d.ts)
   [Symbol.asyncDispose](): void
   [Symbol.dispose](): void
   addEventListener<T = unknown>(type: `${string}.${string}`, listener: (event: { new <T>(type: string, eventInitDict?: MessageEventInit<T> | undefined): MessageEvent<T>; prototype: MessageEvent<any>; }) => void, options?: Bun.AddEventListenerOptions | boolean | undefined): void
@@ -2667,7 +2667,7 @@ namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/global
     cancelBubble: boolean
     cancelable [readonly]: boolean
     composed [readonly]: boolean
-    composedPath(): [(EventTarget)?]
+    composedPath(): [EventTarget?]
     currentTarget [readonly]: EventTarget | null
     defaultPrevented [readonly]: boolean
     eventPhase [readonly]: number
@@ -2760,38 +2760,38 @@ namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/global
     glob<TModule = unknown>(pattern: Array<string> | string, options?: (Bun.ImportMetaGlobOptions & { eager?: false; }) | undefined): Record<string, () => Promise<TModule>>
     glob<TModule = unknown>(pattern: Array<string> | string, options: Bun.ImportMetaGlobOptions & { eager: true; }): Record<string, TModule>
   type __internal.KeysInBoth<A, B> (bun-types/bun.d.ts) = keyof A extends keyof B ? keyof B & keyof A : never
-  type __internal.LibDomIsLoaded (bun-types/bun.d.ts) = true
-  type __internal.LibEmptyOrBroadcastChannel (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrBunEvent (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrBunEventTarget (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrBunWebSocket (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrEventSource (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeCryptoWebcryptoSubtleCrypto (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeMessagePort (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeReadableStream<T> (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeStreamWebCompressionStream (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeStreamWebDecompressionStream (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeStreamWebTextDecoderStream (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeStreamWebTextEncoderStream (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeUtilTextDecoder (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeUtilTextEncoder (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrNodeWritableStream<T> (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrPerformanceEntry (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrPerformanceMark (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrPerformanceMeasure (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrPerformanceObserver (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrPerformanceObserverEntryList (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrPerformanceResourceTiming (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrReadableByteStreamController (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrReadableStreamBYOBReader (bun-types/globals.d.ts) = {}
-  type __internal.LibEmptyOrReadableStreamBYOBRequest (bun-types/globals.d.ts) = {}
-  type __internal.LibOrFallbackHeaders (bun-types/fetch.d.ts) = {}
-  type __internal.LibOrFallbackRequest (bun-types/fetch.d.ts) = {}
-  type __internal.LibOrFallbackRequestInit (bun-types/fetch.d.ts) = {}
-  type __internal.LibOrFallbackResponse (bun-types/fetch.d.ts) = {}
-  type __internal.LibOrFallbackResponseInit (bun-types/fetch.d.ts) = {}
-  type __internal.LibPerformanceOrNodePerfHooksPerformance (bun-types/globals.d.ts) = {}
-  type __internal.LibWorkerOrBunWorker (bun-types/globals.d.ts) = {}
+  type __internal.LibDomIsLoaded (bun-types/bun.d.ts) = true [written: typeof globalThis extends { onabort: any; } ? true : false]
+  type __internal.LibEmptyOrBroadcastChannel (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:worker_threads").BroadcastChannel]
+  type __internal.LibEmptyOrBunEvent (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : BunEvent]
+  type __internal.LibEmptyOrBunEventTarget (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : BunEventTarget]
+  type __internal.LibEmptyOrBunWebSocket (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : Bun.WebSocket]
+  type __internal.LibEmptyOrEventSource (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("undici-types").EventSource]
+  type __internal.LibEmptyOrNodeCryptoWebcryptoSubtleCrypto (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("crypto").webcrypto.SubtleCrypto]
+  type __internal.LibEmptyOrNodeMessagePort (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:worker_threads").MessagePort]
+  type __internal.LibEmptyOrNodeReadableStream<T> (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").ReadableStream<T>]
+  type __internal.LibEmptyOrNodeStreamWebCompressionStream (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").CompressionStream]
+  type __internal.LibEmptyOrNodeStreamWebDecompressionStream (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").DecompressionStream]
+  type __internal.LibEmptyOrNodeStreamWebTextDecoderStream (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").TextDecoderStream]
+  type __internal.LibEmptyOrNodeStreamWebTextEncoderStream (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").TextEncoderStream]
+  type __internal.LibEmptyOrNodeUtilTextDecoder (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:util").TextDecoder]
+  type __internal.LibEmptyOrNodeUtilTextEncoder (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:util").TextEncoder]
+  type __internal.LibEmptyOrNodeWritableStream<T> (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").WritableStream<T>]
+  type __internal.LibEmptyOrPerformanceEntry (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceEntry]
+  type __internal.LibEmptyOrPerformanceMark (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMark]
+  type __internal.LibEmptyOrPerformanceMeasure (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceMeasure]
+  type __internal.LibEmptyOrPerformanceObserver (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceObserver]
+  type __internal.LibEmptyOrPerformanceObserverEntryList (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceObserverEntryList]
+  type __internal.LibEmptyOrPerformanceResourceTiming (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:perf_hooks").PerformanceResourceTiming]
+  type __internal.LibEmptyOrReadableByteStreamController (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").ReadableByteStreamController]
+  type __internal.LibEmptyOrReadableStreamBYOBReader (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").ReadableStreamBYOBReader]
+  type __internal.LibEmptyOrReadableStreamBYOBRequest (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:stream/web").ReadableStreamBYOBRequest]
+  type __internal.LibOrFallbackHeaders (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : FallbackHeaders]
+  type __internal.LibOrFallbackRequest (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : FallbackRequest]
+  type __internal.LibOrFallbackRequestInit (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : Omit<import("undici-types").RequestInit, "body" | "headers"> & { body?: Bun.BodyInit | null | undefined; headers?: Bun.HeadersInit | undefined; }]
+  type __internal.LibOrFallbackResponse (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : FallbackResponse]
+  type __internal.LibOrFallbackResponseInit (bun-types/fetch.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("undici-types").ResponseInit]
+  type __internal.LibPerformanceOrNodePerfHooksPerformance (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : import("node:perf_hooks").Performance]
+  type __internal.LibWorkerOrBunWorker (bun-types/globals.d.ts) = {} [written: LibDomIsLoaded extends true ? {} : Bun.Worker]
   type __internal.Merge<A, B> (bun-types/bun.d.ts) = Omit<A, Extract<keyof A, keyof B>> & Omit<B, Extract<keyof A, keyof B>> & { [Key in Extract<keyof A, keyof B>]: A[Key] | B[Key]; } & Omit<B, Extract<keyof B, keyof A>> & Omit<A, Extract<keyof B, keyof A>> & { [Key in Extract<keyof B, keyof A>]: B[Key] | A[Key]; }
   type __internal.MergeInner<A, B> (bun-types/bun.d.ts) = Omit<A, Extract<keyof A, keyof B>> & Omit<B, Extract<keyof A, keyof B>> & { [Key in Extract<keyof A, keyof B>]: A[Key] | B[Key]; }
   type __internal.NodeCryptoWebcryptoCryptoKey (bun-types/globals.d.ts) = import("node:crypto").webcrypto.CryptoKey
@@ -2803,7 +2803,7 @@ namespace __internal (bun-types/bun.d.ts, bun-types/fetch.d.ts, bun-types/global
   type __internal.XOR<A, B> (bun-types/bun.d.ts) = Bun.__internal.Without<A, B> | Bun.__internal.Without<B, A>
 function allocUnsafe (bun-types/bun.d.ts)
   call (size: number): Uint8Array<ArrayBuffer>
-var argv (bun-types/bun.d.ts): Array<string>
+const argv (bun-types/bun.d.ts): Array<string>
 function build (bun-types/bun.d.ts)
   call (config: Bun.BuildConfig): Promise<Bun.BuildOutput>
 function color (bun-types/bun.d.ts)
@@ -2820,7 +2820,7 @@ function concatArrayBuffers (bun-types/bun.d.ts)
 function connect (bun-types/bun.d.ts)
   call <Data = undefined>(options: Bun.TCPSocketConnectOptions<Data>): Promise<Bun.Socket<Data>>
   call <Data = undefined>(options: Bun.UnixSocketOptions<Data>): Promise<Bun.Socket<Data>>
-var cron (bun-types/bun.d.ts)
+const cron (bun-types/bun.d.ts)
   call (schedule: Bun.CronWithAutocomplete, handler: (this: Bun.CronJob) => unknown, options?: Bun.CronOptions | undefined): Bun.CronJob
   call (path: string, schedule: Bun.CronWithAutocomplete, title: string): Promise<void>
   parse(expression: Bun.CronWithAutocomplete, relativeDate?: Date | number | undefined, options?: Bun.CronOptions | undefined): Date | null
@@ -2832,18 +2832,18 @@ function deepMatch (bun-types/bun.d.ts)
 function deflateSync (bun-types/bun.d.ts)
   call (data: ArrayBuffer | Uint8Array<ArrayBuffer> | string, options?: Bun.LibdeflateCompressionOptions | Bun.ZlibCompressionOptions | undefined): Uint8Array<ArrayBuffer>
 namespace dns (bun-types/bun.d.ts)
-  var dns.ADDRCONFIG (bun-types/bun.d.ts): number
-  var dns.ALL (bun-types/bun.d.ts): number
-  var dns.V4MAPPED (bun-types/bun.d.ts): number
+  const dns.ADDRCONFIG (bun-types/bun.d.ts): number
+  const dns.ALL (bun-types/bun.d.ts): number
+  const dns.V4MAPPED (bun-types/bun.d.ts): number
   function dns.getCacheStats (bun-types/bun.d.ts)
     call (): { cacheHitsCompleted: number; cacheHitsInflight: number; cacheMisses: number; size: number; errors: number; totalCount: number; }
   function dns.lookup (bun-types/bun.d.ts)
     call (hostname: string, options?: undefined | { family?: "IPv4" | "IPv6" | "any" | 0 | 4 | 6; socketType?: "tcp" | "udp"; flags?: number; port?: number; backend?: "c-ares" | "getaddrinfo" | "libc" | "system"; }): Promise<Array<Bun.DNSLookup>>
   function dns.prefetch (bun-types/bun.d.ts)
     call (hostname: string, port?: number | undefined): void
-var embeddedFiles (bun-types/bun.d.ts): ReadonlyArray<Blob>
-var enableANSIColors (bun-types/bun.d.ts): boolean
-var env (bun-types/bun.d.ts): Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv
+const embeddedFiles (bun-types/bun.d.ts): ReadonlyArray<Blob>
+const enableANSIColors (bun-types/bun.d.ts): boolean
+const env (bun-types/bun.d.ts): Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv
 function escapeHTML (bun-types/bun.d.ts)
   call (input: boolean | number | object | string): string
 var fetch (bun-types/bun.d.ts): typeof fetch
@@ -2863,7 +2863,7 @@ function gunzipSync (bun-types/bun.d.ts)
   call (data: ArrayBuffer | Uint8Array<ArrayBuffer> | string, options?: Bun.LibdeflateCompressionOptions | Bun.ZlibCompressionOptions | undefined): Uint8Array<ArrayBuffer>
 function gzipSync (bun-types/bun.d.ts)
   call (data: ArrayBuffer | Uint8Array<ArrayBuffer> | string, options?: Bun.LibdeflateCompressionOptions | Bun.ZlibCompressionOptions | undefined): Uint8Array<ArrayBuffer>
-var hash (bun-types/bun.d.ts): ((data: ArrayBuffer | Bun.ArrayBufferView<ArrayBufferLike> | SharedArrayBuffer | string, seed?: bigint | number | undefined) => bigint) & Bun.Hash
+const hash (bun-types/bun.d.ts): ((data: ArrayBuffer | Bun.ArrayBufferView<ArrayBufferLike> | SharedArrayBuffer | string, seed?: bigint | number | undefined) => bigint) & Bun.Hash
 function indexOfLine (bun-types/bun.d.ts)
   call (buffer: ArrayBufferLike | Bun.ArrayBufferView<ArrayBufferLike>, offset?: bigint | number | undefined): number
 function inflateSync (bun-types/bun.d.ts)
@@ -2873,17 +2873,17 @@ function inspect (bun-types/bun.d.ts)
   custom: typeof inspect.custom
   table: { (tabularData: Array<unknown> | object, properties?: Array<string> | undefined, options?: undefined | { colors?: boolean; }): string; (tabularData: Array<unknown> | object, options?: undefined | { colors?: boolean; }): string }
 namespace inspect (bun-types/bun.d.ts)
-  var inspect.custom (bun-types/bun.d.ts): typeof inspect.custom
+  const inspect.custom (bun-types/bun.d.ts): typeof inspect.custom
   function inspect.table (bun-types/bun.d.ts)
     call (tabularData: Array<unknown> | object, properties?: Array<string> | undefined, options?: undefined | { colors?: boolean; }): string
     call (tabularData: Array<unknown> | object, options?: undefined | { colors?: boolean; }): string
 type int32 (bun-types/bun.d.ts) = number & { readonly "bun.int32"?: true; }
-var isMainThread (bun-types/bun.d.ts): boolean
-var isStandaloneExecutable (bun-types/bun.d.ts): boolean
+const isMainThread (bun-types/bun.d.ts): boolean
+const isStandaloneExecutable (bun-types/bun.d.ts): boolean
 function listen (bun-types/bun.d.ts)
   call <Data = undefined>(options: Bun.TCPSocketListenOptions<Data>): Bun.TCPSocketListener<Data>
   call <Data = undefined>(options: Bun.UnixSocketOptions<Data>): Bun.UnixSocketListener<Data>
-var main (bun-types/bun.d.ts): string
+const main (bun-types/bun.d.ts): string
 namespace markdown (bun-types/bun.d.ts)
   interface markdown.AnsiTheme (bun-types/bun.d.ts)
     colors [?]: boolean
@@ -3039,7 +3039,7 @@ function nanoseconds (bun-types/bun.d.ts)
   call (): number
 function openInEditor (bun-types/bun.d.ts)
   call (path: string, options?: Bun.EditorOptions | undefined): void
-var password (bun-types/bun.d.ts)
+const password (bun-types/bun.d.ts)
   hash(password: Bun.StringOrBuffer, algorithm?: "argon2d" | "argon2i" | "argon2id" | "bcrypt" | Bun.Password.Argon2Algorithm | Bun.Password.BCryptAlgorithm | undefined): Promise<string>
   hashSync(password: Bun.StringOrBuffer, algorithm?: "argon2d" | "argon2i" | "argon2id" | "bcrypt" | Bun.Password.Argon2Algorithm | Bun.Password.BCryptAlgorithm | undefined): string
   verify(password: Bun.StringOrBuffer, hash: Bun.StringOrBuffer, algorithm?: "argon2d" | "argon2i" | "argon2id" | "bcrypt" | undefined): Promise<boolean>
@@ -3052,8 +3052,8 @@ function peek (bun-types/bun.d.ts)
 namespace peek (bun-types/bun.d.ts)
   function peek.status (bun-types/bun.d.ts)
     call <T = undefined>(promise: Promise<T> | T): "fulfilled" | "pending" | "rejected"
-var plugin (bun-types/bun.d.ts): Bun.BunRegisterPlugin
-var postgres (bun-types/sql.d.ts): Bun.SQL
+const plugin (bun-types/bun.d.ts): Bun.BunRegisterPlugin
+const postgres (bun-types/sql.d.ts): Bun.SQL
 function randomUUIDv5 (bun-types/bun.d.ts)
   call (name: Bun.BufferSource | string, namespace: Bun.BufferSource | string, encoding: "buffer"): Buffer<ArrayBufferLike>
   call (name: Bun.BufferSource | string, namespace: Bun.BufferSource | string, encoding?: "base64" | "base64url" | "hex" | undefined): string
@@ -3074,14 +3074,14 @@ function readableStreamToJSON (bun-types/deprecated.d.ts)
   call (stream: ReadableStream<any>): Promise<any>
 function readableStreamToText (bun-types/deprecated.d.ts)
   call (stream: ReadableStream<any>): Promise<string>
-var redis (bun-types/redis.d.ts): Bun.RedisClient
+const redis (bun-types/redis.d.ts): Bun.RedisClient
 function resolve (bun-types/bun.d.ts)
   call (moduleId: string, parent: string): Promise<string>
 function resolveSync (bun-types/bun.d.ts)
   call (moduleId: string, parent: string): string
-var revision (bun-types/bun.d.ts): string
+const revision (bun-types/bun.d.ts): string
 var s3 (bun-types/s3.d.ts): Bun.S3Client
-var secrets (bun-types/bun.d.ts)
+const secrets (bun-types/bun.d.ts)
   delete(options: { service: string; name: string; }): Promise<boolean>
   get(options: { service: string; name: string; }): Promise<null | string>
   set(options: { service: string; name: string; value: string; allowUnrestrictedAccess?: boolean; persist?: "enterprise" | "local" | undefined; }): Promise<void>
@@ -3107,12 +3107,12 @@ function spawn (bun-types/bun.d.ts)
   call <const In extends Bun.Spawn.Writable = "ignore", const Out extends Bun.Spawn.Readable = "pipe", const Err extends Bun.Spawn.Readable = "inherit">(options: Bun.Spawn.SpawnOptions<In, Out, Err> & { cmd: Array<string>; }): Bun.Subprocess<In, Out, Err>
   call <const In extends Bun.Spawn.Writable = "ignore", const Out extends Bun.Spawn.Readable = "pipe", const Err extends Bun.Spawn.Readable = "inherit">(cmds: Array<string>, options?: Bun.Spawn.SpawnOptions<In, Out, Err> | undefined): Bun.Subprocess<In, Out, Err>
 function spawnSync (bun-types/bun.d.ts)
-  call <const In extends Bun.Spawn.Writable = "ignore", const Out extends Bun.Spawn.Readable = "pipe", const Err extends Bun.Spawn.Readable = "pipe">(options: Bun.Spawn.SpawnSyncOptions<In, Out, Err> & { cmd: Array<string>; onExit?: undefined; }): Bun.SyncSubprocess<Out, Err>
+  call <const In extends Bun.Spawn.Writable = "ignore", const Out extends Bun.Spawn.Readable = "pipe", const Err extends Bun.Spawn.Readable = "pipe">(options: Bun.Spawn.SpawnSyncOptions<In, Out, Err> & { cmd: Array<string>; onExit?: never; }): Bun.SyncSubprocess<Out, Err>
   call <const In extends Bun.Spawn.Writable = "ignore", const Out extends Bun.Spawn.Readable = "pipe", const Err extends Bun.Spawn.Readable = "pipe">(cmds: Array<string>, options?: Bun.Spawn.SpawnSyncOptions<In, Out, Err> | undefined): Bun.SyncSubprocess<Out, Err>
-var sql (bun-types/sql.d.ts): Bun.SQL
-var stderr (bun-types/bun.d.ts): Bun.BunFile
-var stdin (bun-types/bun.d.ts): Bun.BunFile
-var stdout (bun-types/bun.d.ts): Bun.BunFile
+const sql (bun-types/sql.d.ts): Bun.SQL
+const stderr (bun-types/bun.d.ts): Bun.BunFile
+const stdin (bun-types/bun.d.ts): Bun.BunFile
+const stdout (bun-types/bun.d.ts): Bun.BunFile
 function stringWidth (bun-types/bun.d.ts)
   call (input: string, options?: Bun.StringWidthOptions | undefined): number
 function stripANSI (bun-types/bun.d.ts)
@@ -3217,8 +3217,8 @@ namespace unsafe (bun-types/bun.d.ts)
     call (): void
   function unsafe.setJITPolicy (bun-types/bun.d.ts)
     call (scale: number): void
-var version (bun-types/bun.d.ts): string
-var version_with_sha (bun-types/bun.d.ts): string
+const version (bun-types/bun.d.ts): string
+const version_with_sha (bun-types/bun.d.ts): string
 function which (bun-types/bun.d.ts)
   call (command: string, options?: Bun.WhichOptions | undefined): null | string
 function wrapAnsi (bun-types/bun.d.ts)
@@ -3247,7 +3247,7 @@ function feature (bun-types/bundle.d.ts)
 function CFunction (bun-types/ffi.d.ts)
   call (fn: import("bun:ffi").FFIFunction & { ptr: bigint | import("bun:ffi").Pointer | number; }): CallableFunction & { close(): void; }
 type CString (bun-types/ffi.d.ts) = string
-var CString (bun-types/ffi.d.ts): import("bun:ffi").CStringConstructor
+const CString (bun-types/ffi.d.ts): import("bun:ffi").CStringConstructor
 interface CStringConstructor (bun-types/ffi.d.ts)
   call (ptr: bigint | import("bun:ffi").Pointer | null | number, byteOffset?: number | undefined, byteLength?: number | undefined): string
   construct new (ptr: bigint | import("bun:ffi").Pointer | null | number, byteOffset?: number | undefined, byteLength?: number | undefined): string
@@ -3257,7 +3257,7 @@ interface FFIFunction (bun-types/ffi.d.ts)
   ptr [? readonly]: bigint | import("bun:ffi").Pointer
   returns [? readonly]: import("bun:ffi").FFITypeOrString
   threadsafe [? readonly]: boolean
-var FFIFunctionCallableSymbol (bun-types/ffi.d.ts): typeof FFIFunctionCallableSymbol
+const FFIFunctionCallableSymbol (bun-types/ffi.d.ts): typeof FFIFunctionCallableSymbol
 enum FFIType (bun-types/ffi.d.ts)
   char = 0
   int8_t = 1
@@ -3422,7 +3422,7 @@ namespace read (bun-types/ffi.d.ts)
     call (ptr: bigint | import("bun:ffi").Pointer | number, byteOffset?: number | undefined): bigint
   function read.u8 (bun-types/ffi.d.ts)
     call (ptr: bigint | import("bun:ffi").Pointer | number, byteOffset?: number | undefined): number
-var suffix (bun-types/ffi.d.ts): string
+const suffix (bun-types/ffi.d.ts): string
 function toArrayBuffer (bun-types/ffi.d.ts)
   call (ptr: bigint | import("bun:ffi").Pointer | number, byteOffset?: number | undefined, byteLength?: number | undefined): ArrayBuffer
 function toBuffer (bun-types/ffi.d.ts)
@@ -3590,7 +3590,7 @@ interface FunctionOptions (bun-types/sqlite.d.ts)
   varargs [?]: boolean | undefined
 type SQLFunctionResult (bun-types/sqlite.d.ts) = ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike> | bigint | boolean | null | number | string | undefined | void
 type SQLQueryBindings (bun-types/sqlite.d.ts) = ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike> | Record<string, ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike> | bigint | boolean | null | number | string> | bigint | boolean | null | number | string
-class SQLiteError (bun-types/sqlite.d.ts)
+class SQLiteError extends Error (bun-types/sqlite.d.ts)
   byteOffset [readonly]: number
   cause [?]: unknown
   code [?]: string
@@ -3636,72 +3636,72 @@ class Statement<ReturnType = unknown, ParamsType extends Array<import("bun:sqlit
     prototype: import("bun:sqlite").Statement<any, any>
 type UpdateHook (bun-types/sqlite.d.ts) = (this: import("bun:sqlite").Database, database: import("bun:sqlite").Database, tableName: string, rowid: bigint | number, schemaName: string) => void
 namespace constants (bun-types/sqlite.d.ts)
-  var constants.SQLITE_FCNTL_BEGIN_ATOMIC_WRITE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_BUSYHANDLER (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_CHUNK_SIZE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_CKPT_DONE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_CKPT_START (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_CKSM_FILE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_COMMIT_ATOMIC_WRITE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_COMMIT_PHASETWO (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_DATA_VERSION (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_EXTERNAL_READER (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_FILE_POINTER (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_GET_LOCKPROXYFILE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_HAS_MOVED (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_JOURNAL_POINTER (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_LAST_ERRNO (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_LOCKSTATE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_LOCK_TIMEOUT (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_MMAP_SIZE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_OVERWRITE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_PDB (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_PERSIST_WAL (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_POWERSAFE_OVERWRITE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_PRAGMA (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_RBU (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_RESERVE_BYTES (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_RESET_CACHE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_SET_LOCKPROXYFILE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_SIZE_HINT (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_SIZE_LIMIT (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_SYNC (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_SYNC_OMITTED (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_TEMPFILENAME (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_TRACE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_VFSNAME (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_VFS_POINTER (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_WAL_BLOCK (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_WIN32_AV_RETRY (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_WIN32_GET_HANDLE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_WIN32_SET_HANDLE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_FCNTL_ZIPVFS (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_AUTOPROXY (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_CREATE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_DELETEONCLOSE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_EXCLUSIVE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_EXRESCODE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_FULLMUTEX (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_MAIN_DB (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_MAIN_JOURNAL (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_MEMORY (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_NOFOLLOW (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_NOMUTEX (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_PRIVATECACHE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_READONLY (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_READWRITE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_SHAREDCACHE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_SUBJOURNAL (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_SUPER_JOURNAL (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_TEMP_DB (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_TEMP_JOURNAL (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_TRANSIENT_DB (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_URI (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_OPEN_WAL (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_PREPARE_NORMALIZE (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_PREPARE_NO_VTAB (bun-types/sqlite.d.ts): number
-  var constants.SQLITE_PREPARE_PERSISTENT (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_BEGIN_ATOMIC_WRITE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_BUSYHANDLER (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_CHUNK_SIZE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_CKPT_DONE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_CKPT_START (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_CKSM_FILE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_COMMIT_ATOMIC_WRITE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_COMMIT_PHASETWO (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_DATA_VERSION (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_EXTERNAL_READER (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_FILE_POINTER (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_GET_LOCKPROXYFILE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_HAS_MOVED (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_JOURNAL_POINTER (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_LAST_ERRNO (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_LOCKSTATE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_LOCK_TIMEOUT (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_MMAP_SIZE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_OVERWRITE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_PDB (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_PERSIST_WAL (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_POWERSAFE_OVERWRITE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_PRAGMA (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_RBU (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_RESERVE_BYTES (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_RESET_CACHE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_SET_LOCKPROXYFILE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_SIZE_HINT (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_SIZE_LIMIT (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_SYNC (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_SYNC_OMITTED (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_TEMPFILENAME (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_TRACE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_VFSNAME (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_VFS_POINTER (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_WAL_BLOCK (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_WIN32_AV_RETRY (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_WIN32_GET_HANDLE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_WIN32_SET_HANDLE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_FCNTL_ZIPVFS (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_AUTOPROXY (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_CREATE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_DELETEONCLOSE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_EXCLUSIVE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_EXRESCODE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_FULLMUTEX (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_MAIN_DB (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_MAIN_JOURNAL (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_MEMORY (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_NOFOLLOW (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_NOMUTEX (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_PRIVATECACHE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_READONLY (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_READWRITE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_SHAREDCACHE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_SUBJOURNAL (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_SUPER_JOURNAL (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_TEMP_DB (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_TEMP_JOURNAL (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_TRANSIENT_DB (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_URI (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_OPEN_WAL (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_PREPARE_NORMALIZE (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_PREPARE_NO_VTAB (bun-types/sqlite.d.ts): number
+  const constants.SQLITE_PREPARE_PERSISTENT (bun-types/sqlite.d.ts): number
 default -> import("bun:sqlite").Database
 
 # module "bun:test"
@@ -4165,12 +4165,12 @@ function beforeAll (bun-types/test.d.ts)
   call (fn: (() => Promise<unknown> | void) | ((done: (err?: unknown) => void) => void), options?: HookOptions | undefined): void
 function beforeEach (bun-types/test.d.ts)
   call (fn: (() => Promise<unknown> | void) | ((done: (err?: unknown) => void) => void), options?: HookOptions | undefined): void
-var describe (bun-types/test.d.ts): import("bun:test").Describe<[]>
-var expect (bun-types/test.d.ts): import("bun:test").Expect
-var expectTypeOf (bun-types/test.d.ts)
+const describe (bun-types/test.d.ts): import("bun:test").Describe<[]>
+const expect (bun-types/test.d.ts): import("bun:test").Expect
+const expectTypeOf (bun-types/test.d.ts)
   call <Actual>(actual: Actual): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
   call <Actual>(): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
-var it (bun-types/test.d.ts): import("bun:test").Test<[]>
+const it (bun-types/test.d.ts): import("bun:test").Test<[]>
 namespace jest (bun-types/test.d.ts)
   type jest.Mock<T extends (...args: Array<any>) => any = (...args: Array<any>) => any> (bun-types/test.d.ts) = JestMock.Mock<T>
   type jest.Replaced<T> (bun-types/test.d.ts) = JestMock.Replaced<T>
@@ -4210,7 +4210,7 @@ namespace jest (bun-types/test.d.ts)
   function jest.isFakeTimers (bun-types/test.d.ts)
     call (): boolean
   function jest.isMockFunction (bun-types/test.d.ts)
-    call (fn: unknown): fn is Mock<(...args: any[]) => any>
+    call (fn: unknown): fn is import("bun:test").jest.Mock<(...args: Array<any>) => any>
   function jest.mock (bun-types/test.d.ts)
     call (id: string, factory?: import("bun:test").ModuleMockFactory<any> | undefined): typeof jest
   function jest.mocked (bun-types/test.d.ts)
@@ -4253,7 +4253,7 @@ namespace jest (bun-types/test.d.ts)
     call (options?: "legacy" | "modern" | import("bun:test").FakeTimersOptions | undefined): typeof jest
   function jest.useRealTimers (bun-types/test.d.ts)
     call (): typeof jest
-var mock (bun-types/test.d.ts)
+const mock (bun-types/test.d.ts)
   call <T extends (...args: Array<any>) => any>(Function?: T | undefined): import("bun:test").Mock<T>
   call <Args extends Array<any>, Instance>(Class: new (...args: Args) => Instance): import("bun:test").Mock<(...args: Args) => Instance>
   call <T extends (...args: Array<any>) => any>(Function?: T | undefined): import("bun:test").Mock<T>
@@ -4271,7 +4271,7 @@ function spyOn (bun-types/test.d.ts)
   call <T extends object, K extends keyof T>(obj: T, property: K, accessType: "set"): import("bun:test").Mock<(value: T[K]) => void>
   call <T extends object, K extends keyof T>(obj: T, methodOrPropertyValue: K): import("bun:test").Mock<Extract<T[K], (...args: Array<any>) => any>>
 test -> import("bun:test").it
-var vi (bun-types/test.d.ts)
+const vi (bun-types/test.d.ts)
   advanceTimersByTime(milliseconds: number): ...
   advanceTimersByTimeAsync(milliseconds: number): Promise<...>
   advanceTimersToNextFrame(): ...
@@ -4291,7 +4291,7 @@ var vi (bun-types/test.d.ts)
   importActual<T = any>(id: string): Promise<T>
   importMock<T = any>(id: string): Promise<import("bun:test").Mocked<T>>
   isFakeTimers(): boolean
-  isMockFunction: (fn: unknown) => fn is Mock<(...args: any[]) => any>
+  isMockFunction: (fn: unknown) => fn is import("bun:test").jest.Mock<(...args: Array<any>) => any>
   mock<T>(module: Promise<T>, factory?: import("bun:test").ModuleMockFactory<T> | import("bun:test").ModuleMockOptions | undefined): Promise<void> | void
   mock(id: string, factory?: import("bun:test").ModuleMockFactory<any> | import("bun:test").ModuleMockOptions | undefined): Promise<void> | void
   mockObject<T>(value: T, options?: undefined | { spy?: boolean | undefined; }): import("bun:test").Mocked<T>
@@ -4319,8 +4319,8 @@ var vi (bun-types/test.d.ts)
   useRealTimers(): ...
   waitFor<T>(callback: () => Promise<T> | T, options?: number | undefined | { timeout?: number | undefined; interval?: number | undefined; }): Promise<T>
   waitUntil<T>(callback: () => Promise<T> | T, options?: number | undefined | { timeout?: number | undefined; interval?: number | undefined; }): Promise<Exclude<T, "" | 0 | 0n | false | null | undefined>>
-var xdescribe (bun-types/test.d.ts): import("bun:test").Describe<[]>
-var xit (bun-types/test.d.ts): import("bun:test").Test<[]>
+const xdescribe (bun-types/test.d.ts): import("bun:test").Describe<[]>
+const xit (bun-types/test.d.ts): import("bun:test").Test<[]>
 xtest -> import("bun:test").xit
 
 # module "console"
@@ -4517,7 +4517,7 @@ interface ArrayConstructor (bun-types/globals.d.ts, lib.es2015.core.d.ts, lib.es
   from<T, U>(arrayLike: ArrayLike<T>, mapfn: (v: T, k: number) => U, thisArg?: any): Array<U>
   fromAsync<T>(arrayLike: ArrayLike<T> | AsyncIterable<T> | Iterable<T>): Promise<Array<Awaited<T>>>
   fromAsync<T, U>(arrayLike: ArrayLike<T> | AsyncIterable<T> | Iterable<T>, mapFn?: ((value: T, index: number) => U) | undefined, thisArg?: any): Promise<Array<Awaited<U>>>
-  isArray(arg: any): arg is any[]
+  isArray(arg: any): arg is Array<any>
   of<T>(...items: Array<T>): Array<T>
   prototype [readonly]: Array<any>
 interface Blob (@types/node/web-globals/blob.d.ts, bun-types/globals.d.ts, lib.dom.d.ts)
@@ -6232,6 +6232,10 @@ function structuredClone (@types/node/web-globals/messaging.d.ts, bun-types/glob
   call <T = any>(value: T, options?: StructuredSerializeOptions | undefined): T
 
 # not exported, named by the types above
+const import("bun-types/vendor/expect-type/index").expectTypeOf (bun-types/vendor/expect-type/index.d.ts)
+  call <Actual>(actual: Actual): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
+  call <Actual>(): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
+const secret (bun-types/vendor/expect-type/utils.d.ts): typeof secret
 interface AsymmetricMatchersBuiltinNegated (bun-types/test.d.ts)
   arrayContaining<E = any>(arr: ReadonlyArray<E>): any
   closeTo(num: number, numDigits?: number | undefined): any
@@ -6465,7 +6469,7 @@ type JestMock.UnknownFunction (bun-types/test.d.ts) = (...args: Array<unknown>) 
 type MatcherContext (bun-types/test.d.ts) = MatcherUtils & MatcherState
 type MatcherHintColor (bun-types/test.d.ts) = (arg: string) => string
 type Mismatch (bun-types/vendor/expect-type/utils.d.ts) = { [mismatch]: "mismatch"; }
-type ReactElement (bun-types/jsx.d.ts) = unknown
+type ReactElement (bun-types/jsx.d.ts) = unknown [written: typeof globalThis extends { React: infer React; } ? React extends { createElement(...args: any): infer R; } ? R : never : unknown]
 type ReadonlyEquivalent<X, Y> (bun-types/vendor/expect-type/utils.d.ts) = [<T>() => T extends X ? true : false] extends [<T>() => T extends Y ? true : false] ? true : false
 type Secret (bun-types/vendor/expect-type/utils.d.ts) = typeof secret
 type SuiteHook<Context> (bun-types/test.d.ts) = (fn: (context: Context, suite: import("bun:test").TestSuite) => unknown, options?: HookOptions | undefined) => void
@@ -6539,7 +6543,3 @@ type import("bun-types/vendor/expect-type/utils").TuplifyUnion<Union, LastElemen
 type import("bun-types/vendor/expect-type/utils").UnionToIntersection<Union> (bun-types/vendor/expect-type/utils.d.ts) = (Union extends any ? (distributedUnion: Union) => void : never) extends (mergedIntersection: infer Intersection) => void ? Intersection : never
 type import("bun-types/vendor/expect-type/utils").UnionToTuple<Union> (bun-types/vendor/expect-type/utils.d.ts) = IsNever<Union> extends true ? [] : [...TuplifyUnion<Exclude<Union, LastOf<Union>>, LastOf<Exclude<Union, LastOf<Union>>>>, LastOf<Union>]
 type import("bun-types/vendor/expect-type/utils").UsefulKeys<T> (bun-types/vendor/expect-type/utils.d.ts) = T extends Array<any> ? { [K in keyof T]: K; }[number] : keyof T
-var import("bun-types/vendor/expect-type/index").expectTypeOf (bun-types/vendor/expect-type/index.d.ts)
-  call <Actual>(actual: Actual): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
-  call <Actual>(): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
-var secret (bun-types/vendor/expect-type/utils.d.ts): typeof secret

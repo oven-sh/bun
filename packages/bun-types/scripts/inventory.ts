@@ -145,7 +145,7 @@ async function createProject(tempDir: string): Promise<{ projectDir: string; ver
   await mkdir(projectDir);
   await cp(PACKAGE_ROOT, buildDir, { recursive: true, filter: source => basename(source) !== "node_modules" });
 
-  const version = (process.env.BUN_VERSION ?? Bun.version).replace(/^.*v/, "");
+  const version = (process.env.BUN_VERSION || Bun.version).replace(/^.*v/, "");
   const tarball = `bun-types-${version}.tgz`;
   await $`cd ${PACKAGE_ROOT} && BUN_VERSION=${version} bun run build ${buildDir}`.quiet();
   await $`cd ${buildDir} && bun pm pack --destination ${projectDir}`.quiet();
@@ -270,6 +270,11 @@ function inventory(
 
   const rawTypeText = (type: ts.Type) => clean(checker.typeToString(type, undefined, typeFormat));
 
+  const sourcePrinter = ts.createPrinter({ removeComments: true });
+  /** A type as the source writes it, on one line and with no comment. */
+  const writtenText = (node: ts.Node) =>
+    clean(sourcePrinter.printNode(ts.EmitHint.Unspecified, node, node.getSourceFile()));
+
   // Every class, interface, enum, alias and `typeof` target that a listed declaration names.
   const named = new Set<ts.Symbol>();
 
@@ -344,6 +349,15 @@ function inventory(
   const isNotSetMarker = (type: ts.Type) => !!(type.flags & ts.TypeFlags.Undefined) && type !== undefinedType;
 
   /**
+   * The members of a union that are printed. A union built from an aliased union plus extra
+   * members (`FormDataEntryValue | null`) keeps the alias in `origin`, so that the name survives.
+   */
+  const unionParts = (type: ts.UnionType) => {
+    const origin = (type as ts.Type & { origin?: ts.Type }).origin;
+    return (origin?.isUnion() ? origin.types : type.types).filter(t => !isNotSetMarker(t));
+  };
+
+  /**
    * The order in which a call tries its overloads, which is not the order of
    * `getSignaturesOfType`: the signatures of one declaration stay in source order, a LATER
    * declaration of the same symbol (another block of a merged interface, another
@@ -412,7 +426,7 @@ function inventory(
     const text = typeText(member);
     // An aliased member prints as its name, `Bun.X` or `Bun.X<T>`.
     if (member.aliasSymbol) return text;
-    const isFunction = /^(new )?[(<]/.test(text) && text.includes("=> ");
+    const isFunction = /^(abstract )?(new )?[(<]/.test(text) && text.includes("=> ");
     const isConditional = !!(member.flags & ts.TypeFlags.Conditional);
     return wrap || isFunction || isConditional ? `(${text})` : text;
   }
@@ -531,7 +545,12 @@ function inventory(
         if (flags & ts.ElementFlags.Rest) return `...${label}Array<${typeText(element)}>`;
         if (flags & ts.ElementFlags.Optional) {
           if (name !== undefined) return `${name}?: ${typeText(element)}`;
-          return `${memberText(element, element.isUnion() || element.isIntersection())}?`;
+          // With exactOptionalPropertyTypes the element is `T | <not set>` and only `T` is printed,
+          // so only `T` decides the parentheses: `[X?]`, `[(A | B)?]`, `[boolean?]`.
+          const parts = element.isUnion() && !element.aliasSymbol ? unionParts(element) : [element];
+          const shown = parts.length === 1 ? parts[0]! : element;
+          const isBoolean = parts.length === 2 && parts.every(t => t.flags & ts.TypeFlags.BooleanLiteral);
+          return `${memberText(shown, !isBoolean && (shown.isUnion() || shown.isIntersection()))}?`;
         }
         return label + typeText(element);
       });
@@ -559,6 +578,8 @@ function inventory(
       type.aliasSymbol
         ? clean(checker.typeToString(type, undefined, typeFormat | ts.TypeFormatFlags.InTypeAlias))
         : rawTypeText(type);
+    // `x?: never` is the "not set" marker and nothing else. TypeScript prints that as `undefined`.
+    if (isNotSetMarker(type)) return "never";
     // An enum is a union of its members. It has a name.
     if (type.flags & ts.TypeFlags.EnumLike && type.symbol && !type.aliasSymbol) return qualifiedName(type.symbol);
     if (type.isUnion()) {
@@ -567,9 +588,7 @@ function inventory(
       if (origin?.isIntersection()) return origin.types.map(t => memberText(t, t.isUnion())).join(" & ");
       // A `keyof X` origin: TypeScript prints it as `keyof X`, keep that.
       if (origin && !origin.isUnion()) return ownText();
-      // A union built from an aliased union plus extra members (`FormDataEntryValue | null`)
-      // keeps the alias in `origin`. Print through it so the alias name survives.
-      const parts = (origin?.isUnion() ? origin.types : type.types).filter(t => !isNotSetMarker(t));
+      const parts = unionParts(type);
       const isBooleanLiteral = (t: ts.Type, name: string) =>
         !!(t.flags & ts.TypeFlags.BooleanLiteral) && (t as ts.Type & { intrinsicName?: string }).intrinsicName === name;
       const hasTrue = parts.some(t => isBooleanLiteral(t, "true"));
@@ -688,9 +707,9 @@ function inventory(
         if (constraint) {
           // `keyof X` of an interface that has no member yet is `never`, and a user who augments X
           // changes it. Print what is written.
-          const source = declaration?.constraint?.getText();
+          const source = declaration?.constraint && writtenText(declaration.constraint);
           const collapsed = constraint.flags & ts.TypeFlags.Never && source !== undefined && source !== "never";
-          text += ` extends ${collapsed ? clean(source) : typeText(constraint)}`;
+          text += ` extends ${collapsed ? source : typeText(constraint)}`;
         }
         const fallback =
           !declaration || copy.target
@@ -700,6 +719,17 @@ function inventory(
         return text;
       })
       .join(", ")}>`;
+  }
+
+  /** `x is T`, `asserts x is T`, `asserts x`, with `this` for x in a method that narrows its object. */
+  function predicateText(predicate: ts.TypePredicate): string {
+    const { kind } = predicate;
+    const asserts = kind === ts.TypePredicateKind.AssertsThis || kind === ts.TypePredicateKind.AssertsIdentifier;
+    const subject =
+      kind === ts.TypePredicateKind.This || kind === ts.TypePredicateKind.AssertsThis
+        ? "this"
+        : predicate.parameterName;
+    return `${asserts ? "asserts " : ""}${subject}${predicate.type ? ` is ${typeText(predicate.type)}` : ""}`;
   }
 
   function signatureText(sig: ts.Signature, kind: ts.SignatureKind, arrow: string): string {
@@ -713,9 +743,7 @@ function inventory(
       params.unshift(`this: ${typeText(checker.getTypeOfSymbol(sig.thisParameter))}`);
     }
     const predicate = checker.getTypePredicateOfSignature(sig);
-    const returns = predicate
-      ? clean(checker.typePredicateToString(predicate))
-      : typeText(checker.getReturnTypeOfSignature(sig));
+    const returns = predicate ? predicateText(predicate) : typeText(checker.getReturnTypeOfSignature(sig));
     const head = `${typeParamsText(sig.typeParameters)}(${params.join(", ")})`;
     if (kind !== ts.SignatureKind.Construct) return `${head}${arrow}${returns}`;
     // `abstract new () => X`, and every constructor of an abstract class. TypeScript keeps this in
@@ -796,11 +824,11 @@ function inventory(
       if (!body || !(ts.isModuleBlock(body) || ts.isSourceFile(body))) continue;
       for (const statement of body.statements) {
         if (ts.isExportDeclaration(statement) && !statement.exportClause && statement.moduleSpecifier) {
-          specifiers.add(statement.moduleSpecifier.getText());
+          specifiers.add(`${statement.isTypeOnly ? "type " : ""}* from ${statement.moduleSpecifier.getText()}`);
         }
       }
     }
-    return [...specifiers].sort().map(specifier => `export * from ${specifier}`);
+    return [...specifiers].sort().map(specifier => `export ${specifier}`);
   }
 
   /** The exports of a module or namespace that bun-types declares, augments, or re-exports. */
@@ -818,6 +846,15 @@ function inventory(
    */
   function emitSymbol(sym: ts.Symbol, path: string, indent: string, reference = path) {
     const target = resolveSymbol(sym);
+    // `export type { X }` of a class, an enum or a namespace: the name is the type and not the
+    // value. X has its own entry. For an interface or a type alias the keyword changes nothing.
+    const typeOnly = (sym.declarations ?? []).some(
+      d => ts.isExportSpecifier(d) && (d.isTypeOnly || d.parent.parent.isTypeOnly),
+    );
+    if (typeOnly && target.flags & ts.SymbolFlags.Value) {
+      lines.push(`${indent}${path} [type only] -> ${qualifiedName(target)}`);
+      return;
+    }
     const earlier = seen.get(target);
     if (earlier !== undefined) {
       lines.push(`${indent}${path} -> ${earlier}`);
@@ -835,7 +872,15 @@ function inventory(
     if (target.flags & ts.SymbolFlags.Class) {
       const declared = checker.getDeclaredTypeOfSymbol(target) as ts.InterfaceType;
       const abstract = modifierFlags(target) & ts.ModifierFlags.Abstract ? "abstract " : "";
-      lines.push(`${indent}${abstract}class ${path}${typeParamsText(declared.typeParameters)} (${where})`);
+      // The members below include the inherited ones. The base itself also counts: a class is
+      // only assignable to the base whose private members it has. The `extends` of an interface
+      // that merges with the class is not one: it only adds members.
+      const base = (target.declarations ?? [])
+        .filter(ts.isClassDeclaration)
+        .flatMap(d => d.heritageClauses ?? [])
+        .find(clause => clause.token === ts.SyntaxKind.ExtendsKeyword)?.types[0];
+      const heritage = base ? ` extends ${typeText(checker.getTypeFromTypeNode(base))}` : "";
+      lines.push(`${indent}${abstract}class ${path}${typeParamsText(declared.typeParameters)}${heritage} (${where})`);
       emitTypeMembers(declared, inner);
       lines.push(`${inner}[static]`);
       emitTypeMembers(checker.getTypeOfSymbol(target), inner + "  ");
@@ -850,9 +895,19 @@ function inventory(
         const params = decl?.typeParameters?.map(
           p => checker.getDeclaredTypeOfSymbol(checker.getSymbolAtLocation(p.name)!) as ts.TypeParameter,
         );
-        lines.push(`${indent}type ${path}${typeParamsText(params)} (${where}) = ${typeText(declared, target)}`);
+        // A conditional with no type parameter to wait for is already resolved: `unknown` for
+        // `typeof globalThis extends { React: infer R } ? ... : unknown` where there is no React.
+        // Print what is written as well. A change to the branch that no preset takes then shows.
+        const written =
+          decl && ts.isConditionalTypeNode(decl.type) && !(declared.flags & ts.TypeFlags.Conditional)
+            ? ` [written: ${writtenText(decl.type)}]`
+            : "";
+        lines.push(
+          `${indent}type ${path}${typeParamsText(params)} (${where}) = ${typeText(declared, target)}${written}`,
+        );
       } else if (target.flags & ts.SymbolFlags.Enum) {
-        lines.push(`${indent}enum ${path} (${where})`);
+        const constant = target.flags & ts.SymbolFlags.ConstEnum ? "const " : "";
+        lines.push(`${indent}${constant}enum ${path} (${where})`);
         for (const member of checker.getExportsOfModule(target)) {
           // The value, not the literal type: that one prints as the member's own name.
           const declaration = member.valueDeclaration;
@@ -862,7 +917,16 @@ function inventory(
         }
       }
       if (target.flags & (ts.SymbolFlags.Variable | ts.SymbolFlags.Function | ts.SymbolFlags.Property)) {
-        const kind = target.flags & ts.SymbolFlags.Function ? "function" : "var";
+        const declaration = target.valueDeclaration;
+        const binding = declaration && ts.isVariableDeclaration(declaration) ? ts.getCombinedNodeFlags(declaration) : 0;
+        const kind =
+          target.flags & ts.SymbolFlags.Function
+            ? "function"
+            : binding & ts.NodeFlags.Const
+              ? "const"
+              : binding & ts.NodeFlags.Let
+                ? "let"
+                : "var";
         const type = checker.getTypeOfSymbol(target);
         const expand =
           type.flags & ts.TypeFlags.Object &&
@@ -917,7 +981,10 @@ function inventory(
     seen.set(mod, `module ${name}`);
     const exportEquals = mod.exports?.get(ts.InternalSymbolName.ExportEquals as ts.__String);
     if (exportEquals) {
-      lines.push(`export = ${typeText(checker.getTypeOfSymbol(resolveSymbol(exportEquals)))}`);
+      const assigned = resolveSymbol(exportEquals);
+      lines.push(`export = ${typeText(checker.getTypeOfSymbol(assigned))}`);
+      // `typeof f` says nothing about f. A function or a class that is assigned gets an entry.
+      if (assigned.flags & (ts.SymbolFlags.Function | ts.SymbolFlags.Class)) note(assigned);
     }
     for (const line of starExportsOf(mod)) lines.push(line);
     // The global `Bun` is the namespace of the module "bun".

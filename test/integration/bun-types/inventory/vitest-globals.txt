@@ -414,7 +414,7 @@ interface TestOptions (bun-types/vitest.d.ts)
   skip [?]: boolean | undefined
   timeout [?]: number | undefined
   todo [?]: boolean | undefined
-var TestRunner (bun-types/vitest.d.ts)
+const TestRunner (bun-types/vitest.d.ts)
   getCurrentTest(): import("vitest").RunnerTestCase<object> | undefined
 interface VitestUtils (bun-types/vitest.d.ts)
   advanceTimersByTime: (...args: [milliseconds: number]) => import("vitest").VitestUtils
@@ -435,7 +435,7 @@ interface VitestUtils (bun-types/vitest.d.ts)
   importActual: <T = any>(id: string) => Promise<T>
   importMock<T = Record<string, any>>(id: string): Promise<MaybeMockedDeep<T>>
   isFakeTimers: (((...args: []) => false) & (() => boolean)) | (((...args: []) => true) & (() => boolean))
-  isMockFunction(fn: any): fn is Mock<Procedure>
+  isMockFunction(fn: any): fn is import("vitest").Mock<Procedure>
   mock: (((...args: [id: string, factory?: import("bun:test").ModuleMockFactory<any> | import("bun:test").ModuleMockOptions | undefined]) => Promise<void>) & { <T>(module: Promise<T>, factory?: import("bun:test").ModuleMockFactory<T> | import("bun:test").ModuleMockOptions | undefined): Promise<void> | void; (id: string, factory?: import("bun:test").ModuleMockFactory<any> | import("bun:test").ModuleMockOptions | undefined): Promise<void> | void }) | { <T>(module: Promise<T>, factory?: import("bun:test").ModuleMockFactory<T> | import("bun:test").ModuleMockOptions | undefined): Promise<void> | void; (id: string, factory?: import("bun:test").ModuleMockFactory<any> | import("bun:test").ModuleMockOptions | undefined): Promise<void> | void }
   mockObject<T>(value: T, options?: undefined | { spy?: boolean | undefined; }): MaybeMockedDeep<T>
   mocked<T>(item: T, deep?: false | undefined): MaybeMocked<T>
@@ -479,28 +479,28 @@ function aroundAll (bun-types/vitest.d.ts)
   call <ExtraContext = object>(fn: (runSuite: () => Promise<void>, context: ExtraContext, suite: Readonly<import("vitest").RunnerTestFile | import("vitest").RunnerTestSuite>) => unknown, timeout?: number | undefined): void
 function aroundEach (bun-types/vitest.d.ts)
   call <ExtraContext = object>(fn: (runTest: () => Promise<void>, context: import("vitest").TestContext & ExtraContext, suite: Readonly<import("vitest").RunnerTestSuite>) => unknown, timeout?: number | undefined): void
-var assert (bun-types/vitest.d.ts): any
-var assertType (bun-types/vitest.d.ts): import("vitest").AssertType
+const assert (bun-types/vitest.d.ts): any
+const assertType (bun-types/vitest.d.ts): import("vitest").AssertType
 function beforeAll (bun-types/vitest.d.ts)
   call <ExtraContext = object>(fn: (context: ExtraContext, suite: Readonly<import("vitest").RunnerTestFile | import("vitest").RunnerTestSuite>) => unknown, timeout?: number | undefined): void
 function beforeEach (bun-types/vitest.d.ts)
   call <ExtraContext = object>(fn: (context: import("vitest").TestContext & ExtraContext) => unknown, timeout?: number | undefined): void
-var describe (bun-types/vitest.d.ts): import("vitest").SuiteAPI
-var expect (bun-types/vitest.d.ts): import("vitest").ExpectStatic
-var expectTypeOf (bun-types/vitest.d.ts)
+const describe (bun-types/vitest.d.ts): import("vitest").SuiteAPI
+const expect (bun-types/vitest.d.ts): import("vitest").ExpectStatic
+const expectTypeOf (bun-types/vitest.d.ts)
   call <Actual>(actual: Actual): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
   call <Actual>(): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
 function inject (bun-types/vitest.d.ts)
   call <T extends keyof ProvidedContext & string>(key: T): ProvidedContext[T] | undefined
-var it (bun-types/vitest.d.ts): import("vitest").TestAPI<object>
+const it (bun-types/vitest.d.ts): import("vitest").TestAPI<object>
 function onTestFailed (bun-types/vitest.d.ts)
   call (fn: import("vitest").OnTestFailedHandler, timeout?: number | undefined): void
 function onTestFinished (bun-types/vitest.d.ts)
   call (fn: import("vitest").OnTestFinishedHandler, timeout?: number | undefined): void
-var should (bun-types/vitest.d.ts): any
+const should (bun-types/vitest.d.ts): any
 suite -> import("vitest").describe
 test -> import("vitest").it
-var vi (bun-types/vitest.d.ts): import("vitest").VitestUtils
+const vi (bun-types/vitest.d.ts): import("vitest").VitestUtils
 vitest -> import("vitest").vi
 
 # globals

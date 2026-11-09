@@ -78,8 +78,7 @@ pub struct Environment {
     pub instrument_gating_name: Option<StoreStr>,
     pub hook_guard_name: Option<StoreStr>,
 
-    /// [`Host::jsx_classic_factory_root`](crate::program::Host::jsx_classic_factory_root), once lowering has
-    /// seen a call of the factory.
+    /// `Host::jsx_classic_factory_root`, once lowering has seen a call of the classic JSX factory.
     pub(crate) jsx_factory_root: Option<StoreStr>,
 
     // Renames: tracks variable renames from lowering (original_name → new_name)

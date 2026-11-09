@@ -3924,7 +3924,8 @@ describe.concurrent("an .oxlintrc.json", () => {
           categories: { correctness: "off" },
           rules: { "no-unused-vars": "error", "typescript/consistent-type-imports": "error" },
         }),
-        "a.vue": "<script>\n// eslint-disable-next-line typescript/consistent-type-imports\nexport const a = 1;\n</script>\n",
+        "a.vue":
+          "<script>\n// eslint-disable-next-line typescript/consistent-type-imports\nexport const a = 1;\n</script>\n",
         "a.js": "// eslint-disable-next-line no-unused-vars\nconst a = 1;\n",
       },
       [".", "--report-unused-disable-directives"],

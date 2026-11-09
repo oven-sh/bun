@@ -440,8 +440,9 @@ declare module "bun" {
      * so `size` does not count it. A `type: "direct"` stream has no queue:
      * `size` is 1 when `value` holds a chunk.
      *
-     * Do not use `size` as the number of bytes in `value`. To count bytes, add
-     * up the `byteLength` of each chunk.
+     * Do not use `size` as the number of bytes in `value`. To count the bytes
+     * of `Uint8Array` or other binary chunks, add up the `byteLength` of each
+     * chunk.
      */
     size: number;
     value: T[];

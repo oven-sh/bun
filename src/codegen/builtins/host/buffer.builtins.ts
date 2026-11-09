@@ -366,6 +366,15 @@ export default b.declarations(
         uses: { encoding: b.inspected },
         implementation: b.hostCall,
       },
+      of: {
+        args: { items: b.any.rest },
+        returns: newBuffer,
+        capability: "js",
+        throws: true,
+        runsOnlyOperandCode: true,
+        uses: { items: converted },
+        implementation: b.hostCall,
+      },
     },
     proto: {
       parent: propertyOfBuffer("parent", "buffer", b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"))),

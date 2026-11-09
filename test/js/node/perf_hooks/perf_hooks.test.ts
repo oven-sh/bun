@@ -1,7 +1,7 @@
 import * as internalForTesting from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, nodeExeAtLeast, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, nodeExeAtLeast, tempDir, withoutAggressiveGC } from "harness";
 import net from "net";
 import { join } from "path";
 import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
@@ -1113,12 +1113,19 @@ describe("gc entries", () => {
     expect(exitCode).toBe(0);
   });
 
-  // With BUN_JSC_logGC=1, JavaScriptCore prints each stop of a collection (p=) and the length of its cycle. The program
-  // runs beside the collections that its own allocations bring, so the entry of each lasts for its stops, and for no
-  // longer than its cycle. The script marks where the allocations begin and end in that log. A collection that is still
-  // under way at the second mark is left out: the forced collection behind the mark waits for it. A debug build takes a
-  // second for three of the twenty rounds. With BUN_JSC_useConcurrentGC=0 a collection is one stop, which begins a
-  // moment before its cycle is timed, so there the entry lasts for the cycle.
+  // With BUN_JSC_logGC=1, JavaScriptCore prints each stop of a collection (p=) and the length of its cycle, in
+  // milliseconds with six digits behind the point.
+  const collectionsInTheLog = (log: string) =>
+    [...log.matchAll(/START[^]*?cycle ([0-9.]+)ms END\]/g)].map(([collection, cycle]) => {
+      const stops = [...collection.matchAll(/ p=([0-9.]+)ms/g)].map(([, stop]) => Number(stop));
+      return { cycle: Number(cycle), stops: stops.length, allStops: stops.reduce((sum, stop) => sum + stop, 0) };
+    });
+
+  // The program runs beside the collections that its own allocations bring, so the entry of each lasts for its stops,
+  // and for no longer than its cycle. The script marks where the allocations begin and end in the log. A collection
+  // that is still under way at the second mark is left out: the forced collection behind the mark waits for it. A debug
+  // build takes a second for three of the twenty rounds. With BUN_JSC_useConcurrentGC=0 a collection is one stop, which
+  // begins a moment before its cycle is timed, so there the entry lasts for the cycle.
   concurrent.each([
     ["some of which have more than one stop", {}, true],
     ["each of which is one stop", { BUN_JSC_useConcurrentGC: "0" }, false],
@@ -1163,25 +1170,105 @@ describe("gc entries", () => {
         }),
       );
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const log = stderr.slice(stderr.indexOf("== the allocations begin"), stderr.indexOf("== the allocations end"));
-      const logged = [...log.matchAll(/START[^]*?cycle ([0-9.]+)ms END\]/g)].map(([collection, cycle]) => {
-        const stops = [...collection.matchAll(/ p=([0-9.]+)ms/g)].map(([, stop]) => Number(stop));
-        return {
-          stops: stops.length,
-          lasts: Math.min(
-            Number(cycle),
-            stops.reduce((sum, stop) => sum + stop, 0),
-          ),
-        };
-      });
+      const logged = collectionsInTheLog(
+        stderr.slice(stderr.indexOf("== the allocations begin"), stderr.indexOf("== the allocations end")),
+      );
       const durations: number[] = JSON.parse(stdout);
       expect({
         someHaveMoreThanOneStop: logged.some(({ stops }) => stops > 1),
-        // The log prints a stop with six digits behind the point of a millisecond.
-        differFromTheLog: logged.filter(({ lasts }, i) => !(Math.abs(durations[i] - lasts) < 0.001)),
+        differFromTheLog: logged.filter(
+          ({ cycle, allStops }, i) => !(Math.abs(durations[i] - Math.min(cycle, allStops)) < 0.001),
+        ),
         // One more entry at most: the collection that was under way at the second mark.
         entriesForTheLog: [0, 1].includes(durations.length - logged.length),
       }).toEqual({ someHaveMoreThanOneStop: moreThanOneStop, differFromTheLog: [], entriesForTheLog: true });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // With BUN_JSC_collectContinuously=1 a thread of JavaScriptCore asks for the next collection again and again. So a
+  // collection can begin while the program is still inside the call that waited for the forced collection before it,
+  // and then end beside the program. Each stop that the log has for a collection kept the program from running, so no
+  // entry is shorter than the stops of its collection, and none is longer than its cycle. The entry of a forced
+  // collection lasts for its cycle. That finds the forced collections in the log, and with them all those between.
+  // Without the generational collector, each of those marks all of the live objects, in more than one stop. Windows and
+  // a debug build take too long for a child that collects at every moment of its start.
+  test.concurrent.skipIf(isDebug || isWindows)(
+    "no entry is shorter than the stops of its collection where one collection follows the other at once",
+    async () => {
+      await using proc = tracked(
+        Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const { PerformanceObserver, constants } = require("node:perf_hooks");
+            const isForced = entry => entry.detail.flags === constants.NODE_PERFORMANCE_GC_FLAGS_FORCED;
+            globalThis.live = Array.from({ length: 100000 }, (_, i) => ({ i, pair: [i, i] }));
+            const keepAlive = setInterval(() => {}, 1);
+            const entries = [];
+            let rounds = 0;
+            const observer = new PerformanceObserver(list => {
+              entries.push(...list.getEntries());
+            });
+            observer.observe({ type: "gc" });
+            (function round() {
+              // Until the forced entry of the round before is here, and the entry of a collection behind it.
+              if (rounds && (entries.filter(isForced).length < rounds || isForced(entries.at(-1)))) {
+                return setImmediate(round);
+              }
+              if (rounds === 20) {
+                observer.disconnect();
+                clearInterval(keepAlive);
+                console.log(JSON.stringify(entries.map(entry => ({ lasts: entry.duration, forced: isForced(entry) }))));
+                return;
+              }
+              rounds++;
+              Bun.gc(true);
+              setImmediate(round);
+            })();
+          `,
+          ],
+          env: {
+            ...bunEnv,
+            BUN_JSC_logGC: "1",
+            BUN_JSC_collectContinuously: "1",
+            BUN_JSC_collectContinuouslyPeriodMS: "0.1",
+            BUN_JSC_useGenerationalGC: "0",
+            BUN_GC_TIMER_DISABLE: "1",
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        }),
+      );
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const logged = collectionsInTheLog(stderr);
+      const entries: { lasts: number; forced: boolean }[] = JSON.parse(stdout);
+      const forced = entries.flatMap(({ forced }, i) => (forced ? [i] : []));
+      // How far the log is ahead of the entries: there, each forced entry lasts for the cycle of its collection.
+      const ahead = logged.flatMap((_, at) => {
+        const by = at - forced[0];
+        return forced.every(i => Math.abs((logged[i + by]?.cycle ?? NaN) - entries[i].lasts) < 0.000001) ? [by] : [];
+      });
+      const between = entries
+        .slice(forced[0], forced.at(-1)! + 1)
+        .map((entry, i) => ({ ...entry, ...logged[forced[0] + ahead[0] + i] }));
+      const unforced = between.filter(({ forced }) => !forced);
+      expect({
+        forcedCollections: forced.length,
+        placesInTheLog: ahead.length,
+        someHaveMoreThanOneStop: unforced.some(({ stops }) => stops > 1),
+        shorterThanTheirStops: unforced.filter(
+          ({ lasts, cycle, allStops }) => !(lasts >= Math.min(cycle, allStops) - 0.001),
+        ),
+        longerThanTheirCycle: between.filter(({ lasts, cycle }) => !(lasts <= cycle + 0.001)),
+      }).toEqual({
+        forcedCollections: 20,
+        placesInTheLog: 1,
+        someHaveMoreThanOneStop: true,
+        shorterThanTheirStops: [],
+        longerThanTheirCycle: [],
+      });
       expect(exitCode).toBe(0);
     },
   );

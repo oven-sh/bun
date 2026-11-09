@@ -158,6 +158,17 @@ export { twiceAgain };`,
     prints: "[answer 1] [answer 1] true\n",
     calls: { "once.min.js": 1, "twice.min.js": 1 },
   },
+  "a script with a byte order mark that the plugin passes on keeps its bytes": {
+    files: {
+      "main.ts": `${reads}// @ts-ignore
+import marked from "./marked.min.js" with { type: "file" };
+console.log(Array.from(await Bun.file(marked).bytes(), (byte: any) => byte.toString(16).padStart(2, "0")).join(""));`,
+      "marked.min.js": "﻿ab\n",
+      "plugin.ts": plugin(`  b.onLoad({ filter: /marked\\.min\\.js$/ }, (a: any) => answer(a, undefined));`),
+    },
+    prints: "efbbbf61620a\n",
+    calls: { "marked.min.js": 1 },
+  },
   "a plugin that returns undefined embeds the file from disk": {
     files: {
       "main.ts": `${reads}// @ts-ignore

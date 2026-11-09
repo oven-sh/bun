@@ -128,6 +128,7 @@ fn create_analysis<'s>(
         answers_of_resolvers: scan.answers_of_resolvers,
         names_of_workers: scan.names_of_workers,
         paths_of_changed_files: scan.paths_of_changed_files,
+        paths_of_files_read: scan.paths_of_files_read,
         exported_file_changers: scan.exported_file_changers,
         asked_of_other_files: scan.asked_of_other_files,
         asked_of_data_files: scan.asked_of_data_files,

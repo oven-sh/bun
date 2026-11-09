@@ -41,6 +41,7 @@ pub struct FileAnalysis<'s> {
     answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     names_of_workers: &'s [(ExprId, ImportSpecifier)],
     pub paths_of_changed_files: &'s [ChangedPath],
+    pub paths_of_files_read: &'s [(ExprId, Atom)],
     pub exported_file_changers: &'s [ExportedFileChanger],
     pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],

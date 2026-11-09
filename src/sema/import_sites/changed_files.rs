@@ -45,6 +45,17 @@ fn is_method_of_file_that_changes_it(name: &[u8]) -> bool {
     matches!(name, b"write" | b"writer" | b"delete" | b"unlink")
 }
 
+fn is_function_of_fs_that_reads_first_operand(name: &[u8]) -> bool {
+    matches!(name, b"readFile" | b"readFileSync" | b"createReadStream")
+}
+
+fn is_method_of_file_that_reads_it(name: &[u8]) -> bool {
+    matches!(
+        name,
+        b"text" | b"json" | b"bytes" | b"arrayBuffer" | b"stream"
+    )
+}
+
 fn find_constant(inputs: &ScanInputs<'_, '_>, e: ExprId) -> Option<Constant> {
     match inputs.decisions.constant(inputs.hir, e) {
         FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
@@ -128,6 +139,14 @@ fn opens_for_writing(inputs: &ScanInputs<'_, '_>, flags: Option<ExprId>) -> bool
     let flags = flags.and_then(|flags| find_constant(inputs, flags));
     matches!(flags, Some(Constant::String(flags))
         if bun_core::strings::index_of_any(inputs.atoms.bytes(flags), b"wa+").is_some())
+}
+
+fn opens_for_reading(inputs: &ScanInputs<'_, '_>, flags: Option<ExprId>) -> bool {
+    let Some(flags) = flags else {
+        return true;
+    };
+    matches!(find_constant(inputs, flags), Some(Constant::String(flags))
+        if bun_core::strings::index_of_any(inputs.atoms.bytes(flags), b"wa+").is_none())
 }
 
 fn may_say_recursive(inputs: &ScanInputs<'_, '_>, options: ExprId) -> bool {
@@ -241,16 +260,45 @@ impl<'a, 's> TextsOfFile<'a, 's> {
         }
     }
 
+    fn is_written_from_folder(&self, text: Atom) -> bool {
+        let text = self.inputs.atoms.bytes(text);
+        text.starts_with(b"./") || text.starts_with(b"../")
+    }
+
     pub fn find_path(&self, value: ExprId) -> Option<(Atom, bool)> {
-        let is_from_folder = |text: Atom| {
-            let text = self.inputs.atoms.bytes(text);
-            text.starts_with(b"./") || text.starts_with(b"../")
-        };
         match self.find_one(value)? {
             (text, starts_at_own_directory, None) => Some((text, starts_at_own_directory)),
-            (text, _, Some(ResolvedForm::Path)) if is_from_folder(text) => Some((text, true)),
+            (text, _, Some(ResolvedForm::Path)) if self.is_written_from_folder(text) => {
+                Some((text, true))
+            }
             _ => None,
         }
+    }
+
+    pub(super) fn find_paths_from_own_folder(&self, value: ExprId) -> SmallVec<[Atom; 2]> {
+        let (names, asked) = (&self.written_names, &self.asked);
+        let found = find_alternatives(
+            &self.inputs,
+            names,
+            asked,
+            value,
+            Folder::OfFile,
+            None,
+            None,
+        );
+        let Some(found) = found.filter(|found| !found.is_out_of_data_file) else {
+            return SmallVec::new();
+        };
+        let is_from_own_folder = |text: Atom| match found.resolved_form {
+            None => found.start_at_own_directory,
+            Some(ResolvedForm::Path | ResolvedForm::UrlObject) => self.is_written_from_folder(text),
+            Some(ResolvedForm::Url) => false,
+        };
+        let texts = found.alternatives.iter().filter_map(|it| match *it {
+            ImportSpecifier::Constant(text) if is_from_own_folder(text) => Some(text),
+            _ => None,
+        });
+        texts.collect()
     }
 
     pub fn writes_second_operand_into_file(&self, callee: ExprId) -> bool {
@@ -331,14 +379,20 @@ pub fn write_start_from_other_folder(start: &[u8], folder: &[u8], other: &[u8]) 
     Some(written)
 }
 
-pub(super) fn find_operands_that_name_changed_files<'a>(
+#[derive(Default)]
+pub(super) struct OperandsThatNameFiles<'a> {
+    pub(super) changed: SmallVec<[(ChangedPath, Option<&'a ImportedFileChanger>); 2]>,
+    pub(super) read: Option<ExprId>,
+}
+
+pub(super) fn find_operands_that_name_files<'a>(
     inputs: &ScanInputs<'a, '_>,
     callee: ExprId,
     args: IdList<ExprId>,
-) -> SmallVec<[(ChangedPath, Option<&'a ImportedFileChanger>); 2]> {
+) -> OperandsThatNameFiles<'a> {
     let &ScanInputs { hir, atoms, .. } = inputs;
     let callee = hir.skip_type_assertions(callee);
-    let mut found = SmallVec::new();
+    let mut found = OperandsThatNameFiles::default();
     let written_name = match hir.member_key(callee) {
         Some((_, MemberKey::Name(name))) => Some(atoms.bytes(name)),
         Some(_) => return found,
@@ -347,6 +401,8 @@ pub(super) fn find_operands_that_name_changed_files<'a>(
     let may_be_named = |name: &[u8]| {
         !operands_changed_by_function_of_fs(name).is_empty()
             || is_method_of_file_that_changes_it(name)
+            || is_function_of_fs_that_reads_first_operand(name)
+            || is_method_of_file_that_reads_it(name)
             || matches!(name, b"open" | b"openSync")
     };
     let may_be_of_other_file = !hir.imported_file_changers.is_empty();
@@ -384,9 +440,10 @@ pub(super) fn find_operands_that_name_changed_files<'a>(
                 false => Reach::File,
             };
             let given = operand(called.place as usize);
-            found.extend(given.map(|given| (changed(given, reach).0, Some(called))));
+            let given = given.map(|given| (changed(given, reach).0, Some(called)));
+            found.changed.extend(given);
         }
-        if !found.is_empty() || written_name.is_some_and(|name| !may_be_named(name)) {
+        if !found.changed.is_empty() || written_name.is_some_and(|name| !may_be_named(name)) {
             return found;
         }
     }
@@ -394,23 +451,32 @@ pub(super) fn find_operands_that_name_changed_files<'a>(
         Some((Holder::Fs | Holder::FsPromises, name)) => {
             let name = atoms.bytes(name);
             let places = operands_changed_by_function_of_fs(name).iter();
-            found
-                .extend(places.filter_map(|&(place, reach)| Some(changed(operand(place)?, reach))));
-            if matches!(name, b"open" | b"openSync") && opens_for_writing(inputs, operand(1)) {
-                found.extend(operand(0).map(file));
+            let named = places.filter_map(|&(place, reach)| Some(changed(operand(place)?, reach)));
+            found.changed.extend(named);
+            let opens = matches!(name, b"open" | b"openSync");
+            if opens && opens_for_writing(inputs, operand(1)) {
+                found.changed.extend(operand(0).map(file));
+            } else if opens && opens_for_reading(inputs, operand(1))
+                || is_function_of_fs_that_reads_first_operand(name)
+            {
+                found.read = operand(0);
             }
         }
         Some((Holder::Bun, name)) if atoms.bytes(name) == b"write" => {
             let target = operand(0);
             let path = target.and_then(|target| find_path_of_file_object(inputs, target));
-            found.extend(path.or(target).map(file));
+            found.changed.extend(path.or(target).map(file));
         }
         Some((Holder::Bun, _)) => {}
         None => {
-            if let Some((object, MemberKey::Name(name))) = hir.member_key(callee)
-                && is_method_of_file_that_changes_it(atoms.bytes(name))
-            {
-                found.extend(find_path_of_file_object(inputs, object).map(file));
+            if let Some((object, MemberKey::Name(name))) = hir.member_key(callee) {
+                let name = atoms.bytes(name);
+                if is_method_of_file_that_changes_it(name) {
+                    let path = find_path_of_file_object(inputs, object);
+                    found.changed.extend(path.map(file));
+                } else if is_method_of_file_that_reads_it(name) {
+                    found.read = find_path_of_file_object(inputs, object);
+                }
             }
         }
     }

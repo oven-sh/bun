@@ -16,11 +16,11 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
-  "aot/two-calls-left-in-flight-where-the-mock-is-taken-away-share-one-run-of-the-file.test.ts": {
+  "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000
   },
-  "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
+  "aot/a-birth-that-fills-a-slot-planned-in-the-form-of-definitions-stops-the-build-under-the-check.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -3001,6 +3001,10 @@
     "asan": 240000
   },
   "aot/turns-of-three-statements-by-name.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/two-calls-left-in-flight-where-the-mock-is-taken-away-share-one-run-of-the-file.test.ts": {
     "default": 60000,
     "asan": 240000
   },

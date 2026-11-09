@@ -21,7 +21,8 @@ use bun_sema::bind::{
 use bun_sema::components::strongly_connected_components;
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{
-    self, BinOp, Chain, ExprId, ExprKind, Flags, FnId, ImportEqualsId, StmtId, StmtKind, VarKind,
+    self, BinOp, Chain, ExprId, ExprKind, Flags, FnId, ImportEqualsId, NodeData, StmtId, StmtKind,
+    VarKind,
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, OwnRequire, find_module_printed_as_require, find_own_require,
@@ -499,8 +500,10 @@ impl<'a, 's> FileText<'a, 's> {
     }
 
     pub(super) fn is_free(&self, expression: ExprId, variable: CommonJsVariable) -> bool {
+        let scope_object = self.bound.dynamic_lookup_scope(NodeData::Expr(expression));
         matches!(self.hir[expression].kind, ExprKind::Ident(_))
             && self.bound.binding(expression) == Binding::CommonJs(variable)
+            && scope_object.is_none()
     }
 
     fn is_proven_call(

@@ -116,8 +116,6 @@ impl<'s> LoadedProgram<'s> {
         self.origins_behind_reach.get().unwrap_or(&self.origins)
     }
 
-    /// `files` are in the program only through entry points that are evaluated text: the code of the program that names
-    /// them is reached by nothing.
     pub fn hold_as_evaluated_text(&self, files: &[FileId]) {
         if files.is_empty() {
             return;

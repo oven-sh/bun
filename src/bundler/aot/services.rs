@@ -10,6 +10,7 @@ use bun_aot::load::source_provider::{
 };
 use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Loader, Log, SideEffects};
+use bun_core::ZBox;
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_react_compiler::Observer;
@@ -233,8 +234,17 @@ pub(crate) struct BundlerServices {
     /// `CompiledProgram::refused_data`
     refused_data: Guarded<Vec<u8>>,
     files_for_file_system: Guarded<FilesForFileSystem>,
+    /// What `--asset` names, by absolute paths.
+    assets: Box<[Vec<u8>]>,
+    /// An asset below this folder is embedded under its path from the root, where the code beside it looks for it. Any other is embedded under its name alone.
+    folder_of_assets_that_keep_paths: Vec<u8>,
     names_wanted: NamesWanted,
     names_of_packages: Guarded<NamesOfPackages>,
+}
+
+pub(super) fn is_at_or_below(path: &[u8], folder: &[u8]) -> bool {
+    let rest = path.strip_prefix(folder);
+    rest.is_some_and(|rest| rest.first().is_none_or(|&byte| bun_paths::is_sep_any(byte)))
 }
 
 pub(crate) struct NamesWanted {
@@ -277,9 +287,21 @@ impl BundlerServices {
             refused_names: Guarded::new(Vec::new()),
             refused_data: Guarded::new(Vec::new()),
             files_for_file_system: Guarded::new(FilesForFileSystem::default()),
+            assets: Box::default(),
+            folder_of_assets_that_keep_paths: Vec::new(),
             names_wanted,
             names_of_packages: Guarded::new(NamesOfPackages::default()),
         }
+    }
+
+    pub(crate) fn with_assets(
+        mut self,
+        assets: Box<[Vec<u8>]>,
+        folder_of_assets_that_keep_paths: Vec<u8>,
+    ) -> BundlerServices {
+        self.assets = assets;
+        self.folder_of_assets_that_keep_paths = folder_of_assets_that_keep_paths;
+        self
     }
 
     pub(crate) fn take_names_of_packages(&self) -> NamesOfPackages {
@@ -523,6 +545,20 @@ impl SourceProvider for BundlerServices {
             .lock()
             .code_seen
             .push(source_path.into());
+    }
+
+    fn is_file_that_only_asset_brings(&self, source_path: &[u8]) -> bool {
+        let is_found_by_pattern = || {
+            let files = self.files_for_file_system.lock();
+            let mut found = files.data_found_by_patterns.iter();
+            found.any(|found| &found[..] == source_path)
+        };
+        let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
+        let mut assets = self.assets.iter();
+        is_at_or_below(source_path, &self.folder_of_assets_that_keep_paths)
+            && !assets.any(|asset| is_at_or_below(source_path, asset))
+            && !is_found_by_pattern()
+            && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
     }
 
     fn parse_data<'s>(

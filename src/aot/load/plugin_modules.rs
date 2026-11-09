@@ -236,6 +236,19 @@ impl<'a> PluginModules<'a> {
     }
 
     pub(crate) fn read(&self, path: &[u8], default_loader: Loader) -> ModuleText {
+        self.read_from_disk_as(path, default_loader, default_loader)
+    }
+
+    pub(crate) fn read_bytes(&self, path: &[u8], default_loader: Loader) -> ModuleText {
+        self.read_from_disk_as(path, default_loader, Loader::File)
+    }
+
+    fn read_from_disk_as(
+        &self,
+        path: &[u8],
+        default_loader: Loader,
+        disk_loader: Loader,
+    ) -> ModuleText {
         let cell = match self.modules.get_ref(path) {
             Some(cell) => cell,
             None => self.modules.insert_ref(path.to_vec(), OnceLock::new()),
@@ -243,7 +256,7 @@ impl<'a> PluginModules<'a> {
         let mut first_text = None;
         let load = cell.get_or_init(|| {
             let module = self.module_name(path);
-            let read_file = || self.read_file(path, default_loader);
+            let read_file = || self.read_file(path, disk_loader);
             let request = LoadRequest {
                 module,
                 default_loader,
@@ -279,10 +292,10 @@ impl<'a> PluginModules<'a> {
             return ModuleText::Text(text);
         }
         match load {
-            ModuleLoad::Loaded(module) => self.read_again(module, path, default_loader),
+            ModuleLoad::Loaded(module) => self.read_again(module, path, disk_loader),
             ModuleLoad::Deferred(answer) => match answer.get() {
                 None => ModuleText::Deferred,
-                Some(Some(module)) => self.read_again(module, path, default_loader),
+                Some(Some(module)) => self.read_again(module, path, disk_loader),
                 Some(None) => ModuleText::Failed,
             },
             ModuleLoad::Missing => ModuleText::Missing,

@@ -739,9 +739,7 @@ pub(super) fn find_file_of_kind_that_loader_decides(
     let files = state.files.iter().zip(&is_of_program);
     let mut files = files.zip(&is_reached_by_guess);
     let found = files.find(|&((file, &is_of_program), &is_reached_by_guess)| {
-        is_of_program
-            && is_of_kind_that_loader_decides(context, file)
-            && (is_reached_by_guess || !context.is_written_entry_point(file.target.key))
+        is_of_program && is_reached_by_guess && is_of_kind_that_loader_decides(context, file)
     });
     found.map(|((file, _), _)| file.target.key.path.to_vec())
 }

@@ -1,6 +1,6 @@
 // Where the build can't prove which name a `require(name)` gets, it still brings the files whose names are written where the name comes from. That is a guess. A `.cjs` file with no
 // require, module, exports, import or export in it is what its first loader makes of it, and a guess says nothing about who comes first. So a guess enters a program only when all
-// that is sure has been found, and only if no file of the program leaves what it is to its loader. Where such a file comes in with the guesses, all guesses go again.
+// that is sure has been found, and where a guessed file, or one that it loads, loads a file that leaves what it is to its loader, all guesses go again.
 // And a guess comes in whole or not at all: a guessed file that loads under a name nobody can read, or whose own loads would have to be looked for in turn (a further guess, a name
 // handed to a helper, a Worker's start, a name out of a data file), would run and find them missing, and a `catch` around them would hide it. The same holds for a file of the
 // program behind the guessed load. And a guessed file never stops a build, so none of them is TypeScript, which the build would have to check.

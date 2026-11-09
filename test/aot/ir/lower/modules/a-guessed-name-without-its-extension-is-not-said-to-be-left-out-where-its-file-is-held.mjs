@@ -4,7 +4,7 @@
 // CHECK-NOT: path="/$bunfs/root/other.mjs"
 
 // FILE: main.mjs
-// silent.cjs leaves what it is to its loader, so no file comes in on a guess. part.mjs is imported for sure: `./part` finds it, and the build does not say that it is missing. `./other` is.
+// silent.cjs leaves what it is to its loader, and other.mjs, which only a guess brings, loads it too, so no file comes in on a guess. part.mjs is imported for sure: `./part` finds it, and the build does not say that it is missing. `./other` is.
 import { createRequire } from "node:module";
 import "./silent.cjs";
 import { part } from "./part.mjs";
@@ -22,4 +22,5 @@ console.log("silent");
 export const part = 1;
 
 // FILE: other.mjs
+import "./silent.cjs";
 export const other = 2;

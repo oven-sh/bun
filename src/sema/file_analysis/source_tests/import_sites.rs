@@ -3044,6 +3044,178 @@ fn paths_that_a_file_spells_to_calls_which_change_what_is_there() {
     }
 }
 
+const PATHS_OF_FILES_READ: &[(&str, &str, &[&str])] = &[
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL('./a.txt', import.meta.url));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; readFileSync(fileURLToPath(new URL('../a.txt', import.meta.url)), 'utf8');",
+        &["./../a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import { join } from 'node:path'; fs.readFile(join(import.meta.dirname, 'b', 'a.txt'), done);",
+        &["./b/a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFile } from 'node:fs/promises'; import { join } from 'node:path'; await readFile(join(import.meta.dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import * as fs from 'node:fs'; import { join } from 'node:path'; await fs.promises.readFile(join(import.meta.dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.cjs",
+        "const fs = require('fs'); const path = require('path'); fs.createReadStream(path.join(__dirname, 'a.txt'));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { openSync } from 'node:fs'; import { join } from 'node:path'; openSync(join(import.meta.dirname, 'a.txt')); openSync(join(import.meta.dirname, 'b.txt'), 'r');",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { join } from 'node:path'; const file = Bun.file(join(import.meta.dir, 'a.txt')); await file.text(); await Bun.file(join(import.meta.dir, 'b.json')).json();",
+        &["./a.txt", "./b.json"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./a.txt', base)); } read(import.meta.url);",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; function read(options) { return readFileSync(new URL('./a.txt', options.url)); } read({ url: import.meta.url });",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./a.txt', base)); } read(import.meta.url); read(other);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL('./a.txt', base)); } read(import.meta.url);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL(flag ? './a.txt' : './b.txt', import.meta.url));",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; const read = (base, name) => readFileSync(new URL(name, base)); read(import.meta.url, './b.txt'); read(import.meta.url, './a.txt');",
+        &["./a.txt", "./b.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL(flag ? './a.txt' : name, import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync('a.txt'); readFileSync('./a.txt'); readFileSync('/p/a.txt');",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; import { join } from 'node:path'; readFileSync(join(import.meta.dirname, name));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; import { join } from 'node:path'; readFileSync(join(process.cwd(), 'a.txt'));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL('./a.txt', import.meta.url).href);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; if (false) readFileSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from './mine.js'; readFileSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "export {}; function readFileSync() {} readFileSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "export {}; other.readFileSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(...all);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { openSync } from 'node:fs'; openSync(new URL('./a.txt', import.meta.url), 'w'); openSync(new URL('./a.txt', import.meta.url), 'r+'); openSync(new URL('./a.txt', import.meta.url), flags);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { existsSync, statSync } from 'node:fs'; existsSync(new URL('./a.txt', import.meta.url)); statSync(new URL('./a.txt', import.meta.url));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { writeFileSync } from 'node:fs'; writeFileSync(new URL('./a.txt', import.meta.url), text);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { join } from 'node:path'; Bun.file(join(import.meta.dir, 'a.txt')); await Bun.write(Bun.file(join(import.meta.dir, 'a.txt')), text);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { join } from 'node:path'; await other.file(join(import.meta.dir, 'a.txt')).text();",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "export {}; await response.json(); await response.text();",
+        &[],
+    ),
+];
+
+#[test]
+fn paths_from_its_own_folder_that_a_file_spells_to_calls_which_read_what_is_there() {
+    for &(name, text, paths) in PATHS_OF_FILES_READ {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new(name, text), &w.fold_inputs(&TARGET));
+            let read = s.analysis.paths_of_files_read.iter();
+            let described: Vec<String> = read
+                .map(|&(_, path)| s.workspace.text(path).to_string())
+                .collect();
+            assert_eq!(described, paths, "{text}");
+            let lays_nothing_else = s.analysis.names_out_of_data_files.is_empty()
+                && s.analysis.asked_of_other_files.is_empty()
+                && s.analysis.asked_of_data_files.is_empty()
+                && s.analysis.asked_of_own_exports.is_empty();
+            assert!(lays_nothing_else, "{text}");
+        });
+    }
+}
+
 const FUNCTIONS_THAT_CHANGE_THE_FILE_THEY_ARE_TOLD: &[(&str, &str, &[&str])] = &[
     (
         "a.mjs",

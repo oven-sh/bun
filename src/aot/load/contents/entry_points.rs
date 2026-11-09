@@ -26,7 +26,7 @@ use crate::builtins::table::{self, BuiltinFlags, BuiltinId, Origin};
 use crate::compile::EntryPointPaths;
 use crate::load::externals::contains;
 use crate::load::host::{LoadHost, ResolveWhoseFoldersBringNothing};
-use crate::load::loaders::{loader_named_by_path, script_kind_of};
+use crate::load::loaders::{gives_data, loader_named_by_path, script_kind_of};
 use crate::load::module_paths::{
     FOLDER_ABOVE_ROOT, compute_relative_path, count_folders, spell_folder_above_root,
     spell_with_other_levels,
@@ -1030,9 +1030,16 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         found.into_iter().map(NamedFile::at).collect()
     }
 
-    fn can_be_entry_point(&self, path: &[u8], starts_worker_by_whole_name: bool) -> bool {
-        let is_code = match loader_named_by_path(&self.input.options.load.loaders, path) {
-            Some(loader) => script_kind_of(loader).is_some(),
+    fn can_be_entry_point(
+        &self,
+        path: &[u8],
+        because: FoundBecause,
+        starts_worker_by_whole_name: bool,
+    ) -> bool {
+        let fits = match loader_named_by_path(&self.input.options.load.loaders, path) {
+            Some(loader) => {
+                script_kind_of(loader).is_some() || (gives_data(loader) && !because.is_for_worker())
+            }
             None => {
                 let name = &path[strings::last_index_of_char(path, b'/').map_or(0, |at| at + 1)..];
                 starts_worker_by_whole_name
@@ -1041,12 +1048,13 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             }
         };
         let is_file_on_disk = path.starts_with(b"/") && !is_host_path(path);
-        is_code && is_file_on_disk && !is_declaration_file_name(path)
+        fits && is_file_on_disk && !is_declaration_file_name(path)
     }
 
     fn write_down_names(
         &self,
         files: Vec<NamedFile>,
+        because: FoundBecause,
         starts_worker_by_whole_name: bool,
         names_written: &mut Vec<EntryPointPaths>,
     ) -> Vec<Vec<u8>> {
@@ -1057,7 +1065,7 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                 written_down_as,
             } = file;
             if let Some(public_path) = written_down_as
-                .filter(|_| self.can_be_entry_point(&path, starts_worker_by_whole_name))
+                .filter(|_| self.can_be_entry_point(&path, because, starts_worker_by_whole_name))
             {
                 names_written.push(EntryPointPaths {
                     public_path,
@@ -1078,10 +1086,11 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
         &self,
         path: &[u8],
         path_of_copy: Option<&[u8]>,
+        because: FoundBecause,
         starts_worker_by_whole_name: bool,
     ) -> Option<Vec<u8>> {
         let Options { aot, paths, .. } = self.input.options;
-        if !self.can_be_entry_point(path, starts_worker_by_whole_name) {
+        if !self.can_be_entry_point(path, because, starts_worker_by_whole_name) {
             return None;
         }
         match path_of_copy {
@@ -1189,7 +1198,8 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     starts_worker_by_whole_name =
                         because == FoundBecause::StartsWorker && is_whole && !question.is_guess;
                     let whole = starts_worker_by_whole_name;
-                    let paths = self.write_down_names(files, whole, &mut found.names_written);
+                    let written = &mut found.names_written;
+                    let paths = self.write_down_names(files, because, whole, written);
                     (paths, None, Some(question))
                 }
                 Named::File {
@@ -1267,7 +1277,8 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     continue;
                 }
                 let whole = starts_worker_by_whole_name;
-                let Some(name) = self.find_name(&path, path_of_copy.as_deref(), whole) else {
+                let copy = path_of_copy.as_deref();
+                let Some(name) = self.find_name(&path, copy, because, whole) else {
                     continue;
                 };
                 let entry_point = FoundEntryPoint {
@@ -1419,14 +1430,11 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
             }
         }
         for (key, entry_point) in keys.iter().zip(entry_points) {
-            // A package's file that is held as a file and that sure starts name too waits for those starts. The reach seeds it
-            // behind them, as what a Worker may start.
             let waits_though_held = entry_point.because.is_for_worker()
                 && found.named_as_what_a_worker_may_start.contains(key)
                 && is_in_node_modules(&entry_point.source_path)
                 && !found.named_by_more_than_workers.contains(key);
             if waits_though_held {
-                // Of two mentions of one file either reason may have stayed.
                 entry_point.because = FoundBecause::MayStartWorker;
             }
             let is_named_otherwise = found.named_otherwise.contains(key) && !waits_though_held;

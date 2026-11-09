@@ -14,6 +14,7 @@ use crate::known_helpers::KnownHelpers;
 use crate::link::run_steps_beside;
 use crate::load::contents::worker_entries::source_path_of;
 use crate::load::loaders::{gives_data, loader_by_path};
+use crate::load::module_paths::compute_display_path;
 use crate::load::source_provider::{RefusedText, SourceProvider};
 use crate::load::sources::{JSON_PARSE_ERROR_FOR_BLANK_TEXT, parsed_source};
 use crate::load::{PerProject, ProjectId};
@@ -25,6 +26,8 @@ use crate::modules::{
 use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
 use bun_paths::is_absolute;
+use bun_paths::platform::Posix;
+use bun_paths::resolve_path::dirname;
 use bun_sema::bind::{
     Binding, Decl, FunctionFlags, Parent, ReferentCertainty, ResolvedReferent, StaticReferent,
     static_referent,
@@ -36,7 +39,7 @@ use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files};
 use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::SharedSort;
-use bun_sema_driver::host::{from_native, to_native};
+use bun_sema_driver::host::{from_argument, from_native, to_native};
 
 fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     for &module in &reached.looked_at {
@@ -250,6 +253,31 @@ fn name_data_files_found_by_patterns(
     found_by_patterns.sort_unstable();
     found_by_patterns.dedup();
     has_found_data.then_some(found_by_patterns)
+}
+
+fn warn_where_files_read_are_not_embedded(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    left_out: &LeftOutCode,
+    project_root: &[u8],
+    provider: &dyn SourceProvider,
+) {
+    let (files, sources) = (view.files(), view.sources);
+    let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
+    for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
+        let folder = dirname::<Posix>(files.module(file).file_name());
+        for &(operand, path) in files.analysis(file).paths_of_files_read {
+            let path = from_argument(folder, files.atoms.bytes(path));
+            let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
+            if is_code || !provider.is_file_that_only_asset_brings(to_native(&path)) {
+                continue;
+            }
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
+            let name = compute_display_path(project_root, to_native(&path));
+            let code = Code::FileReadIsNotEmbedded;
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+        }
+    }
 }
 
 fn keep_paths_of_code_that_file_system_sees(
@@ -585,7 +613,6 @@ impl Build<'_> {
                     .collect();
                 starts_of_workers
                     .sort_unstable_by_key(|&(file, at, entry_point)| (file, at.0, entry_point));
-                // What the build compiles only because a Worker may start it is no root of the program's own.
                 let host = loaded.project(project).host;
                 let found_entry_points = view.files().entry_points().iter().copied();
                 let seeded_last: Vec<FileId> = found_entry_points
@@ -736,6 +763,15 @@ impl Build<'_> {
                         );
                     }
                     keep_where_parsers_refused_data(view, &left_out, self.provider);
+                    if !self.options.load.runs_tests {
+                        warn_where_files_read_are_not_embedded(
+                            &mut self.diagnostics,
+                            view,
+                            &left_out,
+                            &self.options.load.project_root,
+                            self.provider,
+                        );
+                    }
                 }
                 crate::test_run_loads::warn_where_every_file_may_load_again(
                     &mut self.diagnostics,

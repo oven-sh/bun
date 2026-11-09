@@ -1773,12 +1773,13 @@
     "aot/a-call-of-import-made-where-the-tests-are-done-runs-no-mocked-file.test.ts",
     "aot/what-is-compiled-only-because-a-worker-may-start-it-stops-no-build.test.ts",
     "aot/the-check-of-closure-resolves-the-calls-that-it-tells.test.ts",
+    "aot/two-calls-left-in-flight-where-the-mock-is-taken-away-share-one-run-of-the-file.test.ts",
+    "aot/a-birth-that-fills-a-slot-planned-in-the-form-of-definitions-stops-the-build-under-the-check.test.ts",
     "aot/a-class-of-buns-modules-over-a-constructor-function-names-it-as-its-base.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",
     "aot/asking-the-global-object-for-a-written-name-hands-it-to-nobody.test.ts",
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
-    "aot/typescript-that-tsc-rejects.test.ts",
-    "aot/two-calls-left-in-flight-where-the-mock-is-taken-away-share-one-run-of-the-file.test.ts"
+    "aot/typescript-that-tsc-rejects.test.ts"
   ]
 }

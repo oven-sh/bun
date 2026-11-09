@@ -131,11 +131,6 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         self.written_entry_points.len() + self.found_entry_points.lock().len()
     }
 
-    pub(super) fn is_written_entry_point(&self, key: LoadKey<'_>) -> bool {
-        let key = (to_path(key.path, self.is_case_sensitive), key.loader);
-        self.keys_of_entry_points.contains(&key)
-    }
-
     pub(super) fn is_entry_point(&self, key: LoadKey<'_>) -> bool {
         let key = (to_path(key.path, self.is_case_sensitive), key.loader);
         self.keys_of_entry_points.contains(&key)

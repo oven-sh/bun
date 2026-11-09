@@ -3,7 +3,7 @@ use super::alternatives::{
     find_elements_of_list_that_nothing_changes, find_names_as_written, find_path_around_parameter,
     find_texts_of_key,
 };
-use super::changed_files::find_operands_that_name_changed_files;
+use super::changed_files::{TextsOfFile, find_operands_that_name_files};
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, UrlsHanded, find_imported_export, find_own_require,
     follow_settled_bindings, follow_to_own_require, holds_import_meta_require, is_nothing,
@@ -856,6 +856,7 @@ pub(super) struct ScannedCalls {
     pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
+    pub(super) paths_of_files_read: Vec<(ExprId, Atom)>,
     pub(super) exported_file_changers: Vec<ExportedFileChanger>,
     pub(super) asked_of_other_files: Vec<(Atom, Atom)>,
     pub(super) asked_of_data_files: Vec<(Atom, Atom)>,
@@ -883,6 +884,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut paths_given_to_create_require = Vec::new();
     let mut names_of_workers = Vec::new();
     let mut paths_of_changed_files = Vec::new();
+    let mut paths_of_files_read = Vec::new();
+    let mut texts_of_file = None;
     let mut exported_file_changers: Vec<ExportedFileChanger> = Vec::new();
     let mut keys_stored_in_caches = Vec::new();
     let mut names_resolved_from_listed_folders = Vec::new();
@@ -911,8 +914,18 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             continue;
         }
         if let (false, CallForm::Call { callee, args }) = (is_dead, form) {
-            for (mut changed, around) in find_operands_that_name_changed_files(inputs, callee, args)
-            {
+            let named = find_operands_that_name_files(inputs, callee, args);
+            if let Some(operand) = named.read {
+                let texts = texts_of_file.get_or_insert_with(|| {
+                    let &ScanInputs {
+                        fold, file, atoms, ..
+                    } = inputs;
+                    TextsOfFile::new(hir, bound, decisions, fold, file, atoms)
+                });
+                let paths = texts.find_paths_from_own_folder(operand).into_iter();
+                paths_of_files_read.extend(paths.map(|path| (operand, path)));
+            }
+            for (mut changed, around) in named.changed {
                 let names = alternatives.names_out_of_data_files.len();
                 changed.path = path_specifier(inputs, changed.operand, &mut alternatives);
                 alternatives.names_out_of_data_files.truncate(names);
@@ -1022,6 +1035,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         answers_of_resolvers: alternatives.answers_of_resolvers,
         names_of_workers,
         paths_of_changed_files,
+        paths_of_files_read,
         exported_file_changers,
         asked_of_other_files: alternatives.asked_of_other_files.take(),
         asked_of_data_files: alternatives.asked_of_data_files.take(),

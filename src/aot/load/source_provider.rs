@@ -186,6 +186,10 @@ pub trait SourceProvider: Sync {
 
     fn keep_path_of_code_that_file_system_sees(&self, _source_path: &[u8]) {}
 
+    fn is_file_that_only_asset_brings(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
     fn parse_data<'s>(
         &self,
         file: &SourceFile<'_>,

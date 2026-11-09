@@ -25,6 +25,7 @@ use bun_aot::report::SourceTexts;
 use bun_aot::statistics::{Stage, Statistics};
 use bun_ast::{Loc, Log};
 use bun_options_types::aot_options::AotOptions;
+use bun_paths::string_paths::without_trailing_slash_windows_path;
 use bun_resolver::package_names::{
     BuildPaths, FurtherPackageName, PackageName, PathAlias, add_hidden_names, add_written_names,
 };
@@ -35,7 +36,7 @@ pub use options::expand_entry_points;
 use options::{OptionsInput, options_from_bundler};
 pub use services::FileFinder;
 pub use services::FilesForFileSystem;
-use services::{BundlerServices, NamesWanted};
+use services::{BundlerServices, NamesWanted, is_at_or_below};
 
 pub struct PluginSetup {
     pub plugins: NonNull<JSBundlerPlugin>,
@@ -130,6 +131,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     if let Some(outfile) = outfile {
         transpiler.resolver.pass_over_outfile(outfile);
     }
+    let is_root_written = !transpiler.options.root_dir.is_empty();
     let input = OptionsInput {
         bundle_options: &transpiler.options,
         entry_points,
@@ -182,6 +184,22 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         bundle.completion = Some(setup.completion);
     }
 
+    let working_directory = crate::bun_fs::FileSystem::get().top_level_dir();
+    let working_directory = without_trailing_slash_windows_path(working_directory);
+    let assets_by_absolute_paths = assets
+        .iter()
+        .map(|asset| {
+            let path = paths::absolute_path(working_directory, asset);
+            without_trailing_slash_windows_path(&path).to_vec()
+        })
+        .collect();
+    // `options::root_directory` widens a root that nobody wrote to the assets below the working directory.
+    let root_directory = &options.paths.root_directory[..];
+    let is_root_widened = !is_root_written && is_at_or_below(root_directory, working_directory);
+    let folder_of_assets_that_keep_paths = match is_root_widened {
+        true => working_directory.to_vec(),
+        false => root_directory.to_vec(),
+    };
     let services = BundlerServices::new(
         NonNull::from(&mut *bundle).cast(),
         module_prefix,
@@ -191,7 +209,8 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
             loads_code_from_disk: aot.loads_code_from_disk,
             root_directory: Box::from(&options.paths.root_directory[..]),
         },
-    );
+    )
+    .with_assets(assets_by_absolute_paths, folder_of_assets_that_keep_paths);
     let mut said_by_compiler = Log::init();
     let result = bun_aot::compile(&options, &services, &mut said_by_compiler);
     // SAFETY: the log outlives the build, and the reference ends with the statement.

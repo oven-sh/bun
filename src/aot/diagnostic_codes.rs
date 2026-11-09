@@ -56,6 +56,7 @@ diagnostic_codes! {
         MadeRequireGoesOutOfSight = 100096, Warning, "The build can't follow the require() that is made here to every call of it. If such a call names code that isn't in the executable, it throws at run time. Make it for the file's own path or URL, keep it in a const and call it by that name, or build with --aot-allow-code-from-disk";
         SearchGoesOnAboveListedFolder = 100097, Warning, "One of the folders that this call looks in isn't there or doesn't hold the module, so the search goes on in the folders above it and finds {0}. In an executable the search doesn't go on above a listed folder, so the call may find another module of the same name, or none. List the folder that holds the module";
         DataFilesFoundByPattern = 100088, Note, "This path isn't a constant, so the executable embeds every file that it may name. These aren't code: {0}";
+        FileReadIsNotEmbedded = 100098, Warning, "This reads \"{0}\", but the executable has no file at that path. Embed it with --asset {0}";
 
 
     }

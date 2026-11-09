@@ -802,7 +802,7 @@ impl<'a> LoadHost<'a> {
 
     pub(crate) fn finish_background_reads(&self) {
         let paths = std::mem::take(&mut *self.background_reads.lock());
-        let read = |path: &[u8]| self.plugins.read(path, self.default_loader(path));
+        let read = |path: &[u8]| self.plugins.read_bytes(path, self.default_loader(path));
         let mut deferred = Vec::new();
         for path in &paths {
             match read(path) {
@@ -1486,7 +1486,7 @@ impl CodeHost for LoadHost<'_> {
     }
 
     fn read_in_background(&self, path: &[u8]) {
-        self.plugins.read(path, self.default_loader(path));
+        self.plugins.read_bytes(path, self.default_loader(path));
     }
 
     fn is_plugin_source(&self, path: &[u8]) -> bool {

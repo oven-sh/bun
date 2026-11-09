@@ -1,5 +1,6 @@
 import { afterAll, describe as describeAnywhere, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isASAN, isLinux, isWindows, tempDir } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { linkSync } from "node:fs";
 import { join } from "node:path";
 import { locksEnvironment } from "./hardened";
@@ -171,10 +172,19 @@ const withoutCoreDump = (cmd: string[]) =>
         ...cmd,
       ];
 
+// A case that runs into its limit says nothing of the command that it waits for. So the command ends shortly before, and the case fails by what the command has printed.
+const endOfCommands = new AsyncLocalStorage<number>();
+
 // No more commands at once than the machine has cores: many fill the address space that they are given.
 async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
+  const end = endOfCommands.getStore();
   const { stdout, stderr, exitCode } = await inTurn(() =>
-    runCommand(cmd, cwd, { ...bunEnv, ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }), ...env }),
+    runCommand(
+      cmd,
+      cwd,
+      { ...bunEnv, ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }), ...env },
+      end && Math.max(Math.ceil(end - performance.now()), 1),
+    ),
   );
   // The message of the error goes on with the limit and the option that lifts it. The first test reads all of it; the programs that print a message are compared without.
   return { stdout: stdout.replaceAll(": " + limitOf64MB, ""), stderr, exitCode };
@@ -270,7 +280,9 @@ export function addressSpaceForObjects(part: number, parts: number) {
   const dealt = <Row>(rows: Row[]) => rows.filter(isInPart);
   // The cases run at once, so one of them may take about as long as the file, and with a sanitizer the file takes over two minutes.
   const inPart = (define: typeof test) => (name: string, body: () => Promise<void>, timeout?: number) => {
-    if (isInPart()) define(name, body, timeout && isASAN ? timeout * 2 : timeout);
+    if (!isInPart()) return;
+    const limit = timeout && isASAN ? timeout * 2 : timeout;
+    define(name, limit ? () => endOfCommands.run(performance.now() + limit * 0.9, body) : body, limit);
   };
 
   describe("the address space for objects of a compiled program", () => {

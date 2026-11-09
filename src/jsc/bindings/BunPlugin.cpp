@@ -1812,7 +1812,10 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         }
         return true;
     };
-    if (JSValue answer; importsOriginal && factoryValue && factoryValue.isCallable() && globalObject->aotInstance() && answersByBodyOfOriginal(answer))
+    // A require() of the mocked file itself makes no such module: the loader calls the factory, and cannot wait for it. See handleVirtualModuleResult().
+    auto fileOfMock = importsOriginal && JSC::AOT::requireRunsMocks(vm) ? Bun::compiledModuleForPath(specifier->tryGetValue().data) : std::nullopt;
+    bool isRequiredItself = fileOfMock && JSC::AOT::requireAsksFor(globalObject, *fileOfMock);
+    if (JSValue answer; importsOriginal && !isRequiredItself && factoryValue && factoryValue.isCallable() && globalObject->aotInstance() && answersByBodyOfOriginal(answer))
         return answer;
     if (givesFileItself && synchronous) {
         JSValue file = requireOriginalModule(globalObject, this);
@@ -5980,8 +5983,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     auto specifier = moduleMockSpecifierArgument(globalObject, callframe, "importActual(module)"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (JSModuleMock* mock = registeredModuleMock(globalObject, specifier.key))
+    if (JSModuleMock* mock = registeredModuleMock(globalObject, specifier.key)) {
+#if ENABLE(AOT)
+        // As jsFunctionModuleMockImportOriginal() has it, where the factory of the mock itself asks by name.
+        if (auto factories = factoriesInAsyncContext(globalObject); vm.hasCompiledCode() && !factories.isEmpty() && factories[0] == mock) {
+            auto* asyncContext = globalObject->m_asyncContextData.get();
+            JSValue contextOfFactory = asyncContext->getInternalField(0);
+            asyncContext->putInternalField(vm, 0, asyncContextAroundFactoryOf(globalObject, mock));
+            JSC::JSPromise* original = importOriginalModule(globalObject, mock, true, callerPath(vm, callframe));
+            asyncContext->putInternalField(vm, 0, contextOfFactory);
+            RELEASE_AND_RETURN(scope, JSValue::encode(original));
+        }
+#endif
         RELEASE_AND_RETURN(scope, JSValue::encode(importOriginalModule(globalObject, mock, true, callerPath(vm, callframe))));
+    }
 #if ENABLE(AOT)
     if (JSValue kept = failureKeptForImportsOf(globalObject, specifier.key))
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, kept)));
@@ -7706,6 +7721,11 @@ bool canRequireOriginalOfModuleMock(Zig::GlobalObject* globalObject, JSC::JSObje
     auto* mock = dynamicDowncast<Zig::JSModuleMock>(moduleMock);
     if (!hasUncalledFactoryThatAwaits(mock))
         return false;
+#if ENABLE(AOT)
+    // A compiled file that the mock has set aside has no entry under the key below: the run time keeps its record.
+    if (auto compiled = mock->hasSetCompiledModuleAside ? Bun::compiledModuleForPath(mock->specifier->tryGetValue().data) : std::nullopt; compiled && JSC::AOT::isSetAsideInMiddleOfEvaluation(globalObject, *compiled))
+        return false;
+#endif
     // An import of the mock loads what the original imports before it calls a factory that takes the original.
     String key = Zig::originalModuleKey(mock->specifier->tryGetValue().data);
     auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key));

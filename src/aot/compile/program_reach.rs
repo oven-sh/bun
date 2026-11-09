@@ -2704,8 +2704,6 @@ impl<'a, 's> Walk<'a, 's> {
             .collect()
     }
 
-    /// One walk. `seeded_last` are seeded when everything else has run dry, and the last of the answer lists the files that
-    /// were not alive then. The marks only ever get set, so what is alive at the end does not hang on the order.
     fn run(
         &mut self,
         in_parallel: InParallel<'_>,
@@ -3958,7 +3956,6 @@ pub(crate) struct LeftOutCode {
     names_read_from_objects: SharedSet<(FileId, Atom)>,
     bound_variables: SharedSet<Sym>,
     pub holds_every_load_by_unknown_name: bool,
-    /// Sorted. In the program, and not yet when the entry points that are seeded last were still to come.
     pub files_alive_through_last_seeds_alone: Vec<FileId>,
 }
 

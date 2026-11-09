@@ -298,6 +298,7 @@ describe("v8.serialize of a value that cannot be cloned", () => {
   test("a CryptoKey that is not extractable throws an Error", async () => {
     const secret = new TextEncoder().encode("THIS-IS-SECRET-KEY-MATERIAL-32B!");
     const key = await crypto.subtle.importKey("raw", secret, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    // node's text here is "Unserializable host object: CryptoKey ...", and node refuses a key that is extractable too.
     expectPlainError(
       thrownBy(() => v8.serialize(key)),
       couldNotBeCloned,

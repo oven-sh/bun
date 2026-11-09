@@ -1195,16 +1195,17 @@ describe("gc entries", () => {
   // cycle. The entry of a forced collection lasts for its cycle. That finds the forced collections in the log, and with
   // them all those between. Without the generational collector, and with the concurrent one, each of those marks all
   // of the live objects in more than one stop. Windows and a debug build take too long for a child that collects at
-  // every moment of its start.
-  test.concurrent.skipIf(isDebug || isWindows)(
-    "no entry is shorter than the stops of its collection where one collection follows the other at once",
-    async () => {
-      await using proc = tracked(
-        Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `
+  // every moment of its start, so the test is made only for the other builds.
+  if (!isDebug && !isWindows) {
+    test.concurrent(
+      "no entry is shorter than the stops of its collection where one collection follows the other at once",
+      async () => {
+        await using proc = tracked(
+          Bun.spawn({
+            cmd: [
+              bunExe(),
+              "-e",
+              `
             const { PerformanceObserver, constants } = require("node:perf_hooks");
             const isForced = entry => entry.detail.flags === constants.NODE_PERFORMANCE_GC_FLAGS_FORCED;
             globalThis.live = Array.from({ length: 100000 }, (_, i) => ({ i, pair: [i, i] }));
@@ -1231,51 +1232,52 @@ describe("gc entries", () => {
               setImmediate(round);
             })();
           `,
-          ],
-          env: {
-            ...bunEnv,
-            BUN_JSC_logGC: "1",
-            BUN_JSC_collectContinuously: "1",
-            BUN_JSC_collectContinuouslyPeriodMS: "0.1",
-            BUN_JSC_useGenerationalGC: "0",
-            BUN_JSC_useConcurrentGC: "1",
-            BUN_GC_TIMER_DISABLE: "1",
-          },
-          stdout: "pipe",
-          stderr: "pipe",
-        }),
-      );
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const logged = collectionsInTheLog(stderr);
-      const entries: { lasts: number; forced: boolean }[] = JSON.parse(stdout);
-      const forced = entries.flatMap(({ forced }, i) => (forced ? [i] : []));
-      // How far the log is ahead of the entries: there, each forced entry lasts for the cycle of its collection.
-      const ahead = logged.flatMap((_, at) => {
-        const by = at - forced[0];
-        return forced.every(i => Math.abs((logged[i + by]?.cycle ?? NaN) - entries[i].lasts) < 0.000001) ? [by] : [];
-      });
-      const between = entries
-        .slice(forced[0], forced.at(-1)! + 1)
-        .map((entry, i) => ({ ...entry, ...logged[forced[0] + ahead[0] + i] }));
-      const unforced = between.filter(({ forced }) => !forced);
-      expect({
-        forcedCollections: forced.length,
-        placesInTheLog: ahead.length,
-        someHaveMoreThanOneStop: unforced.some(({ stops }) => stops > 1),
-        shorterThanTheirStops: unforced.filter(
-          ({ lasts, cycle, allStops }) => !(lasts >= Math.min(cycle, allStops) - 0.001),
-        ),
-        longerThanTheirCycle: between.filter(({ lasts, cycle }) => !(lasts <= cycle + 0.001)),
-      }).toEqual({
-        forcedCollections: 20,
-        placesInTheLog: 1,
-        someHaveMoreThanOneStop: true,
-        shorterThanTheirStops: [],
-        longerThanTheirCycle: [],
-      });
-      expect(exitCode).toBe(0);
-    },
-  );
+            ],
+            env: {
+              ...bunEnv,
+              BUN_JSC_logGC: "1",
+              BUN_JSC_collectContinuously: "1",
+              BUN_JSC_collectContinuouslyPeriodMS: "0.1",
+              BUN_JSC_useGenerationalGC: "0",
+              BUN_JSC_useConcurrentGC: "1",
+              BUN_GC_TIMER_DISABLE: "1",
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+          }),
+        );
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const logged = collectionsInTheLog(stderr);
+        const entries: { lasts: number; forced: boolean }[] = JSON.parse(stdout);
+        const forced = entries.flatMap(({ forced }, i) => (forced ? [i] : []));
+        // How far the log is ahead of the entries: there, each forced entry lasts for the cycle of its collection.
+        const ahead = logged.flatMap((_, at) => {
+          const by = at - forced[0];
+          return forced.every(i => Math.abs((logged[i + by]?.cycle ?? NaN) - entries[i].lasts) < 0.000001) ? [by] : [];
+        });
+        const between = entries
+          .slice(forced[0], forced.at(-1)! + 1)
+          .map((entry, i) => ({ ...entry, ...logged[forced[0] + ahead[0] + i] }));
+        const unforced = between.filter(({ forced }) => !forced);
+        expect({
+          forcedCollections: forced.length,
+          placesInTheLog: ahead.length,
+          someHaveMoreThanOneStop: unforced.some(({ stops }) => stops > 1),
+          shorterThanTheirStops: unforced.filter(
+            ({ lasts, cycle, allStops }) => !(lasts >= Math.min(cycle, allStops) - 0.001),
+          ),
+          longerThanTheirCycle: between.filter(({ lasts, cycle }) => !(lasts <= cycle + 0.001)),
+        }).toEqual({
+          forcedCollections: 20,
+          placesInTheLog: 1,
+          someHaveMoreThanOneStop: true,
+          shorterThanTheirStops: [],
+          longerThanTheirCycle: [],
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+  }
 
   concurrent("the observers that exist when an entry reaches JS get it", async () => {
     // The entry is for whoever observes when it is handed over, and between the two

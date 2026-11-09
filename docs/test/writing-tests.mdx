@@ -547,11 +547,13 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 
 `test`, `describe` and the hooks follow the column of the module they're imported from. These are in the `"vitest"` column in every module, `"bun:test"` included:
 
-- `test.for`, and a `test` that [`test.extend()`](#fixtures) returned, with its `each` and `for`. Bun clears mock functions before each of their tests. In such a test, `expect` follows the `"vitest"` rows, as it does in a test from `"vitest"`.
+- `test.for`, and a `test` that [`test.extend()`](#fixtures) returned, with its `each` and `for`. Bun clears mock functions before each of their tests.
 - The hooks of an extended `test`, such as `test.beforeEach()`.
 - `describe.for`, and `test.describe()` on an extended `test`.
 
 The hooks, `describe` and `vi` that you import from `"bun:test"` stay in its column, also around such a test.
+
+For the matcher rows, `expect` follows the test that runs, also in the `beforeEach`, `afterEach` and `aroundEach` hooks that run for that test. In a `beforeAll` or `afterAll` hook, it follows the hook.
 
 When a test runs [concurrently](/test#concurrent-test-execution) with other tests, the imported `expect` can't tell which test called it. Its matchers then follow the `"bun:test"` column, in a test from `"vitest"` too. The `expect` of the [test context](#test-context) follows the column of its test.
 

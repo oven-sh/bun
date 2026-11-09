@@ -267,11 +267,8 @@ VersionSqlite3::~VersionSqlite3()
 // waits on readers via the connection's busy-handler, so a large user-set
 // timeout plus a cross-process reader would stall process.exit(); with a
 // zero handler TRUNCATE degrades to a passive checkpoint immediately.
-// Skip read-only schemas. A read-only schema cannot be written, yet its checkpoint still
-// takes the WAL write lock and syncs the WAL before the first write fails, so writers in
-// other processes see SQLITE_BUSY for nothing. Read-only is a property of each schema's
-// file, not of the connection: a `file:?mode=ro` main can have a writable ATTACHed
-// database, and an unwritable file silently opens read-only.
+// A read-only schema's checkpoint holds the WAL write lock (other processes see SQLITE_BUSY)
+// until its first write fails, so skip it. Read-only is per schema, not per connection.
 extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
 {
     sqlite3_busy_timeout(db, 0);

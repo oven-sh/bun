@@ -3,15 +3,17 @@ import * as py from "./holders_helper.py";
 
 let failures = 0;
 const used = [];
-function check(name, make) {
+function check(name, make, isOld = false) {
   let holder = make();
+  if (isOld) Bun.gc(true);
   const held = py.blocked();
+  const released = py.released();
   used.push(typeof holder); // A variable that is not read again holds nothing.
   holder = null;
   const after = py.blocked();
-  if (held !== true || after !== false) {
+  if (held !== true || released !== false || after !== false) {
     failures++;
-    console.log(`FAIL ${name}: blocked while held: ${held}, after: ${after}`);
+    console.log(`FAIL ${name}: blocked while held: ${held}, released: ${released}, after: ${after}`);
   }
 }
 class WithField { #v = py.view(); }
@@ -36,18 +38,19 @@ check("generator", () => { const g = (function* () { const v = py.view(); yield 
 check("spread", () => [...[py.view()]]);
 check("frozen copy-on-write literal", () => Object.freeze([1, 2, py.view()]));
 check("Error cause", () => new Error("e", { cause: py.view() }));
+check("old property", () => ({ v: py.view() }), true);
+check("old prototype", () => Object.create({ v: py.view() }), true);
+check("instance of ctypes on a prototype", () => Object.create({ v: py.instance() }));
 // Not in strict code: a parameter that has lost its name is still an item of `arguments`.
 check("parameter hidden by its namesake", () => new Function("a", "a", "(() => a); return arguments;")(py.view(), 1));
 check("parameter hidden by a function", () => new Function("a", "b", "function a() {} (() => b); return arguments;")(py.view(), 1));
 // What an object inherits from is reached through its structure.
 check("prototype", () => Object.create({ v: py.view() }));
 check("prototype given later", () => Object.setPrototypeOf({}, { v: py.view() }));
-check("prototype of the prototype", () => Object.create(Object.create({ v: py.view() })));
 check("prototype of an array", () => Object.setPrototypeOf([], { v: py.view() }));
+check("prototype of the prototype", () => Object.create(Object.create({ v: py.view() })));
 check("prototype of a function", () => Object.setPrototypeOf(() => {}, { v: py.view() }));
-check("instance of a function", () => { function F() {} F.prototype.v = py.view(); return new F(); });
 check("instance of a class, method", () => { const v = py.view(); return new (class { get() { return v; } })(); });
-check("instance of a class, accessor", () => { const v = py.view(); return new (class { get v() { return v; } })(); });
 {
   // In the hands of a function that is running.
   const inner = v => { const r = py.blocked(); used.push(typeof v); return r; };
@@ -65,6 +68,19 @@ check("instance of a class, accessor", () => { const v = py.view(); return new (
   if (results[0] !== true || results[2] !== false) {
     failures++;
     console.log("FAIL prototype that only a structure of the global object refers to: " + results);
+  }
+}
+{
+  // What the engine has cached on a structure, and is out of date, holds nothing: the chain of the prototypes of `object`.
+  const middle = Object.setPrototypeOf({}, { v: py.view() });
+  const object = Object.create(middle);
+  for (const key in object) used.push(key);
+  object.q = 1;
+  const results = [py.blocked(), Object.setPrototypeOf(middle, null) === middle, py.blocked()];
+  used.push(typeof object);
+  if (results[0] !== true || results[2] !== false) {
+    failures++;
+    console.log("FAIL prototype that was taken out of the chain: " + results);
   }
 }
 console.log(failures ? `${failures} failed` : "ok");

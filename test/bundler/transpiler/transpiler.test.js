@@ -4016,29 +4016,40 @@ console.log(resolve.length)
           "js",
           "l\\u0065t",
         );
+
+        // The error covers the whole name, also when the name starts with an escape.
+        const lengthOf = code => {
+          try {
+            transpiler.transformSync(code, "js");
+          } catch (er) {
+            return er.position?.length;
+          }
+        };
+        const sources = ["let l\\u0065t = 1", "let [l\\u0065t] = [1]", "let [\\u{6c}et] = [1]"];
+        expect(sources.map(lengthOf)).toEqual([8, 8, 8]);
       });
 
-      it("is an error in TypeScript, in a namespace too", () => {
+      it("is an error in TypeScript where the declaration makes a binding", () => {
         expectRefused(
           [
             "let [let]: number[] = [1]",
             "let [let]!: number[] = [1]",
             "const {let}: any = {}",
-            "namespace N { export let [let] = [1] }",
             "namespace N { const {let} = {} }",
           ],
           "ts",
         );
-        // A declare statement with a plain name is an error, as "declare let let" is.
-        expectRefused(["declare let l\\u0065t: any"], "ts", "l\\u0065t");
+        expectRefused(["namespace N { let l\\u0065t = 1 }"], "ts", "l\\u0065t");
       });
 
-      it("stays valid in a pattern that a TypeScript declare erases", () => {
+      it("stays valid where TypeScript makes no binding: a declare, an exported namespace member", () => {
         expectAccepted(
           [
             "declare let [let]: any",
             "declare const {let}: any",
             "declare const [l\\u0065t]: any",
+            "declare let l\\u0065t: any",
+            "declare let \\u006cet: any",
             "declare global { let [let]: any }",
             "declare namespace N { let [let]: any }",
             "declare namespace N { export let [let]: any }",
@@ -4048,8 +4059,15 @@ console.log(resolve.length)
             // Such a pattern declares no symbol.
             "declare const {a}: any; const a = 1",
             "declare let [x]: any; let x = 1",
+            "namespace N { export let [let] = [1] }",
+            "namespace N { export const {let} = {} }",
+            "namespace N { export let l\\u0065t = 1 }",
           ],
           "ts",
+        );
+        ts.expectPrinted_(
+          "namespace N { export let [let] = [1] }",
+          "var N;\n((N) => {\n  [N.let] = [1];\n})(N ||= {})",
         );
       });
 
@@ -4092,6 +4110,7 @@ console.log(resolve.length)
         expect(errorsOf("for (let let of []) ;")).toEqual([{ message, offset: 9 }]);
         expect(errorsOf("{ using let = null; }")).toEqual([{ message, offset: 8 }]);
         expect(errorsOf("declare let let: any", "ts")).toEqual([{ message, offset: 12 }]);
+        expect(errorsOf("namespace N { export let let = 1 }", "ts")).toEqual([{ message, offset: 25 }]);
         // The name is reported before the lexer fails on the token after it.
         expect(errorsOf('let let "x')).toEqual([
           { message, offset: 4 },

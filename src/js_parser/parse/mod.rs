@@ -1296,18 +1296,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if kind == js_ast::symbol::Kind::Other || kind == js_ast::symbol::Kind::Constant {
                 // Forbid "let let" and "const let" but not "var let"
                 if p.lexer.token == T::TIdentifier && p.lexer.identifier == b"let" {
-                    p.log().add_range_error(
-                        Some(p.source),
-                        p.lexer.range(),
-                        b"Cannot use \"let\" as an identifier here",
-                    );
+                    // Where TypeScript makes no binding, only the unescaped name is an error.
+                    if !(Self::IS_TYPESCRIPT_ENABLED && opts.makes_no_lexical_binding())
+                        || p.lexer.raw() == b"let"
+                    {
+                        p.log().add_range_error(
+                            Some(p.source),
+                            p.lexer.range(),
+                            b"Cannot use \"let\" as an identifier here",
+                        );
+                    }
                 }
                 local = p.parse_binding(ParseBindingOptions {
                     is_using_statement: opts.is_using_statement,
                 })?;
-                // A plain name has the test above. A TypeScript "declare" pattern binds nothing.
+                // A plain name has the test above.
                 if matches!(local.data, B::B::BIdentifier(_))
-                    || (Self::IS_TYPESCRIPT_ENABLED && opts.is_typescript_declare)
+                    || (Self::IS_TYPESCRIPT_ENABLED && opts.makes_no_lexical_binding())
                 {
                     p.declare_binding(kind, &mut local, opts)
                 } else {

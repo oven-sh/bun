@@ -1543,6 +1543,12 @@ impl<'a> ParseStatementOptions<'a> {
             StatementScope::Nested => false,
         }
     }
+
+    /// A TypeScript `declare` and an exported namespace member make no `let` or `const` binding.
+    #[inline]
+    pub(crate) fn makes_no_lexical_binding(&self) -> bool {
+        self.is_typescript_declare || (self.is_export && self.scope.is_namespace())
+    }
 }
 
 // Only const-able AST node singletons live here. Callers needing the rest

@@ -5219,7 +5219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[cold]
     #[inline(never)]
     fn report_let_as_lexical_name(&mut self, loc: bun_ast::Loc) {
-        let r = js_lexer::range_of_identifier(self.source, loc);
+        let r = self.source.range_of_identifier(loc);
         // `parse_property_binding` takes the name of `{...1}` from the previous identifier token.
         if r.len == 0 {
             return;

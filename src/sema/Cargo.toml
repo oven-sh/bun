@@ -13,6 +13,7 @@ baselines = []
 test_support = []
 
 [dependencies]
+bun_sort_by_number.workspace = true
 bun_alloc.workspace = true
 bun_collections.workspace = true
 bun_core.workspace = true

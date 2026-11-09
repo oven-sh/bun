@@ -1,14 +1,9 @@
 // One `await import(name)` whose name comes out of a Set that closures fill at run time from a written table of built-in modules.
 // The build knows what the name may be, so the load finds those modules and nothing else: no file of the program is handed out by it,
 // and the passes over the whole program go on editing.
-// STATISTIC: PromoteEnvironmentsToVariablesChanges >= 1
-// STATISTIC: RemoveUnreadExportsChanges >= 1
-// STATISTIC: DeferDefinitionsChanges >= 1
-// STATISTIC: EnvironmentsPromotedToVariables >= 1
-// STATISTIC: UnreadVariableStoresRemoved >= 1
-// STATISTIC: ClosuresDeferredInVariables >= 1
-// STATISTIC: ImageFunctionsAndJumpsInTheirPlace <= 4389
-// STATISTIC: FlowEdgesLogged <= 300000
+// An earlier compiler also counted the passes that changed the program: PromoteEnvironmentsToVariablesChanges, RemoveUnreadExportsChanges and DeferDefinitionsChanges >= 1. There are no passes now: what each of them did is asked below.
+// STATISTIC: ImageFunctionsEmitted <= 4800
+// STATISTIC: FactEdges <= 300000
 import { createRequire } from "node:module";
 import { name as pluginName } from "./app/plugin.ts";
 import { add, makeCounter, pattern, Shape } from "./app/shapes.ts";

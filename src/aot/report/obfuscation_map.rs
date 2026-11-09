@@ -1,6 +1,7 @@
 use core::cmp::Reverse;
 use core::hash::Hash;
 
+use bun_aot_interface::report::SourceChanged;
 use bun_base64::VLQ;
 use bun_collections::ArrayHashMap;
 use bun_core::handle_oom;
@@ -12,7 +13,6 @@ use super::positions::resolve_ascending;
 use super::source_texts::{ModuleLocator, ModuleSource, SourceTexts};
 use crate::engine::{EngineResult, ObfuscatedSiteRecord, Position, position_of};
 use crate::ir::ids::ModuleId;
-use crate::link::ProgramNames;
 
 #[derive(Copy, Clone)]
 struct Located {
@@ -21,11 +21,9 @@ struct Located {
     column: u32,
 }
 
-/// A file in `sources`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Source {
     Module(ModuleId),
-    /// Built-in functions that are in no module, such as `Array.prototype.map`.
     Native,
 }
 
@@ -42,22 +40,20 @@ struct Site {
     name: Option<u32>,
 }
 
-/// What the map says about the executable it belongs to.
 #[derive(Copy, Clone)]
 pub struct Executable<'a> {
     pub file_name: &'a [u8],
-    /// `bun_crash_handler::build_id::write_uuid`. `None` where the executable has no build ID.
     pub debug_id: Option<&'a [u8]>,
 }
 
 pub fn write(
     engine: &EngineResult,
-    names: &ProgramNames,
     texts: &SourceTexts,
     executable: Executable<'_>,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, SourceChanged> {
     let records = sort_records(engine.obfuscated_sites());
     let located = locate_records(&records, texts);
+    let written_names = texts.written_names();
     let mut sources: ArrayHashMap<Source, ()> = ArrayHashMap::default();
     let mut frame_names: ArrayHashMap<&[u8], ()> = ArrayHashMap::default();
     let sites: Vec<Site> = records
@@ -65,6 +61,7 @@ pub fn write(
         .zip(located)
         .map(|(record, located)| {
             let name = engine.text(record.name);
+            let name = written_names.get(name).copied().unwrap_or(name);
             let name = (!name.is_empty()).then(|| intern(&mut frame_names, name));
             let original = match (located, name) {
                 (Some(found), _) => Some(Original {
@@ -91,16 +88,25 @@ pub fn write(
     write_mappings(&sites, &mut mappings);
 
     let printer = PathPrinter::new();
+    let changed = records.iter().find_map(|record| {
+        let source = texts.get(position_of(record.location)?.module)?;
+        source.text().is_none().then_some(source)
+    });
+    if let Some(changed) = changed {
+        return Err(SourceChanged {
+            path: printer.posix_path(&changed.path),
+        });
+    }
     let source_paths: Vec<Vec<u8>> = sources
         .keys()
         .iter()
         .map(|&source| match source {
-            Source::Module(module) => printer.posix_path(names.module_path(module)),
+            Source::Module(module) => printer.posix_path(texts.path(module)),
             Source::Native => b"native".to_vec(),
         })
         .collect();
     let source_texts = sources.keys().iter().map(|&source| match source {
-        Source::Module(module) => texts.get(module).map(ModuleSource::text),
+        Source::Module(module) => texts.get(module).and_then(ModuleSource::text),
         Source::Native => None,
     });
     let mut json = JsonWriter::object();
@@ -108,7 +114,6 @@ pub fn write(
     json.string("file", executable.file_name);
     if let Some(debug_id) = executable.debug_id {
         json.string("debugId", debug_id);
-        // Older tools read this spelling.
         json.string("debug_id", debug_id);
     }
     json.strings("sources", source_paths.iter().map(Vec::as_slice));
@@ -116,10 +121,9 @@ pub fn write(
     json.strings("names", frame_names.keys().iter().copied());
     json.string("mappings", &mappings);
     write_function_maps(&mut json, &sites, sources.count(), frame_names.keys());
-    json.finish()
+    Ok(json.finish())
 }
 
-/// A segment only has a name if it has a place. In a file without text each function gets a line of its own, the number of its name.
 fn source_without_text(record: &ObfuscatedSiteRecord) -> Source {
     position_of(record.location).map_or(Source::Native, |position| Source::Module(position.module))
 }
@@ -188,7 +192,6 @@ fn write_mappings(sites: &[Site], out: &mut Vec<u8>) {
 
 const UNNAMED_FUNCTION: &[u8] = b"?";
 
-/// From this place in a source file on, the code belongs to the function with this name.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct FunctionStart {
     line: u32,
@@ -196,8 +199,6 @@ struct FunctionStart {
     name: Option<u32>,
 }
 
-/// `x_facebook_sources`, the function maps of Metro: for each source, which function each place belongs to. A `name` in
-/// `mappings` is read as the name of the callee by some tools, and these maps are what they read for the function around a place.
 fn write_function_maps(
     json: &mut JsonWriter,
     sites: &[Site],
@@ -233,15 +234,12 @@ fn write_function_maps(
     json.end_array();
 }
 
-/// A reader takes the last start at or in front of a place, so a start with the name of the one in front of it says nothing.
 fn keep_name_changes(starts: &mut Vec<FunctionStart>) {
-    // Where two functions have a site at one place, a name wins over none.
     starts.shared_sort_unstable_by_key(|start| (start.line, start.column, Reverse(start.name)));
     starts.dedup_by_key(|start| (start.line, start.column));
     starts.dedup_by_key(|start| start.name);
 }
 
-/// Each segment has a column, a name and a line, as differences. A `;` sets the column back to zero.
 fn write_function_mappings(
     starts: &[FunctionStart],
     out: &mut Vec<u8>,

@@ -3,13 +3,10 @@ use bun_sema::check::aot::{ClassRef, FunctionRef, GaveUp, PositionTypes, declare
 use bun_sema::hir::{ExprKind, File, Flags, FnBody, PatId, StmtKind, VarDeclId, VarKind};
 use bun_sema::program::{FileId, Sym};
 
-use super::SiteOrigin;
-use crate::ir::generated::TypeSiteKind;
-use crate::ir::{DeclaredType, FunctionKey, Type, TypeTable};
+use crate::ir::{DeclaredType, FunctionKey, TypeTable};
 use crate::lower::FileLowering;
 use crate::lower::function_types::find_explicit_constructor;
 
-// `const zero = 0` holds the integer. Its type does not say so: TypeScript's `0` is also the type of `-0`.
 fn is_const_written_as_zero(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
     let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
         return false;
@@ -18,34 +15,75 @@ fn is_const_written_as_zero(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -
     written.kind == VarKind::Const
         && written.ty.is_none()
         && written.init.is_some()
-        && !hir.is_ambient(hir.node(declaration))
         && matches!(hir[written.init].kind, ExprKind::Number(index)
             if hir.numbers[index as usize].to_bits() == 0)
+        && !hir.is_ambient(hir.node(declaration))
+}
+
+fn comes_from_elsewhere(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId) -> bool {
+    let PatParent::Var(declaration) = bound.pat_parent[pattern.idx()] else {
+        return false;
+    };
+    let mut value = hir[declaration].init;
+    if value.is_none() {
+        return false;
+    }
+    loop {
+        value = match hir[value].kind {
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } => expr,
+            ExprKind::AsConst(expr) | ExprKind::NonNull(expr) | ExprKind::Await(expr) => expr,
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) => return true,
+            _ => return false,
+        };
+    }
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    pub(in crate::lower) fn compute_inferred_position(&mut self, symbol: Sym) -> DeclaredType {
+        let files = self.queries.files();
+        let declarations = files.decls_of(symbol);
+        let mut values = declarations
+            .iter()
+            .filter(|&&(_, it)| !declares_type_alone(it));
+        let Some(&(declaring_file, Decl::Var(pattern))) = values.next() else {
+            return DeclaredType::untyped();
+        };
+        if declaring_file != self.file || !comes_from_elsewhere(self.hir, self.bound, pattern) {
+            return DeclaredType::untyped();
+        }
+        let written = self.queries.written_variable_type(symbol);
+        let checked = self.queries.binding_type(pattern);
+        self.create_expected_position(PositionTypes { written, checked })
+    }
+
     pub(super) fn compute_variable_position(&mut self, symbol: Sym) -> DeclaredType {
-        if self.is_function_binding(symbol) {
-            let ty = match self.find_bound_function(symbol) {
+        let class = self.queries.class_of_binding(symbol);
+        let files = self.queries.files();
+        let declarations = files.decls_of(symbol);
+        if class.is_some() || self.is_function_binding(symbol, &declarations) {
+            let ty = match self.find_bound_function(symbol, class) {
                 Some(key) => {
                     let function = self.reference_function(key);
-                    self.fragment.types.intern(Type::function(function))
+                    self.fragment.types.intern_function(function)
                 }
                 None => TypeTable::FUNCTION,
             };
-            return DeclaredType::from_compiler(ty);
+            let position = DeclaredType::from_compiler(ty);
+            let starts_empty = symbol.file == self.file
+                && self.scopes.function_made_at_first_read(symbol.id).is_some();
+            return match starts_empty {
+                true => self.add_undefined(position),
+                false => position,
+            };
         }
-        let files = self.queries.files();
-        let declarations = files.decls_of(symbol);
         let mut values = declarations
             .iter()
             .filter(|&&(_, it)| !declares_type_alone(it));
         let Some(&(declaring_file, declaration)) = values.next() else {
             return DeclaredType::untyped();
         };
-        let (kind, pattern) = match declaration {
-            Decl::Var(pattern) | Decl::Require(pattern) => (TypeSiteKind::Variable, pattern),
-            Decl::Param(pattern) => (TypeSiteKind::Parameter, pattern),
+        let pattern = match declaration {
+            Decl::Var(pattern) | Decl::Require(pattern) | Decl::Param(pattern) => pattern,
             _ => return DeclaredType::untyped(),
         };
         if is_const_written_as_zero(
@@ -55,26 +93,25 @@ impl FileLowering<'_, '_, '_, '_> {
         ) {
             self.types.positions.constant_zeros.insert(symbol);
         }
+        let is_parameter = matches!(
+            files.bound(declaring_file).pat_parent[pattern.idx()],
+            PatParent::Param(_)
+        );
+        let is_stored_again = !files.bound(symbol.file).is_stable_binding(symbol.id);
         let written = self.queries.written_variable_type(symbol);
-        let (checked, origin) = match declaring_file == self.file {
-            true => {
-                let origin = SiteOrigin {
-                    kind,
-                    position: self.hir[pattern].pos,
-                };
-                (self.queries.binding_type(pattern), Some(origin))
-            }
-            false => (Err(GaveUp::Unresolved), None),
+        let is_declared = is_parameter || is_stored_again || written.written().is_some();
+        let checked = match is_declared && declaring_file == self.file {
+            true => self.queries.binding_type(pattern),
+            false => Err(GaveUp::Unresolved),
         };
         let types = PositionTypes { written, checked };
-        let position = self.build_position_of_types(types, origin);
+        let position = self.create_position(types);
         match self.starts_undefined(symbol, declaring_file, pattern) {
             true => self.add_undefined(position),
             false => position,
         }
     }
 
-    // `var v = 1`, `let v;` and the `v` of `(v?: number) => {}` hold `undefined` before anything is stored.
     fn starts_undefined(&self, symbol: Sym, declaring_file: FileId, pattern: PatId) -> bool {
         let files = self.queries.files();
         if files.bound(symbol.file).initial_state(symbol.id) == InitialState::Undefined {
@@ -114,8 +151,8 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn find_bound_function(&self, symbol: Sym) -> Option<FunctionKey> {
-        let key = match self.queries.class_of_binding(symbol) {
+    fn find_bound_function(&self, symbol: Sym, class: Option<ClassRef>) -> Option<FunctionKey> {
+        let key = match class {
             Some(class) => {
                 let left_out = self.inputs.library_functions.left_out_declarations();
                 match left_out.is_class_left_out(class.file, class.class) {
@@ -125,16 +162,17 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             None => self.find_defined_function(find_only_definition(self, symbol)?),
         };
-        key.filter(|key| self.inputs.modules.load_failure(key.home_file()).is_none())
+        let modules = self.inputs.modules;
+        key.filter(|key| {
+            let home = key.home_file();
+            modules.load_failure(home).is_none() && !modules.is_placeholder(home)
+        })
     }
 
-    fn is_function_binding(&self, symbol: Sym) -> bool {
-        if self.queries.class_of_binding(symbol).is_some() {
-            return true;
-        }
+    fn is_function_binding(&self, symbol: Sym, declarations: &[(FileId, Decl)]) -> bool {
         let files = self.queries.files();
         let mut has_body = false;
-        for &(declaring_file, declaration) in files.decls_of(symbol).iter() {
+        for &(declaring_file, declaration) in declarations {
             let function = match declaration {
                 Decl::Fn(function) => function,
                 _ if declares_type_alone(declaration) => continue,
@@ -149,12 +187,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 FnBody::Block(_) | FnBody::Expr(_) => true,
             };
         }
-        // The variable that a function in a block also declares in sloppy code is `undefined` until the block runs.
         has_body && files.bound(symbol.file).initial_state(symbol.id) == InitialState::Initialized
     }
 }
 
-// `for (const v of list)` stores into `v` before anything reads it.
 fn is_loop_head(hir: &File<'_>, bound: &Bound<'_>, declaration: VarDeclId) -> bool {
     let statement = bound.var_stmt[declaration.idx()];
     let Parent::Stmt(parent) = bound.parent_of_stmt(statement) else {

@@ -1,0 +1,14 @@
+# -- source: variable-does-not-come-round-a-loop-that-hands-its-closure-on.js
+# function twice(v, f) { let work = 0; for (let j = 0; j < 2; j++) work += j; f(null, v); f(null, v + work); }
+# function run(n) { let total = 0; let failed = 0; function done(err, v) { if (err) failed++; else total += v; } for (let i = 0; i < n; i++) twice(i, done); return total + failed; }
+# print(run(5) + 1);
+# print(run(5) + 1);
+# -- end of source
+# The loop hands `done` to a call in every turn, so the state holds neither variable at the back edge. A parameter of the head would be fed by a read out of memory in every turn and read by nobody before the exit: the head takes the counter alone.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isInLoop=true isLoopHead=true:
+# RUN(HEAD): walk f2 mechanisms=all
+# HEAD-NOT: @Double{{*}}) isInLoop=true isLoopHead=true:
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

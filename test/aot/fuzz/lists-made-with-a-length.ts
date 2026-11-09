@@ -137,7 +137,8 @@ export function generate(random: Random, typed: boolean): string {
     const isStrange = strangeLengths.includes(length);
     const isNumber = !strangeLengths.includes(length) || !["word", "true", "null"].some(each => length.includes(each));
     const start = isNumber || !typed ? length : `(${length} as unknown as number)`;
-    const made = random.pick(makers).replace(" as LIST", typed ? " as any[]" : "");
+    const drawnMaker = random.pick(makers).replace(" as LIST", typed ? " as any[]" : "");
+    const made = length === "2 ** 32" && !drawnMaker.includes("(n)") ? "new Array(n)" : drawnMaker;
     const change = isPlain || random.chance(0.45) ? "" : random.pick(before);
     const seldom = random.pick([1, 1, 3, 11]);
     const head = isPlain
@@ -192,7 +193,7 @@ export function generate(random: Random, typed: boolean): string {
     ${change && !pushesInHead ? `if (turn % ${seldom} === 0) { ${change} }` : ""}
     ${isWrapped ? "let round = 0; do { turns = 0;" : ""}
     for (${head}) {
-      ${body.includes("k + 1") || (body.includes("push") && !pushesInHead) ? "if (k > 300) break;" : ""}
+      ${body.includes("k + 1") || (body.includes("push") && !pushesInHead) || (body.includes("handOn") && head.includes("k < list.length;")) ? "if (k > 300) break;" : ""}
       ${body}
     }
     ${isWrapped ? "} while (++round < 2);" : ""}

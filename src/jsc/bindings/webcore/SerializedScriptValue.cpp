@@ -641,6 +641,8 @@ static bool isCompiledObject(JSC::JSObject* object)
 static bool tryMaterializeAsFinalObject(JSC::VM& vm, JSC::JSObject* object)
 {
 #if ENABLE(AOT)
+    if (!vm.hasCompiledCode()) [[likely]]
+        return false;
     JSC::AOT::PropertyWalk::materializeLazyProperties(vm, object);
     return object->classInfo() == JSC::JSFinalObject::info();
 #else

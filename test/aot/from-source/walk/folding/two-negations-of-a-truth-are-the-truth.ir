@@ -1,0 +1,14 @@
+# `!!x`: LogicalNot(ToBoolean(LogicalNot(ToBoolean(x)))): two negations of a boolean are the boolean. The rule looked for a LogicalNot right under the outer one and never found it: a ToBoolean stands between.
+# -- source: two-negations.ts
+# export function isThere(value: unknown): boolean {
+#     return !!value;
+# }
+# console.log(isThere(1), isThere(""));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: LogicalNot
+# CHECK: ToBoolean
+# CHECK-NOT: LogicalNot
+# CHECK: Return

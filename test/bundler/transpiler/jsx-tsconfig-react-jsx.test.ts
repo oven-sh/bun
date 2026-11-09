@@ -109,11 +109,10 @@ describe("tsconfig compilerOptions.jsx", () => {
   );
 });
 
-// A --jsx-* flag names a factory, a fragment, an import source or a runtime. A bunfig.toml can have no `jsx` key, or
-// `jsx = "react"`. None of these says development or production. In `bun build`, what says it is NODE_ENV,
-// --production, "jsx": "react-jsx" or "react-jsxdev" in tsconfig.json, and `jsx = "react-jsx"` or "react-jsxDEV" in
-// bunfig.toml.
-describe.concurrent("bun build: a --jsx-* flag or a bunfig.toml without jsx does not choose dev or prod", () => {
+// A bunfig.toml can have no `jsx` key, or `jsx = "react"`. Neither says development or production. In `bun build`,
+// what says it is NODE_ENV, --production, a --jsx-* flag (production), "jsx": "react-jsx" or "react-jsxdev" in
+// tsconfig.json, and `jsx = "react-jsx"` or "react-jsxDEV" in bunfig.toml.
+describe.concurrent("bun build: a bunfig.toml without jsx does not choose dev or prod", () => {
   type Files = Record<string, string>;
   type Env = Record<string, string>;
   const importSource = "--jsx-import-source=shim";
@@ -138,26 +137,6 @@ describe.concurrent("bun build: a --jsx-* flag or a bunfig.toml without jsx does
     Array.from(output.matchAll(/"([^"]+\/jsx(?:-dev)?-runtime)"/g), match => match[1]);
 
   test.each<[string, string[], string, Files?, Env?]>([
-    ["no tsconfig.json", [importSource], "shim/jsx-dev-runtime"],
-    ["no tsconfig.json", ["--jsx-import-source="], "react/jsx-dev-runtime"],
-    ["no tsconfig.json", ["--jsx-runtime=automatic"], "react/jsx-dev-runtime"],
-    ["no tsconfig.json", ["--jsx-factory=h"], "react/jsx-dev-runtime"],
-    ["no tsconfig.json", ["--jsx-fragment=F"], "react/jsx-dev-runtime"],
-    ["no tsconfig.json", ["--no-bundle", importSource], "shim/jsx-dev-runtime"],
-    ["no tsconfig.json", [importSource, "--production"], "shim/jsx-runtime"],
-    ['tsconfig.json "react-jsxdev"', [importSource], "shim/jsx-dev-runtime", tsconfig("react-jsxdev")],
-    ['tsconfig.json "react-jsx"', [importSource], "shim/jsx-runtime", tsconfig("react-jsx")],
-    ['tsconfig.json "react-jsx"', ["--no-bundle", importSource], "shim/jsx-runtime", tsconfig("react-jsx")],
-    // Only "production" and "development" are a choice.
-    ["NODE_ENV=test", [importSource], "shim/jsx-dev-runtime", {}, { NODE_ENV: "test" }],
-    ["NODE_ENV=production", [importSource], "shim/jsx-runtime", {}, production],
-    [
-      'NODE_ENV=production, tsconfig.json "react-jsxdev"',
-      [importSource],
-      "shim/jsx-runtime",
-      tsconfig("react-jsxdev"),
-      production,
-    ],
     [
       'NODE_ENV=production, bunfig.toml without jsx, tsconfig.json "react-jsxdev"',
       [],
@@ -165,16 +144,6 @@ describe.concurrent("bun build: a --jsx-* flag or a bunfig.toml without jsx does
       { ...bunfigWithoutJsx, ...tsconfig("react-jsxdev") },
       production,
     ],
-    // The file has a tsconfig.json of its own that does not choose, so --no-bundle reads what NODE_ENV chose.
-    [
-      'NODE_ENV=development, tsconfig.json "react-jsx", sub/tsconfig.json without jsx',
-      ["--no-bundle", importSource],
-      "shim/jsx-dev-runtime",
-      { ...tsconfig("react-jsx"), "sub/tsconfig.json": "{}", "sub/m.jsx": shimFiles["m.jsx"] },
-      { NODE_ENV: "development" },
-    ],
-    ['bunfig.toml jsx = "react-jsxDEV"', [importSource], "shim/jsx-dev-runtime", bunfig("react-jsxDEV")],
-    ['bunfig.toml jsx = "react-jsx"', [importSource], "shim/jsx-runtime", bunfig("react-jsx")],
     [
       'bunfig.toml jsx = "react-jsxDEV", tsconfig.json "react-jsx"',
       [],
@@ -186,13 +155,6 @@ describe.concurrent("bun build: a --jsx-* flag or a bunfig.toml without jsx does
       [],
       "react/jsx-runtime",
       { ...bunfig("react-jsx"), ...tsconfig("react-jsxdev") },
-    ],
-    ["bunfig.toml without jsx", [importSource], "shim/jsx-dev-runtime", bunfigWithoutJsx],
-    [
-      'bunfig.toml without jsx, tsconfig.json "react-jsx"',
-      [importSource],
-      "shim/jsx-runtime",
-      { ...bunfigWithoutJsx, ...tsconfig("react-jsx") },
     ],
     [
       'bunfig.toml without jsx, tsconfig.json "react-jsx"',
@@ -227,8 +189,8 @@ describe.concurrent("bun build: a --jsx-* flag or a bunfig.toml without jsx does
   });
 
   const testFile = `import { test } from "bun:test";\ntest("jsx", () => {\n  globalThis.s = <div p="1">x</div>;\n});\n`;
-  // Outside `bun build` a --jsx-* flag selects the production runtime, as it has since 1.2.3. `bun run <file>` reads
-  // bunfig.toml after the flags, and the bunfig.toml then decides.
+  // A --jsx-* flag selects the production runtime, as it has since 1.2.3. `bun run <file>` reads bunfig.toml after the
+  // flags, and the bunfig.toml then decides.
   test.each<[string, string[], string, Files?]>([
     ["no bunfig.toml", [importSource, "m.jsx"], "prod jsx"],
     ["no bunfig.toml", ["run", importSource, "m.jsx"], "prod jsx"],

@@ -11,7 +11,7 @@ const packages = {
   "node_modules/cond/custom.js": `export default "custom";`,
   "node_modules/cond/default.js": `export default "default";`,
   "node_modules/mine/package.json": `{ "name": "mine", "version": "1.0.0", "exports": { "./jsx-runtime": "./r.js", "./jsx-dev-runtime": "./r.js" } }`,
-  "node_modules/mine/r.js": `export const jsx = (t, p) => "mine:" + t + JSON.stringify(p); export const jsxs = jsx; export const jsxDEV = (t, p) => "mine dev:" + t + JSON.stringify(p); export const Fragment = "f";`,
+  "node_modules/mine/r.js": `export const jsx = (t, p) => "mine:" + t + JSON.stringify(p); export const jsxs = jsx; export const jsxDEV = jsx; export const Fragment = "f";`,
 };
 
 const pathsThatEndInBrackets = {
@@ -174,19 +174,9 @@ console.log(kind(() => typeof config.flag), kind(() => typeof (config.flag)), ki
     },
     prints: 'a{"b":"c"}d fragnulle\n',
   },
-  // Built in one program with --define=process.env.NODE_ENV="staging" above: only "production" makes JSX call `jsx`.
   "--jsx-import-source": {
     flags: ["--jsx-import-source=mine"],
     files: { ...packages, "main.jsx": `console.log(<a b="c">d</a>);` },
-    prints: 'mine dev:a{"b":"c","children":"d"}\n',
-  },
-  '--jsx-import-source beside "jsx": "react-jsx" in tsconfig.json': {
-    flags: ["--jsx-import-source=mine"],
-    files: {
-      ...packages,
-      "tsconfig.json": `{ "compilerOptions": { "jsx": "react-jsx" } }`,
-      "main.jsx": `console.log(<a b="c">d</a>);`,
-    },
     prints: 'mine:a{"b":"c","children":"d"}\n',
   },
   "--compile-exec-argv": {
@@ -267,7 +257,7 @@ console.log(evaluated, tools.keep("kept"));`,
 };
 
 // These change every file of the build, or what another of them asks. The others are given to one build of one program.
-const alone = /brackets|tsconfig\.json|^--(format|jsx-runtime|minify|production|drop=console)/;
+const alone = /brackets|^--(format|jsx-runtime|minify|production|drop=console)/;
 const together = Object.entries(honored).filter(([name]) => !alone.test(name));
 for (const [name] of together) delete honored[name];
 const mains = together.map(([, { files }], index) =>

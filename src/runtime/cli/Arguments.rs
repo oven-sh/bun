@@ -1992,8 +1992,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let default_factory: &[u8] = b"";
         let default_fragment: &[u8] = b"";
         let default_import_source: &[u8] = b"";
-        // Outside `bun build`, a `--jsx-*` flag selects the production runtime, as it has since 1.2.3.
-        let development = |of_bunfig: Option<bool>| if is_build { of_bunfig } else { Some(false) };
         if opts.jsx.is_none() {
             opts.jsx = Some(api::Jsx {
                 factory: jsx_factory.unwrap_or(default_factory).into(),
@@ -2004,7 +2002,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 } else {
                     api::JsxRuntime::Automatic
                 },
-                development: development(None),
+                development: Some(false),
                 side_effects: jsx_side_effects,
             });
         } else {
@@ -2020,7 +2018,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 } else {
                     prev.runtime
                 },
-                development: development(prev.development),
+                development: Some(false),
                 side_effects: jsx_side_effects,
             });
         }

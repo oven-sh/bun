@@ -4248,7 +4248,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
 
 /// The extra normalization for attributes declared with a tokenized or
 /// enumerated type (§3.3.3): leading and trailing #x20 removed, runs of
-/// #x20 collapsed. A `\t`, `\n` or `\r` from a character reference stays.
+/// #x20 collapsed.
 fn collapse_spaces<'a, U: Unit>(bump: &'a Bump, value: &'a [U]) -> &'a [U] {
     let mut a = 0;
     while a < value.len() && value[a].low() == b' ' {

@@ -4009,6 +4009,14 @@ describe("bundler", () => {
       BehindADependencyOfAMemoBlock: (t: string) => `<i>{replaceAndCount(${t}) + p.n}</i>`,
       BehindASpreadAndAMemoBlock: (t: string) => `...replaceAndList(${t}), <i>{p.n}</i>`,
     };
+    // A function that is left as it is written prints the right result too. So each of these calls has to print with
+    // the receiver given. Without memo blocks the last three producers leave no statement.
+    const replaced = (producerNames: string[]) =>
+      Object.keys(callees).flatMap(calleeName => producerNames.map(producerName => calleeName + producerName));
+    const receiverGiven = {
+      browser: replaced(Object.keys(producers)),
+      bun: replaced(Object.keys(producers).slice(0, -3)),
+    };
     for (const [calleeName, { setup, target, callee }] of Object.entries(callees)) {
       for (const [producerName, producer] of Object.entries(producers)) {
         cells.push({
@@ -4461,6 +4469,9 @@ describe("bundler", () => {
               ]),
             ),
           ).toEqual(memberCalls[name]);
+          expect(receiverGiven[name].filter(cell => !bodies[cell].includes("Function.prototype.call.call("))).toEqual(
+            [],
+          );
           if (name !== "browser") return;
           // A compiled function starts with its memo cache. In these two the load of the method is in the memo block
           // of `log` and the call is behind that block, which codegen cannot print.

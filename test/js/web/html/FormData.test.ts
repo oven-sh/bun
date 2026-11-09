@@ -724,15 +724,18 @@ describe("FormData", () => {
       expect(iterator.next()).toEqual({ value: undefined, done: true });
     });
 
-    it("yields what is added to an empty list after it", () => {
-      for (const kind of ["keys", "values", "entries", Symbol.iterator] as const) {
-        const formData = new FormData();
-        const iterator = formData[kind]();
-        expect(iterator.next()).toEqual({ value: undefined, done: true });
-        formData.append("a", "1");
-        expect(iterator.next().done).toBe(false);
-        expect(iterator.next()).toEqual({ value: undefined, done: true });
-      }
+    it.each([
+      ["keys", "a"],
+      ["values", "1"],
+      ["entries", ["a", "1"]],
+      [Symbol.iterator, ["a", "1"]],
+    ] as const)("%p yields what is added to an empty list after it", (kind, value) => {
+      const formData = new FormData();
+      const iterator = formData[kind]();
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+      formData.append("a", "1");
+      expect(iterator.next()).toEqual({ value, done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
     });
   });
 

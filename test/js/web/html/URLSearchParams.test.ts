@@ -103,15 +103,18 @@ describe("URLSearchParams", () => {
       expect(iterator.next()).toEqual({ value: undefined, done: true });
     });
 
-    it("yields what is added to an empty list after it", () => {
-      for (const kind of ["keys", "values", "entries", Symbol.iterator] as const) {
-        const params = new URLSearchParams();
-        const iterator = params[kind]();
-        expect(iterator.next()).toEqual({ value: undefined, done: true });
-        params.append("a", "1");
-        expect(iterator.next().done).toBe(false);
-        expect(iterator.next()).toEqual({ value: undefined, done: true });
-      }
+    it.each([
+      ["keys", "a"],
+      ["values", "1"],
+      ["entries", ["a", "1"]],
+      [Symbol.iterator, ["a", "1"]],
+    ] as const)("%p yields what is added to an empty list after it", (kind, value) => {
+      const params = new URLSearchParams();
+      const iterator = params[kind]();
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+      params.append("a", "1");
+      expect(iterator.next()).toEqual({ value, done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
     });
 
     it("yields what url.search adds after it", () => {

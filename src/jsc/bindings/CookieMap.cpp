@@ -272,18 +272,19 @@ size_t CookieMap::memoryCost() const
 
 std::optional<KeyValuePair<String, String>> CookieMap::Iterator::next()
 {
-    while (m_index < m_target->m_modifiedCookies.size() + m_target->m_originalCookies.size()) {
-        if (m_index >= m_target->m_modifiedCookies.size()) {
-            return m_target->m_originalCookies[(m_index++) - m_target->m_modifiedCookies.size()];
-        }
-
-        auto result = m_target->m_modifiedCookies[m_index++];
-        if (result->value().isEmpty()) {
+    auto& modified = m_target->m_modifiedCookies;
+    while (m_modifiedIndex < modified.size()) {
+        auto& cookie = modified[m_modifiedIndex++];
+        if (cookie->value().isEmpty()) {
             continue; // deleted; skip
         }
-
-        return KeyValuePair<String, String>(result->name(), result->value());
+        return KeyValuePair<String, String>(cookie->name(), cookie->value());
     }
+
+    auto& original = m_target->m_originalCookies;
+    if (m_originalIndex < original.size())
+        return original[m_originalIndex++];
+
     return std::nullopt;
 }
 

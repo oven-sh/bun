@@ -385,6 +385,8 @@ describe("Cookie name field is immutable", () => {
 });
 
 describe("iterator", () => {
+  // Deleting the current entry shifts the next one under the cursor, so every
+  // other entry is skipped. FormData works this way too. Set does not.
   test("delete in a loop", () => {
     const map = new Bun.CookieMap();
     for (let i = 0; i < 1000; i++) {
@@ -393,8 +395,7 @@ describe("iterator", () => {
     for (const key of map.keys()) {
       map.delete(key);
     }
-    // expect(map.size).toBe(0);
-    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+    expect(map.size).toBe(500);
   });
   test("delete in a loop with predefined entries", () => {
     const entries: [string, string][] = [];
@@ -405,7 +406,7 @@ describe("iterator", () => {
     for (const key of map.keys()) {
       map.delete(key);
     }
-    expect(map.size).toBe(0);
+    expect(map.size).toBe(500);
   });
   test("delete in a loop with both", () => {
     const entries: [string, string][] = [];
@@ -419,8 +420,7 @@ describe("iterator", () => {
     for (const key of map.keys()) {
       map.delete(key);
     }
-    // expect(map.size).toBe(0);
-    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+    expect(map.size).toBe(750);
   });
   test("basic iterator", () => {
     const cookies = new Bun.CookieMap({ a: "b", c: "d" });
@@ -433,10 +433,29 @@ describe("iterator", () => {
     c=d"
   `);
   });
-  // Only the empty map is pinned. CookieMap::Iterator walks one index over
-  // [modified..., original...] and set() appends to the modified half, so on a
-  // map with original cookies a set() under a live cursor shifts the originals
-  // and the cursor replays one (see "delete in a loop" above).
+  test("set() of a new name during the walk yields it once and replays nothing", () => {
+    const cookies = new Bun.CookieMap({ x: "1", y: "2" });
+    const seen: string[] = [];
+    for (const [key] of cookies) {
+      seen.push(key);
+      if (key === "x") cookies.set("n", "3");
+    }
+    expect(seen).toEqual(["x", "n", "y"]);
+  });
+  // https://github.com/oven-sh/bun/issues/48347
+  test("an iterator that is done yields what set() adds after it", () => {
+    const cookies = new Bun.CookieMap("a=1; b=2");
+    const iterator = cookies.entries();
+    expect([...iterator]).toEqual([
+      ["a", "1"],
+      ["b", "2"],
+    ]);
+    cookies.set("c", "3");
+    expect(iterator.next()).toEqual({ value: ["c", "3"], done: false });
+    expect(iterator.next()).toEqual({ value: undefined, done: true });
+    cookies.delete("a");
+    expect(iterator.next()).toEqual({ value: undefined, done: true });
+  });
   test("an iterator over an empty map that is done yields what set() adds after it", () => {
     const cookies = new Bun.CookieMap();
     const iterator = cookies.entries();

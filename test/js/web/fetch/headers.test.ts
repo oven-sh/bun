@@ -951,15 +951,18 @@ describe("Headers", () => {
       expect(iterator.next()).toEqual({ value: undefined, done: true });
     });
 
-    test("an iterator over empty headers that is done yields what is added after it", () => {
-      for (const kind of ["keys", "values", "entries", Symbol.iterator] as const) {
-        const headers = new Headers();
-        const iterator = headers[kind]();
-        expect(iterator.next()).toEqual({ value: undefined, done: true });
-        headers.set("a", "1");
-        expect(iterator.next().done).toBe(false);
-        expect(iterator.next()).toEqual({ value: undefined, done: true });
-      }
+    test.each([
+      ["keys", "a"],
+      ["values", "1"],
+      ["entries", ["a", "1"]],
+      [Symbol.iterator, ["a", "1"]],
+    ] as const)("a %p iterator over empty headers that is done yields what is added after it", (kind, value) => {
+      const headers = new Headers();
+      const iterator = headers[kind]();
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
+      headers.set("a", "1");
+      expect(iterator.next()).toEqual({ value, done: false });
+      expect(iterator.next()).toEqual({ value: undefined, done: true });
     });
 
     test("an iterator over empty headers finds what is added before its first step", () => {

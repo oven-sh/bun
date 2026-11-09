@@ -87,8 +87,9 @@ const rewriter = new HTMLRewriter().on("p", {
   },
 });
 const read = () => rewriter.transform(new Response(Bun.file("page.html")));
+const decoder = new TextDecoder();
 console.log(await read().text());
-console.log((await read().arrayBuffer()).byteLength, (await read().blob()).size, (await read().bytes()).length);
+console.log(decoder.decode(await read().arrayBuffer()), await (await read().blob()).text(), decoder.decode(await read().bytes()));
 //// what-a-rewriter-of-HTML-refuses
 //@ removes Bun.build
 //@ removes bun:test

@@ -553,6 +553,8 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 
 The hooks, `describe` and `vi` that you import from `"bun:test"` stay in its column, also around such a test.
 
+When a test runs [concurrently](/test#concurrent-test-execution) with other tests, the imported `expect` can't tell which test called it. Its matchers then follow the `"bun:test"` column, in a test from `"vitest"` too. The `expect` of the [test context](#test-context) follows the column of its test.
+
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context). It exports `inject` too, which always returns `undefined`, because `bun test` has no `provide` option or global setup file to provide a value.
 
 `import { assert, should } from "vitest"` imports them from the `chai` package in your `node_modules`, which Vitest depends on. If `chai` isn't there, as with pnpm, Bun looks next to the installed `vitest`. They aren't available through `import * as`, `import()` or a re-export of `"vitest"`.
@@ -723,7 +725,9 @@ describe("math", () => {
 | `expectedAssertionsNumber` | The count passed to `expect.assertions()`, or `null`                                      |
 | `isExpectingAssertions`    | `true` after `expect.hasAssertions()`, unless the test also calls `expect.assertions()`   |
 
-When a test runs [concurrently](/test#concurrent-test-execution) with other tests, `expect` can't tell which test called it. `currentTestName` is then `undefined`, in `expect.getState()` and on `this` in a custom matcher. The three assertion properties stay at `0`, `null` and `false`. The `expect` of the [test context](#test-context) knows its test, so use that one in concurrent tests. Every `getState()` call returns the same object, so copy the values you need before the next `await`.
+In every module, `>` also joins the names of a `test.for` test and of a test of an [extended](#fixtures) `test`.
+
+When a test runs [concurrently](/test#concurrent-test-execution) with other tests, `expect` can't tell which test called it. `currentTestName` is then `undefined`, in `expect.getState()` and on `this` in a custom matcher. The three assertion properties stay at `0`, `null` and `false`. The `expect` of the [test context](#test-context) knows its test. Tests from `"vitest"`, `test.for` tests and tests of an extended `test` receive that context, so use its `expect` in them. A `test.each` test doesn't receive it, and neither do the other tests from `"bun:test"`. Every `getState()` call returns the same object, so copy the values you need before the next `await`.
 
 `expect.setState(state)` merges your own properties into the object `expect.getState()` returns. It can also set the three assertion properties above. Custom matchers don't get your own properties on `this`.
 

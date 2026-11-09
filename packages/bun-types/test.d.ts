@@ -1722,8 +1722,9 @@ declare module "bun:test" {
      *
      * When a test runs concurrently with other tests, `expect` can't tell which test called it.
      * `currentTestName` is then `undefined`, and the three counters stay at `0`, `null` and `false`.
-     * The `expect` of the {@link TestContext} knows its test. Its `getState()` writes into the same object,
-     * so copy the values you need before the next `await`.
+     * The `expect` of the {@link TestContext} knows its test. A test receives that context if it comes from
+     * `"vitest"`, from `test.for()` or from a `test` that `test.extend()` returned, and isn't an `each()` test.
+     * Its `getState()` writes into the same object, so copy the values you need before the next `await`.
      */
     getState(): ExpectState & Record<string, unknown>;
 
@@ -1741,7 +1742,8 @@ declare module "bun:test" {
     /** The number of assertions the current test has made. */
     assertionCalls: number;
     /**
-     * The enclosing `describe` blocks' names and the current test's name, joined by a space.
+     * The enclosing `describe` blocks' names and the current test's name, joined by a space. In a test from
+     * `"vitest"`, from `test.for()` or from a `test` that `test.extend()` returned, ` > ` joins them.
      *
      * `undefined` outside a test. In a test that runs concurrently with other tests, it is `undefined`
      * unless you read it through the `expect` of the {@link TestContext}.

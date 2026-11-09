@@ -371,6 +371,8 @@ test("mock.module", async () => {
 });
 ```
 
+`./module` was imported before it was mocked, so Bun updates it in place: it copies the value of each export the factory returned into the module's export of the same name, once. [Getters and Missing Exports](#getters-and-missing-exports) lists what that means for getters, for writes, and for names that only the module or only the factory has.
+
 When the factory returns a promise that is still pending, Bun updates the already-imported module once the promise settles. In that case `mock.module()` returns a promise that resolves after the update, and otherwise it returns `undefined`. `await mock.module(...)` inside a test or hook covers both. At the top level of a test file, Bun waits for pending module mocks before it runs the file's tests.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
@@ -420,7 +422,7 @@ When one import leads to several mocked modules, Bun calls their factories one a
 
 ### Getters and Missing Exports
 
-Bun reads an export from the object the factory returned every time it's used, so getters stay live.
+When a module is loaded after it's mocked, Bun reads an export from the object the factory returned every time it's used, so getters stay live.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -451,6 +453,15 @@ flags.enabled = true;
 A mock made by a `--preload` script is shared by every test file, so a write to it is still there in the next file. With `--isolate`, each file gets a fresh one.
 
 If a module imports a name the factory didn't return, the module still loads. With `vi.mock()` and `vi.doMock()`, using that name throws an error that says which export is missing from which mock, as in Vitest. With `mock.module()`, `jest.mock()` and `jest.doMock()`, the name is `undefined`. As in Jest, a default import of a `jest.mock()` or `jest.doMock()` factory's object is the object itself, unless it has `__esModule: true`. A name that reaches the module through another module's `export * from` or `export { name } from` is `undefined` instead, as in Vitest.
+
+A module that was loaded as a mock keeps these rules when you mock it again.
+
+A module that was imported before it was mocked is the original module. When Bun updates it in place (see [Overriding Already Imported Modules](#overriding-already-imported-modules)), it copies the value of each export the factory returned into the module's export of the same name, once. Then the rules are different:
+
+- Bun reads a getter once, when it updates the module. The module's export keeps that value.
+- The module's namespace object stays read-only. A write to it throws a `TypeError`.
+- A name the factory didn't return keeps its current value.
+- A name that only the factory has isn't added.
 
 ### Mocking a Package
 
@@ -816,7 +827,7 @@ Module mocks interact with both ESM and CommonJS module caches.
 
 ### Lazy Evaluation
 
-Bun evaluates the mock factory callback only when the module is imported or required.
+Bun calls the mock factory when the module is next imported or required. The exception is a mock call that updates a module that's already loaded (see [Overriding Already Imported Modules](#overriding-already-imported-modules)). Bun then calls the factory at once.
 
 ### Path Resolution
 
@@ -835,7 +846,7 @@ For this reason, use `vi.mock()`, `jest.mock()` or `--preload` for mocks that ne
 
 ### Live Bindings
 
-Mocked ESM modules maintain live bindings, so changing the mock updates all existing imports.
+Importers read a mocked ES module through live bindings. A mock call that updates the loaded module changes what its existing imports read. A later change to the object the factory returned reaches them only if the module was loaded as a mock (see [Getters and Missing Exports](#getters-and-missing-exports)).
 
 ## Advanced Patterns
 

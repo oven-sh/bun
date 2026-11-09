@@ -134,10 +134,34 @@ test.skipIf(!isWindows)("probe", async () => {
     report.a2 = { stdout, stderr, exitCode, child: read("a2") };
   }
 
-  const spawnFfi = (name: string, inherit: number, handleList: bigint[] | null) => {
+  const spawnFfi = (
+    name: string,
+    inherit: number,
+    handleList: bigint[] | null,
+    std: bigint[] | null = null,
+    reserved2 = false,
+  ) => {
     const startup = new DataView(new ArrayBuffer(112));
     startup.setUint32(0, 112, true);
     let flags = 0;
+    let block: Uint8Array | null = null;
+    if (std) {
+      startup.setUint32(60, 0x100, true); // STARTF_USESTDHANDLES
+      startup.setBigUint64(80, std[0], true);
+      startup.setBigUint64(88, std[1], true);
+      startup.setBigUint64(96, std[2], true);
+      if (reserved2) {
+        block = new Uint8Array(4 + 3 + 3 * 8);
+        const view = new DataView(block.buffer);
+        view.setUint32(0, 3, true);
+        for (let i = 0; i < 3; i++) {
+          block[4 + i] = 0x01; // FOPEN
+          view.setBigUint64(7 + i * 8, std[i], true);
+        }
+        startup.setUint16(48, block.byteLength, true); // cbReserved2
+        startup.setBigUint64(56, BigInt(ptr(block)), true); // lpReserved2
+      }
+    }
     let attributes: Uint8Array | null = null;
     if (handleList) {
       const size = new BigUint64Array(1);
@@ -183,6 +207,12 @@ test.skipIf(!isWindows)("probe", async () => {
   const other = open("stdin.txt");
   spawnFfi("b", 1, [BigInt(other)]);
   k.symbols.CloseHandle(other);
+  // B2: the list is the three std handles, which STARTUPINFO names
+  const std = [open("stdin.txt"), open("stdin.txt"), open("stdin.txt")].map(BigInt);
+  spawnFfi("b2", 1, std, std);
+  // B3: the same, plus the C runtime block in lpReserved2, as libuv passes it
+  spawnFfi("b3", 1, std, std, true);
+  for (const h of std) k.symbols.CloseHandle(h);
   k.symbols.CloseHandle(extra);
   expect(JSON.stringify(report, null, 1)).toBe("");
 });

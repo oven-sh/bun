@@ -2,40 +2,40 @@
 
 use core::ffi::c_void;
 
+use crate::js_value::ForEachPropertyWithRowsCallback;
 use crate::{JSGlobalObject, JSValue, JsResult};
 
-/// The rows of one `JSValue::jest_deep_match` call, or none. It is a GC cell that only the stack roots: keep it in locals, arguments and a formatter's field.
+/// The rows of one `JSValue::jest_deep_match` call, or none. It is a GC cell with no `Strong`: the stack roots it, so keep it in locals, arguments and a formatter that is a local.
 #[repr(transparent)]
 #[derive(Clone, Copy, Default)]
 pub struct MatchedRows(JSValue);
 
 impl MatchedRows {
     #[inline]
-    fn is_empty(self) -> bool {
+    pub fn is_empty(self) -> bool {
         self.0.is_empty()
+    }
+
+    /// The place of the object that was matched and of the pattern it was matched with. None if there are no rows.
+    pub fn root(self) -> MatchedPlace {
+        if self.is_empty() {
+            return MatchedPlace::default();
+        }
+        MatchedPlace {
+            rows: self,
+            handle: crate::cpp::Bun__JestMatchedRows__root(self.0),
+        }
     }
 }
 
-/// Names a place inside one rows cell. C++ numbers them: 0 is no place and 1 is the object that was matched.
-#[repr(transparent)]
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub struct PlaceHandle(u32);
+/// Names a place inside one rows cell. C++ hands them out and answers for any number.
+pub type PlaceHandle = u32;
 
-impl PlaceHandle {
-    const NONE: Self = Self(0);
-    const ROOT: Self = Self(1);
-}
+/// The handle that names no place.
+const NO_PLACE: PlaceHandle = 0;
 
-/// `ForEachPropertyCallback` plus the place of `value`, which is none unless `value` was compared with a pattern that leads to a matcher.
-pub(crate) type ForEachMatchedRowCallback = extern "C" fn(
-    global: &JSGlobalObject,
-    ctx: *mut c_void,
-    key: &bun_core::EncodedSlice,
-    value: JSValue,
-    is_symbol: bool,
-    is_private_symbol: bool,
-    child: PlaceHandle,
-);
+/// What to print for a property in place of reading it: the matcher that it matched, or the value that the comparison read. With it comes the place of that value.
+pub type MatchedRow = (JSValue, MatchedPlace);
 
 /// An object together with the pattern it was compared with, if that pattern leads to a matcher that passed. Otherwise none.
 #[derive(Clone, Copy, Default)]
@@ -47,7 +47,7 @@ pub struct MatchedPlace {
 impl MatchedPlace {
     #[inline]
     pub fn is_none(self) -> bool {
-        self.handle == PlaceHandle::NONE
+        self.handle == NO_PLACE
     }
 
     /// The pattern of the pair.
@@ -55,25 +55,24 @@ impl MatchedPlace {
         if self.is_none() {
             return None;
         }
-        Some(Bun__JestMatchedRows__pattern(self.rows, self.handle))
+        let pattern = crate::cpp::Bun__JestMatchedRows__pattern(self.rows.0, self.handle);
+        (!pattern.is_empty()).then_some(pattern)
     }
 
-    /// What to print for property `name` in place of reading it: the matcher it matched, or the value that the comparison read, and the place of that value.
+    /// The row of property `name`, if the comparison left one at this place.
     #[inline]
-    pub fn row(self, name: &'static str) -> Option<(JSValue, MatchedPlace)> {
-        if self.is_none() {
-            return None;
-        }
+    pub fn row(self, name: &'static str) -> Option<MatchedRow> {
         self.row_named(&bun_core::String::static_(name))
     }
 
     /// [`Self::row`] for a name that is not a literal.
-    pub fn row_named(self, name: &bun_core::String) -> Option<(JSValue, MatchedPlace)> {
+    #[inline]
+    pub fn row_named(self, name: &bun_core::String) -> Option<MatchedRow> {
         if self.is_none() {
             return None;
         }
-        let mut child = PlaceHandle::NONE;
-        let value = Bun__JestMatchedRows__get(self.rows, self.handle, name, &mut child);
+        let mut child = NO_PLACE;
+        let value = Bun__JestMatchedRows__get(self.rows.0, self.handle, name, &mut child);
         self.row_of(value, child)
     }
 
@@ -92,16 +91,16 @@ impl MatchedPlace {
 
     /// [`Self::row`] for the element at `index` of an array.
     #[inline]
-    pub fn element(self, index: u32) -> Option<(JSValue, MatchedPlace)> {
+    pub fn element(self, index: u32) -> Option<MatchedRow> {
         if self.is_none() {
             return None;
         }
-        let mut child = PlaceHandle::NONE;
-        let value = Bun__JestMatchedRows__getIndex(self.rows, self.handle, index, &mut child);
+        let mut child = NO_PLACE;
+        let value = Bun__JestMatchedRows__getIndex(self.rows.0, self.handle, index, &mut child);
         self.row_of(value, child)
     }
 
-    fn row_of(self, value: JSValue, child: PlaceHandle) -> Option<(JSValue, MatchedPlace)> {
+    fn row_of(self, value: JSValue, child: PlaceHandle) -> Option<MatchedRow> {
         let place = MatchedPlace {
             rows: self.rows,
             handle: child,
@@ -114,59 +113,60 @@ impl MatchedPlace {
         if self.is_none() {
             return None;
         }
-        let merged = Bun__JestMatchedRows__merged(self.rows, self.handle);
+        let merged = crate::cpp::Bun__JestMatchedRows__merged(self.rows.0, self.handle);
         (!merged.is_empty()).then_some(merged)
     }
 
     /// Keeps the object that snapshot serializers are offered for this place, so it is built once.
     pub fn set_merged(self, merged: JSValue) {
         if !self.is_none() {
-            Bun__JestMatchedRows__setMerged(self.rows, self.handle, merged);
+            crate::cpp::Bun__JestMatchedRows__setMerged(self.rows.0, self.handle, merged);
         }
     }
 
-    /// `JSValue::for_each_property_ordered_calling_getters` on `object`, the object of the pair. A row is passed in place of its property, which is not read.
+    /// `JSValue::for_each_property_ordered_calling_getters` on `object`, the object of this place, which must not be none. A row is passed in place of its property, which is not read.
     #[inline(always)]
+    #[allow(clippy::not_unsafe_ptr_arg_deref)] // `ctx` is not read here: C++ hands it back to `callback`
     pub fn for_each_property_ordered_calling_getters(
         self,
         object: JSValue,
         global: &JSGlobalObject,
         ctx: *mut c_void,
-        callback: ForEachMatchedRowCallback,
+        callback: ForEachPropertyWithRowsCallback,
     ) -> JsResult<bool> {
-        debug_assert!(!self.is_none());
-        crate::top_scope!(scope, global);
-        let is_same = Bun__JestMatchedRows__forEachPropertyOrderedCallingGetters(
-            object,
-            global,
-            ctx,
-            callback,
-            self.rows,
-            self.handle,
-        );
-        scope.return_if_exception().map(|()| is_same)
+        let (rows, place) = self.cell_and_handle();
+        // SAFETY: `cell_and_handle` returns the cell of a `jest_deep_match` call and a place of that cell.
+        unsafe {
+            object.for_each_property_ordered_calling_getters_with_rows(
+                global, ctx, callback, rows, place,
+            )
+        }
     }
 
-    /// `JSValue::for_each_property_ordered_with_non_enumerable` on `object`, with rows in place of properties.
+    /// `JSValue::for_each_property_ordered_with_non_enumerable` on `object`, with rows in place of properties as above.
     #[inline(always)]
+    #[allow(clippy::not_unsafe_ptr_arg_deref)] // `ctx` is not read here: C++ hands it back to `callback`
     pub fn for_each_property_ordered_with_non_enumerable(
         self,
         object: JSValue,
         global: &JSGlobalObject,
         ctx: *mut c_void,
-        callback: ForEachMatchedRowCallback,
+        callback: ForEachPropertyWithRowsCallback,
     ) -> JsResult<()> {
-        debug_assert!(!self.is_none());
-        crate::top_scope!(scope, global);
-        Bun__JestMatchedRows__forEachPropertyOrderedWithNonEnumerable(
-            object,
-            global,
-            ctx,
-            callback,
-            self.rows,
-            self.handle,
-        );
-        scope.return_if_exception()
+        let (rows, place) = self.cell_and_handle();
+        // SAFETY: `cell_and_handle` returns the cell of a `jest_deep_match` call and a place of that cell.
+        unsafe {
+            object.for_each_property_ordered_with_non_enumerable_with_rows(
+                global, ctx, callback, rows, place,
+            )
+        }
+    }
+
+    /// What the `JSValue` walkers with rows take. Rows that are not empty are the cell that `jest_deep_match` returned, and C++ named every handle: the root, the child of a row, the `child_place` of a walk.
+    #[inline(always)]
+    fn cell_and_handle(self) -> (JSValue, PlaceHandle) {
+        assert!(!self.is_none() && !self.rows.is_empty());
+        (self.rows.0, self.handle)
     }
 }
 
@@ -183,12 +183,8 @@ impl MatchedPlaceScope {
     pub fn at_root(rows: MatchedRows) -> Self {
         Self {
             rows,
-            current: PlaceHandle::NONE,
-            next: if rows.is_empty() {
-                PlaceHandle::NONE
-            } else {
-                PlaceHandle::ROOT
-            },
+            current: NO_PLACE,
+            next: rows.root().handle,
         }
     }
 
@@ -207,7 +203,7 @@ impl MatchedPlaceScope {
         self.next = place.handle;
     }
 
-    /// [`Self::hand`] for the `child` that a [`ForEachMatchedRowCallback`] got.
+    /// [`Self::hand`] for the `child_place` that a [`ForEachPropertyWithRowsCallback`] got.
     #[inline]
     pub fn hand_child(&mut self, child: PlaceHandle) {
         self.next = child;
@@ -226,48 +222,28 @@ impl MatchedPlaceScope {
     #[inline]
     pub fn leave(&mut self, outer: PlaceHandle) {
         self.current = outer;
-        self.next = PlaceHandle::NONE;
+        self.next = NO_PLACE;
     }
 
     /// The print goes on with another value, which has no rows.
     #[inline]
     pub fn clear(&mut self) {
-        self.current = PlaceHandle::NONE;
+        self.current = NO_PLACE;
     }
 }
 
 unsafe extern "C" {
-    // safe: a place that is not none carries the cell that `JSC__JSValue__jestDeepMatch` built, C++ answers any handle for that cell, and none of these enters JS.
-    safe fn Bun__JestMatchedRows__pattern(rows: MatchedRows, place: PlaceHandle) -> JSValue;
+    // safe: C++ answers for any `rows` and `place`, uses `name` and `child` only during the call, and enters no JS. `crate::cpp` has the accessors that take no pointer.
     safe fn Bun__JestMatchedRows__get(
-        rows: MatchedRows,
+        rows: JSValue,
         place: PlaceHandle,
         name: &bun_core::String,
         child: &mut PlaceHandle,
     ) -> JSValue;
     safe fn Bun__JestMatchedRows__getIndex(
-        rows: MatchedRows,
+        rows: JSValue,
         place: PlaceHandle,
         index: u32,
         child: &mut PlaceHandle,
     ) -> JSValue;
-    safe fn Bun__JestMatchedRows__merged(rows: MatchedRows, place: PlaceHandle) -> JSValue;
-    safe fn Bun__JestMatchedRows__setMerged(rows: MatchedRows, place: PlaceHandle, merged: JSValue);
-    // safe: same contract as `JSC__JSValue__forEachProperty` in JSValue.rs.
-    safe fn Bun__JestMatchedRows__forEachPropertyOrderedCallingGetters(
-        object: JSValue,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachMatchedRowCallback,
-        rows: MatchedRows,
-        place: PlaceHandle,
-    ) -> bool;
-    safe fn Bun__JestMatchedRows__forEachPropertyOrderedWithNonEnumerable(
-        object: JSValue,
-        global: &JSGlobalObject,
-        ctx: *mut c_void,
-        callback: ForEachMatchedRowCallback,
-        rows: MatchedRows,
-        place: PlaceHandle,
-    );
 }

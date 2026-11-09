@@ -389,6 +389,8 @@ test.for([
 
 A `test.for` or `describe.for` title follows the [Vitest title format](#vitest-title-format), even when `test` and `describe` come from `"bun:test"`. Some specifiers print differently than in a `test.each` title.
 
+A `test.for` test behaves like a test from `"vitest"` in other ways too, in every module. For example, Bun clears mock functions before it, and `.not.not` still negates in it. See [what differs](#importing-from-vitest).
+
 ### Format Specifiers
 
 Use these specifiers in a `test.each` or `describe.each` title:
@@ -491,7 +493,7 @@ test("responds", async ({ url }) => {
 - Fixtures are torn down in reverse order, after the `afterEach` hooks. A fixture that an `aroundEach` hook destructures is torn down after the hook finishes.
 - A fixture that isn't a function is passed as is.
 - You can call `test.extend()` on an extended `test`. A fixture that replaces one with the same name can destructure the one it replaces.
-- Titles of `test.each` and `test.for` on the extended `test` follow the [Vitest title format](#vitest-title-format), even when `test` comes from `"bun:test"`.
+- Tests and hooks of the extended `test` behave like tests and hooks from `"vitest"`, even when `test` comes from `"bun:test"`. For example, Bun clears mock functions before each of these tests, `.not.not` still negates in them, and the titles of its `test.each` follow the [Vitest title format](#vitest-title-format). See [what differs](#importing-from-vitest).
 
 | Option                             | Description                                                                                              |
 | ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -542,6 +544,14 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `.not.not`                                                | cancels out                          | still negates                                                        |
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 | `performance` while fake timers are on                    | the same object, on the fake clock   | a new object; the one it replaces still reads the real clock         |
+
+`test`, `describe` and the hooks follow the column of the module they're imported from. These are in the `"vitest"` column in every module, `"bun:test"` included:
+
+- `test.for`, and a `test` that [`test.extend()`](#fixtures) returned, with its `each` and `for`. Bun clears mock functions before each of their tests. In such a test, `expect` follows the `"vitest"` rows, as it does in a test from `"vitest"`.
+- The hooks of an extended `test`, such as `test.beforeEach()`.
+- `describe.for`, and `test.describe()` on an extended `test`.
+
+The hooks, `describe` and `vi` that you import from `"bun:test"` stay in its column, also around such a test.
 
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context). It exports `inject` too, which always returns `undefined`, because `bun test` has no `provide` option or global setup file to provide a value.
 

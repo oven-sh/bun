@@ -290,9 +290,9 @@ Bun reads and writes each snapshot file in the format of the runner that created
 
 Bun's format and `pretty-format` print most values the same way. They differ on functions (`[Function: name]` in Bun's format, `[Function]` in Jest's and Vitest's), classes, mock functions, regular expressions, symbol keys, React elements and a few others.
 
-A new snapshot file uses Vitest's format if `test` is imported from `"vitest"`, and Bun's format otherwise.
+A new snapshot file uses Vitest's format if the test that stores its first snapshot is from `"vitest"`, and Bun's format otherwise. In every module, a `test.for` test and a test of an [extended](/test/writing-tests#fixtures) `test` count as tests from `"vitest"`.
 
-Inline snapshots don't record which runner wrote them, so Bun accepts a match in any runner's format. It writes and updates them in the format of the runner that `test` is imported from.
+Inline snapshots don't record which runner wrote them, so Bun accepts a match in any runner's format. It writes and updates them in the format of the runner that `test` is imported from, and in Vitest's format in a `test.for` test or a test of an extended `test`.
 
 With `--update-snapshots`, Bun removes entries that no test uses anymore from a file in Jest's or Vitest's format. It keeps entries for tests that were skipped, filtered out or failed. A file in Bun's format keeps only the entries of tests that ran.
 

@@ -618,7 +618,10 @@ declare module "bun:test" {
       hookTimeout?: number | undefined;
       /** The number of concurrent tests that can run at the same time. */
       maxConcurrency?: number | undefined;
-      /** Call `vi.clearAllMocks()` before each test. This is the default for tests that use `test` from `"vitest"`. */
+      /**
+       * Call `vi.clearAllMocks()` before each test. This is the default for tests that use `test` from `"vitest"`,
+       * `test.for()` or a `test` that `test.extend()` returned.
+       */
       clearMocks?: boolean | undefined;
       /** Call `vi.resetAllMocks()` before each test. */
       mockReset?: boolean | undefined;
@@ -1204,6 +1207,9 @@ declare module "bun:test" {
      * specifier, `%%` also prints the next value, `$#` isn't the index, and `$name` prints `undefined` when an
      * object row has no `name`.
      *
+     * A test from `for()` behaves like a test from `"vitest"`, also when `test` comes from `"bun:test"`.
+     * For example, mock functions are cleared before it, and `.not.not` still negates in it.
+     *
      * @example
      * ```ts
      * test.for([[1, 2, 3]])("%i + %i = %i", ([a, b, sum], { expect }) => {
@@ -1212,6 +1218,7 @@ declare module "bun:test" {
      * ```
      *
      * @see https://bun.com/docs/test/writing-tests#vitest-title-format
+     * @see https://bun.com/docs/test/writing-tests#importing-from-vitest
      */
     for<const Row>(table: readonly Row[]): TestWithContext<object, [row: Row]>;
     for(headings: TemplateStringsArray, ...values: any[]): TestWithContext<object, [row: any]>;
@@ -1220,6 +1227,12 @@ declare module "bun:test" {
      *
      * A fixture is set up for the tests that destructure it, and for the returned `test`'s
      * `beforeEach()` / `afterEach()` hooks that destructure it. It's torn down after the test.
+     *
+     * The tests and hooks of the returned `test` behave like the ones from `"vitest"`, also when `test` comes
+     * from `"bun:test"`. For example, mock functions are cleared before each of its tests, and `.not.not` still
+     * negates in them.
+     *
+     * @see https://bun.com/docs/test/writing-tests#importing-from-vitest
      *
      * @example
      * ```ts

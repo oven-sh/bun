@@ -1162,8 +1162,8 @@ impl PackageManager {
         if !registry.keyfile.is_empty() {
             config.key_file_name = bun_core::dupe_z(&registry.keyfile);
         }
-        if let Some(cafile) = holder::ABS_CA_FILE_NAME.get() {
-            config.ca_file_name = bun_core::dupe_z(cafile.as_bytes());
+        if !self.options.ca_file_name.is_empty() {
+            config.ca_file_name = bun_core::dupe_z(self.options.ca_file_name);
         }
         if !self.options.ca.is_empty() {
             config.ca = Some(

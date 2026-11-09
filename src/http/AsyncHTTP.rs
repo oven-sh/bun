@@ -1,4 +1,4 @@
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_ast::{Loc, Log};
@@ -271,6 +271,18 @@ pub struct Options<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl<'a> AsyncHTTP<'a> {
+    /// # Safety
+    /// `source` is an HTTP-thread working copy of the live request at `target`.
+    /// The caller transfers its aliased buffers without dropping either copy.
+    pub unsafe fn copy_result(source: *const Self, target: *mut Self) {
+        // SAFETY: the callback owns both live requests; TLS references are independently owned.
+        unsafe {
+            let tls_props = (*target).client.tls_props.take();
+            ptr::write(target, ptr::read(source));
+            (*target).client.tls_props = tls_props;
+        }
+    }
+
     /// Erase the borrow lifetime for storage in intrusive queues / raw-pointer
     /// callback contexts. See [`HTTPClient::as_erased_ptr`] for rationale.
     #[inline(always)]

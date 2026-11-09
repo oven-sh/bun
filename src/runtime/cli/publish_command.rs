@@ -706,7 +706,9 @@ impl PublishCommand {
     }
 
     fn require_credentials(registry: &Npm::Registry::Scope) {
-        if registry.authorization_parts(&registry.url.url()).is_none() {
+        if registry.authorization_parts(&registry.url.url()).is_none()
+            && !registry.has_client_identity()
+        {
             Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
             Global::crash();
         }

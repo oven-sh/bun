@@ -6642,3 +6642,258 @@ cafile=client.pem
     }
   });
 });
+
+describe.concurrent("certificate-only registry operations", () => {
+  async function runRegistryCase(kind: "retry" | "tarball-retry" | "userinfo" | "whoami" | "publish" | "auto-install") {
+    const tarball = await new Bun.Archive({
+      "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+      "package/index.js": 'module.exports = "mtls-package";',
+    }).bytes();
+    const seen: { path: string; certificate: boolean; authorization: string | null }[] = [];
+    const sockets = new Set<import("node:tls").TLSSocket>();
+    const server = createTlsServer({ ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: true }, socket => {
+      sockets.add(socket);
+      socket.on("close", () => sockets.delete(socket));
+      let head = "";
+      let answered = false;
+      socket.on("data", data => {
+        head += data.toString();
+        if (answered || !head.includes("\r\n\r\n")) return;
+        answered = true;
+        const path = head.split(" ")[1];
+        seen.push({
+          path,
+          certificate: !!socket.getPeerCertificate().raw,
+          authorization: /\r\nauthorization: ([^\r]*)/i.exec(head)?.[1] ?? null,
+        });
+        const retry = (kind === "retry" && seen.length === 1) || (kind === "tarball-retry" && seen.length === 2);
+        const body = retry
+          ? Buffer.from("retry")
+          : path.endsWith(".tgz")
+            ? tarball
+            : Buffer.from(
+                JSON.stringify(
+                  kind === "whoami"
+                    ? { username: "certificate-user" }
+                    : kind === "publish"
+                      ? { ok: true }
+                      : {
+                          name: "pkg",
+                          "dist-tags": { latest: "1.0.0" },
+                          versions: { "1.0.0": { name: "pkg", version: "1.0.0", dist: { tarball: `${url}pkg.tgz` } } },
+                        },
+                ),
+              );
+        socket.end(
+          Buffer.concat([
+            Buffer.from(
+              `HTTP/1.1 ${retry ? "503 Service Unavailable" : "200 OK"}\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+            ),
+            body,
+          ]),
+        );
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    await using cleanup = {
+      async [Symbol.asyncDispose]() {
+        for (const socket of sockets) socket.destroy();
+        await new Promise<void>((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+      },
+    };
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    const url = `https://localhost:${port}/`;
+    using dir = tempDir("npmrc-mtls-review", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        files: ["index.js"],
+        ...(kind === "retry" || kind === "tarball-retry"
+          ? { dependencies: { pkg: "1.0.0" } }
+          : kind === "userinfo"
+            ? { dependencies: { pkg: `https://url-user:url-pass@localhost:${port}/pkg.tgz` } }
+            : {}),
+      }),
+      ".npmrc": `registry=${url}\n//localhost:${port}/:certfile=client.pem\n//localhost:${port}/:keyfile=client.key\n${kind === "auto-install" ? "" : "cafile=client.pem\n"}`,
+      "bunfig.toml": kind === "auto-install" ? '[install]\ncafile="client.pem"\n' : "",
+      "client.pem": tls.cert,
+      "client.key": tls.key,
+      "index.js": 'console.log(require("pkg"));',
+    });
+    const args =
+      kind === "whoami"
+        ? ["pm", "whoami"]
+        : kind === "publish"
+          ? ["publish"]
+          : kind === "auto-install"
+            ? ["index.js"]
+            : ["install"];
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: {
+        ...env,
+        HOME: String(dir),
+        USERPROFILE: String(dir),
+        XDG_CONFIG_HOME: undefined,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_CONFIG_HTTP_RETRY_COUNT: kind === "retry" || kind === "tarball-retry" ? "1" : "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (kind === "whoami") expect(stdout.trim()).toBe("certificate-user");
+    else if (kind === "auto-install") expect(stdout.trim()).toBe("mtls-package");
+    else if (kind === "publish") expect(stdout).toContain("app@1.0.0");
+    else expect(stdout).toContain("1 package installed");
+    expect(stderr).not.toContain("error:");
+    expect(seen).toEqual(
+      (kind === "whoami"
+        ? ["/-/whoami"]
+        : kind === "publish"
+          ? ["/app"]
+          : kind === "userinfo"
+            ? ["/pkg.tgz"]
+            : kind === "tarball-retry"
+              ? ["/pkg", "/pkg.tgz", "/pkg.tgz"]
+              : kind === "retry"
+                ? ["/pkg", "/pkg", "/pkg.tgz"]
+                : ["/pkg", "/pkg.tgz"]
+      ).map(path => ({ path, certificate: true, authorization: null })),
+    );
+    expect(exitCode).toBe(0);
+  }
+
+  test.each(["retry", "tarball-retry", "userinfo", "whoami", "publish", "auto-install"] as const)(
+    "%s with certificate-only registry credentials",
+    runRegistryCase,
+  );
+});
+
+test.concurrent("registry mTLS identity stays inside an HTTPS proxy tunnel", async () => {
+  const identities: boolean[] = [];
+  let registryRequests = 0;
+  using registry = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    tls: { ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: true },
+    fetch() {
+      registryRequests++;
+      return Response.json({
+        name: "pkg",
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { name: "pkg", version: "1.0.0" } },
+      });
+    },
+  });
+  const net = await import("node:net");
+  const sockets = new Set<import("node:net").Socket>();
+  const proxy = createTlsServer({ ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: false }, client => {
+    identities.push(!!client.getPeerCertificate().raw);
+    sockets.add(client);
+    client.on("close", () => sockets.delete(client));
+    client.on("error", () => {});
+    let head = Buffer.alloc(0);
+    const onData = (data: Buffer) => {
+      head = Buffer.concat([head, data]);
+      const end = head.indexOf("\r\n\r\n");
+      if (end < 0) return;
+      client.off("data", onData);
+      const upstream = net.connect(registry.port!, "127.0.0.1", () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        if (head.length > end + 4) upstream.write(head.subarray(end + 4));
+        client.pipe(upstream);
+        upstream.pipe(client);
+      });
+      sockets.add(upstream);
+      upstream.on("close", () => {
+        sockets.delete(upstream);
+        client.destroy();
+      });
+      upstream.on("error", () => client.destroy());
+      client.on("close", () => upstream.destroy());
+    };
+    client.on("data", onData);
+  });
+  proxy.listen(0, "127.0.0.1");
+  await once(proxy, "listening");
+  await using cleanup = {
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve, reject) => proxy.close(error => (error ? reject(error) : resolve())));
+    },
+  };
+  const proxyPort = (proxy.address() as import("node:net").AddressInfo).port;
+  using dir = tempDir("npmrc-mtls-proxy", {
+    "package.json": '{"name":"app","version":"1.0.0"}',
+    ".npmrc": `registry=https://localhost:${registry.port}/\n//localhost:${registry.port}/:certfile=client.pem\n//localhost:${registry.port}/:keyfile=client.key\ncafile=client.pem\n`,
+    "client.pem": tls.cert,
+    "client.key": tls.key,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "view", "pkg", "version"],
+    cwd: String(dir),
+    env: {
+      ...env,
+      HOME: String(dir),
+      USERPROFILE: String(dir),
+      XDG_CONFIG_HOME: undefined,
+      HTTPS_PROXY: `https://localhost:${proxyPort}`,
+      https_proxy: undefined,
+      HTTP_PROXY: undefined,
+      http_proxy: undefined,
+      ALL_PROXY: undefined,
+      all_proxy: undefined,
+      NO_PROXY: "",
+      no_proxy: "",
+      BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("1.0.0");
+  expect(stderr).toBe("");
+  expect(identities).toEqual([false]);
+  expect(registryRequests).toBe(1);
+  expect(exitCode).toBe(0);
+});
+
+describe.concurrent("incomplete registry client identities", () => {
+  test.each([
+    ["whoami", "certfile"],
+    ["whoami", "keyfile"],
+    ["publish", "certfile"],
+    ["publish", "keyfile"],
+  ] as const)("%s rejects a lone %s", async (command, field) => {
+    let requests = 0;
+    using registry = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch() {
+        requests++;
+        return Response.json({ username: "unexpected" });
+      },
+    });
+    using dir = tempDir("npmrc-incomplete-identity", {
+      "package.json": '{"name":"app","version":"1.0.0","files":["index.js"]}',
+      "index.js": "",
+      ".npmrc": `registry=${registry.url}\n//127.0.0.1:${registry.port}/:${field}=client.pem\n`,
+      "client.pem": field === "certfile" ? tls.cert : tls.key,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...(command === "whoami" ? ["pm", "whoami"] : ["publish"])],
+      cwd: String(dir),
+      env: { ...env, HOME: String(dir), USERPROFILE: String(dir), XDG_CONFIG_HOME: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("unexpected");
+    expect(stderr).toContain("missing authentication");
+    expect(requests).toBe(0);
+    expect(exitCode).toBe(1);
+  });
+});

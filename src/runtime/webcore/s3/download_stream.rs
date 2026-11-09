@@ -237,7 +237,7 @@ impl S3HttpDownloadStreamingTask {
             // destructors (the HTTP thread retains ownership of the source until the request
             // completes). `self.http` was previously initialised in
             // `client::download_stream`.
-            unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
+            unsafe { bun_http::AsyncHTTP::copy_result(async_http, self.http.as_mut_ptr()) };
         }
         wait_until_done
     }

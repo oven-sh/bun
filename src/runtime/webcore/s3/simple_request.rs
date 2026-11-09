@@ -424,7 +424,7 @@ impl S3HttpSimpleTask {
         // allocation (TrivialDeinit).
         // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
         // `self.http` was previously initialised in `execute_simple_s3_request`.
-        unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
+        unsafe { bun_http::AsyncHTTP::copy_result(async_http, self.http.as_mut_ptr()) };
     }
 
     /// this is the AsyncHTTP callback and is always called from the HTTPThread

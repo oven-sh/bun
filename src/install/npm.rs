@@ -53,9 +53,10 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     }
 
     // An `_auth` whose username could not be derived still authenticates the request.
-    let Some(authorization) = registry.authorization(&registry_url) else {
+    let authorization = registry.authorization(&registry_url);
+    if authorization.is_none() && !registry.has_client_identity() {
         return Err(WhoamiError::NeedAuth);
-    };
+    }
 
     let auth_type: &[u8] = match &manager.options.publish_config.auth_type {
         Some(auth_type) => auth_type.as_str().as_bytes(),
@@ -75,14 +76,18 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let header_list: [(&[u8], &[u8]); 8] = [
         (b"accept", b"*/*"),
         (b"accept-encoding", b"gzip/deflate"),
-        (b"authorization", &authorization),
         (b"npm-auth-type", auth_type),
         (b"npm-command", b"whoami"),
         (b"user-agent", user_agent.as_bytes()),
         (b"Connection", b"keep-alive"),
         (b"Host", registry_url.host),
+        (
+            b"authorization",
+            authorization.as_deref().unwrap_or_default(),
+        ),
     ];
-    let headers = HeaderBuilder::from_pairs(&header_list)?;
+    let header_count = header_list.len() - usize::from(authorization.is_none());
+    let headers = HeaderBuilder::from_pairs(&header_list[..header_count])?;
 
     let mut print_buf: Vec<u8> = Vec::new();
     write!(
@@ -390,10 +395,12 @@ pub mod registry {
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
         }
 
+        pub fn has_client_identity(&self) -> bool {
+            !self.certfile.is_empty() && !self.keyfile.is_empty()
+        }
+
         pub(crate) fn has_credentials(&self) -> bool {
-            !self.token.is_empty()
-                || !self.auth.is_empty()
-                || (!self.certfile.is_empty() && !self.keyfile.is_empty())
+            !self.token.is_empty() || !self.auth.is_empty() || self.has_client_identity()
         }
 
         pub(crate) fn copy_credentials_from(&mut self, other: &Scope) {

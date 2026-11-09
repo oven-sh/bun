@@ -3333,7 +3333,7 @@ impl RemoteImageDownload<'_> {
                 // NO destructor on the old value: `ptr::write` —
                 // `*real.as_ptr() = …` would run Drop on the previous
                 // `this.async_http` (whose state the fresh copy still aliases).
-                real.as_ptr().write(::core::ptr::read(async_http));
+                bun_http::AsyncHTTP::copy_result(async_http, real.as_ptr());
             }
             result.body_into(&mut this.response_buffer.list);
             // Channel payload is a placeholder tick — the main thread

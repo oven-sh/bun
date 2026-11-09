@@ -194,6 +194,15 @@ export function bunExe() {
   return process.execPath;
 }
 
+export function noCoreCmd(argv: string[]): string[] {
+  if (isWindows) return argv;
+  // Linux pipe collectors ignore RLIMIT_CORE; the mapping filter survives exec (core(5)).
+  const command = isLinux
+    ? 'ulimit -c 0 && printf 0 > /proc/self/coredump_filter && exec "$@"'
+    : 'ulimit -c 0 && exec "$@"';
+  return ["/bin/sh", "-c", command, "--", ...argv];
+}
+
 /**
  * Source for a `bun -e` script: binds `port`, where a dial to 127.0.0.1 sits in
  * EINPROGRESS for good, and `filler`, to `destroy()` when done. Not on Windows or musl.

@@ -727,7 +727,10 @@ interface ReadableWritablePair<R = any, W = any> {
 }
 
 interface WritableStreamDefaultController {
-  /** An `AbortSignal` that aborts when the stream is aborted or errored. */
+  /**
+   * An `AbortSignal` that aborts when the stream is aborted. The underlying
+   * sink can use it to stop a pending write or close.
+   */
   readonly signal: AbortSignal;
   error(e?: any): void;
 }

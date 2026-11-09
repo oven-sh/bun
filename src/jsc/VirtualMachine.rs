@@ -8421,25 +8421,31 @@ fn run_on_resolve(
         return Ok(None);
     }
     // The importer's key ends in the query it was imported with.
-    let importer = importer.to_utf8();
-    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
-        Some(query) => &importer[..query],
-        None => &importer[..],
+    let importer_with_query = importer.to_utf8();
+    let importer = match bun_core::strings::index_of_char_usize(&importer_with_query, b'?') {
+        Some(query) => &importer_with_query[..query],
+        None => &importer_with_query[..],
     };
-    // For import(), an importer that isn't a file arrives as `/namespace:path`. Folder names may contain a colon, but a namespace never contains a slash.
-    let importer_namespace =
-        match ModuleLoader::namespace_and_path(importer.strip_prefix(b"/").unwrap_or(importer)).0 {
-            b"" => &b"file"[..],
-            [_] if cfg!(windows) => &b"file"[..],
-            namespace
-                if namespace
-                    .iter()
-                    .any(|&byte| bun_paths::resolve_path::is_sep_any(byte)) =>
-            {
-                &b"file"[..]
-            }
-            namespace => namespace,
-        };
+    // import(), require() and import.meta name a module whose key isn't a path (`namespace:path`) as `/namespace:path`. An importer is a loaded module, so the loader knows whether that key or a file is meant; a file is never split at a colon.
+    let is_loaded =
+        |key: &[u8]| global.is_key_of_loaded_module(&bun_core::StringView::borrow_utf8(key));
+    let importer_key = match (
+        importer.strip_prefix(b"/"),
+        importer_with_query.strip_prefix(b"/"),
+    ) {
+        (Some(key), Some(key_with_query))
+            if !ModuleLoader::namespace_and_path(key).0.is_empty()
+                && (is_loaded(key_with_query) || is_loaded(key)) =>
+        {
+            key
+        }
+        _ => importer,
+    };
+    let importer_namespace = match ModuleLoader::namespace_and_path(importer_key).0 {
+        _ if bun_paths::is_absolute(importer_key) => &b"file"[..],
+        b"" => &b"file"[..],
+        namespace => namespace,
+    };
     let resolve_dir = match importer_namespace {
         b"file" if importer_is_a_file => bun_paths::dirname(importer).unwrap_or(importer),
         b"file" => importer,

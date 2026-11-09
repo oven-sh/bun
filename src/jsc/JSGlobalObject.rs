@@ -713,6 +713,11 @@ impl JSGlobalObject {
         Ok(Some(result))
     }
 
+    /// Whether a module is loaded under `key`, as ESM or as CommonJS.
+    pub(crate) fn is_key_of_loaded_module(&self, key: &BunString) -> bool {
+        Bun__isKeyOfLoadedModule(self, key)
+    }
+
     /// Whether an `onResolve` or `onLoad` is registered.
     pub(crate) fn has_plugins(&self) -> bool {
         Bun__hasPlugins(self)
@@ -1480,6 +1485,7 @@ unsafe extern "C" {
         mode: u8,
     ) -> JSValue;
     safe fn Bun__hasPlugins(global: &JSGlobalObject) -> bool;
+    safe fn Bun__isKeyOfLoadedModule(global: &JSGlobalObject, key: &BunString) -> bool;
     safe fn Bun__onResolveNamespaces(global: &JSGlobalObject) -> u8;
     safe fn Bun__resolveVirtualModule(
         global: &JSGlobalObject,

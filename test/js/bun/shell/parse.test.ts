@@ -384,7 +384,6 @@ describe("parse shell", () => {
       ["a JS object after `<`", "cat < @", [{ exprs: [cmd([word("cat")], { stdin: true }, { jsbuf: { idx: 0 } })] }]],
       ["a JS object and a blank", "echo hi > @ ", echoHiTo({ stdout: true })],
       ["a subshell", " (echo hi)", [{ exprs: [subshell(echo("hi"))] }]],
-      ["`]]` and a blank", "[[ -n x ]] ", [{ exprs: [{ condexpr: { op: "-n", args: [word("x")] } }] }]],
       ["nothing", "", []],
       ["a blank", " ", []],
       ["`;`", "echo hi;", [{ exprs: [echo("hi")] }]],

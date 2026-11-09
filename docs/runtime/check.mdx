@@ -438,7 +438,7 @@ for (const log of result.logs) {
 
 ### `bun compile`
 
-[`bun compile`](/compiler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. It also reports the type errors in functions that nothing calls. `bun compile --check` stops at those too. Like the build, it takes entry points.
+[`bun compile`](/compiler/aot) always type checks, because it uses your types to generate machine code. `bun check --aot ./server.ts` reports every error that the build would report, and builds nothing. It also reports the type errors in functions that nothing calls. `bun compile --check` stops at those too. Like the build, it takes entry points. It reports no type errors in a file that the build doesn't compile, such as one that you import only with `import type`. Run `bun check` without `--aot` to see those.
 
 `bun check --aot` takes `--define k=v`, like `bun compile`. A define decides which code the build removes, and neither command type checks that code: `bun check --aot` reports [no more there than the build does](/compiler/aot#type-errors-stop-the-build). Pass both commands the same defines, so that they see the same program.
 

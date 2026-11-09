@@ -882,7 +882,8 @@ fn get_property_path(global: &JSGlobalObject, object: JSValue, path: &[u8]) -> J
         if key.is_empty() || value.is_undefined_or_null() {
             return Ok(None);
         }
-        value = value.get_if_property_exists_from_path(global, bun_string_jsc::create_utf8_for_js(global, key)?)?;
+        // The flavor argument only matters for a Symbol in an array path. This path is a string.
+        value = value.get_if_property_exists_from_path(global, bun_string_jsc::create_utf8_for_js(global, key)?, false)?;
         if value.is_empty() {
             return Ok(None);
         }

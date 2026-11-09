@@ -5197,7 +5197,7 @@ static JSValue getPropertyOnPath(JSGlobalObject* globalObject, JSValue base, Pro
     RELEASE_AND_RETURN(scope, object->getIfPropertyExists(globalObject, name));
 }
 
-JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1)
+JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, bool isForVitest)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     VM& vm = globalObject->vm();
@@ -5299,19 +5299,12 @@ JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValu
         auto* pathObject = path.toObject(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         forEachInArrayLike(globalObject, pathObject, [&](JSValue item) -> bool {
-            if (!(item.isString() || item.isNumber() || item.isSymbol())) {
+            Identifier propName = item.toPropertyKey(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            // In Vitest a Symbol in the path matches no key.
+            if (isForVitest && propName.isSymbol()) {
                 currProp = {};
                 return false;
-            }
-
-            Identifier propName;
-            if (item.isSymbol()) {
-                propName = Identifier::fromUid(asSymbol(item)->privateName());
-            } else {
-                JSString* propNameString = item.toString(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
-                propName = propNameString->toIdentifier(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
             }
 
             currProp = getPropertyOnPath(globalObject, currProp, propName);

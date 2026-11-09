@@ -2647,12 +2647,15 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
-  test("toHaveProperty() with a Symbol in an array path", async () => {
+  test("toHaveProperty() with an array path element that is not a string", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import * as bun from "bun:test";
         import * as vitest from "vitest";
         const outcome = fn => { try { fn(); return "passes"; } catch { return "fails"; } };
+        const thrown = fn => { try { fn(); return "passes"; } catch (error) { return error instanceof RangeError ? "RangeError" : "fails"; } };
+        const settled = async fn => { try { await fn(); return "passes"; } catch { return "fails"; } };
+        class Path extends Array {}
         for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
           test(name, () => {
             const s = Symbol("k");
@@ -2663,11 +2666,68 @@ describe.concurrent("behavior depends on the module a function is imported from"
               outcome(() => expect({ [s]: 1 }).not.toHaveProperty([s])),
             ].join(" "));
           });
+          // Every path that Array.isArray() accepts.
+          test(name + " every array", async () => {
+            const s = Symbol("k");
+            console.log(name, "every array:", [
+              outcome(() => expect({ [s]: 1 }).toHaveProperty(new Proxy([s], {}))),
+              outcome(() => expect({ [s]: 1 }).toHaveProperty(new Proxy([s], {}), 1)),
+              outcome(() => expect({ a: { [s]: { b: 2 } } }).toHaveProperty(new Proxy(["a", s, "b"], {}), 2)),
+              outcome(() => expect({ [s]: 1 }).not.toHaveProperty(new Proxy([s], {}))),
+              outcome(() => expect({ [s]: 1 }).toHaveProperty(new Proxy(new Proxy([s], {}), {}))),
+              outcome(() => expect({ [s]: 1 }).toHaveProperty(Path.of(s))),
+              outcome(() => expect({ a: 1 }).toHaveProperty(new Proxy(["a"], {}))),
+              await settled(() => expect(Promise.resolve({ [s]: 1 })).resolves.toHaveProperty(new Proxy([s], {}))),
+            ].join(" "));
+          });
+          // The path is read once, and the keys before the Symbol are looked up.
+          test(name + " one read", () => {
+            const s = Symbol("k");
+            let reads = 0, counted = 0, onSymbol = 0;
+            const changes = Object.defineProperty([], 0, { get: () => (reads++ ? s : "zzz") });
+            const counts = Object.defineProperty([], 0, { get: () => (counted++, "a") });
+            const traced = new Proxy({ [s]: 1 }, {
+              has: (target, key) => (key === s && onSymbol++, key in target),
+              get: (target, key) => (key === s && onSymbol++, target[key]),
+            });
+            expect({ a: 1 }).toHaveProperty(counts);
+            outcome(() => expect(traced).not.toHaveProperty(new Proxy([s], {})));
+            console.log(name, "one read:", [
+              outcome(() => expect({ [s]: 1 }).toHaveProperty(changes)),
+              counted,
+              thrown(() => expect({ get a() { throw new RangeError("read"); } }).not.toHaveProperty(["a", s])),
+              onSymbol > 0 ? "looks up the symbol" : "no symbol lookup",
+            ].join(" "));
+          });
+          // Jest reads object[element] and Vitest reads String(element). They differ only where that gives a Symbol.
+          test(name + " other keys", () => {
+            const s = Symbol("k");
+            const named = { toString: () => "a" };
+            console.log(name, "other keys:", [
+              outcome(() => expect({ true: 1 }).toHaveProperty([true], 1)),
+              outcome(() => expect({ 1: 1 }).toHaveProperty([1n], 1)),
+              outcome(() => expect({ null: 1 }).toHaveProperty([null], 1)),
+              outcome(() => expect({ undefined: 1 }).toHaveProperty([undefined], 1)),
+              outcome(() => expect({ true: { a: 1 } }).toHaveProperty([true, named], 1)),
+              outcome(() => expect({ true: 1 }).not.toHaveProperty([true])),
+              thrown(() => expect({ a: 1 }).not.toHaveProperty([{ toString() { throw new RangeError("key"); } }])),
+              outcome(() => expect({ [s]: 1 }).toHaveProperty([{ [Symbol.toPrimitive]: () => s }])),
+            ].join(" "));
+          });
         }
       `,
     });
     expect({ log, exitCode }).toEqual({
-      log: ["bun passes passes passes fails", "vitest fails fails fails passes"],
+      log: [
+        "bun passes passes passes fails",
+        "bun every array: passes passes passes fails passes passes passes passes",
+        "bun one read: fails 1 RangeError looks up the symbol",
+        "bun other keys: passes passes passes passes passes fails RangeError passes",
+        "vitest fails fails fails passes",
+        "vitest every array: fails fails fails passes fails fails passes fails",
+        "vitest one read: fails 1 RangeError no symbol lookup",
+        "vitest other keys: passes passes passes passes passes fails RangeError fails",
+      ],
       exitCode: 0,
     });
   });

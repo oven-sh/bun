@@ -201,7 +201,7 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromInt64NoTruncate(JSC::JSGlobalObje
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__fromUInt64NoTruncate(JSC::JSGlobalObject* arg0, uint64_t arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__bigIntFromLatin1(JSC::JSGlobalObject* arg0, const uint8_t* arg1, size_t arg2);
 CPP_DECL BunString JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
+CPP_DECL JSC::EncodedJSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, bool arg3);
 CPP_DECL double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL BunString JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__getPrototype(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);

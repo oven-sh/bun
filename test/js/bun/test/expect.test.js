@@ -2648,6 +2648,27 @@ describe("expect()", () => {
     expect({}).not.toHaveProperty([s]);
     expect(() => expect({}).toHaveProperty([s])).toThrow("Unable to find property");
     expect(() => expect({ [s]: 1 }).not.toHaveProperty([s])).toThrow("Expected path: not");
+    expect({ [s]: 1 }).toHaveProperty(ANY([{ [Symbol.toPrimitive]: () => s }]), 1);
+  });
+
+  // Jest reads `object[element]` and Vitest reads `String(element)`. Both give these elements the same key.
+  test("toHaveProperty() - an array path element that is not a string, a number or a symbol", () => {
+    const named = { toString: () => "a" };
+    const throws = {
+      toString() {
+        throw new RangeError("key");
+      },
+    };
+    expect({ true: 1 }).toHaveProperty(ANY([true]), 1);
+    expect({ 1: 1 }).toHaveProperty(ANY([1n]), 1);
+    expect({ null: 1 }).toHaveProperty(ANY([null]), 1);
+    expect({ undefined: 1 }).toHaveProperty(ANY([undefined]), 1);
+    expect({ a: 1 }).toHaveProperty(ANY([named]), 1);
+    expect({ true: { a: 1 } }).toHaveProperty(ANY([true, named]), 1);
+    expect({ a: 1 }).not.toHaveProperty(ANY([true]));
+    expect(() => expect({ true: 1 }).not.toHaveProperty(ANY([true]))).toThrow();
+    expect(() => expect({ a: 1 }).toHaveProperty(ANY([throws]))).toThrow(RangeError);
+    expect(() => expect({ a: 1 }).not.toHaveProperty(ANY([throws]))).toThrow(RangeError);
   });
 
   test("toHaveProperty() - all", () => {

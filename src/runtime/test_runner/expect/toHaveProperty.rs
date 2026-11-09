@@ -1,22 +1,9 @@
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSValue, JsResult};
 
 use super::throw;
 use super::DiffFormatter;
 use super::Expect;
-
-fn array_has_symbol(global: &JSGlobalObject, path: JSValue) -> JsResult<bool> {
-    if !path.is_array() {
-        return Ok(false);
-    }
-    let mut elements = path.array_iterator(global)?;
-    while let Some(element) = elements.next()? {
-        if element.is_symbol() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
 
 impl Expect {
     pub(crate) fn to_have_property(
@@ -42,9 +29,10 @@ impl Expect {
             "toHaveProperty",
             "<green>path<r><d>, <r><green>value<r>",
         )?;
+        let is_vitest = this.is_vitest();
 
         // bun:test has always let `.not.toHaveProperty()` pass on these two.
-        if value.is_undefined_or_null() && this.is_vitest() {
+        if value.is_undefined_or_null() && is_vitest {
             return Err(global.throw_type_error(format_args!(
                 ".toHaveProperty() expects to receive a valid object, but got {}",
                 if value.is_null() { "null" } else { "undefined" },
@@ -62,21 +50,14 @@ impl Expect {
 
         if pass {
             // In Vitest an own key spelled like the whole path, e.g. "a.b", wins over walking the path.
-            let own_property = if expected_property_path.is_string() && this.is_vitest() {
+            let own_property = if expected_property_path.is_string() && is_vitest {
                 value.get_own(global, &expected_property_path.to_bun_string(global)?)?
             } else {
                 None
             };
             received_property = match own_property {
                 Some(own_property) => own_property,
-                // Vitest reads each element of an array path as a string, so a Symbol finds no symbol key.
-                None if !expected_property_path.is_string()
-                    && this.is_vitest()
-                    && array_has_symbol(global, expected_property_path)? =>
-                {
-                    JSValue::ZERO
-                }
-                None => value.get_if_property_exists_from_path(global, expected_property_path)?,
+                None => value.get_if_property_exists_from_path(global, expected_property_path, is_vitest)?,
             };
             pass = !received_property.is_empty();
         }

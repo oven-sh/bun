@@ -721,7 +721,7 @@ The result has two fields, `current` and `highwater`. Where the value lands depe
 - `SQLITE_DBSTATUS_CACHE_HIT`, `SQLITE_DBSTATUS_CACHE_MISS`, `SQLITE_DBSTATUS_CACHE_WRITE`, `SQLITE_DBSTATUS_CACHE_SPILL`, `SQLITE_DBSTATUS_TEMPBUF_SPILL`: `current` is the count since the connection opened, `highwater` is always `0`. `reset: true` sets the count to `0`. `CACHE_WRITE` and `TEMPBUF_SPILL` overlap, so a reset of one lowers the other.
 - `SQLITE_DBSTATUS_DEFERRED_FKS`: `current` is `1` while the open transaction has an unresolved foreign key constraint, else `0`. `highwater` is always `0`.
 
-On macOS, Bun uses the system SQLite library. A library older than 3.51 has no `sqlite3_db_status64`, so a count above 2,147,483,647 is truncated there. Elsewhere the values are exact.
+On macOS, Bun uses the system SQLite library. If that library does not export `sqlite3_db_status64` (the macOS 26 library does not, although it reports version 3.51), Bun calls the 32-bit `sqlite3_db_status`, and a count above 2,147,483,647 is truncated. Elsewhere the values are exact.
 
 `.status()` throws a `RangeError` for an `op` the SQLite library does not know, and an error if the database is closed. Bun turns off the process-wide SQLite memory statistics (`SQLITE_CONFIG_MEMSTATUS`), so `sqlite3_memory_used()` and the other global counters report nothing. `sqlite3_db_status` does not depend on them.
 

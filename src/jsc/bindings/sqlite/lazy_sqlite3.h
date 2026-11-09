@@ -514,13 +514,13 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
             return static_cast<sqlite3_int64>(lazy_sqlite3_changes(db));
         };
     }
-    // sqlite3_db_status64 was added in 3.51.0; macOS 14 ships 3.43.
+    // sqlite3_db_status64 was added in 3.51.0. No macOS system library exports it yet, including the 3.51 snapshot of macOS 26.
     if (!lazy_sqlite3_db_status64) {
         lazy_sqlite3_db_status64 = [](sqlite3* db, int op, sqlite3_int64* pCur, sqlite3_int64* pHiwtr, int resetFlg) -> int {
             int current = 0;
             int highwater = 0;
             int rc = lazy_sqlite3_db_status(db, op, &current, &highwater, resetFlg);
-            // A library this old keeps the counters in int and can wrap negative. The 3.51 wrapper masks the same way.
+            // Such a library keeps the counters in int and can wrap negative. The 3.51 wrapper masks the same way.
             *pCur = current & 0x7fffffff;
             *pHiwtr = highwater & 0x7fffffff;
             return rc;

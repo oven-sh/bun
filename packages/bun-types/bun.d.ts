@@ -369,14 +369,20 @@ declare module "bun" {
      * value of type `string` is not accepted. `Lowercase` maps U+212A KELVIN
      * SIGN to `"k"` and the runtime does not, so a label that contains it is
      * rejected first.
+     *
+     * The first arm is true only for `any`. TypeScript puts `any` in place of
+     * `L` when it compares the constructor with another constructor type, and
+     * the parameter must stay {@link Bun.Encoding} there.
      */
-    type EncodingLabel<L extends string> = [L] extends [Bun.Encoding]
-      ? L
-      : L extends `${string}\u212A${string}`
-        ? Bun.Encoding
-        : Lowercase<TrimEncodingLabel<L>> extends Bun.Encoding
-          ? L
-          : Bun.Encoding;
+    type EncodingLabel<L extends string> = unknown extends L
+      ? Bun.Encoding
+      : [L] extends [Bun.Encoding]
+        ? L
+        : L extends `${string}\u212A${string}`
+          ? Bun.Encoding
+          : Lowercase<TrimEncodingLabel<L>> extends Bun.Encoding
+            ? L
+            : Bun.Encoding;
 
     /**
      * Like Omit, but correctly distributes over unions. Most useful for removing

@@ -350,7 +350,8 @@ declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
     prototype: TextDecoder;
     // The first signature keeps `<E extends Bun.Encoding>(e: E) => new TextDecoder(e)` compiling and
     // resolves a lower-case label with no inference. The generic one takes a label in another ASCII
-    // case, or with ASCII whitespace around it.
+    // case, or with ASCII whitespace around it. A class that extends `TextDecoder` gets the generic
+    // one with `L` set to its default, so `new Sub("UTF-8")` and `super("UTF-8")` stay errors.
     new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
     new <const L extends string = Bun.Encoding>(
       encoding?: Bun.__internal.EncodingLabel<L>,

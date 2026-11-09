@@ -1,7 +1,8 @@
 // `bun compile` type checks what it builds, so a label that runs on Bun and that the declarations of Bun refuse stops the build.
 // The project is the one that `bun init` writes: no library for browsers, and the types of Bun.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
+import { bunExe, tempDirWithBunTypes } from "harness";
+import { run } from "../../aot/harness/run";
 
 const tsconfig = JSON.stringify({
   compilerOptions: {
@@ -25,7 +26,8 @@ const printed = `utf-8 shift_jis
 windows-1252
 `;
 
-// The first two labels throw on Bun, and so does the label in the tuple and in the class. The third is known only at run time.
+// The first two labels throw on Bun, and so does the label in the tuple and in the class. The third is known only at run time,
+// and a constructor type whose label is a string could be given any of them.
 const refused = `declare const charset: string;
 // @ts-expect-error
 new TextDecoder("utf-99");
@@ -38,13 +40,9 @@ export const args: ConstructorParameters<typeof TextDecoder> = ["utf-99"];
 class Sub extends TextDecoder {}
 // @ts-expect-error
 new Sub("utf-99");
+// @ts-expect-error
+export const Alias: new (label: string) => TextDecoder = TextDecoder;
 `;
-
-async function run(dir: string, ...command: string[]) {
-  await using proc = Bun.spawn({ cmd: [bunExe(), ...command], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  return { stdout, exitCode };
-}
 
 // One check reads every declaration of Bun and of Node.js, which takes a debug build several seconds.
 test("TextDecoder takes a label in any ASCII case", async () => {
@@ -53,13 +51,11 @@ test("TextDecoder takes a label in any ASCII case", async () => {
     "index.ts": program,
     "refused.ts": refused,
   });
-  expect(await run(String(dir), "index.ts")).toEqual({ stdout: printed, exitCode: 0 });
-  const checked = await run(String(dir), "check", "--no-pretty");
-  expect({
-    errors: checked.stdout.split("\n").filter(line => line.includes("error TS")),
-    exitCode: checked.exitCode,
-  }).toEqual({
-    errors: [],
+  expect(await run([bunExe(), "index.ts"], String(dir))).toEqual({ stdout: printed, stderr: "", exitCode: 0 });
+  const checked = await run([bunExe(), "check", "--no-pretty"], String(dir));
+  // The summary on stderr has a time in it. Where the check fails, the message shows all three.
+  expect(checked.exitCode === 0 ? { stdout: checked.stdout, exitCode: 0 } : checked).toEqual({
+    stdout: "",
     exitCode: 0,
   });
 }, 60_000);

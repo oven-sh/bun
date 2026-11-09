@@ -883,7 +883,11 @@ describe("@types/bun integration test", () => {
            // @ts-expect-error - the parameter tuple rejects it too
            export const args: ConstructorParameters<typeof TextDecoder> = ["utf-99"];
            // @ts-expect-error - the parameter tuple rejects it too
-           export const streamArgs: ConstructorParameters<typeof TextDecoderStream> = ["utf-99"];`,
+           export const streamArgs: ConstructorParameters<typeof TextDecoderStream> = ["utf-99"];
+           // @ts-expect-error - a constructor type whose label is a string does not take the class
+           export const Alias: new (label: string) => TextDecoder = TextDecoder;
+           // @ts-expect-error - a constructor type whose label is a string does not take the class
+           export const StreamAlias: new (label: string) => TextDecoderStream = TextDecoderStream;`,
       });
 
       await using proc = Bun.spawn({

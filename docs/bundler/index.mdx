@@ -1510,6 +1510,18 @@ Default `true`. When a namespace object does have to be created, each property c
   </Tab>
 </Tabs>
 
+### signal
+
+Pass an `AbortSignal` to cancel a build. When the signal aborts, the returned promise rejects with `signal.reason` (an `AbortError` by default). The bundler stops, and a plugin hook that has not answered yet is not waited for. The abort is not a build error: it is not reported as a `BuildMessage`, and `throw: false` does not turn it into a `{ success: false }` result. A signal that is already aborted rejects at once, before any plugin runs.
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./index.tsx"],
+  outdir: "./out",
+  signal: AbortSignal.timeout(10_000),
+});
+```
+
 ### metafile
 
 Generate metadata about the build in a structured format. The metafile describes every input and output file: sizes, imports, and exports. Use it for:
@@ -1985,6 +1997,14 @@ interface BuildConfig {
    * @default true
    */
   throw?: boolean;
+
+  /**
+   * Cancel the build. When the signal aborts, the returned promise rejects
+   * with `signal.reason` (an `AbortError` by default), the bundler stops, and
+   * a plugin hook that is still pending is never waited for. A signal that
+   * is already aborted rejects at once, before any plugin runs.
+   */
+  signal?: AbortSignal;
 
   /**
    * Type check the entry points and everything they import before writing any output.

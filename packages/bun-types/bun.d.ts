@@ -3668,6 +3668,22 @@ declare module "bun" {
     throw?: boolean;
 
     /**
+     * Cancel the build. When the signal aborts, the returned promise rejects
+     * with `signal.reason` (an `AbortError` by default), the bundler stops, and
+     * a plugin hook that is still pending is never waited for. A signal that
+     * is already aborted rejects at once, before any plugin runs.
+     *
+     * @example
+     * ```ts
+     * await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   signal: AbortSignal.timeout(10_000),
+     * });
+     * ```
+     */
+    signal?: AbortSignal;
+
+    /**
      * Custom tsconfig.json file path. This build reads it in place of every
      * `tsconfig.json` it would otherwise find, for `paths`, JSX and decorator
      * settings, and for `check`. A directory means the `tsconfig.json` in it.

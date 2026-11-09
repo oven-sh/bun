@@ -2698,3 +2698,183 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
   });
 });
+
+describe("Bun.build signal", () => {
+  /** A plugin whose `onLoad` for `entry.ts` stays pending until `release()` is called. */
+  function hangingPlugin() {
+    const { promise: called, resolve: markCalled } = Promise.withResolvers<void>();
+    const { promise: gate, resolve: release } = Promise.withResolvers<void>();
+    const plugin: import("bun").BunPlugin = {
+      name: "hang",
+      setup(build) {
+        build.onLoad({ filter: /entry\.ts$/ }, async () => {
+          markCalled();
+          await gate;
+          return { contents: "export const x = 1;", loader: "ts" };
+        });
+      },
+    };
+    return { plugin, called, release };
+  }
+
+  test("a signal that is already aborted rejects with its reason before any plugin runs", async () => {
+    using dir = tempDir("build-signal-pre-aborted", { "entry.ts": "export const x = 1;" });
+    const controller = new AbortController();
+    const reason = new Error("stop");
+    controller.abort(reason);
+    let setupCalled = false;
+    const promise = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [{ name: "never", setup: () => void (setupCalled = true) }],
+      signal: controller.signal,
+    });
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toBe(reason);
+    expect(setupCalled).toBe(false);
+  });
+
+  test("a signal that is not an AbortSignal throws", () => {
+    expect(() =>
+      Bun.build({
+        entrypoints: ["entry.ts"],
+        files: { "entry.ts": "" },
+        signal: {} as any,
+      }),
+    ).toThrow(/signal/);
+  });
+
+  test("aborting while an onLoad hook is pending rejects with the reason", async () => {
+    using dir = tempDir("build-signal-hung-onload", { "entry.ts": "export const x = 1;" });
+    const { plugin, called, release } = hangingPlugin();
+    const controller = new AbortController();
+    const promise = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [plugin],
+      signal: controller.signal,
+    });
+    await called;
+    controller.abort();
+    const error = await promise.then(
+      () => {
+        throw new Error("resolved");
+      },
+      e => e,
+    );
+    expect(error).toBe(controller.signal.reason);
+    expect(error.name).toBe("AbortError");
+    expect(error).not.toBeInstanceOf(AggregateError);
+
+    // The late answer from the hook is dropped, and the next build in this process runs.
+    release();
+    const next = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [plugin],
+    });
+    expect(next.success).toBe(true);
+    expect(await next.outputs[0].text()).toContain("x = 1");
+  });
+
+  test("a custom abort reason is the rejection", async () => {
+    using dir = tempDir("build-signal-custom-reason", { "entry.ts": "export const x = 1;" });
+    const { plugin, called, release } = hangingPlugin();
+    const controller = new AbortController();
+    const reason = { why: "deadline" };
+    const promise = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [plugin],
+      signal: controller.signal,
+    });
+    await called;
+    controller.abort(reason);
+    await expect(promise).rejects.toBe(reason);
+    release();
+  });
+
+  test("throw: false still rejects on abort", async () => {
+    using dir = tempDir("build-signal-throw-false", { "entry.ts": "export const x = 1;" });
+    const { plugin, called, release } = hangingPlugin();
+    const controller = new AbortController();
+    const promise = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [plugin],
+      signal: controller.signal,
+      throw: false,
+    });
+    await called;
+    controller.abort();
+    await expect(promise).rejects.toBe(controller.signal.reason);
+    release();
+  });
+
+  test("a build queued behind a hung build rejects on abort without waiting for it", async () => {
+    using dir = tempDir("build-signal-queued", {
+      "entry.ts": "export const x = 1;",
+      "other.ts": "export const y = 2;",
+    });
+    const { plugin, called, release } = hangingPlugin();
+    const first = Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      plugins: [plugin],
+    });
+    await called;
+    // The bundle thread is busy with `first`: this one waits on its queue.
+    const controller = new AbortController();
+    const second = Bun.build({
+      entrypoints: [join(String(dir), "other.ts")],
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(second).rejects.toBe(controller.signal.reason);
+    release();
+    expect((await first).success).toBe(true);
+  });
+
+  test("aborting after the build settled does nothing", async () => {
+    using dir = tempDir("build-signal-after-settle", { "entry.ts": "export const x = 1;" });
+    const controller = new AbortController();
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.ts")],
+      signal: controller.signal,
+    });
+    expect(result.success).toBe(true);
+    controller.abort();
+    expect(await result.outputs[0].text()).toContain("x = 1");
+  });
+
+  test("an aborted build does not keep the process alive", async () => {
+    using dir = tempDir("build-signal-exit", {
+      "entry.ts": "export const x = 1;",
+      "build.ts": `
+        const controller = new AbortController();
+        const promise = Bun.build({
+          entrypoints: ["./entry.ts"],
+          plugins: [{
+            name: "hang",
+            setup(build) {
+              build.onLoad({ filter: /entry\\.ts$/ }, () => {
+                controller.abort();
+                return new Promise(() => {});
+              });
+            },
+          }],
+          signal: controller.signal,
+        });
+        promise.then(
+          () => console.log("resolved"),
+          error => console.log("rejected:", error.name),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("rejected: AbortError\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

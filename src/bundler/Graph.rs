@@ -59,9 +59,10 @@ pub struct Graph<'a> {
     /// Which deferred batch is being collected: bumped each time `drain_deferred_tasks` moves the parked
     /// units back, so a `Load` can tell whether its own unit is still parked. Bundle thread only.
     pub(crate) defer_epoch: u32,
-    /// The VM that owns the plugins is shutting down: `dispatch()` hands it nothing further (what it
-    /// holds comes back answered as cancelled) and the pass fails at its next checkpoint.
-    pub(crate) cancelled: bool,
+    /// The build is cancelled (its signal fired, or the VM that owns the plugins is shutting down):
+    /// `dispatch()` hands the plugins nothing further (what they hold comes back answered as cancelled)
+    /// and the pass fails at its next checkpoint with `Error::Cancelled`.
+    pub(crate) cancelled: Option<crate::bundle_v2::dispatch::CancelCause>,
 
     /// A map of build targets to their corresponding module graphs.
     pub build_graphs: EnumMap<options::Target, PathToSourceIndexMap>,
@@ -169,7 +170,7 @@ impl<'a> Graph<'a> {
             pending_items: 0,
             deferred_pending: 0,
             defer_epoch: 0,
-            cancelled: false,
+            cancelled: None,
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: HtmlImports::default(),

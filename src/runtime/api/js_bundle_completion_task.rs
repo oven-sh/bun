@@ -13,6 +13,7 @@ use core::ptr::{self, NonNull};
 use std::io::Write as _;
 
 use bun_alloc::Arena;
+use bun_bundler::bundle_v2::dispatch::CancelCause;
 use bun_bundler::bundle_v2::{
     BundleV2, BundleV2Result, CompletionStruct, FileMap as Bv2FileMap,
     JSBundleCompletionTask as Bv2OpaqueCompletion, JSBundlerPlugin, dispatch,
@@ -64,20 +65,23 @@ pub(crate) struct JSBundleCompletionTask {
     /// hops reach the VM that called Bun.build, and what makes it wait.
     pub(crate) bundle_ticket: Option<jsc::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
-    /// The context whose script called `Bun.build`. The build cannot be cancelled in a live VM
-    /// (see `arm_owner` below), so one for a `Bun.ModuleGraph` that stopped meanwhile runs to
-    /// its end and its result is dropped.
+    /// The context whose script called `Bun.build`. One for a `Bun.ModuleGraph` that stopped
+    /// meanwhile is not cancelled (see `CallerOfTheBuild`): it runs to its end and its result is
+    /// dropped.
     pub(crate) context: jsc::ContextId,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub poll_ref: KeepAlive,
     /// This build's copy of the VM's env. Boxed because the transpiler keeps a pointer to it.
     pub(crate) env: Box<bun_dotenv::Loader>,
     pub(crate) log: bun_ast::Log,
-    /// Set by the owner giving up on the result (HTMLBundle route torn down)
-    /// or by the VM's stop phase; read by `on_complete` (skip delivery) and by
-    /// the bundle thread (`CompletionDispatch::is_cancelled`: stop waiting on
-    /// plugins, fail the build).
-    pub(crate) cancelled: core::sync::atomic::AtomicBool,
+    /// A [`CancelCause`] (or [`CancelCause::NONE`]), set once the script's `signal` fires or the
+    /// VM's stop phase gives up on the result; read by `on_complete` (reject with the reason, or
+    /// skip delivery) and by the bundle thread (`CompletionDispatch::cancel_cause`: stop waiting
+    /// on plugins, fail the build). `ContextStopped` is the larger value: it wins over `Aborted`
+    /// and is never overwritten.
+    pub(crate) cancel_cause: core::sync::atomic::AtomicU8,
+    /// `signal.reason`, held from the abort until `on_complete` rejects the promise with it.
+    pub(crate) abort_reason: jsc::StrongOptional,
     /// The bundle thread's uws loop while this build runs there, so a
     /// cancelling VM can wake its Mini loop out of an idle wait.
     pub(crate) bundle_loop: core::sync::atomic::AtomicPtr<bun_uws::Loop>,
@@ -98,8 +102,8 @@ pub(crate) struct JSBundleCompletionTask {
     pub(crate) transpiler: *mut BundleV2<'static>,
     pub(crate) plugins: Option<NonNull<Plugin>>,
     pub(crate) started_at_ns: u64,
-    /// Armed while the build is out on the bundle thread: the context that
-    /// called `Bun.build` gives up on the result when it stops.
+    /// Armed while the build is out on the bundle thread: the VM gives up on the result when it
+    /// stops, and the `signal` the script passed (which this handle holds) aborts it.
     pub(crate) abort_handle: jsc::AbortHandle,
     /// Armed in the context that called `Bun.build`, when that is a `Bun.ModuleGraph`'s.
     pub(crate) caller: CallerOfTheBuild,
@@ -114,9 +118,9 @@ pub(crate) struct DeclarationOutputs {
 }
 
 /// The build's tie to the script that called `Bun.build`. When that script's context stops (its
-/// `Bun.ModuleGraph` is disposed) the build itself goes on — a live VM cannot cancel one — but
-/// what its plugins were asked and have not answered is answered now, as cancelled: their
-/// callbacks ran in that context, so whatever they were waiting for went with it.
+/// `Bun.ModuleGraph` is disposed) the build itself goes on, but what its plugins were asked and
+/// have not answered is answered now, as cancelled: their callbacks ran in that context, so
+/// whatever they were waiting for went with it.
 pub(crate) struct CallerOfTheBuild {
     handle: jsc::AbortHandle,
 }
@@ -132,9 +136,20 @@ jsc::impl_abort_handle_owner!(CallerOfTheBuild, handle, |this, _cause| {
     }
 });
 
-jsc::impl_abort_handle_owner!(JSBundleCompletionTask, abort_handle, |this, _cause| {
+jsc::impl_abort_handle_owner!(JSBundleCompletionTask, abort_handle, |this, cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ its completion has not run).
-    unsafe { JSBundleCompletionTask::give_up_on_result(this) }
+    unsafe {
+        let cause = match cause {
+            jsc::AbortCause::Signal(reason) => {
+                (*this)
+                    .abort_reason
+                    .set((*this).global_this.get(), reason);
+                CancelCause::Aborted
+            }
+            jsc::AbortCause::ContextStopped(_) => CancelCause::ContextStopped,
+        };
+        JSBundleCompletionTask::give_up_on_result(this, cause)
+    }
 });
 
 #[repr(u8)]
@@ -196,7 +211,8 @@ impl JSBundleCompletionTask {
                 global_this.bun_vm().env_loader().clone_loaded(),
             )),
             log: bun_ast::Log::init(),
-            cancelled: core::sync::atomic::AtomicBool::new(false),
+            cancel_cause: core::sync::atomic::AtomicU8::new(CancelCause::NONE),
+            abort_reason: jsc::StrongOptional::empty(),
             bundle_loop: core::sync::atomic::AtomicPtr::new(ptr::null_mut()),
             stage: core::sync::atomic::AtomicU8::new(Stage::Queued as u8),
             abort_handle: jsc::AbortHandle::for_owner::<Self>(),
@@ -216,7 +232,8 @@ impl JSBundleCompletionTask {
     /// `BundleV2.createAndScheduleCompletionTask` — take a process-keepalive
     /// ref and hand the task to the bundle-thread singleton. The one ref `new`
     /// created travels with the task and is released by `on_complete_anytask`.
-    pub(crate) fn schedule(mut self) {
+    /// `signal`: the script's `AbortSignal` for this build, if it passed one.
+    pub(crate) fn schedule(mut self, signal: Option<jsc::AbortSignalRef>) {
         self.poll_ref.ref_(self.global_this.bun_vm().loop_ctx());
         let plugins = self.plugins;
         let completion = RefPtr::new(self).into_raw();
@@ -241,6 +258,11 @@ impl JSBundleCompletionTask {
             jsc::AbortHandle::arm_owner(completion, vm.root_context());
             if let Some(caller) = vm.as_graph_context(vm.context_of((*completion).context)) {
                 jsc::AbortHandle::arm_owner(&raw mut (*completion).caller, caller);
+            }
+            // Last: a signal that is already aborted fires before this returns and releases the
+            // build unstarted (`give_up_on_result`); the bundle thread then only frees it.
+            if let Some(signal) = signal {
+                jsc::AbortHandle::follow_owner(completion, signal);
             }
         };
         bun_bundler::bundle_v2::singleton::enqueue::<JSBundleCompletionTask>(completion);
@@ -723,7 +745,8 @@ impl JSBundleCompletionTask {
         bun_removable_features::removable_definition!(Bundler, Self::on_complete_anytask);
         // SAFETY: `ctx` is the live heap allocation (fn contract).
         unsafe {
-            (*ctx).abort_handle.leave();
+            // `disarm`, not `leave`: the signal is released too, so a later `abort()` is a no-op.
+            (*ctx).abort_handle.disarm();
             (*ctx).caller.handle.leave();
         }
         // SAFETY: `ctx` is the live heap allocation; takes over the +1 taken by
@@ -737,25 +760,28 @@ impl JSBundleCompletionTask {
         unsafe { &mut *ctx }.on_complete()
     }
 
-    /// The VM is tearing down (JS thread): give up on the result.
+    /// The script's signal fired, or the VM is tearing down (JS thread): give up on the result.
     ///
-    /// * Still queued behind other builds: release the JS side here (plugin
-    ///   cell, promise, keep-alive), return the count, and leave the inert rest
-    ///   for the bundle thread to free when it dequeues it — the VM does not
-    ///   wait behind other VMs' builds.
-    /// * Already on the bundle thread: tombstone the plugin — which answers what
-    ///   the plugins still hold as cancelled — then cancel and wake the bundle
-    ///   thread; it consumes those answers, fails the build and posts the
-    ///   completion, which teardown waits for and releases.
+    /// * Still queued behind other builds: settle the promise here (rejected with the reason for
+    ///   `Aborted`, dropped for `ContextStopped`), release the JS side (plugin cell, keep-alive,
+    ///   signal, reason), return the count, and leave the inert rest for the bundle thread to
+    ///   free when it dequeues it — nobody waits behind other builds.
+    /// * Already on the bundle thread: publish the cause, tombstone the plugin — which answers
+    ///   what the plugins still hold as cancelled — and wake the bundle thread; it consumes
+    ///   those answers, fails the build with `Error::Cancelled` and posts the completion, which
+    ///   `on_complete` settles from the cause.
     ///
     /// # Safety
     /// `this` is live (its completion has not run); JS thread.
-    unsafe fn give_up_on_result(this: *mut Self) {
+    unsafe fn give_up_on_result(this: *mut Self, cause: CancelCause) {
         use core::sync::atomic::Ordering;
         // SAFETY: fn contract; the plugin cell is protected by this task; the
         // loop pointer is a thread's uws loop, valid for that thread's
         // lifetime, and wakeup is thread-safe.
         unsafe {
+            // Before the plugins are tombstoned: the bundle thread reads the cause as it consumes
+            // the answers that produces. `max`: `ContextStopped` wins and is never overwritten.
+            (*this).cancel_cause.fetch_max(cause as u8, Ordering::AcqRel);
             if (*this)
                 .stage
                 .compare_exchange(
@@ -767,11 +793,18 @@ impl JSBundleCompletionTask {
                 .is_ok()
             {
                 (*this).poll_ref.disable();
+                // Everything thread-affine goes here: the bundle thread drops the rest.
+                (*this).abort_handle.disarm();
                 (*this).caller.handle.leave();
                 (*this).abandon_html_route();
                 if let Some(plugin) = (*this).plugins.take() {
                     Plugin::destroy(plugin.as_ptr());
                 }
+                if let Some(reason) = (*this).abort_reason.try_swap() {
+                    let global_this = (*this).global_this.get();
+                    let _ = (*this).promise.reject(global_this, Ok(reason));
+                }
+                (*this).abort_reason.deinit();
                 (*this).promise = jsc::JSPromiseStrong::default();
                 (*this).bundle_ticket = None;
                 // Publish only now: from here the bundle thread may free `this`.
@@ -783,12 +816,16 @@ impl JSBundleCompletionTask {
             if let Some(plugins) = (*this).plugins {
                 crate::api::JSBundler::PluginJscExt::tombstone(plugins.as_ref());
             }
-            (*this).cancelled.store(true, Ordering::Release);
             let l = (*this).bundle_loop.load(Ordering::Acquire);
             if !l.is_null() {
                 bun_uws::us_wakeup_loop(l);
             }
         }
+    }
+
+    #[inline]
+    fn cancel_cause(&self) -> Option<CancelCause> {
+        CancelCause::from_u8(self.cancel_cause.load(core::sync::atomic::Ordering::Acquire))
     }
 
     /// For an HTML route's build that will not deliver its result: the plugins are the route's
@@ -807,9 +844,27 @@ impl JSBundleCompletionTask {
         // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
             .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
-        if this.cancelled.load(core::sync::atomic::Ordering::Acquire) {
-            this.abandon_html_route();
-            return Ok(());
+        match this.cancel_cause() {
+            // Script is forbidden (VM teardown), or nobody is left to hear it (a disposed
+            // `Bun.ModuleGraph`): the result is dropped unreported.
+            Some(CancelCause::ContextStopped) => {
+                this.abort_reason.deinit();
+                this.abandon_html_route();
+                return Ok(());
+            }
+            // The signal fired: the promise rejects with `signal.reason`, whatever the bundle
+            // thread handed back. No `BuildMessage`, no `onEnd` callbacks.
+            Some(CancelCause::Aborted) => {
+                this.abandon_html_route();
+                let reason = this
+                    .abort_reason
+                    .try_swap()
+                    .expect("an aborted Bun.build holds its signal's reason");
+                this.abort_reason.deinit();
+                let global_this = this.global_this.get();
+                return this.promise.reject(global_this, Ok(reason));
+            }
+            None => {}
         }
 
         if let Some(html_build_task) = this.html_build_task.take() {
@@ -1002,11 +1057,7 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 }
 
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
-    is_cancelled: |c| {
-        from_completion_handle(c)
-            .cancelled
-            .load(core::sync::atomic::Ordering::Acquire)
-    },
+    cancel_cause: |c| from_completion_handle(c).cancel_cause(),
     enqueue_task_concurrent: |c, task| {
         from_completion_handle(c)
             .bundle_ticket
@@ -1508,9 +1559,10 @@ impl bun_event_loop::Taskable for JSBundleCompletionTask {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
         unsafe {
-            (*this)
-                .cancelled
-                .store(true, core::sync::atomic::Ordering::Release)
+            (*this).cancel_cause.fetch_max(
+                CancelCause::ContextStopped as u8,
+                core::sync::atomic::Ordering::AcqRel,
+            )
         };
         let _ = JSBundleCompletionTask::on_complete_anytask(this);
     }

@@ -4,6 +4,10 @@ pub enum Error {
     ModuleNotFound,
     #[error("BuildFailed")]
     BuildFailed,
+    /// The `Bun.build` this pass ran for was cancelled (its `signal` fired, or the VM that owns its
+    /// plugins stopped). The log carries no message for it: the JS side reports the cause.
+    #[error("Cancelled")]
+    Cancelled,
     #[error("CompilationFailed")]
     CompilationFailed,
     #[error("Plugin")]
@@ -104,6 +108,7 @@ impl Error {
         match self {
             Self::ModuleNotFound => "ModuleNotFound",
             Self::BuildFailed => "BuildFailed",
+            Self::Cancelled => "Cancelled",
             Self::CompilationFailed => "CompilationFailed",
             Self::Plugin => "Plugin",
             Self::InvalidCssImport => "InvalidCssImport",

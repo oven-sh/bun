@@ -456,6 +456,7 @@ fn resolution_from_value(value: ResolveValue, log: &mut Log) -> Result<Resolutio
             record_message(message, log)?;
             Ok(Resolution::NotHandled)
         }
+        ResolveValue::Cancelled => Err(Failed),
         ResolveValue::Pending | ResolveValue::Consumed => {
             unreachable!("a resolve request is answered with a value")
         }
@@ -479,6 +480,7 @@ fn loaded_from_value(
             record_message(message, log)?;
             Ok(Loaded::from_file(read_file(), default_loader))
         }
+        LoadValue::Cancelled => Err(Failed),
         LoadValue::Pending | LoadValue::Consumed => {
             unreachable!("a load request is answered with a value")
         }

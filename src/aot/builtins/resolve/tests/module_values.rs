@@ -76,6 +76,23 @@ fn members() {
     });
 }
 
+// `may_modify_import_meta` in bun_sema cannot read the table: it names the functions of import.meta by hand.
+#[test]
+fn call_modifies_import_meta_unless_table_has_function() {
+    let functions = ["require", "resolve", "resolveSync"];
+    let members = table::members(BuiltinId::ImportMeta).iter();
+    let listed = members.filter(|&&member| table::is_callable(member));
+    let names = listed.map(|&member| table::text_of_name(table::entry(member).name));
+    let names = names.map(|name| std::str::from_utf8(name).unwrap());
+    assert_eq!(names.collect::<Vec<_>>(), functions);
+    for name in functions.into_iter().chain(["hasOwnProperty", "f"]) {
+        with_case(PROGRAM, &format!("import.meta.{name}('./b.js');"), |case| {
+            let may_be_modified = case.bound.import_meta_may_be_modified();
+            assert_eq!(may_be_modified, !functions.contains(&name), "{name}");
+        });
+    }
+}
+
 #[test]
 fn member_mutability_is_of_location() {
     with_case(SCRIPT, "require.resolve; require.cache;", |case| {

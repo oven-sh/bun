@@ -520,6 +520,104 @@ describe("expect()", () => {
     expect([, 1]).toEqual([undefined, 1]);
   });
 
+  describe("toEqual() with two Errors", () => {
+    class BadInput extends TypeError {}
+    class BadRange extends RangeError {}
+    class AppError extends Error {
+      get name() {
+        return this.constructor.name;
+      }
+    }
+    class NotFound extends AppError {}
+    class Forbidden extends AppError {}
+    class MessageA extends Error {
+      get message() {
+        return "A";
+      }
+    }
+    class MessageB extends Error {
+      get message() {
+        return "B";
+      }
+    }
+
+    test("an instance of a subclass of a native error equals an instance of the base", () => {
+      class Deeper extends BadInput {}
+      expect(new BadInput("m")).toEqual(new TypeError("m"));
+      expect(new TypeError("m")).toEqual(new BadInput("m"));
+      expect(new BadRange("m")).toEqual(new RangeError("m"));
+      expect(new Deeper("m")).toEqual(new TypeError("m"));
+      expect(new BadInput("m")).not.toEqual(new TypeError("other"));
+      expect(new BadInput("m")).toStrictEqual(new BadInput("m"));
+    });
+
+    test("the name and the message are read through getters", () => {
+      expect(new MessageA()).not.toEqual(new MessageB());
+      expect(new MessageA()).toEqual(new Error("A"));
+      expect(new Error()).toEqual(new Error(""));
+      expect(new NotFound("m")).toEqual(new NotFound("m"));
+      expect(new NotFound("m")).not.toStrictEqual(new Forbidden("m"));
+      // Jest compares only the messages of two Errors.
+      if (!isJest) {
+        expect(new NotFound("m")).not.toEqual(new Forbidden("m"));
+        expect(new NotFound("m")).not.toEqual(new Error("m"));
+        expect(new BadInput("m")).not.toEqual(new BadRange("m"));
+      }
+    });
+
+    test("a matcher in the place of a message is not a message", () => {
+      const expected = new Error("m");
+      expected.message = ANY(expect.any(String));
+      expect(new Error("m")).not.toEqual(expected);
+    });
+
+    test("a message that is an object is compared with ===", () => {
+      class WithPayload extends Error {
+        constructor(/** @type {object} */ payload) {
+          super();
+          this.message = ANY(payload);
+        }
+      }
+      const payload = { status: 404 };
+      expect(new WithPayload(payload)).toEqual(new WithPayload(payload));
+      expect(new WithPayload({ status: 404 })).not.toEqual(new WithPayload({ status: 404 }));
+      if (isBun) {
+        expect(Bun.deepEquals(new WithPayload({ status: 404 }), new WithPayload({ status: 404 }))).toBe(true);
+      }
+    });
+
+    // Jest and Vitest tell each of these pairs apart, by the two classes. toStrictEqual() of Bun has
+    // no class rule for two Errors (#47837 adds one), so it takes them for equal.
+    (isBun ? test.failing : test).each([
+      ["an instance of a subclass of TypeError and a TypeError", () => new BadInput("m"), () => new TypeError("m")],
+      ["a TypeError and an instance of a subclass of TypeError", () => new TypeError("m"), () => new BadInput("m")],
+      ["a message getter and an Error with that message", () => new MessageA(), () => new Error("A")],
+    ])("toStrictEqual() tells %s apart", (_label, received, expected) => {
+      expect(received()).not.toStrictEqual(expected());
+    });
+
+    test("the matchers that compare values compare two Errors the same way", () => {
+      const called = jest.fn();
+      called(new BadInput("m"));
+      expect(called).toHaveBeenCalledWith(new TypeError("m"));
+      expect([new BadInput("m")]).toContainEqual(new TypeError("m"));
+      expect([new BadInput("m")]).toEqual(expect.arrayContaining([new TypeError("m")]));
+      expect({ error: new BadInput("m") }).toEqual(expect.objectContaining({ error: new TypeError("m") }));
+      expect(new Map([["k", new BadInput("m")]])).toEqual(new Map([["k", new TypeError("m")]]));
+      expect(new Error("outer", { cause: new BadInput("m") })).toEqual(
+        new Error("outer", { cause: new TypeError("m") }),
+      );
+
+      expect.extend({
+        toBeTheSameErrorAs(received, expected) {
+          return { pass: this.equals(received, expected), message: () => "" };
+        },
+      });
+      ANY(expect(new BadInput("m"))).toBeTheSameErrorAs(new TypeError("m"));
+      ANY(expect(new MessageA())).not.toBeTheSameErrorAs(new MessageB());
+    });
+  });
+
   describe("toEqual() with DOM types", () => {
     test("URLSearchParams", () => {
       expect(new URLSearchParams("a=1")).not.toEqual(new URLSearchParams("b=1"));

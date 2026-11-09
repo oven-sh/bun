@@ -1679,6 +1679,38 @@ static constexpr DeepEqualsMode deepEqualsMode {
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
 
+// Compares `message`, then `name`, of two Errors as properties: either can come from any
+// prototype or from a getter, and can hold any value.
+// expect(): the two values must be ===, as in Vitest's isErrorEqual(). Jest compares only
+// `message`, the same way. That `name` counts in every flavor is Bun's rule.
+// The other modes compare the two values like any other pair, as node's isEnumerableOrIdentical():
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/comparisons.js#L231-L235
+// node leaves an enumerable property to its key check. The caller's walk over the enumerable
+// properties takes its names from `left`, so an own enumerable property of `left` is left to
+// that walk: a second compare here would run a getter twice, and nested Errors 2^depth times.
+static NEVER_INLINE bool errorMessagesAndNamesEqual(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* left, JSObject* right)
+{
+    VM& vm = JSC::getVM(globalObject);
+    for (PropertyName propertyName : { PropertyName(vm.propertyNames->message), PropertyName(vm.propertyNames->name) }) {
+        if (!mode.enableAsymmetricMatchers) {
+            unsigned attributes;
+            if (isValidOffset(left->structure()->get(vm, propertyName, attributes)) && !(attributes & PropertyAttribute::DontEnum))
+                continue;
+        }
+        JSValue leftValue = left->get(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue rightValue = right->get(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool equal = mode.enableAsymmetricMatchers
+            ? JSC::JSValue::strictEqual(globalObject, leftValue, rightValue)
+            : mode.deepEquals(globalObject, leftValue, rightValue, gcBuffer, stack, scope, true);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!equal)
+            return false;
+    }
+    return true;
+}
+
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once
 // and take the mode at runtime; only the dispatch and the plain-object tail in
 // `specialObjectsDequal` below stay specialised per mode.
@@ -1824,21 +1856,9 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
                 return false;
             }
 
-            auto leftName = left->sanitizedNameString(globalObject);
+            bool messagesAndNamesEqual = errorMessagesAndNamesEqual(mode, globalObject, gcBuffer, stack, scope, left, right);
             RETURN_IF_EXCEPTION(scope, {});
-            auto rightName = right->sanitizedNameString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (leftName != rightName) {
-                // manual `.name` changes (usually in subclasses)
-                return false;
-            }
-
-            auto leftMessage = left->sanitizedMessageString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto rightMessage = right->sanitizedMessageString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (leftMessage != rightMessage) {
-                // `.message`
+            if (!messagesAndNamesEqual) {
                 return false;
             }
 

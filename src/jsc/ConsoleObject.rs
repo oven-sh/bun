@@ -8,6 +8,7 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate as jsc;
+use crate::js_value::OwnKeys;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
@@ -2478,12 +2479,20 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                self.print_as::<ENABLE_ANSI_COLORS>(
-                                    Tag::String,
+                                // The text of the value, and no own key: `%s` converts to a string.
+                                let mut unused = false;
+                                if self.print_as_prelude::<ENABLE_ANSI_COLORS>(
                                     writer_,
                                     next_value,
-                                    next_value.js_type(),
-                                )?;
+                                    Tag::String,
+                                    &mut unused,
+                                )? {
+                                    self.print_string::<ENABLE_ANSI_COLORS>(
+                                        writer_,
+                                        next_value,
+                                        next_value.js_type(),
+                                    )?;
+                                }
                                 writer = WrappedWriter {
                                     ctx: writer_,
                                     failed: false,
@@ -2994,14 +3003,37 @@ pub mod formatter {
         }
     }
 
-    /// The opening bracket of an array while its named properties print. `Pending`: not written.
+    /// Where the writer is when the first own key of a value prints, which decides what goes around the keys.
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub(crate) enum ArrayOpen {
-        /// An object, or an array whose first element wrote the bracket.
-        No,
-        Pending,
-        Inline,
-        Multiline,
+    pub(crate) enum Opens {
+        /// The object printer: `handle_first_property` writes the opening.
+        Object,
+        /// After an element or an entry of the value, on its line: `[ 1`, `Map(1) { 1: 2`.
+        AfterEntry,
+        /// After content that is no entry: `Promise { <pending>`, `Uint8Array(1) [ 1`.
+        AfterContent,
+        /// An array with no elements, whose bracket is not written yet.
+        EmptyArray,
+        /// Where an entry starts, inside the braces of a `Map` or `Set`.
+        AtEntryStart,
+        /// After the `[` of a typed array that has no elements.
+        EmptyBrackets,
+        /// After the name of a `Map` or `Set` that has no entries: the keys go in `(0) { }`.
+        EmptyCollection,
+        /// After the name of a `WeakMap` or `WeakSet`: the keys go in ` { }`.
+        EmptyWeakCollection,
+        /// After text that has no brackets of its own (a `Date`, a `RegExp`): the keys go in ` { }`.
+        Block,
+    }
+
+    impl Opens {
+        /// Whether `print_as_prelude` keeps the value in the visited map: an array, a `Map`, a `Set`.
+        fn value_is_visited(self) -> bool {
+            !matches!(
+                self,
+                Opens::AfterContent | Opens::EmptyBrackets | Opens::Block
+            )
+        }
     }
 
     pub(crate) struct PropertyIteratorCtx<'a, 'b, const C: bool> {
@@ -3010,7 +3042,9 @@ pub mod formatter {
         pub(crate) i: usize,
         pub(crate) single_line: bool,
         pub(crate) always_newline: bool,
-        pub(crate) array_open: ArrayOpen,
+        pub(crate) opens: Opens,
+        /// `open_own_keys` broke the line behind the bracket of `Opens::EmptyArray`.
+        pub(crate) broke_line: bool,
         pub(crate) parent: JSValue,
     }
 
@@ -3064,28 +3098,63 @@ pub mod formatter {
             Ok(())
         }
 
-        /// Writes the bracket that `print_array` held back for an array with no elements.
+        /// Writes what goes before the first own key of a value that is no plain object, once that key is known to print.
         #[cold]
         #[inline(never)]
-        fn open_array(&mut self) {
+        fn open_own_keys(&mut self) {
             let indent = self.formatter.indent;
             let mut writer = WrappedWriter {
                 ctx: &mut *self.writer,
                 failed: false,
                 estimated_line_length: &mut self.formatter.estimated_line_length,
             };
-            let was_good_time =
-                self.formatter.always_newline_scope || writer.good_time_for_a_new_line(indent);
-            if !self.single_line && (self.formatter.ordered_properties || was_good_time) {
-                writer.reset_line(indent);
-                writer.write_all(b"[\n");
-                writer.write_indent(indent);
-                writer.add_for_new_line(1);
-                self.array_open = ArrayOpen::Multiline;
-            } else {
-                writer.write_all(b"[ ");
-                writer.add_for_new_line(2);
-                self.array_open = ArrayOpen::Inline;
+            match self.opens {
+                Opens::Object | Opens::AfterEntry => {}
+                // The comma and the break that each later key gets.
+                Opens::AfterContent => self.i = 1,
+                Opens::EmptyArray => {
+                    let was_good_time = self.formatter.always_newline_scope
+                        || writer.good_time_for_a_new_line(indent);
+                    if !self.single_line && (self.formatter.ordered_properties || was_good_time) {
+                        writer.reset_line(indent);
+                        writer.write_all(b"[\n");
+                        writer.write_indent(indent);
+                        writer.add_for_new_line(1);
+                        self.broke_line = true;
+                    } else {
+                        writer.write_all(b"[ ");
+                        writer.add_for_new_line(2);
+                    }
+                }
+                Opens::AtEntryStart => {
+                    if !self.single_line {
+                        self.always_newline = true;
+                        writer.write_indent(indent);
+                    }
+                }
+                Opens::EmptyBrackets => writer.space(),
+                Opens::EmptyCollection | Opens::EmptyWeakCollection | Opens::Block => {
+                    // A `Map` lists one entry on each line. A block breaks the line only if it is long.
+                    self.always_newline = !self.single_line
+                        && (self.opens != Opens::Block || *writer.estimated_line_length > 80);
+                    let brace: &[u8] = if self.opens == Opens::EmptyCollection {
+                        b"(0) {"
+                    } else {
+                        b" {"
+                    };
+                    if C && self.opens == Opens::Block {
+                        writer.write_all(pfmt!("<r>", true).as_bytes());
+                    }
+                    writer.add_for_new_line(brace.len());
+                    writer.write_all(brace);
+                    if self.always_newline {
+                        writer.write_all(b"\n");
+                        writer.write_indent(indent);
+                        writer.reset_line(indent);
+                    } else {
+                        writer.space();
+                    }
+                }
             }
             if writer.failed {
                 self.formatter.failed = true;
@@ -3214,8 +3283,8 @@ pub mod formatter {
             }
 
             if ctx.i == 0 {
-                if ctx.array_open == ArrayOpen::Pending {
-                    ctx.open_array();
+                if ctx.opens != Opens::Object {
+                    ctx.open_own_keys();
                 } else if ctx.handle_first_property(global_this, ctx.parent).is_err() {
                     return None;
                 }
@@ -3386,6 +3455,15 @@ pub mod formatter {
             self.map_node.is_some() && self.map.contains(&value)
         }
 
+        fn write_circular<const C: bool>(&mut self, writer_: &mut dyn bun_io::Write) {
+            if writer_
+                .write_all(pfmt!("<r><cyan>[Circular]<r>", C).as_bytes())
+                .is_err()
+            {
+                self.failed = true;
+            }
+        }
+
         /// Circular-reference / stack-overflow / visited-map prelude for
         /// `print_as`. Outlined so its locals (the pool node, the
         /// `get_or_put` result, the `[Circular]` write path) live in a leaf
@@ -3422,12 +3500,7 @@ pub mod formatter {
             }
 
             if !self.visited_insert(value) {
-                if writer_
-                    .write_all(pfmt!("<r><cyan>[Circular]<r>", C).as_bytes())
-                    .is_err()
-                {
-                    self.failed = true;
-                }
+                self.write_circular::<C>(writer_);
                 return Ok(false);
             }
             *remove_before_recurse = true;
@@ -3479,7 +3552,13 @@ pub mod formatter {
                 Tag::StringPossiblyFormatted => {
                     self.print_string_possibly_formatted::<ENABLE_ANSI_COLORS>(writer_, value)
                 }
-                Tag::String => self.print_string::<ENABLE_ANSI_COLORS>(writer_, value, js_type),
+                // A primitive string has no keys.
+                Tag::String if js_type == jsc::JSType::String => {
+                    self.print_string::<ENABLE_ANSI_COLORS>(writer_, value, js_type)
+                }
+                Tag::String => {
+                    self.print_string_object::<ENABLE_ANSI_COLORS>(writer_, value, js_type)
+                }
                 Tag::Integer => self.print_integer::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::BigInt => self.print_bigint::<ENABLE_ANSI_COLORS>(writer_, value),
                 Tag::Double => self.print_double::<ENABLE_ANSI_COLORS>(writer_, value),
@@ -3554,6 +3633,153 @@ pub mod formatter {
                 opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
             }
             opts
+        }
+
+        /// Whether `print_own_keys` can have a key of `value` to list: one read of its Structure.
+        #[inline]
+        fn has_own_keys(&self, value: JSValue, keys: OwnKeys) -> bool {
+            !self.is_snapshot && value.has_own_keys_to_list(keys)
+        }
+
+        /// For a printer whose tag `print_as_prelude` does not record. `None`: `[Circular]` is written. `Some(keyed)`: own keys follow.
+        #[inline]
+        fn own_keys_follow<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            keys: OwnKeys,
+        ) -> Option<bool> {
+            if !self.has_own_keys(value, keys) {
+                return Some(false);
+            }
+            self.own_keys_follow_unless_circular::<C>(writer_, value)
+        }
+
+        #[cold]
+        #[inline(never)]
+        fn own_keys_follow_unless_circular<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+        ) -> Option<bool> {
+            if self.visited_contains(value) {
+                self.write_circular::<C>(writer_);
+                return None;
+            }
+            // The keys are one level down. Past the depth limit the value prints without them.
+            Some(self.depth <= self.max_depth)
+        }
+
+        /// `print_own_keys_one_level_down`, if `own_keys_follow` said `keyed`.
+        #[inline]
+        fn list_own_keys<const C: bool>(
+            &mut self,
+            keyed: bool,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            keys: OwnKeys,
+            opens: Opens,
+        ) -> JsResult<()> {
+            if keyed {
+                self.print_own_keys_one_level_down::<C>(writer_, value, keys, opens)?;
+            }
+            Ok(())
+        }
+
+        /// `print_own_keys` for a printer that is not inside its value: one level deeper, with strings quoted.
+        #[inline(never)]
+        fn print_own_keys_one_level_down<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            keys: OwnKeys,
+            opens: Opens,
+        ) -> JsResult<bool> {
+            let prev_quote_strings = self.quote_strings;
+            self.quote_strings = true;
+            let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
+            self.indent += 1;
+            self.depth = self.depth.saturating_add(1);
+            let _i = defer_decrement!(self.indent);
+            let _d = defer_decrement!(self.depth);
+            self.print_own_keys::<C>(writer_, value, keys, opens)
+        }
+
+        /// Lists the own enumerable keys of `value` behind its text and closes what `opens` opened. Returns whether a key printed.
+        #[inline(never)]
+        fn print_own_keys<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            keys: OwnKeys,
+            opens: Opens,
+        ) -> JsResult<bool> {
+            let single_line = self.single_line;
+            let global_this = self.global_this;
+            let call_getters = self.call_own_getters;
+            let entered = !opens.value_is_visited() && self.visited_insert(value);
+            // After an entry, each key gets the comma and the break of a later key.
+            let first = usize::from(opens == Opens::AfterEntry);
+            let mut iter = PropertyIteratorCtx::<C> {
+                formatter: self,
+                writer: writer_,
+                always_newline: false,
+                single_line,
+                opens,
+                broke_line: false,
+                parent: value,
+                i: first,
+            };
+            let walked = value.for_each_own_property(
+                global_this,
+                keys,
+                call_getters,
+                (&raw mut iter).cast::<c_void>(),
+                PropertyIteratorCtx::<C>::for_each,
+            );
+            let listed = iter.i != first;
+            let always_newline = iter.always_newline;
+            if entered {
+                self.visited_remove(value);
+            }
+            walked?;
+            if self.failed {
+                return Ok(listed);
+            }
+            match opens {
+                Opens::Object | Opens::AfterEntry | Opens::AfterContent | Opens::EmptyArray => {}
+                Opens::AtEntryStart => {
+                    if listed && !single_line {
+                        let _ = self.print_comma::<C>(writer_);
+                        let _ = writer_.write_all(b"\n");
+                    }
+                }
+                Opens::EmptyBrackets => {
+                    if listed {
+                        self.estimated_line_length += 2;
+                        let _ = writer_.write_all(b" ]");
+                    } else {
+                        let _ = writer_.write_all(b"]");
+                    }
+                }
+                Opens::EmptyCollection | Opens::EmptyWeakCollection | Opens::Block => {
+                    if !listed {
+                        if opens != Opens::Block {
+                            let _ = writer_.write_all(b" {}");
+                        }
+                    } else if always_newline {
+                        let _ = self.print_comma::<C>(writer_);
+                        let _ = writer_.write_all(b"\n");
+                        let _ = write_indent_n(self.indent.saturating_sub(1), writer_);
+                        let _ = writer_.write_all(b"}");
+                        self.estimated_line_length += 1;
+                    } else {
+                        self.estimated_line_length += 2;
+                        let _ = writer_.write_all(b" }");
+                    }
+                }
+            }
+            Ok(listed)
         }
 
         #[inline(never)]
@@ -3695,6 +3921,42 @@ pub mod formatter {
             let slice = str.slice();
             self.add_for_new_line(slice.len());
             self.write_with_formatting::<C>(writer_, slice, self.global_this)
+        }
+
+        /// A `String` object or a `RegExp`: the text, then the own keys.
+        #[inline(never)]
+        fn print_string_object<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+        ) -> JsResult<()> {
+            // The index keys of a `String` object are its characters.
+            let keys = if js_type == jsc::JSType::RegExpObject {
+                OwnKeys::All
+            } else {
+                OwnKeys::Named
+            };
+            if self.has_own_keys(value, keys) {
+                return self.print_keyed_string_object::<C>(writer_, value, js_type, keys);
+            }
+            self.print_string::<C>(writer_, value, js_type)
+        }
+
+        #[cold]
+        #[inline(never)]
+        fn print_keyed_string_object<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            js_type: jsc::JSType,
+            keys: OwnKeys,
+        ) -> JsResult<()> {
+            let Some(keyed) = self.own_keys_follow_unless_circular::<C>(writer_, value) else {
+                return Ok(());
+            };
+            self.print_string::<C>(writer_, value, js_type)?;
+            self.list_own_keys::<C>(keyed, writer_, value, keys, Opens::Block)
         }
 
         #[inline(never)]
@@ -3973,6 +4235,14 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
+                let Some(keyed) = self.own_keys_follow::<C>(writer_, value, OwnKeys::All) else {
+                    return Ok(());
+                };
+                let mut writer = WrappedWriter {
+                    ctx: writer_,
+                    failed: false,
+                    estimated_line_length: &mut self.estimated_line_length,
+                };
                 let number_name = value.get_class_name(self.global_this)?;
 
                 let number_value = value.to_js_string_view(self.global_this)?;
@@ -3991,7 +4261,13 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    return Ok(());
+                    return self.list_own_keys::<C>(
+                        keyed,
+                        writer_,
+                        value,
+                        OwnKeys::All,
+                        Opens::Block,
+                    );
                 }
 
                 writer.add_for_new_line(number_name.length() + number_value.length() + 4);
@@ -4005,7 +4281,7 @@ pub mod formatter {
                 if writer.failed {
                     self.failed = true;
                 }
-                return Ok(());
+                return self.list_own_keys::<C>(keyed, writer_, value, OwnKeys::All, Opens::Block);
             }
 
             let num = value.as_number();
@@ -4371,6 +4647,9 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            let Some(keyed) = self.own_keys_follow::<C>(writer_, value, OwnKeys::All) else {
+                return Ok(());
+            };
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -4402,8 +4681,11 @@ pub mod formatter {
             }
 
             writer.write_all(pfmt!("<r>", C).as_bytes());
-            writer.write_all(b" }");
             if writer.failed {
+                self.failed = true;
+            }
+            self.list_own_keys::<C>(keyed, writer_, value, OwnKeys::All, Opens::AfterContent)?;
+            if writer_.write_all(b" }").is_err() {
                 self.failed = true;
             }
             Ok(())
@@ -4429,6 +4711,14 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
+                let Some(keyed) = self.own_keys_follow::<C>(writer_, value, OwnKeys::All) else {
+                    return Ok(());
+                };
+                let mut writer = WrappedWriter {
+                    ctx: writer_,
+                    failed: false,
+                    estimated_line_length: &mut self.estimated_line_length,
+                };
                 let bool_name = value.get_class_name(self.global_this)?;
                 let bool_value = value.to_js_string_view(self.global_this)?;
 
@@ -4446,7 +4736,13 @@ pub mod formatter {
                     if writer.failed {
                         self.failed = true;
                     }
-                    return Ok(());
+                    return self.list_own_keys::<C>(
+                        keyed,
+                        writer_,
+                        value,
+                        OwnKeys::All,
+                        Opens::Block,
+                    );
                 }
                 writer.add_for_new_line(bool_value.length() + "[Boolean: ]".len());
                 writer.print(format_args!(
@@ -4458,7 +4754,7 @@ pub mod formatter {
                 if writer.failed {
                     self.failed = true;
                 }
-                return Ok(());
+                return self.list_own_keys::<C>(keyed, writer_, value, OwnKeys::All, Opens::Block);
             }
             if value.to_boolean() {
                 writer.add_for_new_line(4);
@@ -4501,6 +4797,13 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
+            let mut keyed = false;
+            if js_type == jsc::JSType::JSDate {
+                let Some(follow) = self.own_keys_follow::<C>(writer_, value, OwnKeys::All) else {
+                    return Ok(());
+                };
+                keyed = follow;
+            }
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -4542,7 +4845,7 @@ pub mod formatter {
                 if writer.failed {
                     self.failed = true;
                 }
-                return Ok(());
+                return self.list_own_keys::<C>(keyed, writer_, value, OwnKeys::All, Opens::Block);
             }
 
             writer.print(format_args!("{str}"));
@@ -4559,10 +4862,13 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            // `named`: no elements, and an enumerable named property to print. A snapshot has none.
+            // `named`: a named key to list. A snapshot lists none, and neither does an arguments object.
             let (len, named) = match value.array_length_and_named_keys() {
                 Some((len, named)) => (u64::from(len), named && !self.is_snapshot),
-                None => (value.get_length(self.global_this)?, false),
+                None => (
+                    value.get_length(self.global_this)?,
+                    !js_type.is_arguments() && self.has_own_keys(value, OwnKeys::Named),
+                ),
             };
             if (len != 0 || named) && self.depth > self.max_depth {
                 return self.print_depth_exceeded_marker::<C>(writer_, "Array");
@@ -4623,7 +4929,7 @@ pub mod formatter {
                 let mut empty_start: Option<u32> = None;
                 'first: {
                     if len == 0 {
-                        // `open_array` writes the bracket with the first property.
+                        // `open_own_keys` writes the bracket with the first property.
                         break 'first;
                     }
                     let element = get_element(0)?;
@@ -4811,51 +5117,53 @@ pub mod formatter {
                     // Hoist field reads before `formatter: self` reborrows the
                     // whole `*self` (struct-literal field order is not eval
                     // order in the borrow checker's eyes once `self` is moved).
-                    // `open_array` reads the line length of an empty array: do not reset it.
+                    // `open_own_keys` reads the line length of an empty array: do not reset it.
                     let always_newline = len != 0
                         && !self.single_line
                         && (self.always_newline_scope || self.good_time_for_a_new_line());
                     let single_line = self.single_line;
                     let global_this = self.global_this;
-                    let mut iter = PropertyIteratorCtx::<C> {
-                        formatter: self,
-                        writer: writer_,
-                        always_newline,
-                        single_line,
-                        array_open: if len == 0 {
-                            ArrayOpen::Pending
-                        } else {
-                            ArrayOpen::No
-                        },
-                        parent: value,
-                        i: i as usize,
-                    };
-                    value.for_each_property_non_indexed(
-                        global_this,
-                        (&raw mut iter).cast::<c_void>(),
-                        PropertyIteratorCtx::<C>::for_each,
-                    )?;
-                    let array_open = iter.array_open;
-                    if self.failed {
-                        return Ok(());
+                    if named {
+                        let call_getters = self.call_own_getters;
+                        let first = i as usize;
+                        let mut iter = PropertyIteratorCtx::<C> {
+                            formatter: self,
+                            writer: writer_,
+                            always_newline,
+                            single_line,
+                            opens: if len == 0 {
+                                Opens::EmptyArray
+                            } else {
+                                Opens::AfterEntry
+                            },
+                            broke_line: false,
+                            parent: value,
+                            i: first,
+                        };
+                        value.for_each_own_property(
+                            global_this,
+                            OwnKeys::Named,
+                            call_getters,
+                            (&raw mut iter).cast::<c_void>(),
+                            PropertyIteratorCtx::<C>::for_each,
+                        )?;
+                        let listed = iter.i != first;
+                        was_good_time = was_good_time || iter.broke_line;
+                        if self.failed {
+                            return Ok(());
+                        }
+                        if len == 0 && !listed {
+                            if writer_.write_all(b"[]").is_err() {
+                                self.failed = true;
+                            }
+                            return Ok(());
+                        }
                     }
                     writer = WrappedWriter {
                         ctx: writer_,
                         failed: false,
                         estimated_line_length: &mut self.estimated_line_length,
                     };
-                    match array_open {
-                        // No property printed.
-                        ArrayOpen::Pending => {
-                            writer.write_all(b"[]");
-                            if writer.failed {
-                                self.failed = true;
-                            }
-                            return Ok(());
-                        }
-                        ArrayOpen::Multiline => was_good_time = true,
-                        ArrayOpen::Inline | ArrayOpen::No => {}
-                    }
                 }
             }
 
@@ -4964,13 +5272,14 @@ pub mod formatter {
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
-            let map_name = if value.js_type() == jsc::JSType::WeakMap {
-                "WeakMap"
-            } else {
-                "Map"
-            };
+            let is_weak = value.js_type() == jsc::JSType::WeakMap;
+            let map_name = if is_weak { "WeakMap" } else { "Map" };
 
             if length == 0 {
+                if self.has_own_keys(value, OwnKeys::All) {
+                    return self
+                        .print_keyed_empty_collection::<C>(writer_, value, map_name, is_weak);
+                }
                 let _ = write!(writer_, "{map_name} {{}}");
                 return Ok(());
             }
@@ -5003,11 +5312,13 @@ pub mod formatter {
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, true>::for_each,
                     )?;
-                    let count = iter.count;
+                    let after_entry = iter.count > 0;
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if count > 0 {
+                    let listed =
+                        self.list_own_keys_after_entries::<C>(writer_, value, after_entry)?;
+                    if after_entry || listed {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
@@ -5024,6 +5335,7 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
+                    self.list_own_keys_after_entries::<C>(writer_, value, false)?;
                 }
             }
             if !self.single_line {
@@ -5031,6 +5343,48 @@ pub mod formatter {
             }
             let closing: &[u8] = if self.is_snapshot { b"}\n" } else { b"}" };
             let _ = writer_.write_all(closing);
+            Ok(())
+        }
+
+        /// The own keys of a `Map` or `Set` behind its entries. `after_entry`: an entry is on the line.
+        #[inline]
+        fn list_own_keys_after_entries<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            after_entry: bool,
+        ) -> JsResult<bool> {
+            if !self.has_own_keys(value, OwnKeys::All) {
+                return Ok(false);
+            }
+            let opens = if after_entry {
+                Opens::AfterEntry
+            } else {
+                Opens::AtEntryStart
+            };
+            self.print_own_keys::<C>(writer_, value, OwnKeys::All, opens)
+        }
+
+        /// A `Map` or `Set` with no entries that can have own keys: `Map(0) { key: 1 }`, or its marker past the depth limit.
+        #[cold]
+        #[inline(never)]
+        fn print_keyed_empty_collection<const C: bool>(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            name: &'static str,
+            is_weak: bool,
+        ) -> JsResult<()> {
+            if self.depth > self.max_depth {
+                return self.print_depth_exceeded_marker::<C>(writer_, name);
+            }
+            let _ = writer_.write_all(name.as_bytes());
+            let opens = if is_weak {
+                Opens::EmptyWeakCollection
+            } else {
+                Opens::EmptyCollection
+            };
+            self.print_own_keys_one_level_down::<C>(writer_, value, OwnKeys::All, opens)?;
             Ok(())
         }
 
@@ -5113,11 +5467,8 @@ pub mod formatter {
             self.quote_strings = true;
             let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
 
-            let set_name = if value.js_type() == jsc::JSType::WeakSet {
-                "WeakSet"
-            } else {
-                "Set"
-            };
+            let is_weak = value.js_type() == jsc::JSType::WeakSet;
+            let set_name = if is_weak { "WeakSet" } else { "Set" };
 
             // Snapshots indent a set once more, after whatever is already on the line.
             if self.is_snapshot {
@@ -5125,6 +5476,10 @@ pub mod formatter {
             }
 
             if length == 0 {
+                if self.has_own_keys(value, OwnKeys::All) {
+                    return self
+                        .print_keyed_empty_collection::<C>(writer_, value, set_name, is_weak);
+                }
                 let _ = write!(writer_, "{set_name} {{}}");
                 return Ok(());
             }
@@ -5157,11 +5512,13 @@ pub mod formatter {
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, true>::for_each,
                     )?;
-                    let is_first = iter.is_first;
+                    let after_entry = !iter.is_first;
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if !is_first {
+                    let listed =
+                        self.list_own_keys_after_entries::<C>(writer_, value, after_entry)?;
+                    if after_entry || listed {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
@@ -5178,6 +5535,7 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
+                    self.list_own_keys_after_entries::<C>(writer_, value, false)?;
                 }
             }
             if !self.single_line {
@@ -5779,7 +6137,8 @@ pub mod formatter {
                 writer: writer_,
                 always_newline,
                 single_line,
-                array_open: ArrayOpen::No,
+                opens: Opens::Object,
+                broke_line: false,
                 parent: value,
                 i: 0,
             };
@@ -5944,6 +6303,15 @@ pub mod formatter {
             if self.is_snapshot {
                 return self.print_typed_array_in_snapshot(writer_, value, js_type);
             }
+            // The index keys of a typed array are its elements.
+            let keys = if matches!(js_type, jsc::JSType::ArrayBuffer | jsc::JSType::DataView) {
+                OwnKeys::All
+            } else {
+                OwnKeys::Named
+            };
+            let Some(keyed) = self.own_keys_follow::<C>(writer_, value, keys) else {
+                return Ok(());
+            };
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -5967,7 +6335,7 @@ pub mod formatter {
                 if C {
                     writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
-                return Ok(());
+                return self.list_own_keys::<C>(keyed, writer_, value, keys, Opens::Block);
             }
 
             // `ArrayBuffer.typed_array_type` is `JSType` in the Rust
@@ -5986,6 +6354,16 @@ pub mod formatter {
                 },
             );
             if slice.is_empty() {
+                if keyed {
+                    writer.print(format_args!("({}) [", array_buffer.len));
+                    return self.list_own_keys::<C>(
+                        true,
+                        writer_,
+                        value,
+                        keys,
+                        Opens::EmptyBrackets,
+                    );
+                }
                 writer.print(format_args!("({}) []", array_buffer.len));
                 return Ok(());
             }
@@ -5994,8 +6372,11 @@ pub mod formatter {
 
             Self::write_typed_array::<C>(&mut writer, js_type, slice, None);
 
-            writer.write_all(b" ]");
             if writer.failed {
+                self.failed = true;
+            }
+            self.list_own_keys::<C>(keyed, writer_, value, keys, Opens::AfterContent)?;
+            if writer_.write_all(b" ]").is_err() {
                 self.failed = true;
             }
             Ok(())

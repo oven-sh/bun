@@ -1,5 +1,6 @@
 #include "root.h"
 #include "headers.h"
+#include "UtilInspect.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSFunction.h"
 #include "JavaScriptCore/JSString.h"
@@ -73,7 +74,56 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
 }
 
-// The length, plus bit 32 when the array is empty and has an enumerable named key. UINT64_MAX: not an ArrayType cell.
+// True if the Structure has an enumerable key that is no private name. The printer drops the text `constructor`, of a symbol too.
+static bool hasListedNamedKey(VM& vm, Structure* structure)
+{
+    bool found = false;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName())
+            return true;
+        if (WTF::equal(entry.key(), "constructor"_s))
+            return true;
+        found = true;
+        return false;
+    });
+    return found;
+}
+
+#if ASSERT_ENABLED
+// What the two probes below promise for "no key". A key that the engine keeps outside the Structure fails here.
+static bool ownPropertyWalkListsNothing(JSObject* object, OwnKeys keys)
+{
+    VM& vm = object->vm();
+    JSGlobalObject* globalObject = object->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    if (keys == OwnKeys::All)
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Exclude);
+    else
+        object->getOwnNonIndexPropertyNames(globalObject, names, DontEnumPropertiesMode::Exclude);
+    CLEAR_IF_EXCEPTION(scope);
+    for (auto& name : names) {
+        if (!WTF::equal(name.impl(), "constructor"_s))
+            return false;
+    }
+    return true;
+}
+#endif
+
+// False only if JSC__JSValue__forEachOwnProperty has no key of the value for the printer to list. It runs no JS.
+extern "C" bool Bun__JSValue__hasOwnKeysToList(JSC::EncodedJSValue encodedValue, OwnKeys keys)
+{
+    JSObject* object = JSValue::decode(encodedValue).getObject();
+    if (!object)
+        return false;
+    Structure* structure = object->structure();
+    bool has = (keys == OwnKeys::All && hasIndexedProperties(structure->indexingType()))
+        || (structure->maxOffset() != invalidOffset && hasListedNamedKey(object->vm(), structure));
+    ASSERT(has || ownPropertyWalkListsNothing(object, keys));
+    return has;
+}
+
+// The length, plus bit 32 when the array has a named key to list. UINT64_MAX: not an ArrayType cell.
 extern "C" uint64_t Bun__JSArray__lengthAndNamedKeys(JSC::EncodedJSValue encodedValue)
 {
     static constexpr uint64_t namedKeys = 1ULL << 32;
@@ -85,20 +135,9 @@ extern "C" uint64_t Bun__JSArray__lengthAndNamedKeys(JSC::EncodedJSValue encoded
     JSArray* array = uncheckedDowncast<JSArray>(value.asCell());
     uint64_t length = array->length();
     Structure* structure = array->structure();
-    if (length || (!structure->outOfLineSize() && !structure->inlineSize()))
-        return length;
-
-    VM& vm = array->vm();
-    bool found = false;
-    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-        if ((entry.attributes() & PropertyAttribute::DontEnum) || PropertyName(entry.key()).isPrivateName())
-            return true;
-        if (WTF::equal(entry.key(), "constructor"_s)) // the property walk prints no key with this text, a symbol too
-            return true;
-        found = true;
-        return false;
-    });
-    return found ? namedKeys : 0;
+    bool has = structure->maxOffset() != invalidOffset && hasListedNamedKey(array->vm(), structure);
+    ASSERT(has || ownPropertyWalkListsNothing(array, OwnKeys::Named));
+    return has ? length | namedKeys : length;
 }
 
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by

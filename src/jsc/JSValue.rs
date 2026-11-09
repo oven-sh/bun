@@ -2162,8 +2162,17 @@ struct SerializedScriptValueExternal {
 pub type ForEachCallback =
     extern "C" fn(vm: *mut crate::VM, global: &JSGlobalObject, ctx: *mut c_void, next: JSValue);
 
+/// Which own keys [`JSValue::for_each_own_property`] passes on. Must match `OwnKeys` in `UtilInspect.h`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnKeys {
+    /// No index key: an Array, a typed array and a String object print those as their elements.
+    Named = 0,
+    All = 1,
+}
+
 /// Callback signature for [`JSValue::for_each_property`] /
-/// [`JSValue::for_each_property_non_indexed`].
+/// [`JSValue::for_each_own_property`].
 /// C++ passes the address of a stack `EncodedSlice` as `key`.
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
@@ -2447,27 +2456,36 @@ impl JSValue {
         JSC__JSValue__forEachPropertyCallingOwnGetters(self, global, ctx, callback);
         scope.return_if_exception()
     }
-    /// `JSValue.forEachPropertyNonIndexed` — like
-    /// [`for_each_property`](Self::for_each_property) but skips array-index
-    /// keys.
-    pub(crate) fn for_each_property_non_indexed(
+    /// The own enumerable keys of `self` that `keys` names: index keys, then strings in creation order, then symbols.
+    pub(crate) fn for_each_own_property(
         self,
         global: &JSGlobalObject,
+        keys: OwnKeys,
+        call_getters: bool,
         ctx: *mut c_void,
         callback: ForEachPropertyCallback,
     ) -> JsResult<()> {
         unsafe extern "C" {
             // safe: same contract as `JSC__JSValue__forEachProperty` above.
-            safe fn JSC__JSValue__forEachPropertyNonIndexed(
+            safe fn JSC__JSValue__forEachOwnProperty(
                 this: JSValue,
                 global: &JSGlobalObject,
+                keys: OwnKeys,
+                call_getters: bool,
                 ctx: *mut c_void,
                 callback: ForEachPropertyCallback,
             );
         }
         crate::top_scope!(scope, global);
-        JSC__JSValue__forEachPropertyNonIndexed(self, global, ctx, callback);
+        JSC__JSValue__forEachOwnProperty(self, global, keys, call_getters, ctx, callback);
         scope.return_if_exception()
+    }
+    /// False only if [`for_each_own_property`](Self::for_each_own_property) has no key for the console formatter to list.
+    pub(crate) fn has_own_keys_to_list(self, keys: OwnKeys) -> bool {
+        unsafe extern "C" {
+            safe fn Bun__JSValue__hasOwnKeysToList(this: JSValue, keys: OwnKeys) -> bool;
+        }
+        Bun__JSValue__hasOwnKeysToList(self, keys)
     }
     /// `JSValue.forEachPropertyOrdered` — like
     /// [`for_each_property`](Self::for_each_property) but visits keys in
@@ -2575,7 +2593,7 @@ impl JSValue {
             index => Some(index as u32),
         }
     }
-    /// For an `Array`: its length, and whether it is empty and has an enumerable named property.
+    /// For an `Array`: its length, and whether it has a named key for the console formatter to list.
     pub(crate) fn array_length_and_named_keys(self) -> Option<(u32, bool)> {
         unsafe extern "C" {
             safe fn Bun__JSArray__lengthAndNamedKeys(this: JSValue) -> u64;

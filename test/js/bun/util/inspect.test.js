@@ -437,7 +437,7 @@ it("inspect", () => {
     enumerable: true,
     value: Set,
   });
-  expect(Bun.inspect(setWithOverriddenSize)).toBe("Set {}");
+  expect(Bun.inspect(setWithOverriddenSize)).toBe("Set(0) {\n  size: [class Set],\n}");
 
   const mapWithOverriddenSize = new Map();
   Object.defineProperty(mapWithOverriddenSize, "size", {
@@ -445,7 +445,7 @@ it("inspect", () => {
     enumerable: true,
     value: "not a number",
   });
-  expect(Bun.inspect(mapWithOverriddenSize)).toBe("Map {}");
+  expect(Bun.inspect(mapWithOverriddenSize)).toBe('Map(0) {\n  size: "not a number",\n}');
   expect(Bun.inspect(<div>foo</div>)).toBe("<div>foo</div>");
   expect(Bun.inspect(<div hello>foo</div>)).toBe("<div hello=true>foo</div>");
   expect(Bun.inspect(<div hello={1}>foo</div>)).toBe("<div hello=1>foo</div>");
@@ -2065,4 +2065,339 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
+});
+
+// An own enumerable key follows the content of a value, as a named key follows the elements of an array.
+describe("the own keys of a value that is not a plain object", () => {
+  const keyed = (value, keys = { extra: 1 }) => Object.assign(value, keys);
+  class NumberChild extends Number {}
+  class BooleanChild extends Boolean {}
+  // Puts a private field on any object: the base constructor returns it.
+  class PrivateField extends function (object) {
+    return object;
+  } {
+    #field = 1;
+  }
+
+  // [kind, a value with no own key, its text, its text with the key `extra: 1`, that text on one line, that text past
+  // the depth limit]. A kind that is marked with "elements" prints its index keys as its elements.
+  // prettier-ignore
+  const kinds = [
+    ["Map", () => new Map([[1, 2]]), "Map(1) {\n  1: 2,\n}", "Map(1) {\n  1: 2,\n  extra: 1,\n}", "Map(1) { 1: 2, extra: 1 }", "[Map ...]"],
+    ["Map with no entries", () => new Map(), "Map {}", "Map(0) {\n  extra: 1,\n}", "Map(0) { extra: 1 }", "[Map ...]"],
+    ["WeakMap", () => new WeakMap(), "WeakMap {}", "WeakMap {\n  extra: 1,\n}", "WeakMap { extra: 1 }", "[WeakMap ...]"],
+    ["Set", () => new Set([1]), "Set(1) {\n  1,\n}", "Set(1) {\n  1,\n  extra: 1,\n}", "Set(1) { 1, extra: 1 }", "[Set ...]"],
+    ["Set with no entries", () => new Set(), "Set {}", "Set(0) {\n  extra: 1,\n}", "Set(0) { extra: 1 }", "[Set ...]"],
+    ["WeakSet", () => new WeakSet(), "WeakSet {}", "WeakSet {\n  extra: 1,\n}", "WeakSet { extra: 1 }", "[WeakSet ...]"],
+    ["Uint8Array (elements)", () => new Uint8Array(2), "Uint8Array(2) [ 0, 0 ]", "Uint8Array(2) [ 0, 0, extra: 1 ]"],
+    ["Uint8Array with no elements (elements)", () => new Uint8Array(0), "Uint8Array(0) []", "Uint8Array(0) [ extra: 1 ]"],
+    ["Float64Array (elements)", () => new Float64Array(1), "Float64Array(1) [ 0 ]", "Float64Array(1) [ 0, extra: 1 ]"],
+    ["BigInt64Array (elements)", () => new BigInt64Array(1), "BigInt64Array(1) [ 0n ]", "BigInt64Array(1) [ 0n, extra: 1 ]"],
+    ["ArrayBuffer", () => new ArrayBuffer(1), "ArrayBuffer(1) [ 0 ]", "ArrayBuffer(1) [ 0, extra: 1 ]"],
+    ["SharedArrayBuffer", () => new SharedArrayBuffer(1), "SharedArrayBuffer(1) [ 0 ]", "SharedArrayBuffer(1) [ 0, extra: 1 ]"],
+    ["DataView", () => new DataView(new ArrayBuffer(1)), "DataView(1) [ 0 ]", "DataView(1) [ 0, extra: 1 ]"],
+    ["RegExp", () => /x/g, "/x/g", "/x/g { extra: 1 }"],
+    ["Date", () => new Date(0), "1970-01-01T00:00:00.000Z", "1970-01-01T00:00:00.000Z { extra: 1 }"],
+    ["Date that is invalid", () => new Date(NaN), "Invalid Date", "Invalid Date { extra: 1 }"],
+    ["Promise", () => Promise.resolve(), "Promise { <resolved> }", "Promise { <resolved>, extra: 1 }"],
+    ["Promise that is pending", () => new Promise(() => {}), "Promise { <pending> }", "Promise { <pending>, extra: 1 }"],
+    ["String object (elements)", () => new String("s"), '"s"', '"s" { extra: 1 }'],
+    ["String object that is empty (elements)", () => new String(""), '""', '"" { extra: 1 }'],
+    ["String object of two-byte text (elements)", () => new String("日本"), '"日本"', '"日本" { extra: 1 }'],
+    ["Number object", () => new Number(1), "[Number: 1]", "[Number: 1] { extra: 1 }"],
+    ["Number subclass", () => new NumberChild(1), "[Number (NumberChild): 1]", "[Number (NumberChild): 1] { extra: 1 }"],
+    ["Boolean object", () => new Boolean(true), "[Boolean: true]", "[Boolean: true] { extra: 1 }"],
+    ["Boolean subclass", () => new BooleanChild(false), "[Boolean (BooleanChild): false]", "[Boolean (BooleanChild): false] { extra: 1 }"],
+  ];
+
+  describe.each(kinds)("%s", (kind, make, text, withKey, onOneLine = withKey, pastDepth = text) => {
+    const withKeyAs = key => withKey.replace("extra: 1", key);
+    const hasElements = kind.endsWith("(elements)");
+
+    it("lists a key after its content", () => {
+      expect(Bun.inspect(make())).toBe(text);
+      expect(Bun.inspect(keyed(make()))).toBe(withKey);
+      expect(Bun.inspect(keyed(make()), { compact: true })).toBe(onOneLine);
+      expect(Bun.inspect({ value: keyed(make()) })).toBe(`{\n  value: ${withKey.replaceAll("\n", "\n  ")},\n}`);
+      const twice = keyed(make());
+      expect(Bun.inspect([twice, twice], { compact: true })).toBe(`[ ${onOneLine}, ${onOneLine} ]`);
+    });
+
+    it("lists a key as the object printer does", () => {
+      expect(Bun.inspect(keyed(make(), { extra: "text" }))).toBe(withKeyAs('extra: "text"'));
+      expect(Bun.inspect(keyed(make(), { [Symbol("s")]: 1 }))).toBe(withKeyAs("[Symbol(s)]: 1"));
+      let calls = 0;
+      const getter = { get: () => ++calls, enumerable: true };
+      expect(Bun.inspect(Object.defineProperty(make(), "extra", getter))).toBe(withKeyAs("extra: [Getter]"));
+      expect(calls).toBe(0);
+      const itself = make();
+      itself.extra = itself;
+      expect(Bun.inspect(itself)).toBe(withKeyAs("extra: [Circular]"));
+      // The keys are one level down, so the value prints them at the depth limit. It is in there a second time.
+      expect(Bun.inspect(itself, { depth: 0 })).toBe(withKeyAs("extra: [Circular]"));
+    });
+
+    it.skipIf(hasElements)("lists an index key and a key that is named length", () => {
+      const own = { value: 0, enumerable: true, writable: true, configurable: true };
+      expect(Bun.inspect(Object.defineProperty(make(), "7", own))).toBe(withKeyAs('"7": 0'));
+      expect(Bun.inspect(Object.defineProperty(make(), "length", own))).toBe(withKeyAs("length: 0"));
+    });
+
+    it("prints as before when no key is listed", () => {
+      const deleted = keyed(make());
+      delete deleted.extra;
+      const hidden = Object.defineProperty(make(), "extra", { value: 1 });
+      const named = keyed(make(), { constructor: 1, [Symbol("constructor")]: 2 });
+      const privately = new PrivateField(make());
+      for (const value of [deleted, hidden, named, privately]) {
+        expect(Bun.inspect(value)).toBe(text);
+        // The line of the array is over 80 columns behind the value. Where it breaks is the same.
+        const around = value => Bun.inspect(["a".repeat(70), value, 1, 2, 3]);
+        expect(around(value)).toBe(around(make()));
+      }
+      expect(Bun.inspect({ value: make() }, { depth: 0 })).toBe(
+        `{\n  value: ${pastDepth === text || text.includes("\n") ? pastDepth : text},\n}`,
+      );
+    });
+
+    it("stops at the depth limit", () => {
+      expect(Bun.inspect({ value: keyed(make()) }, { depth: 0 })).toBe(`{\n  value: ${pastDepth},\n}`);
+      // At the limit the value of a key is past it.
+      expect(Bun.inspect(keyed(make(), { extra: { a: 1 } }), { depth: 0 })).toBe(withKeyAs("extra: [Object ...]"));
+    });
+
+    it("has the same text with colors", () => {
+      const value = { value: keyed(make(), { extra: "text", [Symbol("s")]: 1 }) };
+      expect(Bun.stripANSI(Bun.inspect(value, { colors: true }))).toBe(Bun.inspect(value));
+      expect(Bun.stripANSI(Bun.inspect(value, { colors: true, compact: true }))).toBe(
+        Bun.inspect(value, { compact: true }),
+      );
+    });
+  });
+
+  it("ends the color of the text before the brace of a block", () => {
+    const inspect = value => Bun.inspect(keyed(value), { colors: true });
+    const key = "\x1b[0mextra\x1b[2m:\x1b[0m \x1b[0m\x1b[33m1\x1b[0m";
+    expect({
+      emptyString: inspect(new String("")),
+      emptyStringInAnObject: Bun.inspect({ value: keyed(new String("")) }, { colors: true, compact: true }),
+      string: inspect(new String("s")),
+      date: inspect(new Date(0)),
+      number: inspect(new Number(1)),
+      typedArray: inspect(new Uint8Array(1)),
+      emptyTypedArray: inspect(new Uint8Array(0)),
+      promise: inspect(Promise.resolve()),
+      emptyMap: inspect(new Map()),
+    }).toEqual({
+      emptyString: `""\x1b[0m { ${key} }`,
+      emptyStringInAnObject: `{ \x1b[0mvalue\x1b[2m:\x1b[0m \x1b[0m\x1b[32m""\x1b[0m { ${key} }\x1b[0m }`,
+      string: `\x1b[0m\x1b[32m"s"\x1b[0m\x1b[0m { ${key} }`,
+      date: `\x1b[0m\x1b[35m1970-01-01T00:00:00.000Z\x1b[0m\x1b[0m { ${key} }`,
+      number: `\x1b[0m\x1b[33m[Number: 1]\x1b[0m\x1b[0m { ${key} }`,
+      typedArray: `Uint8Array(1) [ \x1b[0m\x1b[33m0\x1b[0m\x1b[0m\x1b[2m,\x1b[0m ${key} ]`,
+      emptyTypedArray: `Uint8Array(0) [ ${key} ]`,
+      promise: `Promise { \x1b[0m\x1b[36m<resolved>\x1b[0m\x1b[0m\x1b[2m,\x1b[0m ${key} }`,
+      emptyMap: `Map(0) {\n  ${key}\x1b[0m\x1b[2m,\x1b[0m\n}`,
+    });
+  });
+
+  // A diff has the text of a snapshot. That text has the keys of a Number or Boolean object, and of no other kind.
+  it.each(kinds.filter(([kind]) => !/^(Number|Boolean)/.test(kind)))(
+    "the text of a %s in a diff is as before",
+    (_, make) => {
+      const diff = value => {
+        try {
+          expect(value).toEqual(null);
+        } catch (error) {
+          return error.message;
+        }
+        throw new Error("toEqual(null) passed");
+      };
+      expect(diff(keyed(make()))).toBe(diff(make()));
+    },
+  );
+
+  it("keeps the text of a snapshot", () => {
+    expect(keyed(new Map([[1, 2]]))).toMatchInlineSnapshot(`
+      Map {
+        1 => 2,
+      }
+    `);
+    expect({ date: keyed(new Date(0)), bytes: keyed(new Uint8Array(1)), pattern: keyed(/x/) }).toMatchInlineSnapshot(`
+      {
+        "bytes": Uint8Array [
+          0,
+        ],
+        "date": 1970-01-01T00:00:00.000Z,
+        "pattern": /x/,
+      }
+    `);
+  });
+
+  it("lists the fields of a subclass, and no key of a prototype", () => {
+    class Registry extends Map {
+      name = "registry";
+    }
+    Registry.prototype.shared = 1;
+    expect(Bun.inspect(new Registry([[1, 2]]))).toBe('Map(1) {\n  1: 2,\n  name: "registry",\n}');
+    class Task extends Promise {
+      id = 7;
+    }
+    expect(Bun.inspect(new Task(() => {}))).toBe("Promise { <pending>, id: 7 }");
+  });
+
+  it("lists index keys, then string keys in the order of their creation, then symbols", () => {
+    const date = new Date(0);
+    date[Symbol("s")] = 1;
+    date.b = 2;
+    date[9] = 3;
+    date.a = 4;
+    date[2] = 5;
+    expect(Bun.inspect(date)).toBe('1970-01-01T00:00:00.000Z { "2": 5, "9": 3, b: 2, a: 4, [Symbol(s)]: 1 }');
+  });
+
+  it("lists the value of a key one level deeper", () => {
+    expect(Bun.inspect(keyed(new Date(0), { a: { b: { c: {} } } }), { depth: 1 })).toBe(
+      "1970-01-01T00:00:00.000Z { a: {\n    b: [Object ...],\n  } }",
+    );
+    expect(Bun.inspect(keyed(new Map([[1, 2]]), { a: { b: 1 } }))).toBe(
+      "Map(1) {\n  1: 2,\n  a: {\n    b: 1,\n  },\n}",
+    );
+    expect(Bun.inspect(keyed(new Uint8Array(1), { a: { b: 1 } }))).toBe("Uint8Array(1) [ 0, a: {\n    b: 1,\n  } ]");
+  });
+
+  // An entry has its string key in quotes. An own key has quotes only when it is no identifier.
+  it("lists the keys of a Map after its entries, in the same braces", () => {
+    const map = new Map([
+      ["name", 1],
+      ["a-b", 2],
+      [true, 3],
+    ]);
+    expect(Bun.inspect(keyed(map, { name: "own", "a-b": "own", true: "own" }))).toBe(
+      'Map(3) {\n  "name": 1,\n  "a-b": 2,\n  true: 3,\n  name: "own",\n  "a-b": "own",\n  true: "own",\n}',
+    );
+  });
+
+  it("lists the keys of a Map whose size is not its number of entries", () => {
+    const map = Object.defineProperty(keyed(new Map()), "size", { value: 2 });
+    expect(Bun.inspect(map)).toBe("Map(2) {\n  extra: 1,\n}");
+    expect(Bun.inspect(map, { compact: true })).toBe("Map(2) { extra: 1 }");
+  });
+
+  it("breaks a line that is over 80 columns", () => {
+    const long = "a".repeat(90);
+    const two = { a: 1, b: 2 };
+    expect({
+      block: Bun.inspect(keyed(new RegExp(long))),
+      blockOfTwo: Bun.inspect(keyed(new RegExp(long), two)),
+      longValue: Bun.inspect(keyed(new Date(0), { a: long, b: 2 })),
+      manyElements: Bun.inspect(keyed(new Uint8Array(42), two)),
+      behindALongKey: Bun.inspect({ [long]: keyed(new Uint8Array(2), two) }),
+      noElementsBehindALongKey: Bun.inspect({ [long]: keyed(new Uint8Array(0), two) }),
+      promise: Bun.inspect(keyed(Promise.resolve(), { a: long, b: 2 })),
+    }).toEqual({
+      block: `/${long}/ {\n  extra: 1,\n}`,
+      blockOfTwo: `/${long}/ {\n  a: 1,\n  b: 2,\n}`,
+      longValue: `1970-01-01T00:00:00.000Z { a: "${long}",\n  b: 2 }`,
+      manyElements: `Uint8Array(42) [ ${"0, ".repeat(41)}0,\n  a: 1, b: 2 ]`,
+      behindALongKey: `{\n  ${long}: Uint8Array(2) [ 0, 0,\n    a: 1, b: 2 ],\n}`,
+      noElementsBehindALongKey: `{\n  ${long}: Uint8Array(0) [ a: 1,\n    b: 2 ],\n}`,
+      promise: `Promise { <resolved>, a: "${long}",\n  b: 2 }`,
+    });
+  });
+
+  // An error prints a Buffer as text when it is UTF-8, with no inspect function called.
+  it("lists the keys of a Buffer that an error prints", () => {
+    const error = new Error("message");
+    error.text = keyed(Buffer.from("hi"));
+    error.bytes = keyed(Buffer.from([255, 254]));
+    const printed = Bun.inspect(error);
+    expect(printed).toContain(' text: "hi" { extra: 1 },\n');
+    expect(printed).toContain("bytes: Buffer(2) [ 255, 254, extra: 1 ],\n");
+  });
+
+  it("prints a value that holds itself as [Circular] where the depth limit is near", () => {
+    const date = new Date(0);
+    date.self = date;
+    const error = Object.assign(new Error("message"), { date });
+    expect(Bun.inspect(error)).toContain(" date: 1970-01-01T00:00:00.000Z { self: [Circular] },\n");
+    expect(Bun.inspect.table([{ date }])).toContain(" 1970-01-01T00:00:00.000Z { self: [Circular] } ");
+  });
+
+  it("throws what the value of a key throws", () => {
+    const throws = {
+      [Bun.inspect.custom]() {
+        throw new Error("from the value");
+      },
+    };
+    for (const [, make, , withKey, onOneLine = withKey] of kinds) {
+      const value = keyed(make(), { throws });
+      expect(() => Bun.inspect(value)).toThrow("from the value");
+      delete value.throws;
+      expect(Bun.inspect(keyed(value), { compact: true })).toBe(onOneLine);
+    }
+  });
+
+  // The error printer goes on behind a value that threw. The next values show what the walk left behind.
+  it.each(kinds)("a %s whose key threw prints again, and the values behind it are indented as before", (_, make) => {
+    let threw = false;
+    const toString = () => {
+      if (threw) return "7";
+      threw = true;
+      throw new Error("once");
+    };
+    const value = keyed(make(), { key: Object.defineProperty(new Number(7), "toString", { value: toString }) });
+    const printed = Bun.inspect(new AggregateError([value, value, { after: { x: { y: 1 } } }]), { depth: 2 });
+    const again = Bun.inspect(value);
+    expect(again).toContain("key: [Number: 7]");
+    expect(printed.split(/^error\n/m).slice(1)).toEqual([
+      expect.stringContaining("key: [threw while printing]\n"),
+      again + "\n",
+      "{\n  after: {\n    x: [Object ...],\n  },\n}\n",
+    ]);
+  });
+
+  it("lists the keys in the message of ERR_INVALID_ARG_VALUE, as Node.js does", () => {
+    expect(() => require("node:dns").setDefaultResultOrder(keyed(new Date(0)))).toThrow(
+      "The argument 'order' is invalid. Received 1970-01-01T00:00:00.000Z { extra: 1 }",
+    );
+  });
+
+  it("calls the own getters of a value in the message of a matcher", () => {
+    const message = value => {
+      try {
+        expect(value).toBe(1);
+      } catch (error) {
+        return Bun.stripANSI(error.message);
+      }
+    };
+    const total = { get: () => 5, enumerable: true };
+    expect(message(Object.defineProperty(new Map(), "total", total))).toContain("Received: Map(0) {\n  total: 5,\n}");
+    expect(message(Object.defineProperty(new Date(0), "total", total))).toContain(
+      "Received: 1970-01-01T00:00:00.000Z { total: 5 }",
+    );
+    expect(message(Object.defineProperty([], "total", total))).toContain("Received: [ total: 5 ]");
+    expect(message(Object.defineProperty([1], "total", total))).toContain("Received: [ 1, total: 5 ]");
+  });
+
+  // These print as before. Node.js and `util.inspect` list the key of each. A row moves to `kinds` when its printer does.
+  // prettier-ignore
+  it.failing.each([
+    // #32226
+    ["function", () => function named() {}, "extra: 1"],
+    ["class", () => class Named {}, "extra: 1"],
+    // The array printer lists no named key of an arguments object (#15404).
+    ["arguments object", () => (function () { return arguments; })(1), "extra: 1"],
+    ["Map iterator", () => new Map([[1, 2]]).entries(), "extra: 1"],
+    ["Set iterator", () => new Set([1]).values(), "extra: 1"],
+    ["Timeout", () => { const timer = setTimeout(() => {}, 0); clearTimeout(timer); return timer; }, "extra: 1"],
+    // The index key of a String object that is no character.
+    ["String object with an index key past its text", () => new String("s"), '"7": 1', { 7: 1 }],
+    // #38937
+    ["Date with a key that is named constructor", () => new Date(0), "constructor: 1", { constructor: 1 }],
+    // #46156
+    ["Date with sorted keys", () => new Date(0), "a: 2, b: 1", { b: 1, a: 2 }, { sorted: true }],
+  ])("a %s lists its own keys", (_, make, expected, keys = { extra: 1 }, options) => {
+    expect(Bun.inspect(keyed(make(), keys), options)).toContain(expected);
+  });
 });

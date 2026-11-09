@@ -299,3 +299,26 @@ console.log("%%d", 1);
   nonEmptyArrayWithItems.field2 = 2;
   console.log(nonEmptyArrayWithItems);
 }
+
+// An own key follows the content of a value that is not a plain object. %s converts to a string and lists no key.
+{
+  const keyed = value => Object.assign(value, { extra: 1 });
+  console.log(keyed(new String("s")));
+  console.log(keyed(new Map([[1, 2]])));
+  console.log(keyed(new Date(0)));
+  console.log("%s %s %s", keyed(/x/), keyed(new String("s")), keyed(new Number(1)));
+  console.log("%o %O", keyed(/x/), keyed(new Number(1)));
+
+  // console.log() writes a string as it is. The value of a key is in quotes.
+  const text = value => Object.assign(value, { extra: "text" });
+  console.log(text(new Date(0)));
+  console.log(text(Promise.resolve()));
+  console.log(text(new Uint8Array(0)));
+  console.log(text(new Uint8Array(1)));
+  console.log(text(new Map()));
+  console.log(text(new Set([1])));
+  console.log("%o", text(/x/));
+
+  // A RegExp or a String object before the last argument prints as its text (#45571).
+  console.log(keyed(/x/), keyed(new String("s")), keyed(/x/));
+}

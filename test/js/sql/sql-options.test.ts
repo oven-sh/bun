@@ -1077,3 +1077,65 @@ describe("a query keeps its state in private fields", () => {
     }
   });
 });
+
+// What prints an error that nothing caught calls no inspect function, and lists the own keys of each value in it.
+describe("the error printer lists no state of a query", () => {
+  const password = "Hunter2Marker";
+
+  test.each([
+    ["postgres", `postgres://user:${password}@127.0.0.1:1/db`],
+    ["mysql", `mysql://user:${password}@127.0.0.1:1/db`],
+    ["sqlite", ":memory:"],
+  ])("%s: a query in a property of an error", async (_, url) => {
+    await using sql = new SQL(url, { max: 1 });
+    const query = sql`select 1`;
+    const printed = Bun.inspect(Object.assign(new Error("failed"), { query }));
+    expect(printed).toContain(" query: Promise { <pending> },\n");
+    expect(printed).not.toContain(password);
+  });
+
+  async function printedBy(code: string, url: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const sql = new Bun.SQL(process.env.URL, { max: 1 }); ${code}`],
+      env: { ...bunEnv, URL: url },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    "reportError({ query: sql`select 1` });",
+    "throw { query: sql`select 1` };",
+    "Promise.reject({ query: sql`select 1` });",
+  ])("%s prints a pending Promise", async code => {
+    const { stdout, stderr, exitCode } = await printedBy(code, `postgres://user:${password}@127.0.0.1:1/db`);
+    expect(stdout).toBe("");
+    expect(stderr).toStartWith("error\n{\n  query: Promise { <pending> },\n}\n");
+    expect(stderr).not.toContain(password);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a query that ran on a connection of the pool prints as a resolved Promise", async () => {
+    const { port, server } = await pgMockServer(type => {
+      if (type !== "Q") return;
+      return [
+        pgRowDescription([{ name: "x", typeOid: 23 }]),
+        pgDataRow([Buffer.from("1")]),
+        pgCommandComplete("SELECT 1"),
+        pgReadyForQuery(),
+      ];
+    });
+    try {
+      const code = "const query = sql`select 1 as x`.simple(); await query; reportError({ query }); await sql.close();";
+      const { stdout, stderr, exitCode } = await printedBy(code, `postgres://user:${password}@127.0.0.1:${port}/db`);
+      expect(stdout).toBe("");
+      expect(stderr).toStartWith("error\n{\n  query: Promise { <resolved> },\n}\n");
+      expect(stderr).not.toContain(password);
+      expect(exitCode).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+});

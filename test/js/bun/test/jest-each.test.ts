@@ -283,6 +283,21 @@ describe.concurrent("titles", () => {
     });
   });
 
+  it("%p, %o and %O list the own keys of a value that is not a plain object", async () => {
+    expect(
+      await titlesOf(
+        [["%p|%o|%O", `[new Stamp(0), new Registry([[1, 2]])].map(value => [value, value, value])`]],
+        `class Stamp extends Date { zone = "utc" } class Registry extends Map { name = "reg" }`,
+      ),
+    ).toEqual({
+      titles: [
+        Array(3).fill('1970-01-01T00:00:00.000Z { zone: "utc" }').join("|"),
+        Array(3).fill('Map(1) { 1: 2, name: "reg" }').join("|"),
+      ],
+      exitCode: 0,
+    });
+  });
+
   it("%#, %$ and %% take no value, and anything else after a % is kept", async () => {
     expect(
       await titlesOf([

@@ -1,8 +1,24 @@
 declare module "bun" {
+  namespace __internal {
+    interface FallbackWebAssemblyTag {
+      readonly [Symbol.toStringTag]: "WebAssembly.Tag";
+    }
+    // An empty interface, not `{}`: an interface without members is read as its base, and `{}` is an object literal type.
+    interface LibWebAssemblyTag {}
+    // lib.dom's `Tag` is empty. It stays empty with lib.dom, so that a cast of an export to `WebAssembly.Tag` is legal.
+    type LibOrFallbackWebAssemblyTag = LibDomIsLoaded extends true ? LibWebAssemblyTag : FallbackWebAssemblyTag;
+  }
+
   namespace WebAssembly {
     type ImportExportKind = "function" | "global" | "memory" | "table" | "tag";
     type TableKind = "anyfunc" | "externref";
-    type ExportValue = Function | Global | WebAssembly.Memory | WebAssembly.Table | Tag;
+    // Every value fits lib.dom's empty `Tag`, so with lib.dom a tag is no export value, as in lib.dom itself.
+    type ExportValue =
+      | Function
+      | Global
+      | WebAssembly.Memory
+      | WebAssembly.Table
+      | (__internal.LibDomIsLoaded extends true ? never : Tag);
     type Exports = Record<string, ExportValue>;
     type ImportValue = ExportValue | number;
     type Imports = Record<string, ModuleImports>;
@@ -51,24 +67,6 @@ declare module "bun" {
       readonly buffer: ArrayBuffer;
       /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Memory/grow) */
       grow(delta: number): number;
-      /**
-       * Returns the memory as a fixed-length buffer, which becomes
-       * {@link buffer}. A resizable buffer of the memory is detached.
-       *
-       * For a shared memory the result is a `SharedArrayBuffer`, and no buffer
-       * is detached.
-       */
-      toFixedLengthBuffer(): ArrayBuffer | SharedArrayBuffer;
-      /**
-       * Returns the memory as a resizable buffer, which becomes {@link buffer}.
-       * The fixed-length buffer of the memory is detached. The resizable buffer
-       * grows with the memory, and its `maxByteLength` is the maximum size of
-       * the memory.
-       *
-       * For a shared memory the result is a growable `SharedArrayBuffer`, and
-       * no buffer is detached.
-       */
-      toResizableBuffer(): ArrayBuffer | SharedArrayBuffer;
     }
 
     /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module) */
@@ -121,7 +119,7 @@ declare module "bun" {
 
     interface ExceptionOptions {
       /** Give the exception a `stack` property with a stack trace. Defaults to `false`. */
-      traceStack?: boolean;
+      traceStack?: boolean | undefined;
     }
 
     /**
@@ -130,9 +128,7 @@ declare module "bun" {
      *
      * [MDN Reference](https://developer.mozilla.org/docs/WebAssembly/Reference/JavaScript_interface/Tag)
      */
-    interface Tag {
-      readonly [Symbol.toStringTag]: "WebAssembly.Tag";
-    }
+    interface Tag extends __internal.LibOrFallbackWebAssemblyTag {}
 
     /**
      * An exception that WebAssembly code throws to JavaScript, or that
@@ -265,10 +261,6 @@ declare namespace WebAssembly {
    * this tag can catch such a value as an `externref`.
    */
   var JSTag: Tag;
-
-  // `promising`, `Suspending` and `SuspendError` are not declared here. lib.dom does not declare them
-  // yet. If it later gives `Suspending` or `SuspendError` another type than a `var` here has, that
-  // is an error (TS2403).
 
   interface Table extends Bun.WebAssembly.Table {}
   var Table: {

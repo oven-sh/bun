@@ -902,10 +902,11 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  async function checkSource(name: string, lib: string[], source: string) {
+  async function checkSource(name: string, lib: string[], source: string, options: Partial<ts.CompilerOptions> = {}) {
     const checkDir = join(TEMP_DIR, name);
     const tsconfig = structuredClone(sourceTsconfig);
     tsconfig.include = ["check.ts"];
+    Object.assign(tsconfig.compilerOptions, options);
     tsconfig.compilerOptions.lib = lib;
     tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
     await mkdir(checkDir, { recursive: true });
@@ -941,17 +942,81 @@ describe("@types/bun integration test", () => {
          Response.redirect(url, { status: 302 });
 
          class BareStream extends ReadableStream {}
-         new BareStream();
+         new BareStream({ type: "bytes" });
+         // A program that picks between the class and a subclass of it constructs what it picked.
+         class ByteStream extends ReadableStream<Uint8Array> {}
+         declare const subclass: boolean;
+         new (subclass ? ByteStream : ReadableStream)({ type: "bytes" });
 
-         // @ts-expect-error - a byte source does not produce strings
-         new ReadableStream<string>({ type: "bytes" });
-         declare const derived: InstanceType<typeof ReadableStream>;
-         derived satisfies ReadableStream<Uint8Array>;
-         export const byteSourceFirst: ConstructorParameters<typeof ReadableStream>[0] = { type: "bytes" };
+         // A source of type \`any\` gives \`ReadableStream<any>\`, and no byte stream (#44614).
+         declare const source: any;
+         export const fromAny: ReadableStream<string> = new ReadableStream(source);
+         // The expected type sets the chunk type of a byte stream.
+         export function byteStream<T extends Uint8Array>(): ReadableStream<T> {
+           return new ReadableStream({ type: "bytes" });
+         }
+
+         // What a program reads off the constructor type stays: three signatures, and the last one is the byte source.
+         type EverySource = typeof ReadableStream extends {
+           new (...args: infer A1): any;
+           new (...args: infer A2): any;
+           new (...args: infer A3): any;
+         }
+           ? NonNullable<A1[0] | A2[0] | A3[0]>
+           : never;
+         export const defaultSource: EverySource = { start() {} };
+         export const byteSource: ConstructorParameters<typeof ReadableStream>[0] = { type: "bytes" };
+         declare const instance: InstanceType<typeof ReadableStream>;
+         instance satisfies ReadableStream<Uint8Array>;
+
+         // lib.dom has an empty \`WebAssembly.Tag\`, and no tag among the values that a module imports.
+         declare const compiled: WebAssembly.Module;
+         declare const settings: { trace?: boolean };
+         const tag = new WebAssembly.Tag({ parameters: ["i32"] });
+         const exception = new WebAssembly.Exception(tag, [1], { traceStack: settings.trace });
+         WebAssembly.instantiate(compiled, { env: { thrown: tag, thrownByJavaScript: WebAssembly.JSTag } });
+         // @ts-expect-error - a string is not a value that a module imports
+         WebAssembly.instantiate(compiled, { env: { thrown: "tag" } });
+         // @ts-expect-error - a number is not a tag
+         exception.is(42);
+         // @ts-expect-error - an object is not a tag
+         new WebAssembly.Exception({}, []);
 
          // @ts-expect-error - the runtime ignores \`endings\` (#11796), so the option is not declared
          new Blob(["a"], { endings: "native" });`,
+        { exactOptionalPropertyTypes: true },
       );
+    });
+
+    // TypeScript before 7 reads every construct signature of the base class for a class in a JavaScript file.
+    typeTest("a class in a checked JavaScript file extends ReadableStream", {
+      options: { checkJs: true },
+      files: {
+        "streams-in-javascript.js": `
+          /** @extends {ReadableStream<string>} */
+          export class Lines extends ReadableStream {}
+          /** @extends {ReadableStream<Uint8Array>} */
+          export class Bytes extends ReadableStream {
+            constructor() {
+              super({ type: "bytes" });
+            }
+          }
+          /**
+           * @template {Uint8Array} T
+           * @extends {ReadableStream<T>}
+           */
+          export class Chunks extends ReadableStream {}
+          export class Bare extends ReadableStream {}
+
+          /** @type {ReadableStream<Uint8Array<ArrayBuffer>>} */
+          export const bytes = new ReadableStream({ type: "bytes" });
+          /** @type {ReadableStream<string>} */
+          // @ts-expect-error - a byte source does not produce strings
+          export const text = new ReadableStream({ type: "bytes" });
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: [],
     });
   });
 

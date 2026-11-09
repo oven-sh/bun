@@ -152,19 +152,18 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
-    // The two signatures for a byte source. An `extends` clause reads only the signatures that take its
-    // number of type arguments, and they must all return the same type. So the signature for an explicit
-    // `<R>` has no constraint, and its parameter refuses an `R` that is not a `Uint8Array`. The signature
-    // that infers `R` takes three type parameters, which keeps it out of `extends ReadableStream` and
-    // `extends ReadableStream<T>`. In a checked JavaScript file that holds from TypeScript 7 only.
-    new <R>(
-      underlyingSource: R extends Uint8Array ? import("node:stream/web").UnderlyingByteSource : never,
+    // A call without type arguments infers `K` as `"bytes"`. Else `K` is `never`, and this returns `ReadableStream<R>`.
+    new <
+      R = any,
+      K extends "bytes" = never,
+      B extends ([K] extends [never] ? unknown : Uint8Array) = [K] extends [never] ? R : Uint8Array<ArrayBuffer>,
+    >(
+      // Always `UnderlyingByteSource`. The other branch is where a call infers `K`.
+      underlyingSource: [K] extends ["bytes"]
+        ? import("node:stream/web").UnderlyingByteSource
+        : import("node:stream/web").UnderlyingByteSource & { type: K },
       strategy?: { highWaterMark?: number },
-    ): ReadableStream<R>;
-    new <A extends never, B extends never, R extends Uint8Array = Uint8Array<ArrayBuffer>>(
-      underlyingSource: import("node:stream/web").UnderlyingByteSource,
-      strategy?: { highWaterMark?: number },
-    ): ReadableStream<R | A | B>;
+    ): ReadableStream<B>;
   }
 >;
 

@@ -22,10 +22,22 @@ const program = `const url = new URL("http://localhost/a/b");
 const request = new Request(url, { method: "POST" });
 const redirect = Response.redirect(url, 302);
 console.log(request.method, new Request({ url }).url, redirect.headers.get("location"));
+console.log(Response.redirect(url, { status: 307 }).status, URL.canParse(url), URL.parse(url)?.href);
 console.log(URL.canParse("/c", url), URL.parse("c", url)?.href);
 
 class Lines extends ReadableStream<string> {}
 class Chunks extends ReadableStream {}
+class Bytes<T extends Uint8Array> extends ReadableStream<T> {
+  constructor() {
+    super({
+      type: "bytes",
+      pull(controller) {
+        controller.enqueue(new Uint8Array([104, 105]));
+        controller.close();
+      },
+    });
+  }
+}
 const bytes: ReadableStream<Uint8Array<ArrayBuffer>> = new ReadableStream({ type: "bytes" });
 const lines = new Lines({
   start(controller) {
@@ -33,7 +45,9 @@ const lines = new Lines({
     controller.close();
   },
 });
-console.log(await lines.text(), new Chunks() instanceof ReadableStream, bytes.locked);
+console.log(await lines.text(), new Chunks({ type: "bytes" }) instanceof Chunks, bytes.locked);
+const { value: chunk } = await new Bytes().getReader().read();
+console.log(chunk instanceof Uint8Array, Buffer.isBuffer(chunk), chunk?.length);
 
 const tag = new WebAssembly.Tag({ parameters: ["i32"] });
 const exception = new WebAssembly.Exception(tag, [7]);
@@ -41,8 +55,10 @@ console.log(exception.is(tag), exception.is(WebAssembly.JSTag), exception.getArg
 `;
 
 const printed = `POST http://localhost/a/b http://localhost/a/b
+307 true http://localhost/a/b
 true http://localhost/a/c
 line true false
+true false 2
 true false 7
 `;
 

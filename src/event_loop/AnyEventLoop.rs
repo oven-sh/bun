@@ -164,7 +164,6 @@ impl AnyEventLoop {
     pub fn tick_once(&mut self, context: *mut core::ffi::c_void) {
         match self {
             AnyEventLoop::Js { owner } => {
-                let _ = context;
                 owner.tick();
                 owner.auto_tick_active();
             }
@@ -314,13 +313,7 @@ impl EventLoopHandle {
     #[inline]
     pub fn as_event_loop_ctx(self) -> bun_io::EventLoopCtx {
         match self {
-            // SAFETY: `owner.bun_vm()` returns the owning `*mut VirtualMachine`,
-            // which is what the `EventLoopCtxKind::Js` `link_impl_EventLoopCtx!`
-            // (in `bun_jsc`) is written for. Both are per-thread singletons
-            // that outlive the ctx.
-            EventLoopHandle::Js { owner } => unsafe {
-                bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, owner.bun_vm())
-            },
+            EventLoopHandle::Js { owner } => owner.event_loop_ctx(),
             // `mini` is a `BackRef` to the live per-thread singleton (see
             // `mini_mut` doc) — valid for the ctx's lifetime.
             EventLoopHandle::Mini(mut mini) => {
@@ -384,7 +377,7 @@ impl EventLoopHandle {
     /// (the trait) and the `*mut Loop` deref dance in scope. `uws_loop` is the
     /// process-global loop returned by `AnyEventLoop::r#loop()` — never null.
     #[inline]
-    pub fn set_as_parent_of(self, uws_loop: &mut UwsLoop) {
+    pub fn set_as_parent_of(self, uws_loop: &UwsLoop) {
         let (tag, ptr) = self.into_tag_ptr();
         uws_loop.internal_loop_data.set_parent_raw(tag, ptr);
     }

@@ -152,7 +152,14 @@ const allTests = extractTests(esbuildSource);
 const todoPatterns: RegExp[] = [];
 
 // Additional specific tests that use features not yet working
-const todoTests = new Set<string>([]);
+const todoTests = new Set<string>([
+  // Expects a ReferenceError from a class element decorator argument that
+  // reads the class name before the class decorators run. Bun keeps the class
+  // members in place and binds the body's name to a `let` declared before the
+  // class, so that read is `undefined` instead, as in tsc's output. Once the
+  // class is bound, the name is the class the class decorators returned.
+  "Decorator list evaluation: Class binding (class statement)",
+]);
 
 function shouldTodo(name: string): boolean {
   if (todoTests.has(name)) return true;

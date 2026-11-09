@@ -1,0 +1,22 @@
+function f({ a =
+  // c
+  1 }) {}
+function g(a =
+  // c
+  1) {}
+const [b =
+  // c
+  1] = x;
+({ a =
+  // c
+  1 } = x);
+function h({ a: b =
+  /* c */
+  1 }) {}
+function i({
+  m = /** @type {M} */
+  /** @type {unknown} */ t,
+}) {}
+function j(a
+  // c
+  = 1) {}

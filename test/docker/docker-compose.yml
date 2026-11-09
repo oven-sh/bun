@@ -4,17 +4,22 @@ services:
   # image so cold container start is `exec postgres` (~1-2s) instead of the
   # stock entrypoint's first-boot init. State lives on the container's CoW
   # layer, so a fresh container is still a fresh cluster.
+  #
+  # `init: true` and no shell in the health check: as PID 1 the postmaster adopts
+  # the pg_isready that a timed-out CMD-SHELL check orphans and takes its exit
+  # status 2 for a crashed backend (all sessions die, recovery).
   postgres_plain:
     build:
       context: .
       dockerfile: Dockerfile.postgres-plain
     image: bun-postgres-plain:local
+    init: true
     ports:
       - target: 5432
         published: 0
         protocol: tcp
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -26,6 +31,7 @@ services:
       context: ../js/sql/docker-tls
       dockerfile: Dockerfile
     image: bun-postgres-tls:local
+    init: true
     ports:
       - target: 5432
         published: 0
@@ -39,7 +45,7 @@ services:
       -c max_prepared_transactions=1000
       -c max_connections=2000
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -51,6 +57,7 @@ services:
       context: .
       dockerfile: Dockerfile.postgres-auth
     image: bun-postgres-auth:local
+    init: true
     ports:
       - target: 5432
         published: 0
@@ -61,7 +68,7 @@ services:
       -c max_prepared_transactions=1000
       -c max_connections=2000
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD", "pg_isready", "-U", "postgres"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -181,33 +188,6 @@ services:
       - redis-unix:/tmp/redis
       - redis-data:/data
 
-  # MinIO (S3) Service
-  minio:
-    image: minio/minio:latest
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-      MINIO_DOMAIN: localhost
-    command: server /data --console-address :9001
-    ports:
-      - target: 9000
-        published: 0
-        protocol: tcp
-        name: api
-      - target: 9001
-        published: 0
-        protocol: tcp
-        name: console
-    tmpfs:
-      - /data
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
-      start_period: 60s
-      start_interval: 1s
-
   # WebSocket Autobahn Test Suite
   # NOTE: Autobahn requires port 9002 to match both internal and external ports
   # because it validates the Host header against its configured listening port.
@@ -247,7 +227,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "pgrep squid > /dev/null"]
+      # The process is there well before it listens, and a test file that its PR changes runs first, right behind "ready".
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/3128"]
       interval: 5s
       timeout: 5s
       retries: 30

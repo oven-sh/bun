@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, withoutAggressiveGC } from "harness";
+import vm from "node:vm";
 
 const RealStringDecoder = require("string_decoder").StringDecoder;
 
@@ -16,8 +17,9 @@ function FakeStringDecoderCall() {
 }
 require("util").inherits(FakeStringDecoderCall, RealStringDecoder);
 
-// extending StringDecoder is not supported
-for (const StringDecoder of [FakeStringDecoderCall, RealStringDecoder]) {
+class SubStringDecoder extends RealStringDecoder {}
+
+for (const StringDecoder of [FakeStringDecoderCall, RealStringDecoder, SubStringDecoder]) {
   describe(StringDecoder.name, () => {
     it("StringDecoder-utf8", () => {
       test("utf-8", Buffer.from("$", "utf-8"), "$");
@@ -305,6 +307,114 @@ describe("StringDecoder called without new", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
+});
+
+// A native constructor receives new.target in the this slot. One function served both [[Call]] and
+// [[Construct]], so `new Sub()` looked like `StringDecoder.call(Sub)`: it wrote the decoder state
+// onto the class and returned the class.
+describe("StringDecoder constructed with another new.target", () => {
+  it("new Sub() returns an instance of Sub", () => {
+    class Sub extends RealStringDecoder {}
+    const decoder = new Sub("utf16le");
+    expect({
+      isTheClass: decoder === Sub,
+      type: typeof decoder,
+      hasSubPrototype: Object.getPrototypeOf(decoder) === Sub.prototype,
+      instanceOfBase: decoder instanceof RealStringDecoder,
+      classKeys: Reflect.ownKeys(Sub),
+      encoding: decoder.encoding,
+      decoded: decoder.write(Buffer.from("hi", "utf16le")),
+    }).toEqual({
+      isTheClass: false,
+      type: "object",
+      hasSubPrototype: true,
+      instanceOfBase: true,
+      classKeys: ["length", "name", "prototype"],
+      encoding: "utf16le",
+      decoded: "hi",
+    });
+  });
+
+  it("a subclass can add a constructor, fields and methods", () => {
+    class Sub extends RealStringDecoder {
+      chunks = 0;
+      constructor(encoding, label) {
+        super(encoding);
+        this.label = label;
+      }
+      write(buf) {
+        this.chunks++;
+        return super.write(buf);
+      }
+    }
+    const decoder = new Sub("utf8", "euro");
+    expect(decoder.write(Buffer.from([0xe2, 0x82]))).toBe("");
+    expect({ lastNeed: decoder.lastNeed, lastTotal: decoder.lastTotal, lastChar: [...decoder.lastChar] }).toEqual({
+      lastNeed: 1,
+      lastTotal: 3,
+      lastChar: [0xe2, 0x82, 0, 0],
+    });
+    expect(decoder.write(Buffer.from([0xac]))).toBe("€");
+    expect(decoder.end()).toBe("");
+    expect({ label: decoder.label, chunks: decoder.chunks }).toEqual({ label: "euro", chunks: 2 });
+    expect(() => new Sub("bogus")).toThrow(expect.objectContaining({ code: "ERR_UNKNOWN_ENCODING" }));
+  });
+
+  // The shape of Babel's _callSuper helper: an ES5 constructor that forwards its own new.target.
+  it("Reflect.construct takes the prototype from new.target", () => {
+    function Legacy(encoding) {
+      return Reflect.construct(RealStringDecoder, [encoding], new.target);
+    }
+    Object.setPrototypeOf(Legacy.prototype, RealStringDecoder.prototype);
+    Object.setPrototypeOf(Legacy, RealStringDecoder);
+    const decoder = new Legacy("hex");
+    expect(decoder).toBeInstanceOf(Legacy);
+    expect(decoder.write(Buffer.from([0xab]))).toBe("ab");
+    expect(Object.hasOwn(Legacy, "encoding")).toBe(false);
+
+    function Unrelated() {}
+    const other = Reflect.construct(RealStringDecoder, ["latin1"], Unrelated);
+    expect(other).not.toBe(Unrelated);
+    expect(Object.getPrototypeOf(other)).toBe(Unrelated.prototype);
+    expect(Object.hasOwn(Unrelated, "encoding")).toBe(false);
+    expect(RealStringDecoder.prototype.write.call(other, Buffer.from([0xe9]))).toBe("é");
+  });
+
+  // An unfixed build writes `encoding` onto the global Object here. The delete keeps that out of other tests.
+  it("Reflect.construct with Object as new.target does not return or change Object", () => {
+    try {
+      const decoder = Reflect.construct(RealStringDecoder, ["utf8"], Object);
+      expect({
+        isObject: decoder === Object,
+        hasObjectPrototype: Object.getPrototypeOf(decoder) === Object.prototype,
+        objectHasEncoding: Object.hasOwn(Object, "encoding"),
+        decoded: RealStringDecoder.prototype.write.call(decoder, Buffer.from("hi")),
+      }).toEqual({ isObject: false, hasObjectPrototype: true, objectHasEncoding: false, decoded: "hi" });
+    } finally {
+      delete Object.encoding;
+    }
+  });
+
+  it("reads the prototype through a Proxy new.target", () => {
+    class Sub extends RealStringDecoder {}
+    const decoder = Reflect.construct(RealStringDecoder, ["utf8"], new Proxy(Sub, {}));
+    expect(decoder).toBeInstanceOf(Sub);
+    expect(decoder.write(Buffer.from("hi"))).toBe("hi");
+
+    const { proxy, revoke } = Proxy.revocable(Sub, {});
+    revoke();
+    expect(() => Reflect.construct(RealStringDecoder, ["utf8"], proxy)).toThrow(TypeError);
+  });
+
+  it("a class from a node:vm context can extend StringDecoder", () => {
+    const result = vm.runInNewContext(
+      `class Sub extends StringDecoder {}
+       const decoder = new Sub("utf8");
+       [decoder instanceof Sub, decoder instanceof StringDecoder, decoder.write(bytes)];`,
+      { StringDecoder: RealStringDecoder, bytes: Buffer.from("hi") },
+    );
+    expect([...result]).toEqual([true, true, "hi"]);
   });
 });
 

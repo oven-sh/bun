@@ -194,7 +194,7 @@ impl UnicodeRange {
         // This deviates from the spec in case there are CSS comments
         // between tokens in the middle of one <unicode-range>,
         // but oh well…
-        let concatenated_tokens = input.slice_from_cloned(after_u);
+        let concatenated_tokens = input.slice_from(after_u);
 
         let range = if let Some(range) = Self::parse_concatenated(concatenated_tokens) {
             range
@@ -220,19 +220,12 @@ impl UnicodeRange {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
             css::Token::Number { .. } => {
                 let after_number = input.state();
-                let token = match input.next_including_whitespace() {
-                    Ok(vv) => vv,
-                    Err(_) => {
-                        input.reset(&after_number);
-                        return Ok(());
+                match input.next_including_whitespace() {
+                    Ok(&css::Token::Delim(c)) if c == '?' as u32 => {
+                        return Self::parse_question_marks(input);
                     }
-                };
-
-                if matches!(*token, css::Token::Delim(c) if c == '?' as u32) {
-                    return Self::parse_question_marks(input);
-                }
-                if matches!(*token, css::Token::Delim(_) | css::Token::Number { .. }) {
-                    return Ok(());
+                    Ok(&css::Token::Dimension { .. } | &css::Token::Number { .. }) => {}
+                    _ => input.reset(&after_number),
                 }
                 return Ok(());
             }
@@ -415,7 +408,7 @@ pub enum FontFormat {
 
 impl FontFormat {
     fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
-        let s = input.expect_ident_or_string_cloned()?;
+        let s = input.expect_ident_or_string()?;
         Ok(crate::match_ignore_ascii_case! { s, {
             b"woff" => FontFormat::Woff,
             b"woff2" => FontFormat::Woff2,
@@ -429,18 +422,19 @@ impl FontFormat {
     }
 
     fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        let format: &[u8] = match self {
+            FontFormat::Woff => b"woff",
+            FontFormat::Woff2 => b"woff2",
+            FontFormat::Truetype => b"truetype",
+            FontFormat::Opentype => b"opentype",
+            FontFormat::EmbeddedOpentype => b"embedded-opentype",
+            FontFormat::Collection => b"collection",
+            FontFormat::Svg => b"svg",
+            FontFormat::String(s) => s,
+        };
         // Browser support for keywords rather than strings is very limited.
         // https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/src
-        match self {
-            FontFormat::Woff => dest.write_str("woff"),
-            FontFormat::Woff2 => dest.write_str("woff2"),
-            FontFormat::Truetype => dest.write_str("truetype"),
-            FontFormat::Opentype => dest.write_str("opentype"),
-            FontFormat::EmbeddedOpentype => dest.write_str("embedded-opentype"),
-            FontFormat::Collection => dest.write_str("collection"),
-            FontFormat::Svg => dest.write_str("svg"),
-            FontFormat::String(s) => dest.serialize_string(*s),
-        }
+        dest.serialize_string(format)
     }
 
     fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
@@ -674,58 +668,16 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
+    use css::{Parser, ParserOptions, Result};
 
     impl AtRuleParser for FontFaceDeclarationParser {
         type Prelude = ();
         type AtRule = FontFaceProperty;
-
-        fn parse_prelude(
-            _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Prelude> {
-            Err(
-                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
-                    [u8],
-                >(name))),
-            )
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _: Self::Prelude,
-            _: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-        }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _: Self::Prelude,
-            _: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl QualifiedRuleParser for FontFaceDeclarationParser {
         type Prelude = ();
         type QualifiedRule = FontFaceProperty;
-
-        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _: Self::Prelude,
-            _: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
     }
 
     impl DeclarationParser for FontFaceDeclarationParser {
@@ -733,7 +685,7 @@ const _: () = {
 
         fn parse_value(
             _this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> Result<Self::Declaration> {
             let state = input.state();

@@ -1,0 +1,13 @@
+let query = getSessionKysely(database.db)
+  .selectFrom("session_nodes")
+  .where("session_key", "=", expected.sessionKey)
+  // JSON.parse uses the last duplicate key; SQLite extraction uses the first.
+  .where(sql<boolean>`NOT EXISTS (
+      SELECT 1 FROM json_each(entry_json)
+    )`);
+a
+  .b()
+  // short
+  .c(`
+    d
+  `);

@@ -5,7 +5,6 @@ use bun_core::{Global, Output};
 use bun_options_types::schema::api;
 
 use crate::shell::Interpreter;
-use bun_sys;
 
 use crate::command::Context;
 

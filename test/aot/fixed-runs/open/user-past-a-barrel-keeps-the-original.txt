@@ -1,0 +1,28 @@
+Whoever is linked past a barrel by name keeps the original behind vi.doMock() of the barrel; import() of a computed name gets the mock.
+#### a.test.js
+import { test } from "bun:test";
+import { seen } from "./user.js";
+test("t", async () => console.log("| CASE", await seen()));
+#### b.test.js
+import { test } from "bun:test";
+import { later } from "./user.js";
+test("the next file", async () => { const m = await import("./barrel.js"); console.log("| CASE next", later(), m.x, m.y); });
+#### barrel.js
+export { x, y } from "./leaf.js";
+#### barrel2.js
+export { x, y } from "./barrel.js";
+#### leaf.js
+export const x = "real x"; export const y = "real y";
+#### user.js
+import { vi } from "bun:test";
+import { x, y } from "./barrel2.js"; const read = () => [x, y].join(" ");
+const ask = async name => { try { const m = await import(name); return [m.x, m.y, Object.keys(m).sort().join("+")].join(" "); } catch (e) { return "threw " + e.name; } };
+export const seen = async () => {
+  const said = [read()];
+  vi.doMock("./barrel.js", () => ({ x: "over x", y: "mock y" }));
+  said.push(read(), await ask("./barrel2.js"), await ask("./barrel.js"), await ask("./leaf.js"), read());
+  vi.doUnmock("./barrel.js");
+  said.push(read(), await ask("./barrel.js"), await ask("./barrel2.js"));
+  return said.join(" | ");
+};
+export const later = () => read();

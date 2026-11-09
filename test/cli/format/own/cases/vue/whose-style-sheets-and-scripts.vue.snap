@@ -1,0 +1,150 @@
+------------------
+{ printWidth: 40 }
+------------------
+<template>
+  <p
+    :a="b ? c : d ? e : f"
+    style="
+      font-family:
+        system-ui,
+        -apple-system,
+        &quot;Segoe UI&quot;,
+        sans-serif;
+    "
+  >
+    அனிமேசன், நகைச்சுவை படங்கள் மற்றும்
+    செய்திகளை அனிமேசன், நகைச்சுவை
+    படங்கள்
+  </p>
+</template>
+<style>
+a {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+</style>
+<style lang="scss">
+a {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+</style>
+<script>
+x = {
+  a: 1,
+  b: 2,
+  c: 3,
+  d: 4,
+};
+y = [a, b];
+f(
+  a,
+  b,
+);
+</script>
+
+------------------
+{ printWidth: 80 }
+------------------
+<template>
+  <p
+    :a="b ? c : d ? e : f"
+    style="
+      font-family:
+        system-ui,
+        -apple-system,
+        &quot;Segoe UI&quot;,
+        sans-serif;
+    "
+  >
+    அனிமேசன், நகைச்சுவை படங்கள் மற்றும் செய்திகளை அனிமேசன், நகைச்சுவை படங்கள்
+  </p>
+</template>
+<style>
+a {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+</style>
+<style lang="scss">
+a {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+</style>
+<script>
+x = {
+  a: 1,
+  b: 2,
+  c: 3,
+  d: 4,
+};
+y = [a, b];
+f(
+  a,
+  b,
+);
+</script>
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<template>
+  <p
+    :a="b ? c : d ? e : f"
+    style="
+      font-family:
+        system-ui,
+        -apple-system,
+        &quot;Segoe UI&quot;,
+        sans-serif;
+    "
+  >
+    அனிமேசன், நகைச்சுவை படங்கள் மற்றும் செய்திகளை அனிமேசன், நகைச்சுவை படங்கள்
+  </p>
+</template>
+<style>
+a {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+</style>
+<style lang="scss">
+a {
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+}
+</style>
+<script>
+x = {
+  a: 1,
+  b: 2,
+  c: 3,
+  d: 4,
+};
+y = [a, b];
+f(
+  a,
+  b,
+);
+</script>
+
+===================== End =====================

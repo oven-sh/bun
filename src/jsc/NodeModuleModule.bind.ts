@@ -1,8 +1,9 @@
-import { fn, t } from "bindgen";
+import * as b from "../codegen/bindgen-lib.ts";
 
-export const _stat = fn({
+export const _stat = b.fn({
   args: {
-    str: t.UTF8String,
+    str: b.string.loose.utf8,
   },
-  ret: t.i32,
+  returns: b.i32,
+  rustPath: "crate::node_module_module::stat",
 });

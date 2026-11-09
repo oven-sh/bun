@@ -1,0 +1,8 @@
+if (1)
+  const enum A {}
+else
+  const enum B {}
+enum C {}
+function f() {
+  enum D {}
+}

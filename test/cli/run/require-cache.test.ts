@@ -11,6 +11,7 @@ import {
   isMusl,
   isWindows,
   tempDir,
+  withoutAsanQuarantine,
 } from "harness";
 import { join } from "path";
 
@@ -204,6 +205,16 @@ describe.concurrent("require.cache", () => {
       expect(exitCode).toBe(0);
     }, 60000);
 
+    // The harness turns the transpiler cache off, so each import() parses the module again: ~15ms in release, 115 to
+    // 185ms under ASAN, where the full counts are a minute of work. The ASAN counts still leak past the limit with the
+    // bug (0.64 and 1.7 MB per import); its quarantine, which holds ~150 MB of what was freed, is off for these two.
+    const noQuarantine = {
+      ...bunEnv,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    };
+
     test("via await import() with a lot of function calls", async () => {
       let text = "function i() { return 1; }\n";
       for (let i = 0; i < 20000; i++) {
@@ -223,13 +234,13 @@ describe.concurrent("require.cache", () => {
             delete require.cache[path];
           }
 
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < ${isASAN ? 25 : 100}; i++) {
             await import(path);
             bust();
           }
           gc(true);
           const baseline = rss();
-          for (let i = 0; i < 400; i++) {
+          for (let i = 0; i < ${isASAN ? 150 : 400}; i++) {
             await import(path);
             bust(path);
           }
@@ -238,7 +249,7 @@ describe.concurrent("require.cache", () => {
           const diff = after - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
+          if (diff > 64 * 1024 * 1024) {
             // Bun v1.1.22 reported 1 MB here on macoS arm64.
             // Bun v1.1.21 reported 257 MB here on macoS arm64.
             throw new Error("Memory leak detected");
@@ -249,7 +260,7 @@ describe.concurrent("require.cache", () => {
       });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
+        env: noQuarantine,
         stdio: ["inherit", "inherit", "inherit"],
       });
 
@@ -273,13 +284,13 @@ describe.concurrent("require.cache", () => {
             delete require.cache[path];
           }
 
-          for (let i = 0; i < 50; i++) {
+          for (let i = 0; i < ${isASAN ? 40 : 50}; i++) {
             await import(path);
             bust();
           }
           gc(true);
           const baseline = rss();
-          for (let i = 0; i < 250; i++) {
+          for (let i = 0; i < ${isASAN ? 60 : 250}; i++) {
             await import(path);
             bust(path);
           }
@@ -288,7 +299,7 @@ describe.concurrent("require.cache", () => {
           const diff = after - baseline;
           console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
           console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
+          if (diff > 64 * 1024 * 1024) {
             // Bun v1.1.21 reported 423 MB here on macoS arm64.
             // Bun v1.1.22 reported 4 MB here on macoS arm64.
             throw new Error("Memory leak detected");
@@ -300,7 +311,7 @@ describe.concurrent("require.cache", () => {
       console.log({ dir });
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-        env: bunEnv,
+        env: noQuarantine,
         stdio: ["inherit", "inherit", "inherit"],
       });
 
@@ -339,13 +350,13 @@ describe.concurrent("require.cache", () => {
             }
           }
 
-          for (let i = 0; i < 100; i++) {
+          for (let i = 0; i < ${isASAN ? 25 : 100}; i++) {
             require(path);
             bust();
           }
           gc(true);
           const baseline = rss();
-          for (let i = 0; i < 400; i++) {
+          for (let i = 0; i < ${isASAN ? 150 : 400}; i++) {
             require(path);
             bust(path);
           }
@@ -365,7 +376,7 @@ describe.concurrent("require.cache", () => {
         });
         await using proc = Bun.spawn({
           cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
-          env: bunEnv,
+          env: noQuarantine,
           stdio: ["inherit", "inherit", "inherit"],
         });
 
@@ -576,7 +587,7 @@ describe.concurrent("require.cache", () => {
     test("via require()", async () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "cjs-fixture-leak-small.js")],
-        env: bunEnv,
+        env: withoutAsanQuarantine(bunEnv),
         stderr: "inherit",
       });
 
@@ -591,7 +602,7 @@ describe.concurrent("require.cache", () => {
       async () => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "--smol", "run", join(import.meta.dir, "esm-fixture-leak-small.mjs")],
-          env: bunEnv,
+          env: withoutAsanQuarantine(bunEnv),
           stderr: "inherit",
         });
 

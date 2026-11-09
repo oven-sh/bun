@@ -1622,7 +1622,7 @@ fn file_followed_further_than_the_bundler_is_an_entry_point_beside_a_plugin() {
 
 #[test]
 fn file_found_for_a_load_is_read_as_that_load_reads_it() {
-    use bun_sema::module_format::ModuleFormat::{CommonJs, Esm};
+    use bun_sema::module_format::ModuleFormat::CommonJs;
     const NO_KIND: &str = "globalThis.ran = true;";
     const PLUG: (&str, &str) = ("plug.mjs", r#"import "./plain.cjs";"#);
     let rows: [(&[(&str, &str)], &str, _); 6] = [

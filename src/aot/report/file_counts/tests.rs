@@ -18,8 +18,12 @@ fn role_decision(view: ProgramView<'_, '_>, demoted: &[FileId]) -> RoleDecision 
     let files = view.files();
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
     let cause = DemotionCause::UnverifiedTypes;
+    let mut roles: Vec<FileRole> = file_ids.map(|file| files.role(file)).collect();
+    for &file in demoted {
+        roles[file.idx()] = FileRole::Inferred;
+    }
     RoleDecision {
-        roles: file_ids.map(|file| files.role(file)).collect(),
+        roles,
         demoted: demoted
             .iter()
             .map(|&file| Demotion { file, cause })
@@ -47,6 +51,15 @@ fn file_at(view: ProgramView<'_, '_>, suffix: &str) -> FileId {
     compiled_files
         .find(|&file| files.module(file).file_name().ends_with(suffix.as_bytes()))
         .unwrap_or_else(|| panic!("{suffix} is not compiled"))
+}
+
+fn file_that_is_not_compiled(view: ProgramView<'_, '_>, suffix: &str) -> FileId {
+    let files = view.files();
+    let mut file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
+    let found = file_ids.find(|&file| files.module(file).file_name().ends_with(suffix.as_bytes()));
+    let file = found.unwrap_or_else(|| panic!("{suffix} is not in the program"));
+    assert!(!files.is_compiled(file), "{suffix} is compiled");
+    file
 }
 
 #[test]
@@ -218,6 +231,28 @@ fn demoted_files_are_counted() {
         };
         assert_eq!(count_demoted(&demoted[..1]), 1);
         assert_eq!(count_demoted(&demoted), 2);
+    });
+}
+
+#[test]
+fn demoted_file_that_is_not_compiled_is_not_counted() {
+    let files = [
+        (
+            "a.ts",
+            "import { b } from \"./b\";\nimport type { Kind } from \"./kind\";\nexport const a: Kind = b;\n",
+        ),
+        ("b.ts", "export const b = 1;\n"),
+        ("kind.ts", "export type Kind = number;\n"),
+    ];
+    with_project_view(&files, |view| {
+        let demoted = [
+            file_at(view, "/b.ts"),
+            file_that_is_not_compiled(view, "/kind.ts"),
+        ];
+        let statistics = count(view, &role_decision(view, &demoted));
+        assert_eq!(statistics.get(StatisticId::SourceFilesChecked), 1);
+        assert_eq!(statistics.get(StatisticId::SourceFilesInferred), 1);
+        assert_eq!(statistics.get(StatisticId::SourceFilesDemoted), 1);
     });
 }
 

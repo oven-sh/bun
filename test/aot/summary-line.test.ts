@@ -264,3 +264,117 @@ test(
     }),
   buildTimeout,
 );
+
+// The closing line also counts the files that are compiled without their types: a file that begins with `// @ts-nocheck`, and a
+// file whose tsconfig.json needs another program than the entry point's (docs/compiler/aot.mdx lists the options that do). A
+// tsconfig.json without "include" names every file below it, and a build reads each of them for what it declares, as it reads a
+// file that is imported for a type. Neither is compiled, and neither is a file that is embedded as text, so none of them is counted.
+const sameInBoth = {
+  strict: true,
+  module: "preserve",
+  moduleResolution: "bundler",
+  target: "esnext",
+  noEmit: true,
+  allowImportingTsExtensions: true,
+  types: ["bun"],
+  lib: ["esnext"],
+};
+const tsconfig = (more: object = {}) => JSON.stringify({ compilerOptions: { ...sameInBoth, ...more } });
+const threeModules: Files = {
+  "web/a.ts": "export const a = 1;\n",
+  "web/b.ts": "export const b = 2;\n",
+  "web/c.ts": "export const c = 3;\n",
+};
+const folderWithAnotherLib: Files = {
+  "tsconfig.json": tsconfig(),
+  "web/tsconfig.json": tsconfig({ lib: ["esnext", "dom"] }),
+  ...threeModules,
+};
+// The tsconfig.json that `bun init` writes allows JavaScript, so a folder whose own one does not say so too needs another program.
+const folderBelowOneThatAllowsJavaScript: Files = {
+  "tsconfig.json": tsconfig({ allowJs: true }),
+  "web/tsconfig.json": "{}",
+  ...threeModules,
+};
+const filesWithoutChecks: Files = {
+  "tsconfig.json": tsconfig(),
+  "a.ts": `// @ts-nocheck\nexport const a: number = "1";\n`,
+  "b.ts": `// @ts-nocheck\nexport const b: number = "2";\n`,
+  "c.ts": `// @ts-nocheck\nexport {};\ndeclare global {\n  var c: number;\n}\n`,
+};
+const oneFileAndTheTypeOfAnother = (folder: string) =>
+  `import { a } from "${folder}/a";\nimport type { b } from "${folder}/b";\nconst two: typeof b = 2;\n`;
+const oneFileAndTheTextOfAnother = `import { a } from "./web/a";\nimport text from "./web/b.ts" with { type: "text" };\n`;
+const oneOfThreeIsCompiled: Files = {
+  ...folderWithAnotherLib,
+  "main.ts": `${oneFileAndTheTypeOfAnother("./web")}console.log(a, two);\n`,
+};
+const untypedFiles: [string, Files, string][] = [
+  [
+    "nothing of a folder whose tsconfig.json is empty, below one that allows JavaScript",
+    { ...folderBelowOneThatAllowsJavaScript, "main.ts": "console.log(1);\n" },
+    "1 file",
+  ],
+  [
+    "one file of a folder with another lib, and the type of another",
+    oneOfThreeIsCompiled,
+    "2 files, 1 file compiled without types",
+  ],
+  [
+    "one file of such a folder, and the text of another",
+    { ...folderWithAnotherLib, "main.ts": `${oneFileAndTheTextOfAnother}console.log(a, text.length);\n` },
+    "3 files, 1 file compiled without types",
+  ],
+  [
+    "one file that begins with // @ts-nocheck, the type of another, and a global that a third declares",
+    {
+      ...filesWithoutChecks,
+      "main.ts": `${oneFileAndTheTypeOfAnother(".")}globalThis.c = 3;\nconsole.log(a, two, c);\n`,
+    },
+    "2 files, 1 file compiled without types",
+  ],
+];
+
+describe.concurrent("closing line counts the files that are compiled without their types", () => {
+  test.each(untypedFiles)(
+    "the program imports %s",
+    (_, files, counts) =>
+      slot(async () => {
+        const closingLine = new RegExp(
+          ` No type errors in ${counts}, compiled [\\d,]+ lines? in [\\d,]+\\.\\d\\d s \\([\\d,]+ lines/s\\)$`,
+        );
+        const { lines } = await check(files);
+        expect(lines.filter(line => line.includes("No type errors"))).toEqual([expect.stringMatching(closingLine)]);
+      }),
+    buildTimeout,
+  );
+
+  test(
+    "a build counts them alike, on its compile line and under --explain=statistics",
+    () =>
+      slot(async () => {
+        using dir = tempDirWithBunTypes("aot-summary-line", oneOfThreeIsCompiled);
+        const command = [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          "--explain=statistics",
+          "main.ts",
+          "--outfile",
+          "compiled",
+        ];
+        const { stdout, stderr, exitCode, signal } = await spawned(command, String(dir), { ...bunEnv, NO_COLOR: "1" });
+        const said = exitCode === 0 ? "" : stdout + stderr;
+        expect({ exitCode, signal, said }).toEqual({ exitCode: 0, signal: null, said: "" });
+        const compileLine = / compile  .*  1 file compiled without types, compiled [\d,]+ lines? in /;
+        expect(stdout.split("\n").filter(line => line.includes(" compile "))).toEqual([
+          expect.stringMatching(compileLine),
+        ]);
+        expect(stderr.split("\n").filter(line => line.startsWith("SourceFilesDemoted "))).toEqual([
+          "SourceFilesDemoted 1",
+        ]);
+      }),
+    buildTimeout,
+  );
+});

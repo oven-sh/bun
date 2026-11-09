@@ -1,6 +1,8 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
+// STATISTIC: SourceFilesInferred = 2
+// STATISTIC: SourceFilesDemoted = 2
 
 // FILE: main.ts
 // strict/ has a tsconfig.json whose compiler options are not the program's. A constant of the entry point, true because the program starts with it, decides there that an `import()` never runs, so the executable does not hold the file that it names.

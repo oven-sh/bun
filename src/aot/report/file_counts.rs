@@ -83,10 +83,11 @@ pub(crate) fn count_files(
     let demoted_files = roles.demoted.iter().map(|demotion| demotion.file);
     let demoted_count = demoted_files
         .filter(|&file| {
-            !matches!(
-                view.origin(file),
-                FileOrigin::Runtime | FileOrigin::EvaluatedText
-            )
+            files.is_compiled(file)
+                && !matches!(
+                    view.origin(file),
+                    FileOrigin::Runtime | FileOrigin::EvaluatedText
+                )
         })
         .count();
     statistics.count(StatisticId::SourceFilesDemoted, demoted_count as u64);

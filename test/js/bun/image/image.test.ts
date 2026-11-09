@@ -1,4 +1,5 @@
 import { S3Client } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
@@ -1117,6 +1118,15 @@ describe("Bun.Image", () => {
       expect(blob.type).toBe("image/png");
       const back = decodePngRaw(new Uint8Array(await blob.arrayBuffer()));
       expect(back.w).toBe(16);
+    });
+
+    test(".blob() tells the GC the size of its bytes", async () => {
+      // Noise, so that the PNG is far larger than the estimate for an empty Blob.
+      let seed = 1;
+      const noise = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) >>> 24;
+      const blob = await new Bun.Image(makePng(64, 64, () => [noise(), noise(), noise(), 255])).png().blob();
+      expect(blob.size).toBeGreaterThan(4096);
+      expect(estimateShallowMemoryUsageOf(blob)).toBeGreaterThan(blob.size);
     });
 
     test(".buffer() returns a Node Buffer", async () => {

@@ -1,0 +1,20 @@
+A preload mocks a CommonJS file, and a test file imports a name that the factory leaves out.
+preload: preload.mjs
+#### left-out.test.mjs
+import { test } from "bun:test";
+import { other } from "./mocked.cjs";
+console.log("| CASE THE BODY OF THE TEST FILE RUNS", String(other));
+test("ran", () => {});
+#### mocked.cjs
+exports.c = x => x + 1;
+exports.other = 5;
+#### named.test.mjs
+import { test } from "bun:test";
+import { c } from "./mocked.cjs";
+console.log("| CASE named |", c(1));
+test("ran", () => {});
+#### package.json
+{ "name": "names-left-out-by-a-preload" }
+#### preload.mjs
+import { mock } from "bun:test";
+mock.module("./mocked.cjs", () => ({ c: () => "fake" }));

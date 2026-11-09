@@ -24,7 +24,7 @@ impl Printer<'_> {
         self.out.push('}');
     }
 
-    #[allow(clippy::large_types_passed_by_value)] // made for this call
+    #[allow(clippy::large_types_passed_by_value)]
     fn print_block(&mut self, block: BlockView<'_>) {
         let _ = write!(self.out, "  {}(", block.id);
         self.print_separated(
@@ -45,12 +45,12 @@ impl Printer<'_> {
         if let Some(subject) = block.subject {
             let _ = write!(self.out, " subject={subject}");
         }
-        if block.frequency != BlockFrequency::default() {
-            let _ = write!(self.out, " frequency={}", block.frequency.name());
-        }
         if let Some(handler) = block.handler() {
             self.out.push_str(" handler=");
             self.print_target(handler);
+        }
+        if block.frequency != BlockFrequency::default() {
+            let _ = write!(self.out, " frequency={}", block.frequency.name());
         }
         self.out.push_str(":\n");
         for value in block.values() {
@@ -67,10 +67,6 @@ impl Printer<'_> {
         self.out.push_str(value.opcode.name());
         print_value_fields(value.opcode, value.fields, self);
         self.print_position(value.position);
-        self.print_position(value.written_position);
-        if value.is_written_position_for_callers {
-            self.out.push_str(" callers");
-        }
         self.out.push('\n');
     }
 

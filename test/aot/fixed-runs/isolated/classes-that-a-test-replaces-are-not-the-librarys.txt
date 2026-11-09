@@ -1,0 +1,24 @@
+In the code of Bun itself a bare `Blob`, `URL` or `TextDecoder` is what Bun began with: a class that a test puts on globalThis in its place is made by the code of the project and by no built-in module.
+#### a.test.js
+import { test } from "bun:test";
+import { Readable } from "node:stream";
+import { blob, text } from "node:stream/consumers";
+import { pathToFileURL } from "node:url";
+test("classes", async () => {
+  const made = [];
+  const real = { Blob, URL, TextDecoder };
+  globalThis.Blob = class extends real.Blob { constructor(...operands) { super(...operands); made.push("Blob"); } };
+  globalThis.URL = class extends real.URL { constructor(...operands) { super(...operands); made.push("URL"); } };
+  globalThis.TextDecoder = class extends real.TextDecoder { constructor(...operands) { super(...operands); made.push("TextDecoder"); } };
+  try {
+    console.log("| CASE", await text(Readable.from([Buffer.from("a"), Buffer.from("b")])), (await blob(Readable.from([Buffer.from("abc")]))).size, pathToFileURL("/a/b").protocol);
+    console.log("| CASE the library", made.sort().join());
+    new URL("http://a");
+    new Blob([]);
+    console.log("| CASE with the project's own", made.sort().join());
+  } finally {
+    Object.assign(globalThis, real);
+  }
+});
+#### package.json
+{ "name": "p", "type": "module" }

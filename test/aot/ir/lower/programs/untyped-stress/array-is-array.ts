@@ -160,8 +160,6 @@ console.log("passed");
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Undefined
 // CHECK-NEXT: Return v0
 // CHECK-NEXT: }

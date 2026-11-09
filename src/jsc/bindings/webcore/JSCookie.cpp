@@ -100,7 +100,7 @@ static std::optional<CookieInit> cookieInitFromJS(JSC::VM& vm, JSGlobalObject* l
         if (checkName) {
             auto nameValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name);
             RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (nameValue) {
+            if (nameValue && !nameValue.isUndefinedOrNull()) {
                 name = convert<IDLUSVString>(*lexicalGlobalObject, nameValue);
                 RETURN_IF_EXCEPTION(throwScope, std::nullopt);
             }
@@ -112,7 +112,7 @@ static std::optional<CookieInit> cookieInitFromJS(JSC::VM& vm, JSGlobalObject* l
 
             auto valueValue = optionsObj->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->value);
             RETURN_IF_EXCEPTION(throwScope, std::nullopt);
-            if (valueValue) {
+            if (valueValue && !valueValue.isUndefinedOrNull()) {
                 value = convert<IDLUSVString>(*lexicalGlobalObject, valueValue);
                 RETURN_IF_EXCEPTION(throwScope, std::nullopt);
             }

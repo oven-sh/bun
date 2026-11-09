@@ -3325,6 +3325,16 @@ describe("a spy or stub that is undone under the fake clock", () => {
     expect(Object.getOwnPropertyDescriptor(globalThis, "setTimeout")).toEqual(descriptor);
   });
 
+  test('a "get" spy that the test put on the global as a value stays, as its restore leaves it with no clock', () => {
+    const spy = jest.spyOn(globalThis, "setTimeout", "get");
+    const byHand = { value: spy, writable: true, enumerable: true, configurable: true };
+    Object.defineProperty(globalThis, "setTimeout", byHand);
+    jest.useFakeTimers();
+    spy.mockRestore();
+    jest.useRealTimers();
+    expect(Object.getOwnPropertyDescriptor(globalThis, "setTimeout")).toEqual(byHand);
+  });
+
   test("a spy on one half of an accessor that is restored under the clock does not come back", () => {
     const accessor = { configurable: true, enumerable: true, get: () => saved.setTimeout, set(_: unknown) {} };
     Object.defineProperty(globalThis, "setTimeout", accessor);

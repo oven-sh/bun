@@ -909,8 +909,14 @@ public:
     }
     void didReplaceSpy() { m_spyAttributes |= SpyAttributeOverSpy; }
     bool isRestored() const { return m_spyAttributes & SpyAttributeRestored; }
-    // The restore of such a spy writes only if the accessor still has the spy. The restore of another spy always writes.
-    bool restoresOnlyItsAccessor() const { return m_spyAttributes & SpyAttributeAccessor; }
+    // What putBackOriginal() asks of the property before it writes.
+    bool restoreWritesOver(SlotContent content)
+    {
+        if (!(m_spyAttributes & SpyAttributeAccessor))
+            return true;
+        auto* accessor = content.storage ? dynamicDowncast<GetterSetter>(content.storage) : nullptr;
+        return accessor && isAccessorOf(accessor);
+    }
     InternalFieldTuple* stubLink() const
     {
         if (!(m_spyAttributes & SpyAttributeOverStub))
@@ -1351,7 +1357,7 @@ static SlotContent whatStandsFor(Zig::GlobalObject* globalObject, JSObject* targ
         auto* linkOfSpy = spy->stubLink();
         // The removal of a stub wrote over each spy that was made over the stub.
         bool isWrittenOver = linkOfSpy && isGone(globalObject, key, linkOfSpy, under.storage);
-        if (isWrittenOver || (spy->isRestored() && (!spy->restoresOnlyItsAccessor() || holds(content, spy, target, key)))) {
+        if (isWrittenOver || (spy->isRestored() && spy->restoreWritesOver(content))) {
             content = under;
             link = linkOfSpy;
         }
@@ -1405,6 +1411,7 @@ void willReplaceForStub(Zig::GlobalObject* globalObject, const Identifier& key, 
 
 bool putBackForStub(Zig::GlobalObject* globalObject, const Identifier& key, const PropertyDescriptor& descriptor)
 {
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     if (!mayHaveSpy(descriptor))
         return false;
     SlotContent content = contentOfDescriptor(globalObject, descriptor);
@@ -1413,6 +1420,17 @@ bool putBackForStub(Zig::GlobalObject* globalObject, const Identifier& key, cons
     // No spy in it is undone: the caller defines the property.
     if (toPut.storage == content.storage)
         return false;
+
+    // putContent() asks no attribute. With no object, this only validates: it throws what the caller's define of `descriptor` throws.
+    PropertyDescriptor current;
+    bool exists = globalObject->getOwnPropertyDescriptor(globalObject, key, current);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool isExtensible = globalObject->isExtensible(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    validateAndApplyPropertyDescriptor(globalObject, nullptr, key, isExtensible, descriptor, exists, current, true);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    scope.release();
     putContent(globalObject, globalObject, key, toPut, false);
     return true;
 }

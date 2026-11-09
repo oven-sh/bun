@@ -17,7 +17,7 @@ use bun_jsc::{
 use super::{Expect, Flags, Promise};
 use crate::generated_bindgen::expect_deferred as generated;
 use crate::test_runner::bun_test::{
-    BunTest, BunTestPtr, BunTestPtrWeak, Phase, RefDataValue, StepResult,
+    BunTest, BunTestPtr, BunTestPtrWeak, Flavor, Phase, RefDataValue, StepResult,
 };
 use crate::test_runner::execution::ExecutionSequence;
 use crate::test_runner::expect::js as expect_js;
@@ -293,6 +293,8 @@ enum Role {
 pub(crate) struct Pass {
     outer: Cell<*const Pass>,
     role: Role,
+    /// For `Role::Matcher`, the flavor of the `Expect` whose matcher runs. Deep equality asks for it.
+    flavor: Flavor,
     /// Number of `once()` calls so far. For `Role::Replaying`, how many were answered from the journal.
     cursor: Cell<u32>,
     /// Four bits per `recent` entry: `Asked << 1 | threw`.
@@ -305,7 +307,19 @@ pub(crate) struct Pass {
     recent: [[Cell<JSValue>; 3]; Pass::RECENT],
 }
 
+// `run_matcher` builds one per matcher call.
+const _: () = assert!(core::mem::size_of::<Pass>() == 128);
+
 pub(crate) struct EnteredPass<'a>(&'a Pass);
+
+/// For `Bun__deepEquals`: the `expect()` whose matcher compares decides, and the entry that started last where none does.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Expect__comparesLikeVitest(vm: &bun_jsc::virtual_machine::VirtualMachine) -> bool {
+    match Pass::flavor_of_matcher() {
+        Some(flavor) => flavor == Flavor::Vitest,
+        None => vm.is_running_vitest_entry,
+    }
+}
 
 impl Drop for EnteredPass<'_> {
     #[inline]
@@ -319,10 +333,11 @@ impl Pass {
     const STRIDE: u32 = 4;
 
     #[inline]
-    fn new(role: Role, journal: JSValue) -> Pass {
+    fn new(role: Role, flavor: Flavor, journal: JSValue) -> Pass {
         Pass {
             outer: Cell::new(core::ptr::null()),
             role,
+            flavor,
             cursor: Cell::new(0),
             recent_kinds: Cell::new(0),
             journal: Cell::new(journal),
@@ -331,16 +346,30 @@ impl Pass {
     }
 
     #[inline]
-    fn of_matcher() -> Pass {
-        Self::new(Role::Matcher, JSValue::ZERO)
+    fn of_matcher(flavor: Flavor) -> Pass {
+        Self::new(Role::Matcher, flavor, JSValue::ZERO)
     }
 
     fn replaying(deferred: JSValue) -> Pass {
-        Self::new(Role::Replaying, deferred)
+        Self::new(Role::Replaying, Flavor::Jest, deferred)
     }
 
     pub(crate) fn barrier() -> Pass {
-        Self::new(Role::Barrier, JSValue::ZERO)
+        Self::new(Role::Barrier, Flavor::Jest, JSValue::ZERO)
+    }
+
+    /// `None` outside a matcher, as when a test calls `asymmetricMatch()` itself.
+    fn flavor_of_matcher() -> Option<Flavor> {
+        // SAFETY: as in `current`.
+        let mut entered = unsafe { Self::innermost().get().as_ref() };
+        while let Some(pass) = entered {
+            if pass.role == Role::Matcher {
+                return Some(pass.flavor);
+            }
+            // SAFETY: an entered pass outlives the passes entered inside it.
+            entered = unsafe { pass.outer.get().as_ref() };
+        }
+        None
     }
 
     #[inline]
@@ -956,7 +985,7 @@ impl Expect {
         if !self.flags.get().is_plain() {
             return self.call_modified_matcher(cx, call, &matcher);
         }
-        let pass = Pass::of_matcher();
+        let pass = Pass::of_matcher(self.flavor);
         let _entered = pass.enter();
         match matcher(cx) {
             Ok(value) => Ok(value),
@@ -984,7 +1013,7 @@ impl Expect {
         call: &MatcherCall<'_>,
         matcher: Matcher<'_, 'a>,
     ) -> JsResult<JSValue> {
-        let pass = Pass::of_matcher();
+        let pass = Pass::of_matcher(self.flavor);
         let _entered = pass.enter();
         let flags = self.flags.get();
         let result = if flags.promise() != Promise::None {
@@ -1079,6 +1108,7 @@ impl Expect {
         let expect = Expect {
             flags: Cell::new(Flags(self.flags.get().0 & Flags::NOT_MASK)),
             matcher_ran: Cell::new(false),
+            flavor: self.flavor,
             parent: None,
             custom_label: self.custom_label.clone(),
         }
@@ -1166,6 +1196,7 @@ impl Expect {
         let copy = Expect {
             flags: Cell::new(self.flags.get()),
             matcher_ran: Cell::new(false),
+            flavor: self.flavor,
             parent: self.parent.clone(),
             custom_label: self.custom_label.clone(),
         }

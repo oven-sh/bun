@@ -225,9 +225,7 @@ fn takes_no_names(holder: BuiltinId) -> bool {
 }
 
 pub(super) fn follows_unlisted_names_of(object: BuiltinId) -> bool {
-    is_of_test_runner(object)
-        || table::HOLDERS_OF_MATCHERS.contains(&object)
-        || takes_no_names(object)
+    is_of_test_runner(object) || table::reaches_holder_of_matchers(object) || takes_no_names(object)
 }
 
 fn takes_names_that_a_file_spells(holder: BuiltinId) -> bool {
@@ -335,7 +333,7 @@ impl WritesFound {
         let mut pending: SmallVec<[BuiltinId; 16]> = smallvec![object];
         while let Some(reached) = pending.pop() {
             let reached = table::canonical_id(reached);
-            let holds_matchers = table::HOLDERS_OF_MATCHERS.contains(&reached);
+            let holds_matchers = table::reaches_holder_of_matchers(reached);
             if !(holds_matchers || is_of_test_runner(reached))
                 || self.runner_objects_out_of_sight.contains(&reached)
             {
@@ -355,7 +353,7 @@ impl WritesFound {
     }
 
     fn note_object_out_of_sight(&mut self, object: BuiltinId) {
-        if is_of_test_runner(object) || table::HOLDERS_OF_MATCHERS.contains(&object) {
+        if is_of_test_runner(object) || table::reaches_holder_of_matchers(object) {
             self.note_runner_out_of_sight(object);
         } else if let Some(writer) = find_writer(object) {
             self.note_writer_out_of_sight(writer);
@@ -1026,7 +1024,7 @@ impl Resolver<'_, '_> {
         let writer = find_writer(object);
         if writer.is_none()
             && !is_of_test_runner(object)
-            && !table::HOLDERS_OF_MATCHERS.contains(&object)
+            && !table::reaches_holder_of_matchers(object)
             && !opens_where_handed_on(object)
         {
             return;

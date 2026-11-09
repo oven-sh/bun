@@ -255,7 +255,7 @@ export const ExpectMatcherContext = b.class({
 /** `this.utils` in a matcher of `expect.extend()`. Its functions are own properties, which ignore `this`. */
 export const ExpectMatcherUtils = b.class({
   rustPath: "crate::test_runner::ExpectMatcherUtils",
-  internalFields: ["equalityTesters", "equals", "state", "snapshotSerializers", "toSatisfy"],
+  internalFields: ["equalityTesters", "equals", "state", "snapshotSerializers", "toSatisfy", "vitestExpect"],
 });
 
 /** Ignores `this`, so a matcher can destructure it or pass it around like in Jest. */
@@ -277,6 +277,19 @@ export const matcherContextEquals = b.fn({
 export const toSatisfyAsCustomMatcher = b.fn({
   ...plain("Expect", "toSatisfyAsCustomMatcher", "to_satisfy_as_custom_matcher"),
   args: { received: b.any, predicate: b.any },
+});
+/** The `expect` that `"vitest"` exports, and its own `soft` and `poll`. Their objects follow Vitest where it and Jest disagree. */
+export const vitestCall = b.fn({
+  ...plain("Expect", "vitestCall", "vitest_call"),
+  args: { value: b.any, message: b.any },
+});
+export const vitestSoft = b.fn({
+  ...plain("Expect", "vitestSoft", "vitest_soft"),
+  args: { value: b.any, message: b.any },
+});
+export const vitestPoll = b.fn({
+  ...plain("Expect", "vitestPoll", "vitest_poll"),
+  args: { fn: b.any, options: b.any },
 });
 export const stringify = b.fn({ ...utility("stringify", "stringify"), args: { value: b.any } });
 export const printExpected = b.fn({ ...utility("printExpected", "print_expected"), args: { value: b.any } });

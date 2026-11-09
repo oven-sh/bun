@@ -537,8 +537,8 @@ const alwaysThrows = "the constructor throws whatever it is given";
 /** Rows that are not called, by what their paths look like. */
 export const familiesNotCalled: { rows: RegExp; why: string }[] = [
   {
-    rows: /^%Expect%\.prototype\.|^bun:test\./,
-    why: "a matcher and a hook of bun:test answer in a test run alone, and this process is none",
+    rows: /^%Expect%\.prototype\.|^bun:test(\/vitest)?\./,
+    why: "a matcher, a hook of bun:test and the expect of vitest answer in a test run alone, and this process is none",
   },
   {
     rows: /^%NodeJSFS%\.prototype\./,

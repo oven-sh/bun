@@ -189,6 +189,20 @@ pub const HOLDERS_OF_MATCHERS: [BuiltinId; 3] = [
     BuiltinId::ExpectStaticPrototype,
 ];
 
+/// A holder of matchers, or what inherits from one: the `expect` of "vitest" inherits `extend()` from the constructor.
+pub fn reaches_holder_of_matchers(object: BuiltinId) -> bool {
+    let mut reached = canonical_id(object);
+    loop {
+        if HOLDERS_OF_MATCHERS.contains(&reached) {
+            return true;
+        }
+        match entry(reached).prototype {
+            Prototype::Builtin(parent) => reached = canonical_id(parent),
+            Prototype::Unknown | Prototype::Null => return false,
+        }
+    }
+}
+
 pub fn is_locked(id: BuiltinId) -> bool {
     let mut next = Some(id);
     while let Some(place) = next {

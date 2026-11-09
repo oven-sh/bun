@@ -15,7 +15,7 @@ use bun_resolver::fs::FileSystem;
 use super::bun_test::js_fns::Signature;
 use super::bun_test::{
     Around, AroundPhase, BaseScope, BunTest, BunTestPtr, BunTestPtrWeak, DescribeScope, EntryData,
-    ExecutionEntry, Only, Phase, RefDataValue, ScopeMode,
+    ExecutionEntry, Flavor, Only, Phase, RefDataValue, ScopeMode,
 };
 use super::execution::{ExecutionSequence, Result as ExecutionResult};
 use super::expect::Expect;
@@ -310,8 +310,7 @@ impl TestContext {
     pub(crate) fn get_expect(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let (this_value, global) = (this_value.to_js(), cx.global());
         let expect = bound(global, this_value, "expect", 1, generated::Bun__TestContext__expect)?;
-        let constructor = super::expect::js::get_constructor(global);
-        jsc::cpp::Bun__JSValue__setPrototypeDirect(expect, constructor, global)?;
+        jsc::cpp::Bun__JSValue__setPrototypeDirect(expect, Expect::of_vitest(global)?, global)?;
         expect.put(global, b"assertions", bound(global, this_value, "assertions", 1, generated::Bun__TestContext__assertions)?);
         expect.put(global, b"hasAssertions", bound(global, this_value, "hasAssertions", 0, generated::Bun__TestContext__hasAssertions)?);
         expect.put(global, b"getState", bound(global, this_value, "getState", 0, generated::Bun__TestContext__getState)?);
@@ -388,21 +387,21 @@ impl TestContext {
 pub(crate) fn expect(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, received: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
     let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
-    Expect::call_in(global, received.to_js(), message.to_js(), state)
+    Expect::call_in_of_vitest(global, received.to_js(), message.to_js(), state)
 }
 
 #[optimize(size)]
 pub(crate) fn soft(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, received: JsLocal<'_>, message: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
     let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
-    Expect::soft_in(global, received.to_js(), message.to_js(), state)
+    Expect::soft_in(global, received.to_js(), message.to_js(), state, Flavor::Vitest)
 }
 
 #[optimize(size)]
 pub(crate) fn poll(cx: &mut JsScope<'_>, this_value: JsLocal<'_>, callback: JsLocal<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
     let global = cx.global();
     let state = TestContext::of_call(global, this_value)?.state_data(this_value.to_js());
-    Expect::poll_in(global, callback.to_js(), options.to_js(), state)
+    Expect::poll_in(global, callback.to_js(), options.to_js(), state, Flavor::Vitest)
 }
 
 #[optimize(size)]

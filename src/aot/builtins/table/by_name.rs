@@ -1,5 +1,6 @@
 use std::sync::OnceLock;
 
+use super::entries::Prototype;
 use super::ids::{BuiltinId, RuntimeModule};
 use super::lookup::{
     canonical_id, entry, find_name, module_by_specifier, namespace_of, own_member, root_of,
@@ -50,12 +51,17 @@ pub fn returns_test_runner(id: BuiltinId) -> bool {
 }
 
 pub fn is_of_expect(id: BuiltinId) -> bool {
+    let is_expect = |id: BuiltinId| Some(canonical_id(id)) == found().expect;
     let mut holder = Some(id);
     while let Some(held) = holder {
-        if Some(canonical_id(held)) == found().expect {
+        let data = entry(held);
+        // The `expect` of "vitest" is a function of its own that inherits from the constructor.
+        if is_expect(held)
+            || matches!(data.prototype, Prototype::Builtin(parent) if is_expect(parent))
+        {
             return true;
         }
-        holder = entry(held).holder;
+        holder = data.holder;
     }
     false
 }

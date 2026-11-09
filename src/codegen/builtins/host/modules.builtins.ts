@@ -217,6 +217,9 @@ const expects = {
   implementation: b.generic,
 } satisfies b.FunctionField;
 
+// expect.soft() and expect.poll(): the object is not new to the caller, because the runner holds it too.
+const answersExpect = { ...expects, returns: b.instance("Expect") } satisfies b.FunctionField;
+
 // The matcher that it answers keeps the pattern, and wherever a comparison meets the matcher the pattern goes to Bun__deepMatch().
 const answersMatcherOfPattern = {
   args: { pattern: b.any.optional, others: b.any.rest },
@@ -551,7 +554,11 @@ export default b.declarations(
     ),
   ),
   b.same("bun:test.expect", "%Expect%"),
-  b.same("bun:test/vitest.expect", "%Expect%"),
+  // A function of its own that inherits from the constructor: Expect::of_vitest() in src/runtime/test_runner/expect.rs.
+  b.fn("bun:test/vitest.expect", expects),
+  b.inherits("bun:test/vitest.expect", "%Expect%"),
+  b.fn("bun:test/vitest.expect.soft", answersExpect),
+  b.fn("bun:test/vitest.expect.poll", answersExpect),
   b.fn("bun:test.setSystemTime", b.otherwise),
   b.namespace("bun:test.mock", { module: b.otherwise, restore: b.otherwise, clearAllMocks: b.otherwise }),
   b.fn("bun:test.mock", b.otherwise),

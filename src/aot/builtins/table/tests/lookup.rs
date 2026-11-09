@@ -287,6 +287,35 @@ fn canonical_ids() {
 }
 
 #[test]
+fn the_expect_of_vitest_reaches_the_holders_of_matchers() {
+    for holder in HOLDERS_OF_MATCHERS {
+        assert!(reaches_holder_of_matchers(holder), "{}", text_of(holder));
+    }
+    assert_eq!(canonical_id(BuiltinId::BunTestExpect), BuiltinId::Expect);
+    assert!(reaches_holder_of_matchers(BuiltinId::BunTestExpect));
+    let of_vitest = BuiltinId::BunTestVitestExpect;
+    assert_eq!(canonical_id(of_vitest), of_vitest);
+    assert!(reaches_holder_of_matchers(of_vitest));
+    assert_eq!(
+        member(of_vitest, name("extend")),
+        MemberLookup::Found(BuiltinId::ExpectExtend)
+    );
+    assert_eq!(
+        member(of_vitest, name("soft")),
+        MemberLookup::Found(BuiltinId::BunTestVitestExpectSoft)
+    );
+    let reaching = all_ids().filter(|&id| reaches_holder_of_matchers(id));
+    let reaching: Vec<BuiltinId> = reaching.map(canonical_id).collect();
+    for id in reaching {
+        assert!(
+            id == of_vitest || HOLDERS_OF_MATCHERS.contains(&id),
+            "{}",
+            text_of(id)
+        );
+    }
+}
+
+#[test]
 fn global_object_locations_hold_global_object() {
     let is_global_object = |id| has_flag(id, BuiltinFlags::IS_GLOBAL_OBJECT);
     assert!(is_global_object(BuiltinId::GlobalThis) && is_global_object(BuiltinId::Global));

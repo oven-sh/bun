@@ -516,6 +516,8 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 | `performance` while fake timers are on                    | the same object, on the fake clock   | a new object; the one it replaces still reads the real clock         |
 
+Each row goes by the module that its function is imported from: `test` or the hook, `vi`, and `expect` for the rows about matchers. A matcher follows its `expect` whichever test runs, also in [concurrent](/test#concurrent-test-execution) tests. `"vitest"` and `"bun:test"` export different `expect` functions, which share the matchers that `expect.extend()` adds. The `expect` of a [test context](#test-context) follows Vitest.
+
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context). It exports `inject` too, which always returns `undefined`, because `bun test` has no `provide` option or global setup file to provide a value.
 
 `import { assert, should } from "vitest"` imports them from the `chai` package in your `node_modules`, which Vitest depends on. If `chai` isn't there, as with pnpm, Bun looks next to the installed `vitest`. They aren't available through `import * as`, `import()` or a re-export of `"vitest"`.
@@ -566,7 +568,7 @@ test("promises", async () => {
 
 If you don't `await` a matcher, the test still waits for it before ending, and a failure still fails that test. Outside a test, the file waits for the matcher, and a failure is reported as an error between tests. Code after the matcher doesn't wait for it, so `await` the matcher if that code closes something the promise needs.
 
-In a `"bun:test"` test, a promise that has already settled is checked right away, and a failed matcher throws instead of returning a rejected promise. In a `"vitest"` test, the matcher always returns a promise.
+With `expect` from `"bun:test"`, a promise that has already settled is checked right away, and a failed matcher throws instead of returning a rejected promise. With `expect` from `"vitest"`, the matcher always returns a promise.
 
 These matchers also return a promise:
 

@@ -2961,7 +2961,7 @@ describe.concurrent("behavior depends on the module a function is imported from"
     expect({ log, results, exitCode }).toEqual({
       log: [
         "true false false false",
-        "true false true true true true",
+        "false false true true true true",
         "bun beforeEach function",
         "bun function",
         "bun beforeEach function",
@@ -3050,6 +3050,275 @@ describe.concurrent("behavior depends on the module a function is imported from"
       ],
       results: ["(pass) from the helper", "(pass) own"],
       exitCode: 0,
+    });
+  });
+
+  // Where the two modules disagree about a matcher, an `expect()` follows the `expect` that made it, whichever test runs.
+  describe("the rules of an expect() go by the module of its expect", () => {
+    // One entry for each rule. Every `expect()` is called before the first `await`.
+    const rules = `
+      const outcome = check => { try { check(); return "passes"; } catch (error) { return error instanceof TypeError ? "TypeError" : "fails"; } };
+      export const rulesNow = expect => [
+        ["toContain", outcome(() => expect("a1").toContain(1))],
+        ["toMatchObject", outcome(() => expect(1).not.toMatchObject({ a: 1 }))],
+        ["toHaveProperty", outcome(() => expect({ "a.b": 1 }).toHaveProperty("a.b"))],
+        ["undefined", outcome(() => expect(undefined).not.toHaveProperty("a"))],
+        ["not.not", outcome(() => expect(1).not.not.toBe(1))],
+        ["toEqual", outcome(() => expect([1]).toEqual([1, undefined]))],
+      ].map(rule => rule.join(" ")).join(", ");
+      export async function rulesOf(expect) {
+        const now = rulesNow(expect);
+        const settled = outcome(() => expect(Promise.resolve(1)).resolves.toBe(2).catch(() => {})) === "passes" ? "a promise" : "throws";
+        const toThrow = expect(Promise.resolve(new Error("x"))).resolves.toThrow().then(() => "passes", () => "fails");
+        return [now, "settled " + settled, "toThrow " + (await toThrow)].join(", ");
+      }
+      export const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+    `;
+    const nowOfVitest =
+      "toContain passes, toMatchObject passes, toHaveProperty passes, undefined TypeError, not.not fails, toEqual fails";
+    const nowOfBun =
+      "toContain fails, toMatchObject fails, toHaveProperty fails, undefined passes, not.not passes, toEqual passes";
+    const ofVitest = `${nowOfVitest}, settled a promise, toThrow fails`;
+    const ofBun = `${nowOfBun}, settled throws, toThrow passes`;
+    const atOnceAndLater = `async () => {
+      console.log(name, "at once:", await rulesOf(expect));
+      await nextTurn();
+      console.log(name, "later:", await rulesOf(expect));
+    }`;
+    const sorted = ({ log, exitCode }: { log: string[]; exitCode: number | null }) => ({
+      log: log.toSorted(),
+      exitCode,
+    });
+
+    test("in a concurrent group as in turn", async () => {
+      const file = (declare: string) => `
+        import { test, expect } from "vitest";
+        import { rulesOf, nextTurn } from "./rules.js";
+        for (const name of ["a", "b"]) ${declare}(name, ${atOnceAndLater});
+      `;
+      const runs = await Promise.all([
+        runTests({ "rules.js": rules, "a.test.js": file("test") }),
+        runTests({ "rules.js": rules, "a.test.js": file("test.concurrent") }),
+        runTests({ "rules.js": rules, "a.test.js": file("test") }, ["--concurrent"]),
+        runTests({ "rules.js": rules, "a.test.js": file("test.concurrent") }, ["--max-concurrency=1"]),
+      ]);
+      const expected = {
+        log: ["a", "b"].flatMap(name => [`${name} at once: ${ofVitest}`, `${name} later: ${ofVitest}`]),
+        exitCode: 0,
+      };
+      expect(runs.map(sorted)).toEqual([expected, expected, expected, expected]);
+    });
+
+    test("beside a concurrent test of the other module, also a skipped one", async () => {
+      const [mixed, skipped] = await Promise.all([
+        runTests({
+          "rules.js": rules,
+          "a.test.js": `
+            import * as bun from "bun:test";
+            import * as vitest from "vitest";
+            import { rulesOf, nextTurn } from "./rules.js";
+            for (const [name, { test, expect }] of Object.entries({ vitest, bun })) test.concurrent(name, ${atOnceAndLater});
+          `,
+        }),
+        runTests({
+          "rules.js": rules,
+          "a.test.js": `
+            import { test as testOfBun } from "bun:test";
+            import { test, expect } from "vitest";
+            import { rulesOf, nextTurn } from "./rules.js";
+            const name = "vitest";
+            test.concurrent(name, ${atOnceAndLater});
+            testOfBun.concurrent.skip("skipped", () => {});
+          `,
+        }),
+      ]);
+      const linesOfVitest = [`vitest at once: ${ofVitest}`, `vitest later: ${ofVitest}`];
+      expect([mixed, skipped].map(sorted)).toEqual([
+        { log: [`bun at once: ${ofBun}`, `bun later: ${ofBun}`, ...linesOfVitest], exitCode: 0 },
+        { log: linesOfVitest, exitCode: 0 },
+      ]);
+    });
+
+    test("the expect of one module in a test of the other", async () => {
+      const file = (declare: string) => `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        import { rulesOf } from "./rules.js";
+        vitest.${declare}("of vitest", async () => console.log("expect of bun:test:", await rulesOf(bun.expect)));
+        bun.${declare}("of bun:test", async () => console.log("expect of vitest:", await rulesOf(vitest.expect)));
+      `;
+      const runs = await Promise.all([
+        runTests({ "rules.js": rules, "a.test.js": file("test") }),
+        runTests({ "rules.js": rules, "a.test.js": file("test.concurrent") }),
+      ]);
+      const expected = { log: [`expect of bun:test: ${ofBun}`, `expect of vitest: ${ofVitest}`], exitCode: 0 };
+      expect(runs.map(sorted)).toEqual([expected, expected]);
+    });
+
+    test("outside a test, in a hook, and on an expect() that was made earlier", async () => {
+      const { log, exitCode } = await runTests({
+        "rules.js": rules,
+        "a.test.js": `
+          import { test, describe, expect, beforeEach, afterEach } from "vitest";
+          import { rulesNow, rulesOf } from "./rules.js";
+          const kept = expect(1);
+          console.log("top level:", await rulesOf(expect));
+          describe("describe", () => {
+            console.log("describe body:", rulesNow(expect));
+            beforeEach(async () => console.log("beforeEach:", await rulesOf(expect)));
+            afterEach(async () => console.log("afterEach:", await rulesOf(expect)));
+            test("test", () => {
+              try { kept.not.not.toBe(1); console.log("kept: passes"); } catch { console.log("kept: fails"); }
+            });
+          });
+        `,
+      });
+      expect({ log, exitCode }).toEqual({
+        log: [
+          `top level: ${ofVitest}`,
+          `describe body: ${nowOfVitest}`,
+          `beforeEach: ${ofVitest}`,
+          "kept: fails",
+          `afterEach: ${ofVitest}`,
+        ],
+        exitCode: 0,
+      });
+    });
+
+    test("the global expect, also of a helper and under --globals=vitest", async () => {
+      const helper = `import { rulesNow } from "./rules.js"; export const rulesOfHelper = () => rulesNow(expect);`;
+      const tests = `
+        import { rulesNow } from "./rules.js";
+        import { rulesOfHelper } from "./helper.js";
+        for (const name of ["a", "b"]) {
+          test.concurrent(name, async () => {
+            await 1;
+            console.log(name, "global:", rulesNow(expect));
+            console.log(name, "globalThis:", rulesNow(globalThis.expect ?? expect));
+            console.log(name, "helper:", rulesOfHelper());
+          });
+        }
+      `;
+      const runs = await Promise.all([
+        runTests({ "rules.js": rules, "helper.js": helper, "a.test.js": `import { test } from "vitest"; ${tests}` }),
+        runTests({ "rules.js": rules, "helper.js": helper, "a.test.js": tests }, ["--globals=vitest"]),
+        runTests({ "rules.js": rules, "helper.js": helper, "a.test.js": tests }),
+      ]);
+      const expected = (rules: string) => ({
+        log: ["a", "b"].flatMap(name => ["global", "globalThis", "helper"].map(which => `${name} ${which}: ${rules}`)),
+        exitCode: 0,
+      });
+      expect(runs.map(sorted)).toEqual([expected(nowOfVitest), expected(nowOfVitest), expected(nowOfBun)]);
+    });
+
+    test("test.for() and test.extend() of bun:test: the imported expect is bun:test's, the context's is vitest's", async () => {
+      const { log, exitCode } = await runTests({
+        "rules.js": rules,
+        "a.test.js": `
+          import { test, expect } from "bun:test";
+          import { rulesNow } from "./rules.js";
+          const show = (name, ofContext) => {
+            console.log(name, "imported:", rulesNow(expect));
+            console.log(name, "of the context:", rulesNow(ofContext));
+          };
+          test.for([1])("for %i", (row, { expect: ofContext }) => show("for", ofContext));
+          test.extend({ value: 1 })("extend", ({ value, expect: ofContext }) => show("extend", ofContext));
+        `,
+      });
+      expect({ log, exitCode }).toEqual({
+        log: ["for", "extend"].flatMap(name => [
+          `${name} imported: ${nowOfBun}`,
+          `${name} of the context: ${nowOfVitest}`,
+        ]),
+        exitCode: 0,
+      });
+    });
+
+    test("behind expect.poll(), through the module's expect and the context's", async () => {
+      const { log, exitCode } = await runTests({
+        "a.test.js": `
+          import * as bun from "bun:test";
+          import * as vitest from "vitest";
+          const polled = async expect => {
+            const poll = value => expect.poll(() => value, { timeout: 50, interval: 5 });
+            const outcome = matched => matched.then(() => "passes", error => error instanceof TypeError ? "TypeError" : "fails");
+            return [
+              "toContain " + await outcome(poll("a1").toContain(1)),
+              "toMatchObject " + await outcome(poll(1).not.toMatchObject({ a: 1 })),
+              "toHaveProperty " + await outcome(poll({ "a.b": 1 }).toHaveProperty("a.b")),
+              "undefined " + await outcome(poll(undefined).not.toHaveProperty("a")),
+              "toEqual " + await outcome(poll([1]).toEqual([1, undefined])),
+            ].join(", ");
+          };
+          vitest.test("vitest", async ({ expect }) => {
+            console.log("vitest, module:", await polled(vitest.expect));
+            console.log("vitest, context:", await polled(expect));
+          });
+          bun.test("bun", async () => console.log("bun, module:", await polled(bun.expect)));
+        `,
+      });
+      const polledOfVitest =
+        "toContain passes, toMatchObject passes, toHaveProperty passes, undefined TypeError, toEqual fails";
+      expect({ log, exitCode }).toEqual({
+        log: [
+          `vitest, module: ${polledOfVitest}`,
+          `vitest, context: ${polledOfVitest}`,
+          "bun, module: toContain fails, toMatchObject fails, toHaveProperty fails, undefined passes, toEqual passes",
+        ],
+        exitCode: 0,
+      });
+    });
+
+    test("a new inline snapshot of an error is written in Vitest's form in a concurrent test too", async () => {
+      using dir = tempDir("vitest-flavor-inline", {
+        "a.test.js": `
+          import { test, expect } from "vitest";
+          test.concurrent("a", () => { expect(() => { throw new Error("e"); }).toThrowErrorMatchingInlineSnapshot(); });
+          test.concurrent("b", () => {});
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        env: { ...bunEnv, CI: "false" },
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const written = await Bun.file(`${dir}/a.test.js`).text();
+      expect(written).toContain("toThrowErrorMatchingInlineSnapshot(`[Error: e]`)");
+      expect(stderr).toContain("2 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("both modules share the matchers of expect.extend() and the class of expect()", async () => {
+      const { log, exitCode } = await runTests({
+        "a.test.js": `
+          import * as bun from "bun:test";
+          import * as vitest from "vitest";
+          vitest.expect.extend({ toBeOfVitest: () => ({ pass: true, message: () => "" }) });
+          bun.expect.extend({ toBeOfBun: () => ({ pass: true, message: () => "" }) });
+          vitest.test("test", ({ expect }) => {
+            console.log("extend:", [bun.expect(1).toBeOfVitest, vitest.expect(1).toBeOfBun, expect(1).toBeOfBun].map(matcher => typeof matcher).join(" "));
+            console.log("asymmetric:", [bun.expect.toBeOfVitest, vitest.expect.toBeOfBun, expect.toBeOfBun, vitest.expect.any].map(matcher => typeof matcher).join(" "));
+            console.log("instanceof:", vitest.expect(1) instanceof vitest.expect, vitest.expect(1) instanceof bun.expect, bun.expect(1) instanceof vitest.expect);
+            console.log("inherits:", Object.getPrototypeOf(vitest.expect) === bun.expect, Object.getPrototypeOf(expect) === vitest.expect);
+            console.log("own:", Object.keys(vitest.expect).join(" "), "|", vitest.expect.name, vitest.expect.length);
+            console.log("state:", vitest.expect.getState() === bun.expect.getState(), vitest.expect.getState().currentTestName);
+          });
+        `,
+      });
+      expect({ log, exitCode }).toEqual({
+        log: [
+          "extend: function function function",
+          "asymmetric: function function function function",
+          "instanceof: true true true",
+          "inherits: true true",
+          "own: soft poll | expect 0",
+          "state: true test",
+        ],
+        exitCode: 0,
+      });
     });
   });
 });

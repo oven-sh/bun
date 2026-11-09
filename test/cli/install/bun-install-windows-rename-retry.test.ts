@@ -18,9 +18,9 @@
 // links in place, so the install succeeds either way.
 //
 // One rename replaces a file: bun writes its own `config` into a cached git
-// clone before it runs git there. That one fails with STATUS_SHARING_VIOLATION
-// (EBUSY) for as long as a handle without FILE_SHARE_DELETE is open on the
-// `config` itself. git opens the file that way to read it.
+// clone before it runs git there. That one is refused for as long as a handle
+// without FILE_SHARE_DELETE is open on the `config` itself, or a handle with
+// DELETE access on the clone folder.
 
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -316,7 +316,26 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
 
   // The clone is in the cache, and its `config` holds a setting that is not bun's, like the `config` of a clone that
   // an older bun left there. So the install has to replace the file before it runs `git fetch` in the clone.
-  test.each(modes)("config of a cached git clone: $mode", async ({ budget, holdMs }) => {
+  //
+  // The replace is refused while a handle without FILE_SHARE_DELETE is open on the `config`: Windows 11 answers
+  // STATUS_SHARING_VIOLATION (EBUSY), Windows Server 2019 STATUS_ACCESS_DENIED (EPERM). It is also refused, with
+  // STATUS_SHARING_VIOLATION, while a handle with DELETE access is open on the folder of the clone. The install that
+  // renamed the clone into the cache has such a handle until it closes it.
+  //
+  // The install also stops waiting when the file holds the text that it wants, which another install of the same
+  // dependency writes.
+  test.each([
+    ...modes.map(mode => ({ ...mode, held: "config", errno: "E(BUSY|PERM)", sameText: false })),
+    ...modes.map(mode => ({ ...mode, held: "folder", errno: "EBUSY", sameText: false })),
+    {
+      mode: "the same text from another install ends the wait",
+      budget: undefined,
+      holdMs: 15_000,
+      held: "config",
+      errno: "E(BUSY|PERM)",
+      sameText: true,
+    },
+  ])("config of a cached git clone, $held held: $mode", async ({ budget, holdMs, held, errno, sameText }) => {
     using repo = await makeGitRepo();
     using s = scaffold("rename-retry-git-config", "", {
       dependencies: { [GIT_PKG]: `git+${pathToFileURL(String(repo))}` },
@@ -324,32 +343,54 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
     const env = { ...s.env, ...gitEnv };
     expect(await runInstall(s.project, env)).toMatchObject({ exitCode: 0 });
 
-    const [clone] = readdirSync(s.cache).filter(name => name.endsWith(".git"));
-    const config = join(s.cache, clone, "config");
+    const [cloneName] = readdirSync(s.cache).filter(name => name.endsWith(".git"));
+    const clone = join(s.cache, cloneName);
+    const config = join(clone, "config");
     const written = readFileSync(config, "utf8");
     writeFileSync(config, written + "[core]\n\tfilemode = false\n");
     rmSync(join(s.project, "node_modules"), { recursive: true, force: true });
     rmSync(join(s.project, "bun.lock"));
+    const temporaryFiles = () => readdirSync(clone).filter(name => name.endsWith(".tmp"));
 
-    // The file already exists, so the fixture holds it before the install starts.
-    const blocker = spawnBlocker(s.cache, ".git", holdMs, "config");
+    // The clone already exists, so the fixture holds it before the install starts.
+    const blocker = spawnBlocker(s.cache, ".git", holdMs, held === "folder" ? ":folder" : held);
     await blocker.held;
 
-    const result = await runInstall(s.project, { ...env, [ENV]: budget });
-    expect(await blocker.finish()).toContain(`HELD ${config}`);
+    let exited = false;
+    const install = runInstall(s.project, { ...env, [ENV]: budget }).finally(() => (exited = true));
+    let waited = false;
+    if (sameText) {
+      // While the install waits, the file that is to replace `config` stays next to it. The holder shares write
+      // access, so the text can be written in place.
+      while (!exited && !waited) {
+        waited = temporaryFiles().length > 0;
+        if (!waited) await Bun.sleep(5);
+      }
+      writeFileSync(config, written);
+    }
+    const result = await install;
+    const blockerOut = await blocker.finish();
+    expect(blockerOut).toContain(`HELD ${held === "folder" ? clone : config}`);
 
     if (budget === undefined) {
       expect(result).toMatchObject({ exitCode: 0 });
       expect(readFileSync(config, "utf8")).toBe(written);
       expect(existsSync(join(s.project, "node_modules", GIT_PKG, "index.js"))).toBe(true);
     } else {
-      expect(result.stderr).toContain(`writing "config" for "${GIT_PKG}" failed: EBUSY`);
-      expect(result.stderr).toContain("NtSetInformationFile");
-      expect(result.stderr).toContain(ENV);
-      expect(result.exitCode).toBe(1);
+      const refused = new RegExp(
+        `^error: writing "config" for "${GIT_PKG}" failed: ${errno}: .*\\(NtSetInformationFile\\(\\)\\) ` +
+          `\\(gave up after retrying for \\d+ms; .* Set ${ENV} to wait longer\\)$`,
+      );
+      expect({
+        exitCode: result.exitCode,
+        error: result.stderr.split(/\r?\n/).find(line => line.includes('writing "config"')) ?? result.stderr,
+      }).toEqual({ exitCode: 1, error: expect.stringMatching(refused) });
     }
+    // The install stopped waiting because of the text, and not because the holder let go.
+    if (sameText)
+      expect({ waited, released: blockerOut.includes("RELEASED") }).toEqual({ waited: true, released: false });
     // The temporary file that was to replace `config` is not left behind.
-    expect(readdirSync(join(s.cache, clone)).filter(name => name.endsWith(".tmp"))).toEqual([]);
+    expect(temporaryFiles()).toEqual([]);
   });
 
   // The held file is not one of the package's: it is gone if the old directory was moved aside

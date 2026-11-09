@@ -3,7 +3,7 @@
 // FILE_SHARE_DELETE on any file inside a directory makes a rename of that
 // directory fail with STATUS_ACCESS_DENIED.
 //
-// argv: <watchDir> <subdirFilter> <holdMs> [fileName]
+// argv: <watchDir> <subdirFilter> <holdMs> [fileName | ":folder"]
 //
 // Spin-polls watchDir until a subdirectory whose name contains subdirFilter
 // ("" matches any) contains a regular file (one named fileName, if that is
@@ -11,6 +11,10 @@
 // FILE_SHARE_WRITE (no DELETE), prints "HELD <path>", keeps the handle open
 // for holdMs, closes it, prints "RELEASED" and exits 0. Prints "MISSED" and
 // exits 0 if nothing shows up within 15s.
+//
+// With ":folder" it holds the subdirectory itself instead, with DELETE access
+// and every share mode. That is the handle that a rename of the directory
+// keeps until it is closed.
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { readdirSync } from "node:fs";
@@ -33,11 +37,15 @@ const { symbols } = dlopen("kernel32.dll", {
 });
 
 const GENERIC_READ = 0x80000000;
+const DELETE = 0x00010000;
+const SYNCHRONIZE = 0x00100000;
 const FILE_SHARE_READ = 0x00000001;
 const FILE_SHARE_WRITE = 0x00000002;
-// Deliberately omitting FILE_SHARE_DELETE (0x00000004).
+// Deliberately omitted where a file is held.
+const FILE_SHARE_DELETE = 0x00000004;
 const OPEN_EXISTING = 3;
 const FILE_ATTRIBUTE_NORMAL = 0x80;
+const FILE_FLAG_BACKUP_SEMANTICS = 0x02000000;
 const INVALID_HANDLE_VALUE = 0xffffffffffffffffn;
 
 function toWide(s: string): Uint8Array {
@@ -54,6 +62,18 @@ function tryOpenNoShareDelete(path: string): bigint {
     null,
     OPEN_EXISTING,
     FILE_ATTRIBUTE_NORMAL,
+    0n,
+  ) as bigint;
+}
+
+function tryOpenFolderForRename(path: string): bigint {
+  return symbols.CreateFileW(
+    ptr(toWide(path)),
+    DELETE | SYNCHRONIZE,
+    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    null,
+    OPEN_EXISTING,
+    FILE_FLAG_BACKUP_SEMANTICS,
     0n,
   ) as bigint;
 }
@@ -97,7 +117,12 @@ outer: while (Date.now() < deadline) {
   }
   for (const name of names) {
     if (!name.includes(subdirFilter)) continue;
-    [handle, heldPath] = grabFileBelow(join(watchDir, name), 4);
+    if (fileName === ":folder") {
+      const h = tryOpenFolderForRename(join(watchDir, name));
+      if (h !== INVALID_HANDLE_VALUE && h !== 0n) [handle, heldPath] = [h, join(watchDir, name)];
+    } else {
+      [handle, heldPath] = grabFileBelow(join(watchDir, name), 4);
+    }
     if (handle !== INVALID_HANDLE_VALUE) break outer;
   }
 }

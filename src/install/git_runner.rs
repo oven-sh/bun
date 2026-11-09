@@ -670,7 +670,7 @@ fn read_clone_config(repo: &bun_sys::Dir) -> bun_sys::Maybe<Vec<u8>> {
 }
 
 /// Overwrites the `config` file of the clone in `repo` with the output of `clone_config`. On
-/// Windows, the rename waits while another program has one of its two files open.
+/// Windows, the rename waits while the handle of another program refuses it.
 fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> Result<(), RenameError> {
     let old = read_clone_config(repo)?;
     let config = clone_config(url, &old);
@@ -690,11 +690,11 @@ fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> Result<(), RenameError
         else {
             return Ok(());
         };
-        result = retry.wait(err);
-        // Another install of the same URL may have written this text during the wait.
-        if result.is_ok() && read_clone_config(repo).is_ok_and(|written| written == config) {
+        // Another install of the same URL may have written this text in the meantime.
+        if read_clone_config(repo).is_ok_and(|written| written == config) {
             break;
         }
+        result = retry.wait(err);
     }
     let _ = bun_sys::unlinkat(repo.fd(), tmp_name);
     result

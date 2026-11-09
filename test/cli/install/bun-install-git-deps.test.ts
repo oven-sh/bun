@@ -1641,11 +1641,19 @@ test.concurrent(
 // Two installs of different projects that share a cold cache both clone the repository of a git dependency. The one
 // that finishes second finds the other's clone already in the cache. It used to swap in its own clone and delete the
 // other one, which the first install still had open. The first install's checkout then failed with "fatal: repository
-// '<cache>/.<id>.tmp (deleted)' does not exist". The same applies to the checkout folder. The clone that it keeps is
-// not its own, so it writes bun's `config` into that clone before it runs git there, like into any cached clone.
-test.concurrent.skipIf(isWindows)(
-  "an install keeps the git cache folders that another install published first",
-  async () => {
+// '<cache>/.<id>.tmp (deleted)' does not exist". The same applies to the checkout folder.
+//
+// The clone that it keeps holds bun's `config` already, so it replaces nothing there. If that clone holds another
+// setting by then, it writes bun's `config` into it before it runs git there, like into any cached clone.
+test.concurrent.skipIf(isWindows).each([
+  { what: "an install keeps the git cache folders that another install published first", setting: "" },
+  {
+    what: "an install writes bun's config into a clone that another install published first",
+    setting: "[core]\\n\\tfilemode = false\\n",
+  },
+])(
+  "$what",
+  async ({ setting }) => {
     using dir = tempDir("git-dep-publish-race", {});
     const root = String(dir);
     const bin = join(root, "bin");
@@ -1664,12 +1672,12 @@ wait_for() { i=0; while [ ! -e "$steps/$1" ] && [ $i -lt 200 ]; do sleep 0.05; i
 case "$INSTALL $*" in
   # Both look for the bare clone in the cache before "first" publishes its own.
   "first "*" clone "*" --bare "*) wait_for second-clones-bare ;;
-  # "second" publishes its bare clone after "first" did, and before "first" uses its own. By then the clone of
-  # "first" holds a setting that is not bun's.
+  # "second" publishes its bare clone after "first" did, and before "first" uses its own. It notes which file the
+  # \`config\` of the clone of "first" is by then.
   "second "*" clone "*" --bare "*)
     reach second-clones-bare; wait_for first-runs-log
     for config in ${quote(join(root, "cache"))}/*.git/config; do
-      printf '[core]\\n\\tfilemode = false\\n' >> "$config" && reach second-changes-config
+      printf '${setting}' >> "$config"; ls -i "$config" > ${quote(join(root, "published-config"))}
     done ;;
   "first "*" --git-dir="*" log "*) reach first-runs-log; wait_for second-runs-log ;;
   "second "*" --git-dir="*" log "*) reach second-runs-log ;;
@@ -1707,17 +1715,22 @@ exec ${quote(Bun.which("git", { PATH: gitEnv.PATH })!)} "$@"
     expect(readdirSync(steps).sort()).toEqual([
       "first-clones-checkout",
       "first-runs-log",
-      "second-changes-config",
       "second-clones-bare",
       "second-clones-checkout",
       "second-runs-log",
     ]);
-    expect(readFileSync(join(bareCloneIn(cache), "config"), "utf8")).not.toContain("filemode");
     expect(
       readdirSync(cache)
         .map(name => name.replace(/^[0-9a-f]{16}(?=\.git$)/, "<clone id>"))
         .sort(),
     ).toEqual(["<clone id>.git", `@G@${sharedCommits["pkg-c"]}`]);
+    // "second" replaced the `config` of that clone only if it held the other setting.
+    const config = join(bareCloneIn(cache), "config");
+    const [published] = readFileSync(join(root, "published-config"), "utf8").trim().split(/\s+/);
+    expect({
+      replaced: String(lstatSync(config).ino) !== published,
+      text: readFileSync(config, "utf8"),
+    }).toEqual({ replaced: setting !== "", text: expect.not.stringContaining("filemode") });
   },
   30_000,
 );

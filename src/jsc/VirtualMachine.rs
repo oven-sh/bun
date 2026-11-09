@@ -8093,16 +8093,14 @@ impl VirtualMachine {
             .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::get().top_level_dir())
     }
 
-    /// Starts a GitHub Actions `::error` command, up to `title=`, with the file, line and column that are known.
+    /// Starts a GitHub Actions `::error` command, up to `title=`. A line or a column below 1 is unknown and is left out.
     #[inline]
     fn write_github_annotation_head(
         writer: &mut bun_core::io::Writer,
         dir: &[u8],
-        file: Option<&[u8]>,
-        line: Option<i32>,
-        column: Option<i32>,
+        location: Option<(&[u8], i32, i32)>,
     ) {
-        let Some(file) = file else {
+        let Some((file, line, column)) = location else {
             let _ = writer.write_all(b"\n::error title=");
             return;
         };
@@ -8112,9 +8110,9 @@ impl VirtualMachine {
             "\n::error file={}",
             bun_core::fmt::github_action_property(file)
         );
-        if let Some(line) = line {
+        if line > 0 {
             let _ = write!(writer, ",line={line}");
-            if let Some(column) = column {
+            if column > 0 {
                 let _ = write!(writer, ",col={column}");
             }
         }
@@ -8134,23 +8132,13 @@ impl VirtualMachine {
         if !is_bun_test_in_github_actions || msg.kind != bun_ast::Kind::Err {
             return;
         }
-        let location = msg.data.location.as_ref();
-        let file = location
-            .map(|location| &*location.file)
-            .filter(|file| !file.is_empty());
-        let line = location
-            .map(|location| location.line)
-            .filter(|line| *line > 0);
-        let column = location
-            .map(|location| location.column)
-            .filter(|column| *column > 0);
-        Self::write_github_annotation_head(
-            writer,
-            Self::github_annotation_dir(),
-            file,
-            line,
-            column,
-        );
+        let location = msg
+            .data
+            .location
+            .as_ref()
+            .filter(|location| !location.file.is_empty())
+            .map(|location| (&*location.file, location.line, location.column));
+        Self::write_github_annotation_head(writer, Self::github_annotation_dir(), location);
         // GitHub makes no annotation from a command without data, so the text is the data and the title is the class.
         let _ = writeln!(
             writer,
@@ -8175,13 +8163,17 @@ impl VirtualMachine {
 
         let located_frame = top_frame.filter(|frame| !frame.position.is_invalid());
         let source_url = located_frame.map(|frame| frame.source_url.to_utf8());
-        Self::write_github_annotation_head(
-            writer,
-            dir,
-            source_url.as_ref().map(|source_url| source_url.slice()),
-            located_frame.map(|frame| frame.position.line.one_based()),
-            located_frame.map(|frame| frame.position.column.one_based()),
-        );
+        let location = located_frame
+            .zip(source_url.as_ref())
+            .map(|(frame, source_url)| {
+                let position = frame.position;
+                (
+                    source_url.slice(),
+                    position.line.one_based(),
+                    position.column.one_based(),
+                )
+            });
+        Self::write_github_annotation_head(writer, dir, location);
 
         if name.is_empty() || name.eq_ascii(b"Error") {
             let _ = writer.write_all(b"error");

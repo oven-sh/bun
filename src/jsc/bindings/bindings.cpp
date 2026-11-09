@@ -6460,14 +6460,43 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
             object->methodTable()->getOwnPropertyNames(object, globalObject, properties, withNonEnumerable ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
         if constexpr (std::is_same_v<Visitor, MatchedRowsVisitor>) {
-            // A matched name that is not an own property, such as a getter of the class, gets a line at its sorted place.
-            WTF::Vector<Identifier> missing;
-            Bun::appendMissingMatchedRowNames(iter.rows, iter.place, properties.data()->propertyNameVector().span(), missing);
-            for (auto& name : missing)
-                properties.add(name);
+            // A matched name that is not listed, such as a getter of the class, gets a line at its sorted place.
             auto& names = properties.data()->propertyNameVector();
-            // Strings stay ahead of symbols, as in the names of an object that owns the row. It shows where a string and a symbol have the same text.
-            std::stable_partition(names.begin(), names.end(), [](const Identifier& name) { return !name.isSymbol(); });
+            WTF::Vector<Identifier> missing;
+            Bun::appendMissingMatchedRowNames(iter.rows, iter.place, names.span(), missing);
+            if (!missing.isEmpty()) {
+                // std::sort is not stable, and a string and a symbol with the same text compare equal: which of them prints first depends on the order here. Stored snapshots have the text that follows from the order in which the object would list the names if every row were an enumerable property of its own.
+                if (!withNonEnumerable) {
+                    // The row of an own property that is not enumerable goes where the object has the property.
+                    JSC::PropertyNameArrayBuilder all(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+                    object->methodTable()->getOwnPropertyNames(object, globalObject, all, DontEnumPropertiesMode::Include);
+                    RETURN_IF_EXCEPTION(scope, );
+                    WTF::UncheckedKeyHashSet<WTF::UniquedStringImpl*> unplaced;
+                    for (auto& name : names)
+                        unplaced.add(name.impl());
+                    for (auto& name : missing)
+                        unplaced.add(name.impl());
+                    PropertyNameArray::PropertyNameVector placed;
+                    auto placeFrom = [&](const auto& list) {
+                        for (auto& name : list) {
+                            if (unplaced.remove(name.impl()))
+                                placed.append(name);
+                        }
+                    };
+                    placeFrom(all);
+                    placeFrom(names);
+                    placeFrom(missing);
+                    names = WTF::move(placed);
+                } else
+                    names.appendVector(missing);
+                // The row of any other property goes where a property added in the order of the walk would be listed: an index among the indices, which come first in numeric order, and a string ahead of the symbols.
+                auto listRank = [](const Identifier& name) -> uint64_t {
+                    if (name.isSymbol())
+                        return static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1;
+                    return parseIndex(name).value_or(std::numeric_limits<uint32_t>::max());
+                };
+                std::stable_sort(names.begin(), names.end(), [&](const Identifier& a, const Identifier& b) { return listRank(a) < listRank(b); });
+            }
         }
     }
 

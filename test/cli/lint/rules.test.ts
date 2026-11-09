@@ -132,9 +132,13 @@ test.concurrent("a JSX spread that acorn-jsx doesn't parse is a parse error, wor
     // acorn reports an error in the expression before it gets to the comma.
     ["6.jsx", "export const a = (b, c) => <a {...{ b = 1 }, c} />;", `1:39 ${shorthand}`, true],
     ["es2015-0.jsx", "module.exports = function (b) { return <a {...b} />; };"],
+    // In a script, `<!--` starts a comment.
+    ["es2015-1.jsx", "module.exports = function (b) { return <a>{<!-- b\n...b}</a>; };", `2:1 ${child}`],
+    ["es2015-2.jsx", "module.exports = function (b, c) { return <a {...b <!-- c\n, c} />; };", `2:1 ${comma}`],
     ["es5-0.jsx", "module.exports = function (b) { return <a {...b} />; };", `1:44 ${dot}`],
     ["es5-1.jsx", "module.exports = function (b, c) { return <a {...b, c} />; };", `1:47 ${dot}`],
     ["es5-2.jsx", "module.exports = function (b) { return <a>{...b}</a>; };", `1:44 ${dot}`],
+    ["es5-3.jsx", "module.exports = function (b) { return <a {<!-- b\n...b} />; };", `2:1 ${dot}`],
   ];
   const files = Object.fromEntries(cases.map(([name, code]) => [name, code + "\n"]));
   const [withConfig, withoutConfig] = await Promise.all([

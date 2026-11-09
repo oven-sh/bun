@@ -1168,11 +1168,10 @@ impl<'a, 'c> Checks<'a, 'c> {
             return;
         }
         for spread in file.exprs_of_kind(ExprTag::Spread) {
-            if spread.jsx_container_span().is_some() {
-                let dots = spread.span().start;
-                if self.token_at(dots) == b"..." {
-                    self.unexpected(dots);
-                }
+            if let Some(braces) = spread.jsx_container_span()
+                && let Some(dots) = self.token_after_if(braces.start + 1, b"...")
+            {
+                self.unexpected(dots);
             }
         }
         for sequence in early::sequences_in_spread_attributes(file) {
@@ -1183,11 +1182,26 @@ impl<'a, 'c> Checks<'a, 'c> {
                 first = left;
             }
             // The parser makes a sequence of adjacent elements, which has no comma.
-            let comma = first.operator_span().map(|it| it.start);
-            if let Some(comma) = comma.filter(|&at| self.token_at(at) == b",") {
+            if let ExprKind::Binary { left, .. } = first.kind()
+                && let Some(comma) = self.token_after_if(left.outer_span().end, b",")
+            {
                 self.unexpected(comma);
             }
         }
+    }
+
+    /// The start of the token after `at`, if it's `token`. `at` is between tokens.
+    fn token_after_if(&self, at: u32, token: &[u8]) -> Option<u32> {
+        let next = skip_trivia(self.file.text(), at);
+        if self.token_at(next) == token {
+            return Some(next);
+        }
+        // In a script, `<!--` starts a comment, which `skip_trivia` doesn't know. The tokens of a whole tree do.
+        if !self.is_whole {
+            return None;
+        }
+        let next = self.file.token_after(Span::new(at, at))?;
+        (next.text() == token).then(|| next.start())
     }
 
     // ───────────────────────────── checks that depend on the source type ─────────────────────────────

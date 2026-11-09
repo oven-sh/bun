@@ -395,11 +395,11 @@ impl<'a> Checks<'a, '_> {
     fn property(&mut self, prop: Prop<'a>, edition: u32) {
         if prop.is_jsx_attribute() {
             // acorn-jsx expects a `...` token after the `{` of a spread attribute, whatever the edition.
-            if prop.kind() == PropKind::Spread && edition < 6 {
-                let dots = self.after_token(prop.span().start);
-                if self.token_at(dots) == b"..." {
-                    self.dots(dots, edition);
-                }
+            if prop.kind() == PropKind::Spread
+                && edition < 6
+                && let Some(dots) = self.token_after_if(prop.span().start + 1, b"...")
+            {
+                self.dots(dots, edition);
             }
             return;
         }

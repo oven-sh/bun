@@ -3433,7 +3433,7 @@ console.log(<div {...obj} key="after" />);`),
     it("return undefined in an async generator", () => {
       const keeps = [
         ["async function* f() { return undefined; }", "async function* f() {\n  return undefined;\n}"],
-        ["async function* f() { return void 0; }", "async function* f() {\n  return void 0;\n}"],
+        ["async function* f() { return void 0; }", "async function* f() {\n  return undefined;\n}"],
         [
           "const f = async function* () { return undefined; }",
           "const f = async function* () {\n  return undefined;\n}",
@@ -3446,7 +3446,7 @@ console.log(<div {...obj} key="after" />);`),
         expectPrintedMin_(code, out.replaceAll("return undefined", "return void 0"));
       }
 
-      // A kept `void 0` stays `void 0`, so a binding named `undefined` cannot capture it.
+      // A kept `void 0` stays `void 0` where a binding named `undefined` would capture it.
       expectPrinted_(
         "async function* g(undefined) { return void 0; }",
         "async function* g(undefined) {\n  return void 0;\n}",
@@ -3455,6 +3455,8 @@ console.log(<div {...obj} key="after" />);`),
         "function f(undefined) { return [void 0, undefined]; }",
         "function f(undefined) {\n  return [void 0, undefined];\n}",
       );
+      // Elsewhere `void 0` still folds, so a comparison against a define stays dead code.
+      expectPrinted_("if (process.env.NODE_ENV === void 0) { a() } else { b() }", "if (false) {} else {\n  b();\n}");
 
       // Every other kind of function drops the operand, including one nested
       // in an async generator.

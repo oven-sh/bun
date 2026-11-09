@@ -234,7 +234,7 @@ describe("the list of .bind.ts files", () => {
     const command = expand(manifest.rules.get("codegen")!.command, name =>
       name === "in" ? edge.inputs.join(" ") : name === "out" ? edge.outputs.join(" ") : (edge.bindings[name] ?? ""),
     );
-    expect(command.length).toBeLessThan(1024);
+    expect(command.length).toBeLessThanOrEqual(HOST_SHELL_COMMAND_BUDGET);
     expect(
       readFileSync(bindgenSources.path, "utf8")
         .split("\n")

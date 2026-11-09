@@ -63,14 +63,23 @@ export interface BindgenSources {
 }
 
 /**
- * Write the list of `.bind.ts` files for the steps that read them all: on the command line it outruns cmd.exe
+ * Write a list of sources, one per line, for an edge to name as an input: a changed list (a file added, removed or
+ * moved) re-runs the edge, which the inputs alone do not do for a removed file, and the list stays off the command line
  * (HOST_SHELL_COMMAND_BUDGET in ninja.ts). Written at configure time, like emitCppBind's cxx-sources.txt, with
- * `writeIfChanged`: an unchanged list keeps its mtime, and the edges that name it as an input stay clean. A changed
- * list (a schema added, removed or moved) re-runs them.
+ * `writeIfChanged`: an unchanged list keeps its mtime and the edge stays clean.
  */
+export function writeSourceList(path: string, lines: readonly string[]): string {
+  writeIfChanged(path, lines.map(line => `${line}\n`).join(""));
+  return path;
+}
+
+/** Write the list of `.bind.ts` files for the steps that read them all, as `<crate>=<path>` lines. */
 export function writeBindgenSources(path: string, bindgen: readonly string[]): BindgenSources {
   const crates = new Map(bindgen.map(src => [src, crateOf(src)]));
-  writeIfChanged(path, bindgen.map(src => `${crates.get(src)}=${src}\n`).join(""));
+  writeSourceList(
+    path,
+    bindgen.map(src => `${crates.get(src)}=${src}`),
+  );
   return { path, crates };
 }
 
@@ -618,22 +627,22 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const jsOutputs = sources.nodeFallbacks.map(s => resolve(outDir, basename(s)));
   const outputs = [...jsOutputs, ...jsOutputs.map(o => `${o}.zst`)];
 
-  // The script (build-fallbacks.ts) reads its args as [outdir, ...sources]
-  // but actually ignores the sources — it does readdirSync(".") to discover
-  // files. We pass them anyway: as inputs ninja tracks their edits, and in
-  // the command line a deleted file re-runs the edge.
+  // The script (build-fallbacks.ts) takes the output directory and finds the
+  // sources with readdirSync("."). They are inputs, so an edit re-runs the
+  // edge, and their list is one, so a deleted file does too.
   const script = resolve(sourceDir, "build-fallbacks.ts");
+  const list = writeSourceList(resolve(cfg.codegenDir, "node-fallbacks-sources.txt"), sources.nodeFallbacks);
   n.build({
     outputs,
     rule: "codegen_bun",
     inputs: [script, ...sources.nodeFallbacks],
-    implicitInputs: [installStamp],
+    implicitInputs: [installStamp, list],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: sourceDir,
       desc: "node-fallbacks/*.js",
       // `bun run build-fallbacks` resolves to `./build-fallbacks.ts` in cwd
-      args: shJoin(cfg, ["run", "build-fallbacks", outDir, ...sources.nodeFallbacks]),
+      args: shJoin(cfg, ["run", "build-fallbacks", outDir]),
     },
   });
 

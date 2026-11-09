@@ -314,7 +314,8 @@ impl TestContext {
     pub(crate) fn get_expect(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let (this_value, global) = (this_value.to_js(), cx.global());
         let expect = bound(global, this_value, "expect", 1, generated::Bun__TestContext__expect)?;
-        jsc::cpp::Bun__JSValue__setPrototypeDirect(expect, super::jest::Jest::expect_of(global, self.flavor)?, global)?;
+        let constructor = super::expect::js::get_constructor(global);
+        jsc::cpp::Bun__JSValue__setPrototypeDirect(expect, constructor, global)?;
         expect.put(global, b"assertions", bound(global, this_value, "assertions", 1, generated::Bun__TestContext__assertions)?);
         expect.put(global, b"hasAssertions", bound(global, this_value, "hasAssertions", 0, generated::Bun__TestContext__hasAssertions)?);
         expect.put(global, b"getState", bound(global, this_value, "getState", 0, generated::Bun__TestContext__getState)?);

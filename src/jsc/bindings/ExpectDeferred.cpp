@@ -1,21 +1,18 @@
 #include "root.h"
 
 #include "ErrorStackTrace.h"
-#include "GeneratedExpect.h"
 #include "GeneratedExpectDeferred.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
-#include <JavaScriptCore/AOTCompiledCaller.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/StackFrame.h>
-#include <JavaScriptCore/VMEntryRecord.h>
 
 using namespace JSC;
 
-// The `expect` of "vitest". Its structure has its prototype from the start: `bun test --aot` refuses to change the prototype of a native function.
+// The `expect` of "vitest": the constructor of Expect again, with another function for a call. It inherits from that constructor from the start, because `bun test --aot` refuses to change the prototype of a native function.
 class JSExpectOfVitest final : public InternalFunction {
 public:
     using Base = InternalFunction;
@@ -27,17 +24,18 @@ public:
         return &vm.internalFunctionSpace();
     }
 
-    static JSExpectOfVitest* create(VM& vm, JSGlobalObject* globalObject, JSValue prototype, NativeFunction call)
+    static JSExpectOfVitest* create(VM& vm, JSGlobalObject* globalObject, InternalFunction* constructor, NativeFunction call)
     {
-        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info());
-        auto* function = new (NotNull, allocateCell<JSExpectOfVitest>(vm)) JSExpectOfVitest(vm, structure, call);
-        function->finishCreation(vm, 2, "expect"_s);
+        auto* structure = Bun::createClassStructure(vm, globalObject, constructor, TypeInfo(InternalFunctionType, StructureFlags), info());
+        auto construct = constructor->nativeFunctionFor(CodeSpecializationKind::CodeForConstruct).retagged<CFunctionPtrTag>();
+        auto* function = new (NotNull, allocateCell<JSExpectOfVitest>(vm)) JSExpectOfVitest(vm, structure, call, construct);
+        function->finishCreation(vm, 0, constructor->name(), PropertyAdditionMode::WithoutStructureTransition);
         return function;
     }
 
 private:
-    JSExpectOfVitest(VM& vm, Structure* structure, NativeFunction call)
-        : Base(vm, structure, call, callHostFunctionAsConstructor)
+    JSExpectOfVitest(VM& vm, Structure* structure, NativeFunction call, NativeFunction construct)
+        : Base(vm, structure, call, construct)
     {
     }
 };
@@ -46,27 +44,45 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSExpectOfVitest, InternalFunction);
 
 const ClassInfo JSExpectOfVitest::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSExpectOfVitest) };
 
-extern "C" EncodedJSValue Expect__createOfVitest(JSGlobalObject* globalObject, EncodedJSValue prototype, NativeFunction call)
-{
-    return JSValue::encode(JSExpectOfVitest::create(getVM(globalObject), globalObject, JSValue::decode(prototype), call));
-}
-
-static Bun::Bindgen::Generated::JSExpect* expectOfFrame(VM& vm, CallFrame* frame)
-{
-    if (!frame || AOT::isOperationFrameRecord(vm, frame))
-        return nullptr;
-    JSValue thisValue = frame->thisValue();
-    return thisValue.isCell() ? dynamicDowncast<Bun::Bindgen::Generated::JSExpect>(thisValue.asCell()) : nullptr;
-}
-
-// The `expect()` object whose matcher is running: `this` of the top native frame, or of the one that called into script last, which a matcher of `expect.extend()` runs below.
-extern "C" EncodedJSValue Expect__ofRunningMatcher(JSGlobalObject* globalObject)
+extern "C" EncodedJSValue Expect__createOfVitest(JSGlobalObject* globalObject, EncodedJSValue encodedConstructor, NativeFunction call, NativeFunction soft, NativeFunction poll)
 {
     auto& vm = getVM(globalObject);
-    auto* expect = expectOfFrame(vm, vm.topCallFrame);
-    if (!expect && vm.topEntryFrame)
-        expect = expectOfFrame(vm, vmEntryRecord(vm.topEntryFrame)->prevTopCallFrame());
-    return JSValue::encode(expect ? JSValue(expect) : jsUndefined());
+    auto* constructor = uncheckedDowncast<InternalFunction>(JSValue::decode(encodedConstructor));
+    auto* expect = JSExpectOfVitest::create(vm, globalObject, constructor, call);
+    Identifier softName = Identifier::fromString(vm, "soft"_s);
+    Identifier pollName = Identifier::fromString(vm, "poll"_s);
+    JSValue softOfVitest = JSFunction::create(vm, globalObject, 1, softName.string(), soft, ImplementationVisibility::Public);
+    JSValue pollOfVitest = JSFunction::create(vm, globalObject, 1, pollName.string(), poll, ImplementationVisibility::Public);
+    // It has the members of the constructor itself, so that Object.assign() and a spread copy them from it too.
+    constructor->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        UniquedStringImpl* key = entry.key();
+        if (key == vm.propertyNames->name.impl() || key == vm.propertyNames->length.impl())
+            return true;
+        JSValue value = constructor->getDirect(entry.offset());
+        if (key == softName.impl())
+            value = softOfVitest;
+        else if (key == pollName.impl())
+            value = pollOfVitest;
+        if (entry.attributes() & PropertyAttribute::Accessor)
+            expect->putDirectNonIndexAccessorWithoutTransition(vm, key, uncheckedDowncast<GetterSetter>(value), entry.attributes());
+        else if (value.isCustomGetterSetter())
+            expect->putDirectCustomGetterSetterWithoutTransition(vm, key, value, entry.attributes());
+        else
+            expect->putDirectWithoutTransition(vm, key, value, entry.attributes());
+        return true;
+    });
+    return JSValue::encode(expect);
+}
+
+// The `expect` of "vitest" in this realm, or empty if its module was not made or has another `expect` now.
+extern "C" EncodedJSValue Expect__ofVitestIfMade(JSGlobalObject* globalObject)
+{
+    auto& vm = getVM(globalObject);
+    JSObject* module = defaultGlobalObject(globalObject)->nativeModuleDefaultObject(NativeModuleDefaultSlot::BunTestVitest).get();
+    if (!module)
+        return {};
+    JSValue expect = module->getDirect(vm, Identifier::fromString(vm, "expect"_s));
+    return JSValue::encode(expect && expect.inherits<JSExpectOfVitest>() ? expect : JSValue());
 }
 
 extern "C" void ExpectDeferred__callWhenSettled(JSGlobalObject* globalObject, EncodedJSValue promise, EncodedJSValue function, EncodedJSValue deferred)

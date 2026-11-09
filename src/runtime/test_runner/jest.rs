@@ -342,17 +342,6 @@ pub(crate) mod Jest {
         Ok(found)
     }
 
-    /// The `expect` that the module of `flavor` exports.
-    pub(crate) fn expect_of(global: &JSGlobalObject, flavor: Flavor) -> JsResult<JSValue> {
-        match flavor {
-            Flavor::Jest => Ok(js_Expect::get_constructor(global)),
-            Flavor::Vitest => {
-                let module = jsc::from_js_host_call(global, || Bun__Jest__vitestModuleObject(global))?;
-                Ok(module.get(global, "expect")?.unwrap_or_else(|| js_Expect::get_constructor(global)))
-            }
-        }
-    }
-
     /// `globals = "vitest"`: as with Vitest's `globals: true`, the names are also properties of `globalThis`. Packages look for them there.
     #[inline(never)] // --trim cuts the test runner at the call.
     pub(crate) fn define_vitest_globals(global: &JSGlobalObject) -> JsResult<()> {

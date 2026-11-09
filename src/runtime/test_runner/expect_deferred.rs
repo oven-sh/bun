@@ -17,7 +17,7 @@ use bun_jsc::{
 use super::{Expect, Flags, Promise};
 use crate::generated_bindgen::expect_deferred as generated;
 use crate::test_runner::bun_test::{
-    BunTest, BunTestPtr, BunTestPtrWeak, Phase, RefDataValue, StepResult,
+    BunTest, BunTestPtr, BunTestPtrWeak, Flavor, Phase, RefDataValue, StepResult,
 };
 use crate::test_runner::execution::ExecutionSequence;
 use crate::test_runner::expect::js as expect_js;
@@ -45,7 +45,6 @@ unsafe extern "C" {
         on_fulfilled: JSValue,
     ) -> JSValue;
     safe fn ExpectDeferred__takeThrown(global: &JSGlobalObject) -> JSValue;
-    safe fn Expect__ofRunningMatcher(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__isHandled(promise: JSValue) -> bool;
     safe fn ExpectDeferred__captureCallSite(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__continueStackAt(
@@ -294,6 +293,8 @@ enum Role {
 pub(crate) struct Pass {
     outer: Cell<*const Pass>,
     role: Role,
+    /// The module whose rules a comparison under this pass follows. A pass that states none takes that of the pass around it.
+    flavor: Cell<Option<Flavor>>,
     /// Number of `once()` calls so far. For `Role::Replaying`, how many were answered from the journal.
     cursor: Cell<u32>,
     /// Four bits per `recent` entry: `Asked << 1 | threw`.
@@ -305,6 +306,8 @@ pub(crate) struct Pass {
     /// `[who, what, answer]` per `once()` call, until `journal` exists.
     recent: [[Cell<JSValue>; 3]; Pass::RECENT],
 }
+
+const _: () = assert!(core::mem::size_of::<Pass>() == 128);
 
 pub(crate) struct EnteredPass<'a>(&'a Pass);
 
@@ -320,10 +323,11 @@ impl Pass {
     const STRIDE: u32 = 4;
 
     #[inline]
-    fn new(role: Role, journal: JSValue) -> Pass {
+    fn new(role: Role, journal: JSValue, flavor: Option<Flavor>) -> Pass {
         Pass {
             outer: Cell::new(core::ptr::null()),
             role,
+            flavor: Cell::new(flavor),
             cursor: Cell::new(0),
             recent_kinds: Cell::new(0),
             journal: Cell::new(journal),
@@ -332,16 +336,23 @@ impl Pass {
     }
 
     #[inline]
-    fn of_matcher() -> Pass {
-        Self::new(Role::Matcher, JSValue::ZERO)
+    fn of_matcher(flavor: Flavor) -> Pass {
+        Self::new(Role::Matcher, JSValue::ZERO, Some(flavor))
     }
 
     fn replaying(deferred: JSValue) -> Pass {
-        Self::new(Role::Replaying, deferred)
+        Self::new(Role::Replaying, deferred, None)
     }
 
-    pub(crate) fn barrier() -> Pass {
-        Self::new(Role::Barrier, JSValue::ZERO)
+    pub(crate) fn barrier(flavor: Option<Flavor>) -> Pass {
+        Self::new(Role::Barrier, JSValue::ZERO, flavor)
+    }
+
+    /// The module whose rules a comparison follows now. `None` with no matcher and no `equals()` on the stack.
+    #[inline]
+    pub(crate) fn flavor() -> Option<Flavor> {
+        // SAFETY: as in `current`.
+        unsafe { Self::innermost().get().as_ref() }.and_then(|pass| pass.flavor.get())
     }
 
     #[inline]
@@ -352,7 +363,12 @@ impl Pass {
 
     #[inline]
     pub(crate) fn enter(&self) -> EnteredPass<'_> {
-        self.outer.set(Self::innermost().replace(self));
+        let outer = Self::innermost().replace(self);
+        self.outer.set(outer);
+        if self.flavor.get().is_none() {
+            // SAFETY: as in `current`.
+            self.flavor.set(unsafe { outer.as_ref() }.and_then(|outer| outer.flavor.get()));
+        }
         EnteredPass(self)
     }
 
@@ -545,15 +561,12 @@ impl Pass {
     }
 }
 
-/// For C++ deep equality, where Vitest and Jest disagree. With no matcher on the stack (a kept `equals()`, a direct `asymmetricMatch()`) the running entry decides.
+/// For C++ deep equality, where Vitest and Jest disagree.
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Expect__comparesLikeVitest(global: &JSGlobalObject) -> bool {
     bun_removable_features::removable_definition!(Test, Expect__comparesLikeVitest);
-    match Expect__ofRunningMatcher(global).as_class_ref::<Expect>() {
-        Some(expect) => expect.is_vitest(),
-        None => global.bun_vm().is_running_vitest_entry,
-    }
+    Expect::flavor_of_comparison(global) == Flavor::Vitest
 }
 
 /// A matcher call waiting on a promise. [`Pass::wait_for`] throws it and `Expect::matcher_threw` catches it.
@@ -968,7 +981,7 @@ impl Expect {
         if !self.flags.get().is_plain() {
             return self.call_modified_matcher(cx, call, &matcher);
         }
-        let pass = Pass::of_matcher();
+        let pass = Pass::of_matcher(self.flavor.get());
         let _entered = pass.enter();
         match matcher(cx) {
             Ok(value) => Ok(value),
@@ -996,7 +1009,7 @@ impl Expect {
         call: &MatcherCall<'_>,
         matcher: Matcher<'_, 'a>,
     ) -> JsResult<JSValue> {
-        let pass = Pass::of_matcher();
+        let pass = Pass::of_matcher(self.flavor.get());
         let _entered = pass.enter();
         let flags = self.flags.get();
         let result = if flags.promise() != Promise::None {

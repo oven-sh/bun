@@ -255,7 +255,7 @@ export const ExpectMatcherContext = b.class({
 /** `this.utils` in a matcher of `expect.extend()`. Its functions are own properties, which ignore `this`. */
 export const ExpectMatcherUtils = b.class({
   rustPath: "crate::test_runner::ExpectMatcherUtils",
-  internalFields: ["equalityTesters", "equals", "state", "snapshotSerializers", "toSatisfy"],
+  internalFields: ["equalityTesters", "equals", "equalsOfVitest", "state", "snapshotSerializers", "toSatisfy"],
 });
 
 /** Ignores `this`, so a matcher can destructure it or pass it around like in Jest. */
@@ -270,6 +270,12 @@ const utility = (name: string, rustName: string) => plain("ExpectMatcherUtils", 
 
 export const matcherContextEquals = b.fn({
   ...plain("ExpectMatcherContext", "equals", "equals"),
+  args: { a: b.any, b: b.any, customTesters: b.any, strictCheck: b.bool.loose },
+  returns: b.bool,
+});
+/** `this.equals` in a matcher that was called on an `expect()` of `"vitest"`. */
+export const matcherContextEqualsOfVitest = b.fn({
+  ...plain("ExpectMatcherContext", "equalsOfVitest", "equals_of_vitest"),
   args: { a: b.any, b: b.any, customTesters: b.any, strictCheck: b.bool.loose },
   returns: b.bool,
 });

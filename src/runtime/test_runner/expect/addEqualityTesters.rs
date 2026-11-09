@@ -121,7 +121,7 @@ impl Expect {
 
     fn run_equality_testers(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
         let Some(testers) = Self::equality_testers(global)? else { return Ok(None) };
-        let context = ExpectMatcherContext { flags: Flags::default(), parent: None }.to_js(global);
+        let context = ExpectMatcherContext { flags: Flags::default(), flavor: Expect::flavor_of_comparison(global), parent: None }.to_js(global);
         let mut iter = testers.array_iterator(global)?;
         while let Some(tester) = iter.next()? {
             if !tester.is_callable() {

@@ -156,7 +156,7 @@ pub(crate) struct InlineSnapshotToWrite {
     pub(crate) start_indent: Option<Box<[u8]>>,
     /// owned (was: owned by Snapshots.allocator)
     pub(crate) end_indent: Option<Box<[u8]>>,
-    pub(crate) is_in_vitest_test: bool,
+    pub(crate) expect_is_of_vitest: bool,
 }
 
 impl InlineSnapshotToWrite {
@@ -1104,7 +1104,7 @@ impl Snapshots {
                             // regular line. indent.
                             re_indented_string.extend_from_slice(start_indent);
                             if needs_more_spaces {
-                                let by_tab = ils.is_in_vitest_test && strings::contains_char(start_indent, b'\t');
+                                let by_tab = ils.expect_is_of_vitest && strings::contains_char(start_indent, b'\t');
                                 re_indented_string.extend_from_slice(if by_tab { b"\t" } else { b"  " });
                             }
                         }

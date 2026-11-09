@@ -83,7 +83,12 @@ Look for these causes, in this order.
 
 ## The executable is too large
 
-[`--trim`](/compiler/size) removes the Bun and Node.js APIs that your code never calls. If that changes little, something in your program could reach any API, usually `eval` or a dynamic `require()`. [`--explain=trim`](/compiler/size#what-blocks---trim) says what. `--no-compile-function-source` leaves out the source text of your functions.
+[`--trim`](/compiler/size) removes the Bun and Node.js APIs that the compiler can prove your code never calls. If the executable is still large, run the build with `--explain=trim`.
+
+- A report that starts with `blocked by` gives the reason, such as `eval` or a dynamic `require()`. A `blocked by` line that ends in `at file:line:column` gives the place too. [What blocks `--trim`](/compiler/size#what-blocks---trim) lists the reasons.
+- A report with no `blocked by` line can still keep many APIs that your code never calls. A `kept` line gives the place of the use only when the compiler has one. [See what the compiler found](/compiler/size#see-what-the-compiler-found) has a way to find the statement behind the other lines.
+
+`--no-compile-function-source` leaves out the source text of your functions.
 
 ## Something else
 

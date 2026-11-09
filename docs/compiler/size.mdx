@@ -37,6 +37,14 @@ aot: trim: kept Bun.serve (serve): used (Bun.serve) at server.ts:1:1
 aot: trim: removed bun:sqlite and node:sqlite (sqlite): unused
 ```
 
+The report has more lines than these three. A `uses` line names a built-in that the compiler counts as used, such as a global, a module, a class or one of their members. It can also name a bare property name. A name in percent signs, such as `%Dirent%`, stands for a built-in that has no global name. Your code doesn't have to name or call what a `uses` line names. If a `uses` line ends in `(escapes, so any member may be used)`, the compiler can't tell which members of that built-in your program uses. Any of them may be used, including members that your code never names.
+
+A `kept` line that says `used` ends in `at file:line:column` when the compiler has a place for the use. Some of these lines have no place. Some have a place in one of Bun's own modules, such as `internal:util/inspect`. For those lines, the report doesn't say which statement of your program leads there. A report that starts with `the compiler can see every API this program uses` can have such lines too.
+
+To find the statement, make a copy of your program and remove statements from it. Then get the report for the copy with the same command and options, and see which features moved from a `kept` line to a `removed` line. If the command stops at an error in the copy, it prints no report. If two statements lead to the same APIs, those features only move when you remove both. A program with no statements still has a few `kept` lines.
+
+A default export in your entry file is one such statement. Bun can start a server from that export, as [export default syntax](/runtime/http/server#export-default-syntax) describes. The compiler keeps `Bun.serve` unless it can tell that the export holds no server options. To rule it out, export the value under a name.
+
 ## What blocks `--trim`
 
 If the report starts with `blocked by`, your program or a dependency could reach APIs that the compiler can't see, so `--trim` keeps more. The line says where. With the first three reasons, unused Bun and Node.js APIs are still removed. With the last three, `--trim` keeps every API.

@@ -576,7 +576,40 @@ fn add_assets(
         root_directory,
         output_files,
     );
+    // SAFETY: the log outlives the request, and the build, which writes to it, has ended.
+    let log = unsafe { &mut *request.log };
+    warn_where_file_system_lacks(
+        files_for_file_system,
+        root_directory,
+        &laid,
+        output_files,
+        log,
+    );
     Ok((named_at_root, encode_files_for_file_system_alone(laid)))
+}
+
+fn warn_where_file_system_lacks(
+    files_for_file_system: &FilesForFileSystem,
+    root_directory: &[u8],
+    laid: &[PathForFileSystemAlone],
+    output_files: &[OutputFile],
+    log: &mut bun_ast::Log,
+) {
+    let root = with_forward_slashes(trim_trailing_separators(root_directory));
+    let laid = laid.iter().filter(|it| !it.is_folder);
+    let laid = laid.map(|it| &it.path_below_root[..]);
+    let is_file = |file: &&OutputFile| file.output_kind.is_file_in_standalone_mode();
+    let with_text = output_files.iter().filter(is_file);
+    let with_text = with_text.filter(|file| !has_no_text(file));
+    let with_text = with_text.map(|it| bun_core::strings::remove_leading_dot_slash(&it.dest_path));
+    let found: std::collections::BTreeSet<&[u8]> = laid.chain(with_text).collect();
+    for (path, warning) in &files_for_file_system.warnings_if_lacking {
+        let spelled = with_forward_slashes(path);
+        if !found.contains(spelled.get(root.len() + 1..).unwrap_or_default()) {
+            log.warnings += 1;
+            log.add_msg(warning.clone());
+        }
+    }
 }
 
 fn with_forward_slashes(path: &[u8]) -> Vec<u8> {

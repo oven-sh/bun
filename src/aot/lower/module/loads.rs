@@ -483,6 +483,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         call: ExprId,
         chain_exit: Option<BlockId>,
     ) -> Option<ValueId> {
+        let of_site_around = self.made_require_of_site.take();
+        let lowered = self.try_lower_module_call_of_site(call, chain_exit);
+        self.made_require_of_site = of_site_around;
+        lowered
+    }
+
+    fn try_lower_module_call_of_site(
+        &mut self,
+        call: ExprId,
+        chain_exit: Option<BlockId>,
+    ) -> Option<ValueId> {
         let hir = self.file.hir;
         let ExprKind::Call(id) = hir[call].kind else {
             return None;
@@ -665,6 +676,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 && (self.file).has_arm_for_transpiler_alone(site.specifier_node),
             maker_of_asked_require,
         };
+        let is_seen = match site.plan {
+            Some(plan) => plan.records,
+            None => modules.keeps_module_object(ModuleRef::File(self.file.file)),
+        };
+        if is_by_made_require && is_seen && matches!(hir[made].kind, ExprKind::Ident(_)) {
+            self.made_require_of_site = Some(made);
+        }
         if matches!(operation, ModuleOperation::RequireResolve) && given.len() > 1 {
             return None;
         }
@@ -1467,17 +1485,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_planned_require(&mut self, plan: PlannedSite) -> ValueId {
         let module = self.file.fragment.declare_module(plan.target);
         let referrer = self.current_module_id();
+        let object_of_run = match plan.records {
+            true => self.find_module_object_of_run(),
+            false => None,
+        };
+        let by_made_require = plan.is_by_made_require;
         if plan.records {
             self.builder
-                .record_require(module, referrer, plan.is_by_made_require);
+                .record_require(module, referrer, object_of_run, by_made_require, false);
         }
         let is_bare = plan.is_bare && self.is_module_body() && self.handler().is_none();
         let is_call_of_require = matches!(plan.target, ModuleRef::File(_) | ModuleRef::Runtime(_));
         self.builder
             .evaluate_module(module, referrer, is_bare, is_call_of_require);
         if plan.records {
-            self.builder
-                .record_require(module, referrer, plan.is_by_made_require);
+            let names_run = object_of_run.is_some();
+            self.builder.record_require(
+                module,
+                referrer,
+                object_of_run,
+                by_made_require,
+                names_run,
+            );
         }
         if !plan.yields_value {
             return self.builder.boolean(true);
@@ -1549,16 +1578,18 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     fn emit_require_module(&mut self, module: ModuleRef, specifier: StringId) -> ValueId {
         let id = self.file.fragment.declare_module(module);
         let referrer = self.file.module_id();
+        let object_of_run = self.find_module_object_of_run();
         let forms = (self.file.inputs.modules).forms_require_checks_first(module);
         if forms.is_empty() {
-            let required = self.builder.require_module(id, referrer, specifier, false);
+            let required =
+                (self.builder).require_module(id, referrer, specifier, object_of_run, false);
             return self.expect_exports_layout(module, required);
         }
         let answer = self.builder.create_variable(None);
         let done = self.create_block();
         for &(_, form) in forms {
             let form = (self.file.fragment).declare_module(ModuleRef::File(form));
-            let namespace = self.builder.require_module(form, referrer, specifier, true);
+            let namespace = (self.builder).require_module(form, referrer, specifier, None, true);
             let is_held = self.builder.type_test(namespace, TypeTable::OBJECT);
             self.builder.write_variable(answer, namespace);
             let not_held = self.create_block();
@@ -1567,7 +1598,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
             self.continue_in(not_held);
         }
-        let required = self.builder.require_module(id, referrer, specifier, false);
+        let required = (self.builder).require_module(id, referrer, specifier, object_of_run, false);
         self.builder.write_variable(answer, required);
         self.jump(done);
 
@@ -1647,7 +1678,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_require_by_name(&mut self, name: ValueId, referrer: ModuleId) -> ValueId {
-        self.builder.require_dynamic(name, referrer, false, false)
+        let object_of_run = self.find_module_object_of_run();
+        (self.builder).require_dynamic(name, referrer, object_of_run, false, false)
     }
 
     fn asks_loader_functions(&self) -> bool {
@@ -2453,10 +2485,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         let (all_are_known, no_library_module) =
             (known.all_names_are_known, known.names_no_library_module);
+        let object_of_run = match load {
+            ComputedLoad::Require { .. } => self.find_module_object_of_run(),
+            _ => None,
+        };
         match load {
             ComputedLoad::Require { .. } => (self.builder).require_dynamic(
                 specifier,
                 referrer,
+                object_of_run,
                 all_are_known,
                 no_library_module,
             ),

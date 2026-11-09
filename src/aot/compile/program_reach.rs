@@ -3840,8 +3840,8 @@ fn find_who_hands_on_what(
         };
         let is_by_star = false;
         if let ModuleRef::File(file) = module
-            && !matches!(handed_on, HandedOn::Variable(defined) if defined.file == file)
-            && add_exporter(handed_on, Exporter { file, is_by_star })
+            && (matches!(handed_on, HandedOn::Variable(defined) if defined.file == file)
+                || add_exporter(handed_on, Exporter { file, is_by_star }))
         {
             handed_on_by_commonjs.push((file, handed_on));
         }

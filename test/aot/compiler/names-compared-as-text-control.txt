@@ -210,6 +210,8 @@ allows src/sema/import_sites/changed_files.rs a function of node:fs that changes
     return matches!(name, b"open" | b"openSync");
 allows src/sema/import_sites/changed_files.rs a function of node:fs that reads a file
     return matches!(name, b"readFile" | b"readFileSync" | b"createReadStream");
+allows src/sema/import_sites/changed_files.rs a flag of fs.constants that only reads
+    return atoms.bytes(constants) == b"constants" && matches!(name, b"O_RDONLY" | b"O_NONBLOCK");
 finds src/sema/import_sites/changed_files.rs matches!
     return matches!(name, b"existsSync");
 allows src/sema/import_sites/call_sites.rs a member of jest, which the record of an import leads to

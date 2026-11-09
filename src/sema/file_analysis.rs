@@ -13,8 +13,8 @@ use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{
-    ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind, ImportSpecifier, JsxImport,
-    JsxImportSet, JsxMode, ResolvedForm, ResolvedFrom,
+    ChangedPath, ExportedFileChanger, FileReadBesideCaller, ImportSite, ImportSiteKind,
+    ImportSpecifier, JsxImport, JsxImportSet, JsxMode, OwnUrlHanded, ResolvedForm, ResolvedFrom,
 };
 use crate::module_format::{DeclaredModuleType, FormatByDeclaredType, ModuleFormat};
 use crate::session::Arena;
@@ -42,6 +42,8 @@ pub struct FileAnalysis<'s> {
     names_of_workers: &'s [(ExprId, ImportSpecifier)],
     pub paths_of_changed_files: &'s [ChangedPath],
     pub paths_of_files_read: &'s [(ExprId, Atom)],
+    pub files_read_beside_callers: &'s [FileReadBesideCaller],
+    pub own_urls_handed: &'s [OwnUrlHanded],
     pub exported_file_changers: &'s [ExportedFileChanger],
     pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],

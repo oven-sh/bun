@@ -1775,6 +1775,8 @@
     "aot/the-check-of-closure-resolves-the-calls-that-it-tells.test.ts",
     "aot/two-calls-left-in-flight-where-the-mock-is-taken-away-share-one-run-of-the-file.test.ts",
     "aot/a-birth-that-fills-a-slot-planned-in-the-form-of-definitions-stops-the-build-under-the-check.test.ts",
+    "aot/the-rules-on-holes-read-as-nan-refuse-a-walk-that-lies.test.ts",
+    "aot/an-executable-without-the-text-of-functions-prints-no-value-in-a-message.test.ts",
     "aot/a-class-of-buns-modules-over-a-constructor-function-names-it-as-its-base.test.ts",
     "aot/a-compiled-program-needs-half-a-megabyte-of-stack.test.ts",
     "aot/a-free-name-that-a-member-of-the-library-has-too-is-compiled.test.ts",

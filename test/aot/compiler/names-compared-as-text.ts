@@ -188,9 +188,9 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   {
     paths: /^src\/sema\/import_sites\/changed_files\.rs$/,
     lines:
-      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open|readFile|createReadStream)(?:Sync)?"|b"(?:promises|file|write|writer|delete|recursive|text|json|bytes|arrayBuffer|stream)"/,
+      /b"(?:writeFile|appendFile|truncate|unlink|createWriteStream|rm|copyFile|link|symlink|cp|rename|open|readFile|createReadStream)(?:Sync)?"|b"(?:promises|file|write|writer|delete|recursive|text|json|bytes|arrayBuffer|stream|constants)"|b"O_[A-Z]+"/,
     reason:
-      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change or read a file, and which operand names it. find_function() finds the holder first, by the record of the import or as the free name `Bun`",
+      "a table of built-ins: which functions of node:fs, node:fs/promises, `Bun` and `Bun.file()` change or read a file, which operand names it, and which flags of `fs.constants` only read. find_function() and find_members_below_holder() find the holder first, by the record of the import or as the free name `Bun`",
   },
   {
     paths: /^src\/sema\/import_sites\/call_sites\.rs$/,

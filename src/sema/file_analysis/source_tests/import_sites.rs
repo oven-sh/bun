@@ -2348,6 +2348,7 @@ const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
     "const load = id => require(id); load('./a'); hand(load);",
     "function find() { return find(); } require(find());",
     "async function find() { return './a'; } require(find());",
+    "export {}; const base = flag ? import.meta.url : 'file:///nowhere/'; import(new URL('./a.mjs', base).href);",
 ];
 
 const NAMES_WITH_A_PART_OUT_OF_WHAT_MAY_CHANGE: &[(&str, &[&str])] = &[
@@ -3098,7 +3099,7 @@ const PATHS_OF_FILES_READ: &[(&str, &str, &[&str])] = &[
     (
         "a.mjs",
         "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./a.txt', base)); } read(import.meta.url); read(other);",
-        &[],
+        &["./a.txt"],
     ),
     (
         "a.mjs",
@@ -3118,6 +3119,31 @@ const PATHS_OF_FILES_READ: &[(&str, &str, &[&str])] = &[
     (
         "a.mjs",
         "import { readFileSync } from 'node:fs'; readFileSync(new URL(flag ? './a.txt' : name, import.meta.url));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; export function read(options = {}) { const base = options.base ?? import.meta.url; return readFileSync(new URL('./a.txt', base)); }",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(flag ? one : other);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; import { join } from 'node:path'; let file; if (flag) file = other; else file = join(import.meta.dirname, 'a.txt'); readFileSync(file);",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./a.txt', base)); } read(import.meta.url); read(other ?? 'file:///nowhere/');",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { readFileSync } from 'node:fs'; readFileSync(new URL('./a.txt', 'file:///nowhere/'));",
         &[],
     ),
     (
@@ -3195,6 +3221,46 @@ const PATHS_OF_FILES_READ: &[(&str, &str, &[&str])] = &[
         "export {}; await response.json(); await response.text();",
         &[],
     ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import { openSync, constants } from 'node:fs'; openSync(new URL('./a.txt', import.meta.url), constants.O_RDONLY);",
+        &["./a.txt"],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDONLY | fs.constants.O_CREAT);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDWR);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDONLY | flags);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; fs.openSync(new URL('./a.txt', import.meta.url), fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 1));",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; const constants = { O_RDONLY: 1 }; fs.openSync(new URL('./a.txt', import.meta.url), constants.O_RDONLY);",
+        &[],
+    ),
+    (
+        "a.mjs",
+        "import fs from 'node:fs'; import os from 'node:os'; fs.openSync(new URL('./a.txt', import.meta.url), os.constants.O_RDONLY);",
+        &[],
+    ),
 ];
 
 #[test]
@@ -3207,6 +3273,387 @@ fn paths_from_its_own_folder_that_a_file_spells_to_calls_which_read_what_is_ther
                 .map(|&(_, path)| s.workspace.text(path).to_string())
                 .collect();
             assert_eq!(described, paths, "{text}");
+            let lays_nothing_else = s.analysis.names_out_of_data_files.is_empty()
+                && s.analysis.asked_of_other_files.is_empty()
+                && s.analysis.asked_of_data_files.is_empty()
+                && s.analysis.asked_of_own_exports.is_empty();
+            assert!(lays_nothing_else, "{text}");
+        });
+    }
+}
+
+const FILES_READ_BESIDE_THE_FILE_THAT_CALLS: &[(&str, &[&str], &[&str])] = &[
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL('./data.txt', base)); }",
+        &["read 0 ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; export const read = (options, base) => readFileSync(fileURLToPath(new URL('../a.txt', base)));",
+        &["read 1 ./../a.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./data.txt', base)); } export { read as t };",
+        &["read 0 ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; import path from 'node:path'; const NOTES = 'notes.json'; export function read(base) { const folder = path.dirname(fileURLToPath(base)); for (const found of [path.resolve(folder, NOTES), path.resolve(folder, '..', NOTES)]) { try { return readFileSync(found); } catch {} } }",
+        &["read 0 ./../notes.json", "read 0 ./notes.json"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL('./data.txt', base)); } read(import.meta.url);",
+        &["read 0 ./data.txt"],
+        &["read 0"],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; import path from 'node:path'; export function read(base) { return readFileSync(base ? path.join(import.meta.dirname, 'a.txt') : fileURLToPath(new URL('./b.txt', base))); }",
+        &["read 0 ./b.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; export function read(base) { return readFileSync(fileURLToPath(base)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; export function read(base) { return readFileSync(fileURLToPath(base).slice(0, -1) + 'data.txt'); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { return readFileSync(new URL(base.slice(0, -1) + 'data.txt')); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; import { fileURLToPath } from 'node:url'; export function read(base) { return readFileSync(fileURLToPath(base).replace(/[^/]$/, '') + 'data.txt'); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { base = other; return readFileSync(new URL('./data.txt', base)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base, name) { return readFileSync(new URL(name, base)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(base) { arguments[0] = other; return readFileSync(new URL('./data.txt', base)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; function read(base) { return readFileSync(new URL('./data.txt', base)); } read(import.meta.url);",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(import.meta.url);",
+        &[],
+        &["read 0"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(1, import.meta.url);",
+        &[],
+        &["read 1"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(...list, import.meta.url);",
+        &[],
+        &[],
+    ),
+    (
+        "import * as lib from './lib.mjs'; lib.read(import.meta.url);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; if (false) read(import.meta.url);",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(import.meta.dirname);",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(new URL('./data.txt', options.moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options = {}) { const base = options.base ?? import.meta.url; return readFileSync(new URL('./data.txt', base)); }",
+        &["read 0 base ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(new URL('./data.txt', options)); }",
+        &["read 0 ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(new URL(options.name, options.moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(flag ? new URL('./a.txt', options.moduleUrl) : new URL('./b.txt', options)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ moduleUrl: import.meta.url });",
+        &[],
+        &["read 0 moduleUrl"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read(1, { name: 'x', base: import.meta.url });",
+        &[],
+        &["read 1 base"],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ [key]: import.meta.url }); read({ get base() { return import.meta.url; } }); read({ inner: { base: import.meta.url } });",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { options.url = other; return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { delete options.url; return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { Object.assign(options, { url: other }); return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; function change(o) { o.url = other; } export function read(options) { change(options); return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { options.url ??= other; return readFileSync(new URL('./data.txt', options.url)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { log(options.name); return readFileSync(new URL('./data.txt', options.url)); }",
+        &["read 0 url ./data.txt"],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ url: import.meta.url, url: other });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ url: import.meta.url, ...far });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ url: import.meta.url, [key]: other });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ url: import.meta.url, get url() { return other; } });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ ...far, url: other, url: import.meta.url, name: 'x' });",
+        &[],
+        &["read 0 url"],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl }) { moduleUrl = other; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl }) { const set = () => { moduleUrl = other; }; set(); return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ [key]: moduleUrl }) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ ...rest }) { return readFileSync(new URL('./data.txt', rest.moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl }) { log(moduleUrl); return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl }) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(name, { moduleUrl: base }) { return readFileSync(new URL('./data.txt', base)); }",
+        &["read 1 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ moduleUrl = other }) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ inner: { moduleUrl } }) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read({ ...rest }) { return readFileSync(new URL('./data.txt', rest.moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read([moduleUrl]) { return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { return readFileSync(flag ? new URL('./a.txt', options.moduleUrl) : new URL('./b.txt', options.other)); }",
+        &["read 0 moduleUrl ./a.txt"],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ moduleUrl: import.meta.url, get early() { return 1; } });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ get early() { return 1; }, moduleUrl: import.meta.url });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ set early(value) {}, moduleUrl: import.meta.url });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ change() {}, moduleUrl: import.meta.url });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ __proto__: far, moduleUrl: import.meta.url });",
+        &[],
+        &[],
+    ),
+    (
+        "import { read } from './lib.mjs'; read({ change: () => 1, moduleUrl: import.meta.url });",
+        &[],
+        &["read 0 moduleUrl"],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { name, moduleUrl: base } = options; log(name); return readFileSync(new URL('./data.txt', base)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { log(options.name); const { moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 moduleUrl ./data.txt"],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { moduleUrl = other } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { [key]: moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { ...rest } = options; return readFileSync(new URL('./data.txt', rest.moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { moduleUrl, ...rest } = options; log(rest); return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { inner: { moduleUrl } } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { let { moduleUrl } = options; moduleUrl = other; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { options.moduleUrl = other; const { moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { change(options); const { moduleUrl } = options; return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &[],
+        &[],
+    ),
+    (
+        "import { readFileSync } from 'node:fs'; export function read(options) { const { other: moduleUrl } = options; log(options.moduleUrl); return readFileSync(new URL('./data.txt', moduleUrl)); }",
+        &["read 0 other ./data.txt"],
+        &[],
+    ),
+];
+
+#[test]
+fn files_that_a_function_reads_beside_the_file_whose_url_it_is_handed() {
+    for &(text, read, handed) in FILES_READ_BESIDE_THE_FILE_THAT_CALLS {
+        with_workspace(|w| {
+            let s = &w.analyze(&Source::new("a.mjs", text), &w.fold_inputs(&TARGET));
+            let name = |symbol| s.workspace.text(s.bound.symbol(symbol).name);
+            let mut described: Vec<String> = (s.analysis.files_read_beside_callers.iter())
+                .map(|it| {
+                    let path = s.workspace.text(it.path);
+                    let property = it.property.map(|it| format!("{} ", s.workspace.text(it)));
+                    let property = property.unwrap_or_default();
+                    format!("{} {} {property}{path}", name(it.function), it.place)
+                })
+                .collect();
+            described.sort();
+            assert_eq!(described, read, "{text}");
+            let described: Vec<String> = (s.analysis.own_urls_handed.iter())
+                .map(|it| {
+                    let property = it.property.map(|it| format!(" {}", s.workspace.text(it)));
+                    let property = property.unwrap_or_default();
+                    format!("{} {}{property}", name(it.function), it.place)
+                })
+                .collect();
+            assert_eq!(described, handed, "{text}");
             let lays_nothing_else = s.analysis.names_out_of_data_files.is_empty()
                 && s.analysis.asked_of_other_files.is_empty()
                 && s.analysis.asked_of_data_files.is_empty()

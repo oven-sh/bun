@@ -15,6 +15,7 @@ use bun_sema::util::FxHashSet;
 pub(super) use self::walker::walk_file;
 use super::{BindingRef, ScopeInput, ScopeSlot};
 use crate::ir::FunctionKey;
+use crate::lower::commonjs::WrapperSlots;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub(in crate::lower) struct WalkedFunctionId(pub(in crate::lower) u32);
@@ -139,6 +140,7 @@ pub(super) struct ScopeWalk {
     pub(super) eval_variable_scopes: Vec<ScopeId>,
     pub(super) parameter_eval_variable_scopes: Vec<ScopeId>,
     pub(super) has_wrapper_parameters: bool,
+    pub(super) wrapper_slots: WrapperSlots,
     pub(super) has_values_of_each_run: bool,
     pub(super) keeps_first_exports: bool,
 }

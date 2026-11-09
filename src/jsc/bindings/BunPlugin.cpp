@@ -4491,8 +4491,8 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     if (JSC::Exception* thrown = scope.exception()) [[unlikely]] {
         // The next load asks the mock again.
         waiting.append({ module.index(), JSC::Strong<JSC::JSObject> { vm, mock } });
-        // The load that `bun test` leaves behind such an ask, by require() or import(), fails with the factory, and nobody hears it.
-        if (comesToFetchInFlight && !JSC::AOT::isAskedByLoadThatRequireLeft(globalObject, module) && !vm.isTerminationException(thrown) && scope.tryClearException()) {
+        // The load that `bun test` leaves behind such a require() fails with the factory, and nobody hears it.
+        if (comesToFetchInFlight && !vm.isTerminationException(thrown) && scope.tryClearException()) {
             JSC::JSPromise::rejectedPromise(globalObject, thrown->value())->performPromiseThen(vm, globalObject, JSC::jsUndefined(), JSC::jsUndefined(), JSC::JSPromise::create(vm, globalObject->promiseStructure()));
             throwException(globalObject, scope, thrown);
         }
@@ -4574,6 +4574,15 @@ static Vector<JSObject*, 2> factoriesThatAskThrough(Zig::GlobalObject* globalObj
             callers.append(running.mock.get());
     }
     return callers;
+}
+
+// As keyOfImportWhileModuleMocksRun() has it: with no factory in the context, the file that wrote a running factory asks for it. A factory that was called behind the call of import() is nothing to that call.
+static bool isAskedByFileOfRunningFactory(Zig::GlobalObject* globalObject, JSModuleMock* mock, const JSC::AOT::ImportThatAsks& import)
+{
+    // Compiled code calls a factory that takes the original of a file that has run inside the call of import(), earlier than `bun test` does: there the moments tell nothing.
+    if (mock->importsOriginal && JSC::AOT::isLeftAloneByMock(globalObject, import.fileAskedFor))
+        return false;
+    return mock->state == JSModuleMock::State::Running && !mock->isDetached && registeredModuleMock(globalObject, mock->specifier->tryGetValue().data) == mock && mock->calledAt <= import.momentOfCall && isWrittenIn(mock, import.fileThatWroteIt);
 }
 
 static bool waitsForMockOf(Zig::GlobalObject* globalObject, JSModuleMock* running, const Vector<JSObject*, 2>& callers, std::optional<JSC::AOT::ImportThatAsks> import)
@@ -4901,6 +4910,8 @@ JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, 
         }
         if (isCaller(mock) || (!callers && factory.isWaitedForByFetch))
             continue;
+        if (factoriesThatAsk.isEmpty() && callers && import && askedBy == JSC::AOT::FactoryAskedForBy::ImportCall && import->fileAskedFor.index() == factory.module && isAskedByFileOfRunningFactory(globalObject, mock, *import))
+            continue;
         if (!factoriesThatAsk.isEmpty() && !waitsForMockOf(globalObject, mock, factoriesThatAsk, import))
             continue;
         if (isAskedAbout(JSC::AOT::ModuleID(factory.module))) {
@@ -5028,8 +5039,11 @@ bool isCalledFromFactoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject,
 {
     auto import = JSC::AOT::importThatAsks(globalObject);
     Vector<JSObject*, 2> callers = factoriesThatAskThrough(globalObject, import ? import->fileThatWroteIt : JSC::AOT::ModuleID(), import ? import->fileAskedFor : JSC::AOT::ModuleID(), import ? import->momentOfCall : UINT32_MAX);
-    if (callers.isEmpty())
-        return false;
+    if (callers.isEmpty()) {
+        return import && globalObject->onLoadPlugins.factoriesOfCompiledMocks.containsIf([&](const auto& factory) {
+            return factory.module == module.index() && factory.patched->status() == JSC::JSPromise::Status::Pending && isAskedByFileOfRunningFactory(globalObject, uncheckedDowncast<JSModuleMock>(factory.mock.get()), *import);
+        });
+    }
     for (const auto& factory : globalObject->onLoadPlugins.factoriesOfCompiledMocks) {
         if (factory.module != module.index() || factory.patched->status() != JSC::JSPromise::Status::Pending)
             continue;
@@ -6310,7 +6324,7 @@ static bool isGoneWhileLoadsWaitForFactory(Zig::GlobalObject* globalObject, JSMo
         return false;
     auto* later = registeredModuleMock(globalObject, specifier);
     bool isWaitedForByImporter = globalObject->onLoadPlugins.factoriesOfCompiledMocks.containsIf([&](const auto& factory) { return factory.mock.get() == mock && factory.isWaitedForByImporter; });
-    if (later && ((mock->state == JSModuleMock::State::Settled && !isWaitedForByImporter && JSC::AOT::isImportHeld(globalObject, JSC::AOT::ModuleID(*mock->compiledModuleThatNeverRan))) || (later->calledAt && later->factory.get() != mock->factory.get()) || !globalObject->onLoadPlugins.compiledMocksToRun.containsIf([&](const auto& waiting) { return waiting.second.get() == later; })))
+    if (later && ((mock->state == JSModuleMock::State::Settled && !isWaitedForByImporter && JSC::AOT::isImportHeld(globalObject, JSC::AOT::ModuleID(*mock->compiledModuleThatNeverRan))) || !globalObject->onLoadPlugins.compiledMocksToRun.containsIf([&](const auto& waiting) { return waiting.second.get() == later; })))
         return false;
     return globalObject->onLoadPlugins.factoriesOfCompiledMocks.containsIf([&](const auto& factory) { return factory.mock.get() == mock && (factory.isWaitedFor || !factory.wasStartedByRequire); });
 }
@@ -7067,23 +7081,12 @@ JSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, const String& 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     String path = Zig::withoutOriginalModuleQuery(namespaceLength ? key.substringSharingImpl(namespaceLength + 1) : key);
-    size_t suffix = namespaceLength ? notFound : path.find('?');
-    // Module keys store a fragment that has no query as `?#x`. Plugins see `#x`.
-    if (suffix != notFound && suffix + 1 < path.length() && path[suffix + 1] == '#')
-        path = makeString(StringView(path).left(suffix), StringView(path).substring(suffix + 1));
 
-    while (true) {
-        for (size_t i = 0; i < group->filters.size(); i++) {
-            auto matchResult = group->filters[i]->match(globalObject, path, 0);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (matchResult)
-                matches.callbacks.append(group->callbacks[i].get());
-        }
-        // If no filter matches the path with its query, try the path alone, so /\.mjs$/ also matches a.mjs?v=1 (as in Bun.build and esbuild).
-        if (!matches.callbacks.isEmpty() || suffix == notFound)
-            break;
-        path = path.left(suffix);
-        suffix = notFound;
+    for (size_t i = 0; i < group->filters.size(); i++) {
+        auto matchResult = group->filters[i]->match(globalObject, path, 0);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (matchResult)
+            matches.callbacks.append(group->callbacks[i].get());
     }
     if (matches.callbacks.hasOverflowed()) [[unlikely]] {
         JSC::throwOutOfMemoryError(globalObject, scope);

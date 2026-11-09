@@ -976,6 +976,10 @@
     "default": 13200,
     "asan": 52800
   },
+  "aot/an-executable-without-the-text-of-functions-prints-no-value-in-a-message.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/an-import-eight-jobs-behind-the-old-answer-of-a-replaced-mock-gets-the-new-mock.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -2847,6 +2851,10 @@
   "aot/the-report-of-a-build-comes-with-the-stage-log-alone.test.ts": {
     "default": 1200,
     "asan": 4800
+  },
+  "aot/the-rules-on-holes-read-as-nan-refuse-a-walk-that-lies.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/the-runner-points-where-what-is-thrown-ends.test.ts": {
     "default": 60000,

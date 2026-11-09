@@ -1,7 +1,7 @@
 use super::alternatives::{
     AskedOfDataFiles, AskedOfOwnExports, Folder, WrittenNames, find_alternatives,
     find_elements_of_list_that_nothing_changes, find_names_as_written, find_path_around_parameter,
-    find_texts_of_key,
+    find_texts_of_key, names_own_url,
 };
 use super::changed_files::{TextsOfFile, find_operands_that_name_files};
 use super::made_requires::{
@@ -11,8 +11,8 @@ use super::made_requires::{
 };
 use super::parameters::{find_names_exported_for, find_parameter_named};
 use super::{
-    Alternatives, ChangedPath, ExportedFileChanger, ImportSite, ImportSiteKind, ImportSpecifier,
-    ResolvedForm, ResolvedFrom, ScanInputs,
+    Alternatives, ChangedPath, ExportedFileChanger, FileReadBesideCaller, ImportSite,
+    ImportSiteKind, ImportSpecifier, OwnUrlHanded, ResolvedForm, ResolvedFrom, ScanInputs,
 };
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{
@@ -26,7 +26,7 @@ use crate::hir::{
     BinOp, Branches, CallId, ClassId, ExprFlags, ExprId, ExprKind, File, IdList,
     ImportedFileChanger, MemberKey, NodeData, PropId, PropKey, PropKind, UnOp,
 };
-use crate::util::SharedSort;
+use crate::util::{FxHashSet, SharedSort};
 use bun_core::strings;
 
 pub const WORDS_THAT_MOCK_LOOKS_FOR_IN_FACTORY: [&[u8]; 3] =
@@ -857,6 +857,8 @@ pub(super) struct ScannedCalls {
     pub(super) names_of_workers: Vec<(ExprId, ImportSpecifier)>,
     pub(super) paths_of_changed_files: Vec<ChangedPath>,
     pub(super) paths_of_files_read: Vec<(ExprId, Atom)>,
+    pub(super) files_read_beside_callers: Vec<FileReadBesideCaller>,
+    pub(super) own_urls_handed: Vec<OwnUrlHanded>,
     pub(super) exported_file_changers: Vec<ExportedFileChanger>,
     pub(super) asked_of_other_files: Vec<(Atom, Atom)>,
     pub(super) asked_of_data_files: Vec<(Atom, Atom)>,
@@ -885,6 +887,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     let mut names_of_workers = Vec::new();
     let mut paths_of_changed_files = Vec::new();
     let mut paths_of_files_read = Vec::new();
+    let mut files_read_beside_callers: Vec<FileReadBesideCaller> = Vec::new();
+    let mut own_urls_handed = Vec::new();
     let mut texts_of_file = None;
     let mut exported_file_changers: Vec<ExportedFileChanger> = Vec::new();
     let mut keys_stored_in_caches = Vec::new();
@@ -922,8 +926,15 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
                     } = inputs;
                     TextsOfFile::new(hir, bound, decisions, fold, file, atoms)
                 });
-                let paths = texts.find_paths_from_own_folder(operand).into_iter();
-                paths_of_files_read.extend(paths.map(|path| (operand, path)));
+                let (paths, parameter) = texts.find_paths_from_own_folder(operand);
+                paths_of_files_read.extend(paths.into_iter().map(|path| (operand, path)));
+                if let Some(parameter) = parameter {
+                    files_read_beside_callers
+                        .extend(texts.find_files_read_beside_caller(operand, parameter));
+                }
+            }
+            if bound.may_name_own_path() {
+                own_urls_handed.extend(find_own_urls_handed(hir, bound, callee, args));
             }
             for (mut changed, around) in named.changed {
                 let names = alternatives.names_out_of_data_files.len();
@@ -1029,6 +1040,12 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     exported_file_changers
         .shared_sort_unstable_by_key(|it| (it.export.0, it.place, it.reaches_below));
     exported_file_changers.dedup();
+    let text = |atom: Atom| inputs.atoms.bytes(atom);
+    files_read_beside_callers.shared_sort_unstable_by_key(|it| {
+        let texts = (it.property.map(text), text(it.path));
+        (it.function.0, it.place, texts)
+    });
+    files_read_beside_callers.dedup();
     ScannedCalls {
         alternatives: alternatives.found,
         paths_from_own_directory: alternatives.paths_from_own_directory,
@@ -1036,6 +1053,8 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         names_of_workers,
         paths_of_changed_files,
         paths_of_files_read,
+        files_read_beside_callers,
+        own_urls_handed,
         exported_file_changers,
         asked_of_other_files: alternatives.asked_of_other_files.take(),
         asked_of_data_files: alternatives.asked_of_data_files.take(),
@@ -1429,6 +1448,63 @@ fn find_specifier(
             count: found.alternatives.len() as u32,
         })
     })
+}
+
+fn find_own_urls_handed(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    args: IdList<ExprId>,
+) -> Vec<OwnUrlHanded> {
+    let callee = hir.skip_type_assertions(callee);
+    let is_own_url = |e: ExprId| names_own_url(hir, bound, e);
+    let is_spread = |e: &ExprId| matches!(expr_kind(hir, *e), Some(ExprKind::Spread(_)) | None);
+    let mut spelled: Vec<(u32, Option<Atom>, ExprId)> = Vec::new();
+    for (place, argument) in (0..).zip(hir.ids(args).take_while(|it| !is_spread(it))) {
+        if is_own_url(argument) {
+            spelled.push((place, None, argument));
+            continue;
+        }
+        let properties = match expr_kind(hir, hir.skip_type_assertions(argument)) {
+            Some(ExprKind::Object(properties)) => properties,
+            _ => continue,
+        };
+        if !properties.iter().any(|id| is_own_url(hir[id].value)) {
+            continue;
+        }
+        let holds_own_code = properties.iter().map(|id| &hir[id]).any(|property| {
+            matches!(
+                property.kind,
+                PropKind::Method | PropKind::Getter | PropKind::Setter
+            ) || property.key == PropKey::Name(known::__proto__)
+        });
+        if holds_own_code {
+            continue;
+        }
+        let mut laid_behind: FxHashSet<Atom> = FxHashSet::default();
+        for property in properties.iter().rev().map(|id| &hir[id]) {
+            let (PropKey::Name(name), false) = (property.key, property.kind == PropKind::Spread)
+            else {
+                break;
+            };
+            let is_last_writer = laid_behind.insert(name);
+            if is_last_writer && property.kind == PropKind::Init && is_own_url(property.value) {
+                spelled.push((place, Some(name), property.value));
+            }
+        }
+    }
+    let function = match (expr_kind(hir, callee), bound.binding(callee)) {
+        (Some(ExprKind::Ident(_)), Binding::Symbol(function)) => function,
+        _ => return Vec::new(),
+    };
+    let handed = spelled.into_iter();
+    let handed = handed.map(|(place, property, argument)| OwnUrlHanded {
+        argument,
+        function,
+        place,
+        property,
+    });
+    handed.collect()
 }
 
 fn find_exports_that_take(

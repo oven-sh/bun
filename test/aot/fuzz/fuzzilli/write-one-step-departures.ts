@@ -10,7 +10,7 @@
 //
 // The stored programs are witnesses of old faults: few of their loops count down, keep a value from turn to turn or fill a second list. ./textbook holds what a textbook holds: sums in front, the greatest so far, sorting,
 // tables filled row by row. STORED_PROGRAMS=<folder> takes the programs from another folder. There, as under ../../parallel, a folder with a main file is one program and every other file is a program by itself; a file may hold several, each
-// behind a line `// @filename: ./x`, as the other writers here lay them. The moves on the graph of modules come first in the row, then the moves on loops.
+// behind a line `// @filename: ./x`, as the other writers here lay them. The moves on the graph of modules come first in the row, then the moves on loops, then those on records.
 // Several folders are parted by a colon. MOVES=<pattern> keeps the moves of such names alone, and SEEDS_WITH=<pattern> the programs in which a move of such a name fits. What this writes is itself such a folder: a second
 // step is this writer over what it wrote.
 //
@@ -575,6 +575,18 @@ const graphMoves: Move[] = [
       ),
   },
   {
+    name: "a-typescript-file-for-a-javascript-file",
+    places: program =>
+      [...program.files]
+        .filter(([file]) => /\.[cm]?js$/.test(file) && !file.includes("node_modules/"))
+        .map(([file, text]) => () => {
+          const to = file.replace(/js$/, "ts");
+          if (file !== program.entry) return renamed(program, file, to, text);
+          const files = new Map([...program.files].map(([path, its]) => [path === file ? to : path, its]));
+          return files.size === program.files.size ? { entry: to, files } : undefined;
+        }),
+  },
+  {
     name: "behind-an-entry-that-imports-it-at-run-time",
     places: program => [
       () => ({
@@ -733,6 +745,56 @@ const onElements = (stores: boolean, more: string) => (program: Program) =>
         changed(program, loop.file, at, at, more),
   );
 
+// `while (asked) {body}` and `do {body} while (asked);`. [start, end) is the whole loop, [inner, inner + body.length) what stands between the braces.
+type Asking = {
+  file: string;
+  text: string;
+  does: boolean;
+  start: number;
+  end: number;
+  inner: number;
+  body: string;
+  asked: string;
+};
+
+function* askingLoops(program: Program): Generator<Asking> {
+  const question = "((?:[^()\\n]|\\([^()\\n]*\\))+)";
+  for (const at of statements(program, new RegExp(`\\bwhile \\(${question}\\) \\{|\\bdo \\{`, "g"), () => true)) {
+    const close = endOfBlock(at.text, at.end - 1);
+    if (close < 0 || /[\w$]:\s*$/.test(at.text.slice(0, at.start))) continue;
+    const [inner, body] = [at.end, at.text.slice(at.end, close)];
+    if (at.match[1] !== undefined)
+      yield {
+        file: at.file,
+        text: at.text,
+        does: false,
+        start: at.start,
+        end: close + 1,
+        inner,
+        body,
+        asked: at.match[1],
+      };
+    else {
+      const tail = new RegExp(`^ while \\(${question}\\);`).exec(at.text.slice(close + 1));
+      if (tail)
+        yield {
+          file: at.file,
+          text: at.text,
+          does: true,
+          start: at.start,
+          end: close + 1 + tail[0].length,
+          inner,
+          body,
+          asked: tail[1],
+        };
+    }
+  }
+}
+const onAskingLoops = (move: (program: Program, loop: Asking) => Departed | undefined) => (program: Program) =>
+  [...askingLoops(program)].map(loop => () => move(program, loop));
+const asksOnly = (asked: string) => !/\+\+|--|[^=!<>]=(?!=)|\(/.test(asked);
+const firstVariable = (asked: string) => new RegExp(`^(?:\\+\\+|--)?(${name})(?![\\w$]*[.[(])`).exec(asked)?.[1];
+
 const keptByAnIf = new RegExp(`\\bif \\(([^()\\n]+?) (>|<) (${name})\\) \\3 = \\1;`, "g");
 
 const loopMoves: Move[] = [
@@ -824,6 +886,59 @@ const loopMoves: Move[] = [
   ...bothWays("a-try-round-the-loop", (program, loop) =>
     whole(program, loop, `try {\n${headOf(loop)} {\n${loop.body}\n}\n} catch (departed) {\nthrow departed;\n}`),
   ),
+  ...bothWays("the-counter-outlives-the-loop", (program, loop) =>
+    whole(
+      program,
+      loop,
+      `{\n${loop.keyword} ${loop.counter} = ${loop.first};\nfor (; ${asked(loop)}; ${step(loop)}) {\n${loop.body}\n}\nconsole.log(String(${loop.counter}));\n}`,
+    ),
+  ),
+  {
+    name: "a-do-while-for-the-while",
+    places: onAskingLoops((program, loop) =>
+      loop.does || !asksOnly(loop.asked)
+        ? undefined
+        : changed(
+            program,
+            loop.file,
+            loop.start,
+            loop.end,
+            `if (${loop.asked})\ndo {${loop.body}} while (${loop.asked});`,
+          ),
+    ),
+  },
+  {
+    name: "the-step-in-the-question",
+    places: onAskingLoops((program, loop) => {
+      const counter = firstVariable(loop.asked);
+      const last = counter && new RegExp(`(?:^|[;{}\\n])\\s*${escaped(counter)}(\\+\\+|--);\\s*$`).exec(loop.body);
+      if (!loop.does || !last || !asksOnly(loop.asked) || /\bcontinue\b/.test(loop.body)) return undefined;
+      const kept = loop.body.slice(0, loop.body.lastIndexOf(counter + last[1]));
+      return changed(program, loop.file, loop.start, loop.end, `do {${kept}} while (${last[1]}${loop.asked});`);
+    }),
+  },
+  {
+    name: "the-step-out-of-the-question",
+    places: onAskingLoops((program, loop) => {
+      const stepped = new RegExp(`^(\\+\\+|--)(${name})( .*)$`).exec(loop.asked);
+      if (!loop.does || !stepped || !asksOnly(stepped[2] + stepped[3]) || /\bcontinue\b/.test(loop.body))
+        return undefined;
+      return changed(
+        program,
+        loop.file,
+        loop.start,
+        loop.end,
+        `do {${loop.body}${stepped[2]}${stepped[1]};\n} while (${stepped[2]}${stepped[3]});`,
+      );
+    }),
+  },
+  {
+    name: "what-the-question-asks-of-is-printed-behind-the-loop",
+    places: onAskingLoops((program, loop) => {
+      const counter = firstVariable(loop.asked);
+      return counter && changed(program, loop.file, loop.end, loop.end, `\nconsole.log(String(${counter}));`);
+    }),
+  },
   ...bothWays("what-is-kept-is-stored-under-the-counter", (program, loop) => {
     const kept =
       new RegExp(keptByAnIf.source).exec(loop.body)?.[3] ??
@@ -900,6 +1015,42 @@ const loopMoves: Move[] = [
           : changed(program, at.file, at.start, at.end, `JSON.parse("[${at.match[1].replaceAll(" ", "")}]")`),
     ),
   },
+  ...(
+    [
+      ["copied-by-array-from", (list: string) => `Array.from(${list})`],
+      ["copied-by-slice", (list: string) => `${list}.slice()`],
+      ["copied-by-a-spread", (list: string) => `[...${list}]`],
+      ["copied-by-map", (list: string) => `${list}.map(one => one)`],
+    ] as [string, (list: string) => string][]
+  ).map(
+    ([how, write]): Move => ({
+      name: "a-parsed-list-" + how,
+      places: onStatements(
+        /(?<![\w$.(]\(|\.\.\.)JSON\.parse\((["'])\[[^"'\n]*\]\1\)(?!\s*[.[])/g,
+        () => true,
+        (program, at) => changed(program, at.file, at.start, at.end, write(at.match[0])),
+      ),
+    }),
+  ),
+  ...(
+    [
+      ["array-from", (list: string) => `Array.from(${list})`],
+      ["slice", (list: string) => `${list}.slice()`],
+      ["a-spread", (list: string) => `[...${list}]`],
+    ] as [string, (list: string) => string][]
+  ).map(
+    ([how, write]): Move => ({
+      name: "a-list-handed-in-is-copied-at-the-head-by-" + how,
+      places: onStatements(
+        new RegExp(`\\bfunction\\*? ${name}\\((${name})(?:: [^,)\\n]+)?[,)][^\\n]*\\{$`, "gm"),
+        () => true,
+        (program, at) =>
+          new RegExp(`\\b${escaped(at.match[1])}\\[`).test(at.text.slice(at.end, at.end + 600))
+            ? changed(program, at.file, at.end, at.end, `\n${at.match[1]} = ${write(at.match[1])};`)
+            : undefined,
+      ),
+    }),
+  ),
   {
     name: "a-parsed-empty-list-for-a-written-one",
     places: onStatements(
@@ -916,6 +1067,160 @@ const loopMoves: Move[] = [
       (program, at) => changed(program, at.file, at.start, at.end, " = new Array(3);"),
     ),
   },
+];
+
+// ---- the moves on records
+
+// `const name = ..;` on a line of its own, of which a key is read further down. `behind` is the end of the last line of that block that names it.
+type Held = {
+  file: string;
+  text: string;
+  start: number;
+  end: number;
+  by: string;
+  name: string;
+  made: string;
+  key: string;
+  behind: number;
+};
+
+function* heldRecords(program: Program): Generator<Held> {
+  for (const at of statements(
+    program,
+    new RegExp(`^( *)(?:const|let) (${name})(?:: [^=\\n]+)? = ([^;\\n]+);$`, "gm"),
+    () => true,
+  )) {
+    const [, by, held, made] = at.match;
+    const rest = at.text.slice(at.end + 1).split("\n");
+    // The block goes on while the lines are indented as deep.
+    let [offset, behind, key] = [at.end + 1, -1, ""];
+    for (const line of rest) {
+      if (line.trim() && !line.startsWith(by)) break;
+      if (line.startsWith(by) && line[by.length] === "}") break;
+      const read = new RegExp(`\\b${escaped(held)}\\.(${name})\\b(?!\\s*[(=])`).exec(line);
+      if (read && !key) key = read[1];
+      if (
+        new RegExp(`\\b${escaped(held)}\\b`).test(line) &&
+        line.startsWith(by) &&
+        line[by.length] !== " " &&
+        /;$/.test(line) &&
+        !/^\s*return\b/.test(line)
+      )
+        behind = offset + line.length;
+      offset += line.length + 1;
+    }
+    if (key && key !== "length" && behind > 0 && /^[\w$.]+\(|^\{|^new /.test(made))
+      yield { file: at.file, text: at.text, start: at.start, end: at.end, by, name: held, made, key, behind };
+  }
+}
+const behindTheLastUse = (moveName: string, write: (held: Held) => string): Move => ({
+  name: moveName,
+  places: program =>
+    [...heldRecords(program)].map(
+      held => () => changed(program, held.file, held.behind, held.behind, "\n" + held.by + write(held)),
+    ),
+});
+const madeOtherwise = (moveName: string, write: (held: Held) => string): Move => ({
+  name: moveName,
+  places: program =>
+    [...heldRecords(program)].map(held => () => {
+      const from = held.end - 1 - held.made.length;
+      return changed(program, held.file, from, held.end - 1, write(held));
+    }),
+});
+// `{ a: 1, b: two }`: keys that are written out, values without a comma, a brace or a bracket.
+const plainLiteral = new RegExp(`\\{ ((?:${name}: [^,{}()\\[\\]\\n]+, )+${name}: [^,{}()\\[\\]\\n]+) \\}`, "g");
+
+const recordMoves: Move[] = [
+  behindTheLastUse(
+    "a-key-is-made-read-only-behind-the-last-use",
+    held => `Object.defineProperty(${held.name}, "${held.key}", { writable: false });`,
+  ),
+  behindTheLastUse(
+    "a-key-is-hidden-behind-the-last-use",
+    held => `Object.defineProperty(${held.name}, "${held.key}", { enumerable: false });`,
+  ),
+  behindTheLastUse(
+    "a-key-is-defined-by-nothing-behind-the-last-use",
+    held => `Object.defineProperty(${held.name}, "${held.key}", {});`,
+  ),
+  behindTheLastUse(
+    "a-key-is-defined-by-its-value-behind-the-last-use",
+    held => `Object.defineProperty(${held.name}, "${held.key}", { value: ${held.name}.${held.key} });`,
+  ),
+  behindTheLastUse("a-key-is-deleted-behind-the-last-use", held =>
+    `delete (${held.name} as any).${held.key};`
+      .replace(" as any", isTyped(held.file) ? " as any" : "")
+      .replace(/^delete \((\w+)\)/, "delete $1"),
+  ),
+  behindTheLastUse("a-key-comes-behind-the-last-use", held =>
+    isTyped(held.file) ? `(${held.name} as any).departed = 1;` : `${held.name}.departed = 1;`,
+  ),
+  behindTheLastUse("frozen-behind-the-last-use", held => `Object.freeze(${held.name});`),
+  behindTheLastUse("printed-whole-behind-the-last-use", held => `console.log(JSON.stringify(${held.name}));`),
+  behindTheLastUse("its-keys-printed-behind-the-last-use", held => `console.log(Object.keys(${held.name}).join());`),
+  madeOtherwise("a-spread-of-the-record", held => `{ ...${held.made} }`),
+  madeOtherwise("the-record-through-json", held => `JSON.parse(JSON.stringify(${held.made}))`),
+  madeOtherwise("the-record-assigned-onto-an-empty-one", held => `Object.assign({}, ${held.made})`),
+  {
+    name: "the-keys-in-the-other-order",
+    places: onStatements(
+      plainLiteral,
+      () => true,
+      (program, at) =>
+        changed(program, at.file, at.start, at.end, `{ ${at.match[1].split(", ").reverse().join(", ")} }`),
+    ),
+  },
+  {
+    name: "a-reckoned-key-for-the-first",
+    places: onStatements(
+      plainLiteral,
+      file => !isTyped(file),
+      (program, at) =>
+        changed(program, at.file, at.start, at.end, at.match[0].replace(new RegExp(`^\\{ (${name}):`), '{ ["$1"]:')),
+    ),
+  },
+  {
+    name: "a-getter-for-the-first",
+    places: onStatements(
+      plainLiteral,
+      () => true,
+      (program, at) =>
+        changed(
+          program,
+          at.file,
+          at.start,
+          at.end,
+          at.match[0].replace(new RegExp(`^\\{ (${name}): ([^,]+),`), "{ get $1() { return $2; },"),
+        ),
+    ),
+  },
+  {
+    name: "a-key-may-be-missing",
+    places: onStatements(new RegExp(`^( +)(${name}): (?=[^;\\n]+;$)`, "gm"), isTyped, (program, at) =>
+      /\b(?:interface|type) [^\n]*\{\n(?: +[^\n]*\n)*$/.test(at.text.slice(0, at.start))
+        ? changed(program, at.file, at.start, at.end, `${at.match[1]}${at.match[2]}?: `)
+        : undefined,
+    ),
+  },
+  {
+    name: "an-empty-record-of-the-type-beside",
+    places: onStatements(new RegExp(`^(?:export )?interface (${name}) \\{$`, "gm"), isTyped, (program, at) => {
+      const close = endOfBlock(at.text, at.end - 1);
+      return close < 0
+        ? undefined
+        : changed(
+            program,
+            at.file,
+            close + 1,
+            close + 1,
+            `\nconst departedDraft: Partial<${at.match[1]}> = {};\nconsole.log(Object.keys(departedDraft).length);`,
+          );
+    }),
+  },
+];
+
+const unmovedMoves: Move[] = [
   // The program as it is stored: whoever reads a table leaves out what comes of a program that by itself does not answer as plain Bun does.
   { name: "nothing-moved", places: program => [() => ({ files: program.files })] },
 ];
@@ -923,8 +1228,9 @@ const loopMoves: Move[] = [
 // ---- the row
 
 const only = (pattern: string | undefined) => (move: Move) => !pattern || new RegExp(pattern).test(move.name);
-const moves = [...graphMoves, ...loopMoves].filter(only(process.env.MOVES));
-const wanted = process.env.SEEDS_WITH ? [...graphMoves, ...loopMoves].filter(only(process.env.SEEDS_WITH)) : [];
+const table = [...graphMoves, ...loopMoves, ...recordMoves, ...unmovedMoves];
+const moves = table.filter(only(process.env.MOVES));
+const wanted = process.env.SEEDS_WITH ? table.filter(only(process.env.SEEDS_WITH)) : [];
 const programs = stored
   .flatMap(folder => [...programsBelow(folder, "")])
   .filter(program => !wanted.length || wanted.some(move => move.places(program).some(place => place())));

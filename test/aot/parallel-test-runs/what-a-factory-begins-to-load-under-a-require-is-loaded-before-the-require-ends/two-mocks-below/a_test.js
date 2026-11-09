@@ -1,11 +1,11 @@
 import { test, vi, afterAll } from "bun:test";
 const note = word => { globalThis.runs = (globalThis.runs ?? "") + word + " "; };
 const asked = name => { try { const got = require(name); return String(got.seen ?? got.width); } catch (error) { return "threw " + String(error?.message).slice(0, 22); } };
-const later = () => new Promise(resolve => setTimeout(resolve, 60));
+const begun = [];
 test("a", async () => {
-  vi.doMock("./wick.mjs", original => { note("f<"); original(); note("f-"); return { width: "mock" }; });
-  vi.doMock("./oil.mjs", original => { note("g<"); original(); note("g-"); return { depth: "mock" }; });
+  vi.doMock("./wick.mjs", original => { note("f<"); begun.push(original()); note("f-"); return { width: "mock" }; });
+  vi.doMock("./oil.mjs", original => { note("g<"); begun.push(original()); note("g-"); return { depth: "mock" }; });
   console.log(asked("./lamp.mjs"), "|", globalThis.runs);
-  await later();
+  await Promise.allSettled(begun);
   console.log("later", globalThis.runs);
 });

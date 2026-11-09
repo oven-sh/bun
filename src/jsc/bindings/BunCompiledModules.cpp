@@ -1592,9 +1592,26 @@ void dropNewChildrenOfCompiledModule(JSCommonJSModule* parent)
 static void showChildren(JSGlobalObject* realm, JSObject* module, JSObject* requiredAgain)
 {
     auto* parent = dynamicDowncast<JSCommonJSModule>(module);
-    // A list that no code has seen is put together when it is first read.
-    if (!parent || !parent->m_childrenValue)
+    if (!parent)
         return;
+    auto& vm = getVM(realm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool hasLeftCompiledModule = parent->compiledModule == JSCommonJSModule::noCompiledModule;
+    // m_children holds module objects alone: its reader takes every entry for one. What merely stands for a module goes onto the list itself.
+    if (!parent->m_childrenValue && requiredAgain && hasLeftCompiledModule && !requiredAgain->inherits<JSCommonJSModule>()) {
+        makeListOfChildren(realm, parent);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    // A list that no code has seen is put together when it is first read: out of the compiled module, or, where the object has left it, out of m_children.
+    if (!parent->m_childrenValue) {
+        if (requiredAgain && hasLeftCompiledModule) {
+            WTF::Locker locker { parent->cellLock() };
+            parent->m_children.append(WriteBarrier<Unknown>());
+            parent->m_children.last().set(vm, parent, requiredAgain);
+        }
+        return;
+    }
+    scope.release();
     if (requiredAgain)
         pushObservableChild(realm, parent, requiredAgain);
     else

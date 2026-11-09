@@ -11,6 +11,7 @@ use super::ScopeSlot;
 use crate::ir::generated::FunctionFlags;
 use crate::ir::{FunctionKey, VariableKey};
 use crate::lower::captures::Capture;
+use crate::lower::commonjs::WrapperSlots;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub(in crate::lower) enum BindingRef {
@@ -213,6 +214,7 @@ pub(crate) struct ScopeAnalysis {
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
     pub(super) registries: Vec<(ScopeId, BindingRef)>,
     pub(super) has_wrapper_parameters: bool,
+    pub(super) wrapper_slots: WrapperSlots,
 }
 
 pub(super) fn find_by_key<K: Copy + Ord, V: Copy>(list: &[(K, V)], key: K) -> Option<V> {
@@ -376,6 +378,11 @@ impl ScopeAnalysis {
     #[inline]
     pub(in crate::lower) fn has_wrapper_parameters(&self) -> bool {
         self.has_wrapper_parameters
+    }
+
+    #[inline]
+    pub(in crate::lower) fn wrapper_slots(&self) -> WrapperSlots {
+        self.wrapper_slots
     }
 
     pub(in crate::lower) fn arguments_object(&self, unit: CodeUnit) -> ArgumentsObject {

@@ -1,11 +1,17 @@
 import { test, vi } from "bun:test";
 import { byHelper } from "./helper.mjs";
-const rest = time => new Promise(done => setTimeout(done, time));
+const gate = Promise.withResolvers(), settles = Promise.withResolvers();
+let hasBegun = false;
+const settled = async () => {
+  gate.resolve();
+  if (hasBegun) await settles.promise;
+  await new Promise(done => setImmediate(done));
+};
 const ask = name => { try { return require(name).seen; } catch (error) { return "threw " + error.name; } };
 test("who is given what", async () => {
-  vi.doMock("./pump.mjs", async () => { await rest(10); return { flow: "stand-in", seen: "pump stand-in" }; });
+  vi.doMock("./pump.mjs", async () => { hasBegun = true; await gate.promise; settles.resolve(); return { flow: "stand-in", seen: "pump stand-in" }; });
   console.log("SAID 1 " + ask("./tank.mjs"));
   console.log("SAID 2 " + byHelper("./pump.mjs"));
-  await rest(40);
+  await settled();
   console.log("SAID at last " + (await import("./pump.mjs")).flow);
 }, 8000);

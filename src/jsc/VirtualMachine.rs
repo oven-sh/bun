@@ -4338,26 +4338,6 @@ pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::Buffe
 #[thread_local]
 static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
 
-/// Candidate positions of the `#` that starts a fragment in `./a.mjs#x` or `/a.mjs#x`, last one first, because file and folder names may contain `#`.
-fn fragments_of_path(specifier: &[u8]) -> impl Iterator<Item = usize> + '_ {
-    let is_separator = |byte: u8| byte == b'/' || (cfg!(windows) && byte == b'\\');
-    let after_dots = specifier
-        .strip_prefix(b"..")
-        .or_else(|| specifier.strip_prefix(b"."));
-    let is_path = bun_paths::is_absolute(specifier)
-        || after_dots
-            .and_then(|rest| rest.first())
-            .is_some_and(|&byte| is_separator(byte));
-    let end = match bun_core::strings::index_of_char_usize(specifier, b'?') {
-        _ if !is_path => 0,
-        Some(query) => query,
-        None => specifier.len(),
-    };
-    (1..end)
-        .rev()
-        .filter(move |&mark| specifier[mark] == b'#' && !is_separator(specifier[mark - 1]))
-}
-
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
@@ -5990,7 +5970,7 @@ impl VirtualMachine {
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
-        let mut resolve_result = jsc_vm._resolve(
+        let resolve_result = jsc_vm._resolve(
             &mut result,
             specifier_utf8.slice(),
             normalize_source(source_utf8.slice()),
@@ -5998,25 +5978,6 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
             global_cache,
         );
-        // A file whose name really contains `#` wins; only if that lookup fails is the `#...` part treated as a fragment.
-        if resolve_result.is_err() && mode.is_esm() {
-            for mark in fragments_of_path(specifier_utf8.slice()) {
-                let (path, fragment) = specifier_utf8.slice().split_at(mark);
-                let without_fragment = jsc_vm._resolve(
-                    &mut result,
-                    path,
-                    normalize_source(source_utf8.slice()),
-                    true,
-                    IS_A_FILE_PATH,
-                    global_cache,
-                );
-                if without_fragment.is_ok() {
-                    result.query_string = if fragment.len() > 1 { fragment } else { b"" };
-                    resolve_result = without_fragment;
-                    break;
-                }
-            }
-        }
         if let Err(err) = resolve_result {
             let import_kind = mode.import_kind();
             // Find a `.resolve`-metadata msg if the log has one.
@@ -8538,27 +8499,7 @@ fn run_on_resolve(
         bun_core::String::create_format(format_args!("{}:{}", user_namespace, file_path))
     } else if file_path.starts_with_ascii(b"file://") {
         let path = bun_url::path_from_file_url(&file_path);
-        if path.is_dead() {
-            file_path
-        } else {
-            let url = file_path.to_utf8();
-            let mut parts = url.slice().splitn(2, |&byte| byte == b'#');
-            let in_front = parts.next().unwrap_or_default();
-            let fragment = bstr::BStr::new(parts.next().unwrap_or_default());
-            let query = bstr::BStr::new(
-                in_front
-                    .splitn(2, |&byte| byte == b'?')
-                    .nth(1)
-                    .unwrap_or_default(),
-            );
-            match (query.is_empty(), fragment.is_empty()) {
-                (true, true) => path,
-                (false, true) => bun_core::String::create_format(format_args!("{path}?{query}")),
-                (_, false) => {
-                    bun_core::String::create_format(format_args!("{path}?{query}#{fragment}"))
-                }
-            }
-        }
+        if path.is_dead() { file_path } else { path }
     } else {
         file_path
     };

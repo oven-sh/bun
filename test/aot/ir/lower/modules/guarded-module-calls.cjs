@@ -16,7 +16,7 @@
 
 // RUN(MODULE): lower
 // MODULE-LABEL: function {{*}}name="loadThroughModule"
-// MODULE: [[module]] = Convert {{*}}declared={type=builtin(ModuleObject) flags=[IsExpected]}
+// MODULE: [[module]] = ModuleBuiltin builtin=ModuleObject module=m
 // MODULE-NEXT: [[read]] = PropGet [[module]] key="require"
 // MODULE-NEXT: [[callee]] = Convert [[read]] declared={type=builtin(ModuleRequire) flags=[IsExpected]}
 // MODULE-NEXT: [[specifier]] = String string="./imports/common.cjs"

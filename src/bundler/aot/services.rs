@@ -9,7 +9,7 @@ use bun_aot::load::source_provider::{
     PathsOfProgram, RefusedText, Resolution, ResolveRequest, SourceFile,
 };
 use bun_aot::{SourceProvider, WithoutServices};
-use bun_ast::{ASTMemoryAllocator, Loader, Log, SideEffects};
+use bun_ast::{ASTMemoryAllocator, Loader, Log, Msg, SideEffects};
 use bun_core::ZBox;
 use bun_js_parser::{Define, ExpandedImportMetaGlob};
 use bun_paths::resolve_path::posix_to_platform_in_place;
@@ -316,12 +316,33 @@ impl BundlerServices {
         core::mem::take(&mut *self.refused_data.lock())
     }
 
+    fn is_found_by_pattern(&self, source_path: &[u8]) -> bool {
+        let files = self.files_for_file_system.lock();
+        let mut found = files.data_found_by_patterns.iter();
+        found.any(|found| &found[..] == source_path)
+    }
+
+    fn is_file_that_asset_would_bring(&self, source_path: &[u8]) -> bool {
+        let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
+        let mut assets = self.assets.iter();
+        is_at_or_below(source_path, &self.folder_of_assets_that_keep_paths)
+            && !assets.any(|asset| is_at_or_below(source_path, asset))
+            && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
+    }
+
     pub(crate) fn take_files_for_file_system(&self) -> FilesForFileSystem {
         let mut files = core::mem::take(&mut *self.files_for_file_system.lock());
         for paths in [&mut files.data_found_by_patterns, &mut files.code_seen] {
             paths.sort_unstable();
             paths.dedup();
         }
+        let key = |kept: &(Box<[u8]>, Msg)| {
+            let place = kept.1.data.location.as_ref();
+            let place = place.map(|it| (it.file.clone(), it.line, it.column));
+            (place, kept.1.data.text.clone())
+        };
+        files.warnings_if_lacking.sort_by_cached_key(key);
+        files.warnings_if_lacking.dedup_by_key(|kept| key(kept));
         files
     }
 
@@ -340,6 +361,8 @@ pub struct FilesForFileSystem {
     pub data_found_by_patterns: Vec<Box<[u8]>>,
     /// The compiled files that `node:fs` finds in the executable. Empty where there is no such data file.
     pub code_seen: Vec<Box<[u8]>>,
+    /// With the path of a data file above: what the build says if `node:fs` won't find it in the executable. Ascending by place and text, each once.
+    pub warnings_if_lacking: Vec<(Box<[u8]>, Msg)>,
 }
 
 impl SourceProvider for BundlerServices {
@@ -548,17 +571,18 @@ impl SourceProvider for BundlerServices {
     }
 
     fn is_file_that_only_asset_brings(&self, source_path: &[u8]) -> bool {
-        let is_found_by_pattern = || {
-            let files = self.files_for_file_system.lock();
-            let mut found = files.data_found_by_patterns.iter();
-            found.any(|found| &found[..] == source_path)
-        };
-        let kind = || bun_sys::exists_at_type(bun_sys::Fd::cwd(), &ZBox::from_bytes(source_path));
-        let mut assets = self.assets.iter();
-        is_at_or_below(source_path, &self.folder_of_assets_that_keep_paths)
-            && !assets.any(|asset| is_at_or_below(source_path, asset))
-            && !is_found_by_pattern()
-            && matches!(kind(), Ok(bun_sys::ExistsAtType::File))
+        !self.is_found_by_pattern(source_path) && self.is_file_that_asset_would_bring(source_path)
+    }
+
+    fn is_data_file_that_its_folder_may_hide(&self, source_path: &[u8]) -> bool {
+        self.is_found_by_pattern(source_path) && self.is_file_that_asset_would_bring(source_path)
+    }
+
+    fn warn_if_file_system_lacks(&self, source_path: &[u8], warning: Msg) {
+        let mut files = self.files_for_file_system.lock();
+        files
+            .warnings_if_lacking
+            .push((source_path.into(), warning));
     }
 
     fn parse_data<'s>(

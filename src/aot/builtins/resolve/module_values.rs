@@ -155,7 +155,12 @@ impl Resolver<'_, '_> {
             let id = id.filter(|&id| table::exists_on(id, input.platform));
             self.commonjs
                 .set(variable, id.map(|id| BuiltinPath { id, mutability }));
-            if has_direct_eval || uses_arguments {
+            let is_held_in_variable = is_stored
+                && matches!(
+                    variable,
+                    CommonJsVariable::Module | CommonJsVariable::Require
+                );
+            if has_direct_eval || uses_arguments || is_held_in_variable {
                 self.expose_commonjs_variable(variable);
             }
             self.exposes_own_module_object |= is_stored && variable != CommonJsVariable::Exports;

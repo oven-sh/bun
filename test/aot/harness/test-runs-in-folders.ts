@@ -6,6 +6,8 @@
 // A file flags.txt in the folder holds flags for both runs: `--isolate`.
 // A file todo.txt in the folder, `"<words>" | "<the words for them>": <why>`: the two runs part today, and in that alone: one says the first words where the other says the second.
 // The project is run all the same. It fails by any other difference, and once the two runs agree: the file goes out.
+// A file says.json in the folder, { why, printed, tests, exitCode }: `bun test` has more than one answer here, by how busy the machine is: the tests leave a call in flight that nobody awaits, and the run ends
+// when they have ended. A compiled run has one answer, the one that `bun test` gives most often: it alone is run, and held to what the file says.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { existsSync, readFileSync, readdirSync, renameSync } from "node:fs";
@@ -53,6 +55,12 @@ function markOf(folder: string) {
   return (outcome: unknown) => JSON.parse(JSON.stringify(outcome).replaceAll(one, other));
 }
 
+function saidOf(folder: string) {
+  if (!existsSync(join(folder, "says.json"))) return undefined;
+  const { printed, tests, exitCode } = JSON.parse(readFileSync(join(folder, "says.json"), "utf8"));
+  return { printed, tests, exitCode, lastWords: [] };
+}
+
 function layPackages(folder: string) {
   for (const entry of readdirSync(folder, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -97,6 +105,12 @@ export function testRunsInFolders(part: number, parts: number) {
       expect(literalPackagesIn(join(root, area, project)).slice(0, 3)).toEqual([]);
       // See the head of this file: the runner would run such a file where it lies, by itself and without the packages of its project, and here it would be no test file that is named in its order.
       expect(takenForTestsOfTheRepository(join(root, area, project)).slice(0, 3)).toEqual([]);
+      const said = saidOf(join(root, area, project));
+      if (said) {
+        using dir = tempDir("aot-test-run-in-folder", join(root, area, project));
+        expect(await outcomeOf(String(dir), wordsOfAll, "--aot", ...flagsOf(join(root, area, project)))).toEqual(said);
+        return;
+      }
       // A folder for each run: a build leaves files beside what it reads.
       using plainDir = tempDir("aot-test-run-in-folder", join(root, area, project));
       using compiledDir = tempDir("aot-test-run-in-folder", join(root, area, project));

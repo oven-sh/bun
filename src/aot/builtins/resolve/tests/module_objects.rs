@@ -91,7 +91,11 @@ fn a_field_that_may_hold_something_else() {
     );
     assert_mentions(
         "require = f; require.main.id;",
-        &[("require.main", EntryPoint, Object), ("", OwnFile, Object)],
+        &[
+            ("require.main", EntryPoint, Object),
+            ("", OwnFile, Object),
+            ("", EntryPoint, HandedOn),
+        ],
     );
     assert_mentions("module.parent.id;", &[("module.parent", OwnFile, Parent)]);
 }

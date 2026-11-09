@@ -166,7 +166,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             let id = self.file.fragment.declare_module(module);
             let referrer = self.file.module_id();
             let specifier = self.file.intern_atom(specifier);
-            return self.builder.require_module(id, referrer, specifier, false);
+            return (self.builder).require_module(id, referrer, specifier, None, false);
         }
         let mocked = match module {
             ModuleRef::File(file) if phase == ImportPhase::Evaluation => {

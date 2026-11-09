@@ -23,7 +23,7 @@ use crate::load::contents::worker_entries::{
 use crate::load::module_paths::with_separators_of_host;
 use crate::load::sources::parsed_source;
 use crate::lower::member::PropertyName;
-use crate::lower::scope::{ArgumentsObject, ScopeSlot};
+use crate::lower::scope::{ArgumentsObject, BindingRef, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, module};
 use crate::module_keys::is_name_of_text;
 use crate::modules::{ModuleGraph, ModuleKind, ModuleRef, Shape, SpelledModule};
@@ -60,6 +60,42 @@ pub(in crate::lower) fn undeclared_wrapper_parameters(
     let redeclared = bound.runtime.redeclared_commonjs_variables();
     let parameters = WRAPPER_PARAMETERS.into_iter();
     parameters.filter(move |&variable| !redeclared.iter().any(|entry| entry.1 == variable))
+}
+
+#[derive(Copy, Clone, Default, Debug)]
+pub(in crate::lower) struct WrapperSlots(u8);
+
+impl WrapperSlots {
+    pub(in crate::lower) fn of(
+        bound: &Bound<'_>,
+        decisions: &Decisions<'_>,
+        runs_again: bool,
+    ) -> WrapperSlots {
+        let mut direct_evals = bound.runtime.eval_scopes().iter();
+        let mut scopes = bound.scopes.iter();
+        let holds_all = runs_again
+            || bound.file_uses_arguments()
+            || direct_evals.any(|&(call, _)| !decisions.is_dead_expr(call))
+            || scopes.any(|scope| matches!(scope.kind, ScopeKind::With(_)));
+        let is_stored = |variable: CommonJsVariable| {
+            let mut stores = bound.runtime.unbound_name_stores().iter();
+            stores.any(|&(target, _)| {
+                bound.binding(target) == Binding::CommonJs(variable)
+                    && !decisions.is_dead_expr(target)
+            })
+        };
+        let mut slots = WrapperSlots::default();
+        for variable in WRAPPER_PARAMETERS {
+            if holds_all || variable == CommonJsVariable::Exports || is_stored(variable) {
+                slots.0 |= 1 << wrapper_parameter_index(variable);
+            }
+        }
+        slots
+    }
+
+    pub(in crate::lower) fn contains(self, variable: CommonJsVariable) -> bool {
+        self.0 & (1 << wrapper_parameter_index(variable)) != 0
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
@@ -171,6 +207,11 @@ impl FileLowering<'_, '_, '_, '_> {
         self.body_form() == BodyForm::Plain && self.inputs.modules.runs_again(self.file)
     }
 
+    pub(super) fn is_handed_to_wrapped_body(&self, variable: CommonJsVariable) -> bool {
+        variable == CommonJsVariable::Exports
+            || self.scopes.arguments_object(CodeUnit::File) != ArgumentsObject::None
+    }
+
     fn find_plain_source(&self, variable: CommonJsVariable) -> VariableSource {
         let modules = self.inputs.modules;
         match variable {
@@ -196,8 +237,13 @@ impl FileLowering<'_, '_, '_, '_> {
             BodyForm::Wrapped => {
                 return match self.scopes.arguments_object(CodeUnit::File) {
                     ArgumentsObject::Mapped => VariableSource::MappedWrapperParameter,
-                    ArgumentsObject::None | ArgumentsObject::Unmapped => {
+                    ArgumentsObject::None | ArgumentsObject::Unmapped
+                        if self.scopes.wrapper_slots().contains(variable) =>
+                    {
                         VariableSource::WrapperParameter
+                    }
+                    ArgumentsObject::None | ArgumentsObject::Unmapped => {
+                        self.find_plain_source(variable)
                     }
                 };
             }
@@ -763,6 +809,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.key != FunctionKey::ModuleBody(self.file.file) && self.file.has_values_of_each_run()
     }
 
+    pub(in crate::lower) fn find_module_object_of_run(&mut self) -> Option<ValueId> {
+        if let Some(made) = self.made_require_of_site {
+            return Some(self.lower_expression(made));
+        }
+        let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
+        let stored = BindingRef::Slot(module::file_scope(self.file), slot);
+        (self.is_function_of_file_that_runs_again() && self.reaches_stored(stored))
+            .then(|| self.get_commonjs_variable(CommonJsVariable::Module))
+    }
+
     fn find_source(&self, variable: CommonJsVariable) -> VariableSource {
         match variable {
             CommonJsVariable::Module | CommonJsVariable::Require
@@ -921,8 +977,13 @@ pub(super) fn emit_entry_value(
         FunctionKey::WrappedModuleBody(lowering.file.file),
         "the wrapper's parameters are entry values of the function that holds the text"
     );
-    let index = wrapper_parameter_index(variable);
-    let value = lowering.builder.parameter(index);
+    let value = match lowering.file.is_handed_to_wrapped_body(variable) {
+        true => {
+            let index = wrapper_parameter_index(variable);
+            lowering.builder.parameter(index)
+        }
+        false => lowering.emit_passed_value(variable),
+    };
     lowering.expect_variable(variable, value)
 }
 

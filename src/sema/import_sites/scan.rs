@@ -49,6 +49,8 @@ pub(crate) fn collect_import_sites<'s>(
         names_of_workers: slice_in(&calls.names_of_workers, arena),
         paths_of_changed_files: slice_in(&calls.paths_of_changed_files, arena),
         paths_of_files_read: slice_in(&calls.paths_of_files_read, arena),
+        files_read_beside_callers: slice_in(&calls.files_read_beside_callers, arena),
+        own_urls_handed: slice_in(&calls.own_urls_handed, arena),
         exported_file_changers: slice_in(&calls.exported_file_changers, arena),
         asked_of_other_files: slice_in(&calls.asked_of_other_files, arena),
         asked_of_data_files: slice_in(&calls.asked_of_data_files, arena),

@@ -129,6 +129,8 @@ fn create_analysis<'s>(
         names_of_workers: scan.names_of_workers,
         paths_of_changed_files: scan.paths_of_changed_files,
         paths_of_files_read: scan.paths_of_files_read,
+        files_read_beside_callers: scan.files_read_beside_callers,
+        own_urls_handed: scan.own_urls_handed,
         exported_file_changers: scan.exported_file_changers,
         asked_of_other_files: scan.asked_of_other_files,
         asked_of_data_files: scan.asked_of_data_files,

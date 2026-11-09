@@ -137,6 +137,22 @@ pub struct ExportedFileChanger {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct FileReadBesideCaller {
+    pub function: SymbolId,
+    pub place: u32,
+    pub property: Option<Atom>,
+    pub path: Atom,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct OwnUrlHanded {
+    pub argument: ExprId,
+    pub function: SymbolId,
+    pub place: u32,
+    pub property: Option<Atom>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ExportedText {
     pub export: Atom,
     pub text: Atom,
@@ -195,6 +211,8 @@ pub(crate) struct ImportScan<'s> {
     pub names_of_workers: &'s [(ExprId, ImportSpecifier)],
     pub paths_of_changed_files: &'s [ChangedPath],
     pub paths_of_files_read: &'s [(ExprId, Atom)],
+    pub files_read_beside_callers: &'s [FileReadBesideCaller],
+    pub own_urls_handed: &'s [OwnUrlHanded],
     pub exported_file_changers: &'s [ExportedFileChanger],
     pub asked_of_other_files: &'s [(Atom, Atom)],
     pub asked_of_data_files: &'s [(Atom, Atom)],

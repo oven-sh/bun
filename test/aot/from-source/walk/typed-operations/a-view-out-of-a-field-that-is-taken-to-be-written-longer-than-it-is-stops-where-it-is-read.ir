@@ -1,0 +1,18 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# class Holder { held = new Int32Array(8); last(): number | undefined { return this.held[8]; } }
+# const holder = new Holder();
+# print(holder.last());
+# print("went on");
+# -- end of source
+# The test behind the read of the field asks for the class of the view alone. The length that is written where the view is made is a word of Link on the read by key: the walk reads the view's own length, holds the
+# word against it, and stops where the word is false. No element is read on the word alone.
+# THE LIE: a view counts as written one longer than it is.
+# RUN: run-in-shell mechanisms=all
+# CHECK: undefined
+# CHECK-NEXT: went on
+# CHECK-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=ViewsAreTakenToBeWrittenOneLonger
+# LIE: what a container holds is not of the type that the compiler has proven of it. It is: nothing. This is a bug in Bun.
+# LIE-NOT: went on
+# LIE: crashed

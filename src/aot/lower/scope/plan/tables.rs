@@ -98,6 +98,7 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         initialized_holders,
         registries: parts.registries,
         has_wrapper_parameters: walk.has_wrapper_parameters,
+        wrapper_slots: walk.wrapper_slots,
     }
 }
 

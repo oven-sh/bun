@@ -339,6 +339,13 @@ impl<'x, 's> Walker<'x, 's> {
         let is_commonjs = input.modules.kind(input.file) == ModuleKind::CommonJs;
         let keeps_wrapper =
             is_commonjs && commonjs::keeps_wrapper(hir, bound, decisions, input.builtins);
+        let wrapper_slots = match keeps_wrapper {
+            true => {
+                let runs_again = input.modules.runs_again(input.file);
+                commonjs::WrapperSlots::of(bound, decisions, runs_again)
+            }
+            false => commonjs::WrapperSlots::default(),
+        };
         let (jsx_uses, metadata_uses) = collect_implicit_uses(bound);
         let (eval_variable_scopes, parameter_eval_variable_scopes) =
             collect_eval_variable_scopes(hir, bound, decisions);
@@ -377,6 +384,7 @@ impl<'x, 's> Walker<'x, 's> {
                 eval_variable_scopes,
                 parameter_eval_variable_scopes,
                 has_wrapper_parameters: keeps_wrapper,
+                wrapper_slots,
                 has_values_of_each_run: is_commonjs
                     && !keeps_wrapper
                     && input.modules.runs_again(input.file),

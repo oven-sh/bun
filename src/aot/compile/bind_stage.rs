@@ -20,8 +20,8 @@ use crate::load::sources::{JSON_PARSE_ERROR_FOR_BLANK_TEXT, parsed_source};
 use crate::load::{PerProject, ProjectId};
 use crate::module_keys::type_attribute_of;
 use crate::modules::{
-    self, BindInput, BoundModules, DeferredExports, LinkedProject, ModuleGraph, ModuleKind,
-    ModuleRef, Shape,
+    self, BindInput, BoundModules, DeferredExports, ImportBinding, LinkedProject, ModuleGraph,
+    ModuleKind, ModuleRef, Shape,
 };
 use crate::statistics::{Stage, StepClock};
 use bun_ast::Loader;
@@ -36,7 +36,7 @@ use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{ExprId, ExprKind, Flags, MemberKey, NodeData, PatKind};
 use bun_sema::import_sites::ImportSiteKind;
-use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files};
+use bun_sema::program::{CodeAnswer, CodeView, ComputedTargets, FileId, Files, Sym};
 use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::host::{from_argument, from_native, to_native};
@@ -208,7 +208,7 @@ fn name_data_files_found_by_patterns(
     left_out: &LeftOutCode,
     loaders: &[(Vec<u8>, Loader)],
     provider: &dyn SourceProvider,
-) -> Option<Vec<FileId>> {
+) -> bool {
     let (files, sources) = (view.files(), view.sources);
     let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
     let is_data = |file: FileId| {
@@ -216,7 +216,6 @@ fn name_data_files_found_by_patterns(
         gives_data(by_name) && gives_data(sources.loader(file))
     };
     let mut has_found_data = false;
-    let mut found_by_patterns: Vec<FileId> = Vec::new();
     for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
         let Some((answers, _)) = files.answers(file) else {
             continue;
@@ -227,7 +226,6 @@ fn name_data_files_found_by_patterns(
             else {
                 continue;
             };
-            found_by_patterns.extend(found.iter().filter(|&&found| is_kept(found)));
             let data = found
                 .iter()
                 .filter(|&&found| is_kept(found) && is_data(found));
@@ -250,14 +248,13 @@ fn name_data_files_found_by_patterns(
             diagnostics.add(Some(view), note);
         }
     }
-    found_by_patterns.sort_unstable();
-    found_by_patterns.dedup();
-    has_found_data.then_some(found_by_patterns)
+    has_found_data
 }
 
 fn warn_where_files_read_are_not_embedded(
     diagnostics: &mut Diagnostics,
     view: ProgramView<'_, '_>,
+    graph: &ModuleGraph,
     left_out: &LeftOutCode,
     project_root: &[u8],
     provider: &dyn SourceProvider,
@@ -266,33 +263,57 @@ fn warn_where_files_read_are_not_embedded(
     let is_kept = |file: FileId| left_out.files.binary_search(&file).is_err();
     for &file in files.compiled_files().iter().filter(|&&file| is_kept(file)) {
         let folder = dirname::<Posix>(files.module(file).file_name());
-        for &(operand, path) in files.analysis(file).paths_of_files_read {
+        let analysis = files.analysis(file);
+        let read_by_functions_called = analysis.own_urls_handed.iter().flat_map(|handed| {
+            let function = match graph.import_binding(file, handed.function) {
+                ImportBinding::Variable(function) => function,
+                _ => Sym {
+                    file,
+                    id: handed.function,
+                },
+            };
+            let read = files.compiled(function.file).into_iter();
+            read.flat_map(|it| it.analysis.files_read_beside_callers)
+                .filter(move |it| {
+                    (it.function, it.place, it.property)
+                        == (function.id, handed.place, handed.property)
+                })
+                .map(|it| (handed.argument, it.path))
+        });
+        let read = analysis.paths_of_files_read.iter().copied();
+        for (operand, path) in read.chain(read_by_functions_called) {
             let path = from_argument(folder, files.atoms.bytes(path));
             let is_code = (files.by_path.get(&path)).is_some_and(|found| !sources.is_data(found));
-            if is_code || !provider.is_file_that_only_asset_brings(to_native(&path)) {
+            let is_lacking = !is_code && provider.is_file_that_only_asset_brings(to_native(&path));
+            let may_be_lacking = !is_code
+                && !is_lacking
+                && provider.is_data_file_that_its_folder_may_hide(to_native(&path));
+            if !is_lacking && !may_be_lacking {
                 continue;
             }
             let span = Span::of_node(files.hir(file), file, NodeData::Expr(operand));
             let name = compute_display_path(project_root, to_native(&path));
-            let code = Code::FileReadIsNotEmbedded;
-            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&name]));
+            let warning = Diagnostic::new(Code::FileReadIsNotEmbedded, Some(span), &[&name]);
+            match is_lacking {
+                true => diagnostics.add(Some(view), warning),
+                false => {
+                    if let Some(warning) = Diagnostics::render(view, warning) {
+                        provider.warn_if_file_system_lacks(to_native(&path), warning);
+                    }
+                }
+            }
         }
     }
 }
 
 fn keep_paths_of_code_that_file_system_sees(
     view: ProgramView<'_, '_>,
-    graph: &ModuleGraph,
     left_out: &LeftOutCode,
-    found_by_patterns: &[FileId],
     provider: &dyn SourceProvider,
 ) {
     let (files, sources) = (view.files(), view.sources);
     for &file in files.compiled_files() {
-        let is_seen = !sources.is_data(file)
-            && left_out.files.binary_search(&file).is_err()
-            && (graph.kind(file) == ModuleKind::CommonJs
-                || found_by_patterns.binary_search(&file).is_ok());
+        let is_seen = !sources.is_data(file) && left_out.files.binary_search(&file).is_err();
         if is_seen {
             provider
                 .keep_path_of_code_that_file_system_sees(to_native(files.module(file).file_name()));
@@ -746,27 +767,22 @@ impl Build<'_> {
                 warn_where_modules_are_reset(&mut self.diagnostics, view, &left_out);
                 if !self.options.aot.runs_in_place {
                     let loaders = &self.options.load.loaders;
-                    let found_by_patterns = name_data_files_found_by_patterns(
+                    let has_found_data = name_data_files_found_by_patterns(
                         &mut self.diagnostics,
                         view,
                         &left_out,
                         loaders,
                         self.provider,
                     );
-                    if let Some(found_by_patterns) = found_by_patterns {
-                        keep_paths_of_code_that_file_system_sees(
-                            view,
-                            &graph,
-                            &left_out,
-                            &found_by_patterns,
-                            self.provider,
-                        );
+                    if has_found_data {
+                        keep_paths_of_code_that_file_system_sees(view, &left_out, self.provider);
                     }
                     keep_where_parsers_refused_data(view, &left_out, self.provider);
                     if !self.options.load.runs_tests {
                         warn_where_files_read_are_not_embedded(
                             &mut self.diagnostics,
                             view,
+                            &graph,
                             &left_out,
                             &self.options.load.project_root,
                             self.provider,

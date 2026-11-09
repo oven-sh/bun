@@ -639,7 +639,9 @@ fn is_handed_own_file_by_calls_in_sight(
                     let place = walked.len();
                     walked.push((handed, asker, false));
                     places.insert(handed, place);
-                    if key.is_some() && !is_only_read_by_member(hir, bound, parameter, name) {
+                    if key.is_some()
+                        && !is_only_read_by_member(hir, bound, parameter, name, &|_| false)
+                    {
                         break Some(place);
                     }
                     let Some((values, path, _)) = find_values_passed_for_pattern(
@@ -691,7 +693,13 @@ fn is_handed_own_file_by_calls_in_sight(
     is_handed
 }
 
-fn is_only_read_by_member(hir: &File<'_>, bound: &Bound<'_>, object: SymbolId, name: Atom) -> bool {
+pub(super) fn is_only_read_by_member(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    object: SymbolId,
+    name: Atom,
+    is_read_otherwise: &dyn Fn(ExprId) -> bool,
+) -> bool {
     let is_callee = |member: ExprId| match bound.parent_of_expr(member) {
         Parent::Expr(user) => match expr_kind(hir, user) {
             Some(ExprKind::Call(call)) => hir[call].callee == member,
@@ -709,7 +717,7 @@ fn is_only_read_by_member(hir: &File<'_>, bound: &Bound<'_>, object: SymbolId, n
                 return true;
             }
             let Parent::Expr(member) = bound.parent_of_expr(written) else {
-                return false;
+                return is_read_otherwise(written);
             };
             hir.member_key(member).is_some_and(|(of, _)| of == written)
                 && !is_callee(member)

@@ -37,7 +37,7 @@ impl Walker<'_, '_> {
                 self.push_initialization(symbol, context);
             }
             StmtKind::ExportAssign(value) => {
-                if self.walk.has_wrapper_parameters {
+                if self.walk.wrapper_slots.contains(CommonJsVariable::Module) {
                     let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
                     self.record_slot_use(context.function, self.file_scope, slot);
                 }

@@ -9,7 +9,7 @@ use crate::load::data_modules::parse_json;
 use crate::load::loaders::loader_name;
 use bstr::BStr;
 use bun_ast::runtime::ReactCompilerMode;
-use bun_ast::{ASTMemoryAllocator, ImportKind, Loader, Loc, Log, Source};
+use bun_ast::{ASTMemoryAllocator, ImportKind, Loader, Loc, Log, Msg, Source};
 use bun_js_parser::{
     Define, ExpandedImportMetaGlob, ImportMetaGlobHost, Parser, ParserOptions,
     record_import_meta_globs,
@@ -189,6 +189,12 @@ pub trait SourceProvider: Sync {
     fn is_file_that_only_asset_brings(&self, _source_path: &[u8]) -> bool {
         false
     }
+
+    fn is_data_file_that_its_folder_may_hide(&self, _source_path: &[u8]) -> bool {
+        false
+    }
+
+    fn warn_if_file_system_lacks(&self, _source_path: &[u8], _warning: Msg) {}
 
     fn parse_data<'s>(
         &self,

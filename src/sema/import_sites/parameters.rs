@@ -115,15 +115,39 @@ pub fn find_parameter_named(
     bound: &Bound<'_>,
     mention: ExprId,
 ) -> Option<(FnId, usize)> {
+    let (function, place, path) = find_parameter_and_path_named(hir, bound, mention)?;
+    path.is_empty().then_some((function, place))
+}
+
+pub(super) fn find_parameter_and_path_named(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    mention: ExprId,
+) -> Option<(FnId, usize, SmallVec<[Atom; 2]>)> {
     let Binding::Symbol(parameter) = bound.binding(mention) else {
         return None;
     };
-    let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
+    let &[Decl::Param(mut pattern)] = bound.symbol(parameter).decls else {
         return None;
     };
-    let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
-        return None;
+    let mut path: SmallVec<[Atom; 2]> = SmallVec::new();
+    let id = loop {
+        match bound.pat_parent[pattern.idx()] {
+            PatParent::Param(id) => break id,
+            PatParent::Prop(parent, property) => {
+                let PropKey::Name(key) = hir.runtime_binding_key(property) else {
+                    return None;
+                };
+                if hir[property].is_rest || hir[property].default.is_some() {
+                    return None;
+                }
+                path.push(key);
+                pattern = parent;
+            }
+            PatParent::Elem(..) | PatParent::Var(_) | PatParent::None => return None,
+        }
     };
+    path.reverse();
     let function = bound.param_fn[id.idx()];
     let place = hir[function].params.iter().position(|it| it == id)?;
     let is_settled = matches!(
@@ -135,7 +159,7 @@ pub fn find_parameter_named(
             .dynamic_lookup_scope(NodeData::Expr(mention))
             .is_none()
         && !hir[id].flags.contains(Flags::REST);
-    is_settled.then_some((function, place))
+    is_settled.then_some((function, place, path))
 }
 
 fn finds_itself(
@@ -187,7 +211,7 @@ fn find_name_of(
     }
 }
 
-fn find_only_name_of(
+pub(super) fn find_only_name_of(
     hir: &File<'_>,
     bound: &Bound<'_>,
     function: FnId,
@@ -261,44 +285,8 @@ pub(super) fn find_values_passed_for_pattern(
     find_written: FindWritten<'_>,
     may_be_exported: bool,
 ) -> Option<(SmallVec<[ExprId; 4]>, SmallVec<[Atom; 2]>, bool)> {
-    let Binding::Symbol(parameter) = bound.binding(mention) else {
-        return None;
-    };
-    let &[Decl::Param(mut pattern)] = bound.symbol(parameter).decls else {
-        return None;
-    };
-    let mut path: SmallVec<[Atom; 2]> = SmallVec::new();
-    let id = loop {
-        match bound.pat_parent[pattern.idx()] {
-            PatParent::Param(id) => break id,
-            PatParent::Prop(parent, property) => {
-                let PropKey::Name(key) = hir.runtime_binding_key(property) else {
-                    return None;
-                };
-                if hir[property].is_rest || hir[property].default.is_some() {
-                    return None;
-                }
-                path.push(key);
-                pattern = parent;
-            }
-            PatParent::Elem(..) | PatParent::Var(_) | PatParent::None => return None,
-        }
-    };
-    path.reverse();
-    let function = bound.param_fn[id.idx()];
-    let index = hir[function].params.iter().position(|it| it == id)?;
-    let is_settled = matches!(
-        bound.binding_stability(parameter),
-        BindingStability::Stable | BindingStability::NotInitializedOnce
-    ) && bound.stores_to(parameter).is_empty()
-        && !bound.is_visible_to_eval(parameter)
-        && bound
-            .dynamic_lookup_scope(NodeData::Expr(mention))
-            .is_none()
-        && !hir[id].flags.contains(Flags::REST);
-    if !is_settled {
-        return None;
-    }
+    let (function, index, path) = find_parameter_and_path_named(hir, bound, mention)?;
+    let id = hir[function].params.iter().nth(index)?;
     let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
     let has_default = hir[id].default.is_some();
     let mut is_left_out = false;

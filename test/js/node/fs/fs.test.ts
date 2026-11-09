@@ -1022,8 +1022,17 @@ describe("copyFileSync", () => {
       await copy(link, dest, force);
       expect(readFileSync(dest).equals(content)).toBe(true);
 
-      // No temporary file is left behind.
-      expect(readdirSync(tempdir).filter(f => f.startsWith(`${name}.bin`) && f !== `${name}.bin`)).toEqual([]);
+      // A basename at NAME_MAX (255 bytes) works for a fresh and an existing destination.
+      const longName = `${name}-` + Buffer.alloc(255 - name.length - 1, "d").toString();
+      const longDest = join(tempdir, longName);
+      await copy(src, longDest, force);
+      expect(readFileSync(longDest).equals(content)).toBe(true);
+      writeFileSync(longDest, "placeholder");
+      await copy(src, longDest, force);
+      expect(readFileSync(longDest).equals(content)).toBe(true);
+
+      // No temporary file is left behind. The temporary name starts with a dot.
+      expect(readdirSync(tempdir).filter(f => f.startsWith("."))).toEqual([]);
     }
   });
 

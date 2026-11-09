@@ -694,7 +694,7 @@ const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 #[cfg(target_os = "macos")]
 const CLONE_NOFOLLOW: u32 = 0x0001;
 
-/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`: clone to a temporary name, then rename over `dest`.
+/// `clonefile(2)` for `COPYFILE_FICLONE_FORCE`: clone to a temporary name in the directory of `dest`, then rename over `dest`.
 #[cfg(target_os = "macos")]
 fn clonefile_force(
     src: &ZStr,
@@ -719,15 +719,24 @@ fn clonefile_force(
         ..Default::default()
     };
     let mut name_buf = [0u8; 64];
-    let name = FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
+    let name = paths::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
         .map_err(|_| name_too_long())?;
+    // The temporary name is short and independent of the basename of `dest`,
+    // so a 255 byte basename does not push it past NAME_MAX.
+    let dir = bun_core::dirname(dest.as_bytes()).unwrap_or(b"");
+    let sep: &[u8] = if dir.is_empty() || dir.ends_with(b"/") {
+        b""
+    } else {
+        b"/"
+    };
     let mut tmp_buf = bun_paths::path_buffer_pool::get();
-    let tmp_len = dest.len() + name.len();
+    let tmp_len = dir.len() + sep.len() + name.len();
     if tmp_len >= tmp_buf.len() {
         return Err(name_too_long());
     }
-    tmp_buf[..dest.len()].copy_from_slice(dest.as_bytes());
-    tmp_buf[dest.len()..tmp_len].copy_from_slice(name.as_bytes());
+    tmp_buf[..dir.len()].copy_from_slice(dir);
+    tmp_buf[dir.len()..dir.len() + sep.len()].copy_from_slice(sep);
+    tmp_buf[dir.len() + sep.len()..tmp_len].copy_from_slice(name.as_bytes());
     tmp_buf[tmp_len] = 0;
     let tmp = ZStr::from_buf(&tmp_buf[..], tmp_len);
 

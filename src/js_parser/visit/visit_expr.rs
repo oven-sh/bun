@@ -1357,7 +1357,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
                     Op::UnVoid => {
-                        if p.expr_can_be_removed_if_unused(&e_.value) {
+                        // Without minify_syntax the printer spells E::Undefined as the
+                        // identifier `undefined`, which a binding in scope can shadow.
+                        if p.options.features.minify_syntax
+                            && p.expr_can_be_removed_if_unused(&e_.value)
+                        {
                             *e = p.new_expr(E::Undefined {}, e_.value.loc);
                             return;
                         }

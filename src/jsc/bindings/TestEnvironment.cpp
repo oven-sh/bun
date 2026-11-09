@@ -84,7 +84,6 @@ static void forEachPropertySlot(JSC::JSObject* object, JSC::Structure* structure
 }
 
 // For each object its structure and then its property slots, or null if those do not tell whether it has changed.
-// The second argument has the indexes of the objects that lost a property since the last call.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionShapesOfObjects, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

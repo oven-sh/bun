@@ -391,8 +391,7 @@ function createHappyDOM(_: Package, exports: any, options: any): Environment | s
 const kept = new $Map<string, Environment>();
 // require() of a module with top-level await throws only the first time, so rethrow that error for every file.
 const failedToLoad = new $Map<string, unknown>();
-// One for each copy of happy-dom: its classes, which every window has, and what those reach. With --isolate that includes
-// the builtins of the global that outlives the files. With --isolate=modules the builtins are globals.ts's to put back.
+// One for each copy of happy-dom: its classes and, with --isolate, the builtins behind them. globals.ts has a shared global's.
 const savedClassesOfPackages: SavedProperties[] = [];
 let builtinsOfSharedGlobal: Objects | undefined;
 

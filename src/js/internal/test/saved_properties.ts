@@ -1,5 +1,4 @@
-// Saves the own properties of an object, of its object properties, of every function reachable from those and of their
-// prototypes, to put them back.
+// Saves the own properties of an object and of what walk() reaches from it, to put them back.
 
 // The second argument lists the objects to take out of dictionary mode first: a delete can leave one in it.
 const shapesOf: (objects: object[], lostProperties?: number[]) => unknown[] = $newCppFunction(
@@ -47,8 +46,7 @@ function isSame(current: PropertyDescriptor, saved: PropertyDescriptor) {
   );
 }
 
-// Visits `root`, its object properties, every function reachable from those and their prototypes, each once.
-// The global object only as the root, and nothing that `others` has.
+// Visits `root`, its objects, the functions they reach and their prototypes. `globalThis` only as the root, and nothing in `others`.
 function walk(
   root: object,
   isTracked: KeyFilter,

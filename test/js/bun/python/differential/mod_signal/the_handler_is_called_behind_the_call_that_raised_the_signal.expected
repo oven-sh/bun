@@ -1,0 +1,26 @@
+status: 0
+script: d94347bdf70ec372
+---
+a_function_pointer_of_ctypes   ['the handler, in a_function_pointer_of_ctypes', 'the next statement']
+an_instance_with_a_call        ['the handler, in an_instance_with_a_call', 'the next statement']
+a_partial                      ['the handler, in a_partial', 'the next statement']
+a_bound_method                 ['the handler, in a_bound_method', 'the next statement']
+a_class                        ['the handler, in a_class', 'the next statement']
+a_class_of_a_metaclass         ['the handler, in a_class_of_a_metaclass', 'the next statement']
+os_kill                        ['the handler, in os_kill', 'the next statement']
+signal_raise_signal            ['the handler, in signal_raise_signal', 'the next statement']
+in another thread              ['the handler, in MainThread', 'the thread goes on, in another thread']
+the handler raises it again by a function pointer of ctypes,  thrice:   4 calls, the first three in ['program', 'handler', 'handler']; the program gets KeyError(4,)
+the handler raises it again by a function pointer of ctypes,  for ever: hundreds of calls, the first three in ['program', 'handler', 'handler']; the program gets RecursionError
+the handler raises it again by a partial,                     thrice:   4 calls, the first three in ['program', 'handler', 'handler']; the program gets KeyError(4,)
+the handler raises it again by a partial,                     for ever: hundreds of calls, the first three in ['program', 'handler', 'handler']; the program gets RecursionError
+the handler raises it again by os.kill(),                     thrice:   4 calls, the first three in ['program', 'handler', 'handler']; the program gets KeyError(4,)
+the handler raises it again by os.kill(),                     for ever: hundreds of calls, the first three in ['program', 'handler', 'handler']; the program gets RecursionError
+the handler raises it again by signal.raise_signal(),         thrice:   4 calls, the first three in ['program', 'handler', 'handler']; the program gets KeyError(4,)
+the handler raises it again by signal.raise_signal(),         for ever: hundreds of calls, the first three in ['program', 'handler', 'handler']; the program gets RecursionError
+__exit__ is called with KeyError
+behind the with
+__aenter__ is a partial and gives a Ready: ['the handler, in road, in the block', '__aexit__ is called with KeyError', 'out of it comes StopIteration, behind the block']
+__aenter__ is a partial and gives a ReadyByAFunctionOfPython: ['the handler, in __await__, before the block', 'out of it comes KeyError, before the block']
+__aenter__ is a method written in C and gives a Ready: ['the handler, in road, in the block', '__aexit__ is called with KeyError', 'out of it comes StopIteration, behind the block']
+__aenter__ is a method written in C and gives a ReadyByAFunctionOfPython: ['the handler, in __await__, before the block', 'out of it comes KeyError, before the block']

@@ -1,0 +1,19 @@
+status: 0
+oracle: none
+---
+the handler notes; a partial: the handler is called in no frame; JS is given a promise of 'the coroutine has run'
+the handler notes; a partial, with kwargs({}): the handler is called in no frame; JS is given a promise of 'the coroutine has run'
+the handler notes; an instance with a __call__: the handler is called in no frame; JS is given a promise of 'the coroutine has run'
+the handler notes; a bound method: the handler is called in no frame; JS is given a promise of 'the coroutine has run'
+the handler notes; a class: the handler is called in no frame; JS is given a promise of 'the coroutine has run'
+the handler notes; a class, with kwargs({}): the handler is called in no frame; JS is given a promise of 'the coroutine has run'
+the handler notes; a class whose class has a __call__: the handler is called in no frame; JS is given a promise of 'the coroutine has run'
+the handler notes; a method written in C: the handler is called in no frame; JS is given a promise of 'the coroutine has run'
+the handler raises; a partial: the handler is called in no frame; JS catches KeyError: 'raised by the handler'
+the handler raises; a partial, with kwargs({}): the handler is called in no frame; JS catches KeyError: 'raised by the handler'
+the handler raises; an instance with a __call__: the handler is called in no frame; JS catches KeyError: 'raised by the handler'
+the handler raises; a bound method: the handler is called in no frame; JS catches KeyError: 'raised by the handler'
+the handler raises; a class: the handler is called in no frame; JS catches KeyError: 'raised by the handler'
+the handler raises; a class, with kwargs({}): the handler is called in no frame; JS catches KeyError: 'raised by the handler'
+the handler raises; a class whose class has a __call__: the handler is called in no frame; JS catches KeyError: 'raised by the handler'
+the handler raises; a method written in C: the handler is called in no frame; JS catches KeyError: 'raised by the handler'

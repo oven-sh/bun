@@ -1911,8 +1911,8 @@ describe.concurrent("an inline snapshot does not say who wrote it", () => {
 });
 
 // Jest 30.5.2 wrote these texts for `value`, in a `.snap` file and inline, each with the `snapshotFormat` option that
-// names it. Vitest 5.0.3 wrote the same in a `.snap` file, and Jest 28.1.3 wrote `both` with its defaults.
-// To add a case, run it under that runner. Never update these with Bun.
+// names it. Vitest 5.0.3 wrote the same in a `.snap` file, and inline with two more spaces before each line.
+// Jest 28.1.3 wrote `both` with its defaults. To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("a snapshot that Jest or Vitest wrote with another `snapshotFormat` than the default", () => {
   const value = String.raw`{ list: [{}, 'say "hi"'], path: "a\\b" }`;
   const written = {
@@ -1978,6 +1978,7 @@ Object {
   const expected = (cases: readonly { name: string; form: keyof typeof difference }[]) =>
     Object.fromEntries(cases.map(({ name, form }) => [name, difference[form].toSorted()]));
   const read = (dir: unknown, ...path: string[]) => readFileSync(join(String(dir), ...path), "utf8");
+  const imports = { jest: "", vitest: `import { describe, test, expect } from "vitest";\n` };
 
   test("in a .snap file: fails with the difference, and --update-snapshots rewrites it in the default form", async () => {
     const older = "// Jest Snapshot v1, https://goo.gl/fbAQLP\n";
@@ -1988,7 +1989,6 @@ Object {
       { name: "vitest-prefixes", format: "vitest", header: headers.vitest, form: "printBasicPrototype" },
       { name: "vitest-escapes", format: "vitest", header: headers.vitest, form: "escapeString" },
     ] as const;
-    const imports = { jest: "", vitest: `import { describe, test, expect } from "vitest";\n` };
     const keys = { jest: "outer inner 1", vitest: "outer > inner 1" };
     const tests = `describe("outer", () => { test("inner", () => { expect(${value}).toMatchSnapshot(); }); });\n`;
     const file = (header: string, format: "jest" | "vitest", form: keyof typeof written) =>
@@ -2018,14 +2018,18 @@ Object {
 
   test("inline: fails with the difference, and --update-snapshots rewrites it in the default form", async () => {
     const cases = [
-      { name: "prefixes", form: "printBasicPrototype" },
-      { name: "escapes", form: "escapeString" },
+      { name: "jest-prefixes", format: "jest", form: "printBasicPrototype" },
+      { name: "jest-escapes", format: "jest", form: "escapeString" },
+      { name: "vitest-prefixes", format: "vitest", form: "printBasicPrototype" },
+      { name: "vitest-escapes", format: "vitest", form: "escapeString" },
     ] as const;
-    const tests = (form: keyof typeof written) =>
-      `test("inline", () => { expect(${value}).toMatchInlineSnapshot(\`${written[form]}\`); });\n`;
+    const literal = (format: "jest" | "vitest", form: keyof typeof written) =>
+      format === "vitest" ? written[form].replaceAll(/\n(?=.)/g, "\n  ") : written[form];
+    const tests = (format: "jest" | "vitest", form: keyof typeof written) =>
+      `${imports[format]}test("inline", () => { expect(${value}).toMatchInlineSnapshot(\`${literal(format, form)}\`); });\n`;
     using dir = tempDir(
       "inline-snapshot-other-form",
-      Object.fromEntries(cases.map(({ name, form }) => [`${name}.test.js`, tests(form)])),
+      Object.fromEntries(cases.map(({ name, format, form }) => [`${name}.test.js`, tests(format, form)])),
     );
     const sources = () => cases.map(({ name }) => read(dir, `${name}.test.js`));
 
@@ -2035,11 +2039,11 @@ Object {
       fail: cases.length,
       marked: expected(cases),
     });
-    expect(sources()).toEqual(cases.map(({ form }) => tests(form)));
+    expect(sources()).toEqual(cases.map(({ format, form }) => tests(format, form)));
     expect(mismatch.exitCode).toBe(1);
 
     const updated = await runTests(String(dir), { CI: "true" }, "--update-snapshots");
-    expect(sources()).toEqual(cases.map(() => tests("default")));
+    expect(sources()).toEqual(cases.map(({ format }) => tests(format, "default")));
     expect(updated.exitCode).toBe(0);
   });
 });

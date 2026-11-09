@@ -288,7 +288,9 @@ Bun reads and writes each snapshot file in the format of the runner that created
 | `// Jest Snapshot v1`   | `outer inner 1`   | `pretty-format` | the error message                |
 | `// Vitest Snapshot v1` | `outer > inner 1` | `pretty-format` | the error                        |
 
-Bun has no `snapshotFormat` option. With `printBasicPrototype: true`, Jest and Vitest print `Object {` and `Array [` where Bun prints `{` and `[`. With `escapeString: true`, they put a backslash before each `"` and each backslash in a string, and Bun prints the string as it is. Jest 28 and earlier printed both forms by default. A `.snap` or inline snapshot in either form fails until `bun test --update-snapshots` rewrites it. If Jest or Vitest also runs the `.snap` file, set both options to `false` in its configuration, so that both runners print the same form.
+Bun has no `snapshotFormat` option. With `printBasicPrototype: true`, Jest and Vitest print `Object {` and `Array [` where Bun prints `{` and `[`. With `escapeString: true`, they put a backslash before each `"` and each backslash in a string, and Bun prints the string as it is. Jest 28 and earlier printed both forms by default.
+
+A `.snap` or inline snapshot in either form fails until `bun test --update-snapshots` rewrites it. If Jest or Vitest also runs the tests, set both options to `false` in its configuration and update the snapshots with that runner instead. Bun accepts the inline snapshots that Jest writes, and Jest does not accept all that Bun writes. Jest has both options since version 27.1.
 
 Bun's format and `pretty-format` print most values the same way. They differ on functions (`[Function: name]` in Bun's format, `[Function]` in Jest's and Vitest's), classes, mock functions, regular expressions, symbol keys, React elements and a few others.
 

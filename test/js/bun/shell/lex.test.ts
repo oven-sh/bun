@@ -865,6 +865,140 @@ describe("lex shell", () => {
     expect(JSON.parse(result)).toEqual(expected);
   });
 
+  // The `)` of `$(` and the closing backtick put a Delimit before CmdSubstEnd only after a
+  // token that is part of a word. The parser takes a Delimit after any other token for the
+  // start of one more command: `expected a command or assignment but got: "CmdSubstEnd"`.
+  describe("end of cmd subst", () => {
+    const buffer = new Uint8Array(8);
+    // `@` in the source is an interpolated Buffer.
+    const tokens = (source: string) => {
+      const raw = source.split("@");
+      return JSON.parse(lex({ raw }, ...raw.slice(1).map(() => buffer)));
+    };
+    const echo = [{ Text: "echo" }, { Delimit: {} }];
+    const echoHi = [...echo, { Text: "hi" }, { Delimit: {} }];
+    const toBuffer = [...echoHi, { Redirect: redirect({ stdout: true }) }, { JSObjRef: 0 }];
+
+    // [what the body ends in, the body, the tokens of the body]
+    const bodies: [string, string, object[]][] = [
+      ["a JS object", "echo hi > @", toBuffer],
+      ["a JS object and a blank", "echo hi > @ ", toBuffer],
+      ["a subshell", " (echo hi)", [{ OpenParen: {} }, ...echoHi, { CloseParen: {} }]],
+      [
+        "`]]` and a blank",
+        "[[ -n x ]] ",
+        [
+          { DoubleBracketOpen: {} },
+          { Text: "-n" },
+          { Delimit: {} },
+          { Text: "x" },
+          { Delimit: {} },
+          { DoubleBracketClose: {} },
+        ],
+      ],
+      ["`[[`", "[[ ", [{ DoubleBracketOpen: {} }]],
+      ["nothing", "", []],
+      ["a blank", " ", []],
+      ["`;`", "echo hi;", [...echoHi, { Semicolon: {} }]],
+      ["a newline", "echo hi\n", [...echoHi, { Newline: {} }]],
+      ["`2>&1`", "echo hi 2>&1", [...echoHi, { Redirect: redirect({ stdout: true, duplicate_out: true }) }]],
+      ["`|`", "echo hi |", [...echoHi, { Pipe: {} }]],
+      ["`||`", "echo hi ||", [...echoHi, { DoublePipe: {} }]],
+      ["`&&`", "echo hi &&", [...echoHi, { DoubleAmpersand: {} }]],
+      ["`&`", "echo hi &", [...echoHi, { Ampersand: {} }]],
+      // A token that is part of a word keeps its Delimit.
+      ["a variable", "echo $FOO", [...echo, { Var: "FOO" }, { Delimit: {} }]],
+      ["a closing quote", 'echo "hi"', [...echo, { DoubleQuotedText: "hi" }, { Delimit: {} }]],
+      ["`*`", "echo *", [...echo, { Asterisk: {} }, { Delimit: {} }]],
+      [
+        "a nested substitution",
+        "echo $(ls)",
+        [...echo, { CmdSubstBegin: {} }, { Text: "ls" }, { Delimit: {} }, { CmdSubstEnd: {} }, { Delimit: {} }],
+      ],
+    ];
+
+    test.each(
+      bodies.flatMap(([end, body, expected]) => [
+        ["$(...) ends in " + end, "$(" + body + ")", expected] as const,
+        ["`...` ends in " + end, "`" + body + "`", expected] as const,
+      ]),
+    )("%s", (_name, subst, expected) => {
+      // A script that is not ASCII goes through the other lexer.
+      for (const word of ["echo", "écho"]) {
+        expect(tokens(`${word} ${subst}`)).toEqual([
+          { Text: word },
+          { Delimit: {} },
+          { CmdSubstBegin: {} },
+          ...expected,
+          { CmdSubstEnd: {} },
+          { Eof: {} },
+        ]);
+      }
+    });
+
+    test.each(['echo "$()"', 'echo "``"'])("empty body in double quotes: %s", source => {
+      expect(tokens(source)).toEqual([
+        ...echo,
+        { CmdSubstBegin: {} },
+        { CmdSubstQuoted: {} },
+        { CmdSubstEnd: {} },
+        { Eof: {} },
+      ]);
+    });
+
+    // Text directly before the opening backtick stays outside the body.
+    test.each([
+      [
+        "X=`echo hi;`",
+        [{ Text: "X=" }, { CmdSubstBegin: {} }, ...echoHi, { Semicolon: {} }, { CmdSubstEnd: {} }, { Eof: {} }],
+      ],
+      [
+        "X=`cat < @`",
+        [
+          { Text: "X=" },
+          { CmdSubstBegin: {} },
+          { Text: "cat" },
+          { Delimit: {} },
+          { Redirect: redirect({ stdin: true }) },
+          { JSObjRef: 0 },
+          { CmdSubstEnd: {} },
+          { Eof: {} },
+        ],
+      ],
+      [
+        "echo pre`(echo hi)`post",
+        [
+          ...echo,
+          { Text: "pre" },
+          { CmdSubstBegin: {} },
+          { OpenParen: {} },
+          ...echoHi,
+          { CloseParen: {} },
+          { CmdSubstEnd: {} },
+          { Text: "post" },
+          { Delimit: {} },
+          { Eof: {} },
+        ],
+      ],
+      [
+        'echo "a `echo hi\n` b"',
+        [
+          ...echo,
+          { DoubleQuotedText: "a " },
+          { CmdSubstBegin: {} },
+          { CmdSubstQuoted: {} },
+          ...echoHi,
+          { Newline: {} },
+          { CmdSubstEnd: {} },
+          { DoubleQuotedText: " b" },
+          { Eof: {} },
+        ],
+      ],
+    ])("text before the backtick: %s", (source, expected) => {
+      expect(tokens(source)).toEqual(expected);
+    });
+  });
+
   // Where the lexer puts `Delimit` when a word's last part is not plain text
   // (a variable, a closing quote, a brace group), or when the word is split
   // into several tokens. Whitespace and operators delimit such a word; `;`
@@ -1045,140 +1179,6 @@ describe("lex shell", () => {
     ],
   ])("delimit: %s", (_name, source, expected) => {
     expect(JSON.parse(lex({ raw: [source] }))).toEqual(expected);
-  });
-
-  // The `)` of `$(` and the closing backtick put a Delimit before CmdSubstEnd only after a
-  // token that is part of a word. The parser takes a Delimit after any other token for the
-  // start of one more command: `expected a command or assignment but got: "CmdSubstEnd"`.
-  describe("end of cmd subst", () => {
-    const buffer = new Uint8Array(8);
-    // `@` in the source is an interpolated Buffer.
-    const tokens = (source: string) => {
-      const raw = source.split("@");
-      return JSON.parse(lex({ raw }, ...raw.slice(1).map(() => buffer)));
-    };
-    const echo = [{ Text: "echo" }, { Delimit: {} }];
-    const echoHi = [...echo, { Text: "hi" }, { Delimit: {} }];
-    const toBuffer = [...echoHi, { Redirect: redirect({ stdout: true }) }, { JSObjRef: 0 }];
-
-    // [what the body ends in, the body, the tokens of the body]
-    const bodies: [string, string, object[]][] = [
-      ["a JS object", "echo hi > @", toBuffer],
-      ["a JS object and a blank", "echo hi > @ ", toBuffer],
-      ["a subshell", " (echo hi)", [{ OpenParen: {} }, ...echoHi, { CloseParen: {} }]],
-      [
-        "`]]` and a blank",
-        "[[ -n x ]] ",
-        [
-          { DoubleBracketOpen: {} },
-          { Text: "-n" },
-          { Delimit: {} },
-          { Text: "x" },
-          { Delimit: {} },
-          { DoubleBracketClose: {} },
-        ],
-      ],
-      ["`[[`", "[[ ", [{ DoubleBracketOpen: {} }]],
-      ["nothing", "", []],
-      ["a blank", " ", []],
-      ["`;`", "echo hi;", [...echoHi, { Semicolon: {} }]],
-      ["a newline", "echo hi\n", [...echoHi, { Newline: {} }]],
-      ["`2>&1`", "echo hi 2>&1", [...echoHi, { Redirect: redirect({ stdout: true, duplicate_out: true }) }]],
-      ["`|`", "echo hi |", [...echoHi, { Pipe: {} }]],
-      ["`||`", "echo hi ||", [...echoHi, { DoublePipe: {} }]],
-      ["`&&`", "echo hi &&", [...echoHi, { DoubleAmpersand: {} }]],
-      ["`&`", "echo hi &", [...echoHi, { Ampersand: {} }]],
-      // A token that is part of a word keeps its Delimit.
-      ["a variable", "echo $FOO", [...echo, { Var: "FOO" }, { Delimit: {} }]],
-      ["a closing quote", 'echo "hi"', [...echo, { DoubleQuotedText: "hi" }, { Delimit: {} }]],
-      ["`*`", "echo *", [...echo, { Asterisk: {} }, { Delimit: {} }]],
-      [
-        "a nested substitution",
-        "echo $(ls)",
-        [...echo, { CmdSubstBegin: {} }, { Text: "ls" }, { Delimit: {} }, { CmdSubstEnd: {} }, { Delimit: {} }],
-      ],
-    ];
-
-    test.each(
-      bodies.flatMap(([end, body, expected]) => [
-        ["$(...) ends in " + end, "$(" + body + ")", expected] as const,
-        ["`...` ends in " + end, "`" + body + "`", expected] as const,
-      ]),
-    )("%s", (_name, subst, expected) => {
-      // A script that is not ASCII goes through the other lexer.
-      for (const word of ["echo", "écho"]) {
-        expect(tokens(`${word} ${subst}`)).toEqual([
-          { Text: word },
-          { Delimit: {} },
-          { CmdSubstBegin: {} },
-          ...expected,
-          { CmdSubstEnd: {} },
-          { Eof: {} },
-        ]);
-      }
-    });
-
-    test.each(['echo "$()"', 'echo "``"'])("empty body in double quotes: %s", source => {
-      expect(tokens(source)).toEqual([
-        ...echo,
-        { CmdSubstBegin: {} },
-        { CmdSubstQuoted: {} },
-        { CmdSubstEnd: {} },
-        { Eof: {} },
-      ]);
-    });
-
-    // Text directly before the opening backtick stays outside the body.
-    test.each([
-      [
-        "X=`echo hi;`",
-        [{ Text: "X=" }, { CmdSubstBegin: {} }, ...echoHi, { Semicolon: {} }, { CmdSubstEnd: {} }, { Eof: {} }],
-      ],
-      [
-        "X=`cat < @`",
-        [
-          { Text: "X=" },
-          { CmdSubstBegin: {} },
-          { Text: "cat" },
-          { Delimit: {} },
-          { Redirect: redirect({ stdin: true }) },
-          { JSObjRef: 0 },
-          { CmdSubstEnd: {} },
-          { Eof: {} },
-        ],
-      ],
-      [
-        "echo pre`(echo hi)`post",
-        [
-          ...echo,
-          { Text: "pre" },
-          { CmdSubstBegin: {} },
-          { OpenParen: {} },
-          ...echoHi,
-          { CloseParen: {} },
-          { CmdSubstEnd: {} },
-          { Text: "post" },
-          { Delimit: {} },
-          { Eof: {} },
-        ],
-      ],
-      [
-        'echo "a `echo hi\n` b"',
-        [
-          ...echo,
-          { DoubleQuotedText: "a " },
-          { CmdSubstBegin: {} },
-          { CmdSubstQuoted: {} },
-          ...echoHi,
-          { Newline: {} },
-          { CmdSubstEnd: {} },
-          { DoubleQuotedText: " b" },
-          { Eof: {} },
-        ],
-      ],
-    ])("text before the backtick: %s", (source, expected) => {
-      expect(tokens(source)).toEqual(expected);
-    });
   });
 
   describe("errors", async () => {

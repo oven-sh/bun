@@ -36,23 +36,6 @@ describe.concurrent("run-shell", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[hi]\nprempost\n", stderr: "", exitCode: 0 });
   });
 
-  test("invalid syntax reports the error correctly", async () => {
-    const dir = tmpdirSync("bun-shell-test-error");
-    mkdirSync(dir, { recursive: true });
-    const shellScript = `-h)
-  echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`;
-    await Bun.write(join(dir, "scripts", "script.sh"), shellScript);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, "scripts", "script.sh")],
-      cwd: dir,
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const stderr = await proc.stderr.text();
-    expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
-  });
-
   test("command substitutions that do not end in a word", async () => {
     const script = 'echo $( (echo one) ) `echo two;` "[$()]"';
     using dir = tempDir("run-shell-cmd-subst", {
@@ -77,6 +60,23 @@ describe.concurrent("run-shell", () => {
       stderr: `$ ${script}\n`,
       exitCode: 0,
     });
+  });
+
+  test("invalid syntax reports the error correctly", async () => {
+    const dir = tmpdirSync("bun-shell-test-error");
+    mkdirSync(dir, { recursive: true });
+    const shellScript = `-h)
+  echo "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`;
+    await Bun.write(join(dir, "scripts", "script.sh"), shellScript);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "scripts", "script.sh")],
+      cwd: dir,
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const stderr = await proc.stderr.text();
+    expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
   });
 });
 

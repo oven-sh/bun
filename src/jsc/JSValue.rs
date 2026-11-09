@@ -2550,7 +2550,7 @@ impl JSValue {
     }
     /// `for_each_property_ordered_calling_getters` for the object at `place`: a matched row is passed in place of its property, which is not read. SAFETY: `rows` is the matched rows cell of a `jest_deep_match` call and `place` is one of its places.
     #[inline(always)]
-    pub unsafe fn for_each_property_ordered_calling_getters_with_rows(
+    pub(crate) unsafe fn for_each_property_ordered_calling_getters_with_rows(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2580,7 +2580,7 @@ impl JSValue {
     }
     /// `for_each_property_ordered_with_non_enumerable` for the object at `place`, with its matched rows. SAFETY: as for `for_each_property_ordered_calling_getters_with_rows`.
     #[inline(always)]
-    pub unsafe fn for_each_property_ordered_with_non_enumerable_with_rows(
+    pub(crate) unsafe fn for_each_property_ordered_with_non_enumerable_with_rows(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,

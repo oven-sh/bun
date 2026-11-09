@@ -48,10 +48,7 @@ public:
 
     private:
         Ref<CookieMap> m_target;
-        // One cursor per list: set() and delete() append to the modified
-        // list, so a shared index over both lists would move under the cursor.
-        size_t m_modifiedIndex { 0 };
-        size_t m_originalIndex { 0 };
+        size_t m_index { 0 };
     };
 
     Iterator createIterator() { return Iterator { *this }; }

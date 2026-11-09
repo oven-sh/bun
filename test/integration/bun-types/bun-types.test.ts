@@ -320,7 +320,8 @@ function checkForEmptyInterfaces(program: ts.Program) {
  *                                   a member of bun-types that Headers gets through a base
  *   Headers extends Bun.__internal.BunHeadersOverride
  *                                   a base that the lib does not give the interface and that is not empty
- *   var console                     a `var` that is not typed with `Bun.__internal.UseLibDomIfAvailable`
+ *   var Crypto                      a `var` that writes its type out. `Bun.__internal.UseLibDomIfAvailable`
+ *                                   takes the type from the `var` of the lib
  *   function fetch                  an overload
  *   namespace fetch                 a namespace, a class, an enum or a type alias that merges into a lib symbol
  *
@@ -332,8 +333,8 @@ function checkForEmptyInterfaces(program: ts.Program) {
 function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
   const checker = program.getTypeChecker();
   const toPosix = (path: string) => path.replaceAll("\\", "/");
-  // The real path: TypeScript names a file under node_modules by it.
-  const packageDir = toPosix(realpathSync.native(bunTypesDir)) + "/";
+  // A host that resolves symbolic links names a file of the package by its real path.
+  const packageDirs = [bunTypesDir, realpathSync.native(bunTypesDir)].map(dir => toPosix(dir) + "/");
 
   type Provider = "lib" | "bun-types" | "other";
   const providers = new Map<ts.SourceFile, Provider>();
@@ -341,9 +342,10 @@ function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
     const file = node.getSourceFile();
     let provider = providers.get(file);
     if (!provider) {
+      const fileName = toPosix(file.fileName);
       provider = program.isSourceFileDefaultLibrary(file)
         ? "lib"
-        : toPosix(realpathSync.native(file.fileName)).startsWith(packageDir)
+        : packageDirs.some(dir => fileName.startsWith(dir))
           ? "bun-types"
           : "other";
       providers.set(file, provider);
@@ -397,21 +399,6 @@ function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
     type.getCallSignatures().length === 0 &&
     type.getConstructSignatures().length === 0 &&
     checker.getIndexInfosOfType(type).length === 0;
-
-  /** With lib.dom loaded, `Bun.__internal.UseLibDomIfAvailable<"X", ...>` is the type that lib.dom gives `X`. */
-  function takesTypeFromLibDom(declaration: ts.VariableDeclaration): boolean {
-    const type = declaration.type;
-    if (!type || !ts.isTypeReferenceNode(type)) return false;
-    const helper = ts.isQualifiedName(type.typeName) ? type.typeName.right : type.typeName;
-    const key = type.typeArguments?.[0];
-    return (
-      resolve(checker.getSymbolAtLocation(helper))?.name === "UseLibDomIfAvailable" &&
-      !!key &&
-      ts.isLiteralTypeNode(key) &&
-      ts.isStringLiteral(key.literal) &&
-      key.literal.text === declaration.name.getText()
-    );
-  }
 
   /** On one line, and `A.B` for a name that the source breaks before the dot. */
   const textOf = (node: ts.Node) =>
@@ -473,7 +460,11 @@ function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
       for (const declaration of declarations) {
         if (providerOf(declaration) !== "bun-types" || ts.isInterfaceDeclaration(declaration)) continue;
         if (ts.isVariableDeclaration(declaration)) {
-          if (!takesTypeFromLibDom(declaration)) add(`var ${name}`);
+          // A `var` adds nothing when its type is the type of the `var` of the lib: the same type, not
+          // a copy of its text. `Bun.__internal.UseLibDomIfAvailable<"X", ...>` is that type when lib.dom
+          // is loaded, and so is the name of an interface that the lib also uses (`var console: Console`).
+          const type = declaration.type && checker.getTypeFromTypeNode(declaration.type);
+          if (!lib.some(ts.isVariableDeclaration) || type !== checker.getTypeOfSymbol(symbol)) add(`var ${name}`);
         } else if (ts.isFunctionDeclaration(declaration)) {
           add(`function ${name}`);
         } else if (ts.isModuleDeclaration(declaration)) {
@@ -2196,7 +2187,6 @@ const expectedLibOverlapWithLibDom = [
   "Headers.toJSON (not in the lib, from Bun.__internal.BunHeadersOverride)",
   "ImportMeta extends Bun.__internal.ImportMetaGlob",
   "ImportMeta.glob (not in the lib, from Bun.__internal.ImportMetaGlob) (2 declarations)",
-  "MessageEvent extends Bun.MessageEvent<T>",
   "Request extends Bun.__internal.BunRequestOverride",
   "Request.headers (from Bun.__internal.BunRequestOverride)",
   "Request.textStream (not in the lib, from Bun.__internal.BunRequestOverride)",
@@ -2212,6 +2202,10 @@ const expectedLibOverlapWithLibDom = [
   "WorkerOptions.ref (not in the lib, from Bun.WorkerOptions)",
   "WorkerOptions.smol (not in the lib, from Bun.WorkerOptions)",
   "WorkerOptions.type (from Bun.WorkerOptions)",
+
+  // A defect. With lib.dom loaded, `Bun.MessageEvent<T>` is the type of the constructor, so an
+  // instance gets `prototype` and a construct signature (#39079).
+  "MessageEvent extends Bun.MessageEvent<T>",
 
   // @types/node gives these global interfaces the members of the interface of its module
   // ("node:console", "node:url"), with or without lib.dom. bun-types augments the module.
@@ -2271,10 +2265,8 @@ const expectedLibOverlapWithLibDom = [
   "function WebAssembly.validate",
   "var WebAssembly.CompileError",
   "var WebAssembly.Global",
-  "var WebAssembly.Instance",
   "var WebAssembly.LinkError",
   "var WebAssembly.Memory",
-  "var WebAssembly.Module",
   "var WebAssembly.RuntimeError",
   "var WebAssembly.Table",
 
@@ -2297,9 +2289,6 @@ const expectedLibOverlapWithLibDom = [
   "var TransformStreamDefaultController",
   "var WritableStreamDefaultController",
   "var WritableStreamDefaultWriter",
-  "var console",
-  "var crypto",
-  "var navigator",
 
   // A function declaration cannot be conditional. Each one is an overload beside the overloads
   // of lib.dom, and a call tries it first.

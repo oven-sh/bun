@@ -703,6 +703,19 @@ fn clonefile_force(
     syscall: sys::Tag,
 ) -> Maybe<ret::CopyFile> {
     // https://www.manpagez.com/man/2/clonefile/
+    // `clonefile` also clones directories. `copyFile` copies regular files only.
+    let stat_ = match Syscall::stat(src) {
+        Ok(stat_) => stat_,
+        Err(err) => return Err(err.with_path(src)),
+    };
+    if !sys::S::ISREG(stat_.st_mode as u32) {
+        return Err(sys::Error {
+            errno: SystemErrno::ENOTSUP as _,
+            syscall,
+            path: src.as_bytes().into(),
+            ..Default::default()
+        });
+    }
     if mode.shouldnt_overwrite() {
         return Maybe::<ret::CopyFile>::errno_sys_p(
             bun_sys::c::clonefile_rc(src, dest, 0),

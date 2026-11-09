@@ -1022,6 +1022,13 @@ describe("copyFileSync", () => {
       await copy(link, dest, force);
       expect(readFileSync(dest).equals(content)).toBe(true);
 
+      // A directory source is refused before anything is cloned. clonefile(2) clones directories.
+      const srcDir = join(tempdir, `${name}.dir`);
+      mkdirSync(srcDir);
+      writeFileSync(join(srcDir, "inner"), "inner");
+      await expect(copy(srcDir, dest, force)).rejects.toThrow(expect.objectContaining({ code: "ENOTSUP" }));
+      expect(readFileSync(dest).equals(content)).toBe(true);
+
       // A basename at NAME_MAX (255 bytes) works for a fresh and an existing destination.
       const longName = `${name}-` + Buffer.alloc(255 - name.length - 1, "d").toString();
       const longDest = join(tempdir, longName);

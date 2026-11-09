@@ -28,7 +28,10 @@ describe("a tag whose template has non-ASCII text", () => {
     raw: ["😀", "a1é2日本", '{"a":"😀"}'],
     cooked: ["😀\n", "é"],
     ownEscapes: ["\\u{1f600}😀\\xe9é"],
+    escaped: ["é", "a日b😀", "\\é\\é"],
+    escapedRaw: ["\\é", "a\\日b\\😀", "\\\\é\\\\\\é"],
     invalidEscape: [true, "\\u{zz}é"],
+    invalidEscapeAndEscaped: [true, true, "\\x\\é"],
     newline: ["é\né"],
     sameSite: true,
     otherSite: false,
@@ -138,5 +141,47 @@ describe("a tag whose template has non-ASCII text", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual(["é\né\né"]);
     expect(exitCode).toBe(0);
+  });
+
+  // What Node gives the tag: [strings, strings.raw].
+  test.concurrent.each([
+    ["a line continuation that ends in U+2028", "a\\\u2028b", [["ab"], ["a\\\u2028b"]]],
+    ["a line continuation that ends in U+2029", "a\\\u2029b", [["ab"], ["a\\\u2029b"]]],
+    ["U+2028 behind two backslashes", "a\\\\\u2028b", [["a\\\u2028b"], ["a\\\\\u2028b"]]],
+    ["a line continuation between $ and {", "$\\\u2028{1}", [["${1}"], ["$\\\u2028{1}"]]],
+    ["U+007F", "a\x7Fb", [["a\x7Fb"], ["a\x7Fb"]]],
+    ["U+007F behind a backslash", "a\\\x7Fb", [["a\x7Fb"], ["a\\\x7Fb"]]],
+  ])("gets %s as it is in Node", async (_, text, stringsAndRaw) => {
+    using dir = tempDir("template-literal-tags", {
+      "tag.js": "console.log(JSON.stringify((strings => [[...strings], strings.raw])`" + text + "`));",
+    });
+    const { stdout, stderr, exitCode } = await run(join(String(dir), "tag.js"));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(stringsAndRaw);
+    expect(exitCode).toBe(0);
+  });
+
+  // `Bun.Transpiler` calls no helper, so the tag gets what is printed in `strings.raw`.
+  test("is printed for Bun with an escape for each non-ASCII character, and cooks to the same strings", () => {
+    // [the text of the template, what is printed for Bun]
+    const rows = [
+      ["\u00E9\\\u00E9\\\\\u00E9", "\\u00E9\\u00E9\\\\\\u00E9"],
+      ["\u0080\uFFFF\\\uFFFF", "\\u0080\\uFFFF\\uFFFF"],
+      ["\u{10000}\\\u{10000}\\\\\\\u{10FFFF}", "\\u{10000}\\u{10000}\\\\\\u{10ffff}"],
+      ["a\\\u2028b\u2029${1}\\\u2029", "a\\\nb\\u2029${1}\\\n"],
+      ["\u00E9\x7F\t\0\\\x7F", "\\u00E9\x7F\t\0\\\x7F"],
+    ];
+    const code = (text: string) => "x = tag`" + text + "`;\n";
+    for (const target of ["browser", "node"] as const) {
+      const transpiler = new Bun.Transpiler({ target });
+      expect(rows.map(([text]) => transpiler.transformSync(code(text)))).toEqual(rows.map(([text]) => code(text)));
+    }
+    const transpiler = new Bun.Transpiler({ target: "bun" });
+    expect(rows.map(([text]) => transpiler.transformSync(code(text)))).toEqual(
+      rows.map(([, printed]) => code(printed)),
+    );
+    const cooked = (code: string) =>
+      new Function("tag", "let x;\n" + code + "return x;")((strings: string[]) => [...strings]);
+    expect(rows.map(([, printed]) => cooked(code(printed)))).toEqual(rows.map(([text]) => cooked(code(text))));
   });
 });

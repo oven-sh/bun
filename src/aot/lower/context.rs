@@ -8,8 +8,7 @@ use core::cell::{OnceCell, RefCell};
 use core::mem::take;
 use std::borrow::Cow;
 
-use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
-use bun_core::strings::{CodepointIterator, Cursor};
+use bun_core::printer::{RawText, write_raw_text_ascii};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Bound, SymbolId};
 use bun_sema::check::aot::{BuiltinTypeSymbols, NamedValues, Queries, QueryInputs};
@@ -56,23 +55,12 @@ use crate::statistics::{LimitId, LimitValues};
 pub(crate) use self::function::FunctionLowering;
 
 pub(super) fn regexp_pattern_as_printed(written: &[u8]) -> Cow<'_, [u8]> {
-    let is_printed_as_written = |character: u32| (FIRST_ASCII..=LAST_ASCII).contains(&character);
-    if written
-        .iter()
-        .all(|&byte| is_printed_as_written(u32::from(byte)))
-    {
+    let Some(start) = RawText::RegExp.first_respelled(written) else {
         return Cow::Borrowed(written);
-    }
+    };
     let mut printed = Vec::with_capacity(written.len() * 2);
-    let characters = CodepointIterator::init(written);
-    let mut cursor = Cursor::default();
-    while characters.next(&mut cursor) {
-        match cursor.c as u32 {
-            character if is_printed_as_written(character) => printed.push(character as u8),
-            character @ 0..=0xFFFF => printed.extend_from_slice(&bmp_escape(character)),
-            character => printed.extend_from_slice(&surrogate_pair_escape(character)),
-        }
-    }
+    write_raw_text_ascii(written, start, RawText::RegExp, &mut printed)
+        .expect("a Vec takes every write");
     Cow::Owned(printed)
 }
 

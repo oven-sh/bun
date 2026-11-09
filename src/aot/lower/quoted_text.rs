@@ -13,6 +13,7 @@ use bun_sort_by_number::SortByNumber;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
+use super::context::regexp_pattern_as_printed;
 use super::expression::is_link_in_brackets;
 use super::{FileLowering, FunctionLowering};
 use crate::ir::generated::QuotedText;
@@ -787,22 +788,9 @@ impl Printer<'_, '_, '_, '_, '_> {
             ExprKind::Regex { .. } => {
                 self.space_before_name();
                 let start = whole(self);
-                let characters = CodepointIterator::init(
-                    &hir.text[hir[expression].pos as usize..hir[expression].end as usize],
-                );
-                let mut cursor = Cursor::default();
-                while characters.next(&mut cursor) {
-                    match (u8::try_from(cursor.c), char::from_u32(cursor.c as u32)) {
-                        (Ok(character), _) if character.is_ascii() => self.text.push(character),
-                        (_, Some(character)) => {
-                            for unit in character.encode_utf16(&mut [0; 2]) {
-                                self.text
-                                    .extend_from_slice(format!("\\u{unit:04X}").as_bytes());
-                            }
-                        }
-                        (_, None) => self.gaps += 1,
-                    }
-                }
+                let literal = &hir.text[hir[expression].pos as usize..hir[expression].end as usize];
+                self.text
+                    .extend_from_slice(&regexp_pattern_as_printed(literal));
                 start
             }
             ExprKind::Spread(operand) => {

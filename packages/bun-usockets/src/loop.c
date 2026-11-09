@@ -158,7 +158,7 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
 
 void us_internal_loop_data_free(struct us_loop_t *loop) {
 #ifndef LIBUS_NO_SSL
-    us_internal_free_loop_ssl_data(loop);
+    if (loop->data.ssl_data) us_internal_free_loop_ssl_data(loop);
 #endif
 
     us_free(loop->data.recv_buf);

@@ -1,4 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { randomIntCallbackCell } from "../../codegen/builtins/host/native-cells.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::node::crypto" });
 
@@ -6,6 +8,21 @@ const INT32_MAX = 2 ** 31 - 1;
 const UINT32_MAX = 2 ** 32 - 1;
 
 const js = { capability: "js", throws: true } as const;
+/** The bytes of the view are written once the operation has ended, and then the callback is called. */
+const fillsLater = { buf: [...table.handedOver, table.writesContents()], callback: table.handedOver };
+/** The callback goes to `process.nextTick` with `undefined` and the number, and nowhere else. */
+const queuesCallback = {
+  callback: [
+    table.storedIn(table.nativeCell(randomIntCallbackCell)),
+    table.called({
+      afterwards: "TouchesOnlyWhatRowNames",
+      times: "Later",
+      this: table.undefined,
+      args: [table.undefined, table.f64],
+      result: "Ignored",
+    }),
+  ],
+};
 
 const stringOrBufferNames = ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"];
 const passwordAndSaltNames = { password: stringOrBufferNames, salt: stringOrBufferNames };
@@ -91,6 +108,7 @@ export const crypto = b.namespace({
       expected: { min: ["a safe integer"], max: ["a safe integer"], callback: ["function"] },
       returns: b.f64.optional,
       rustPath: "crate::node::crypto::random_int_between",
+      uses: queuesCallback,
       length: 2,
       ...js,
     },
@@ -99,6 +117,7 @@ export const crypto = b.namespace({
       expected: { max: ["a safe integer"], callback: ["function"] },
       returns: b.f64.optional,
       rustPath: "crate::node::crypto::random_int_below",
+      uses: queuesCallback,
       ...js,
     },
   ],
@@ -107,6 +126,7 @@ export const crypto = b.namespace({
       args: { buf: b.bufferSource.allowShared, offset: b.f64, size: b.f64.optional, callback: b.callable },
       expected: { buf: bufferNames, offset: ["number"], size: ["number"], callback: ["function"] },
       rustPath: "crate::node::crypto::random_fill_range",
+      uses: fillsLater,
       length: 4,
       ...js,
     },
@@ -114,19 +134,21 @@ export const crypto = b.namespace({
       args: { buf: b.bufferSource.allowShared, offset: b.f64, callback: b.callable },
       expected: { buf: bufferNames, offset: ["number"], callback: ["function"] },
       rustPath: "crate::node::crypto::random_fill_from_offset",
+      uses: fillsLater,
       ...js,
     },
     {
       args: { buf: b.bufferSource.allowShared, callback: b.callable },
       expected: { buf: bufferNames, callback: ["function"] },
       rustPath: "crate::node::crypto::random_fill_all",
+      uses: fillsLater,
       ...js,
     },
   ],
   randomFillSync: {
     args: { buf: b.bufferSource.allowShared, offset: b.f64.default(0), size: b.f64.optional },
     expected: { buf: bufferNames, offset: ["number"], size: ["number"] },
-    returns: b.bufferSource,
+    returns: b.bufferSource.allowShared,
     length: 3,
     capability: "heap",
     throws: true,
@@ -145,7 +167,6 @@ export const crypto = b.namespace({
   getFips: { returns: b.i32 },
   setFips: { length: 1 },
   setEngine: { length: 2, capability: "heap", throws: true },
-  getHashes: { returns: b.array(b.string.utf8) },
   scrypt: [
     {
       args: { ...passwordAndSaltHandles, keylen, options: ScryptOptions, callback: b.callable },

@@ -1,0 +1,11 @@
+# `o.m(i)`, where `o` has been handed to code that nobody has seen: the name may find whatever that code has laid there, so nothing is proven of the call. It was seen to find ONE function: that is held, and the walk tests what is called.
+# f1 = make, f3 = m, f2 = use
+# -- source: call-by-name-on-an-escaped-record-is-held-to-find-the-one-function-that-it-was-seen-to-find.js
+# function make(n) { return { n, m(x) { return this.n + x; } }; }
+# function use(o, i) { return o.m(i); }
+# let o = make(1); sink(o); let total = 0; for (let i = 0; i < 9; i++) total += use(o, i);
+# -- end of source
+# RUN(HELD): link held calls mechanisms=all
+# HELD: call f2 {{*}} -> f3
+# RUN(PROVEN): link calls mechanisms=all
+# PROVEN-NOT: call f2

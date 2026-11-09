@@ -51,6 +51,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include <wtf/text/Base64.h>
 #include <wtf/text/WTFString.h>
 #include <JavaScriptCore/BuiltinNames.h>
 
@@ -607,6 +608,11 @@ JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, W
 
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
+            if (WTF::charactersAreAllASCII(span)) {
+                result = JSValue::encode(createBuffer(lexicalGlobalObject, byteCast<uint8_t>(span.data()), span.size()));
+                break;
+            }
+            [[fallthrough]];
         case WebCore::BufferEncodingType::ucs2:
         case WebCore::BufferEncodingType::utf16le:
         case WebCore::BufferEncodingType::base64:
@@ -2113,6 +2119,18 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
+        constexpr size_t lengthOfLongestDigest = 64;
+        if (bytes.size() <= lengthOfLongestDigest && encoding == BufferEncodingType::base64)
+            return JSValue::encode(jsString(vm, WTF::base64EncodeToString(bytes)));
+        if (bytes.size() <= lengthOfLongestDigest && encoding == BufferEncodingType::hex) {
+            std::span<Latin1Character> digits;
+            auto text = String::createUninitialized(bytes.size() * 2, digits);
+            for (size_t i = 0; i < bytes.size(); ++i) {
+                digits[2 * i] = "0123456789abcdef"[bytes[i] >> 4];
+                digits[2 * i + 1] = "0123456789abcdef"[bytes[i] & 15];
+            }
+            return JSValue::encode(jsString(vm, WTF::move(text)));
+        }
         EncodedJSValue res = Bun__encoding__toString(bytes.data(), bytes.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -2840,6 +2858,12 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_inspect, (JSGlobalObject * le
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_inspectBody>(*lexicalGlobalObject, *callFrame, "inspect");
 }
 
+bool isInspectFunctionOfBuffer(JSValue value)
+{
+    auto* function = dynamicDowncast<JSFunction>(value);
+    return function && function->isHostFunction() && function->nativeFunction() == JSC::toTagged(jsBufferPrototypeFunction_inspect);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_lastIndexOfBody>(*lexicalGlobalObject, *callFrame, "lastIndexOf");
@@ -3536,6 +3560,17 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
 
 /* Hash table for prototype */
 
+// The columns of JSBufferAccessors.def. An 8-byte Signed or Unsigned accessor reads or writes a BigInt.
+enum class BufferAccessorDirection : bool { Read,
+    Write };
+enum class BufferAccessorEndianness : bool { Little,
+    Big };
+template<size_t byteCount> using BufferAccessorUnsigned = typename WTF::SizedUnsignedTrait<byteCount>::Type;
+template<size_t byteCount> using BufferAccessorSigned = std::make_signed_t<BufferAccessorUnsigned<byteCount>>;
+template<size_t byteCount>
+    requires(byteCount == 4 || byteCount == 8)
+using BufferAccessorFloat = std::conditional_t<byteCount == 4, float, double>;
+
 static const HashTableValue JSBufferPrototypeTableValues[]
     = {
           { "asciiSlice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_asciiSlice, 2 } },
@@ -3673,42 +3708,12 @@ static void registerBufferAccessorsWithJSC()
 {
     static std::once_flag registered;
     std::call_once(registered, [] {
-        registerBufferAccessor<int8_t, true, false>(jsBufferPrototypeFunction_readInt8);
-        registerBufferAccessor<uint8_t, true, false>(jsBufferPrototypeFunction_readUInt8);
-        registerBufferAccessor<int16_t, true, false>(jsBufferPrototypeFunction_readInt16LE);
-        registerBufferAccessor<int16_t, false, false>(jsBufferPrototypeFunction_readInt16BE);
-        registerBufferAccessor<uint16_t, true, false>(jsBufferPrototypeFunction_readUInt16LE);
-        registerBufferAccessor<uint16_t, false, false>(jsBufferPrototypeFunction_readUInt16BE);
-        registerBufferAccessor<int32_t, true, false>(jsBufferPrototypeFunction_readInt32LE);
-        registerBufferAccessor<int32_t, false, false>(jsBufferPrototypeFunction_readInt32BE);
-        registerBufferAccessor<uint32_t, true, false>(jsBufferPrototypeFunction_readUInt32LE);
-        registerBufferAccessor<uint32_t, false, false>(jsBufferPrototypeFunction_readUInt32BE);
-        registerBufferAccessor<float, true, false>(jsBufferPrototypeFunction_readFloatLE);
-        registerBufferAccessor<float, false, false>(jsBufferPrototypeFunction_readFloatBE);
-        registerBufferAccessor<double, true, false>(jsBufferPrototypeFunction_readDoubleLE);
-        registerBufferAccessor<double, false, false>(jsBufferPrototypeFunction_readDoubleBE);
-        registerBufferAccessor<int64_t, true, false>(jsBufferPrototypeFunction_readBigInt64LE);
-        registerBufferAccessor<int64_t, false, false>(jsBufferPrototypeFunction_readBigInt64BE);
-        registerBufferAccessor<uint64_t, true, false>(jsBufferPrototypeFunction_readBigUInt64LE);
-        registerBufferAccessor<uint64_t, false, false>(jsBufferPrototypeFunction_readBigUInt64BE);
-        registerBufferAccessor<int8_t, true, true>(jsBufferPrototypeFunction_writeInt8);
-        registerBufferAccessor<uint8_t, true, true>(jsBufferPrototypeFunction_writeUInt8);
-        registerBufferAccessor<int16_t, true, true>(jsBufferPrototypeFunction_writeInt16LE);
-        registerBufferAccessor<int16_t, false, true>(jsBufferPrototypeFunction_writeInt16BE);
-        registerBufferAccessor<uint16_t, true, true>(jsBufferPrototypeFunction_writeUInt16LE);
-        registerBufferAccessor<uint16_t, false, true>(jsBufferPrototypeFunction_writeUInt16BE);
-        registerBufferAccessor<int32_t, true, true>(jsBufferPrototypeFunction_writeInt32LE);
-        registerBufferAccessor<int32_t, false, true>(jsBufferPrototypeFunction_writeInt32BE);
-        registerBufferAccessor<uint32_t, true, true>(jsBufferPrototypeFunction_writeUInt32LE);
-        registerBufferAccessor<uint32_t, false, true>(jsBufferPrototypeFunction_writeUInt32BE);
-        registerBufferAccessor<float, true, true>(jsBufferPrototypeFunction_writeFloatLE);
-        registerBufferAccessor<float, false, true>(jsBufferPrototypeFunction_writeFloatBE);
-        registerBufferAccessor<double, true, true>(jsBufferPrototypeFunction_writeDoubleLE);
-        registerBufferAccessor<double, false, true>(jsBufferPrototypeFunction_writeDoubleBE);
-        registerBufferAccessor<int64_t, true, true>(jsBufferPrototypeFunction_writeBigInt64LE);
-        registerBufferAccessor<int64_t, false, true>(jsBufferPrototypeFunction_writeBigInt64BE);
-        registerBufferAccessor<uint64_t, true, true>(jsBufferPrototypeFunction_writeBigUInt64LE);
-        registerBufferAccessor<uint64_t, false, true>(jsBufferPrototypeFunction_writeBigUInt64BE);
+#define BUFFER_ACCESSOR(name, direction, byteCount, numberKind, endianness) \
+    registerBufferAccessor<BufferAccessor##numberKind<byteCount>, BufferAccessorEndianness::endianness == BufferAccessorEndianness::Little, BufferAccessorDirection::direction == BufferAccessorDirection::Write>(jsBufferPrototypeFunction_##name);
+#define BUFFER_ACCESSOR_ALIAS(alias, name)
+#include "JSBufferAccessors.def"
+#undef BUFFER_ACCESSOR
+#undef BUFFER_ACCESSOR_ALIAS
         registerBufferVarWidthAccessor<true, true, false>(jsBufferPrototypeFunction_readIntLE);
         registerBufferVarWidthAccessor<true, false, false>(jsBufferPrototypeFunction_readIntBE);
         registerBufferVarWidthAccessor<false, true, false>(jsBufferPrototypeFunction_readUIntLE);

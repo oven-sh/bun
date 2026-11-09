@@ -17,6 +17,7 @@ pub(super) const NO_FUNCTION: FnInfo = FnInfo {
     end: UNREACHABLE,
     exit: FlowId::NONE,
     contains_this: false,
+    is_context_sensitive: None,
 };
 
 /// The lists to fill in. Each is as long as the file's matching list and starts out with empty
@@ -311,7 +312,8 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             | ExprKind::Number(_)
             | ExprKind::String(_)
             | ExprKind::BigInt(_)
-            | ExprKind::Regex
+            | ExprKind::Regex { .. }
+            | ExprKind::JsxText(_)
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => {}
             ExprKind::Dot { obj, chain, .. } => {
@@ -543,7 +545,8 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             StmtKind::Expr(e)
             | StmtKind::Throw(e)
             | StmtKind::ExportDefault(e)
-            | StmtKind::ExportAssign(e) => exprs!(e),
+            | StmtKind::ExportAssign(e)
+            | StmtKind::Directive { expr: e, .. } => exprs!(e),
             StmtKind::Var(declarations) => {
                 for d in declarations.iter() {
                     set!(var_stmt[d] = id);
@@ -560,6 +563,10 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             }
             StmtKind::While { test, body } | StmtKind::DoWhile { body, test } => {
                 exprs!(test);
+                stmts!(body);
+            }
+            StmtKind::With { object, body } => {
+                exprs!(object);
                 stmts!(body);
             }
             StmtKind::For {

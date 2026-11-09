@@ -1,6 +1,6 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
-const method = { returns: b.any, capability: "js", throws: true } as const;
+const method = { returns: b.any.returning("Promise"), capability: "js", throws: true } as const;
 
 export const Archive = b.class({
   rustPath: "crate::api::archive::Archive",

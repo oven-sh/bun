@@ -37,12 +37,13 @@ export function jobCoverage(jobs: BkJob[]) {
   const platforms = new Map<string, { name: string; started: number; total: number }>();
   let total = 0;
   for (const job of jobs) {
-    if (!job.name || !job.raw_log_url || !job.name.includes("test-bun") || job.retried) continue;
+    if (!job.name || !job.name.includes("test-bun") || job.retried) continue;
     total++;
     let platform = platforms.get(job.name);
     if (!platform) platforms.set(job.name, (platform = { name: job.name, started: 0, total: 0 }));
     platform.total++;
-    if (!job.started_at) continue;
+    // A job with no log to ask for has no timings either.
+    if (!job.started_at || !job.raw_log_url) continue;
     platform.started++;
     timed.push(job as TestJob);
   }
@@ -156,8 +157,9 @@ if (import.meta.main) {
   if (!BUILD) {
     console.error("no build given, finding a recent merged-PR build...");
     // `--base main`: a PR that merged into the branch of another PR is merged too, and its tree is not main's.
+    // `--repo`: `bk` reads the bun pipeline from .bk.yaml, so `gh` must not read the PRs of a fork.
     const prs: { number: number; headRefName: string }[] =
-      await $`gh pr list --state merged --base main --limit 10 --json number,headRefName`.json();
+      await $`gh pr list --repo oven-sh/bun --state merged --base main --limit 10 --json number,headRefName`.json();
     const { picked, skipped, failedLists } = await findBuild(prs, branch =>
       $`bk build list --branch ${branch}`.quiet().json(),
     );

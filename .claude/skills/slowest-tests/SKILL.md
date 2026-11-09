@@ -9,7 +9,7 @@ Args: `[N] [#channel]` — both optional. `N` defaults to 500. If `#channel` is 
 
 ## 1. Gather the data
 
-Run the script. With no build number it auto-picks the most recent finished build of a PR merged into `main` in which every `test-bun` job started. That build often reports `state=failed` because of flaky tests. That is fine, the timing data is still valid.
+Run the script. With no build number it walks the 10 newest PRs merged into `main` and takes the first build that is finished, not canceled, and has every `test-bun` job started. That build often reports `state=failed` because of flaky tests. That is fine, the timing data is still valid.
 
 ```bash
 bun run ci:slowest                 # top 500 from a recent merged-PR build → TSV on stdout

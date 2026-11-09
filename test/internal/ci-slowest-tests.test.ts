@@ -189,18 +189,19 @@ describe("scripts/ci-slowest-tests.ts jobCoverage", () => {
         expired("e", DARWIN),
         neverStarted("f", DARWIN, "scheduled"),
         bkJob("g", DARWIN, "waiting", { started_at: null }),
-        // Not a test-bun job of the build, or no log to ask for.
+        // Started, but there is no log to ask for.
+        noLogUrl,
+        // Not a test-bun job of the build.
         buildJob,
         retried,
         blockStep,
-        noLogUrl,
         unlabeledStep,
       ]),
     ).toEqual({
       timed: [ranToTheEnd, killedMidRun],
-      total: 7,
+      total: 8,
       platforms: [
-        { name: DEBIAN, started: 2, total: 2 },
+        { name: DEBIAN, started: 2, total: 3 },
         { name: WINDOWS, started: 0, total: 2 },
         { name: DARWIN, started: 0, total: 3 },
       ],
@@ -211,6 +212,8 @@ describe("scripts/ci-slowest-tests.ts jobCoverage", () => {
   test("a build is complete when it has test-bun jobs and every one of them started", () => {
     expect(jobCoverage([started("a", DEBIAN), started("b", WINDOWS, "failed")]).complete).toBe(true);
     expect(jobCoverage([started("a", DEBIAN), expired("b", DARWIN)]).complete).toBe(false);
+    // A test-bun job with no log URL leaves a hole, started or not.
+    expect(jobCoverage([started("a", DEBIAN), { id: "b", name: DEBIAN }]).complete).toBe(false);
     // `[skip tests]` in the commit subject: the build has no test-bun job.
     expect(jobCoverage([started("a", ":linux: x64 - build-bun")])).toEqual({
       timed: [],
@@ -574,7 +577,7 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
       exitCode: 0,
       // The jobs come with the build list, so there is no `bk build view`.
       calls: [
-        "gh pr list --state merged --base main --limit 10 --json number,headRefName",
+        "gh pr list --repo oven-sh/bun --state merged --base main --limit 10 --json number,headRefName",
         "bk build list --branch hot-loop-no-inline",
         "bk build list --branch list-fails",
         "bk build list --branch merged-earlier",
@@ -620,7 +623,7 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
         ],
         exitCode: 1,
         calls: [
-          "gh pr list --state merged --base main --limit 10 --json number,headRefName",
+          "gh pr list --repo oven-sh/bun --state merged --base main --limit 10 --json number,headRefName",
           "bk build list --branch untested",
           "bk build list --branch list-fails",
           "bk build list --branch partial",
@@ -648,7 +651,7 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
       ],
       exitCode: 1,
       calls: [
-        "gh pr list --state merged --base main --limit 10 --json number,headRefName",
+        "gh pr list --repo oven-sh/bun --state merged --base main --limit 10 --json number,headRefName",
         "bk build list --branch a",
         "bk build list --branch b",
       ],
@@ -685,7 +688,7 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
         ],
         exitCode: 1,
         calls: [
-          "gh pr list --state merged --base main --limit 10 --json number,headRefName",
+          "gh pr list --repo oven-sh/bun --state merged --base main --limit 10 --json number,headRefName",
           "bk build list --branch picked",
         ],
         requested: ["201-a"],

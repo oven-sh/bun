@@ -68,9 +68,9 @@ function joinArray(list: ArrayLike<unknown>, first: number, separator: string): 
   return joined;
 }
 
-// spawnargs is `[argv0, ...args]`. Bun.spawn() takes argv0 apart and wants the program in cmd[0].
-function spawnCommand(file: string, spawnargs: string[]): string[] {
-  if (spawnargs[0] === file) return spawnargs;
+// spawnargs is `[argv0, ...args]`, and Bun.spawn() wants the program in cmd[0]. A list of ours (normalizeSpawnArguments) can be the command itself.
+function spawnCommand(file: string, spawnargs: string[], ours: boolean): string[] {
+  if (ours && spawnargs[0] === file) return spawnargs;
   const length = spawnargs.length;
   const cmd = $newArrayWithSize<string>(length > 1 ? length : 1);
   $putByValDirect(cmd, 0, file);
@@ -278,8 +278,6 @@ type ExecCallback = (error: ExecException | null, stdout: string | Buffer, stder
 
 function execFile(file, args, options?, callback?: ExecCallback) {
   ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
-  // A failure names the arguments, and it comes later: the message shows them as they are now.
-  if ($isJSArray(args)) args = copyArray(args);
 
   options = {
     __proto__: null,
@@ -619,7 +617,7 @@ function spawnSync(file, args, options?): SpawnSyncResult {
     }
   }
 
-  const cmd = spawnCommand(options.file, options.args);
+  const cmd = spawnCommand(options.file, options.args, true);
 
   var error;
   try {
@@ -933,7 +931,9 @@ function getSignalsToNamesMapping() {
 }
 
 function normalizeExecFileArgs(file, args, options, callback?) {
-  if (!$isJSArray(args) && args != null && typeof args === "object") {
+  if ($isJSArray(args)) {
+    args = copyArray(args);
+  } else if (args != null && typeof args === "object") {
     callback = options;
     options = args;
     args = null;
@@ -1522,7 +1522,8 @@ class ChildProcess extends EventEmitter {
       return;
     }
 
-    const cmd = spawnCommand(file, spawnargs);
+    // Only normalizeSpawnArguments() sets kBunEnv, and then the list is its own too.
+    const cmd = spawnCommand(file, spawnargs, options[kBunEnv] !== undefined);
     let started: $Bindgen.Subprocess | undefined;
     // Set when this throws after the child started: its exit then reports to nobody.
     let abandoned = false;
@@ -1596,7 +1597,11 @@ class ChildProcess extends EventEmitter {
       if (started !== undefined) {
         // The child runs, and the caller gets no ChildProcess: nothing could wait for the child or stop it.
         abandoned = true;
-        started.kill("SIGKILL");
+        try {
+          started.kill("SIGKILL");
+        } catch {
+          // What went wrong above is what the caller gets.
+        }
         throw ex;
       }
       const exCode =

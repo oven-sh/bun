@@ -13,7 +13,7 @@ const createInterval = $bindgen("histogram.bind.ts", "createInterval");
 const isHistogram = $bindgen("histogram.bind.ts", "isHistogram");
 
 /** Entry types routed through the registry of internal/shared instead of the native observer. */
-const kNodeEntryTypes = new Set(["net", "dns", "http", "http2", "function", "quic"]);
+const kNodeEntryTypes = ["net", "dns", "http", "http2", "function", "quic"];
 
 const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const kInt64Max = 2n ** 63n - 1n;
@@ -156,7 +156,7 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
       }
     }
     if (requested) {
-      const nodeTypes = requested.filter(type => kNodeEntryTypes.has(type));
+      const nodeTypes = requested.filter(type => kNodeEntryTypes.includes(type));
       let registration = this[kNodeObserver];
       if (nodeTypes.length > 0 && !registration) {
         registration = this[kNodeObserver] = new NodeEntryObserver(this[kObserverCallback], this);
@@ -173,7 +173,7 @@ class PerformanceObserverForNodeTypes extends PerformanceObserver {
         }
       }
       if (nodeTypes.length > 0) {
-        const webTypes = requested.filter(type => !kNodeEntryTypes.has(type));
+        const webTypes = requested.filter(type => !kNodeEntryTypes.includes(type));
         if (webTypes.length === 0) {
           // observe({entryTypes}) replaces the whole observed set: a
           // previously-subscribed web type must stop firing when the new set

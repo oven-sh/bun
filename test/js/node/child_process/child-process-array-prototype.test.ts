@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { execFile, spawn } from "node:child_process";
+import { ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { text } from "node:stream/consumers";
 
 // A child gets the argv, the command line, the stdio and the environment that the caller passed, whatever a script stored on
 // Array.prototype. Each case runs in a process of its own.
@@ -234,36 +235,68 @@ describe("what a script stored on Array.prototype", () => {
         });
       }
     `,
+    "perf-hooks-under-a-throwing-iterator.cjs": /* js */ `
+      const realIterator = Array.prototype[Symbol.iterator];
+      Array.prototype[Symbol.iterator] = function () {
+        throw new Error("the array iterator was called");
+      };
+      let out;
+      try {
+        out = "node:perf_hooks loaded, performance.now is a " + typeof require("node:perf_hooks").performance.now;
+      } catch (error) {
+        out = String(error);
+      }
+      Array.prototype[Symbol.iterator] = realIterator;
+      process.stdout.write(out + "\\n");
+    `,
     // Prints once its stdin ends, which is when the process that started it is gone.
     "outlives.cjs": `process.stdin.on("end", () => process.stdout.write("the child outlived spawn()\\n")).resume();`,
     "throws-after-the-child-started.cjs": /* js */ `
       const cp = require("node:child_process");
       const { writeSync } = require("node:fs");
+      const why = process.argv[2];
       const env = { ...process.env };
       // The child holds this process's stdout, and prints there once its stdin ends.
       const stdio = ["pipe", "inherit", "pipe"];
-      const waits = process.platform === "win32" ? [process.execPath, __dirname + "\\\\outlives.cjs"] : ["/bin/sh", "-c", "read line; echo 'the child outlived spawn()'"];
+      const waits =
+        process.platform === "win32"
+          ? [process.execPath, __dirname + "\\\\outlives.cjs"]
+          : ["/bin/sh", "-c", "read line; echo 'the child outlived spawn()'"];
+      // The child runs once the native spawn has returned.
+      let childRuns = false;
+      const nativeSpawn = Bun.spawn;
+      Bun.spawn = function (options) {
+        const handle = nativeSpawn.call(this, options);
+        childRuns = true;
+        if (why === "process.nextTick throws, and then kill() throws") {
+          const kill = handle.kill.bind(handle);
+          handle.kill = signal => {
+            kill(signal);
+            throw new Error("kill() failed");
+          };
+        }
+        return handle;
+      };
       const realNextTick = process.nextTick;
-      if (process.argv[2] === "process.nextTick throws once") {
+      if (why === "the modules of the streams cannot load") {
+        // They cannot under this iterator, and it stays: what fails in spawn() fails again in whatever touches the streams later.
+        Array.prototype[Symbol.iterator] = function () {
+          throw new Error("the array iterator was called");
+        };
+      } else {
         // spawn() calls process.nextTick() once the child runs.
         process.nextTick = () => {
           throw new Error("process.nextTick was called");
         };
-      } else {
-        // The modules of the streams cannot load under this iterator, and it stays: what fails in spawn() fails again in
-        // whatever touches the streams later.
-        Array.prototype[Symbol.iterator] = function () {
-          throw new Error("the array iterator was called");
-        };
       }
-      let threw = false;
+      let threw = "nothing";
       try {
         cp.spawn(waits[0], waits.slice(1), { env, stdio });
-      } catch {
-        threw = true;
+      } catch (error) {
+        threw = error.message;
       }
       process.nextTick = realNextTick;
-      writeSync(1, threw ? "spawn() threw\\n" : "spawn() returned\\n");
+      writeSync(1, "spawn() threw: " + threw + ", " + (childRuns ? "after" : "before") + " the child started\\n");
     `,
   };
 
@@ -328,7 +361,7 @@ describe("what a script stored on Array.prototype", () => {
 
   // The stdio list is read by index now. map() left a hole where the list has one, and so does the loop.
   it("a hole in the stdio list is no pipe", async () => {
-    const stdio: "pipe"[] = new Array(3);
+    const stdio: "pipe"[] = [];
     stdio[1] = stdio[2] = "pipe";
     const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio });
     expect([child.stdin, typeof child.stdout, child.stdio.length]).toEqual([null, "object", 3]);
@@ -337,7 +370,7 @@ describe("what a script stored on Array.prototype", () => {
     await once(child, "close");
   });
 
-  // execFile() keeps a copy of the list for the message of a failure. That copy is made by index now, and in execFile() itself.
+  // execFile() keeps a copy of the list for the message of a failure. That copy is made by index now.
   it("execFile() names the arguments as they were when it was called", async () => {
     const args = ["-e", "process.exit(3)", "original"];
     const { promise, resolve } = Promise.withResolvers<(Error & { code?: unknown; cmd?: string }) | null>();
@@ -383,14 +416,54 @@ describe("what a script stored on Array.prototype", () => {
     },
   );
 
+  // internal/shared built a Set from a list while it loaded. node:perf_hooks is what uses those names.
+  it.concurrent("an array iterator that throws while node:perf_hooks first loads: the module loads", async () => {
+    expect(await run("perf-hooks-under-a-throwing-iterator.cjs")).toEqual({
+      stdout: "node:perf_hooks loaded, performance.now is a function\n",
+      ...ranToItsEnd,
+    });
+  });
+
   // Without the fix the process waits for a child that nothing can reach, until the test runner stops it.
-  it.concurrent.each(["process.nextTick throws once", "the modules of the streams cannot load"])(
-    "spawn() that throws after the child started leaves no child and throws nothing later: %s",
-    async why => {
-      expect(await run("throws-after-the-child-started.cjs", why)).toEqual({
-        stdout: "spawn() threw\n",
-        ...ranToItsEnd,
-      });
-    },
-  );
+  it.concurrent.each([
+    ["process.nextTick throws", "process.nextTick was called"],
+    ["process.nextTick throws, and then kill() throws", "process.nextTick was called"],
+    ["the modules of the streams cannot load", "the array iterator was called"],
+  ])("spawn() that throws after the child started leaves no child and throws nothing later: %s", async (why, threw) => {
+    expect(await run("throws-after-the-child-started.cjs", why)).toEqual({
+      stdout: `spawn() threw: ${threw}, after the child started\n`,
+      ...ranToItsEnd,
+    });
+  });
+
+  // As in Node: the copy comes before an option is read.
+  it("execFileSync() copies its arguments before a getter of an option can change them", () => {
+    const args = ["-e", "process.stdout.write(process.argv.at(-1))", "original"];
+    const options = {
+      env: bunEnv,
+      encoding: "utf8" as const,
+      get argv0() {
+        args.push("added by a getter");
+        return undefined;
+      },
+    };
+    expect(execFileSync(bunExe(), args, options)).toBe("original");
+  });
+
+  // As in Node: the list is `[argv0, ...args]`, and its slot 0 names the child and does not choose it.
+  it("ChildProcess#spawn() runs options.file, whatever a getter of an option stores in options.args[0]", async () => {
+    const spawnargs = [bunExe(), "-e", "process.stdout.write(process.argv.at(-1))", "original"];
+    const child = new ChildProcess();
+    child.spawn({
+      file: bunExe(),
+      args: spawnargs,
+      envPairs: Object.entries(bunEnv).map(([name, value]) => `${name}=${value}`),
+      stdio: ["ignore", "pipe", "inherit"],
+      get cwd() {
+        spawnargs[0] = "another-program";
+        return undefined;
+      },
+    });
+    expect(await text(child.stdout!)).toBe("original");
+  });
 });

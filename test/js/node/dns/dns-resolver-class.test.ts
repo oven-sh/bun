@@ -1,5 +1,6 @@
 // node-dns.test.js resolves public hostnames. These tests need no network.
 import { describe, expect, test } from "bun:test";
+import { runWithError } from "harness";
 import dns from "node:dns";
 
 describe.each([
@@ -19,7 +20,7 @@ describe.each([
       }
     }
 
-    const resolver = new PinnedResolver({ timeout: 1000, tries: 1 });
+    const resolver = new (PinnedResolver as any)({ timeout: 1000, tries: 1 });
     expect(Object.getPrototypeOf(resolver)).toBe(PinnedResolver.prototype);
     expect(resolver).toBeInstanceOf(Resolver);
 
@@ -30,5 +31,18 @@ describe.each([
 
   test("throws a TypeError when called without new", () => {
     expect(() => Resolver()).toThrow(TypeError);
+  });
+
+  test.each([
+    ["resolve", "ERR_INVALID_ARG_TYPE"],
+    ["resolveAny", "ERR_INVALID_ARG_TYPE"],
+    ["reverse", "ERR_INVALID_ARG_TYPE"],
+    ["setLocalAddress", "ERR_INVALID_IP_ADDRESS"],
+    ["setServers", "ERR_INVALID_ARG_TYPE"],
+  ])("_handle.%s() treats a missing argument as undefined", (method, code) => {
+    const handle = new Resolver()._handle;
+    const missing = runWithError(() => handle[method]());
+    expect(missing).toMatchObject({ name: "TypeError", code });
+    expect(missing).toEqual(runWithError(() => handle[method](undefined)));
   });
 });

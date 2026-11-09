@@ -27,7 +27,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // (`[^\]]*\]` tail). Neither `[^\]]` class can cross a `]`, so a match is always
 // fenced inside a single attribute and cannot span from one `#[...]` to the next.
 // Module-level `#![allow(...)]` blocks (codegen surfaces such as
-// `runtime/generated_classes.rs` and `jsc/cpp.rs`) are intentionally not counted.
+// `runtime/generated_host_exports.rs` and `jsc/cpp.rs`) are intentionally not counted.
 const ESCAPE = /#\[\s*(?:cfg_attr\([^\]]+?,\s*)?allow\([^)]*\bdead_code\b[^)]*\)[^\]]*\]/g;
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");

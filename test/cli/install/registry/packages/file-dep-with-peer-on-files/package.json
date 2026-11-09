@@ -1,0 +1,23 @@
+{
+  "_id": "file-dep-with-peer-on-files",
+  "name": "file-dep-with-peer-on-files",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "file-dep-with-peer-on-files",
+      "version": "1.0.0",
+      "dependencies": {
+        "files": "file:the-files",
+        "peer-on-files": "1.0.0"
+      },
+      "_id": "file-dep-with-peer-on-files@1.0.0",
+      "dist": {
+        "integrity": "sha512-ZmSsoAZOGAqssZPTcwdidOg1673007uwXYBG+uFVMARB3y6sjupPm+jGh3/5+bT/Jdp2usHUQWLc1nvsXGBvfQ==",
+        "shasum": "904c29b2d64c8a863793d0615f735094687b64a1",
+        "tarball": "http://localhost:4873/file-dep-with-peer-on-files/-/file-dep-with-peer-on-files-1.0.0.tgz"
+      }
+    }
+  }
+}

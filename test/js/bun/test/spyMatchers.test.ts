@@ -27,7 +27,14 @@ SOFTWARE.
 
 import { describe, expect, jest, expect as jestExpect, test } from "bun:test";
 import * as Immutable from "immutable";
-import type { FunctionLike } from "jest-mock";
+
+type FunctionLike = (...args: any) => any;
+
+declare module "bun:test" {
+  interface AsymmetricMatchers {
+    optionalFn(): any;
+  }
+}
 
 jestExpect.extend({
   optionalFn(fn?: unknown) {
@@ -938,9 +945,9 @@ describe.each(["toHaveLastReturnedWith", "toHaveNthReturnedWith", "toHaveReturne
       fn();
 
       if (isToHaveNth(returnedWith)) {
-        jestExpect(fn)[returnedWith](1);
+        (jestExpect(fn) as any)[returnedWith](1);
       } else {
-        jestExpect(fn)[returnedWith]();
+        (jestExpect(fn) as any)[returnedWith]();
       }
     });
 

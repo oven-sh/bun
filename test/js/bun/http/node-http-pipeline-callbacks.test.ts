@@ -12,7 +12,7 @@ test("aborting a connection settles every queued pipelined response callback onc
   let callbacksRemaining = 6;
   let closesRemaining = 2;
 
-  const callback = (name: string) => (error?: Error) => {
+  const callback = (name: string) => (error?: Error | null) => {
     events.push(name);
     if (error) callbackErrors.push(error);
     if (--callbacksRemaining === 0) callbacksDone.resolve();

@@ -1,0 +1,162 @@
+import { aotBuiltinEntries } from "bun:internal-for-testing";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
+import { builtinEntries } from "../bundler/compile-trim-features";
+import { test } from "./supported";
+
+const { entries } = aotBuiltinEntries();
+const find = (path: string) => path.split(".").reduce<any>((holder, name) => holder?.[name], globalThis);
+const removable = new Set(builtinEntries.filter(each => guardFeatureOf(each) !== undefined).map(each => each.path));
+
+const functions = entries.filter(
+  ({ kind, scope, path }) =>
+    kind === "Function" &&
+    scope === "Realm" &&
+    /^[\w.]+$/.test(path) &&
+    removable.has(path) &&
+    typeof find(path) === "function",
+);
+const listsAllMembers = ({ flags }: (typeof functions)[number]) => flags.includes("ListsAllMembers");
+
+// TODO: to name one of these is a use of something today, whatever is asked about it: the object that holds it, or code of the library.
+const namedIsUsedToday = [
+  /^Buffer\./,
+  /^Bun\.build$/,
+  /^Bun\.plugin(\.|$)/,
+  /^WebAssembly\.(compile|instantiate)Streaming$/,
+  // The object that holds them counts as used once it is read.
+  /^Bun\.CSRF\./,
+  /^Bun\.FFI\./,
+  /^Bun\.JSON5\./,
+  /^Bun\.JSONC\./,
+  /^Bun\.JSONL\./,
+  /^Bun\.TOML\./,
+  /^Bun\.XML\./,
+  /^Bun\.YAML\./,
+  /^Bun\.dns\./,
+  /^Bun\.markdown\./,
+  /^Bun\.password\./,
+  /^Bun\.secrets\./,
+  /^Bun\.semver\./,
+  /^Bun\.unsafe\./,
+  /^Temporal\.Now\./,
+  /^WebAssembly\.(Module\.|compile$|instantiate$|promising$|validate$)/,
+  /^process\.report\./,
+  // Each keeps nearly everything that --trim can remove.
+  /^process\._rawDebug$/,
+  /^process\.loadEnvFile$/,
+];
+
+async function usersIn(text: string) {
+  using dir = tempDir("aot-asking-about-a-function", { "main.js": text });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check", "--aot", "--no-pretty", "--explain=trim", "main.js"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [report] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(report).toContain("aot: trim: the compiler can see every API this program uses");
+  return Array.from(report.matchAll(/^aot: trim: kept (.+): used \((.+?)\)/gm), ([line, feature, user]) => ({
+    line,
+    feature,
+    user,
+  }));
+}
+
+const questionsAbout = (paths: readonly string[]) =>
+  paths
+    .map(path => `console.log(typeof ${path}, ${path}.name, ${path}.length, Object.keys(${path}).length);\n`)
+    .join("");
+
+// A read of one of these counts as a call: it may hold a function that the table does not list.
+test("few functions that --trim can remove have members that the table does not list", () => {
+  expect(functions.length).toBeGreaterThan(100);
+  expect(
+    functions
+      .filter(each => !listsAllMembers(each))
+      .map(({ path }) => path)
+      .sort(),
+  ).toEqual(["Bun.cron", "Bun.peek", "Bun.sql", "process.memoryUsage"]);
+});
+
+// The table takes what it knows only as a property for something that a read may create, so `typeof URL.createObjectURL` would keep URL.
+test("a function that --trim can remove is a property in the table only where a read of it runs code", () => {
+  expect(
+    entries
+      .filter(
+        ({ kind, scope, path }) =>
+          kind === "DataProperty" &&
+          scope === "Realm" &&
+          /^[\w.]+$/.test(path) &&
+          removable.has(path) &&
+          typeof find(path) === "function",
+      )
+      .map(({ path }) => path)
+      .sort(),
+  ).toEqual([
+    // The first read makes them.
+    "Bun.ModuleGraph",
+    "Bun.SQL",
+    "console.Console",
+    // process.kill() calls what it finds there.
+    "process._kill",
+  ]);
+});
+
+test("what a program asks about a function without calling it is no use of anything", async () => {
+  const asked = functions
+    .filter(listsAllMembers)
+    .map(({ path }) => path)
+    .filter(path => !namedIsUsedToday.some(pattern => pattern.test(path)));
+  expect(asked.length).toBeGreaterThan(100);
+  expect(asked).toEqual(expect.arrayContaining(["fetch", "Bun.fetch", "fetch.preconnect", "structuredClone"]));
+  expect(asked).toEqual(expect.arrayContaining(["Bun.Cookie.parse", "Bun.WebView.closeAll", "URL.createObjectURL"]));
+  expect((await usersIn(questionsAbout(asked))).map(({ line }) => line)).toEqual([]);
+}, 600_000);
+
+// A goal that is not met yet. Once it is, this test fails: change `test.failing` to `test` and empty the list of what is used once it is named.
+// A mark does not see a number grow worse: the case behind it holds the report to the number of today.
+let usersOfAll: ReturnType<typeof usersIn> | undefined;
+const usersWhereAllAreAsked = () =>
+  (usersOfAll ??= usersIn(questionsAbout(functions.filter(listsAllMembers).map(({ path }) => path))));
+test.failing(
+  "what a program asks about any function that --trim can remove is no use of anything: 158 lines of the report on Linux, the goal is none",
+  async () => {
+    expect((await usersWhereAllAreAsked()).map(({ line }) => line)).toEqual([]);
+  },
+  600_000,
+);
+test.skipIf(!isLinux)(
+  "what a program asks about any function that --trim can remove is no use of anything: no more than 158 lines of the report",
+  async () => {
+    expect((await usersWhereAllAreAsked()).length).toBeLessThanOrEqual(158);
+  },
+  600_000,
+);
+
+test.concurrent.each(namedIsUsedToday.map(pattern => [String(pattern), pattern] as const))(
+  "the list of what is used once it is named holds nothing that is not: %s",
+  async (_, pattern) => {
+    const named = functions.map(({ path }) => path).filter(path => pattern.test(path));
+    expect(named).not.toEqual([]);
+    expect(await usersIn(questionsAbout(named))).not.toEqual([]);
+  },
+  600_000,
+);
+
+test.concurrent.each([
+  "fetch.preconnect",
+  "Bun.fetch.preconnect",
+  "Object.values(fetch)[0]",
+  "({ ...fetch }).preconnect",
+])(
+  "a member of fetch that is called is a use of fetch: %s",
+  async call => {
+    const users = await usersIn(`try { ${call}(""); } catch {}\n`);
+    expect(users.map(({ feature }) => feature)).toContainEqual(expect.stringMatching(/^fetch and Bun\.FetchSession/));
+  },
+  600_000,
+);

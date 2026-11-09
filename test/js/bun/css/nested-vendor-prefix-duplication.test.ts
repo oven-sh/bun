@@ -160,9 +160,11 @@ test("the fuzzer reproduction shape errors instead of amplifying", () => {
 });
 
 test("nesting-capable targets also bound the mixed vendor-prefix expansion", () => {
-  // Modern targets preserve nesting (no de-nesting), so the same per-prefix
-  // re-serialization of the body applies and must be bounded too.
-  expect(() => minifyTest(nestedMixedPrefix(20), "", { chrome: 130 << 16 })).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+  // With browser targets the `:-webkit-autofill` selector moves to its own rule
+  // at every level, with a copy of the nested rules. The selector limit bounds that.
+  expect(() => minifyTest(nestedMixedPrefix(20), "", { chrome: 130 << 16 })).toThrow(
+    "Nested CSS rules expand to more than",
+  );
 });
 
 test("shallow mixed vendor-prefix nesting still minifies with both prefix variants", () => {
@@ -215,7 +217,7 @@ test("leaf rules nested under a fanning-out ancestor are bounded", () => {
   // (prefix count)^depth times. A ~1.4 KB input expands past 9 MB here unless
   // those duplicated leaves count against the bound; it becomes a thrown error.
   const K = 1;
-  const depth = 15;
+  const depth = 17;
   const leaves = Array.from(
     { length: K },
     (_, i) => `.x${i}:placeholder-shown,.y${i}:-webkit-autofill{--v${i}:1}`,

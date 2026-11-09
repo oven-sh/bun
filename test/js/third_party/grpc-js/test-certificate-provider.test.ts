@@ -33,7 +33,7 @@ describe("Certificate providers", () => {
       );
     });
     it("Should reject a config with no files", () => {
-      const config: experimental.FileWatcherCertificateProviderConfig = {
+      const config: grpc.experimental.FileWatcherCertificateProviderConfig = {
         refreshIntervalMs: 1000,
       };
       assert.throws(() => {
@@ -41,7 +41,7 @@ describe("Certificate providers", () => {
       });
     });
     it("Should accept a config with just a CA certificate", () => {
-      const config: experimental.FileWatcherCertificateProviderConfig = {
+      const config: grpc.experimental.FileWatcherCertificateProviderConfig = {
         caCertificateFile: caPath,
         refreshIntervalMs: 1000,
       };
@@ -50,7 +50,7 @@ describe("Certificate providers", () => {
       });
     });
     it("Should accept a config with just a key and certificate", () => {
-      const config: experimental.FileWatcherCertificateProviderConfig = {
+      const config: grpc.experimental.FileWatcherCertificateProviderConfig = {
         certificateFile: certPath,
         privateKeyFile: keyPath,
         refreshIntervalMs: 1000,
@@ -60,7 +60,7 @@ describe("Certificate providers", () => {
       });
     });
     it("Should accept a config with all files", () => {
-      const config: experimental.FileWatcherCertificateProviderConfig = {
+      const config: grpc.experimental.FileWatcherCertificateProviderConfig = {
         caCertificateFile: caPath,
         certificateFile: certPath,
         privateKeyFile: keyPath,
@@ -71,7 +71,7 @@ describe("Certificate providers", () => {
       });
     });
     it("Should reject a config with a key but no certificate", () => {
-      const config: experimental.FileWatcherCertificateProviderConfig = {
+      const config: grpc.experimental.FileWatcherCertificateProviderConfig = {
         caCertificateFile: caPath,
         privateKeyFile: keyPath,
         refreshIntervalMs: 1000,
@@ -81,7 +81,7 @@ describe("Certificate providers", () => {
       });
     });
     it("Should reject a config with a certificate but no key", () => {
-      const config: experimental.FileWatcherCertificateProviderConfig = {
+      const config: grpc.experimental.FileWatcherCertificateProviderConfig = {
         caCertificateFile: caPath,
         privateKeyFile: keyPath,
         refreshIntervalMs: 1000,
@@ -91,12 +91,12 @@ describe("Certificate providers", () => {
       });
     });
     it("Should find the CA file when configured for it", done => {
-      const config: experimental.FileWatcherCertificateProviderConfig = {
+      const config: grpc.experimental.FileWatcherCertificateProviderConfig = {
         caCertificateFile: caPath,
         refreshIntervalMs: 1000,
       };
       const provider = new experimental.FileWatcherCertificateProvider(config);
-      const listener: experimental.CaCertificateUpdateListener = update => {
+      const listener: grpc.experimental.CaCertificateUpdateListener = update => {
         if (update) {
           provider.removeCaCertificateListener(listener);
           assert(update.caCertificate.equals(caData));
@@ -106,13 +106,13 @@ describe("Certificate providers", () => {
       provider.addCaCertificateListener(listener);
     });
     it("Should find the identity certificate files when configured for it", done => {
-      const config: experimental.FileWatcherCertificateProviderConfig = {
+      const config: grpc.experimental.FileWatcherCertificateProviderConfig = {
         certificateFile: certPath,
         privateKeyFile: keyPath,
         refreshIntervalMs: 1000,
       };
       const provider = new experimental.FileWatcherCertificateProvider(config);
-      const listener: experimental.IdentityCertificateUpdateListener = update => {
+      const listener: grpc.experimental.IdentityCertificateUpdateListener = update => {
         if (update) {
           provider.removeIdentityCertificateListener(listener);
           assert(update.certificate.equals(certData));
@@ -123,7 +123,7 @@ describe("Certificate providers", () => {
       provider.addIdentityCertificateListener(listener);
     });
     it("Should find all files when configured for it", done => {
-      const config: experimental.FileWatcherCertificateProviderConfig = {
+      const config: grpc.experimental.FileWatcherCertificateProviderConfig = {
         caCertificateFile: caPath,
         certificateFile: certPath,
         privateKeyFile: keyPath,
@@ -132,7 +132,7 @@ describe("Certificate providers", () => {
       const provider = new experimental.FileWatcherCertificateProvider(config);
       let seenCaUpdate = false;
       let seenIdentityUpdate = false;
-      const caListener: experimental.CaCertificateUpdateListener = update => {
+      const caListener: grpc.experimental.CaCertificateUpdateListener = update => {
         if (update) {
           provider.removeCaCertificateListener(caListener);
           assert(update.caCertificate.equals(caData));
@@ -142,7 +142,7 @@ describe("Certificate providers", () => {
           }
         }
       };
-      const identityListener: experimental.IdentityCertificateUpdateListener = update => {
+      const identityListener: grpc.experimental.IdentityCertificateUpdateListener = update => {
         if (update) {
           provider.removeIdentityCertificateListener(identityListener);
           assert(update.certificate.equals(certData));

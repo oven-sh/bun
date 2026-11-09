@@ -67,6 +67,17 @@ bun_opaque::opaque_ffi! {
     pub struct WebSocketUpgradeContext;
 }
 
+/// Negotiated permessage-deflate parameters (RFC 7692 7.1). Out-of-range window bits are clamped.
+/// Must match `uWS::PerMessageDeflateParams` in PerMessageDeflate.h.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PerMessageDeflateParams {
+    pub server_max_window_bits: c_int,
+    pub client_max_window_bits: c_int,
+    pub server_no_context_takeover: bool,
+    pub client_no_context_takeover: bool,
+}
+
 /// Opaque handle for `uws::Response<SSL>`.
 ///
 /// The SSL flag is modeled as a `const SSL: bool` parameter on an opaque
@@ -176,6 +187,14 @@ impl<const SSL: bool> Response<SSL> {
         us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>()).is_closed()
     }
 
+    /// False if the socket is closed or already sent its FIN / close_notify. `upgrade()` returns
+    /// null for those.
+    pub(crate) fn can_upgrade(&self) -> bool {
+        let socket =
+            us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>());
+        !socket.is_closed() && !socket.is_shutdown()
+    }
+
     pub(crate) fn prepare_for_sendfile(&mut self) {
         c::uws_res_prepare_for_sendfile(Self::ssl_flag(), self.as_raw())
     }
@@ -197,6 +216,11 @@ impl<const SSL: bool> Response<SSL> {
     /// Defers the close to the end of the read uws is parsing. False: not parsing, the caller closes now.
     pub fn close_after_message_if_parsing(&mut self) -> bool {
         c::uws_res_close_after_message_if_parsing(Self::ssl_flag(), self.as_raw())
+    }
+
+    /// Removes the handlers that were attached with `user_data`. See `HttpResponse::clearHandlersOf`.
+    pub(crate) fn clear_handlers_of(&mut self, user_data: *mut c_void) {
+        c::uws_res_clear_handlers_of(Self::ssl_flag(), self.as_raw(), user_data)
     }
 
     pub(crate) fn pause(&mut self) {
@@ -587,18 +611,18 @@ impl<const SSL: bool> Response<SSL> {
         );
     }
 
-    pub(crate) fn run_corked_with_type<U>(&mut self, handler: fn(*mut U), optional_data: *mut U) {
+    pub(crate) fn run_corked_with_type<U>(&mut self, handler: fn(&U), data: &U) {
         // cork is synchronous, so we can stack-allocate the (handler, data) pair
         // and recover it inside the trampoline.
-        type Ctx<U> = (fn(*mut U), *mut U);
+        type Ctx<'a, U> = (fn(&U), &'a U);
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.
         extern "C" fn handle<U>(user_data: *mut c_void) {
             // SAFETY: user_data points at a stack Ctx<U> valid for this synchronous call.
-            let ctx = unsafe { &*user_data.cast::<Ctx<U>>() };
+            let ctx = unsafe { &*user_data.cast::<Ctx<'_, U>>() };
             (ctx.0)(ctx.1);
         }
-        let mut ctx: Ctx<U> = (handler, optional_data);
+        let mut ctx: Ctx<'_, U> = (handler, data);
         // cork is synchronous so the stack-allocated ctx outlives the FFI call.
         c::uws_res_cork(
             Self::ssl_flag(),
@@ -629,6 +653,29 @@ impl<const SSL: bool> Response<SSL> {
                 sec_web_socket_extensions.as_ptr(),
                 sec_web_socket_extensions.len(),
                 ctx.map_or(core::ptr::null_mut(), std::ptr::from_mut),
+            )
+        }
+    }
+
+    /// Like `upgrade`, but the caller already negotiated. `handshake` is the complete response head
+    /// and is written verbatim. `deflate_params` is `None` if permessage-deflate wasn't negotiated.
+    pub(crate) fn upgrade_raw<D>(
+        &mut self,
+        data: *mut D,
+        handshake: &[u8],
+        deflate_params: Option<&PerMessageDeflateParams>,
+        ctx: &mut WebSocketUpgradeContext,
+    ) -> *mut Socket {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; ptr+len from &[u8].
+        unsafe {
+            c::uws_res_upgrade_raw(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.cast::<c_void>(),
+                handshake.as_ptr(),
+                handshake.len(),
+                deflate_params,
+                ctx,
             )
         }
     }
@@ -921,6 +968,19 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
     }
 
+    /// HTTP/1 only: the handlers of an HTTP/2 or HTTP/3 stream belong to one response.
+    pub fn clear_handlers_of<U>(self, user_data: *mut U) {
+        match self {
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).clear_handlers_of(user_data.cast())
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).clear_handlers_of(user_data.cast())
+            }
+            AnyResponse::H3(_) | AnyResponse::H2(_) => {}
+        }
+    }
+
     /// HTTP/1 only: an HTTP/2 or HTTP/3 stream has no socket read to finish.
     pub fn close_after_message_if_parsing(self) -> bool {
         match self {
@@ -1059,10 +1119,21 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.corked(f))
     }
 
-    pub fn run_corked_with_type<U>(self, handler: fn(*mut U), optional_data: *mut U) {
-        any_dispatch!(self, |r| r.run_corked_with_type(handler, optional_data))
+    pub fn run_corked_with_type<U>(self, handler: fn(&U), data: &U) {
+        any_dispatch!(self, |r| r.run_corked_with_type(handler, data))
     }
 
+    /// See `Response::can_upgrade`.
+    pub fn can_upgrade(self) -> bool {
+        match self {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).can_upgrade(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).can_upgrade(),
+        }
+    }
+
+    /// Returns null if the socket can't be upgraded (see `can_upgrade`). Nothing was written and
+    /// the caller still owns `data`.
     pub fn upgrade<D>(
         self,
         data: *mut D,
@@ -1090,6 +1161,25 @@ impl AnyResponse {
                 sec_web_socket_extensions,
                 ctx,
             ),
+        }
+    }
+
+    /// See `Response::upgrade_raw`. Returns null in the same cases as `upgrade`.
+    pub fn upgrade_raw<D>(
+        self,
+        data: *mut D,
+        handshake: &[u8],
+        deflate_params: Option<&PerMessageDeflateParams>,
+        ctx: &mut WebSocketUpgradeContext,
+    ) -> *mut Socket {
+        match self {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => core::ptr::null_mut(),
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).upgrade_raw(data, handshake, deflate_params, ctx)
+            }
         }
     }
 }
@@ -1226,6 +1316,11 @@ pub mod c {
             ssl: i32,
             res: &mut uws_res,
         ) -> bool;
+        pub(crate) safe fn uws_res_clear_handlers_of(
+            ssl: i32,
+            res: &mut uws_res,
+            user_data: *mut c_void,
+        );
         pub(crate) fn uws_res_end(
             ssl: i32,
             res: *mut uws_res,
@@ -1356,6 +1451,15 @@ pub mod c {
             sec_web_socket_protocol_length: usize,
             sec_web_socket_extensions: *const u8,
             sec_web_socket_extensions_length: usize,
+            ws: *mut WebSocketUpgradeContext,
+        ) -> *mut Socket;
+        pub(crate) fn uws_res_upgrade_raw(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *mut c_void,
+            handshake: *const u8,
+            handshake_length: usize,
+            deflate_params: Option<&PerMessageDeflateParams>,
             ws: *mut WebSocketUpgradeContext,
         ) -> *mut Socket;
         // safe: cork is synchronous — `ctx` is passed straight back to

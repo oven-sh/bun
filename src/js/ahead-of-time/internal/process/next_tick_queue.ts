@@ -1,5 +1,6 @@
-// A module of compiled programs alone: `bun run` has no text under this name and never loads it.
-// test/internal/second-texts-of-modules.test.ts holds that no text outside this folder asks for it.
+// What the compiler reads in place of src/js/internal/process/next_tick_queue.ts, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 6bfa15a49147ccbe51dbb47cec2c272d31f177c679c57e8c929c49ab78d6b56b.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // process.nextTick, and what a built-in module calls in its place.
 type TickRing = $BunModules["internal/process/tick_ring"];

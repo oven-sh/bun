@@ -124,8 +124,6 @@ define_tables! {
             may_name_own_require: bool,
             may_name_own_path: bool,
             may_require_get_members: std::sync::OnceLock<bool>,
-            names_that_hold_own_requires: std::sync::OnceLock<Box<[(SymbolId, bool)]>>,
-            names_used_otherwise_than_called: std::sync::OnceLock<Box<[(SymbolId, bool)]>>,
             lets_made_requires_out_of_sight: std::sync::OnceLock<bool>,
             hoists_top_level_variables: bool,
             jsx_paths: [Option<crate::atom::Atom>; 2],

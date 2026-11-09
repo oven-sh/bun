@@ -43,7 +43,7 @@ test("what `bun run` evaluates asks for no module of compiled programs alone", (
     .filter(file => file.startsWith("ahead-of-time/"))
     .map(file => file.slice("ahead-of-time/".length))
     .filter(file => !existsSync(join(modules, file)));
-  expect(alone).toContain("internal/process/next_tick_queue.ts");
+  expect(alone).toContain("internal/streams/load_all.ts");
   for (const file of alone) expect([file, isOfCompiledProgramsAlone(file)]).toEqual([file, true]);
   const asked = new RegExp(`require\\("(?:${alone.map(file => file.replace(/\.[jt]s$/, "")).join("|")})"\\)`);
   const askers = texts.filter(

@@ -21,10 +21,6 @@ const deeds = [
 ];
 // What is owed, by the name of what is counted. Whatever else parts in such a deed is red.
 const owed: Record<string, { names: string[]; why: string }> = {
-  "a readable is made and read": {
-    names: ["Array.prototype.fill"],
-    why: "a wrong answer today: under `bun test --aot` the queue of ticks is a ring that fills nothing, where `bun test` makes internal/fixed_queue at the first tick, which calls Array.prototype.fill once",
-  },
   "a file is written through a stream": {
     names: ["Function.prototype.bind"],
     why: "a wrong answer today: under `bun test --aot` the modules that load with the first stream of node:fs call bind 6 times, where `bun test` calls it 28 times",

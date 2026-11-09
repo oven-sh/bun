@@ -921,6 +921,8 @@ pub struct LazyCells {
     pub(crate) keyword_identifiers: LazyCell<Box<[Node]>>,
     pub(crate) has_ambient_nodes: LazyCell<bool>,
     pub(crate) ambient_ranges_hold_every_ambient_node: LazyCell<bool>,
+    pub(crate) names_that_hold_own_requires: LazyCell<Box<[(crate::bind::SymbolId, bool)]>>,
+    pub(crate) names_used_otherwise_than_called: LazyCell<Box<[(crate::bind::SymbolId, bool)]>>,
 }
 
 /// A `OnceLock` that can be emptied while nothing reads the file.
@@ -973,6 +975,8 @@ static EMPTY_FILE_CELLS: LazyCells = LazyCells {
     keyword_identifiers: LazyCell::new(),
     has_ambient_nodes: LazyCell::new(),
     ambient_ranges_hold_every_ambient_node: LazyCell::new(),
+    names_that_hold_own_requires: LazyCell::new(),
+    names_used_otherwise_than_called: LazyCell::new(),
 };
 
 /// Copies `list` to a block of exactly its size in `arena` and clears it. `list` keeps its capacity.
@@ -4208,6 +4212,8 @@ impl<'s> File<'s> {
             cells.keyword_identifiers.clear();
             cells.has_ambient_nodes.clear();
             cells.ambient_ranges_hold_every_ambient_node.clear();
+            cells.names_that_hold_own_requires.clear();
+            cells.names_used_otherwise_than_called.clear();
         }
     }
 }

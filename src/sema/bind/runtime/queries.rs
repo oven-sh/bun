@@ -567,22 +567,6 @@ impl Bound<'_> {
             .get_or_init(ask)
     }
 
-    pub fn names_used_otherwise_than_called(
-        &self,
-        list: impl FnOnce() -> Box<[(SymbolId, bool)]>,
-    ) -> &[(SymbolId, bool)] {
-        self.runtime
-            .names_used_otherwise_than_called
-            .get_or_init(list)
-    }
-
-    pub fn names_that_hold_own_requires(
-        &self,
-        list: impl FnOnce() -> Box<[(SymbolId, bool)]>,
-    ) -> &[(SymbolId, bool)] {
-        self.runtime.names_that_hold_own_requires.get_or_init(list)
-    }
-
     pub fn stores(&self) -> &[SymbolStore] {
         &self.runtime.references.stores[..]
     }

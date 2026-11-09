@@ -26,6 +26,11 @@ const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
+const isStandardOutputStream: (value: unknown) => boolean | undefined = $newCppFunction(
+  "BunProcess.cpp",
+  "jsFunctionIsStandardOutputStream",
+  1,
+);
 
 const ObjectDefineProperties = Object.defineProperties;
 const SymbolAsyncDispose = Symbol.asyncDispose;
@@ -842,7 +847,13 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   state.pipes.push(dest);
   $debug("pipe count=%d opts=%j", state.pipes.length, pipeOpts);
 
-  const doEnd = (!pipeOpts || pipeOpts.end !== false) && dest !== process.stdout && dest !== process.stderr;
+  let doEnd = !pipeOpts || pipeOpts.end !== false;
+  if (doEnd) {
+    const isStandardOutput = isStandardOutputStream(dest);
+    // Making process.stdout or process.stderr would have loaded all of node:stream.
+    if (isStandardOutput === undefined) require("internal/stream");
+    doEnd = !isStandardOutput;
+  }
 
   const endFn = doEnd ? onend : unpipe;
   if ((state[kState] & kEndEmitted) !== 0) process.nextTick(endFn);

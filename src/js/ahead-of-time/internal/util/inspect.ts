@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/util/inspect.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 051367a5b6939568e1ce1a53fcd35a55c848e030ff9a19f0138f971fdb242e89.
+// Written against that file with the SHA-256 6af95bda7f7223ec92dd037418200bb7d283944d014eae436c03d725ebf3f69a.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // **TODO: delete this file**

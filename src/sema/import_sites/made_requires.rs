@@ -785,7 +785,8 @@ fn find_require_among_all_that_is_stored(
     if IS_ASKING_WHOLE_FILE.replace(true) {
         return None;
     }
-    let holders = bound.names_that_hold_own_requires(|| list_names_that_hold_own_requires(text));
+    let holders = &hir.lazy.cells.names_that_hold_own_requires;
+    let holders = holders.get_or_init(|| list_names_that_hold_own_requires(text));
     IS_ASKING_WHOLE_FILE.set(false);
     let found = holders.binary_search_by_key(&holder, |it| it.0).ok()?;
     if lets_made_requires_out_of_sight(text) {
@@ -829,8 +830,8 @@ fn list_names_used_otherwise_than_called(
 }
 
 fn is_used_otherwise_than_called(hir: &File<'_>, bound: &Bound<'_>, name: SymbolId) -> bool {
-    let names = bound
-        .names_used_otherwise_than_called(|| list_names_used_otherwise_than_called(hir, bound));
+    let names = &hir.lazy.cells.names_used_otherwise_than_called;
+    let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
     names.binary_search(&(name, false)).is_ok()
 }
 
@@ -839,8 +840,8 @@ fn is_answer_used_otherwise_than_called(
     bound: &Bound<'_>,
     function: SymbolId,
 ) -> bool {
-    let names = bound
-        .names_used_otherwise_than_called(|| list_names_used_otherwise_than_called(hir, bound));
+    let names = &hir.lazy.cells.names_used_otherwise_than_called;
+    let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
     names.binary_search(&(function, true)).is_ok()
         || names.binary_search(&(function, false)).is_ok()
 }

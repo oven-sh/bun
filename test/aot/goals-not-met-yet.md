@@ -2,7 +2,7 @@
 
 This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of the marks in the tree. Do not edit it: change the mark and run the tool.
 
-39 wrong answers in 14 files stand under a mark. They are no goals, and are not counted among them.
+37 wrong answers in 13 files stand under a mark. They are no goals, and are not counted among them.
 
 234 goals in 132 files: 162 on what a program reaches of the library and what --trim keeps, 18 on how a build grows with its program, 54 on other things.
 
@@ -57,9 +57,7 @@ known to fail, so the run stays green; it turns red once the compiled run says t
 | test/aot/parallel/commonjs/a-files-own-read-behind-its-own-store-under-a-getter-of-another-file/main.cjs | it answers as plain Bun: "own" \| "fake" | `bun <file>` prints "fake" | under `bun build --compile --aot` it prints "own" |
 | test/aot/parallel/commonjs/a-late-store-of-a-files-own-text-in-front-of-a-delete-by-another-file/main.cjs | it answers as plain Bun: "second" \| "none" | `bun <file>` prints "none" | under `bun build --compile --aot` it prints "second" |
 | test/aot/parallel/commonjs/both-files-store-behind-a-delete-and-the-other-file-is-the-later/main.cjs | it answers as plain Bun: "own" \| "foreign" | `bun <file>` prints "foreign" | under `bun build --compile --aot` it prints "own" |
-| test/aot/parallel/commonjs/bun-test-is-required-under-a-computed-name-beside-a-replaced-bun-jest.cjs | it answers as plain Bun: "object 0" \| "string 1" | `bun <file>` prints "string 1" | under `bun build --compile --aot` it prints "object 0", for src/js/ahead-of-time/builtins/CommonJS.ts does not name Bun.jest, which would keep the test runner in every executable with a computed require() |
 | test/aot/the-library-calls-the-same-built-ins-compiled-as-plain.test.ts | the library calls the same built-ins and asks for the same names compiled as plain: a file is written through a stream | `bun test` calls it 28 times | under `bun test --aot` the modules that load with the first stream of node:fs call bind 6 times |
-| test/aot/the-library-calls-the-same-built-ins-compiled-as-plain.test.ts | the library calls the same built-ins and asks for the same names compiled as plain: a readable is made and read | `bun test` makes internal/fixed_queue at the first tick, which calls Array.prototype.fill once | under `bun test --aot` the queue of ticks is a ring that fills nothing |
 
 ## Goals
 

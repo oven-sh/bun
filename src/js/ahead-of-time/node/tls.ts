@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/tls.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 e76898cbfcf8c311bf38a051bcc083f3aec6882d213e72f778a62c730e9ab4da.
+// Written against that file with the SHA-256 ee5ac146f5e92a0a2950d437cd7548198b4a2f79feaf5905835737dbf1d982eb.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:tls"
@@ -747,7 +747,9 @@ const buntls: typeof netSymbols.bunTlsSymbol = CAN_REPLACE_BUILT_IN_FUNCTIONS
 const kNativeSecureContextCtor: typeof netSymbols.kNativeSecureContextCtor = CAN_REPLACE_BUILT_IN_FUNCTIONS
   ? (Symbol.for("::buntlsnativesecurecontextctor::") as typeof netSymbols.kNativeSecureContextCtor)
   : netSymbols.kNativeSecureContextCtor;
-const kUpgradeServerTLS: typeof netSymbols.kUpgradeServerTLS = netSymbols.kUpgradeServerTLS;
+const kUpgradeServerTLS: typeof netSymbols.kUpgradeServerTLS = CAN_REPLACE_BUILT_IN_FUNCTIONS
+  ? (Symbol.for("::bunUpgradeServerTLS::") as typeof netSymbols.kUpgradeServerTLS)
+  : netSymbols.kUpgradeServerTLS;
 
 function TLSSocket(this: $Node.TLSSocket, socket?, options?) {
   this[ksecureContext] = undefined;
@@ -868,11 +870,7 @@ function TLSSocket(this: $Node.TLSSocket, socket?, options?) {
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
   if (isNetSocketOrDuplex) {
     if (isServer) {
-      this[
-        CAN_REPLACE_BUILT_IN_FUNCTIONS
-          ? (Symbol.for("::bunUpgradeServerTLS::") as typeof kUpgradeServerTLS)
-          : kUpgradeServerTLS
-      ](socket as unknown as $Node.Socket, this[buntls](null, null));
+      this[kUpgradeServerTLS](socket as unknown as $Node.Socket, this[buntls](null, null));
     } else {
       // The rule of tls.connect(): an untrusted certificate is rejected unless the caller passes `false`.
       this._rejectUnauthorized = ObjectPrototypeHasOwnProperty.$call(options, "rejectUnauthorized")

@@ -1,5 +1,6 @@
-// A module of compiled programs alone: `bun run` has no text under this name and never loads it.
-// test/internal/second-texts-of-modules.test.ts holds that no text outside this folder asks for it.
+// What the compiler reads in place of src/js/internal/validate_function.ts, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 365a74d972dfdf55ffe787c6a6e76b1cd65b4bebec83628aec08abd57ec0160f.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /* part of: internal/validators.ts */
 // validateFunction() of internal/validators, for process.nextTick of a program that is compiled ahead of time. Nearly every program has

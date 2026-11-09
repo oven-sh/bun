@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ConsoleObject.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 753ce68d2da4d6f7033b79bc36ccc08b7589b2b4511d839f6ddbdd752052b304.
+// Written against that file with the SHA-256 51b8e42acee562022ed7241e83371f58a40a7a31129323ffc168ebf79269f33d.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 $overriddenName = "[Symbol.asyncIterator]";

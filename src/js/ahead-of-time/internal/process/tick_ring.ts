@@ -1,5 +1,6 @@
-// A module of compiled programs alone: `bun run` has no text under this name and never loads it.
-// test/internal/second-texts-of-modules.test.ts holds that no text outside this folder asks for it.
+// What the compiler reads in place of src/js/internal/process/tick_ring.ts, which `bun run` evaluates. The two do the same.
+// Written against that file with the SHA-256 ff33ee4be597b763fd45e64008abd87f498378dcb95b2769f1b16989cb9be372.
+// When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // The ticks that wait are in a ring of nodes, from `ring.read` up to `ring.write`, which is always free.
 const { ring, takeTick, asyncContext } = require("internal/process/next_tick_queue");

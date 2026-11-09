@@ -147,7 +147,7 @@ fn hands_module_cache_to_code_out_of_sight(
         return true;
     }
     let parameters = hir[called.function].params;
-    let rest = parameters.iter().last();
+    let rest = parameters.iter().next_back();
     let rest = rest.filter(|&last| hir[last].flags.contains(Flags::REST));
     let Some(parameter) = parameters.iter().nth(index).or(rest) else {
         return false;

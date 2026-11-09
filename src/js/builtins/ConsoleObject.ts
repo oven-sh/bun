@@ -158,6 +158,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const ArrayPrototypeUnshift = Array.prototype.unshift;
   const StringPrototypeRepeat = String.prototype.repeat;
   const StringPrototypeSlice = String.prototype.slice;
+  const StringPrototypeStartsWith = String.prototype.startsWith;
   const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
   const ArrayPrototypeMap = Array.prototype.map;
   const ArrayPrototypeJoin = Array.prototype.join;
@@ -452,21 +453,31 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         // There may be an error occurring synchronously (e.g. for files or TTYs
         // on POSIX systems) or asynchronously (e.g. pipes on POSIX systems), so
         // handle both situations.
+        let hasCalledWrite = false;
         try {
           // Add and later remove a noop error handler to catch synchronous
           // errors.
           if (stream.listenerCount("error") === 0) stream.once("error", noop);
+          hasCalledWrite = true;
           stream.write(string, errorHandler);
         } catch (e) {
-          // Console is a debugging utility, so it swallowing errors is not
-          // desirable even in edge cases such as low stack space.
-          if (
-            e != null &&
-            typeof e === "object" &&
-            (e as Partial<Error>).name === "RangeError" &&
-            (e as Partial<Error>).message === "Maximum call stack size exceeded."
-          )
-            throw e;
+          if (e != null && typeof e === "object" && (e as Partial<Error>).name === "RangeError") {
+            const message = (e as Partial<Error>).message;
+            // Console is a debugging utility, so it swallowing errors is not
+            // desirable even in edge cases such as low stack space.
+            if (message === "Maximum call stack size exceeded.") throw e;
+            // Some memory is free again once an out-of-memory error has been thrown.
+            if (
+              !hasCalledWrite &&
+              typeof message === "string" &&
+              StringPrototypeStartsWith.$call(message, "Out of memory")
+            ) {
+              try {
+                if (stream.listenerCount("error") === 0) stream.once("error", noop);
+                stream.write(string, errorHandler);
+              } catch {}
+            }
+          }
           // Sorry, there's no proper way to pass along the error here.
         } finally {
           stream.removeListener("error", noop);

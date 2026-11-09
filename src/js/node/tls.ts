@@ -609,6 +609,7 @@ const buntls = Symbol.for("::buntls::");
 // (Node's `context.context || context` unwrap accepts both the wrapper and
 // the unwrapped native context).
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
+const kUpgradeServerTLS = Symbol.for("::bunUpgradeServerTLS::");
 
 function TLSSocket(socket?, options?) {
   this[ksecureContext] = undefined;
@@ -729,7 +730,7 @@ function TLSSocket(socket?, options?) {
   // Both upgrades live in net.ts (module-private state); _handle stays unset until one hands back the TLS handle.
   if (isNetSocketOrDuplex) {
     if (isServer) {
-      this[Symbol.for("::bunUpgradeServerTLS::")](socket, this[buntls](null, null));
+      this[kUpgradeServerTLS](socket, this[buntls](null, null));
     } else {
       // The rule of tls.connect(): an untrusted certificate is rejected unless the caller passes `false`.
       this._rejectUnauthorized = ObjectPrototypeHasOwnProperty.$call(options, "rejectUnauthorized")

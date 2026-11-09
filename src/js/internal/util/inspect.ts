@@ -1444,7 +1444,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
     } else if (isModuleNamespaceObject(value)) {
       braces[0] = `${getPrefix(constructor, tag, "Module")}{`;
       // Special handle keys for namespace objects.
-      formatter = formatNamespaceObject.bind(null, keys);
+      formatter = FunctionPrototypeBind(formatNamespaceObject, null, keys);
     } else if (isBoxedPrimitive(value)) {
       base = getBoxedBase(value, ctx, keys, constructor, tag);
       if (keys.length === 0 && protoProps === undefined) {

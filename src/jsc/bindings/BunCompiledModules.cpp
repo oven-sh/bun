@@ -2394,6 +2394,7 @@ using namespace JSC;
 
 const AOT::ModuleHost compiledModuleHost {};
 
+bool openCompressedText(std::span<uint8_t>, std::span<const uint8_t>) { return false; }
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 std::optional<bool> isHiddenFromRequireCache(const String&) { return false; }
 std::optional<AOT::ModuleID> moduleThatMockReplaces(const String&) { return std::nullopt; }

@@ -493,14 +493,11 @@ impl<'a, 's> Syntax<'a, 's> {
         key
     }
 
-    /// Whether `name` is the name of an `accessor #x` member of an object. Its value is in a field of another name, and only its setter stores to that field.
-    fn is_private_accessor_of_object(&self, name: u32) -> bool {
-        let is_it = |member: &Member| {
-            member.name_pos == name
-                && member.flags.contains(Flags::ACCESSOR)
-                && !member.flags.contains(Flags::STATIC)
-        };
-        self.byte(name) == b'#' && self.file.members.iter().any(is_it)
+    /// The `accessor #x` member that `name` is the name of. Its value is in a field of another name, and only its setter stores to that field.
+    fn private_accessor(&self, name: u32) -> Option<&Member> {
+        let is_it =
+            |member: &&Member| member.name_pos == name && member.flags.contains(Flags::ACCESSOR);
+        (self.byte(name) == b'#').then(|| self.file.members.iter().find(is_it))?
     }
 
     fn member_slots(&self, member: &Member, slots: &mut Vec<Slot>) {
@@ -3085,6 +3082,13 @@ impl<'a> Transfer<'_, 'a, '_> {
                 {
                     insertions.add(slot.start, Order::Slot, b": undefined".to_vec());
                 }
+                // The checker takes the type of an `accessor #x;` from what the constructor or a static block stores. Here those stores go to the setter, so the field would have no type (TS7008).
+                if slot.place == Place::MemberType
+                    && output.byte(output.after_trivia(slot.start)) != b'='
+                    && module.syntax.private_accessor(key).is_some()
+                {
+                    insertions.add(slot.start, Order::Slot, b": any".to_vec());
+                }
                 continue;
             };
             let text = module.trimmed_text(found.start, found.end);
@@ -3094,7 +3098,8 @@ impl<'a> Transfer<'_, 'a, '_> {
                     if text.starts_with(b":")
                         && output.byte(output.after_trivia(slot.start)) != b'='
                         && (is_computed
-                            || module.syntax.is_private_accessor_of_object(found.key)) =>
+                            || (module.syntax.private_accessor(found.key))
+                                .is_some_and(|it| !it.flags.contains(Flags::STATIC))) =>
                 {
                     (Order::Slot, [&b"!"[..], &text].concat())
                 }

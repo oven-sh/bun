@@ -136,19 +136,23 @@ export function area(shape: Shape): Sizes.Size {
 class Sizes {
   first = #factor in this;
   accessor #factor: number;
+  accessor #unit;
   static accessor #made: number;
+  static accessor #scale;
   static {
     Sizes.#made = 0;
+    this.#scale = 1;
   }
   accessor #pick: () => "circle" | "square" = () => "circle";
   accessor #round: (size: number) => number = size => Math.round(size);
   constructor(factor: number) {
     this.#factor = factor;
+    this.#unit = 1;
     Sizes.#made++;
   }
   of(shape: Shape): number {
-    const factor = shape.kind === this.#pick() ? this.#factor : 1;
-    return this.first && Sizes.#made > 0 ? this.#round(factor * shape.size ** 2) : 0;
+    const factor = shape.kind === this.#pick() ? this.#factor : this.#unit;
+    return this.first && Sizes.#made > 0 ? this.#round(factor * Sizes.#scale * shape.size ** 2) : 0;
   }
 }
 export function area(shape: Shape): number {

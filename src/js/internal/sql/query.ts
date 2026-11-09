@@ -19,9 +19,9 @@ export interface BaseQueryHandle<Connection> {
 export type { Query, SQLQueryResultMode };
 export type QueryStrings = string | TemplateStringsArray | SQLHelper<any> | Query<any, any>;
 
-/// The query that `value` is, or that a Proxy of one wraps. Undefined for every other object: one that only inherits
-/// from `Query.prototype` has the methods of a query and none of its state.
-let queryOf: (value: object) => Query<any, any> | undefined;
+/// The query that `value` is, that a Proxy of one wraps, or that an object inherits from. Undefined for every other
+/// value: `Query.prototype` has the methods of a query and none of its state.
+let queryOf: (value: object | null) => Query<any, any> | undefined;
 /// Calls `callback` in a microtask once the query has settled, before the reactions of the caller.
 let onQuerySettled: (query: Query<any, any>, callback: () => void) => void;
 /// For "bun:internal-for-testing".
@@ -48,14 +48,11 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
 
   static {
     queryOf = value => {
-      if (!$isObject(value)) return undefined;
-      while (!(#status in value)) {
-        if (!$isProxyObject(value)) return undefined;
-        value = $getProxyInternalField(value, $proxyFieldTarget);
-        // a revoked Proxy
-        if (value === null) return undefined;
+      while ($isObject(value)) {
+        if (#status in value) return value;
+        value = $isProxyObject(value) ? $getProxyInternalField(value, $proxyFieldTarget) : $getPrototypeOf(value);
       }
-      return value;
+      return undefined;
     };
     onQuerySettled = (query, callback) => {
       // A query that is only started, sql`...`.execute(), does not end the process when it fails. What the caller

@@ -478,8 +478,6 @@ static void setTracksActivity(us_socket_t* socket, bool tracks)
 {
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->setFlag(uWS::HttpResponseData<SSL>::HTTP_NODE_TRACKS_ACTIVITY, tracks);
-    // What left before the timer was handed over is no progress under it.
-    httpResponseData->backlogMoved = false;
 }
 
 /* Whether bytes of a pending write left since the last call (AsyncSocketData::backlogMoved). */
@@ -493,6 +491,15 @@ static bool takeBacklogMoved(us_socket_t* socket)
 static bool takeBacklogMoved(us_socket_t* socket, bool ssl)
 {
     return ssl ? takeBacklogMoved<true>(socket) : takeBacklogMoved<false>(socket);
+}
+
+/* What has left of a pending write until now is no progress for the next holdTimeoutBackOnce(). Only for an open socket. */
+void JSNodeHTTPServerSocket::forgetWriteProgress()
+{
+    takeBacklogMoved(socket, is_ssl);
+    if (is_ssl) {
+        lastTLSSpill = us_socket_ssl_spill_pending(socket);
+    }
 }
 
 void JSNodeHTTPServerSocket::setInactivityTimer(JSC::VM& vm, JSC::JSObject* timer)
@@ -509,6 +516,7 @@ void JSNodeHTTPServerSocket::setInactivityTimer(JSC::VM& vm, JSC::JSObject* time
     } else {
         setTracksActivity<false>(socket, !!timer);
     }
+    forgetWriteProgress();
 }
 
 void JSNodeHTTPServerSocket::touchInactivityTimer()
@@ -518,7 +526,7 @@ void JSNodeHTTPServerSocket::touchInactivityTimer()
         timeoutHeldBack = false;
         // onClose() clears `socket` before the task that runs detach().
         if (socket && !us_socket_is_closed(socket)) {
-            takeBacklogMoved(socket, is_ssl);
+            forgetWriteProgress();
         }
     }
 }

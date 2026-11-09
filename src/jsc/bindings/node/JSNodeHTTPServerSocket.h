@@ -72,7 +72,7 @@ public:
     std::optional<bool> closedWithUnsentData;
     /* For m_pipelinedResponses. Here it takes padding, and the object is as large as without m_inactivityTimer. */
     mutable WTF::Lock m_pipelinedResponsesLock;
-    /* us_socket_ssl_spill_pending() at the last holdTimeoutBackOnce(). */
+    /* us_socket_ssl_spill_pending() at the last refresh of m_inactivityTimer or holdTimeoutBackOnce(), whichever came last. */
     unsigned lastTLSSpill = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
@@ -113,6 +113,7 @@ public:
     /* node:http: takes the Timeout of an armed socket inactivity timeout (never the keep-alive one), or null. Server writes and the progress of a pending write refresh it, like net.Socket in Node. */
     void setInactivityTimer(JSC::VM& vm, JSC::JSObject* timer);
     void touchInactivityTimer();
+    void forgetWriteProgress();
     /* For a timer that fired, where Node looks at writeQueueSize. True when bytes of a pending write left since the last call or refresh, and for the first look at a write that is `pending`. */
     bool holdTimeoutBackOnce(bool pending);
 

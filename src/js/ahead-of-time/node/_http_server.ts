@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 154a159503904ab6d703e37d5bdaa37f01a37c82c3f28a9dc35b073ecf9701ab.
+// Written against that file with the SHA-256 afe1fa727e188edb03f07d531760d32176b6cf4ddc3b2febb8751ce16f71a6d5.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -2741,12 +2741,15 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
 
     _onTimeout() {
       const handle = this[kHandle];
-      // Not under the keep-alive timeout: nothing writes there, and the native connection does not have that timer.
-      if (handle && !this[kKeepAliveTimeoutSet]) {
+      if (handle) {
         // The connection has closed, and 'close' comes next.
         if (handle.closed) return;
         // Node looks at the write queue here: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
-        if (handle.holdTimeoutBackOnce(this.writableLength > 0 || (handle.response?.bufferedAmount ?? 0) > 0)) {
+        // Not under the keep-alive timeout: nothing writes there, and the native connection does not have that timer.
+        if (
+          !this[kKeepAliveTimeoutSet] &&
+          handle.holdTimeoutBackOnce(this.writableLength > 0 || (handle.response?.bufferedAmount ?? 0) > 0)
+        ) {
           this._unrefTimer();
           return;
         }

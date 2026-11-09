@@ -1,11 +1,12 @@
 import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tls as tlsOptions } from "harness";
+import { isWindows, tempDir, tls as tlsOptions } from "harness";
 import { once } from "node:events";
 import { readSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
+import { join } from "node:path";
 import { pipeline, Writable } from "node:stream";
 import tls from "node:tls";
 
@@ -19,6 +20,13 @@ async function listen(server: http.Server) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   return (server.address() as net.AddressInfo).port;
+}
+
+// Closes the server and waits for its connections. A connection frees its response on a later turn
+// of the event loop than the one that closes it, and the last test of the file must not end before that.
+async function close(server: http.Server) {
+  server.closeAllConnections();
+  await new Promise(resolve => server.close(resolve));
 }
 
 // For setSocketOptions(). A small kernel buffer keeps most of a large write with the server, whatever the limits of the machine are.
@@ -470,56 +478,84 @@ describe("node:http server timeout enforcement", () => {
   // The reset of the peer and the request of another connection reach the server together. The handler of
   // that request keeps the event loop past the deadline of the timer, so the timer is due when the connection
   // has closed and its 'close' is not out yet. Node emits no 'timeout' there.
-  test("no 'timeout' on a connection that its peer has reset", async () => {
-    const TIMEOUT = 400;
-    let deadline = 0;
-    let timeoutsBehindTheClose = 0;
-    let reset: net.Socket | undefined;
-    let other: net.Socket | undefined;
-    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
-    const server = http.createServer((req, res) => {
-      if (req.url === "/busy") {
-        while (performance.now() < deadline + 50) {}
-        res.end();
-        return;
+  test.each(["socket.setTimeout()", "keepAliveTimeout"])(
+    "no 'timeout' from %s on a connection that its peer has reset",
+    async armedBy => {
+      const TIMEOUT = 400;
+      let deadline = 0;
+      let expiriesBehindTheClose = 0;
+      let timeoutsBehindTheClose = 0;
+      let reset: net.Socket | undefined;
+      let other: net.Socket | undefined;
+      const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+      const server = http.createServer((req, res) => {
+        if (req.url === "/busy") {
+          // No event to wait for: the event loop must not turn before the timer is due.
+          while (performance.now() < deadline + 50) {}
+          res.end();
+          return;
+        }
+        const socket = req.socket as net.Socket & { _onTimeout(): void };
+        // The native connection says when it has closed.
+        const handle = (socket as any)[
+          Object.getOwnPropertySymbols(socket).find(symbol => symbol.description === "handle")!
+        ];
+        // Every expiry of the timer comes through here.
+        const onTimeout = socket._onTimeout;
+        socket._onTimeout = function () {
+          if (handle.closed) expiriesBehindTheClose++;
+          return onTimeout.call(this);
+        };
+        socket.on("timeout", () => handle.closed && timeoutsBehindTheClose++);
+        socket.on("close", onClosed);
+        for (const stream of [socket, req, res]) stream.on("error", () => {});
+        const armed = () => {
+          deadline = performance.now() + TIMEOUT;
+          // On the next turn, when the server has left the read of this connection.
+          setImmediate(() => {
+            reset!.resetAndDestroy();
+            other!.write("GET /busy HTTP/1.1\r\nHost: a\r\n\r\n");
+            // Both are at the sockets of the server before the event loop asks the kernel again. The loopback of macOS delivers on another thread.
+            Bun.sleepSync(10);
+          });
+        };
+        if (armedBy === "keepAliveTimeout") {
+          // The keep-alive timeout starts behind the response.
+          res.on("finish", armed);
+          res.end();
+        } else {
+          socket.setTimeout(TIMEOUT);
+          armed();
+        }
+      });
+      server.keepAliveTimeout = TIMEOUT;
+      server.keepAliveTimeoutBuffer = 0;
+      // Keeps a socket that times out, so its 'close' comes from the reset alone.
+      server.on("timeout", () => {});
+      const port = await listen(server);
+      try {
+        other = net.connect(port, "127.0.0.1");
+        other.on("error", () => {});
+        other.resume();
+        await once(other, "connect");
+        reset = net.connect(port, "127.0.0.1");
+        reset.on("error", () => {});
+        reset.resume();
+        await once(reset, "connect");
+        reset.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+        await closed;
+        // The timer came due behind the close, once. Without that the absence of a 'timeout' proves nothing.
+        expect({ expiriesBehindTheClose, timeoutsBehindTheClose }).toEqual({
+          expiriesBehindTheClose: 1,
+          timeoutsBehindTheClose: 0,
+        });
+      } finally {
+        reset?.destroy();
+        other?.destroy();
+        await close(server);
       }
-      const socket = req.socket;
-      // The native connection says when it has closed.
-      const handle = (socket as any)[
-        Object.getOwnPropertySymbols(socket).find(symbol => symbol.description === "handle")!
-      ];
-      socket.setTimeout(TIMEOUT);
-      deadline = performance.now() + TIMEOUT;
-      socket.on("timeout", () => handle.closed && timeoutsBehindTheClose++);
-      socket.on("close", onClosed);
-      for (const stream of [socket, req, res]) stream.on("error", () => {});
-      setTimeout(() => {
-        // Both are with the kernel before the event loop asks it again.
-        reset!.resetAndDestroy();
-        other!.write("GET /busy HTTP/1.1\r\nHost: a\r\n\r\n");
-      }, TIMEOUT - 150);
-    });
-    // Keeps a socket that times out, so its 'close' comes from the reset alone.
-    server.on("timeout", () => {});
-    const port = await listen(server);
-    try {
-      other = net.connect(port, "127.0.0.1");
-      other.on("error", () => {});
-      other.resume();
-      await once(other, "connect");
-      reset = net.connect(port, "127.0.0.1");
-      reset.on("error", () => {});
-      await once(reset, "connect");
-      reset.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
-      await closed;
-      expect(timeoutsBehindTheClose).toBe(0);
-    } finally {
-      reset?.destroy();
-      other?.destroy();
-      server.closeAllConnections();
-      server.close();
-    }
-  });
+    },
+  );
 });
 
 // server.setTimeout (applied per connection), req.setTimeout, res.setTimeout
@@ -724,8 +760,7 @@ describe("node:http server writes restart the socket inactivity timeout", () => 
       expect(await Promise.race([firstTimeout, lost(client)])).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
     } finally {
       client?.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 
@@ -790,8 +825,7 @@ describe("node:http server writes restart the socket inactivity timeout", () => 
       } finally {
         clearTimeout(reference);
         client?.destroy();
-        server.closeAllConnections();
-        server.close();
+        await close(server);
       }
     },
   );
@@ -855,8 +889,7 @@ describe("node:http server writes restart the socket inactivity timeout", () => 
     } finally {
       clearTimeout(reference);
       client?.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 
@@ -900,8 +933,7 @@ describe("node:http server writes restart the socket inactivity timeout", () => 
     } finally {
       clearTimeout(reference);
       client?.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 
@@ -940,8 +972,7 @@ describe("node:http server writes restart the socket inactivity timeout", () => 
     } finally {
       clearTimeout(reference);
       client?.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 
@@ -986,8 +1017,7 @@ describe("node:http server writes restart the socket inactivity timeout", () => 
     } finally {
       clearTimeout(reference);
       client?.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 
@@ -1025,8 +1055,7 @@ describe("node:http server writes restart the socket inactivity timeout", () => 
     } finally {
       clearTimeout(reference);
       client?.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 });
@@ -1041,7 +1070,7 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
   // all. Then it takes the rest.
   const SLOW_FOR = TIMEOUT * 2.75;
   const STEP = 16 * 1024;
-  function readSlowly(client: net.Socket, step = STEP, slowFor = SLOW_FOR) {
+  function readSlowly(client: net.Socket) {
     let budget = 0;
     let received = 0;
     let head = -1;
@@ -1062,7 +1091,7 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
     });
     const pump = setInterval(() => {
       // A chunk that was larger than the step is paid off before the next one.
-      if (startedAt === 0 || performance.now() - startedAt < slowFor) budget = Math.min(budget + step, step);
+      if (startedAt === 0 || performance.now() - startedAt < SLOW_FOR) budget = Math.min(budget + STEP, STEP);
       else budget = Infinity;
       if (budget > 0) client.resume();
     }, 20);
@@ -1155,8 +1184,7 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
       );
     } finally {
       client.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 
@@ -1189,51 +1217,140 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
       );
     } finally {
       client.destroy();
-      server.closeAllConnections();
-      server.close();
-    }
-  });
-
-  // The TLS layer takes a batch of records from the server and holds the ciphertext that the kernel does not take
-  // yet. The reader takes 2 KB every 20 ms to the end, and the buffers are small, so a batch leaves for longer
-  // than two periods. In that time no plaintext leaves the server, and behind the last batch none is left.
-  // Not concurrent: while another connection of the process holds a batch, the TLS layer sends record by record.
-  test("no 'timeout' while a slow reader drains what the TLS layer holds of one res.end()", async () => {
-    const body = BODY.subarray(0, 224 * 1024);
-    let timeouts = 0;
-    let pendingFor = 0;
-    const server = https.createServer(tlsOptions, (req, res) => {
-      setSocketOptions(req.socket, 1, KERNEL_BUFFER / 4);
-      res.writeHead(200, { "Content-Length": body.length, "Connection": "close" });
-      const wroteAt = performance.now();
-      res.end(body, () => (pendingFor = performance.now() - wroteAt));
-    });
-    server.timeout = TIMEOUT;
-    server.on("timeout", socket => {
-      timeouts++;
-      socket.destroy();
-    });
-    const port = await listen(server);
-    const client = tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
-    try {
-      const received = readSlowly(client, 2 * 1024, Infinity);
-      await once(client, "secureConnect");
-      setSocketOptions(client, 2, KERNEL_BUFFER / 4);
-      client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
-      expect({ body: await received, timeouts, pendingForTwoPeriods: pendingFor > 2 * TIMEOUT }).toEqual({
-        body: body.length,
-        timeouts: 0,
-        pendingForTwoPeriods: true,
-      });
-    } finally {
-      client.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 
   // The timer clock counts whole milliseconds. A server that does not count the bytes fires TIMEOUT / 2 early or more.
   const SLACK = 50;
+
+  // A TCP relay in front of a server on a Unix socket. Every 20 ms it takes up to allowance() bytes of the server
+  // from the kernel and hands them to its client, so it is the relay that says how fast the bytes leave the server.
+  async function relay(path: string, allowance: () => number) {
+    const listener = net.createServer(client => {
+      const server = net.connect({ path });
+      // The event loop never reads it.
+      server.pause();
+      server.on("error", () => client.destroy());
+      client.on("error", () => server.destroy());
+      client.on("data", chunk => server.write(chunk));
+      const into = Buffer.alloc(64 * 1024);
+      const pump = setInterval(() => {
+        const fd: number | undefined = (server as any)._handle?.fd;
+        if (fd === undefined || fd < 0) return;
+        try {
+          for (let left = allowance(); left > 0;) {
+            const length = readSync(fd, into, 0, Math.min(left, into.length), null);
+            // The server has closed the connection.
+            if (length === 0) return client.end();
+            client.write(Buffer.from(into.subarray(0, length)));
+            left -= length;
+          }
+        } catch (error: any) {
+          if (error.code !== "EAGAIN") client.destroy(error);
+        }
+      }, 20);
+      client.on("close", () => {
+        clearInterval(pump);
+        server.destroy();
+      });
+    });
+    listener.listen(0, "127.0.0.1");
+    await once(listener, "listening");
+    return listener;
+  }
+
+  // One write of 128 KB is one batch of TLS records. The TLS layer takes all of it and holds the ciphertext that
+  // the kernel does not take, so the server has no byte of the write left. The kernel holds 8 KB of a Unix socket
+  // with this send buffer, where a TCP connection starts with a receive window of half the batch. The relay takes
+  // 2 KB every 20 ms for longer than two periods, then the rest. Behind that a last write restarts the timer, and
+  // what the TLS layer held before it must not hold 'timeout' back again.
+  test("the ciphertext that the TLS layer holds of a write counts while it leaves, and not after", async () => {
+    // A short name: the path of a Unix socket has about 100 bytes.
+    using dir = tempDir("http-tls", {});
+    const path = join(String(dir), "s.sock");
+    const body = BODY.subarray(0, 128 * 1024);
+    let slowSince = 0;
+    let expiriesWhileLeaving = 0;
+    let timeoutsWhileLeaving = 0;
+    let lastWriteAt = 0;
+    let timedOutAt = 0;
+    let referenceFired = false;
+    let reference: ReturnType<typeof setTimeout> | undefined;
+    let writeLast = () => {};
+    const { promise: settled, resolve: onSettled } = Promise.withResolvers<void>();
+    const server = https.createServer(tlsOptions, (req, res) => {
+      const socket = req.socket as net.Socket & { _onTimeout(): void };
+      setSocketOptions(socket, 1, 4 * 1024);
+      // Every expiry of the timer comes through here.
+      const onTimeout = socket._onTimeout;
+      socket._onTimeout = function () {
+        if (lastWriteAt === 0) expiriesWhileLeaving++;
+        return onTimeout.call(this);
+      };
+      res.writeHead(200, { "Content-Length": body.length + 1 });
+      slowSince = performance.now();
+      res.write(body);
+      writeLast = () => {
+        lastWriteAt = performance.now();
+        res.write("x");
+        // Between the first expiry behind this write and the second one.
+        reference = setTimeout(() => {
+          referenceFired = true;
+          onSettled();
+        }, TIMEOUT * 1.5);
+      };
+    });
+    server.timeout = TIMEOUT;
+    server.on("timeout", socket => {
+      if (lastWriteAt === 0) timeoutsWhileLeaving++;
+      else timedOutAt = performance.now();
+      socket.destroy();
+      onSettled();
+    });
+    server.listen(path);
+    await once(server, "listening");
+    const slowFor = TIMEOUT * 2.25;
+    const inFront = await relay(path, () =>
+      slowSince !== 0 && performance.now() - slowSince < slowFor ? 2 * 1024 : Infinity,
+    );
+    const client = tls.connect({
+      port: (inFront.address() as net.AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    try {
+      let received = 0;
+      let head = -1;
+      let beforeBody = "";
+      client.on("error", () => {});
+      client.on("data", chunk => {
+        if (head === -1) {
+          // The blank line that ends the head can lie across two chunks.
+          beforeBody += chunk.toString("latin1");
+          const end = beforeBody.indexOf("\r\n\r\n");
+          if (end !== -1) head = end + 4;
+        }
+        received += chunk.length;
+        // The whole first write is here, so the TLS layer holds nothing.
+        if (head !== -1 && received - head === body.length) writeLast();
+      });
+      await once(client, "secureConnect");
+      client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+      await settled;
+      expect({ timeoutsWhileLeaving, twoExpiriesWhileLeaving: expiriesWhileLeaving >= 2, referenceFired }).toEqual({
+        timeoutsWhileLeaving: 0,
+        twoExpiriesWhileLeaving: true,
+        referenceFired: false,
+      });
+      expect(timedOutAt - lastWriteAt).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
+    } finally {
+      clearTimeout(reference);
+      client.destroy();
+      inFront.close();
+      await close(server);
+    }
+  });
 
   // What the kernel holds for a paused client, taken from its descriptor at once. Behind it the send buffer of the server has room again.
   function takeFromKernel(client: net.Socket, into: Buffer) {
@@ -1251,9 +1368,30 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
     }
   }
 
+  // Makes the server send what it holds of its writes from inside write() calls alone. The client is paused, this
+  // takes its bytes from the kernel, and each call then sends what the kernel has room for.
+  function sendPendingBytesInWrites(res: http.ServerResponse, client: net.Socket) {
+    // The native response says what it still holds of the writes.
+    const handle = (res as any)[Object.getOwnPropertySymbols(res).find(symbol => symbol.description === "handle")!];
+    if (handle.bufferedAmount === 0) throw new Error("the kernel took the whole megabyte");
+    const into = Buffer.alloc(64 * 1024);
+    const giveUpAt = performance.now() + 3000;
+    while (handle.bufferedAmount > 0) {
+      if (takeFromKernel(client, into) === 0) {
+        // The last call sent nothing: on macOS the kernel opens the window of the client a moment behind the read.
+        if (performance.now() > giveUpAt) throw new Error("the pending bytes do not leave");
+        Bun.sleepSync(1);
+      }
+      res.write("ping");
+    }
+    // Room for the last ping, which leaves when the caller returns.
+    takeFromKernel(client, into);
+  }
+
   // A write() call sends the bytes that are pending before its own. The call that sends the last of them is
-  // activity, although nothing is pending when the timer fires next. The client is paused and the handler takes
-  // its bytes from the kernel itself, so no byte leaves the server outside a write() call.
+  // activity, although nothing is pending when the timer fires next, and the kernel then reports the socket
+  // writable once more. The server counts the bytes there, as Node does when a pending write completes: 'timeout'
+  // comes one period behind them. No byte leaves the server outside a write() call.
   test.concurrent.each([
     ["many chunks of 8 KB", 8 * 1024],
     // Over 16 KB the server keeps the rest of a write by reference, not in the buffer of the connection.
@@ -1261,43 +1399,42 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
   ])("a write() that sends the last pending bytes of %s restarts the period", async (_, size) => {
     let client: net.Socket | undefined;
     let emptying: ReturnType<typeof setTimeout> | undefined;
+    let reference: ReturnType<typeof setTimeout> | undefined;
+    let referenceFired = false;
     let emptiedAt = 0;
-    const { promise: timedOut, resolve: onTimedOut, reject: onFailed } = Promise.withResolvers<number>();
+    let timedOutAt = 0;
+    const { promise: settled, resolve: onSettled, reject: onFailed } = Promise.withResolvers<void>();
     const server = http.createServer((req, res) => {
       const socket = req.socket as net.Socket & { _onTimeout(): void };
       setSocketOptions(socket, 1, KERNEL_BUFFER);
       res.writeHead(200);
       for (let written = 0; written < 1024 * 1024; written += size) res.write(Buffer.alloc(size, "a"));
-      // The native response says what it still holds of the writes.
-      const handle = (res as any)[Object.getOwnPropertySymbols(res).find(symbol => symbol.description === "handle")!];
       const empty = () => {
         try {
-          if (handle.bufferedAmount === 0) throw new Error("the kernel took the whole megabyte");
-          const into = Buffer.alloc(64 * 1024);
-          const giveUpAt = performance.now() + 3000;
-          while (handle.bufferedAmount > 0) {
-            if (takeFromKernel(client!, into) > 0) res.write("ping");
-            else if (performance.now() > giveUpAt) throw new Error("the pending bytes do not leave");
-          }
-          // Room for the last ping, which leaves when this callback returns.
-          takeFromKernel(client!, into);
+          sendPendingBytesInWrites(res, client!);
           emptiedAt = performance.now();
+          // A server that counts these bytes only when the timer fires is due at the second expiry from here, behind this.
+          reference = setTimeout(() => {
+            referenceFired = true;
+            onSettled();
+          }, TIMEOUT * 1.5);
         } catch (error) {
           onFailed(error);
         }
       };
-      // The first expiry finds the writes pending. Three quarters of a period behind it, when the kernel takes no more by itself, the handler sends the rest.
+      // The first expiry finds the writes pending. A quarter of a period behind it, when the kernel takes no more by itself, the handler sends the rest.
       const onTimeout = socket._onTimeout;
       let expiries = 0;
       socket._onTimeout = function () {
-        if (++expiries === 1) emptying = setTimeout(empty, TIMEOUT * 0.75);
+        if (++expiries === 1) emptying = setTimeout(empty, TIMEOUT / 4);
         return onTimeout.call(this);
       };
     });
     server.timeout = TIMEOUT;
     server.on("timeout", socket => {
-      onTimedOut(performance.now());
+      timedOutAt = performance.now();
       socket.destroy();
+      onSettled();
     });
     const port = await listen(server);
     try {
@@ -1307,15 +1444,15 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
       await once(client, "connect");
       setSocketOptions(client, 2, KERNEL_BUFFER);
       client.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
-      const timedOutAt = await timedOut;
-      // A server that does not count those bytes fires at the first expiry, or a quarter of a period behind them.
-      expect(emptiedAt).not.toBe(0);
+      await settled;
+      expect({ emptied: emptiedAt !== 0, referenceFired }).toEqual({ emptied: true, referenceFired: false });
+      // A server that does not count those bytes fires three quarters of a period behind them.
       expect(timedOutAt - emptiedAt).toBeGreaterThanOrEqual(TIMEOUT - SLACK);
     } finally {
       clearTimeout(emptying);
+      clearTimeout(reference);
       client?.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 
@@ -1384,8 +1521,7 @@ describe.skipIf(isWindows)("node:http: a write that drains slowly holds the sock
     } finally {
       clearInterval(pump);
       client.destroy();
-      server.closeAllConnections();
-      server.close();
+      await close(server);
     }
   });
 });

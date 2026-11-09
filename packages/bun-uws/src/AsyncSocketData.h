@@ -180,8 +180,8 @@ struct AsyncSocketData {
      * +3 undoes it, and an idle socket fires -4 in place of -2. */
     bool filteredIdleTunnel = false;
     /* Bytes of a write that was pending have reached the kernel: the sends of `buffer` in
-     * AsyncSocket::flush() and write() set it. node:http reads and clears it when a socket
-     * inactivity timeout fires. */
+     * AsyncSocket::flush() and write() set it. node:http reads and clears it at a writable
+     * event and when a socket inactivity timeout fires. */
     bool backlogMoved = false;
 };
 

@@ -106,6 +106,54 @@ describe.concurrent("a program compiled against a package that bun compile --lib
     expect(await compile(String(dir))).toEqual(USED);
   });
 
+  test("fields with a computed key are written into an .aot.ts file that compiles, also as a file of the program itself", async () => {
+    using dir = tempDir("aot-library-typed-file-computed-keys", {
+      ...library,
+      "library/src/area.ts": `import type { Shape } from "./index";
+const factor = "factor";
+const made = "made";
+class Sizes {
+  [factor]: number;
+  static [made]: number;
+  static {
+    Sizes[made] = 0;
+  }
+  constructor(by: number) {
+    this[factor] = by;
+    Sizes[made]++;
+  }
+  of(shape: Shape): number {
+    const by = shape.kind === "circle" ? this[factor] : 1;
+    return Sizes[made] > 0 ? by * shape.size ** 2 : 0;
+  }
+}
+export function area(shape: Shape): number {
+  return new Sizes(3).of(shape);
+}
+`,
+      // The checker keeps a TypeScript grammar error to itself for a file under node_modules. This one is the program's.
+      "library/importer.ts": `import { total } from "./dist/index.aot.ts";
+console.log(total([{ kind: "square", size: 2 }, { kind: "circle", size: 1 }]));
+`,
+    });
+    await install(String(dir));
+    expect(await compile(String(dir))).toEqual(USED);
+    const imported = await spawned([bunExe(), "--debug-aot", "importer.ts"], join(String(dir), "library"), env);
+    expect(imported).toEqual({ stdout: "7\n", stderr: "", exitCode: 0, signal: null });
+  });
+
+  test("type arguments of a new that only a comment stands before are written into the .aot.ts file", async () => {
+    using dir = tempDir("aot-library-typed-file-new-behind-comment", {
+      ...library,
+      "library/src/version.ts": `// Only this comment stands before the first token of the file.
+new Promise<void>(resolve => resolve());
+export const version: string = "1.2.3";
+`,
+    });
+    await install(String(dir));
+    expect(readFileSync(join(String(dir), "library/dist/version.aot.ts"), "utf8")).toContain("new Promise<void>(");
+  });
+
   test("a namespace that holds nothing but types is written into an .aot.ts file that compiles", async () => {
     using dir = tempDir("aot-library-typed-file-namespace-of-types", {
       ...library,

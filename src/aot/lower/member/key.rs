@@ -223,7 +223,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let value = self.lower_expression(computed);
         if self.builder.is_constant(value) {
             let constant = expression::find_constant_outside_dead_zone(self.file, computed);
-            if let Some(found) = constant.and_then(|constant| self.file.find_key_of_constant(constant)) {
+            if let Some(found) =
+                constant.and_then(|constant| self.file.find_key_of_constant(constant))
+            {
                 self.set_position(position);
                 return (PropertyName::Constant(found), Some(value));
             }

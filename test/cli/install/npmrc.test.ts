@@ -6579,6 +6579,68 @@ describe.concurrent("npmrc client TLS identity", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A completed request is copied back over the task's own request before it is retried, so a
+  // retry must still carry the client identity. The registry rejects a handshake without it.
+  test("retried manifest and tarball requests keep the client identity", async () => {
+    const tarball = await new Bun.Archive({
+      "package/package.json": JSON.stringify({ name: "retried", version: "1.0.0" }),
+    }).bytes("gzip");
+    const requests: string[] = [];
+    await using registry = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: { ...tls, ca: tls.cert, requestCert: true, rejectUnauthorized: true },
+      fetch(req) {
+        const path = new URL(req.url).pathname.slice(1);
+        requests.push(path);
+        if (requests.filter(seen => seen === path).length === 1) return new Response("busy", { status: 503 });
+        if (path.endsWith(".tgz")) return new Response(tarball);
+        return Response.json({
+          name: "retried",
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: "retried",
+              version: "1.0.0",
+              dist: { tarball: `https://localhost:${registry.port}/retried.tgz` },
+            },
+          },
+        });
+      },
+    });
+    using dir = tempDir("npmrc-mtls-retry", {
+      "home/.npmrc": `registry=https://localhost:${registry.port}/\n//localhost:${registry.port}/:certfile=client.pem\n//localhost:${registry.port}/:keyfile=client.key\ncafile=client.pem\n`,
+      "home/client.pem": tls.cert,
+      "home/client.key": tls.key,
+      "project/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { retried: "1.0.0" },
+      }),
+    });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(String(dir), "project"),
+      env: {
+        ...env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: undefined,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        BUN_CONFIG_HTTP_RETRY_COUNT: "2",
+        BUN_CONFIG_HTTP_RETRY_BACKOFF: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("1 package installed");
+    expect(requests).toEqual(["retried", "retried", "retried.tgz", "retried.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("an HTTP to HTTPS upgrade on the same port retains the registry client identity", async () => {
     await using target = await certificateServer();
     using origin = Bun.serve({

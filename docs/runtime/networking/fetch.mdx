@@ -253,8 +253,6 @@ await fetch("https://example.com", {
 });
 ```
 
-Client certificates are retained on same-origin redirects. When a redirect changes the scheme, hostname, or port, Bun removes the client certificate and key from subsequent requests while preserving the trusted CA settings. Returning to the original origin does not restore the client certificate. To authenticate to another origin, handle the redirect with `redirect: "manual"` and explicitly supply that origin's TLS options in a new request.
-
 #### Custom TLS Validation
 
 To customize TLS validation, use the `checkServerIdentity` option in `tls`:

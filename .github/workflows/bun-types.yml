@@ -60,6 +60,9 @@ jobs:
             curl -fsSL --retry 3 -o "$RUNNER_TEMP/engine.tar.gz" "$release/bun-webkit-linux-amd64-lto.tar.gz"
           tar -xzf "$RUNNER_TEMP/engine.tar.gz" -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
       - name: Check types
+        id: check-types
         run: bun test test/integration/bun-types/bun-types.test.ts
       - name: Check the type inventory
+        # Also after a failure of the step above, so that one run shows both. Not after a failed setup.
+        if: ${{ !cancelled() && steps.check-types.conclusion != 'skipped' }}
         run: bun test test/integration/bun-types/inventory.test.ts

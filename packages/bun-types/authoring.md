@@ -118,6 +118,8 @@ There is one file per preset:
 - `test-globals` and `vitest-globals` are the entry points that `index.d.ts` does not load (`/// <reference types="bun-types/test-globals" />`). Each file lists only what the entry point adds.
 - `ts7.1/` is not covered.
 
+A file ends with the declarations that the listed types name and that nothing exports, such as an interface that a module keeps to itself.
+
 How to read a line:
 
 - `name(a: A): B` is a method, with one line per overload. `name: (a: A) => B` is a property with a function type. TypeScript compares the parameters of a method bivariantly, so a change from one form to the other is a type change.
@@ -133,7 +135,7 @@ How to read a line:
 bun packages/bun-types/scripts/inventory.ts
 ```
 
-Read the diff before you commit it. A line that disappears from a preset, or a member whose type changed, is a breaking change for the users on that preset. A change that only moves declarations between files produces no diff.
+Read the diff before you commit it. A line that disappears from a preset, or a member whose type changed, is a breaking change for the users on that preset. A change that only moves a declaration produces no diff when it stays in its file. A move to another file changes the file name in parentheses after the symbol, and nothing else.
 
 ## Questions
 

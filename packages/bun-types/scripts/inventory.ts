@@ -108,14 +108,17 @@ function readVersion(packageJson: string): string | undefined {
  * output only changes when bun-types or that lockfile changes.
  */
 function pinnedDependencies(): string[] {
-  const nodeTypesDir = join(PACKAGE_ROOT, "node_modules", "@types", "node");
-  const nodeTypesVersion = readVersion(join(nodeTypesDir, "package.json"));
-  if (!nodeTypesVersion) {
-    throw new Error(`@types/node is not installed in ${nodeTypesDir}. Run \`bun install\` in the repository first.`);
+  // Resolved like an import from the package: a hoisted install puts @types/node in the
+  // node_modules of the repository root, an isolated one in packages/bun-types/node_modules.
+  let nodeTypesPackageJson: string;
+  try {
+    nodeTypesPackageJson = createRequire(join(PACKAGE_ROOT, "package.json")).resolve("@types/node/package.json");
+  } catch {
+    throw new Error(`@types/node is not installed for ${PACKAGE_ROOT}. Run \`bun install\` in the repository first.`);
   }
-  const pins = [`@types/node@${nodeTypesVersion}`];
+  const pins = [`@types/node@${readVersion(nodeTypesPackageJson)}`];
   // undici-types is a dependency of @types/node, so resolve it from there.
-  const requireFromNodeTypes = createRequire(join(realpathSync.native(nodeTypesDir), "index.d.ts"));
+  const requireFromNodeTypes = createRequire(realpathSync.native(nodeTypesPackageJson));
   let undiciPackageJson: string | undefined;
   try {
     undiciPackageJson = requireFromNodeTypes.resolve("undici-types/package.json");
@@ -260,13 +263,18 @@ function inventory(
 
   const rawTypeText = (type: ts.Type) => clean(checker.typeToString(type, undefined, typeFormat));
 
+  // Every class, interface, enum and alias that a printed type names.
+  const named = new Set<ts.Symbol>();
+
   /**
    * `Bun.Serve.Options`, `import("bun:test").Matchers`, `NodeJS.Dict`, `Blob`: the name of a
    * type with the module that exports it. TypeScript prints the export of a module as the
    * bare name, so `Matchers` of "bun:test" and `Matchers` of "vitest" would read the same.
    */
   function qualifiedName(symbol: ts.Symbol): string {
-    const full = checker.getFullyQualifiedName(symbol);
+    named.add(checker.getMergedSymbol(symbol));
+    // `global.NodeJS.Dict` is what a declaration inside `declare global { }` is called.
+    const full = checker.getFullyQualifiedName(symbol).replace(/^global\./, "");
     const quoted = /^"((?:[^"\\]|\\.)*)"(?:\.(.*))?$/.exec(full);
     if (!quoted) return full;
     const [, module, rest] = quoted;
@@ -361,6 +369,9 @@ function inventory(
     return decl && ts.canHaveModifiers(decl) ? ts.getCombinedModifierFlags(decl) : ts.ModifierFlags.None;
   };
 
+  const accessibility = (flags: ts.ModifierFlags) =>
+    flags & ts.ModifierFlags.Private ? "private" : flags & ts.ModifierFlags.Protected ? "protected" : "";
+
   /** `readonly x`, or `get x()` with no `set x()`. */
   const isReadonly = (sym: ts.Symbol) =>
     !!(modifierFlags(sym) & ts.ModifierFlags.Readonly) ||
@@ -377,7 +388,22 @@ function inventory(
     const signatures = signaturesOf(type, ts.SignatureKind.Call);
     if (signatures.length === 0) return undefined;
     const optional = prop.flags & ts.SymbolFlags.Optional ? "?" : "";
-    return signatures.map(sig => `${name}${optional}${signatureText(sig, ts.SignatureKind.Call, ": ")}`);
+    const access = accessibility(modifierFlags(prop));
+    return signatures.map(
+      sig => `${access && access + " "}${name}${optional}${signatureText(sig, ts.SignatureKind.Call, ": ")}`,
+    );
+  }
+
+  /**
+   * The name of a member. A key that is a symbol prints as it is declared, `[Symbol.iterator]`
+   * or `[EventEmitter.captureRejectionSymbol]`: TypeScript's own name for it is `__@iterator@123`.
+   */
+  function memberName(prop: ts.Symbol): string {
+    if (prop.name.startsWith("__@")) {
+      const declaration = (prop.valueDeclaration ?? prop.declarations?.[0]) as ts.NamedDeclaration | undefined;
+      if (declaration?.name && ts.isComputedPropertyName(declaration.name)) return clean(declaration.name.getText());
+    }
+    return clean(prop.name);
   }
 
   /** `{ a: A; b?: B }`, `(a: A) => B` or `new (a: A) => B`: an object type that is written inline and has no name. */
@@ -415,7 +441,7 @@ function inventory(
         return `${info.isReadonly ? "readonly " : ""}[${key}: ${typeText(info.keyType)}]: ${typeText(info.type)}`;
       }),
       ...props.flatMap(prop => {
-        const name = clean(prop.name);
+        const name = memberName(prop);
         const key = /^[A-Za-z_$][\w$]*$/.test(name) || name.startsWith("[") ? name : JSON.stringify(name);
         const optional = prop.flags & ts.SymbolFlags.Optional ? "?" : "";
         return (
@@ -496,11 +522,29 @@ function inventory(
     if (checker.isTupleType(type)) return tupleText(type as ts.TupleTypeReference);
     if (isTypeLiteral(type)) {
       if (printing.has(type)) return "...";
+      // Every instantiation of a generic literal is another type, so identity alone does not end
+      // a literal whose members instantiate it again. TypeScript's own printer has a limit.
+      if (printing.size >= 16) return ownText();
       printing.add(type);
       try {
         return typeLiteralText(type);
       } finally {
         printing.delete(type);
+      }
+    }
+    // `A extends B ? C : D` as it is declared. The branches of an instantiated one, and a
+    // `B` that declares `infer` parameters, are left to TypeScript.
+    if (type.flags & ts.TypeFlags.Conditional) {
+      const conditional = type as ts.ConditionalType & { mapper?: unknown };
+      const { node, inferTypeParameters } = conditional.root;
+      if (!conditional.mapper && !inferTypeParameters) {
+        const check = conditional.checkType;
+        const extended = conditional.extendsType;
+        const checkText = memberText(check, check.isUnion() || check.isIntersection());
+        const extendsText = memberText(extended, false);
+        const whenTrue = typeText(checker.getTypeFromTypeNode(node.trueType));
+        const whenFalse = typeText(checker.getTypeFromTypeNode(node.falseType));
+        return `${checkText} extends ${extendsText} ? ${whenTrue} : ${whenFalse}`;
       }
     }
     // A class or an interface, with its type arguments.
@@ -597,6 +641,8 @@ function inventory(
   function modifiers(sym: ts.Symbol): string {
     const out: string[] = [];
     if (sym.flags & ts.SymbolFlags.Optional) out.push("?");
+    const access = accessibility(modifierFlags(sym));
+    if (access) out.push(access);
     if (isReadonly(sym)) out.push("readonly");
     if (modifierFlags(sym) & ts.ModifierFlags.Static) out.push("static");
     return out.length ? ` [${out.join(" ")}]` : "";
@@ -618,7 +664,10 @@ function inventory(
       lines.push(`${indent}call ${signatureText(sig, ts.SignatureKind.Call, ": ")}`);
     }
     for (const sig of signaturesOf(type, ts.SignatureKind.Construct)) {
-      lines.push(`${indent}construct ${signatureText(sig, ts.SignatureKind.Construct, ": ")}`);
+      const declaration = sig.getDeclaration() as ts.SignatureDeclaration | undefined;
+      const access =
+        declaration && ts.canHaveModifiers(declaration) ? accessibility(ts.getCombinedModifierFlags(declaration)) : "";
+      lines.push(`${indent}construct ${access && access + " "}${signatureText(sig, ts.SignatureKind.Construct, ": ")}`);
     }
     for (const info of checker.getIndexInfosOfType(type)) {
       lines.push(
@@ -627,7 +676,7 @@ function inventory(
     }
     const props = [...checker.getPropertiesOfType(type)].sort(byName);
     for (const prop of props) {
-      const name = clean(prop.name);
+      const name = memberName(prop);
       const methods = methodTexts(prop, name);
       if (methods) for (const method of methods) lines.push(indent + method);
       else lines.push(`${indent}${name}${modifiers(prop)}: ${typeText(checker.getTypeOfSymbol(prop))}`);
@@ -712,10 +761,7 @@ function inventory(
       if (!(target.flags & ts.SymbolFlags.Class)) {
         lines.push(`${indent}namespace ${path} (${where})`);
       }
-      for (const member of packageExportsOf(target)) {
-        if (member.name === "default") continue;
-        emitSymbol(member, `${path}.${member.name}`, inner);
-      }
+      for (const member of packageExportsOf(target)) emitSymbol(member, `${path}.${member.name}`, inner);
     }
   }
 
@@ -724,14 +770,27 @@ function inventory(
   // from a module file (`declare module "node:tls"` in overrides.d.ts). An
   // augmentation merges into a copy of the target module's symbol, so
   // getMergedSymbol is what carries the bun-types declarations.
-  const modules = checker
-    .getAmbientModules()
-    .map(mod => checker.getMergedSymbol(mod))
-    .filter(isFromPackage)
+  // getAmbientModules() has no module that is a file. A `declare module "x"` of bun-types
+  // that augments one names it.
+  // The specifier is the name: a module with `export =` resolves to what it exports.
+  const moduleNames = new Map<ts.Symbol, string>();
+  for (const mod of checker.getAmbientModules()) moduleNames.set(checker.getMergedSymbol(mod), mod.name);
+  for (const file of program.getSourceFiles().filter(isPackageFile)) {
+    for (const declaration of file.statements.filter(ts.isModuleDeclaration)) {
+      if (!ts.isStringLiteral(declaration.name)) continue;
+      const target = checker.getSymbolAtLocation(declaration.name);
+      if (target && !moduleNames.has(checker.getMergedSymbol(target))) {
+        moduleNames.set(checker.getMergedSymbol(target), JSON.stringify(declaration.name.text));
+      }
+    }
+  }
+  const modules = [...moduleNames]
+    .map(([symbol, name]) => ({ symbol, name: clean(name) }))
+    .filter(mod => isFromPackage(mod.symbol))
     .sort(byName);
-  for (const mod of modules) {
-    lines.push(`# module ${mod.name}`);
-    seen.set(mod, `module ${mod.name}`);
+  for (const { symbol: mod, name } of modules) {
+    lines.push(`# module ${name}`);
+    seen.set(mod, `module ${name}`);
     const exportEquals = mod.exports?.get(ts.InternalSymbolName.ExportEquals as ts.__String);
     if (exportEquals) {
       lines.push(`export = ${typeText(checker.getTypeOfSymbol(resolveSymbol(exportEquals)))}`);
@@ -754,6 +813,22 @@ function inventory(
 
   lines.push("# globals");
   for (const sym of globals) emitSymbol(sym, sym.name, "");
+
+  // A declaration of bun-types that a listed type names and that is no export and no
+  // global: an interface that a module keeps to itself. Listing one can name more.
+  const unlisted = () => [...named].filter(sym => !seen.has(sym) && isFromPackage(sym));
+  const blocks: { name: string; lines: string[] }[] = [];
+  for (let rest = unlisted(); rest.length > 0; rest = unlisted()) {
+    for (const sym of rest) {
+      const start = lines.length;
+      emitSymbol(sym, qualifiedName(sym), "");
+      const block = lines.splice(start);
+      blocks.push({ name: block[0]!, lines: block });
+    }
+  }
+  if (blocks.length > 0) lines.push("", "# not exported, named by the types above");
+  // By name, not in the order in which the walk above met them.
+  for (const block of blocks.sort(byName)) lines.push(...block.lines);
 
   return lines;
 }

@@ -36,14 +36,14 @@ interface Blob (@types/node/buffer.d.ts, bun-types/overrides.d.ts)
   arrayBuffer(): Promise<ArrayBuffer>
   arrayBuffer(): Promise<ArrayBuffer>
   bytes(): Promise<Uint8Array<ArrayBuffer>>
-  bytes(): Promise<global.NodeJS.NonSharedUint8Array>
+  bytes(): Promise<NodeJS.NonSharedUint8Array>
   formData(): Promise<FormData>
   image(options?: Bun.Image.ConstructorOptions | undefined): Bun.Image
   json(): Promise<any>
   size [readonly]: number
   slice(start?: number | undefined, end?: number | undefined, contentType?: string | undefined): import("node:buffer").Blob
   stream(): ReadableStream<Uint8Array<ArrayBuffer>>
-  stream(): import("node:stream/web").ReadableStream<global.NodeJS.NonSharedUint8Array>
+  stream(): import("node:stream/web").ReadableStream<NodeJS.NonSharedUint8Array>
   text(): Promise<string>
   type [readonly]: string
 var Blob (@types/node/buffer.d.ts, bun-types/overrides.d.ts)
@@ -76,9 +76,9 @@ namespace $ (bun-types/shell.d.ts)
     message: string
     name: string
     stack [?]: string
-    stderr [readonly]: global.Buffer<ArrayBufferLike>
-    stdout [readonly]: global.Buffer<ArrayBufferLike>
-    text(encoding?: global.BufferEncoding | undefined): string
+    stderr [readonly]: Buffer<ArrayBufferLike>
+    stdout [readonly]: Buffer<ArrayBufferLike>
+    text(encoding?: BufferEncoding | undefined): string
     [static]
       construct new (message?: string | undefined, options?: ErrorOptions | undefined): Bun.$.ShellError
       construct new (message?: string | undefined, options?: ErrorOptions | undefined): Bun.$.ShellError
@@ -95,9 +95,9 @@ namespace $ (bun-types/shell.d.ts)
     bytes(): Uint8Array<ArrayBuffer>
     exitCode [readonly]: number
     json(): any
-    stderr [readonly]: global.Buffer<ArrayBufferLike>
-    stdout [readonly]: global.Buffer<ArrayBufferLike>
-    text(encoding?: global.BufferEncoding | undefined): string
+    stderr [readonly]: Buffer<ArrayBufferLike>
+    stdout [readonly]: Buffer<ArrayBufferLike>
+    text(encoding?: BufferEncoding | undefined): string
   class $.ShellPromise (bun-types/shell.d.ts)
     [Symbol.toStringTag] [readonly]: string
     arrayBuffer(): Promise<ArrayBuffer>
@@ -111,7 +111,7 @@ namespace $ (bun-types/shell.d.ts)
     nothrow(): Bun.$.ShellPromise
     quiet(isQuiet?: boolean | undefined): Bun.$.ShellPromise
     stdin [readonly]: WritableStream<any>
-    text(encoding?: global.BufferEncoding | undefined): Promise<string>
+    text(encoding?: BufferEncoding | undefined): Promise<string>
     then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: Bun.$.ShellOutput) => PromiseLike<TResult1> | TResult1) | null | undefined, onrejected?: ((reason: any) => PromiseLike<TResult2> | TResult2) | null | undefined): Promise<TResult1 | TResult2>
     throws(shouldThrow: boolean): Bun.$.ShellPromise
     [static]
@@ -183,18 +183,18 @@ class ArrayBufferSink (bun-types/bun.d.ts)
   [static]
     construct new (): Bun.ArrayBufferSink
     prototype: Bun.ArrayBufferSink
-type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> (bun-types/bun.d.ts) = DataView<TArrayBuffer> | global.NodeJS.TypedArray<TArrayBuffer>
+type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> (bun-types/bun.d.ts) = DataView<TArrayBuffer> | NodeJS.TypedArray<TArrayBuffer>
 type ArrayType (bun-types/sql.d.ts) = "ACLITEM" | "BIGINT" | "BIT" | "BOOLEAN" | "BOX" | "BYTEA" | "CHAR" | "CID" | "CIDR" | "CIRCLE" | "DATE" | "DOUBLE PRECISION" | "INET" | "INT" | "INT2VECTOR" | "INTEGER" | "INTERVAL" | "JSON" | "JSONB" | "JSONPATH" | "LINE" | "LSEG" | "MACADDR" | "MACADDR8" | "MONEY" | "NAME" | "NUMERIC" | "OID" | "PATH" | "PG_DATABASE" | "POINT" | "POLYGON" | "REAL" | "SMALLINT" | "TEXT" | "TID" | "TIME" | "TIMESTAMP" | "TIMESTAMPTZ" | "TIMETZ" | "UUID" | "VARBIT" | "VARCHAR" | "XID" | "XML" | (string & {})
 type BeforeExitListener (bun-types/bun.d.ts) = (code: number) => void
 type BinaryType (bun-types/bun.d.ts) = keyof Bun.BinaryTypeList
 interface BinaryTypeList (bun-types/bun.d.ts)
   arraybuffer: ArrayBuffer
-  buffer: global.Buffer<ArrayBufferLike>
+  buffer: Buffer<ArrayBufferLike>
   uint8array: Uint8Array<ArrayBuffer>
-type BlobOrStringOrBuffer (bun-types/bun.d.ts) = ArrayBufferLike | Blob | global.NodeJS.TypedArray<ArrayBufferLike> | string
+type BlobOrStringOrBuffer (bun-types/bun.d.ts) = ArrayBufferLike | Blob | NodeJS.TypedArray<ArrayBufferLike> | string
 type BlobPart (bun-types/bun.d.ts) = Blob | Bun.BufferSource | string
 type BodyInit (bun-types/fetch.d.ts) = (() => AsyncGenerator<ArrayBuffer | Bun.ArrayBufferView<ArrayBufferLike> | string, any, any>) | AsyncGenerator<ArrayBuffer | Bun.ArrayBufferView<ArrayBufferLike> | string, any, any> | AsyncIterable<ArrayBuffer | Bun.ArrayBufferView<ArrayBufferLike> | string> | Bun.Image | Bun.XMLHttpRequestBodyInit | ReadableStream<any>
-type BufferSource (bun-types/bun.d.ts) = ArrayBufferLike | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike>
+type BufferSource (bun-types/bun.d.ts) = ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike>
 namespace Build (bun-types/bun.d.ts)
   type Build.Architecture (bun-types/bun.d.ts) = "aarch64" | "arm64" | "x64"
   type Build.CompileTarget (bun-types/bun.d.ts) = "bun-darwin-aarch64" | "bun-darwin-aarch64-baseline" | "bun-darwin-aarch64-modern" | "bun-darwin-arm64" | "bun-darwin-arm64-baseline" | "bun-darwin-arm64-modern" | "bun-darwin-x64" | "bun-darwin-x64-baseline" | "bun-darwin-x64-modern" | "bun-linux-aarch64" | "bun-linux-aarch64-baseline" | "bun-linux-aarch64-baseline-glibc" | "bun-linux-aarch64-baseline-musl" | "bun-linux-aarch64-glibc" | "bun-linux-aarch64-modern" | "bun-linux-aarch64-modern-glibc" | "bun-linux-aarch64-modern-musl" | "bun-linux-aarch64-musl" | "bun-linux-arm64" | "bun-linux-arm64-baseline" | "bun-linux-arm64-baseline-glibc" | "bun-linux-arm64-baseline-musl" | "bun-linux-arm64-glibc" | "bun-linux-arm64-modern" | "bun-linux-arm64-modern-glibc" | "bun-linux-arm64-modern-musl" | "bun-linux-arm64-musl" | "bun-linux-x64" | "bun-linux-x64-baseline" | "bun-linux-x64-baseline-glibc" | "bun-linux-x64-baseline-musl" | "bun-linux-x64-glibc" | "bun-linux-x64-modern" | "bun-linux-x64-modern-glibc" | "bun-linux-x64-modern-musl" | "bun-linux-x64-musl" | "bun-windows-aarch64" | "bun-windows-arm64" | "bun-windows-x64" | "bun-windows-x64-baseline" | "bun-windows-x64-modern"
@@ -234,7 +234,7 @@ interface BuildConfig (bun-types/bun.d.ts)
   env [?]: "disable" | "inline" | `${string}*`
   external [?]: Array<string>
   features [?]: Array<string>
-  files [?]: Record<string, ArrayBufferLike | Blob | global.NodeJS.TypedArray<ArrayBufferLike> | string>
+  files [?]: Record<string, ArrayBufferLike | Blob | NodeJS.TypedArray<ArrayBufferLike> | string>
   footer [?]: string
   format [?]: "cjs" | "esm" | "iife"
   ignoreDCEAnnotations [?]: boolean
@@ -483,11 +483,11 @@ type CronWithAutocomplete (bun-types/bun.d.ts) = "@annually" | "@daily" | "@hour
 class CryptoHashInterface<T> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
-  digest(hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): T
   [static]
     construct new <T>(): Bun.CryptoHashInterface<T>
-    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.CryptoHashInterface<any>
 class CryptoHasher (bun-types/bun.d.ts)
@@ -495,14 +495,14 @@ class CryptoHasher (bun-types/bun.d.ts)
   byteLength [readonly]: number
   copy(): Bun.CryptoHasher
   digest(encoding: Bun.DigestEncoding): string
-  digest(): global.Buffer<ArrayBufferLike>
-  digest(hashInto: global.NodeJS.TypedArray<ArrayBufferLike>): global.NodeJS.TypedArray<ArrayBufferLike>
-  update(input: Bun.BlobOrStringOrBuffer, inputEncoding?: global.BufferEncoding | undefined): Bun.CryptoHasher
+  digest(): Buffer<ArrayBufferLike>
+  digest(hashInto: NodeJS.TypedArray<ArrayBufferLike>): NodeJS.TypedArray<ArrayBufferLike>
+  update(input: Bun.BlobOrStringOrBuffer, inputEncoding?: BufferEncoding | undefined): Bun.CryptoHasher
   [static]
-    construct new (algorithm: Bun.SupportedCryptoAlgorithms, hmacKey?: global.NodeJS.TypedArray<ArrayBufferLike> | string | undefined): Bun.CryptoHasher
+    construct new (algorithm: Bun.SupportedCryptoAlgorithms, hmacKey?: NodeJS.TypedArray<ArrayBufferLike> | string | undefined): Bun.CryptoHasher
     algorithms [readonly static]: Array<Bun.SupportedCryptoAlgorithms>
-    hash(algorithm: Bun.SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer): global.Buffer<ArrayBufferLike>
-    hash(algorithm: Bun.SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer, hashInto: global.NodeJS.TypedArray<ArrayBufferLike>): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(algorithm: Bun.SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer): Buffer<ArrayBufferLike>
+    hash(algorithm: Bun.SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer, hashInto: NodeJS.TypedArray<ArrayBufferLike>): NodeJS.TypedArray<ArrayBufferLike>
     hash(algorithm: Bun.SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.CryptoHasher
 interface CustomEventInit<T = any> (bun-types/bun.d.ts)
@@ -722,7 +722,7 @@ interface HeapSnapshot (bun-types/bun.d.ts)
 class Image (bun-types/bun.d.ts)
   avif(options?: undefined | { quality?: number; }): Bun.Image
   blob(): Promise<Blob>
-  buffer(): Promise<global.Buffer<ArrayBufferLike>>
+  buffer(): Promise<Buffer<ArrayBufferLike>>
   bytes(): Promise<Uint8Array<ArrayBufferLike>>
   dataurl(): Promise<string>
   flip(): Bun.Image
@@ -737,12 +737,12 @@ class Image (bun-types/bun.d.ts)
   resize(width: number, height?: number | undefined, options?: Bun.Image.ResizeOptions | undefined): Bun.Image
   rotate(degrees: number): Bun.Image
   toBase64(): Promise<string>
-  toBuffer(): Promise<global.Buffer<ArrayBufferLike>>
+  toBuffer(): Promise<Buffer<ArrayBufferLike>>
   webp(options?: undefined | { quality?: number; lossless?: boolean; }): Bun.Image
   width [readonly]: number
   write(dest: Bun.BunFile | Bun.PathLike | Bun.S3File | number): Promise<number>
   [static]
-    construct new (input: ArrayBuffer | Blob | global.NodeJS.TypedArray<ArrayBufferLike> | string, options?: Bun.Image.ConstructorOptions | undefined): Bun.Image
+    construct new (input: ArrayBuffer | Blob | NodeJS.TypedArray<ArrayBufferLike> | string, options?: Bun.Image.ConstructorOptions | undefined): Bun.Image
     backend [static]: "bun" | "system"
     clipboardChangeCount(): number
     fromClipboard(): Bun.Image | null
@@ -791,9 +791,9 @@ namespace JSONL (bun-types/bun.d.ts)
     read: number
     values: Array<unknown>
   function JSONL.parse (bun-types/bun.d.ts)
-    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string): Array<unknown>
+    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string): Array<unknown>
   function JSONL.parseChunk (bun-types/bun.d.ts)
-    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, start?: number | undefined, end?: number | undefined): Bun.JSONL.ParseChunkResult
+    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, start?: number | undefined, end?: number | undefined): Bun.JSONL.ParseChunkResult
 type JavaScriptLoader (bun-types/bun.d.ts) = "js" | "jsx" | "ts" | "tsx"
 interface LibdeflateCompressionOptions (bun-types/bun.d.ts)
   level [?]: 0 | 1 | 10 | 11 | 12 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
@@ -802,23 +802,23 @@ type Loader (bun-types/bun.d.ts) = "css" | "file" | "html" | "js" | "json" | "js
 class MD4 (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
-  digest(hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): Bun.MD4
   [static]
     construct new (): Bun.MD4
     byteLength [readonly static]: 16
-    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.MD4
 class MD5 (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
-  digest(hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): Bun.MD5
   [static]
     construct new (): Bun.MD5
     byteLength [readonly static]: 16
-    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.MD5
 interface MMapOptions (bun-types/bun.d.ts)
@@ -908,7 +908,7 @@ namespace Password (bun-types/bun.d.ts)
   interface Password.BCryptAlgorithm (bun-types/bun.d.ts)
     algorithm: "bcrypt"
     cost [?]: number
-type PathLike (bun-types/bun.d.ts) = ArrayBufferLike | URL | global.NodeJS.TypedArray<ArrayBufferLike> | string
+type PathLike (bun-types/bun.d.ts) = ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike> | URL | string
 type PipedSubprocess (bun-types/bun.d.ts) = Bun.Subprocess<"pipe", "pipe", "pipe">
 type Platform (bun-types/deprecated.d.ts) = "aix" | "android" | "cygwin" | "darwin" | "freebsd" | "haiku" | "linux" | "netbsd" | "openbsd" | "sunos" | "win32"
 interface PluginBuilder (bun-types/bun.d.ts)
@@ -1256,7 +1256,7 @@ interface ReservedSQL (bun-types/sql.d.ts)
   call <T>(value: T & {}): Bun.SQL.Helper<T>
   [Symbol.asyncDispose](): PromiseLike<void>
   [Symbol.dispose](): void
-  array(values: Array<any> | global.NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
+  array(values: Array<any> | NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
   begin<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   begin<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   beginDistributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
@@ -1398,67 +1398,67 @@ interface S3Stats (bun-types/s3.d.ts)
 class SHA1 (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
-  digest(hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): Bun.SHA1
   [static]
     construct new (): Bun.SHA1
     byteLength [readonly static]: 20
-    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA1
 class SHA224 (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
-  digest(hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): Bun.SHA224
   [static]
     construct new (): Bun.SHA224
     byteLength [readonly static]: 28
-    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA224
 class SHA256 (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
-  digest(hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): Bun.SHA256
   [static]
     construct new (): Bun.SHA256
     byteLength [readonly static]: 32
-    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA256
 class SHA384 (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
-  digest(hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): Bun.SHA384
   [static]
     construct new (): Bun.SHA384
     byteLength [readonly static]: 48
-    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA384
 class SHA512 (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
-  digest(hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): Bun.SHA512
   [static]
     construct new (): Bun.SHA512
     byteLength [readonly static]: 64
-    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA512
 class SHA512_256 (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
-  digest(hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): Bun.SHA512_256
   [static]
     construct new (): Bun.SHA512_256
     byteLength [readonly static]: 32
-    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+    hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.SHA512_256
 class SQL (bun-types/sql.d.ts)
@@ -1468,7 +1468,7 @@ class SQL (bun-types/sql.d.ts)
   call <T extends { [x: string]: unknown; [x: number]: unknown; [x: symbol]: unknown; }, Keys extends keyof T = keyof T>(obj: Array<T> | ReadonlyArray<T> | T, ...columns: ReadonlyArray<Keys>): Bun.SQL.Helper<Pick<T, Keys>>
   call <T>(value: T & {}): Bun.SQL.Helper<T>
   [Symbol.asyncDispose](): PromiseLike<void>
-  array(values: Array<any> | global.NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
+  array(values: Array<any> | NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
   begin<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   begin<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   beginDistributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
@@ -1616,7 +1616,7 @@ class SQL (bun-types/sql.d.ts)
     simple(): Bun.SQL.Query<T>
     then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T & Bun.SQL.ResultMetadata) => PromiseLike<TResult1> | TResult1) | null | undefined, onrejected?: ((reason: any) => PromiseLike<TResult2> | TResult2) | null | undefined): Promise<TResult1 | TResult2>
     values(): Bun.SQL.Query<T>
-    writable(): WritableStream<ArrayBufferLike | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string>
+    writable(): WritableStream<ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string>
   interface SQL.ResultColumn (bun-types/sql.d.ts)
     flags [?]: number
     length [?]: number
@@ -1732,7 +1732,7 @@ interface SavepointSQL (bun-types/sql.d.ts)
   call <T extends { [x: string]: unknown; [x: number]: unknown; [x: symbol]: unknown; }, Keys extends keyof T = keyof T>(obj: Array<T> | ReadonlyArray<T> | T, ...columns: ReadonlyArray<Keys>): Bun.SQL.Helper<Pick<T, Keys>>
   call <T>(value: T & {}): Bun.SQL.Helper<T>
   [Symbol.asyncDispose](): PromiseLike<void>
-  array(values: Array<any> | global.NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
+  array(values: Array<any> | NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
   begin<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   begin<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   beginDistributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
@@ -1858,7 +1858,7 @@ interface ServerWebSocket<T = undefined> (bun-types/serve.d.ts)
 type ServerWebSocketSendStatus (bun-types/serve.d.ts) = number
 type ShellExpression (bun-types/shell.d.ts) = Array<Bun.ShellExpression> | BigInt64Array<ArrayBufferLike> | BigUint64Array<ArrayBufferLike> | Blob | Bun.BunFile | Bun.Subprocess<Bun.Spawn.Writable, Bun.Spawn.Readable, Bun.Spawn.Readable> | DataView<ArrayBufferLike> | Float16Array<ArrayBufferLike> | Float32Array<ArrayBufferLike> | Float64Array<ArrayBufferLike> | Int16Array<ArrayBufferLike> | Int32Array<ArrayBufferLike> | Int8Array<ArrayBufferLike> | ReadableStream<any> | ReadableStream<any> | Request | Response | Uint16Array<ArrayBufferLike> | Uint32Array<ArrayBufferLike> | Uint8Array<ArrayBufferLike> | Uint8ClampedArray<ArrayBufferLike> | null | number | string | undefined | { raw: string; } | { toString(): string; }
 type ShellFunction (bun-types/deprecated.d.ts) = (input: Uint8Array<ArrayBuffer>) => Uint8Array<ArrayBuffer>
-type SignalsListener (bun-types/bun.d.ts) = (signal: global.NodeJS.Signals) => void
+type SignalsListener (bun-types/bun.d.ts) = (signal: NodeJS.Signals) => void
 interface SliceAnsiOptions (bun-types/bun.d.ts)
   ambiguousIsNarrow [?]: boolean
   ellipsis [?]: string
@@ -1872,7 +1872,7 @@ interface Socket<Data = undefined> (bun-types/bun.d.ts)
   disableRenegotiation(): void
   end(data?: Bun.BufferSource | string | undefined, byteOffset?: number | undefined, byteLength?: number | undefined): number
   end(): void
-  exportKeyingMaterial(length: number, label: string, context: global.Buffer<ArrayBufferLike>): global.Buffer<ArrayBufferLike>
+  exportKeyingMaterial(length: number, label: string, context: Buffer<ArrayBufferLike>): Buffer<ArrayBufferLike>
   exportKeyingMaterial(length: number, label: string, context?: Bun.BufferSource | string | undefined): void
   flush(): void
   getAuthorizationError(): Error | null
@@ -1884,9 +1884,9 @@ interface Socket<Data = undefined> (bun-types/bun.d.ts)
   getServername(): string
   getSession(): void
   getSharedSigalgs(): Array<string>
-  getTLSFinishedMessage(): global.Buffer<ArrayBufferLike> | undefined
-  getTLSPeerFinishedMessage(): global.Buffer<ArrayBufferLike> | undefined
-  getTLSTicket(): global.Buffer<ArrayBufferLike> | undefined
+  getTLSFinishedMessage(): Buffer<ArrayBufferLike> | undefined
+  getTLSPeerFinishedMessage(): Buffer<ArrayBufferLike> | undefined
+  getTLSTicket(): Buffer<ArrayBufferLike> | undefined
   getTLSVersion(): string
   getX509Certificate(): import("node:crypto").X509Certificate | undefined
   isSessionReused(): boolean
@@ -1907,7 +1907,7 @@ interface Socket<Data = undefined> (bun-types/bun.d.ts)
   setMaxSendFragment(size: number): boolean
   setNoDelay(noDelay?: boolean | undefined): boolean
   setServername(name: string): void
-  setSession(session: Bun.BufferSource | global.Buffer<ArrayBufferLike> | string): void
+  setSession(session: Buffer<ArrayBufferLike> | Bun.BufferSource | string): void
   setVerifyMode(requestCert: boolean, rejectUnauthorized: boolean): void
   shutdown(halfClose?: boolean | undefined): void
   terminate(): void
@@ -1953,7 +1953,7 @@ namespace Spawn (bun-types/bun.d.ts)
     killSignal [?]: number | string
     maxBuffer [?]: number
     onDisconnect?(): Promise<void> | void
-    onExit?(subprocess: Bun.Subprocess<In, Out, Err>, exitCode: null | number, signalCode: global.NodeJS.Signals | null | number, error?: Bun.ErrorLike | undefined): Promise<void> | void
+    onExit?(subprocess: Bun.Subprocess<In, Out, Err>, exitCode: null | number, signalCode: NodeJS.Signals | null | number, error?: Bun.ErrorLike | undefined): Promise<void> | void
     serialization [?]: "advanced" | "json"
     signal [?]: AbortSignal
     stderr [?]: Err
@@ -1966,7 +1966,7 @@ namespace Spawn (bun-types/bun.d.ts)
     windowsVerbatimArguments [?]: boolean
   type Spawn.OptionsObject<In extends Bun.Spawn.Writable, Out extends Bun.Spawn.Readable, Err extends Bun.Spawn.Readable> (bun-types/bun.d.ts) = Bun.Spawn.BaseOptions<In, Out, Err>
   type Spawn.Readable (bun-types/bun.d.ts) = "ignore" | "inherit" | "pipe" | Bun.ArrayBufferView<ArrayBufferLike> | Bun.BunFile | null | number | undefined
-  type Spawn.ReadableToIO<X extends Bun.Spawn.Readable> (bun-types/bun.d.ts) = X extends "pipe" | undefined ? ReadableStream<Uint8Array<ArrayBuffer>> : X extends number | Bun.BunFile | Bun.ArrayBufferView<ArrayBufferLike> ? number : undefined
+  type Spawn.ReadableToIO<X extends Bun.Spawn.Readable> (bun-types/bun.d.ts) = X extends "pipe" | undefined ? ReadableStream<Uint8Array<ArrayBuffer>> : X extends Bun.ArrayBufferView<ArrayBufferLike> | Bun.BunFile | number ? number : undefined
   type Spawn.ReadableToSyncIO<X extends Bun.Spawn.Readable> (bun-types/bun.d.ts) = X extends "pipe" | undefined ? Buffer<ArrayBufferLike> : undefined
   interface Spawn.SpawnOptions<In extends Bun.Spawn.Writable, Out extends Bun.Spawn.Readable, Err extends Bun.Spawn.Readable> (bun-types/bun.d.ts)
     argv0 [?]: string
@@ -1980,7 +1980,7 @@ namespace Spawn (bun-types/bun.d.ts)
     lazy [?]: boolean
     maxBuffer [?]: number
     onDisconnect?(): Promise<void> | void
-    onExit?(subprocess: Bun.Subprocess<In, Out, Err>, exitCode: null | number, signalCode: global.NodeJS.Signals | null | number, error?: Bun.ErrorLike | undefined): Promise<void> | void
+    onExit?(subprocess: Bun.Subprocess<In, Out, Err>, exitCode: null | number, signalCode: NodeJS.Signals | null | number, error?: Bun.ErrorLike | undefined): Promise<void> | void
     serialization [?]: "advanced" | "json"
     signal [?]: AbortSignal
     stderr [?]: Err
@@ -2003,7 +2003,7 @@ namespace Spawn (bun-types/bun.d.ts)
     killSignal [?]: number | string
     maxBuffer [?]: number
     onDisconnect?(): Promise<void> | void
-    onExit?(subprocess: Bun.Subprocess<In, Out, Err>, exitCode: null | number, signalCode: global.NodeJS.Signals | null | number, error?: Bun.ErrorLike | undefined): Promise<void> | void
+    onExit?(subprocess: Bun.Subprocess<In, Out, Err>, exitCode: null | number, signalCode: NodeJS.Signals | null | number, error?: Bun.ErrorLike | undefined): Promise<void> | void
     serialization [?]: "advanced" | "json"
     signal [?]: AbortSignal
     stderr [?]: Err
@@ -2016,10 +2016,10 @@ namespace Spawn (bun-types/bun.d.ts)
     windowsVerbatimArguments [?]: boolean
   type Spawn.Writable (bun-types/bun.d.ts) = "ignore" | "inherit" | "pipe" | Blob | Bun.ArrayBufferView<ArrayBufferLike> | Bun.BunFile | ReadableStream<any> | Request | Response | null | number | undefined
   type Spawn.WritableIO (bun-types/bun.d.ts) = Bun.FileSink | number | undefined
-  type Spawn.WritableToIO<X extends Bun.Spawn.Writable> (bun-types/bun.d.ts) = X extends "pipe" ? Bun.FileSink : X extends number | Bun.BunFile | Blob | Bun.ArrayBufferView<ArrayBufferLike> | Response | Request ? number : undefined
+  type Spawn.WritableToIO<X extends Bun.Spawn.Writable> (bun-types/bun.d.ts) = X extends "pipe" ? Bun.FileSink : X extends Blob | Bun.ArrayBufferView<ArrayBufferLike> | Bun.BunFile | Request | Response | number ? number : undefined
 SpawnOptions -> Spawn
 type StringLike (bun-types/bun.d.ts) = string | { toString(): string; }
-type StringOrBuffer (bun-types/bun.d.ts) = ArrayBufferLike | global.NodeJS.TypedArray<ArrayBufferLike> | string
+type StringOrBuffer (bun-types/bun.d.ts) = ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike> | string
 interface StringWidthOptions (bun-types/bun.d.ts)
   ambiguousIsNarrow [?]: boolean
   countAnsiEscapeCodes [?]: boolean
@@ -2031,14 +2031,14 @@ interface Subprocess<In extends Bun.Spawn.Writable = Bun.Spawn.Writable, Out ext
   disconnect(): void
   exitCode [readonly]: null | number
   exited [readonly]: Promise<number>
-  kill(exitCode?: global.NodeJS.Signals | number | undefined): void
+  kill(exitCode?: NodeJS.Signals | number | undefined): void
   killed [readonly]: boolean
   pid [readonly]: number
   readable [readonly]: Bun.Spawn.ReadableToIO<Out>
   ref(): void
   resourceUsage(): Bun.ResourceUsage | undefined
   send(message: any): void
-  signalCode [readonly]: global.NodeJS.Signals | null | number
+  signalCode [readonly]: NodeJS.Signals | null | number
   stderr [readonly]: Bun.Spawn.ReadableToIO<Err>
   stdin [readonly]: Bun.Spawn.WritableToIO<In>
   stdio [readonly]: [null, null, null, ...Array<null | number>]
@@ -2052,7 +2052,7 @@ interface SyncSubprocess<Out extends Bun.Spawn.Readable = Bun.Spawn.Readable, Er
   exitedDueToTimeout [?]: boolean
   pid: number
   resourceUsage: Bun.ResourceUsage
-  signalCode [?]: global.NodeJS.Signals | number
+  signalCode [?]: NodeJS.Signals | number
   stderr: Bun.Spawn.ReadableToSyncIO<Err>
   stdout: Bun.Spawn.ReadableToSyncIO<Out>
   success: boolean
@@ -2075,7 +2075,7 @@ interface TCPSocket (bun-types/bun.d.ts)
   disableRenegotiation(): void
   end(data?: Bun.BufferSource | string | undefined, byteOffset?: number | undefined, byteLength?: number | undefined): number
   end(): void
-  exportKeyingMaterial(length: number, label: string, context: global.Buffer<ArrayBufferLike>): global.Buffer<ArrayBufferLike>
+  exportKeyingMaterial(length: number, label: string, context: Buffer<ArrayBufferLike>): Buffer<ArrayBufferLike>
   exportKeyingMaterial(length: number, label: string, context?: Bun.BufferSource | string | undefined): void
   flush(): void
   getAuthorizationError(): Error | null
@@ -2087,9 +2087,9 @@ interface TCPSocket (bun-types/bun.d.ts)
   getServername(): string
   getSession(): void
   getSharedSigalgs(): Array<string>
-  getTLSFinishedMessage(): global.Buffer<ArrayBufferLike> | undefined
-  getTLSPeerFinishedMessage(): global.Buffer<ArrayBufferLike> | undefined
-  getTLSTicket(): global.Buffer<ArrayBufferLike> | undefined
+  getTLSFinishedMessage(): Buffer<ArrayBufferLike> | undefined
+  getTLSPeerFinishedMessage(): Buffer<ArrayBufferLike> | undefined
+  getTLSTicket(): Buffer<ArrayBufferLike> | undefined
   getTLSVersion(): string
   getX509Certificate(): import("node:crypto").X509Certificate | undefined
   isSessionReused(): boolean
@@ -2110,7 +2110,7 @@ interface TCPSocket (bun-types/bun.d.ts)
   setMaxSendFragment(size: number): boolean
   setNoDelay(noDelay?: boolean | undefined): boolean
   setServername(name: string): void
-  setSession(session: Bun.BufferSource | global.Buffer<ArrayBufferLike> | string): void
+  setSession(session: Buffer<ArrayBufferLike> | Bun.BufferSource | string): void
   setVerifyMode(requestCert: boolean, rejectUnauthorized: boolean): void
   shutdown(halfClose?: boolean | undefined): void
   terminate(): void
@@ -2175,7 +2175,7 @@ interface TLSSocket (bun-types/bun.d.ts)
   disableRenegotiation(): void
   end(data?: Bun.BufferSource | string | undefined, byteOffset?: number | undefined, byteLength?: number | undefined): number
   end(): void
-  exportKeyingMaterial(length: number, label: string, context: global.Buffer<ArrayBufferLike>): global.Buffer<ArrayBufferLike>
+  exportKeyingMaterial(length: number, label: string, context: Buffer<ArrayBufferLike>): Buffer<ArrayBufferLike>
   exportKeyingMaterial(length: number, label: string, context?: Bun.BufferSource | string | undefined): void
   flush(): void
   getAuthorizationError(): Error | null
@@ -2187,9 +2187,9 @@ interface TLSSocket (bun-types/bun.d.ts)
   getServername(): string
   getSession(): void
   getSharedSigalgs(): Array<string>
-  getTLSFinishedMessage(): global.Buffer<ArrayBufferLike> | undefined
-  getTLSPeerFinishedMessage(): global.Buffer<ArrayBufferLike> | undefined
-  getTLSTicket(): global.Buffer<ArrayBufferLike> | undefined
+  getTLSFinishedMessage(): Buffer<ArrayBufferLike> | undefined
+  getTLSPeerFinishedMessage(): Buffer<ArrayBufferLike> | undefined
+  getTLSTicket(): Buffer<ArrayBufferLike> | undefined
   getTLSVersion(): string
   getX509Certificate(): import("node:crypto").X509Certificate | undefined
   isSessionReused(): boolean
@@ -2210,7 +2210,7 @@ interface TLSSocket (bun-types/bun.d.ts)
   setMaxSendFragment(size: number): boolean
   setNoDelay(noDelay?: boolean | undefined): boolean
   setServername(name: string): void
-  setSession(session: Bun.BufferSource | global.Buffer<ArrayBufferLike> | string): void
+  setSession(session: Buffer<ArrayBufferLike> | Bun.BufferSource | string): void
   setVerifyMode(requestCert: boolean, rejectUnauthorized: boolean): void
   shutdown(halfClose?: boolean | undefined): void
   terminate(): void
@@ -2224,9 +2224,9 @@ interface TLSUpgradeOptions<Data> (bun-types/bun.d.ts)
   tls: Bun.TLSOptions | boolean
 namespace TOML (bun-types/bun.d.ts)
   function TOML.parse (bun-types/bun.d.ts)
-    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string): object
+    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string): object
   function TOML.stringify (bun-types/bun.d.ts)
-    call <T>(input: T, replacer?: null | undefined, space?: number | string | undefined): T extends symbol | Function | undefined ? undefined : T extends object ? string : string | undefined
+    call <T>(input: T, replacer?: null | undefined, space?: number | string | undefined): T extends Function | symbol | undefined ? undefined : T extends object ? string : string | undefined
 interface TSConfig (bun-types/bun.d.ts)
   compilerOptions [?]: { paths?: Record<string, Array<string>>; baseUrl?: string; jsx?: "preserve" | "react" | "react-jsx" | "react-jsxdev"; jsxFactory?: string; jsxFragmentFactory?: string; jsxImportSource?: string; useDefineForClassFields?: boolean; importsNotUsedAsValues?: "error" | "preserve" | "remove"; moduleSuffixes?: any; }
   extends [?]: string
@@ -2262,7 +2262,7 @@ interface TransactionSQL (bun-types/sql.d.ts)
   call <T extends { [x: string]: unknown; [x: number]: unknown; [x: symbol]: unknown; }, Keys extends keyof T = keyof T>(obj: Array<T> | ReadonlyArray<T> | T, ...columns: ReadonlyArray<Keys>): Bun.SQL.Helper<Pick<T, Keys>>
   call <T>(value: T & {}): Bun.SQL.Helper<T>
   [Symbol.asyncDispose](): PromiseLike<void>
-  array(values: Array<any> | global.NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
+  array(values: Array<any> | NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
   begin<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   begin<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   beginDistributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
@@ -2479,11 +2479,11 @@ interface WebSocketHandler<T> (bun-types/serve.d.ts)
   error?(error: Error, ws: Bun.ServerWebSocket<T>): Promise<void> | void
   idleTimeout [?]: number
   maxPayloadLength [?]: number
-  message?(ws: Bun.ServerWebSocket<T>, message: global.Buffer<ArrayBuffer> | string): Promise<void> | void
+  message?(ws: Bun.ServerWebSocket<T>, message: Buffer<ArrayBuffer> | string): Promise<void> | void
   open?(ws: Bun.ServerWebSocket<T>): Promise<void> | void
   perMessageDeflate [?]: boolean | { compress?: Bun.WebSocketCompressor | boolean; decompress?: Bun.WebSocketCompressor | boolean; }
-  ping?(ws: Bun.ServerWebSocket<T>, data: global.Buffer<ArrayBufferLike>): Promise<void> | void
-  pong?(ws: Bun.ServerWebSocket<T>, data: global.Buffer<ArrayBufferLike>): Promise<void> | void
+  ping?(ws: Bun.ServerWebSocket<T>, data: Buffer<ArrayBufferLike>): Promise<void> | void
+  pong?(ws: Bun.ServerWebSocket<T>, data: Buffer<ArrayBufferLike>): Promise<void> | void
   publishToSelf [?]: boolean
   sendPings [?]: boolean
 type WebSocketOptions (bun-types/bun.d.ts) = (Bun.WebSocketOptionsProtocolsOrProtocol & Bun.WebSocketOptionsTLS) & Bun.WebSocketOptionsHeaders & Bun.WebSocketOptionsProxy & Bun.WebSocketOptionsCompression
@@ -2515,7 +2515,7 @@ class WebView (bun-types/bun.d.ts)
   removeEventListener(type: string, listener: Bun.EventListener | Bun.EventListenerObject, options?: Bun.EventListenerOptions | boolean | undefined): void
   resize(width: number, height: number): Promise<void>
   screenshot(options?: undefined | { encoding?: "blob"; format?: "jpeg" | "png" | "webp"; quality?: number; }): Promise<Blob>
-  screenshot(options: { encoding: "buffer"; format?: "jpeg" | "png" | "webp"; quality?: number; }): Promise<global.Buffer<ArrayBufferLike>>
+  screenshot(options: { encoding: "buffer"; format?: "jpeg" | "png" | "webp"; quality?: number; }): Promise<Buffer<ArrayBufferLike>>
   screenshot(options: { encoding: "base64"; format?: "jpeg" | "png" | "webp"; quality?: number; }): Promise<string>
   screenshot(options: { encoding: "shmem"; format?: "jpeg" | "png" | "webp"; quality?: number; }): Promise<{ name: string; size: number; }>
   scroll(dx: number, dy: number): Promise<void>
@@ -2616,16 +2616,16 @@ namespace XML (bun-types/bun.d.ts)
   type XML.Scalar (bun-types/bun.d.ts) = Date | bigint | boolean | number | string
   type XML.Value (bun-types/bun.d.ts) = Bun.XML.Element | string
   function XML.parse (bun-types/bun.d.ts)
-    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, options?: (Bun.XML.ParseOptions & { compact?: true; }) | undefined): Bun.XML.Document
-    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, options: Bun.XML.ParseOptions & { compact: false; }): Bun.XML.Node
-    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, options?: Bun.XML.ParseOptions | undefined): Bun.XML.Document | Bun.XML.Node
+    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, options?: (Bun.XML.ParseOptions & { compact?: true; }) | undefined): Bun.XML.Document
+    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, options: Bun.XML.ParseOptions & { compact: false; }): Bun.XML.Node
+    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, options?: Bun.XML.ParseOptions | undefined): Bun.XML.Document | Bun.XML.Node
   function XML.stringify (bun-types/bun.d.ts)
     call (value: Bun.XML.Document | Bun.XML.NodeInput, replacer?: null | undefined, space?: number | string | undefined): string
     call (value: unknown, replacer?: null | undefined, space?: number | string | undefined): string | undefined
 type XMLHttpRequestBodyInit (bun-types/bun.d.ts) = Blob | Bun.BufferSource | FormData | URLSearchParams | string
 namespace YAML (bun-types/bun.d.ts)
   function YAML.parse (bun-types/bun.d.ts)
-    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string): unknown
+    call (input: ArrayBufferLike | Blob | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string): unknown
   function YAML.stringify (bun-types/bun.d.ts)
     call (input: unknown, replacer?: null | undefined, space?: number | string | undefined): string
 interface ZlibCompressionOptions (bun-types/bun.d.ts)
@@ -3047,13 +3047,13 @@ namespace markdown (bun-types/bun.d.ts)
     thead [?]: ((children: string) => null | string | undefined)
     tr [?]: ((children: string) => null | string | undefined)
   function markdown.ansi (bun-types/bun.d.ts)
-    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, theme?: Bun.markdown.AnsiTheme | undefined): string
+    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, theme?: Bun.markdown.AnsiTheme | undefined): string
   function markdown.html (bun-types/bun.d.ts)
-    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, options?: Bun.markdown.Options | undefined): string
+    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, options?: Bun.markdown.Options | undefined): string
   function markdown.react (bun-types/bun.d.ts)
-    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, components?: Bun.markdown.ComponentOverrides | undefined, options?: Bun.markdown.ReactOptions | undefined): unknown
+    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, components?: Bun.markdown.ComponentOverrides | undefined, options?: Bun.markdown.ReactOptions | undefined): unknown
   function markdown.render (bun-types/bun.d.ts)
-    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, callbacks?: Bun.markdown.RenderCallbacks | undefined, options?: Bun.markdown.Options | undefined): string
+    call (input: ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, callbacks?: Bun.markdown.RenderCallbacks | undefined, options?: Bun.markdown.Options | undefined): string
 function mmap (bun-types/bun.d.ts)
   call (path: string, opts?: Bun.MMapOptions | undefined): Uint8Array<ArrayBuffer>
 function nanoseconds (bun-types/bun.d.ts)
@@ -3076,10 +3076,10 @@ namespace peek (bun-types/bun.d.ts)
 var plugin (bun-types/bun.d.ts): Bun.BunRegisterPlugin
 var postgres (bun-types/sql.d.ts): Bun.SQL
 function randomUUIDv5 (bun-types/bun.d.ts)
-  call (name: Bun.BufferSource | string, namespace: Bun.BufferSource | string, encoding: "buffer"): global.Buffer<ArrayBufferLike>
+  call (name: Bun.BufferSource | string, namespace: Bun.BufferSource | string, encoding: "buffer"): Buffer<ArrayBufferLike>
   call (name: Bun.BufferSource | string, namespace: Bun.BufferSource | string, encoding?: "base64" | "base64url" | "hex" | undefined): string
 function randomUUIDv7 (bun-types/bun.d.ts)
-  call (encoding: "buffer", timestamp?: Date | number | undefined): global.Buffer<ArrayBufferLike>
+  call (encoding: "buffer", timestamp?: Date | number | undefined): Buffer<ArrayBufferLike>
   call (encoding?: "base64" | "base64url" | "hex" | undefined, timestamp?: Date | number | undefined): string
 function readableStreamToArray (bun-types/bun.d.ts)
   call <T>(stream: ReadableStream<T>): Array<T> | Promise<Array<T>>
@@ -3114,7 +3114,7 @@ namespace semver (bun-types/bun.d.ts)
 function serve (bun-types/serve.d.ts)
   call <WebSocketData = undefined, R extends string = never>(options: Bun.Serve.Options<WebSocketData, R>): Bun.Server<WebSocketData>
 function sha (bun-types/bun.d.ts)
-  call (input: Bun.StringOrBuffer, hashInto?: global.NodeJS.TypedArray<ArrayBufferLike> | undefined): global.NodeJS.TypedArray<ArrayBufferLike>
+  call (input: Bun.StringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   call (input: Bun.StringOrBuffer, encoding: Bun.DigestEncoding): string
 function shrink (bun-types/bun.d.ts)
   call (): void
@@ -3245,19 +3245,19 @@ function which (bun-types/bun.d.ts)
 function wrapAnsi (bun-types/bun.d.ts)
   call (input: string, columns: number, options?: Bun.WrapAnsiOptions | undefined): string
 function write (bun-types/bun.d.ts)
-  call (destination: Bun.BunFile | Bun.PathLike | Bun.S3File, input: Array<Bun.BlobPart> | ArrayBufferLike | Blob | Bun.Archive | ReadableStream<any> | global.NodeJS.TypedArray<ArrayBufferLike> | string, options?: undefined | { mode?: number; createPath?: boolean; }): Promise<number>
+  call (destination: Bun.BunFile | Bun.PathLike | Bun.S3File, input: Array<Bun.BlobPart> | ArrayBufferLike | Blob | Bun.Archive | NodeJS.TypedArray<ArrayBufferLike> | ReadableStream<any> | string, options?: undefined | { mode?: number; createPath?: boolean; }): Promise<number>
   call (destination: Bun.BunFile, input: Request | Response, options?: undefined | { createPath?: boolean; }): Promise<number>
   call (destinationPath: Bun.PathLike, input: Request | Response, options?: undefined | { createPath?: boolean; }): Promise<number>
   call (destination: Bun.BunFile, input: Bun.BunFile, options?: undefined | { mode?: number; createPath?: boolean; }): Promise<number>
   call (destinationPath: Bun.PathLike, input: Bun.BunFile, options?: undefined | { mode?: number; createPath?: boolean; }): Promise<number>
 function zstdCompress (bun-types/bun.d.ts)
-  call (data: ArrayBuffer | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, options?: undefined | { level?: number; }): Promise<global.Buffer<ArrayBufferLike>>
+  call (data: ArrayBuffer | Buffer<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, options?: undefined | { level?: number; }): Promise<Buffer<ArrayBufferLike>>
 function zstdCompressSync (bun-types/bun.d.ts)
-  call (data: ArrayBuffer | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string, options?: undefined | { level?: number; }): global.Buffer<ArrayBufferLike>
+  call (data: ArrayBuffer | Buffer<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string, options?: undefined | { level?: number; }): Buffer<ArrayBufferLike>
 function zstdDecompress (bun-types/bun.d.ts)
-  call (data: ArrayBuffer | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string): Promise<global.Buffer<ArrayBufferLike>>
+  call (data: ArrayBuffer | Buffer<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string): Promise<Buffer<ArrayBufferLike>>
 function zstdDecompressSync (bun-types/bun.d.ts)
-  call (data: ArrayBuffer | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string): global.Buffer<ArrayBufferLike>
+  call (data: ArrayBuffer | Buffer<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string): Buffer<ArrayBufferLike>
 
 # module "bun:bundle"
 interface Registry (bun-types/bundle.d.ts)
@@ -3356,17 +3356,17 @@ interface FFITypeToArgsType (bun-types/ffi.d.ts)
   1: number
   10: number
   11: boolean
-  12: bigint | global.NodeJS.TypedArray<ArrayBufferLike> | import("bun:ffi").Pointer | null
+  12: NodeJS.TypedArray<ArrayBufferLike> | bigint | import("bun:ffi").Pointer | null
   13: undefined
-  14: bigint | global.NodeJS.TypedArray<ArrayBufferLike> | import("bun:ffi").Pointer | null | string
+  14: NodeJS.TypedArray<ArrayBufferLike> | bigint | import("bun:ffi").Pointer | null | string
   15: bigint | number
   16: bigint | number
   17: import("bun:ffi").JSCallback | import("bun:ffi").Pointer
   18: unknown
   19: unknown
   2: number
-  20: DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike>
-  21: DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike>
+  20: DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike>
+  21: DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike>
   3: number
   4: number
   5: number
@@ -3388,8 +3388,8 @@ interface FFITypeToReturnsType (bun-types/ffi.d.ts)
   18: unknown
   19: unknown
   2: number
-  20: DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike>
-  21: DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike>
+  20: DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike>
+  21: DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike>
   3: number
   4: number
   5: number
@@ -3409,7 +3409,7 @@ interface Library<Fns extends Readonly<Record<string, import("bun:ffi").FFIFunct
   symbols: import("bun:ffi").ConvertFns<Fns>
 type Pointer (bun-types/ffi.d.ts) = number & { __pointer__: null; }
 type Symbols (bun-types/ffi.d.ts) = Readonly<Record<string, import("bun:ffi").FFIFunction>>
-type ToFFIType<T extends import("bun:ffi").FFITypeOrString> (bun-types/ffi.d.ts) = T extends FFIType ? T : T extends string ? FFITypeStringToType[T] : never
+type ToFFIType<T extends import("bun:ffi").FFITypeOrString> (bun-types/ffi.d.ts) = T extends import("bun:ffi").FFIType ? T : T extends string ? FFITypeStringToType[T] : never
 function cc (bun-types/ffi.d.ts)
   call <Fns extends Record<string, import("bun:ffi").FFIFunction>>(options: { source: Bun.BunFile | URL | string; library?: Array<string> | string; include?: Array<string> | string; symbols: Fns; define?: Record<string, string>; flags?: Array<string> | string; }): import("bun:ffi").Library<Fns>
 function dlopen (bun-types/ffi.d.ts)
@@ -3417,7 +3417,7 @@ function dlopen (bun-types/ffi.d.ts)
 function linkSymbols (bun-types/ffi.d.ts)
   call <Fns extends Record<string, import("bun:ffi").FFIFunction>>(symbols: Fns): import("bun:ffi").Library<Fns>
 function ptr (bun-types/ffi.d.ts)
-  call (view: ArrayBufferLike | DataView<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike>, byteOffset?: number | undefined): import("bun:ffi").Pointer
+  call (view: ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike>, byteOffset?: number | undefined): import("bun:ffi").Pointer
 namespace read (bun-types/ffi.d.ts)
   function read.f32 (bun-types/ffi.d.ts)
     call (ptr: bigint | import("bun:ffi").Pointer | number, byteOffset?: number | undefined): number
@@ -3447,7 +3447,7 @@ var suffix (bun-types/ffi.d.ts): string
 function toArrayBuffer (bun-types/ffi.d.ts)
   call (ptr: bigint | import("bun:ffi").Pointer | number, byteOffset?: number | undefined, byteLength?: number | undefined): ArrayBuffer
 function toBuffer (bun-types/ffi.d.ts)
-  call (ptr: bigint | import("bun:ffi").Pointer | number, byteOffset?: number | undefined, byteLength?: number | undefined): global.Buffer<ArrayBufferLike>
+  call (ptr: bigint | import("bun:ffi").Pointer | number, byteOffset?: number | undefined, byteLength?: number | undefined): Buffer<ArrayBufferLike>
 function viewSource (bun-types/ffi.d.ts)
   call (symbols: Readonly<Record<string, import("bun:ffi").FFIFunction>>, is_callback?: false | undefined): Array<string>
   call (callback: import("bun:ffi").FFIFunction, is_callback: true): string
@@ -3500,7 +3500,7 @@ function bytecodeOrderStats (bun-types/jsc.d.ts)
 function callerSourceOrigin (bun-types/jsc.d.ts)
   call (): null | string
 function deserialize (bun-types/jsc.d.ts)
-  call (value: ArrayBufferLike | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike>): any
+  call (value: ArrayBufferLike | Buffer<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike>): any
 function drainMicrotasks (bun-types/jsc.d.ts)
   call (): void
 function edenGC (bun-types/jsc.d.ts)
@@ -3543,7 +3543,7 @@ function reoptimizationRetryCount (bun-types/jsc.d.ts)
   call (func: (...args: Array<any>) => any): number
 function serialize (bun-types/jsc.d.ts)
   call (value: any, options?: undefined | { binaryType?: "arraybuffer"; }): SharedArrayBuffer
-  call (value: any, options?: undefined | { binaryType: "nodebuffer"; }): global.Buffer<ArrayBufferLike>
+  call (value: any, options?: undefined | { binaryType: "nodebuffer"; }): Buffer<ArrayBufferLike>
 function setRandomSeed (bun-types/jsc.d.ts)
   call (value: number): void
 function setTimeZone (bun-types/jsc.d.ts)
@@ -3588,13 +3588,13 @@ class Database (bun-types/sqlite.d.ts)
   prepare<ReturnType, ParamsType extends Array<import("bun:sqlite").SQLQueryBindings> | import("bun:sqlite").SQLQueryBindings>(sql: string, params?: ParamsType | undefined): import("bun:sqlite").Statement<ReturnType, ParamsType extends Array<any> ? ParamsType : [ParamsType]>
   query<ReturnType, ParamsType extends Array<import("bun:sqlite").SQLQueryBindings> | import("bun:sqlite").SQLQueryBindings>(sql: string): import("bun:sqlite").Statement<ReturnType, ParamsType extends Array<any> ? ParamsType : [ParamsType]>
   run<ParamsType extends Array<import("bun:sqlite").SQLQueryBindings>>(sql: string, ...bindings: Array<ParamsType>): import("bun:sqlite").Changes
-  serialize(name?: string | undefined): global.Buffer<ArrayBufferLike>
+  serialize(name?: string | undefined): Buffer<ArrayBufferLike>
   transaction<A extends Array<any>, T>(insideTransaction: (...args: A) => T): { (...args: A): T; deferred: (...args: A) => T; immediate: (...args: A) => T; exclusive: (...args: A) => T; }
   [static]
     construct new (filename?: string | undefined, options?: import("bun:sqlite").DatabaseOptions | number | undefined): import("bun:sqlite").Database
     MAX_QUERY_CACHE_SIZE [static]: number
-    deserialize(serialized: ArrayBufferLike | global.NodeJS.TypedArray<ArrayBufferLike>, isReadOnly?: boolean | undefined): import("bun:sqlite").Database
-    deserialize(serialized: ArrayBufferLike | global.NodeJS.TypedArray<ArrayBufferLike>, options?: Pick<import("bun:sqlite").DatabaseOptions, "readonly" | "safeIntegers" | "strict"> | undefined): import("bun:sqlite").Database
+    deserialize(serialized: ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike>, isReadOnly?: boolean | undefined): import("bun:sqlite").Database
+    deserialize(serialized: ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike>, options?: Pick<import("bun:sqlite").DatabaseOptions, "readonly" | "safeIntegers" | "strict"> | undefined): import("bun:sqlite").Database
     open(filename: string, options?: import("bun:sqlite").DatabaseOptions | number | undefined): import("bun:sqlite").Database
     prototype: import("bun:sqlite").Database
     setCustomSQLite(path: string): boolean
@@ -3609,8 +3609,8 @@ interface FunctionOptions (bun-types/sqlite.d.ts)
   directOnly [?]: boolean | undefined
   safeIntegers [?]: boolean | undefined
   varargs [?]: boolean | undefined
-type SQLFunctionResult (bun-types/sqlite.d.ts) = ArrayBufferLike | bigint | boolean | global.NodeJS.TypedArray<ArrayBufferLike> | null | number | string | undefined | void
-type SQLQueryBindings (bun-types/sqlite.d.ts) = ArrayBufferLike | Record<string, ArrayBufferLike | bigint | boolean | global.NodeJS.TypedArray<ArrayBufferLike> | null | number | string> | bigint | boolean | global.NodeJS.TypedArray<ArrayBufferLike> | null | number | string
+type SQLFunctionResult (bun-types/sqlite.d.ts) = ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike> | bigint | boolean | null | number | string | undefined | void
+type SQLQueryBindings (bun-types/sqlite.d.ts) = ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike> | Record<string, ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike> | bigint | boolean | null | number | string> | bigint | boolean | null | number | string
 class SQLiteError (bun-types/sqlite.d.ts)
   byteOffset [readonly]: number
   cause [?]: unknown
@@ -3937,7 +3937,7 @@ interface Matchers<T = unknown> (bun-types/test.d.ts)
 interface MatchersBuiltin<T = unknown, R = void> (bun-types/test.d.ts)
   fail: (message?: string | undefined) => R
   lastCalledWith(...expected: Array<unknown>): R
-  not: [R] extends [void] ? Matchers<unknown> : AsyncMatchers<unknown>
+  not: [R] extends [void] ? import("bun:test").Matchers<unknown> : import("bun:test").AsyncMatchers<unknown>
   nthCalledWith(n: number, ...expected: Array<unknown>): R
   pass: (message?: string | undefined) => R
   rejects: import("bun:test").AsyncMatchers<unknown>
@@ -4331,7 +4331,7 @@ var vi (bun-types/test.d.ts)
   setTimerTickMode(mode: "interval", interval?: number | undefined): ...
   setTimerTickMode(mode: "manual" | "nextTimerAsync"): ...
   spyOn: { <T extends object, K extends keyof T>(obj: T, property: K, accessType: "get"): import("bun:test").Mock<() => T[K]>; <T extends object, K extends keyof T>(obj: T, property: K, accessType: "set"): import("bun:test").Mock<(value: T[K]) => void>; <T extends object, K extends keyof T>(obj: T, methodOrPropertyValue: K): import("bun:test").Mock<Extract<T[K], (...args: Array<any>) => any>> }
-  stubEnv<T extends string>(name: T, value: T extends "PROD" | "DEV" | "SSR" ? boolean | undefined : string | undefined): ...
+  stubEnv<T extends string>(name: T, value: T extends "DEV" | "PROD" | "SSR" ? boolean | undefined : string | undefined): ...
   stubGlobal(name: number | string | symbol, value: unknown): ...
   unmock(id: Promise<unknown> | string): void
   unstubAllEnvs(): ...
@@ -4344,11 +4344,38 @@ var xdescribe (bun-types/test.d.ts): import("bun:test").Describe<[]>
 var xit (bun-types/test.d.ts): import("bun:test").Test<[]>
 xtest -> xit
 
+# module "console"
+interface Console (@types/node/console.d.ts, bun-types/overrides.d.ts)
+  Console [readonly]: { new (stdout: NodeJS.WritableStream, stderr?: NodeJS.WritableStream | undefined, ignoreErrors?: boolean | undefined): console.Console; new (options: console.ConsoleOptions): console.Console; prototype: console.Console; }
+  [Symbol.asyncIterator](): AsyncIterableIterator<string>
+  assert(condition?: unknown, ...data: Array<any>): void
+  clear(): void
+  count(label?: string | undefined): void
+  countReset(label?: string | undefined): void
+  debug(...data: Array<any>): void
+  dir(item?: any, options?: import("node:util").InspectOptions | undefined): void
+  dirxml(...data: Array<any>): void
+  error(...data: Array<any>): void
+  group(...data: Array<any>): void
+  groupCollapsed(...data: Array<any>): void
+  groupEnd(): void
+  info(...data: Array<any>): void
+  log(...data: Array<any>): void
+  profile(label?: string | undefined): void
+  profileEnd(label?: string | undefined): void
+  table(tabularData?: any, properties?: Array<string> | undefined): void
+  time(label?: string | undefined): void
+  timeEnd(label?: string | undefined): void
+  timeLog(label?: string | undefined, ...data: Array<any>): void
+  timeStamp(label?: string | undefined): void
+  trace(...data: Array<any>): void
+  warn(...data: Array<any>): void
+
 # module "node:fs"
 interface StreamOptions (@types/node/fs.d.ts, bun-types/overrides.d.ts)
   autoClose [?]: boolean | undefined
   emitClose [?]: boolean | undefined
-  encoding [?]: global.BufferEncoding | undefined
+  encoding [?]: BufferEncoding | undefined
   fd [?]: import("node:fs/promises").FileHandle | number | undefined
   flags [?]: string | undefined
   highWaterMark [?]: number | undefined
@@ -4364,28 +4391,28 @@ function exists (bun-types/overrides.d.ts)
 # module "node:tls"
 interface BunConnectionOptions (bun-types/overrides.d.ts)
   ALPNCallback [?]: ((arg: { servername: string; protocols: Array<string>; }) => string | undefined) | undefined
-  ALPNProtocols [?]: ReadonlyArray<string> | global.NodeJS.ArrayBufferView<ArrayBufferLike> | undefined
+  ALPNProtocols [?]: NodeJS.ArrayBufferView<ArrayBufferLike> | ReadonlyArray<string> | undefined
   SNICallback [?]: ((servername: string, cb: (err: Error | null, ctx?: import("node:tls").SecureContext | undefined) => void) => void) | undefined
   allowPartialTrustChain [?]: boolean | undefined
-  ca [?]: Array<Bun.BunFile | global.Buffer<ArrayBufferLike> | string> | Bun.BunFile | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string | undefined
-  cert [?]: Array<Bun.BunFile | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string> | Bun.BunFile | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string | undefined
+  ca [?]: Array<Buffer<ArrayBufferLike> | Bun.BunFile | string> | Buffer<ArrayBufferLike> | Bun.BunFile | NodeJS.TypedArray<ArrayBufferLike> | string | undefined
+  cert [?]: Array<Buffer<ArrayBufferLike> | Bun.BunFile | NodeJS.TypedArray<ArrayBufferLike> | string> | Buffer<ArrayBufferLike> | Bun.BunFile | NodeJS.TypedArray<ArrayBufferLike> | string | undefined
   checkServerIdentity [?]: ((hostname: string, cert: import("node:tls").PeerCertificate) => Error | undefined) | undefined
   ciphers [?]: string | undefined
   clientCertEngine [?]: string | undefined
-  crl [?]: Array<global.Buffer<ArrayBufferLike> | string> | global.Buffer<ArrayBufferLike> | string | undefined
-  dhparam [?]: global.Buffer<ArrayBufferLike> | string | undefined
+  crl [?]: Array<Buffer<ArrayBufferLike> | string> | Buffer<ArrayBufferLike> | string | undefined
+  dhparam [?]: Buffer<ArrayBufferLike> | string | undefined
   ecdhCurve [?]: string | undefined
   enableTrace [?]: boolean | undefined
   honorCipherOrder [?]: boolean | undefined
   host [?]: string | undefined
-  key [?]: Array<Bun.BunFile | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | import("node:tls").KeyObject | string> | Bun.BunFile | global.Buffer<ArrayBufferLike> | global.NodeJS.TypedArray<ArrayBufferLike> | string | undefined
+  key [?]: Array<Buffer<ArrayBufferLike> | Bun.BunFile | NodeJS.TypedArray<ArrayBufferLike> | import("node:tls").KeyObject | string> | Buffer<ArrayBufferLike> | Bun.BunFile | NodeJS.TypedArray<ArrayBufferLike> | string | undefined
   lookup [?]: import("node:net").LookupFunction | undefined
   maxVersion [?]: import("node:tls").SecureVersion | undefined
   minDHSize [?]: number | undefined
   minVersion [?]: import("node:tls").SecureVersion | undefined
   passphrase [?]: string | undefined
   path [?]: string | undefined
-  pfx [?]: Array<global.Buffer<ArrayBufferLike> | import("node:tls").PxfObject | string> | global.Buffer<ArrayBufferLike> | string | undefined
+  pfx [?]: Array<Buffer<ArrayBufferLike> | import("node:tls").PxfObject | string> | Buffer<ArrayBufferLike> | string | undefined
   port [?]: number | undefined
   privateKeyEngine [?]: string | undefined
   privateKeyIdentifier [?]: string | undefined
@@ -4397,12 +4424,12 @@ interface BunConnectionOptions (bun-types/overrides.d.ts)
   secureOptions [?]: number | undefined
   secureProtocol [?]: string | undefined
   servername [?]: string | undefined
-  session [?]: global.Buffer<ArrayBufferLike> | undefined
+  session [?]: Buffer<ArrayBufferLike> | undefined
   sessionIdContext [?]: string | undefined
   sessionTimeout [?]: number | undefined
   sigalgs [?]: string | undefined
   socket [?]: Stream.Duplex | undefined
-  ticketKeys [?]: global.Buffer<ArrayBufferLike> | undefined
+  ticketKeys [?]: Buffer<ArrayBufferLike> | undefined
   timeout [?]: number | undefined
 function connect (@types/node/tls.d.ts, bun-types/overrides.d.ts)
   call (options: import("node:tls").BunConnectionOptions, secureConnectListener?: (() => void) | undefined): import("node:tls").TLSSocket
@@ -4427,7 +4454,7 @@ interface ReadableStream<R = any> (@types/node/stream/web.d.ts, bun-types/overri
   text(): Promise<string>
   values(options?: import("node:stream/web").ReadableStreamIteratorOptions | undefined): import("node:stream/web").ReadableStreamAsyncIterator<R>
 var ReadableStream (@types/node/stream/web.d.ts, bun-types/overrides.d.ts)
-  construct new (underlyingSource: import("node:stream/web").UnderlyingByteSource, strategy?: undefined | { highWaterMark?: number; }): import("node:stream/web").ReadableStream<global.NodeJS.NonSharedUint8Array>
+  construct new (underlyingSource: import("node:stream/web").UnderlyingByteSource, strategy?: undefined | { highWaterMark?: number; }): import("node:stream/web").ReadableStream<NodeJS.NonSharedUint8Array>
   construct new <R = any>(underlyingSource: import("node:stream/web").UnderlyingDefaultSource<R>, strategy?: import("node:stream/web").QueuingStrategy<R> | undefined): import("node:stream/web").ReadableStream<R>
   construct new <R = any>(underlyingSource?: import("node:stream/web").UnderlyingSource<R> | undefined, strategy?: import("node:stream/web").QueuingStrategy<R> | undefined): import("node:stream/web").ReadableStream<R>
   from<R = any>(iterable: AsyncIterable<R> | Iterable<R>): import("node:stream/web").ReadableStream<R>
@@ -4536,8 +4563,8 @@ interface BroadcastChannel (@types/node/web-globals/messaging.d.ts, bun-types/gl
   onmessageerror: ((ev: import("undici-types/websocket").MessageEvent<any>) => void) | null
   postMessage(message: any): void
   ref(): BroadcastChannel
-  removeEventListener<K extends keyof BroadcastChannelEventMap>(type: K, listener: (ev: BroadcastChannelEventMap[K]) => void, options?: boolean | global.EventListenerOptions | undefined): void
-  removeEventListener(type: string, listener: EventListener | EventListenerObject, options?: boolean | global.EventListenerOptions | undefined): void
+  removeEventListener<K extends keyof BroadcastChannelEventMap>(type: K, listener: (ev: BroadcastChannelEventMap[K]) => void, options?: EventListenerOptions | boolean | undefined): void
+  removeEventListener(type: string, listener: EventListener | EventListenerObject, options?: EventListenerOptions | boolean | undefined): void
   unref(): BroadcastChannel
 var BroadcastChannel (@types/node/web-globals/messaging.d.ts, bun-types/globals.d.ts)
   construct new (name: string): import("node:worker_threads").BroadcastChannel
@@ -4631,13 +4658,13 @@ var CloseEvent (@types/node/web-globals/fetch.d.ts, bun-types/globals.d.ts)
   construct new (type: string, eventInitDict?: Bun.CloseEventInit | undefined): CloseEvent
   prototype: CloseEvent
 interface CompressionStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
-  readable [readonly]: import("node:stream/web").ReadableStream<global.NodeJS.NonSharedUint8Array>
+  readable [readonly]: import("node:stream/web").ReadableStream<NodeJS.NonSharedUint8Array>
   writable [readonly]: import("node:stream/web").WritableStream<NodeJS.BufferSource>
 var CompressionStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
   construct new (format: Bun.CompressionFormat, strategy?: undefined | { highWaterMark?: number; level?: number; }): CompressionStream
   prototype: CompressionStream
 interface Console (@types/node/web-globals/console.d.ts, bun-types/globals.d.ts)
-  Console [readonly]: { new (stdout: global.NodeJS.WritableStream, stderr?: global.NodeJS.WritableStream | undefined, ignoreErrors?: boolean | undefined): console.Console; new (options: console.ConsoleOptions): console.Console; prototype: console.Console; }
+  Console [readonly]: { new (stdout: NodeJS.WritableStream, stderr?: NodeJS.WritableStream | undefined, ignoreErrors?: boolean | undefined): console.Console; new (options: console.ConsoleOptions): console.Console; prototype: console.Console; }
   [Symbol.asyncIterator](): AsyncIterableIterator<string>
   assert(condition?: boolean | undefined, ...data: Array<any>): void
   clear(): void
@@ -4679,7 +4706,7 @@ interface Crypto (@types/node/web-globals/crypto.d.ts, bun-types/globals.d.ts)
   getRandomValues<T extends ArrayBufferView<ArrayBufferLike> | null>(array: T): T
   randomUUID(): `${string}-${string}-${string}-${string}-${string}`
   subtle [readonly]: SubtleCrypto
-  timingSafeEqual: (a: ArrayBufferLike | global.NodeJS.ArrayBufferView<ArrayBufferLike>, b: ArrayBufferLike | global.NodeJS.ArrayBufferView<ArrayBufferLike>) => boolean
+  timingSafeEqual: (a: ArrayBufferLike | NodeJS.ArrayBufferView<ArrayBufferLike>, b: ArrayBufferLike | NodeJS.ArrayBufferView<ArrayBufferLike>) => boolean
 var Crypto (@types/node/web-globals/crypto.d.ts, bun-types/globals.d.ts)
   construct new (): Crypto
   prototype: Crypto
@@ -4777,7 +4804,7 @@ var DOMException (@types/node/web-globals/domexception.d.ts, bun-types/deprecate
   WRONG_DOCUMENT_ERR [readonly]: 4
   prototype: DOMException
 interface DecompressionStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
-  readable [readonly]: import("node:stream/web").ReadableStream<global.NodeJS.NonSharedUint8Array>
+  readable [readonly]: import("node:stream/web").ReadableStream<NodeJS.NonSharedUint8Array>
   writable [readonly]: import("node:stream/web").WritableStream<NodeJS.BufferSource>
 var DecompressionStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
   construct new (format: Bun.CompressionFormat, strategy?: undefined | { highWaterMark?: number; }): DecompressionStream
@@ -5055,7 +5082,7 @@ interface ImportMeta (@types/node/web-globals/importmeta.d.ts, bun-types/devserv
   hot: { data: any; accept(): void; accept(cb: (newModule: any) => void): void; accept(specifier: string, callback: (newModule: any) => void): void; accept(specifiers: Array<string>, callback: (newModules: Array<any>) => void): void; dispose(cb: (data: any) => Promise<void> | void): void; decline(): void; on(event: Bun.HMREvent, callback: () => void): void; off(event: Bun.HMREvent, callback: () => void): void; }
   main: boolean
   path [readonly]: string
-  require: global.NodeJS.Require
+  require: NodeJS.Require
   resolve(specifier: string, parent?: import("node:url").URL | string | undefined): string
   resolveSync(moduleId: string, parent?: string | undefined): string
   url: string
@@ -5115,10 +5142,10 @@ interface MessagePort (@types/node/web-globals/messaging.d.ts, bun-types/globals
   getMaxListeners(): number
   hasRef(): boolean
   listenerCount(type: string): number
-  off(event: "close", listener: (ev: Event) => void, options?: global.EventListenerOptions | undefined): MessagePort
-  off(event: "message", listener: (value: any) => void, options?: global.EventListenerOptions | undefined): MessagePort
-  off(event: "messageerror", listener: (error: Error) => void, options?: global.EventListenerOptions | undefined): MessagePort
-  off(event: string, listener: (arg: any) => void, options?: global.EventListenerOptions | undefined): MessagePort
+  off(event: "close", listener: (ev: Event) => void, options?: EventListenerOptions | undefined): MessagePort
+  off(event: "message", listener: (value: any) => void, options?: EventListenerOptions | undefined): MessagePort
+  off(event: "messageerror", listener: (error: Error) => void, options?: EventListenerOptions | undefined): MessagePort
+  off(event: string, listener: (arg: any) => void, options?: EventListenerOptions | undefined): MessagePort
   on(event: "close", listener: (ev: Event) => void): MessagePort
   on(event: "message", listener: (value: any) => void): MessagePort
   on(event: "messageerror", listener: (error: Error) => void): MessagePort
@@ -5134,12 +5161,12 @@ interface MessagePort (@types/node/web-globals/messaging.d.ts, bun-types/globals
   postMessage(message: any, options?: import("node:worker_threads").StructuredSerializeOptions | undefined): void
   ref(): void
   removeAllListeners(type?: string | undefined): MessagePort
-  removeEventListener<K extends keyof MessagePortEventMap>(type: K, listener: (ev: MessagePortEventMap[K]) => void, options?: boolean | global.EventListenerOptions | undefined): void
-  removeEventListener(type: string, listener: EventListener | EventListenerObject, options?: boolean | global.EventListenerOptions | undefined): void
-  removeListener(event: "close", listener: (ev: Event) => void, options?: global.EventListenerOptions | undefined): MessagePort
-  removeListener(event: "message", listener: (value: any) => void, options?: global.EventListenerOptions | undefined): MessagePort
-  removeListener(event: "messageerror", listener: (error: Error) => void, options?: global.EventListenerOptions | undefined): MessagePort
-  removeListener(event: string, listener: (arg: any) => void, options?: global.EventListenerOptions | undefined): MessagePort
+  removeEventListener<K extends keyof MessagePortEventMap>(type: K, listener: (ev: MessagePortEventMap[K]) => void, options?: EventListenerOptions | boolean | undefined): void
+  removeEventListener(type: string, listener: EventListener | EventListenerObject, options?: EventListenerOptions | boolean | undefined): void
+  removeListener(event: "close", listener: (ev: Event) => void, options?: EventListenerOptions | undefined): MessagePort
+  removeListener(event: "message", listener: (value: any) => void, options?: EventListenerOptions | undefined): MessagePort
+  removeListener(event: "messageerror", listener: (error: Error) => void, options?: EventListenerOptions | undefined): MessagePort
+  removeListener(event: string, listener: (arg: any) => void, options?: EventListenerOptions | undefined): MessagePort
   setMaxListeners(n: number): void
   start(): void
   unref(): void
@@ -5158,7 +5185,7 @@ var Navigator (@types/node/web-globals/navigator.d.ts, bun-types/globals.d.ts)
   prototype: Navigator
 namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/globals.d.ts, @types/node/globals.typedarray.d.ts, @types/node/module.d.ts, @types/node/process.d.ts, @types/node/stream.d.ts, @types/node/timers.d.ts, bun-types/deprecated.d.ts, bun-types/overrides.d.ts)
   interface NodeJS.Process (@types/node/process.d.ts, bun-types/deprecated.d.ts, bun-types/overrides.d.ts)
-    [Symbol.captureRejectionSymbol]?(error: Error, event: string | symbol, ...args: Array<any>): void
+    [EventEmitter.captureRejectionSymbol]?(error: Error, event: string | symbol, ...args: Array<any>): void
     _exiting: boolean
     abort(): never
     addListener(event: "memoryPressure", listener: (level: "critical" | "warning") => void): NodeJS.Process
@@ -5166,7 +5193,7 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     addListener(eventName: string | symbol, listener: (...args: Array<any>) => void): NodeJS.Process
     addUncaughtExceptionCaptureCallback(fn: (err: unknown) => boolean): void
     allowedNodeEnvironmentFlags: ReadonlySet<string>
-    arch [readonly]: global.NodeJS.Architecture
+    arch [readonly]: NodeJS.Architecture
     argv: Array<string>
     argv0: string
     assert(value: unknown, message?: Error | string | undefined): asserts value
@@ -5178,10 +5205,10 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     browser: boolean
     channel [?]: import("node:child_process").Control
     chdir(directory: string): void
-    config [readonly]: global.NodeJS.ProcessConfig
+    config [readonly]: NodeJS.ProcessConfig
     connected: boolean
     constrainedMemory(): number
-    cpuUsage(previousValue?: global.NodeJS.CpuUsage | undefined): global.NodeJS.CpuUsage
+    cpuUsage(previousValue?: NodeJS.CpuUsage | undefined): NodeJS.CpuUsage
     cwd(): string
     debugPort: number
     disconnect?(): void
@@ -5193,7 +5220,7 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     emitWarning(warning: Error | string, ctor?: Function | undefined): void
     emitWarning(warning: Error | string, type?: string | undefined, ctor?: Function | undefined): void
     emitWarning(warning: Error | string, type?: string | undefined, code?: string | undefined, ctor?: Function | undefined): void
-    emitWarning(warning: Error | string, options?: global.NodeJS.EmitWarningOptions | undefined): void
+    emitWarning(warning: Error | string, options?: NodeJS.EmitWarningOptions | undefined): void
     env: NodeJS.ProcessEnv
     eventNames(): Array<string | symbol>
     execArgv: Array<string>
@@ -5201,7 +5228,7 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     execve?(file: string, args?: ReadonlyArray<string> | undefined, env?: NodeJS.ProcessEnv | undefined): never
     exit(code?: null | number | string | undefined): never
     exitCode: null | number | string | undefined
-    features [readonly]: global.NodeJS.ProcessFeatures
+    features [readonly]: NodeJS.ProcessFeatures
     finalization: { register<T extends object>(ref: T, callback: (ref: T, event: "exit") => void): void; registerBeforeExit<T extends object>(ref: T, callback: (ref: T, event: "beforeExit") => void): void; unregister(ref: object): void; }
     getActiveResourcesInfo(): Array<string>
     getBuiltinModule<ID extends keyof BuiltInModule>(id: ID): BuiltInModule[ID]
@@ -5213,7 +5240,7 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     getgroups [?]: (() => Array<number>)
     getuid [?]: (() => number)
     hasUncaughtExceptionCaptureCallback(): boolean
-    hrtime: global.NodeJS.HRTime
+    hrtime: NodeJS.HRTime
     isBun: true
     kill(pid: number, signal?: number | string | undefined): true
     listenerCount<E extends keyof ProcessEventMap>(eventName: E, listener?: ((...args: ProcessEventMap[E]) => void) | undefined): number
@@ -5221,8 +5248,8 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     listeners<E extends keyof ProcessEventMap>(eventName: E): Array<(...args: ProcessEventMap[E]) => void>
     listeners(eventName: string | symbol): Array<(...args: Array<any>) => void>
     loadEnvFile(path?: import("node:fs").PathLike | undefined): void
-    mainModule [?]: global.NodeJS.Module
-    memoryUsage: global.NodeJS.MemoryUsageFn
+    mainModule [?]: NodeJS.Module
+    memoryUsage: NodeJS.MemoryUsageFn
     nextTick(callback: Function, ...args: Array<any>): void
     noDeprecation [?]: boolean
     off(event: "memoryPressure", listener: (level: "critical" | "warning") => void): NodeJS.Process
@@ -5235,9 +5262,9 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     once(event: "memoryPressure", listener: (level: "critical" | "warning") => void): NodeJS.Process
     once<E extends keyof ProcessEventMap>(eventName: E, listener: (...args: ProcessEventMap[E]) => void): NodeJS.Process
     once(eventName: string | symbol, listener: (...args: Array<any>) => void): NodeJS.Process
-    permission: global.NodeJS.ProcessPermission
+    permission: NodeJS.ProcessPermission
     pid [readonly]: number
-    platform [readonly]: global.NodeJS.Platform
+    platform [readonly]: NodeJS.Platform
     ppid [readonly]: number
     prependListener(event: "memoryPressure", listener: (level: "critical" | "warning") => void): NodeJS.Process
     prependListener<E extends keyof ProcessEventMap>(eventName: E, listener: (...args: ProcessEventMap[E]) => void): NodeJS.Process
@@ -5249,15 +5276,15 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     rawListeners(eventName: string | symbol): Array<(...args: Array<any>) => void>
     reallyExit(code?: number | undefined): never
     ref(maybeRefable: any): void
-    release [readonly]: global.NodeJS.ProcessRelease
+    release [readonly]: NodeJS.ProcessRelease
     removeAllListeners<E extends keyof ProcessEventMap>(eventName?: E | undefined): NodeJS.Process
     removeAllListeners(eventName?: string | symbol | undefined): NodeJS.Process
     removeListener(event: "memoryPressure", listener: (level: "critical" | "warning") => void): NodeJS.Process
     removeListener(event: string | symbol, listener: (...args: Array<any>) => void): NodeJS.Process
     removeListener<E extends keyof ProcessEventMap>(eventName: E, listener: (...args: ProcessEventMap[E]) => void): NodeJS.Process
     removeListener(eventName: string | symbol, listener: (...args: Array<any>) => void): NodeJS.Process
-    report: global.NodeJS.ProcessReport
-    resourceUsage(): global.NodeJS.ResourceUsage
+    report: NodeJS.ProcessReport
+    resourceUsage(): NodeJS.ResourceUsage
     revision: string
     send?(message: any, sendHandle?: import("node:child_process").SendHandle, options?: import("node:child_process").MessageOptions | undefined, callback?: ((error: Error | null) => void) | undefined): boolean
     send?(message: any, sendHandle: import("node:child_process").SendHandle, callback?: ((error: Error | null) => void) | undefined): boolean
@@ -5271,10 +5298,10 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     setgroups [?]: ((groups: ReadonlyArray<number | string>) => void)
     setuid [?]: ((id: number | string) => void)
     sourceMapsEnabled [readonly]: boolean
-    stderr: global.NodeJS.WriteStream & { fd: 2; }
-    stdin: global.NodeJS.ReadStream & { fd: 0; }
-    stdout: global.NodeJS.WriteStream & { fd: 1; }
-    threadCpuUsage(previousValue?: global.NodeJS.CpuUsage | undefined): global.NodeJS.CpuUsage
+    stderr: NodeJS.WriteStream & { fd: 2; }
+    stdin: NodeJS.ReadStream & { fd: 0; }
+    stdout: NodeJS.WriteStream & { fd: 1; }
+    threadCpuUsage(previousValue?: NodeJS.CpuUsage | undefined): NodeJS.CpuUsage
     throwDeprecation: boolean
     title: string
     traceDeprecation: boolean
@@ -5301,13 +5328,13 @@ namespace NodeJS (@types/node/buffer.d.ts, @types/node/events.d.ts, @types/node/
     v8: string
     zlib: string
 interface NodeModule (@types/node/module.d.ts, bun-types/globals.d.ts)
-  children: Array<global.NodeJS.Module>
+  children: Array<NodeJS.Module>
   exports: any
   filename: string
   id: string
   isPreloading: boolean
   loaded: boolean
-  parent: global.NodeJS.Module | null | undefined
+  parent: NodeJS.Module | null | undefined
   path: string
   paths: Array<string>
   require(id: string): any
@@ -5329,8 +5356,8 @@ interface Performance (@types/node/web-globals/performance.d.ts, bun-types/globa
   nodeTiming [readonly]: import("node:perf_hooks").PerformanceNodeTiming
   now(): number
   onresourcetimingbufferfull: ((ev: Event) => void) | null
-  removeEventListener<K extends "resourcetimingbufferfull">(type: K, listener: (ev: PerformanceEventMap[K]) => void, options?: boolean | global.EventListenerOptions | undefined): void
-  removeEventListener(type: string, listener: EventListener | EventListenerObject, options?: boolean | global.EventListenerOptions | undefined): void
+  removeEventListener<K extends "resourcetimingbufferfull">(type: K, listener: (ev: PerformanceEventMap[K]) => void, options?: EventListenerOptions | boolean | undefined): void
+  removeEventListener(type: string, listener: EventListener | EventListenerObject, options?: EventListenerOptions | boolean | undefined): void
   setResourceTimingBufferSize(maxSize: number): void
   timeOrigin [readonly]: number
   timerify<T extends (...args: Array<any>) => any>(fn: T, options?: import("node:perf_hooks").TimerifyOptions | undefined): T
@@ -5448,7 +5475,7 @@ interface ReadableByteStreamController (@types/node/web-globals/streams.d.ts, bu
   byobRequest [readonly]: import("node:stream/web").ReadableStreamBYOBRequest | null
   close(): void
   desiredSize [readonly]: null | number
-  enqueue(chunk: global.NodeJS.NonSharedArrayBufferView): void
+  enqueue(chunk: NodeJS.NonSharedArrayBufferView): void
   error(e?: any): void
 var ReadableByteStreamController (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
   construct new (): ReadableByteStreamController
@@ -5476,15 +5503,15 @@ var ReadableStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts
 interface ReadableStreamBYOBReader (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
   cancel(reason?: any): Promise<void>
   closed [readonly]: Promise<void>
-  read<T extends global.NodeJS.NonSharedArrayBufferView>(view: T, options?: import("node:stream/web").ReadableStreamBYOBReaderReadOptions | undefined): Promise<import("node:stream/web").ReadableStreamReadResult<T>>
+  read<T extends NodeJS.NonSharedArrayBufferView>(view: T, options?: import("node:stream/web").ReadableStreamBYOBReaderReadOptions | undefined): Promise<import("node:stream/web").ReadableStreamReadResult<T>>
   releaseLock(): void
 var ReadableStreamBYOBReader (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
   construct new (): ReadableStreamBYOBReader
   prototype: ReadableStreamBYOBReader
 interface ReadableStreamBYOBRequest (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
   respond(bytesWritten: number): void
-  respondWithNewView(view: global.NodeJS.NonSharedArrayBufferView): void
-  view [readonly]: global.NodeJS.NonSharedArrayBufferView | null
+  respondWithNewView(view: NodeJS.NonSharedArrayBufferView): void
+  view [readonly]: NodeJS.NonSharedArrayBufferView | null
 var ReadableStreamBYOBRequest (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
   construct new (): ReadableStreamBYOBRequest
   prototype: ReadableStreamBYOBRequest
@@ -5701,7 +5728,7 @@ var TextDecoderStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d
   construct new (encoding?: Bun.Encoding | undefined, options?: undefined | { fatal?: boolean; ignoreBOM?: boolean; }): TextDecoderStream
   prototype: TextDecoderStream
 interface TextEncoder (@types/node/web-globals/encoding.d.ts, bun-types/globals.d.ts)
-  encode(input?: string | undefined): global.NodeJS.NonSharedUint8Array
+  encode(input?: string | undefined): NodeJS.NonSharedUint8Array
   encodeInto(src: string, dest: Bun.BufferSource): import("node:util").TextEncoderEncodeIntoResult
   encoding [readonly]: string
 var TextEncoder (@types/node/web-globals/encoding.d.ts, bun-types/globals.d.ts)
@@ -5709,7 +5736,7 @@ var TextEncoder (@types/node/web-globals/encoding.d.ts, bun-types/globals.d.ts)
   prototype: TextEncoder
 interface TextEncoderStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
   encoding [readonly]: string
-  readable [readonly]: import("node:stream/web").ReadableStream<global.NodeJS.NonSharedUint8Array>
+  readable [readonly]: import("node:stream/web").ReadableStream<NodeJS.NonSharedUint8Array>
   writable [readonly]: import("node:stream/web").WritableStream<string>
 var TextEncoderStream (@types/node/web-globals/streams.d.ts, bun-types/globals.d.ts)
   construct new (): TextEncoderStream
@@ -6037,13 +6064,13 @@ function addEventListener (bun-types/globals.d.ts)
 function alert (bun-types/globals.d.ts)
   call (message?: string | undefined): void
 function clearImmediate (@types/node/web-globals/timers.d.ts, bun-types/globals.d.ts)
-  call (immediate: global.NodeJS.Immediate | undefined): void
+  call (immediate: NodeJS.Immediate | undefined): void
   call (id?: Timer | number | undefined): void
 function clearInterval (@types/node/web-globals/timers.d.ts, bun-types/globals.d.ts)
-  call (timeout: global.NodeJS.Timeout | number | string | undefined): void
+  call (timeout: NodeJS.Timeout | number | string | undefined): void
   call (id?: Timer | number | undefined): void
 function clearTimeout (@types/node/web-globals/timers.d.ts, bun-types/globals.d.ts)
-  call (timeout: global.NodeJS.Timeout | number | string | undefined): void
+  call (timeout: NodeJS.Timeout | number | string | undefined): void
   call (id?: Timer | number | undefined): void
 function confirm (bun-types/globals.d.ts)
   call (message?: string | undefined): boolean
@@ -6073,20 +6100,253 @@ function removeEventListener (bun-types/globals.d.ts)
   call (type: string, listener: Bun.EventListenerOrEventListenerObject, options?: Bun.EventListenerOptions | boolean | undefined): void
 function reportError (bun-types/globals.d.ts)
   call (error: any): void
-var require (@types/node/module.d.ts, bun-types/globals.d.ts): global.NodeJS.Require
+var require (@types/node/module.d.ts, bun-types/globals.d.ts): NodeJS.Require
 function setImmediate (@types/node/web-globals/timers.d.ts, bun-types/globals.d.ts)
-  call <TArgs extends Array<any>>(callback: (...args: TArgs) => void, ...args: MakeVoidParameterOptional<TArgs>): global.NodeJS.Immediate
+  call <TArgs extends Array<any>>(callback: (...args: TArgs) => void, ...args: MakeVoidParameterOptional<TArgs>): NodeJS.Immediate
   call (handler: Bun.TimerHandler, ...arguments: Array<any>): Timer
   __promisify__: <T = void>(value?: T | undefined, options?: import("node:timers").TimerOptions | undefined) => Promise<T>
 namespace setImmediate (@types/node/web-globals/timers.d.ts, bun-types/globals.d.ts)
 function setInterval (@types/node/web-globals/timers.d.ts, bun-types/globals.d.ts)
-  call <TArgs extends Array<any>>(callback: (...args: TArgs) => void, delay?: number | undefined, ...args: MakeVoidParameterOptional<TArgs>): global.NodeJS.Timeout
+  call <TArgs extends Array<any>>(callback: (...args: TArgs) => void, delay?: number | undefined, ...args: MakeVoidParameterOptional<TArgs>): NodeJS.Timeout
   call (handler: Bun.TimerHandler, interval?: number | undefined, ...arguments: Array<any>): Timer
 function setTimeout (@types/node/web-globals/timers.d.ts, bun-types/globals.d.ts)
-  call <TArgs extends Array<any>>(callback: (...args: TArgs) => void, delay?: number | undefined, ...args: MakeVoidParameterOptional<TArgs>): global.NodeJS.Timeout
+  call <TArgs extends Array<any>>(callback: (...args: TArgs) => void, delay?: number | undefined, ...args: MakeVoidParameterOptional<TArgs>): NodeJS.Timeout
   call (handler: Bun.TimerHandler, timeout?: number | undefined, ...arguments: Array<any>): Timer
   __promisify__: <T = void>(delay?: number | undefined, value?: T | undefined, options?: import("node:timers").TimerOptions | undefined) => Promise<T>
 namespace setTimeout (@types/node/web-globals/timers.d.ts, bun-types/globals.d.ts)
 function structuredClone (@types/node/web-globals/messaging.d.ts, bun-types/globals.d.ts)
   call <T = any>(value: T, options?: import("node:worker_threads").StructuredSerializeOptions | undefined): T
   call <T>(value: T, options?: Bun.StructuredSerializeOptions | undefined): T
+
+# not exported, named by the types above
+interface AsymmetricMatchersBuiltinNegated (bun-types/test.d.ts)
+  arrayContaining<E = any>(arr: ReadonlyArray<E>): any
+  closeTo(num: number, numDigits?: number | undefined): any
+  objectContaining(obj: object): any
+  rejectsTo: ExpectNot
+  resolvesTo: ExpectNot
+  stringContaining(str: String | string): any
+  stringMatching(str: RegExp | String | string): any
+  toSatisfy(predicate: (value: any) => unknown, message?: string | undefined): any
+interface FunctionLike (bun-types/test.d.ts)
+  name [readonly]: string
+interface JestMock.ClassLike (bun-types/test.d.ts)
+  construct new (...args: any): any
+interface JestMock.Mock<T extends (...args: Array<any>) => any> (bun-types/test.d.ts)
+  call (...args: Parameters<T>): ReturnType<T>
+  construct new (...args: Parameters<T>): ReturnType<T>
+  [Symbol.dispose](): void
+  _isMockFunction: true
+  _protoImpl: Function
+  getMockImplementation(): T | undefined
+  getMockName(): string
+  mock: JestMock.MockFunctionState<T>
+  mockClear(): JestMock.Mock<T>
+  mockImplementation(fn: T): JestMock.Mock<T>
+  mockImplementationOnce(fn: T): JestMock.Mock<T>
+  mockName(name: string): JestMock.Mock<T>
+  mockRejectedValue(value: JestMock.RejectType<T>): JestMock.Mock<T>
+  mockRejectedValueOnce(value: JestMock.RejectType<T>): JestMock.Mock<T>
+  mockReset(): JestMock.Mock<T>
+  mockResolvedValue(value: JestMock.ResolveType<T>): JestMock.Mock<T>
+  mockResolvedValueOnce(value: JestMock.ResolveType<T>): JestMock.Mock<T>
+  mockRestore(): void
+  mockReturnThis(): JestMock.Mock<T>
+  mockReturnValue(value: ReturnType<T>): JestMock.Mock<T>
+  mockReturnValueOnce(value: ReturnType<T>): JestMock.Mock<T>
+  mockThrow(value: unknown): JestMock.Mock<T>
+  mockThrowOnce(value: unknown): JestMock.Mock<T>
+  withImplementation(fn: T, callback: () => Promise<unknown>): Promise<void>
+  withImplementation(fn: T, callback: () => void): void
+interface JestMock.MockFunctionResultIncomplete (bun-types/test.d.ts)
+  type: "incomplete"
+  value: undefined
+interface JestMock.MockFunctionResultReturn<T extends JestMock.FunctionLike = JestMock.UnknownFunction> (bun-types/test.d.ts)
+  type: "return"
+  value: ReturnType<T>
+interface JestMock.MockFunctionResultThrow (bun-types/test.d.ts)
+  type: "throw"
+  value: unknown
+interface JestMock.MockFunctionState<T extends JestMock.FunctionLike = JestMock.FunctionLike> (bun-types/test.d.ts)
+  calls: Array<Parameters<T>>
+  contexts: Array<ThisParameterType<T>>
+  instances: Array<ReturnType<T>>
+  invocationCallOrder: Array<number>
+  lastCall [?]: Parameters<T>
+  results: Array<JestMock.MockFunctionResult<T>>
+  settledResults [readonly]: Array<{ type: "fulfilled"; value: Awaited<ReturnType<T>>; } | { type: "incomplete"; value: undefined; } | { type: "rejected"; value: unknown; }>
+interface JestMock.MockInstance<T extends JestMock.FunctionLike = JestMock.UnknownFunction> (bun-types/test.d.ts)
+  [Symbol.dispose](): void
+  _isMockFunction: true
+  _protoImpl: Function
+  getMockImplementation(): T | undefined
+  getMockName(): string
+  mock: JestMock.MockFunctionState<T>
+  mockClear(): JestMock.MockInstance<T>
+  mockImplementation(fn: T): JestMock.MockInstance<T>
+  mockImplementationOnce(fn: T): JestMock.MockInstance<T>
+  mockName(name: string): JestMock.MockInstance<T>
+  mockRejectedValue(value: JestMock.RejectType<T>): JestMock.MockInstance<T>
+  mockRejectedValueOnce(value: JestMock.RejectType<T>): JestMock.MockInstance<T>
+  mockReset(): JestMock.MockInstance<T>
+  mockResolvedValue(value: JestMock.ResolveType<T>): JestMock.MockInstance<T>
+  mockResolvedValueOnce(value: JestMock.ResolveType<T>): JestMock.MockInstance<T>
+  mockRestore(): void
+  mockReturnThis(): JestMock.MockInstance<T>
+  mockReturnValue(value: ReturnType<T>): JestMock.MockInstance<T>
+  mockReturnValueOnce(value: ReturnType<T>): JestMock.MockInstance<T>
+  mockThrow(value: unknown): JestMock.MockInstance<T>
+  mockThrowOnce(value: unknown): JestMock.MockInstance<T>
+  withImplementation(fn: T, callback: () => Promise<unknown>): Promise<void>
+  withImplementation(fn: T, callback: () => void): void
+interface JestMock.Replaced<T = unknown> (bun-types/test.d.ts)
+  replaceValue(value: T): JestMock.Replaced<T>
+  restore(): void
+interface MatcherState (bun-types/test.d.ts)
+  assertionCalls: number
+  currentTestName [?]: string
+  expectedAssertionsNumber: null | number
+  isExpectingAssertions: boolean
+  isNot: boolean
+  promise: string
+  suppressedErrors: Array<Error>
+  testPath [?]: string
+interface MatcherUtils (bun-types/test.d.ts)
+  customTesters: Array<import("bun:test").Tester>
+  equals: import("bun:test").EqualsFunction
+  utils: Readonly<{ stringify(value: unknown): string; printReceived(value: unknown): string; printExpected(value: unknown): string; diff(expected: unknown, received: unknown, options?: object | undefined): null | string; printWithType<T>(name: string, value: T, print: (value: T) => string): string; EXPECTED_COLOR(...text: Array<unknown>): string; RECEIVED_COLOR(...text: Array<unknown>): string; matcherHint(matcherName: string, received?: unknown, expected?: unknown, options?: undefined | { isNot?: boolean; promise?: string; isDirectExpectCall?: boolean; comment?: string; expectedColor?: MatcherHintColor; receivedColor?: MatcherHintColor; secondArgument?: string; secondArgumentColor?: MatcherHintColor; }): string; }>
+interface import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<Actual> (bun-types/vendor/expect-type/index.d.ts)
+  asserts: Actual extends (v: any, ...args: Array<any>) => asserts v is infer T ? unknown extends T ? never : NegativeExpectTypeOf<T> : never
+  constructorParameters: import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<Actual>>
+  exclude: <V>(v?: V | undefined) => import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<Exclude<Actual, V>>
+  extract: <V>(v?: V | undefined) => import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<Extract<Actual, V>>
+  guards: Actual extends (v: any, ...args: Array<any>) => v is infer T ? NegativeExpectTypeOf<T> : never
+  instance: Actual extends new (...args: Array<any>) => infer I ? NegativeExpectTypeOf<I> : never
+  items: Actual extends ArrayLike<infer ItemType> ? NegativeExpectTypeOf<ItemType> : never
+  map: <T>(fn: (value: Actual) => T) => import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<T>
+  omit: <KeyToOmit extends PropertyKey & Record<never, never> | keyof Actual>(keyToOmit?: KeyToOmit | undefined) => import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<Omit<Actual, KeyToOmit>>
+  parameter: <Index extends number>(index: Index) => import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<OverloadParameters<Actual>[Index]>
+  parameters: import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<import("bun-types/vendor/expect-type/overloads").OverloadParameters<Actual>>
+  pick: <KeyToPick extends keyof Actual>(keyToPick?: KeyToPick | undefined) => import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<Pick<Actual, KeyToPick>>
+  resolves: Actual extends PromiseLike<infer ResolvedType> ? NegativeExpectTypeOf<ResolvedType> : never
+  returns: Actual extends Function ? NegativeExpectTypeOf<OverloadReturnTypes<Actual>> : never
+  thisParameter: import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<ThisParameterType<Actual>>
+  toBeAny: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectAny<Actual>, { positive: false; }>
+  toBeArray: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectArray<Actual>, { positive: false; }>
+  toBeBigInt: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectBigInt<Actual>, { positive: false; }>
+  toBeBoolean: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectBoolean<Actual>, { positive: false; }>
+  toBeCallableWith: never
+  toBeConstructibleWith: never
+  toBeFunction: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectFunction<Actual>, { positive: false; }>
+  toBeNever: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNever<Actual>, { positive: false; }>
+  toBeNull: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNull<Actual>, { positive: false; }>
+  toBeNullable: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNullable<Actual>, { positive: false; }>
+  toBeNumber: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNumber<Actual>, { positive: false; }>
+  toBeObject: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectObject<Actual>, { positive: false; }>
+  toBeString: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectString<Actual>, { positive: false; }>
+  toBeSymbol: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectSymbol<Actual>, { positive: false; }>
+  toBeUndefined: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectUndefined<Actual>, { positive: false; }>
+  toBeUnknown: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectUnknown<Actual>, { positive: false; }>
+  toBeVoid: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectVoid<Actual>, { positive: false; }>
+  toEqualTypeOf: { <Expected>(value: Expected & import("bun-types/vendor/expect-type/utils").AValue, ...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<Actual, Expected>, false>): true; <Expected>(...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<Actual, Expected>, false>): true }
+  toExtend<Expected>(...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").Extends<Actual, Expected>, false>): true
+  toHaveProperty: <KeyType extends number | string | symbol>(key: KeyType, ...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").Extends<KeyType, keyof Actual>, false>) => true
+  toMatchObjectType: <Expected>(...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<Pick<Actual, keyof Actual & keyof Expected>, Expected>, false>) => true
+  toMatchTypeOf: { <Expected>(value: Expected & import("bun-types/vendor/expect-type/utils").AValue, ...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").Extends<Actual, Expected>, false>): true; <Expected>(...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").Extends<Actual, Expected>, false>): true }
+interface import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual> (bun-types/vendor/expect-type/index.d.ts)
+  asserts: Actual extends (v: any, ...args: Array<any>) => asserts v is infer T ? unknown extends T ? never : PositiveExpectTypeOf<T> : never
+  branded: { toEqualTypeOf: <Expected extends import("bun-types/vendor/expect-type/branding").StrictEqualUsingBranding<Actual, Expected> extends true ? unknown : import("bun-types/vendor/expect-type/messages").MismatchInfo<Actual, Expected>>(...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/branding").StrictEqualUsingBranding<Actual, Expected>, true>) => true; }
+  constructorParameters: import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<Actual>>
+  exclude: <V>(v?: V | undefined) => import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Exclude<Actual, V>>
+  extract: <V>(v?: V | undefined) => import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Extract<Actual, V>>
+  guards: Actual extends (v: any, ...args: Array<any>) => v is infer T ? PositiveExpectTypeOf<T> : never
+  instance: Actual extends new (...args: Array<any>) => infer I ? PositiveExpectTypeOf<I> : never
+  items: Actual extends ArrayLike<infer ItemType> ? PositiveExpectTypeOf<ItemType> : never
+  map: <T>(fn: (value: Actual) => T) => import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<T>
+  not: import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<Actual>
+  omit: <KeyToOmit extends PropertyKey & Record<never, never> | keyof Actual>(keyToOmit?: KeyToOmit | undefined) => import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Omit<Actual, KeyToOmit>>
+  parameter: <Index extends number>(index: Index) => import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<OverloadParameters<Actual>[Index]>
+  parameters: import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<import("bun-types/vendor/expect-type/overloads").OverloadParameters<Actual>>
+  pick: <KeyToPick extends keyof Actual>(keyToPick?: KeyToPick | undefined) => import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Pick<Actual, KeyToPick>>
+  resolves: Actual extends PromiseLike<infer ResolvedType> ? PositiveExpectTypeOf<ResolvedType> : never
+  returns: Actual extends Function ? PositiveExpectTypeOf<OverloadReturnTypes<Actual>> : never
+  thisParameter: import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<ThisParameterType<Actual>>
+  toBeAny: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectAny<Actual>, { positive: true; branded: false; }>
+  toBeArray: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectArray<Actual>, { positive: true; branded: false; }>
+  toBeBigInt: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectBigInt<Actual>, { positive: true; branded: false; }>
+  toBeBoolean: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectBoolean<Actual>, { positive: true; branded: false; }>
+  toBeCallableWith: <Args extends import("bun-types/vendor/expect-type/overloads").OverloadParameters<Actual>>(...args: Args) => import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<import("bun-types/vendor/expect-type/utils").UnionToIntersection<import("bun-types/vendor/expect-type/overloads").SelectOverloadsInfo<import("bun-types/vendor/expect-type/overloads").TSPost53OverloadsInfoUnion<Actual>, Args>>>
+  toBeConstructibleWith: <Args extends import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<Actual>>(...args: Args) => true
+  toBeFunction: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectFunction<Actual>, { positive: true; branded: false; }>
+  toBeNever: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNever<Actual>, { positive: true; branded: false; }>
+  toBeNull: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNull<Actual>, { positive: true; branded: false; }>
+  toBeNullable: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNullable<Actual>, { positive: true; branded: false; }>
+  toBeNumber: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNumber<Actual>, { positive: true; branded: false; }>
+  toBeObject: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectObject<Actual>, { positive: true; branded: false; }>
+  toBeString: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectString<Actual>, { positive: true; branded: false; }>
+  toBeSymbol: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectSymbol<Actual>, { positive: true; branded: false; }>
+  toBeUndefined: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectUndefined<Actual>, { positive: true; branded: false; }>
+  toBeUnknown: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectUnknown<Actual>, { positive: true; branded: false; }>
+  toBeVoid: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectVoid<Actual>, { positive: true; branded: false; }>
+  toEqualTypeOf: { <Expected extends import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<Actual, Expected> extends true ? unknown : import("bun-types/vendor/expect-type/messages").MismatchInfo<Actual, Expected>>(value: Expected & import("bun-types/vendor/expect-type/utils").AValue, ...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<Actual, Expected>, true>): true; <Expected extends import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<Actual, Expected> extends true ? unknown : import("bun-types/vendor/expect-type/messages").MismatchInfo<Actual, Expected>>(...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<Actual, Expected>, true>): true }
+  toExtend: <Expected extends import("bun-types/vendor/expect-type/utils").Extends<Actual, Expected> extends true ? unknown : import("bun-types/vendor/expect-type/messages").MismatchInfo<Actual, Expected>>(...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").Extends<Actual, Expected>, true>) => true
+  toHaveProperty: <KeyType extends keyof Actual>(key: KeyType, ...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").Extends<KeyType, keyof Actual>, true>) => KeyType extends keyof Actual ? import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual[KeyType]> : true
+  toMatchObjectType: <Expected extends import("bun-types/vendor/expect-type/utils").IsUnion<Expected> extends true ? "toMatchObject does not support union types" : import("bun-types/vendor/expect-type/utils").Not<import("bun-types/vendor/expect-type/utils").Extends<Expected, Record<string, unknown>>> extends true ? "toMatchObject only supports object types" : import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<import("bun-types/vendor/expect-type/utils").DeepPickMatchingProps<Actual, Expected>, Expected> extends true ? unknown : import("bun-types/vendor/expect-type/messages").MismatchInfo<import("bun-types/vendor/expect-type/utils").DeepPickMatchingProps<Actual, Expected>, Expected>>(...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<import("bun-types/vendor/expect-type/utils").DeepPickMatchingProps<Actual, Expected>, Expected>, true>) => true
+  toMatchTypeOf: { <Expected extends import("bun-types/vendor/expect-type/utils").Extends<Actual, Expected> extends true ? unknown : import("bun-types/vendor/expect-type/messages").MismatchInfo<Actual, Expected>>(value: Expected & import("bun-types/vendor/expect-type/utils").AValue, ...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").Extends<Actual, Expected>, true>): true; <Expected extends import("bun-types/vendor/expect-type/utils").Extends<Actual, Expected> extends true ? unknown : import("bun-types/vendor/expect-type/messages").MismatchInfo<Actual, Expected>>(...MISMATCH: import("bun-types/vendor/expect-type/utils").MismatchArgs<import("bun-types/vendor/expect-type/utils").Extends<Actual, Expected>, true>): true }
+type AroundHook<Context> (bun-types/test.d.ts) = (fn: (run: () => Promise<void>, context: Context, suite: import("bun:test").TestSuite) => unknown, options?: HookOptions | undefined) => void
+type ContextHook<Context> (bun-types/test.d.ts) = (fn: (context: Context & import("bun:test").TestContext) => unknown, options?: HookOptions | undefined) => void
+type DescribeLabel (bun-types/test.d.ts) = Function | FunctionLike | number | string
+type ExpectNot (bun-types/test.d.ts) = Omit<import("bun:test").AsymmetricMatchers, keyof AsymmetricMatchersBuiltin> & AsymmetricMatchersBuiltinNegated
+type HookOptions (bun-types/test.d.ts) = number | { timeout?: number; }
+type Inverted<T> (bun-types/vendor/expect-type/messages.d.ts) = { [inverted]: T; }
+type JestMock.FunctionLike (bun-types/test.d.ts) = (...args: any) => any
+type JestMock.MockFunctionResult<T extends JestMock.FunctionLike = JestMock.UnknownFunction> (bun-types/test.d.ts) = JestMock.MockFunctionResultIncomplete | JestMock.MockFunctionResultReturn<T> | JestMock.MockFunctionResultThrow
+type JestMock.RejectType<T extends JestMock.FunctionLike> (bun-types/test.d.ts) = ReturnType<T> extends PromiseLike<any> ? unknown : never
+type JestMock.ResolveType<T extends JestMock.FunctionLike> (bun-types/test.d.ts) = ReturnType<T> extends PromiseLike<infer U> ? U : never
+type JestMock.UnknownFunction (bun-types/test.d.ts) = (...args: Array<unknown>) => unknown
+type MatcherContext (bun-types/test.d.ts) = MatcherUtils & MatcherState
+type MatcherHintColor (bun-types/test.d.ts) = (arg: string) => string
+type Mismatch (bun-types/vendor/expect-type/utils.d.ts) = { [mismatch]: "mismatch"; }
+type SuiteHook<Context> (bun-types/test.d.ts) = (fn: (context: Context, suite: import("bun:test").TestSuite) => unknown, options?: HookOptions | undefined) => void
+type TestOfRows<Row extends ReadonlyArray<unknown>> (bun-types/test.d.ts) = { (label: string, fn: (...args: Row) => Promise<unknown> | void, options: import("bun:test").TestOptions | number): void; (label: string, options: import("bun:test").TestOptions | number, fn: (...args: Row) => Promise<unknown> | void): void; (label: string, fn: (...args: Row) => Promise<unknown> | void, options?: import("bun:test").TestOptions | number | undefined): void }
+type __internal.Flatten<T, Copy extends T = T> (bun-types/test.d.ts) = { [Key in keyof T]: Copy[Key]; }
+type __internal.IfNeverThenElse<T, Else> (bun-types/test.d.ts) = [T] extends [never] ? Else : T
+type __internal.IsTuple<T> (bun-types/test.d.ts) = T extends ReadonlyArray<unknown> ? number extends T["length"] ? false : true : false
+type import("bun-types/vendor/expect-type/branding").StrictEqualUsingBranding<Left, Right> (bun-types/vendor/expect-type/branding.d.ts) = Extends<DeepBrand<Left>, DeepBrand<Right>> | Extends<DeepBrand<Right>, DeepBrand<Left>> extends true ? true : false
+type import("bun-types/vendor/expect-type/messages").ExpectAny<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").IsAny<T>; [expectAny]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectArray<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, Array<any>>; [expectArray]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectBigInt<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, bigint>; [expectBigInt]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectBoolean<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, boolean>; [expectBoolean]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectFunction<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, (...args: Array<any>) => any>; [expectFunction]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectNever<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").IsNever<T>; [expectNever]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectNull<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, null>; [expectNull]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectNullable<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").Not<import("bun-types/vendor/expect-type/branding").StrictEqualUsingBranding<T, NonNullable<T>>>; [expectNullable]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectNumber<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, number>; [expectNumber]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectObject<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, object>; [expectObject]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectString<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, string>; [expectString]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectSymbol<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, symbol>; [expectSymbol]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectUndefined<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, undefined>; [expectUndefined]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectUnknown<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").IsUnknown<T>; [expectUnknown]: T; }
+type import("bun-types/vendor/expect-type/messages").ExpectVoid<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, void>; [expectVoid]: T; }
+type import("bun-types/vendor/expect-type/messages").MismatchInfo<Actual, Expected> (bun-types/vendor/expect-type/messages.d.ts) = import("bun-types/vendor/expect-type/utils").And<[import("bun-types/vendor/expect-type/utils").Extends<import("bun-types/vendor/expect-type/messages").PrintType<Actual>, "...">, import("bun-types/vendor/expect-type/utils").Not<import("bun-types/vendor/expect-type/utils").IsAny<Actual>>]> extends true ? import("bun-types/vendor/expect-type/utils").And<[import("bun-types/vendor/expect-type/utils").Extends<Array<any>, Actual>, import("bun-types/vendor/expect-type/utils").Extends<Array<any>, Expected>]> extends true ? Array<import("bun-types/vendor/expect-type/messages").MismatchInfo<Extract<Actual, Array<any>>[number], Extract<Expected, Array<any>>[number]>> : { [K in UsefulKeys<Actual> | UsefulKeys<Expected>]: MismatchInfo<K extends keyof Actual ? Actual[K] : never, K extends keyof Expected ? Expected[K] : never>; } : import("bun-types/vendor/expect-type/branding").StrictEqualUsingBranding<Actual, Expected> extends true ? Actual : `Expected: ${PrintType<Expected>}, Actual: ${PrintType<Exclude<Actual, Expected>>}`
+type import("bun-types/vendor/expect-type/messages").PrintType<T> (bun-types/vendor/expect-type/messages.d.ts) = import("bun-types/vendor/expect-type/utils").IsUnknown<T> extends true ? "unknown" : import("bun-types/vendor/expect-type/utils").IsNever<T> extends true ? "never" : import("bun-types/vendor/expect-type/utils").IsAny<T> extends true ? never : (boolean) extends T ? "boolean" : T extends boolean ? `literal boolean: ${T}` : string extends T ? "string" : T extends string ? `literal string: ${T}` : number extends T ? "number" : T extends number ? `literal number: ${T}` : bigint extends T ? "bigint" : T extends bigint ? `literal bigint: ${T}` : T extends null ? "null" : T extends undefined ? "undefined" : T extends ((...args: Array<any>) => any) ? "function" : "..."
+type import("bun-types/vendor/expect-type/messages").Scolder<Expecter extends { result: boolean; }, Options extends { positive: boolean; }> (bun-types/vendor/expect-type/messages.d.ts) = Expecter["result"] extends Options["positive"] ? () => true : Options["positive"] extends true ? Expecter : Inverted<Expecter>
+type import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<ConstructorType> (bun-types/vendor/expect-type/overloads.d.ts) = TSPost53ConstructorOverloadsInfoUnion<ConstructorType> extends infer Ctor extends new (...args: any) => any ? ConstructorParameters<Ctor> : never
+type import("bun-types/vendor/expect-type/overloads").OverloadParameters<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = TSPost53OverloadsInfoUnion<FunctionType> extends infer Fn extends (...args: any) => any ? Parameters<Fn> : never
+type import("bun-types/vendor/expect-type/overloads").SelectOverloadsInfo<Union extends import("bun-types/vendor/expect-type/overloads").UnknownFunction, Args extends Array<unknown>> (bun-types/vendor/expect-type/overloads.d.ts) = Union extends infer Fn extends (...args: any) => any ? Args extends Parameters<Fn> ? Fn : never : never
+type import("bun-types/vendor/expect-type/overloads").TSPost53OverloadsInfoUnion<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = FunctionType extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; (...args: infer A4): infer R4; (...args: infer A5): infer R5; (...args: infer A6): infer R6; (...args: infer A7): infer R7; (...args: infer A8): infer R8; (...args: infer A9): infer R9; (...args: infer A10): infer R10; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) | ((...p: A4) => R4) | ((...p: A5) => R5) | ((...p: A6) => R6) | ((...p: A7) => R7) | ((...p: A8) => R8) | ((...p: A9) => R9) | ((...p: A10) => R10) : never
+type import("bun-types/vendor/expect-type/overloads").UnknownFunction (bun-types/vendor/expect-type/overloads.d.ts) = (...args: Array<unknown>) => unknown
+type import("bun-types/vendor/expect-type/utils").AValue (bun-types/vendor/expect-type/utils.d.ts) = bigint | boolean | null | number | string | symbol | undefined | void | { [avalue]?: undefined; }
+type import("bun-types/vendor/expect-type/utils").And<Types extends Array<boolean>> (bun-types/vendor/expect-type/utils.d.ts) = Types[number] extends true ? true : false
+type import("bun-types/vendor/expect-type/utils").DeepPickMatchingProps<Left, Right> (bun-types/vendor/expect-type/utils.d.ts) = Left extends Record<string, unknown> ? Pick<{ [K in keyof Left]: K extends keyof Right ? DeepPickMatchingProps<Left[K], Right[K]> : never; }, Extract<keyof Left, keyof Right>> : Left
+type import("bun-types/vendor/expect-type/utils").Eq<Left extends boolean, Right extends boolean> (bun-types/vendor/expect-type/utils.d.ts) = Left extends true ? Right : import("bun-types/vendor/expect-type/utils").Not<Right>
+type import("bun-types/vendor/expect-type/utils").Extends<Left, Right> (bun-types/vendor/expect-type/utils.d.ts) = import("bun-types/vendor/expect-type/utils").IsNever<Left> extends true ? import("bun-types/vendor/expect-type/utils").IsNever<Right> : [Left] extends [Right] ? true : false
+type import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<Left, Right> (bun-types/vendor/expect-type/utils.d.ts) = import("bun-types/vendor/expect-type/utils").IsAny<Left> extends true ? import("bun-types/vendor/expect-type/utils").IsAny<Right> : import("bun-types/vendor/expect-type/utils").Extends<Left, Right>
+type import("bun-types/vendor/expect-type/utils").IsAny<T> (bun-types/vendor/expect-type/utils.d.ts) = [T] extends [typeof secret] ? import("bun-types/vendor/expect-type/utils").Not<import("bun-types/vendor/expect-type/utils").IsNever<T>> : false
+type import("bun-types/vendor/expect-type/utils").IsNever<T> (bun-types/vendor/expect-type/utils.d.ts) = [T] extends [never] ? true : false
+type import("bun-types/vendor/expect-type/utils").IsUnion<T> (bun-types/vendor/expect-type/utils.d.ts) = Extends<TuplifyUnion<T, LastOf<T>>["length"], 1> extends true ? false : true
+type import("bun-types/vendor/expect-type/utils").IsUnknown<T> (bun-types/vendor/expect-type/utils.d.ts) = [unknown] extends [T] ? import("bun-types/vendor/expect-type/utils").Not<import("bun-types/vendor/expect-type/utils").IsAny<T>> : false
+type import("bun-types/vendor/expect-type/utils").MismatchArgs<ActualResult extends boolean, ExpectedResult extends boolean> (bun-types/vendor/expect-type/utils.d.ts) = import("bun-types/vendor/expect-type/utils").Eq<ActualResult, ExpectedResult> extends true ? [] : [Mismatch]
+type import("bun-types/vendor/expect-type/utils").Not<T extends boolean> (bun-types/vendor/expect-type/utils.d.ts) = T extends true ? false : true
+type import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<L, R> (bun-types/vendor/expect-type/utils.d.ts) = (<T>() => T extends (L & T) | T ? true : false) extends (<T>() => T extends (R & T) | T ? true : false) ? import("bun-types/vendor/expect-type/utils").IsNever<L> extends import("bun-types/vendor/expect-type/utils").IsNever<R> ? true : false : false
+type import("bun-types/vendor/expect-type/utils").UnionToIntersection<Union> (bun-types/vendor/expect-type/utils.d.ts) = (Union extends any ? (distributedUnion: Union) => void : never) extends (mergedIntersection: infer Intersection) => void ? Intersection : never

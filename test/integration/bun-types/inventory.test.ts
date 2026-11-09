@@ -1,11 +1,11 @@
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 import { join } from "node:path";
 
 // The script packs bun-types, installs it into a scratch project, and then
 // type-checks it once per preset, which outlives the 5s default that a plain
-// `bun test <this file>` runs with. Same reason as bun-types.test.ts.
-setDefaultTimeout(1000 * 60 * 3);
+// `bun test <this file>` (.github/workflows/bun-types.yml) runs with.
+const TIMEOUT = 1000 * 60 * 3;
 
 const REPO_ROOT = join(import.meta.dir, "../../..");
 const SCRIPT = join(REPO_ROOT, "packages/bun-types/scripts/inventory.ts");
@@ -23,19 +23,23 @@ const PRESETS = ["esnext", "esnext-dom", "es2022", "es2022-dom", "no-lib", "test
 // Driving the TypeScript checker in-process under a debug build is very slow,
 // so this runs on release builds only, like the type-checking cases in
 // bun-types.test.ts.
-test.skipIf(isDebug)("the inventory snapshots match packages/bun-types", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), SCRIPT, "--check"],
-    env: bunEnv,
-    cwd: REPO_ROOT,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+test.skipIf(isDebug)(
+  "the inventory snapshots match packages/bun-types",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), SCRIPT, "--check"],
+      env: bunEnv,
+      cwd: REPO_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // On a mismatch stdout carries the diff of each preset that differs.
-  expect(stderr).toBe("");
-  expect(stdout).toBe(PRESETS.map(preset => `${preset}: ok\n`).join(""));
-  expect(exitCode).toBe(0);
-});
+    // On a mismatch stdout carries the diff of each preset that differs.
+    expect(stderr).toBe("");
+    expect(stdout).toBe(PRESETS.map(preset => `${preset}: ok\n`).join(""));
+    expect(exitCode).toBe(0);
+  },
+  TIMEOUT,
+);

@@ -6237,7 +6237,7 @@ impl VirtualMachine {
             // This resolution can be the one that made the package manager.
             && !(self.transpiler.resolver.package_manager.is_some() && may_name_a_package(specifier))
             // An `onLoad` can serve such a name itself, also one that is registered later.
-            && (has_entry || !names_an_on_load_namespace(&specifier.to_utf8()))
+            && (has_entry || !may_name_an_on_load_namespace(specifier))
     }
 
     /// Out of line: most resolutions that the memo does not answer are the first of their pair.
@@ -8628,6 +8628,13 @@ impl Drop for OnResolveScope<'_> {
 fn names_an_on_load_namespace(specifier: &[u8]) -> bool {
     ModuleLoader::on_load_namespace_and_path(specifier)
         .is_some_and(|(namespace, _)| namespace.len() > 1)
+}
+
+/// `names_an_on_load_namespace`, for a string: without a `:` it names none.
+fn may_name_an_on_load_namespace(specifier: &bun_core::String) -> bool {
+    let has_no_colon =
+        specifier.is_8bit() && !bun_core::strings::contains_char(specifier.latin1(), b':');
+    !has_no_colon && names_an_on_load_namespace(&specifier.to_utf8())
 }
 
 /// Whether the package manager can have a say in what `specifier` resolves to: only a name that is no path asks it.

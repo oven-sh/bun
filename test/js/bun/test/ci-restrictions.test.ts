@@ -1,5 +1,26 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+
+const onlyDisabledInCI =
+  "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, pass --only or set the environment variable CI=false.";
+
+async function runInCI(files: Record<string, string>, args: string[] = []) {
+  using dir = tempDir("ci-restrictions", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...args],
+    env: { ...bunEnv, CI: "true" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return {
+    // A --parallel coordinator prints its workers' console.log lines to stderr.
+    ran: [...stdout.split("\n"), ...stderr.split("\n")].filter(line => line.startsWith("RAN ")),
+    errors: stderr.split("\n").filter(line => line.startsWith("error: ")),
+    exitCode,
+  };
+}
 
 describe.skipIf(Bun.semver.satisfies(Bun.version.split("-")[0], "< 1.3"))("CI restrictions", () => {
   describe("test.only restrictions", () => {
@@ -54,53 +75,7 @@ test.only("should fail in CI", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain(
-        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, pass --only or set the environment variable CI=false.",
-      );
-    });
-
-    test("test.only and describe.only should work with --only when GITHUB_ACTIONS=1", async () => {
-      const dir = tempDirWithFiles("ci-test-only-flag", {
-        "focused.test.js": `
-import { test, expect, describe } from "bun:test";
-
-test.only("focused test runs", () => {
-  expect(1 + 1).toBe(2);
-});
-
-describe.only("focused describe", () => {
-  test("runs", () => {
-    expect(1 + 1).toBe(2);
-  });
-});
-
-test("unfocused test is skipped", () => {
-  expect(false).toBe(true);
-});
-        `,
-        "other.test.js": `
-import { test, expect } from "bun:test";
-
-test("unfocused file is skipped", () => {
-  expect(false).toBe(true);
-});
-        `,
-      });
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--only"],
-        env: { ...bunEnv, GITHUB_ACTIONS: "1" },
-        cwd: dir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr).not.toContain("is disabled in CI environments");
-      expect(stderr).toContain("2 pass");
-      expect(stderr).toContain("0 fail");
-      expect(exitCode).toBe(0);
+      expect(stderr).toContain(onlyDisabledInCI);
     });
 
     test("describe.only should fail when GITHUB_ACTIONS=1", async () => {
@@ -127,9 +102,89 @@ describe.only("CI test", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(exitCode).toBe(1);
-      expect(stderr).toContain(
-        "error: .only is disabled in CI environments to prevent accidentally skipping tests. To override, pass --only or set the environment variable CI=false.",
+      expect(stderr).toContain(onlyDisabledInCI);
+    });
+
+    // Every way to mark a test or a describe block as only reaches the same guard, and --only lifts it for all of them.
+    describe.each([
+      ["test.only", "bun:test", `test.only("focused", () => console.log("RAN focused"));`],
+      [
+        "describe.only",
+        "bun:test",
+        `describe.only("block", () => { test("focused", () => console.log("RAN focused")); });`,
+      ],
+      ["test.only.each", "bun:test", `test.only.each([1])("focused %i", () => console.log("RAN focused"));`],
+      ["test.only", "vitest", `test.only("focused", () => console.log("RAN focused"));`],
+      [
+        "test(name, { only: true }, fn)",
+        "vitest",
+        `test("focused", { only: true }, () => console.log("RAN focused"));`,
+      ],
+      [
+        "describe(name, { only: true }, fn)",
+        "vitest",
+        `describe("block", { only: true }, () => { test("focused", () => console.log("RAN focused")); });`,
+      ],
+    ])("%s from %s in CI", (_form, source, focused) => {
+      const files = {
+        "focused.test.js": `
+import { test, describe } from "${source}";
+${focused}
+test("not focused", () => console.log("RAN not focused"));
+`,
+        "other.test.js": `
+import { test } from "bun:test";
+test("other file", () => console.log("RAN other file"));
+`,
+      };
+
+      test.concurrent("fails without --only", async () => {
+        expect(await runInCI(files)).toEqual({ ran: ["RAN other file"], errors: [onlyDisabledInCI], exitCode: 1 });
+      });
+
+      test.concurrent("runs the focused test with --only", async () => {
+        expect(await runInCI(files, ["--only"])).toEqual({ ran: ["RAN focused"], errors: [], exitCode: 0 });
+      });
+    });
+
+    test.concurrent("--only lifts the guard in --parallel workers", async () => {
+      const result = await runInCI(
+        {
+          "a.test.js": `
+import { test } from "bun:test";
+test.only("focused a", () => console.log("RAN focused a"));
+test("not focused", () => console.log("RAN not focused a"));
+`,
+          "b.test.js": `
+import { test } from "vitest";
+test("focused b", { only: true }, () => console.log("RAN focused b"));
+test("not focused", () => console.log("RAN not focused b"));
+`,
+        },
+        ["--only", "--parallel=2"],
       );
+      expect({ ...result, ran: result.ran.sort() }).toEqual({
+        ran: ["RAN focused a", "RAN focused b"],
+        errors: [],
+        exitCode: 0,
+      });
+    });
+
+    test.concurrent("--only does not lift the snapshot guard", async () => {
+      const result = await runInCI(
+        {
+          "snapshot.test.js": `
+import { test, expect } from "bun:test";
+test.only("new snapshot", () => { expect("value").toMatchSnapshot(); });
+`,
+        },
+        ["--only"],
+      );
+      expect(result).toEqual({
+        ran: [],
+        errors: ["error: Snapshot creation is disabled in CI environments unless --update-snapshots is used"],
+        exitCode: 1,
+      });
     });
   });
 

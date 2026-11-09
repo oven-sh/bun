@@ -734,8 +734,8 @@ impl ScopeFunctions {
         if matches!(cfg.self_mode, SelfMode::Failing | SelfMode::Fails) && self.mode == Mode::Describe {
             return Err(global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self)));
         }
-        if cfg.self_only && !jest::Jest::runner().is_some_and(|runner| runner.only) {
-            error_in_ci(global, b".only")?;
+        if cfg.self_only {
+            error_if_only_in_ci(global)?;
         }
         // As in Jest and Vitest, modifiers form a set. Repeating one is a no-op, and skip beats todo beats failing.
         let (mut base, mut added) = (self.cfg, cfg);
@@ -764,11 +764,11 @@ fn mode_precedence(mode: SelfMode) -> u8 {
     }
 }
 
-fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
-    if bun_core::ci_info::is_ci() {
+/// Every way to mark a test or a describe block as only calls this. `runner.only` is the `--only` flag.
+fn error_if_only_in_ci(global: &JSGlobalObject) -> JsResult<()> {
+    if bun_core::ci_info::is_ci() && !jest::Jest::runner().is_some_and(|runner| runner.only) {
         return Err(global.throw(format_args!(
-            "{} is disabled in CI environments to prevent accidentally skipping tests. To override, pass --only or set the environment variable CI=false.",
-            bstr::BStr::new(signature)
+            ".only is disabled in CI environments to prevent accidentally skipping tests. To override, pass --only or set the environment variable CI=false."
         )));
     }
     Ok(())
@@ -816,7 +816,7 @@ impl ModifierOptions {
             return Ok(());
         }
         if self.only == Some(true) {
-            error_in_ci(global, b".only")?;
+            error_if_only_in_ci(global)?;
         }
         cfg.self_only = self.only.unwrap_or(cfg.self_only);
         let has = |option: Option<bool>, mode: SelfMode| option.unwrap_or(cfg.self_mode == mode);

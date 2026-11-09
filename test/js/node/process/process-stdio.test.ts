@@ -5,6 +5,39 @@ import { release } from "node:os";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
+  test.each(["stdin", "stdout", "stderr"] as const)("process.%s preserves a constructor exception", async name => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const original = new Error("stdio constructor sentinel");
+          let calls = 0;
+          fs[${JSON.stringify(name === "stdin" ? "ReadStream" : "WriteStream")}] = function () {
+            calls++;
+            throw original;
+          };
+          let caughtOriginal = false;
+          try { void process.${name}; } catch (error) { caughtOriginal = error === original; }
+          fs.writeSync(1, JSON.stringify({ calls, caughtOriginal }) + "\\n");
+          process.exitCode = calls === 1 && caughtOriginal ? 0 : 1;
+        `,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '{"calls":1,"caughtOriginal":true}\n',
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("process.stdin", () => {
     expect(process.stdin).toBeDefined();
     expect(process.stdin.isTTY).toBe<boolean | undefined>(isatty(0) ? true : undefined);

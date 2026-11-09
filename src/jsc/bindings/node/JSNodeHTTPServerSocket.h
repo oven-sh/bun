@@ -65,11 +65,15 @@ public:
     unsigned heldWriteAwaitsDrain : 1 = 0;
     /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
-    /* holdTimeoutBackOnce() said yes, and nothing has refreshed m_inactivityTimer since. */
+    /* holdTimeoutBackOnce() has looked at the write that is pending, and nothing has refreshed m_inactivityTimer since. */
     unsigned timeoutHeldBack : 1 = 0;
     int closeReadError = 0;
     /* Whether the connection closed before the kernel had taken everything, also after an upgrade to a WebSocket. */
     std::optional<bool> closedWithUnsentData;
+    /* For m_pipelinedResponses. Here it takes padding, and the object is as large as without m_inactivityTimer. */
+    mutable WTF::Lock m_pipelinedResponsesLock;
+    /* us_socket_ssl_spill_pending() at the last holdTimeoutBackOnce(). */
+    unsigned lastTLSSpill = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;
     const char* peerCertVerifyErrorCode = nullptr;
@@ -109,15 +113,8 @@ public:
     /* node:http: takes the Timeout of an armed socket inactivity timeout (never the keep-alive one), or null. Server writes and the progress of a pending write refresh it, like net.Socket in Node. */
     void setInactivityTimer(JSC::VM& vm, JSC::JSObject* timer);
     void touchInactivityTimer();
-    /* For a timer that fired with a write still pending, where Node looks at writeQueueSize. True once, then false until something refreshes the timer. */
-    bool holdTimeoutBackOnce()
-    {
-        if (!m_inactivityTimer || timeoutHeldBack) {
-            return false;
-        }
-        timeoutHeldBack = true;
-        return true;
-    }
+    /* For a timer that fired, where Node looks at writeQueueSize. True when bytes of a pending write left since the last call or refresh, and for the first look at a write that is `pending`. */
+    bool holdTimeoutBackOnce(bool pending);
 
     /* node:http server compat - HTTP/1.1 pipelining. Responses for requests
      * that were parsed while an earlier response on this connection was still
@@ -197,10 +194,9 @@ public:
     mutable JSC::WriteBarrier<JSC::JSObject> m_duplex;
     mutable JSC::WriteBarrier<JSC::JSObject> m_inactivityTimer;
 
-    /* Queued pipelined responses (see appendPipelinedResponse). The lock keeps
-     * mutation on the JS thread coherent with the concurrent GC marker walking
+    /* Queued pipelined responses (see appendPipelinedResponse). m_pipelinedResponsesLock
+     * keeps mutation on the JS thread coherent with the concurrent GC marker walking
      * the vector in visitChildren. */
-    mutable WTF::Lock m_pipelinedResponsesLock;
     mutable WTF::Vector<JSC::WriteBarrier<JSNodeHTTPResponse>, 2> m_pipelinedResponses;
 
     DECLARE_INFO;

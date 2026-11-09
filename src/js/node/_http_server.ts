@@ -1966,10 +1966,15 @@ function getNodeHTTPServerSocket() {
 
     _onTimeout() {
       const handle = this[kHandle];
-      // A write in progress holds 'timeout' back once: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
-      if ((this.writableLength > 0 || (handle?.response?.bufferedAmount ?? 0) > 0) && handle?.holdTimeoutBackOnce()) {
-        this._unrefTimer();
-        return;
+      // Not under the keep-alive timeout: nothing writes there, and the native connection does not have that timer.
+      if (handle && !this[kKeepAliveTimeoutSet]) {
+        // The connection has closed, and 'close' comes next.
+        if (handle.closed) return;
+        // Node looks at the write queue here: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
+        if (handle.holdTimeoutBackOnce(this.writableLength > 0 || (handle.response?.bufferedAmount ?? 0) > 0)) {
+          this._unrefTimer();
+          return;
+        }
       }
       this.emit("timeout");
     }

@@ -478,6 +478,21 @@ static void setTracksActivity(us_socket_t* socket, bool tracks)
 {
     auto* httpResponseData = reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket));
     httpResponseData->setFlag(uWS::HttpResponseData<SSL>::HTTP_NODE_TRACKS_ACTIVITY, tracks);
+    // What left before the timer was handed over is no progress under it.
+    httpResponseData->backlogMoved = false;
+}
+
+/* Whether bytes of a pending write left since the last call (AsyncSocketData::backlogMoved). */
+template<bool SSL>
+static bool takeBacklogMoved(us_socket_t* socket)
+{
+    auto* asyncSocketData = reinterpret_cast<uWS::AsyncSocketData<SSL>*>(us_socket_ext(socket));
+    return std::exchange(asyncSocketData->backlogMoved, false);
+}
+
+static bool takeBacklogMoved(us_socket_t* socket, bool ssl)
+{
+    return ssl ? takeBacklogMoved<true>(socket) : takeBacklogMoved<false>(socket);
 }
 
 void JSNodeHTTPServerSocket::setInactivityTimer(JSC::VM& vm, JSC::JSObject* timer)
@@ -501,7 +516,33 @@ void JSNodeHTTPServerSocket::touchInactivityTimer()
     if (auto* timer = m_inactivityTimer.get()) {
         Bun__Timer__refreshTimeout(globalObject(), JSValue::encode(timer));
         timeoutHeldBack = false;
+        // onClose() clears `socket` before the task that runs detach().
+        if (socket && !us_socket_is_closed(socket)) {
+            takeBacklogMoved(socket, is_ssl);
+        }
     }
+}
+
+bool JSNodeHTTPServerSocket::holdTimeoutBackOnce(bool pending)
+{
+    if (!m_inactivityTimer || !socket || upgraded || us_socket_is_closed(socket)) {
+        return false;
+    }
+    bool moved = takeBacklogMoved(socket, is_ssl);
+    if (is_ssl) {
+        // Ciphertext that the TLS layer still holds is a pending write too. us_socket_write() reports none of its sends.
+        const unsigned spill = us_socket_ssl_spill_pending(socket);
+        pending |= spill > 0;
+        moved |= spill != lastTLSSpill;
+        lastTLSSpill = spill;
+    }
+    if (!pending && !moved) {
+        return false;
+    }
+    // One look uses up both: a period without progress ends in 'timeout' at the second expiry.
+    const bool held = moved || !timeoutHeldBack;
+    timeoutHeldBack = true;
+    return held;
 }
 
 bool JSNodeHTTPServerSocket::isAuthorized() const

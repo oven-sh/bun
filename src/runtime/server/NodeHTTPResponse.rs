@@ -132,6 +132,8 @@ bitflags! {
         const TUNNELED                            = 1 << 8;
         /// Its dispatch threw while it was queued (pipelining): advanceResponsePipeline decides at its turn.
         const DISPATCH_THREW_WHILE_QUEUED         = 1 << 9;
+        /// write_head() ran while the connection tracked activity (`State::tracks_node_activity`): the flush_headers() that sends that head is a write.
+        const HEAD_UNDER_INACTIVITY_TIMER         = 1 << 10;
     }
 }
 
@@ -1032,6 +1034,9 @@ impl NodeHTTPResponse {
             }
         }
 
+        if state.tracks_node_activity() {
+            self.update_flags(|f| f.insert(Flags::HEAD_UNDER_INACTIVITY_TIMER));
+        }
         Ok(())
     }
 
@@ -2561,9 +2566,12 @@ impl NodeHTTPResponse {
         if !flags.contains(Flags::UPGRADED) && !self.is_socket_closed_or_closing() {
             if let Some(raw_response) = self.writer() {
                 // Only the call that sends the head: write() with a callback calls this behind every chunk.
-                let state = raw_response.state();
-                if !state.is_http_write_called() {
-                    self.note_write_dispatched(raw_response, state);
+                if flags.contains(Flags::HEAD_UNDER_INACTIVITY_TIMER) {
+                    self.update_flags(|f| f.remove(Flags::HEAD_UNDER_INACTIVITY_TIMER));
+                    let state = raw_response.state();
+                    if !state.is_http_write_called() {
+                        self.note_write_dispatched(raw_response, state);
+                    }
                 }
                 // Don't flush immediately; queue a microtask to uncork the socket.
                 raw_response.flush_headers(false);

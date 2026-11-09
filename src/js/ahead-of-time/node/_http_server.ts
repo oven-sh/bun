@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c8bac99def344958c19aa7f6e5441df451518f0275c5d1cd93f986c3cc652556.
+// Written against that file with the SHA-256 154a159503904ab6d703e37d5bdaa37f01a37c82c3f28a9dc35b073ecf9701ab.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -2741,10 +2741,15 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
 
     _onTimeout() {
       const handle = this[kHandle];
-      // A write in progress holds 'timeout' back once: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
-      if ((this.writableLength > 0 || (handle?.response?.bufferedAmount ?? 0) > 0) && handle?.holdTimeoutBackOnce()) {
-        this._unrefTimer();
-        return;
+      // Not under the keep-alive timeout: nothing writes there, and the native connection does not have that timer.
+      if (handle && !this[kKeepAliveTimeoutSet]) {
+        // The connection has closed, and 'close' comes next.
+        if (handle.closed) return;
+        // Node looks at the write queue here: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L596-L611
+        if (handle.holdTimeoutBackOnce(this.writableLength > 0 || (handle.response?.bufferedAmount ?? 0) > 0)) {
+          this._unrefTimer();
+          return;
+        }
       }
       this.emit("timeout");
     }
@@ -4977,7 +4982,8 @@ const finishExchange = function emitResponseFinished(exchange: Exchange): void {
     return finishExchangeInSteps(exchange, flags);
   }
   const idleTimeout = keepAliveTimeout + keepAliveTimeoutBuffer;
-  if (socket.$armedTimeout !== idleTimeout && socket.setTimeout !== serverSocketSetTimeout) {
+  // finishConnection() calls setTimeout() in these two cases.
+  if ((socket.$armedTimeout !== idleTimeout || socket.timeout !== 0) && socket.setTimeout !== serverSocketSetTimeout) {
     ("unlikely");
     return finishExchangeInSteps(exchange, flags);
   }

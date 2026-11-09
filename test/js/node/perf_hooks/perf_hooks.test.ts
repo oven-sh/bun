@@ -1125,9 +1125,10 @@ describe("gc entries", () => {
   // and for no longer than its cycle. The script marks where the allocations begin and end in the log. A collection
   // that is still under way at the second mark is left out: the forced collection behind the mark waits for it. A debug
   // build takes a second for three of the twenty rounds. With BUN_JSC_useConcurrentGC=0 a collection is one stop, which
-  // begins a moment before its cycle is timed, so there the entry lasts for the cycle.
+  // begins a moment before its cycle is timed, so there the entry lasts for the cycle. Each row sets the option, so
+  // that the environment of the test run does not decide how many stops a collection has.
   concurrent.each([
-    ["some of which have more than one stop", {}, true],
+    ["some of which have more than one stop", { BUN_JSC_useConcurrentGC: "1" }, true],
     ["each of which is one stop", { BUN_JSC_useConcurrentGC: "0" }, false],
   ])(
     "an entry lasts for the stops that JavaScriptCore logs for its collection, %s",
@@ -1188,11 +1189,13 @@ describe("gc entries", () => {
 
   // With BUN_JSC_collectContinuously=1 a thread of JavaScriptCore asks for the next collection again and again. So a
   // collection can begin while the program is still inside the call that waited for the forced collection before it,
-  // and then end beside the program. Each stop that the log has for a collection kept the program from running, so no
-  // entry is shorter than the stops of its collection, and none is longer than its cycle. The entry of a forced
-  // collection lasts for its cycle. That finds the forced collections in the log, and with them all those between.
-  // Without the generational collector, each of those marks all of the live objects, in more than one stop. Windows and
-  // a debug build take too long for a child that collects at every moment of its start.
+  // and then end beside the program. Whether one does in a round is up to the timing of that thread, so the test does
+  // not count those collections: it holds every entry to one rule. Each stop that the log has for a collection kept
+  // the program from running, so no entry is shorter than the stops of its collection, and none is longer than its
+  // cycle. The entry of a forced collection lasts for its cycle. That finds the forced collections in the log, and with
+  // them all those between. Without the generational collector, and with the concurrent one, each of those marks all
+  // of the live objects in more than one stop. Windows and a debug build take too long for a child that collects at
+  // every moment of its start.
   test.concurrent.skipIf(isDebug || isWindows)(
     "no entry is shorter than the stops of its collection where one collection follows the other at once",
     async () => {
@@ -1235,6 +1238,7 @@ describe("gc entries", () => {
             BUN_JSC_collectContinuously: "1",
             BUN_JSC_collectContinuouslyPeriodMS: "0.1",
             BUN_JSC_useGenerationalGC: "0",
+            BUN_JSC_useConcurrentGC: "1",
             BUN_GC_TIMER_DISABLE: "1",
           },
           stdout: "pipe",

@@ -82,14 +82,15 @@ describe("UTF-8 BOM should be ignored", () => {
         expect(await new Response('\uFEFF{"hello":"World 🌎"}').json()).toEqual({ hello: "World 🌎" } as any);
       });
 
-      it("keeps the BOM in arrayBuffer()", async () => {
+      it("keeps the BOM in arrayBuffer() and bytes()", async () => {
         const bytes = new Uint8Array(await new Response("\uFEFFa").arrayBuffer());
         expect(Array.from(bytes)).toEqual([0xef, 0xbb, 0xbf, 0x61]);
+        expect(Array.from(await new Response("\uFEFFa").bytes())).toEqual([0xef, 0xbb, 0xbf, 0x61]);
       });
 
       it("handles a body that is only the BOM", async () => {
         expect(await new Response("\uFEFF").text()).toBe("");
-        expect(async () => await new Response("\uFEFF").json()).toThrow();
+        await expect(new Response("\uFEFF").json()).rejects.toThrow(SyntaxError);
       });
 
       it("keeps a BOM that is not at the start", async () => {

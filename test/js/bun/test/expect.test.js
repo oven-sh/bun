@@ -4041,10 +4041,9 @@ describe("expect()", () => {
         expect(failureOf(() => expect(tagged).not.toMatchObject({ a: number }))).toBe(
           'expect(received).not.toMatchObject(expected)\n\nExpected: not {\n  "a": Any<Number>,\n}\n',
         );
-        expect(Object.entries(tagged)).toEqual([
-          ["a", 1],
-          ["b", 2],
-        ]);
+        expect(Reflect.ownKeys(tagged)).toEqual(["a", "b"]);
+        expect(tagged.a).toBe(1);
+        expect(tagged.b).toBe(2);
         expect(pattern.a).toBe(number);
 
         // A matcher that the tag or an own `constructor` matched stands in for it, so neither of the two names the object.
@@ -4139,7 +4138,8 @@ describe("expect()", () => {
           "- Expected  - 1",
           "+ Received  + 4",
         ]);
-        expect(direct.children.map(child => child.id)).toEqual([1, 2]);
+        expect(direct.children[0].id).toBe(1);
+        expect(direct.children[1].id).toBe(2);
         // The pattern does not name `meta`, the object that holds the link.
         expect(marked(failure(tree(2, true)))).toEqual([
           '+       "meta": {',
@@ -4222,12 +4222,10 @@ describe("expect()", () => {
           "",
         ]);
         expect(ownKeys()).toEqual(before);
-        expect([holders.hasher.algorithm, holders.headers.id, holders.message.data, holders.url.href]).toEqual([
-          "sha1",
-          "v1",
-          "hello",
-          "https://example.com/a",
-        ]);
+        expect(holders.hasher.algorithm).toBe("sha1");
+        expect(holders.headers.id).toBe("v1");
+        expect(holders.message.data).toBe("hello");
+        expect(holders.url.href).toBe("https://example.com/a");
         expect(pattern.headers.id).toBe(string);
 
         // A Map, a Set and a FormData print their entries, and an entry is not the object that matched.
@@ -4297,7 +4295,8 @@ describe("expect()", () => {
           '+     <li id="c2" />',
           "+   </ul>,",
         ]);
-        expect([list.id, item.id]).toEqual(["a1", "c1"]);
+        expect(list.id).toBe("a1");
+        expect(item.id).toBe("c1");
         expect(pattern.props.id).toBe(string);
         // The element and its props are two objects. Each shows what its own pattern matched.
         expect(

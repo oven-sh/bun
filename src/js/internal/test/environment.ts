@@ -5,10 +5,7 @@ const types = require("node:util/types");
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 const isInPreload = $bindgen("environment.bind.ts", "isInPreload");
-const moveReplacements: (on: boolean, coveredStubs: unknown) => unknown = $bindgen(
-  "environment.bind.ts",
-  "moveReplacements",
-);
+const moveReplacements: (on: boolean) => void = $bindgen("environment.bind.ts", "moveReplacements");
 // This module's copy in a global that outlives the test files.
 const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
   "TestEnvironment.cpp",
@@ -445,8 +442,6 @@ function open(
   const id = `${packagePath}\n${optionsText ?? ""}`;
   const last = kept.$get(id);
   if (last && !isClosed(last.window)) return last;
-  // Which names a new window gives globalThis depends on the names that are there.
-  beforeCreating();
 
   let options;
   try {
@@ -454,6 +449,8 @@ function open(
   } catch (error) {
     return `its options are not JSON: ${(error as Error).message}`;
   }
+  // Which names a new window gives globalThis depends on the names that are there.
+  beforeCreating();
   const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(requireFromTest, found.load(), options ?? {});
   if (keep && typeof environment !== "string") kept.$set(id, environment);
   return environment;
@@ -480,22 +477,25 @@ let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unk
 
 // Without --isolate, a preload's vi.stubGlobal() stubs keep what they replaced, so they come off while a window's names move.
 let areReplacementsOff = false;
-// What each stub that a preload put a spy (or the like) over replaced, until that spy is on globalThis again.
-let coveredStubs: unknown;
+// The stubs put a `document` on a globalThis that had none. That is no DOM that a preload set up.
+let isDocumentAStub = false;
 
 function takeOffReplacements() {
   if (areReplacementsOff) return;
   areReplacementsOff = true;
-  coveredStubs = moveReplacements(false, coveredStubs);
+  moveReplacements(false);
 }
 
 function putOnReplacements() {
   if (!areReplacementsOff) return;
   areReplacementsOff = false;
-  moveReplacements(true, coveredStubs);
+  const hadDocument = "document" in globalThis;
+  moveReplacements(true);
+  isDocumentAStub = !hadDocument && "document" in globalThis;
 }
 
 function enter(name: string, environment: Environment, keep: boolean) {
+  if (keep) takeOffReplacements();
   const { properties, keys } = environment;
   const defined: string[] = [];
   const originals: (PropertyDescriptor | undefined)[] = [];
@@ -669,13 +669,15 @@ function setup(
   }
   try {
     if (name === "node") return last && leaveLast();
-    // A stub of a preload is neither a DOM that it set up itself, nor a name that a new window has to leave alone.
-    if (keep && !last) takeOffReplacements();
-    if (!last && "document" in globalThis) return;
+    if (!last && "document" in globalThis) {
+      if (!isDocumentAStub) return;
+      takeOffReplacements();
+      if ("document" in globalThis) return;
+    }
 
     let result;
     try {
-      result = open(name, optionsText, file, keep, () => last && leaveLast());
+      result = open(name, optionsText, file, keep, () => (last ? leaveLast() : keep && takeOffReplacements()));
     } catch (error) {
       if (last) leaveLast();
       if (!isFromComment) throw error;

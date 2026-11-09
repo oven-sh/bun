@@ -1296,6 +1296,7 @@ describe.concurrent("test environment", () => {
               super(options);
               const id = this.environment;
               this.matchMedia = () => id + " media";
+              this.requestAnimationFrame = () => id + " frame";
               this.fetch = () => id + " fetch";
               this.openedWithStubs = "ofThePreload" in globalThis;
               this.close = () => (this.closed = true);
@@ -1413,7 +1414,6 @@ describe.concurrent("test environment", () => {
           { "1.test.js": logs("1", "where(), document"), "2.test.js": `${inNode}${logs("2", "where(), document")}` },
           ["1 happy-dom#1 stub", "2 node stub", "3 happy-dom#1 stub"],
         ],
-        ["in a project without one", [], {}, ["3 happy-dom#1 stub"]],
         [
           "after a window that can't stay until the next file",
           ["--environment=happy-dom"],
@@ -1428,6 +1428,14 @@ describe.concurrent("test environment", () => {
           ...args,
         );
         expect(ran).toEqual(passed(...stdout));
+      });
+
+      test("a stub of document in a project without a window is a DOM that the preload set up", async () => {
+        const ran = await run({
+          "preload.js": `${documentStub} vi.stubGlobal("matchMedia", () => "stub");`,
+          "1.test.js": `${inWindow}${logs("1", "where(), document, media()")}`,
+        });
+        expect(ran).toEqual(passed("1 node stub stub"));
       });
 
       test("a stub is on a node file after a window that can't stay until the next file", async () => {
@@ -1498,51 +1506,255 @@ describe.concurrent("test environment", () => {
         );
       });
 
-      const spy = `vi.spyOn(globalThis, "matchMedia");`;
-      const covered = `(vi.isMockFunction(globalThis.matchMedia) ? "spy of " : "") + media()`;
+      // A change of environment undoes the stubs and makes them again, like the end of a file.
       test.each([
-        ["a spy", spy, ["--environment=happy-dom"], inNode, "spy of stub", "undefined", "happy-dom#1 media"],
-        [
-          "an assignment",
-          `globalThis.matchMedia = () => "assigned";`,
-          ["--environment=happy-dom"],
-          inNode,
-          "assigned",
-          "undefined",
-          "happy-dom#1 media",
-        ],
-        ["a spy in a project without a window", spy, [], inWindow, "spy of stub", "happy-dom#1 media", "undefined"],
+        ["with a spy over it", `vi.spyOn(globalThis, "matchMedia");`, "spy of stub"],
+        ["with an assignment over it", `globalThis.matchMedia = () => "assigned";`, "assigned"],
+        ["read-only", `Object.defineProperty(globalThis, "matchMedia", { writable: false });`, "read-only stub"],
       ])(
-        "what the preload put over a stub stays in the preload's environment, and other files have the stub alone: %s",
-        async (_, cover, args, other, ofPreload, underOther, underPreload) => {
-          const ran = await run(
-            {
-              "preload.js": `${stub} ${cover}`,
-              "1.test.js": `${other}${unstubs("1", covered)}`,
-              "2.test.js": unstubs("2", covered),
-              "3.test.js": `${other}${unstubs("3", covered)}`,
-            },
-            ...args,
+        "known limit: a stub that the preload left %s is a plain stub after the first change of environment",
+        async (_, change, left) => {
+          const seen = `(vi.isMockFunction(globalThis.matchMedia) ? "spy of " : Object.getOwnPropertyDescriptor(globalThis, "matchMedia")?.writable === false ? "read-only " : "") + media()`;
+          const preload = `${stub} ${change}`;
+          const sameFirst = await run(
+            { "preload.js": preload, "1.test.js": logs("1", seen), "2.test.js": logs("2", seen) },
+            "--environment=happy-dom",
           );
-          expect(ran).toEqual(
-            passed("1 stub", `1 ${underOther}`, `2 ${ofPreload}`, `2 ${underPreload}`, "3 stub", `3 ${underOther}`),
+          expect(sameFirst).toEqual(passed(`1 ${left}`, "2 stub"));
+          const otherFirst = await run(
+            { "preload.js": preload, "1.test.js": `${inNode}${unstubs("1", seen)}`, "2.test.js": unstubs("2", seen) },
+            "--environment=happy-dom",
           );
+          expect(otherFirst).toEqual(passed("1 stub", "1 undefined", "2 stub", "2 happy-dom#1 media"));
         },
       );
 
-      test("fake timers that the preload turned on over a stub stay over it in a window", async () => {
+      test("known limit: a stub is over the fake timers that the preload turned on over it, after the first change", async () => {
         const ran = await run({
           "preload.js": `import { vi } from "bun:test"; vi.stubGlobal("setTimeout", () => "stub"); vi.useFakeTimers();`,
           "1.test.js": `${inWindow}${file(
             "1",
-            `console.log("1", where(), Object.hasOwn(setTimeout, "clock"));
+            `console.log("1", where(), vi.isFakeTimers(), Object.hasOwn(setTimeout, "clock"));
             vi.useRealTimers();
             console.log("1", setTimeout());
             vi.unstubAllGlobals();
             console.log("1", setTimeout.name);`,
           )}`,
         });
-        expect(ran).toEqual(passed("1 happy-dom#1 true", "1 stub", "1 setTimeout"));
+        expect(ran).toEqual(passed("1 happy-dom#1 true false", "1 stub", "1 setTimeout"));
+      });
+
+      // A spy and the fake clock keep what they replaced as well, and only the stubs come off while a window's names move.
+      test.each([
+        [
+          "a spy",
+          `vi.spyOn(globalThis, "matchMedia"); vi.stubGlobal("matchMedia", () => "stub");`,
+          `vi.unstubAllGlobals(); vi.restoreAllMocks();`,
+          `vi.isMockFunction(globalThis.matchMedia) ? "the preload's spy" : media()`,
+          "happy-dom#1 media",
+          "undefined",
+          "the preload's spy",
+        ],
+        [
+          "fake timers",
+          `vi.useFakeTimers(); globalThis.fake = requestAnimationFrame; vi.stubGlobal("requestAnimationFrame", () => "stub");`,
+          `vi.unstubAllGlobals(); vi.useRealTimers();`,
+          `typeof requestAnimationFrame !== "function" ? typeof requestAnimationFrame : requestAnimationFrame === fake ? "the preload's fake" : requestAnimationFrame()`,
+          "happy-dom#1 frame",
+          "happy-dom#1 frame",
+          "the preload's fake",
+        ],
+      ])(
+        "known limit: %s under a preload's stub stays in the window that a node file left first",
+        async (_, preload, undo, seen, ofWindow, inNodeFirst, afterNode) => {
+          const undoes = (title: string) => file(title, `${undo}\nconsole.log("${title}", ${seen});`);
+          const files = { "preload.js": `import { vi } from "bun:test"; ${preload}` };
+          const windowFirst = await run(
+            { ...files, "1.test.js": undoes("1"), "2.test.js": `${inNode}${undoes("2")}`, "3.test.js": undoes("3") },
+            "--environment=happy-dom",
+          );
+          expect(windowFirst).toEqual(passed(`1 ${ofWindow}`, "2 undefined", `3 ${ofWindow}`));
+          const nodeFirst = await run(
+            { ...files, "1.test.js": `${inNode}${undoes("1")}`, "2.test.js": undoes("2") },
+            "--environment=happy-dom",
+          );
+          expect(nodeFirst).toEqual(passed(`1 ${inNodeFirst}`, `2 ${afterNode}`));
+        },
+      );
+
+      test("known limit: a preload's hook that undoes stubs and spies sees the order of the files", async () => {
+        const files = {
+          "preload.js": `import { afterEach, vi } from "bun:test";
+            vi.stubGlobal("matchMedia", () => "stub");
+            vi.spyOn(globalThis, "matchMedia");
+            afterEach(() => {
+              vi.unstubAllGlobals();
+              vi.restoreAllMocks();
+            });`,
+        };
+        const twice = (title: string) =>
+          `${logs(title)}\ntest("${title} again", () => console.log("${title}", media()));`;
+        const windowFirst = await run(
+          { ...files, "1.test.js": twice("1"), "2.test.js": `${inNode}${twice("2")}`, "3.test.js": twice("3") },
+          "--environment=happy-dom",
+        );
+        expect(windowFirst).toEqual(passed("1 stub", "1 stub", "2 stub", "2 undefined", "3 stub", "3 stub"));
+        const nodeFirst = await run(
+          { ...files, "1.test.js": `${inNode}${twice("1")}`, "2.test.js": twice("2") },
+          "--environment=happy-dom",
+        );
+        expect(nodeFirst).toEqual(passed("1 stub", "1 stub", "2 stub", "2 happy-dom#1 media"));
+      });
+
+      describe("over every pair of environments", () => {
+        // Two names of the window alone, two that Bun has too, and two that nothing defines.
+        const names = ["matchMedia", "scrollTo", "fetch", "Headers", "ofNobody", "ofNobodyToo"];
+        const ofBunToo = ["fetch", "Headers"];
+        const ofWindow = ["matchMedia", "scrollTo", ...ofBunToo];
+        const windows = {
+          "node_modules/happy-dom/package.json": fakePackages["node_modules/happy-dom/package.json"],
+          "node_modules/happy-dom/index.js": `
+            let count = 0;
+            exports.Window = class Window {
+              constructor({ console: _, ...options }) {
+                const id = "happy-dom#" + ++count;
+                this.environment = id;
+                this.document = { body: { id }, defaultView: this };
+                this.location = { href: options.url };
+                for (const name of ${JSON.stringify(ofWindow)}) this[name] = () => id + " " + name;
+                this.happyDOM = { async abort() {} };
+                this.close = () => {};
+              }
+            };`,
+        };
+        // Every second stub is made in a hook of the preload.
+        const preload = `import { beforeAll, vi } from "bun:test";
+          const stub = name => vi.stubGlobal(name, () => "stub");
+          ${JSON.stringify(names.filter((_, i) => i % 2 === 0))}.forEach(stub);
+          beforeAll(() => ${JSON.stringify(names.filter((_, i) => i % 2 === 1))}.forEach(stub));`;
+        const otherWindow = `// ${VITEST}-options { "url": "https://example.com/" }\n`;
+        // P is the project's environment, O the other kind, and W a window with other options.
+        const comments = {
+          "happy-dom": { P: "", O: inNode, W: otherWindow },
+          "node": { P: "", O: inWindow, W: `${inWindow}${otherWindow}` },
+        };
+        const reads = (comment: string) => `${comment}
+          import { test, vi } from "bun:test";
+          const read = name => {
+            if (!Object.hasOwn(globalThis, name)) return "absent";
+            const value = globalThis[name];
+            return value.name === name ? "Bun's" : value();
+          };
+          const names = ${JSON.stringify(names)};
+          test("reads", () => {
+            console.log(JSON.stringify([typeof environment === "undefined" ? "node" : environment, ...names.map(read)]));
+            vi.unstubAllGlobals();
+            console.log(JSON.stringify(names.map(read)));
+          });`;
+
+        describe.each(["happy-dom", "node"] as const)("in a %s project", project => {
+          test.each(["POW", "PWO", "OPW", "WPO", "OWP", "WOP", "OOP", "WWP", "PPO"])("files %s", async sequence => {
+            const environments = Array.from(sequence) as ("P" | "O" | "W")[];
+            using dir = tempDir("test-environment", {
+              ...windows,
+              "preload.js": preload,
+              ...Object.fromEntries(
+                environments.map((environment, i) => [`${i}.test.js`, reads(comments[project][environment])]),
+              ),
+            });
+            const { stdout, stderr, exitCode } = await bunTest(
+              String(dir),
+              "--preload=./preload.js",
+              ...(project === "node" ? [] : ["--environment=happy-dom"]),
+            );
+            const read = stdout.map(line => JSON.parse(line) as string[]);
+
+            // The project's window opens first, also when no file of the project is first.
+            const opened = project === "node" ? [] : ["P"];
+            const want = environments.flatMap(environment => {
+              const isNode = environment === (project === "node" ? "P" : "O");
+              if (!isNode && !opened.includes(environment)) opened.push(environment);
+              const where = isNode ? "node" : `happy-dom#${opened.indexOf(environment) + 1}`;
+              return [
+                [where, ...names.map(() => "stub")],
+                // After the unstub, every name is what this file's environment defines.
+                names.map(name =>
+                  !ofWindow.includes(name)
+                    ? "absent"
+                    : !isNode
+                      ? `${where} ${name}`
+                      : ofBunToo.includes(name)
+                        ? "Bun's"
+                        : "absent",
+                ),
+              ];
+            });
+            expect({ read, failed: summary(stderr)?.[1], exitCode }).toEqual({
+              read: want,
+              failed: "0 fail",
+              exitCode: 0,
+            });
+          });
+        });
+      });
+
+      test("an uncaughtException listener gets the error of each file end, and none for the change between", async () => {
+        const logsWhere = (title: string) =>
+          `console.log("${title}", typeof environment === "undefined" ? "node" : environment)`;
+        const ran = await run(
+          {
+            "preload.js": `import { vi } from "vitest";
+              vi.stubGlobal("ofThePreload", "stub");
+              process.on("uncaughtException", error => console.log("0", error.message));`,
+            "1.test.js": `import { test } from "vitest";
+              test("1", () => {
+                Object.defineProperty(globalThis, "ofThePreload", { configurable: false });
+                ${logsWhere("1")};
+              });`,
+            "2.test.js": `${inNode}import { test } from "vitest";\ntest("2", () => ${logsWhere("2")});`,
+          },
+          "--environment=happy-dom",
+        );
+        const error = "0 Attempting to change configurable attribute of unconfigurable property.";
+        expect(ran).toEqual(passed("1 happy-dom#1", error, "2 node", error));
+      });
+
+      test("a file that makes globalThis non-extensible doesn't fail for the stubs that can't go on again", async () => {
+        const ran = await run(
+          {
+            "preload.js": stub,
+            "1.test.js": file("1", `Object.preventExtensions(globalThis);\nconsole.log("1", where(), media());`),
+          },
+          "--environment=happy-dom",
+        );
+        expect(ran).toEqual(passed("1 happy-dom#1 stub"));
+      });
+
+      test("a preload that set up its own DOM keeps its stubs as they are for a file with a comment", async () => {
+        const ran = await run({
+          "preload.js": `${stub}
+            globalThis.document = { body: {} };
+            Object.defineProperty(globalThis, "matchMedia", { writable: false });
+            vi.stubGlobal("deleted", "stub");
+            delete globalThis.deleted;`,
+          "1.test.js": `${inWindow}${logs("1", `where(), media(), Object.getOwnPropertyDescriptor(globalThis, "matchMedia").writable, "deleted" in globalThis`)}`,
+        });
+        expect(ran).toEqual(passed("1 node stub false false"));
+      });
+
+      test.each([
+        ["has no package", {}, inWindow],
+        ["has options that are not JSON", packages, `${inWindow}// ${VITEST}-options { url: 1 }\n`],
+      ])("a file whose environment %s keeps the stubs as they are", async (_, installed, comment) => {
+        using dir = tempDir("test-environment", {
+          ...installed,
+          "preload.js": `${stub} Object.defineProperty(globalThis, "matchMedia", { writable: false });`,
+          "1.test.js": `${comment}${logs("1", `where(), media(), Object.getOwnPropertyDescriptor(globalThis, "matchMedia").writable`)}`,
+        });
+        const { stdout, stderr, exitCode } = await bunTest(String(dir), "--preload=./preload.js");
+        expect(stdout).toEqual(["1 node stub false"]);
+        expect(summary(stderr)).toEqual(["1 pass", "0 fail"]);
+        expect(exitCode).toBe(0);
       });
 
       test("a stub that the preload deleted is made again like any other, and the window keeps its own", async () => {
@@ -1557,7 +1769,7 @@ describe.concurrent("test environment", () => {
         expect(ran).toEqual(passed("1 stub", "2 stub", "2 happy-dom#1 fetch"));
       });
 
-      test("a stub that can't be made again is an error, and the file still gets its environment", async () => {
+      test("a stub that can't be made again is an error of the file that it ends, and the next file gets its environment", async () => {
         using dir = tempDir("test-environment", {
           ...packages,
           "preload.js": `import { vi } from "bun:test"; vi.stubGlobal("ofThePreload", "stub");`,
@@ -1575,8 +1787,8 @@ describe.concurrent("test environment", () => {
         );
         expect(stderr).toContain("TypeError: Attempting to change configurable attribute of unconfigurable property.");
         expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["1 happy-dom#1 stub", "2 node stub"]);
-        // One at the end of each file, as before, and one when the second file leaves the window.
-        expect(summary(stderr)).toEqual(["2 pass", "0 fail", "3 errors"]);
+        // One at the end of each file. The change of environment between them reports none of its own.
+        expect(summary(stderr)).toEqual(["2 pass", "0 fail", "2 errors"]);
         expect(exitCode).toBe(1);
       });
     });

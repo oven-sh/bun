@@ -5,7 +5,7 @@ use super::vi_utils;
 use bun_core::lexer::end_of_run;
 use bun_core::{Output, Timespec, TimespecMockMode};
 use bun_core::strings;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::{VirtualMachine, runtime_hooks};
 use bun_jsc::{
@@ -217,23 +217,13 @@ pub(crate) fn is_in_preload() -> bool {
     VirtualMachine::get().is_in_preload
 }
 
-/// Takes a preload's `vi.stubGlobal()` stubs off the global (`on` is false) while environment.ts moves a window's names.
-pub(crate) fn move_replacements(
-    cx: &mut JsScope<'_>,
-    on: bool,
-    covered_stubs: JsLocal<'_>,
-) -> JSValue {
+/// Takes the `vi.stubGlobal()` stubs off the global (`on` is false) while environment.ts moves a window's names.
+pub(crate) fn move_replacements(cx: &mut JsScope<'_>, on: bool) {
     let global = cx.global();
-    let mut covered_stubs = covered_stubs.to_js();
-    // What a stub throws is the file's error. The names of the window still move.
-    if let Err(err) = vi_utils::move_stubs_of_preloads(global, on, &mut covered_stubs) {
-        let error = global.take_exception(err);
-        let _ = global
-            .bun_vm()
-            .as_mut()
-            .uncaught_exception(global, error, false);
+    // The end of each file reports a stub that can't be undone or made again. Here that would be one more error, for the next file.
+    if let Err(err) = vi_utils::move_stubs_of_preloads(global, on) {
+        let _ = global.take_exception(err);
     }
-    covered_stubs
 }
 
 fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalPromise> {

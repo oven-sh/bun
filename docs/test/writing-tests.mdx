@@ -344,6 +344,8 @@ How Bun passes arguments to your test function depends on the structure of your 
 - If a table row is an array (like `[1, 2, 3]`), Bun passes each element as an individual argument
 - If a row is not an array (like an object), Bun passes it as a single argument
 
+`test.each` and `describe.each` from [`"vitest"`](#importing-from-vitest) spread array rows only if every row in the table is an array. If any row isn't an array, Bun passes each row as a single argument, as Vitest does. For the table `[[1, 2], 3]`, Bun calls the callback with `[1, 2]` for the first row and with `3` for the second. `test.each` on a `test` that [`test.extend()`](#fixtures) returned follows this rule in every module.
+
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 // Array items passed as individual arguments
 test.each([
@@ -495,6 +497,7 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 |                                                           | `"bun:test"`, `"@jest/globals"`      | `"vitest"`                                                           |
 | --------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
 | Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                                    |
+| Array row in a `test.each` or `describe.each` table       | spread into arguments                | spread only if every row is an array                                 |
 | `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                          |
 | Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
 | `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                        |

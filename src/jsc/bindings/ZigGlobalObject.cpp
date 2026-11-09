@@ -4396,6 +4396,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     ASSERT(result);
     if (globalObject->m_lazyTestModuleObject.isInitialized()) [[unlikely]] {
+        globalObject->onLoadPlugins.modulesImportedByTestFile.add(key.string());
         Bun::didStartDynamicImport(globalObject, result, std::exchange(globalObject->onLoadPlugins.keyOfImportCall, {}));
         RETURN_IF_EXCEPTION(scope, nullptr);
     }

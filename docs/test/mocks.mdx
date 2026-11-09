@@ -475,7 +475,7 @@ You can call `vi.mock(path)` and `jest.mock(path)` without a factory. `mock.modu
 
 - If a `__mocks__` directory has a file with the same name, Bun loads that file instead. For a file, that's `__mocks__/<file>` in the same directory. For a package or a builtin like `fs`, it's `__mocks__/<package>` in the directory where `bun test` runs.
 - Otherwise, Bun loads the original module and mocks its exports. Functions and classes become mocks that return `undefined`, arrays become empty, and other values are kept.
-- `vi.mock(path, { spy: true })` keeps every function's implementation and records its calls.
+- `vi.mock(path, { spy: true })` keeps every function's implementation and records its calls. Bun evaluates the module once more for the mock, at the first import, and replaces the methods of the objects and class instances it exports in place. A module that an earlier test file loaded isn't written to, and `vi.importActual()` returns it. The evaluation is removed with the mock, so the next `{ spy: true }` mock of the module starts with new spies.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -795,6 +795,7 @@ test("lazy import", async () => {
 ### Differences from Vitest
 
 - A `vi.mock()` call that isn't hoisted, such as one inside a function, updates a module of your own that's already imported in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once. A module that only `vi.importActual()` has loaded stays the original, and the next import calls the factory.
+- A `vi.mock(path, { spy: true })` call that updates a module in place is made from that module's exports, and the module isn't evaluated again. The call spies on the module's functions and on copies of its plain objects, but not on the methods of the class instances it exports. Use `vi.spyOn()` for those, or move the call to the top level of the file. A builtin module such as `node:http` is never evaluated again, so the same goes for it.
 - To update a module in place, Bun calls the factory when you mock the module, not at the next import. If the factory returns a promise, an `import()` of the module doesn't wait for it. Await what `vi.mock()` returns instead. `vi.doMock()` does the same for a builtin module such as `node:fs`.
 - After `vi.doUnmock()`, a module that imported the mock is evaluated again at its next import, and gets the real module. After a second `vi.doMock()` of the same module, it gets the new mock. In Vitest it stays cached with the first mock until `vi.resetModules()`.
 - Without `--isolate`, test files share the modules they load. For `vi.doMock()`, a module that an earlier file loaded counts as not loaded, even if this file imports it too. `vi.importActual()` and `importOriginal` evaluate it again.

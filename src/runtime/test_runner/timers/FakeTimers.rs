@@ -384,7 +384,7 @@ struct Replaced {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Restore {
     Always,
-    /// Skips globals `vi.unstubAllGlobals()` already restored, where `original` is the stale `vi.stubGlobal()` value.
+    /// Skips globals that something wrote since: `vi.unstubAllGlobals()` restored them, or the test put its own value there.
     WhereStillInstalled,
 }
 

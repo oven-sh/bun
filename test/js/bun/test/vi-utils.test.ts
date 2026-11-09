@@ -819,6 +819,32 @@ describe.concurrent("stubs do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
+  // As before: once its file has ended, a restored spy is a value like any other.
+  test("a spy that a stub replaced in an earlier file, put on the global by a later file", async () => {
+    const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
+      "a.test.ts": `
+        import { spyOn, test, vi } from "bun:test";
+        globalThis.realFetch = fetch;
+        test("a", () => {
+          globalThis.spyOfA = spyOn(globalThis, "fetch");
+          vi.stubGlobal("fetch", "stub");
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        test("b", () => {
+          expect(fetch).toBe(realFetch);
+          globalThis.fetch = spyOfA;
+          vi.stubGlobal("fetch", "stub");
+          vi.unstubAllGlobals();
+          expect(fetch).toBe(spyOfA);
+          globalThis.fetch = realFetch;
+        });
+      `,
+    });
+    expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
   // The end of a test file removes the stub of a preload and makes it again. The spy is over the same function then.
   test("a spy of a preload over a stub of that preload, restored in a later file, leaves the stub", async () => {
     const { stderr, exitCode } = await run(["test", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"], {

@@ -57,6 +57,12 @@ static NEVER_INLINE bool isPrototypeOfItsConstructor(VM& vm, JSGlobalObject* glo
     if (constructor.isUndefinedOrNull())
         return false;
 
+    // A class, and a function that has its `prototype`, hold it as a direct data property: no [[Get]] is needed.
+    if (auto* function = dynamicDowncast<JSFunction>(constructor)) {
+        JSValue direct = function->getDirect(vm, vm.propertyNames->prototype);
+        if (direct && direct.isObject())
+            return direct == JSValue(object);
+    }
     JSValue prototype = constructor.get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, false);
     return prototype == JSValue(object);

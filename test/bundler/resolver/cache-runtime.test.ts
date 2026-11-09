@@ -156,6 +156,45 @@ describe.concurrent("a file or package created after the resolver read its direc
     expect(req("@pk/b.ts")).toEqual({ b: 2 });
   });
 
+  test("a file added to a linked package, by the package name alone", async () => {
+    using dir = tempDir("runtime-cache-late-file-link-bare", {
+      "pk/a.ts": `export const a = 1;`,
+      "node_modules/.keep": "",
+    });
+    const root = String(dir);
+    const pk = path.join(root, "pk");
+    link(pk, path.join(root, "node_modules", "@pk"));
+    const req = createRequire(path.join(root, "main.ts"));
+
+    expect(req("@pk/a.ts")).toEqual({ a: 1 });
+    writeFileSync(path.join(pk, "b.ts"), `export const b = 2;`);
+    expect(req("@pk/b.ts")).toEqual({ b: 2 });
+  });
+
+  test("a linked package pointed at another directory after the first lookup", async () => {
+    using dir = tempDir("runtime-cache-retargeted-link", {
+      "pk1/a.ts": `export const a = "pk1";`,
+      "pk1/package.json": `{ "name": "pk", "exports": { "./a.ts": "./a.ts" } }`,
+      "pk2/a.ts": `export const a = "pk2";`,
+      "pk2/b.ts": `export const b = "pk2";`,
+      "pk2/package.json": `{ "name": "pk", "exports": { "./a.ts": "./a.ts", "./b.ts": "./b.ts", "./c": "./a.ts" } }`,
+      "node_modules/.keep": "",
+    });
+    const root = String(dir);
+    const at = path.join(root, "node_modules", "pk");
+    link(path.join(root, "pk1"), at);
+    const req = createRequire(path.join(root, "main.ts"));
+
+    expect(req("pk/a.ts")).toEqual({ a: "pk1" });
+    expect(() => req("pk/b.ts")).toThrow("Cannot find module 'pk/b.ts'");
+    rmSync(at);
+    link(path.join(root, "pk2"), at);
+    // The new target's file is read from the new target, and its exports map is the one in use.
+    expect(req("pk/b.ts")).toEqual({ b: "pk2" });
+    expect(req("pk/c")).toEqual({ a: "pk2" });
+    expect(Bun.resolveSync("pk/b.ts", root)).toBe(path.join(root, "pk2", "b.ts"));
+  });
+
   test("a package subpath that missed, then was written", async () => {
     using dir = tempDir("runtime-cache-miss-then-write", {
       "node_modules/@pk/a.ts": `export const a = 1;`,

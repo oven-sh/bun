@@ -1009,8 +1009,8 @@ pub mod fs {
             let mut dir = DirEntry::init(dir_, generation);
             if let Some(prev) = prev_map.as_deref() {
                 dir.data.reserve(prev.count());
-                dir.identity = ListingIdentity::read(handle).unwrap_or_default();
             }
+            dir.identity = ListingIdentity::read(handle).unwrap_or_default();
 
             if store_fd {
                 FileSystem::set_max_fd(bun_sys::Fd::native(handle));
@@ -1219,21 +1219,17 @@ pub mod fs {
             // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
             // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
             // `entries_option_map()` singleton (process-static).
-            let entries_ptr: *mut DirEntry = match in_place {
-                Some(p) => p,
-                None => bun_core::heap::into_raw(Box::new(DirEntry::init(dir, generation))),
-            };
-            if let Some(original) = in_place {
-                // SAFETY: BSSMap-owned; entries_mutex held.
-                unsafe { (*original).data.clear() };
-            }
             if store_fd && !entries.fd.is_valid() {
                 entries.fd = handle;
             }
-
-            // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
-            // leaked Box; exclusively owned here under `entries_mutex`.
-            unsafe { *entries_ptr = entries };
+            let entries_ptr: *mut DirEntry = match in_place {
+                Some(p) => {
+                    // SAFETY: BSSMap-owned; entries_mutex held.
+                    unsafe { (*p).replace_with(entries) };
+                    p
+                }
+                None => bun_core::heap::into_raw(Box::new(entries)),
+            };
             let result = EntriesOption::Entries(
                 // SAFETY: see above — re-borrow as 'static for the BSSMap slot.
                 unsafe { &mut *entries_ptr },
@@ -1550,10 +1546,8 @@ pub mod fs {
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, &mut ()) {
                         Ok(new_entry) => {
-                            // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
-                            unsafe { *e_ptr = new_entry };
+                            unsafe { (*e_ptr).replace_with(new_entry) };
                         }
                         Err(err) => {
                             // SAFETY: see above.

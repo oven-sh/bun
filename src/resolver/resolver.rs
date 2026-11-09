@@ -2818,7 +2818,7 @@ impl<'a> Resolver<'a> {
         while let Some(info) = level {
             let earlier = checked.levels[..first]
                 .iter()
-                .find(|(seen, _)| std::ptr::eq(&**seen, &*info));
+                .find(|(seen, _)| std::ptr::eq(&raw const **seen, &raw const *info));
             if let Some(&(_, busted)) = earlier {
                 if busted {
                     topmost_stale = Some(checked.levels.len());
@@ -2852,41 +2852,41 @@ impl<'a> Resolver<'a> {
         check_manifest: bool,
         check_tsconfig: bool,
     ) -> bool {
-        let kind_of = |this: &Self, name: &'static [u8]| {
-            info.get_entry(this.generation, name)
-                .map(|e| e.entry().kind(this.rfs_ref(), this.store_fd))
+        let Some(now) = self.stat_in(info.abs_path, b"") else {
+            return true;
         };
-        // Another device or inode after the re-read (a retargeted link) invalidates the real path in the DirInfo.
-        let id_before = info.listing_file_id();
-        let has_node_modules_now = kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir);
-        let id_after = info.listing_file_id();
-        if let (Some(before), Some(after)) = (id_before, id_after)
-            && before.1 != 0
-            && after.1 != 0
-            && before != after
-        {
+        let recorded = info.listing_identity().unwrap_or_default();
+        // Another device or inode (a retargeted link) invalidates the real path in the DirInfo.
+        if recorded.is_recorded() && recorded.file_id() != now.file_id() {
             return true;
         }
-        if !info.is_node_modules() && info.has_node_modules() != has_node_modules_now {
-            return true;
-        }
-        if self.opts.load_package_json
-            && info.flags.contains(DirInfo::Flag::HasPackageJsonFile)
-                != (kind_of(self, b"package.json") == Some(Fs::EntryKind::File))
-        {
-            return true;
-        }
-        if self.opts.load_tsconfig_json {
-            let selected: Option<&[u8]> = [&b"tsconfig.json"[..], &b"jsconfig.json"[..]]
-                .into_iter()
-                .find(|name| kind_of(self, name) == Some(Fs::EntryKind::File));
-            if info.flags.contains(DirInfo::Flag::HasTsconfigFile) != selected.is_some() {
-                return true;
-            }
-            if let Some(tsconfig) = info.tsconfig_json()
-                && selected != Some(bun_paths::basename(&tsconfig.own_abs_path))
+        // Nothing added, removed or renamed since the listing was read: its facts hold. Else stat the names it derives from.
+        if !recorded.holds_for(&now) {
+            let kind_of = |this: &mut Self, name: &[u8]| this.stat_in(info.abs_path, name)?.kind();
+            if !info.is_node_modules()
+                && info.has_node_modules()
+                    != (kind_of(self, b"node_modules") == Some(Fs::EntryKind::Dir))
             {
                 return true;
+            }
+            if self.opts.load_package_json
+                && info.flags.contains(DirInfo::Flag::HasPackageJsonFile)
+                    != (kind_of(self, b"package.json") == Some(Fs::EntryKind::File))
+            {
+                return true;
+            }
+            if self.opts.load_tsconfig_json {
+                let selected: Option<&[u8]> = [&b"tsconfig.json"[..], &b"jsconfig.json"[..]]
+                    .into_iter()
+                    .find(|name| kind_of(self, name) == Some(Fs::EntryKind::File));
+                if info.flags.contains(DirInfo::Flag::HasTsconfigFile) != selected.is_some() {
+                    return true;
+                }
+                if let Some(tsconfig) = info.tsconfig_json()
+                    && selected != Some(bun_paths::basename(&tsconfig.own_abs_path))
+                {
+                    return true;
+                }
             }
         }
         // A file that is listed but did not parse is parsed again: it can have been fixed.
@@ -2915,6 +2915,16 @@ impl<'a> Resolver<'a> {
             }
         }
         false
+    }
+
+    /// `stat` of `name` under `dir` (`dir` itself for an empty name), links followed.
+    fn stat_in(&mut self, dir: &[u8], name: &[u8]) -> Option<Fs::ListingIdentity> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let len = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+            bun_paths::platform::Loose,
+        >(self.fs_ref().top_level_dir(), &mut buf[..], &[dir, name])?
+        .len();
+        Fs::ListingIdentity::stat(bun_core::ZStr::from_buf(&buf[..], len))
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve
@@ -3917,10 +3927,8 @@ impl<'a> Resolver<'a> {
             // covers a typical node_modules package dir; larger dirs still
             // rehash from there (cheap relative to starting at 0).
             new_entry.data.reserve(64);
-            if in_place.is_some() {
-                new_entry.identity =
-                    Fs::file_system::ListingIdentity::read(open_dir).unwrap_or_default();
-            }
+            new_entry.identity =
+                Fs::file_system::ListingIdentity::read(open_dir).unwrap_or_default();
 
             let mut dir_iterator = bun_sys::iterate_dir(open_dir);
             // Hoist the `FilenameStore` singleton resolve out of the per-entry loop
@@ -3936,13 +3944,6 @@ impl<'a> Resolver<'a> {
                     )
                     .expect("unreachable");
             }
-            if let Some(existing) = in_place {
-                // SAFETY: see block-wide note above.
-                // NOTE: `StringHashMap` (std::HashMap newtype)
-                // has no separate `clear_and_free`; `clear()` drops all entries.
-                unsafe { &mut *existing }.data.clear();
-            }
-
             if self.store_fd {
                 new_entry.fd = open_dir;
             }
@@ -3951,7 +3952,7 @@ impl<'a> Resolver<'a> {
             let dir_entries_ptr = match in_place {
                 Some(p) => {
                     // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
-                    unsafe { *p = new_entry };
+                    unsafe { (*p).replace_with(new_entry) };
                     p
                 }
                 None => bun_core::heap::into_raw(Box::new(new_entry)),
@@ -4714,15 +4715,24 @@ impl<'a> Resolver<'a> {
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
-        let top_result = self
+        let mut top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
         match top_result.status {
             allocators::ItemStatus::Exists => {
-                return Ok(self
+                let info = self
                     .dir_cache_mut()
                     .at_index(top_result.index)
-                    .map(DirInfoRef::from_slot));
+                    .map(DirInfoRef::from_slot);
+                let Some(info) = info else {
+                    return Ok(None);
+                };
+                if self.generation == 0 || !self.drop_if_retargeted(info) {
+                    return Ok(Some(info));
+                }
+                top_result = self
+                    .dir_cache_mut()
+                    .get_or_put(path_without_trailing_slash)?;
             }
             allocators::ItemStatus::NotFound => {
                 if self.generation == 0 {
@@ -4738,6 +4748,58 @@ impl<'a> Resolver<'a> {
         }
 
         self.dir_info_cached_miss(enable_logging, input_path, top_result)
+    }
+
+    /// A DirInfo under a link keeps the target as its real path. Drops it, and the ancestors under
+    /// the link, when the link points somewhere else now: all they hold is of the old target.
+    fn drop_if_retargeted(&mut self, info: DirInfoRef) -> bool {
+        if info.abs_real_path.is_empty() {
+            return false;
+        }
+        let parent_key = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
+            info.abs_path,
+            bun_paths::Platform::AUTO,
+        ));
+        if parent_key.is_empty() || parent_key.len() >= info.abs_path.len() {
+            return false;
+        }
+        // Through the cache, not `get_parent()`: a parent dropped here is no longer the one to compare with.
+        let Some(parent) = self
+            .dir_cache_mut()
+            .get(parent_key)
+            .map(DirInfoRef::from_slot)
+        else {
+            return false;
+        };
+        let stale = self.drop_if_retargeted(parent) || !self.real_path_holds(parent, info);
+        if stale {
+            self.dir_cache_mut().remove(info.abs_path);
+        }
+        stale
+    }
+
+    /// `info.abs_real_path` is what the entry for it in `parent` resolves to now.
+    fn real_path_holds(&mut self, parent: DirInfoRef, info: DirInfoRef) -> bool {
+        let base = bun_paths::basename(info.abs_path);
+        // SAFETY: `rfs_ptr()` points at the process-global RealFS singleton.
+        let _entries_unlock = unsafe { &*self.rfs_ptr() }.entries_mutex.lock_guard();
+        let Some(lookup) = parent
+            .get_entries_ref_locked(self.generation)
+            .and_then(|entries| entries.get(base))
+        else {
+            return false;
+        };
+        let symlink = lookup.entry().symlink(self.rfs_ref(), self.store_fd);
+        if !symlink.is_empty() {
+            return symlink == info.abs_real_path;
+        }
+        if parent.abs_real_path.is_empty() {
+            return true;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        self.fs_ref()
+            .abs_buf_checked(&[parent.abs_real_path, base], &mut buf[..])
+            .is_none_or(|joined| joined == info.abs_real_path)
     }
 
     /// A cached "no such directory" holds at a newer generation if the parent's listing still lacks it. Caller holds `entries_mutex`.
@@ -5177,7 +5239,7 @@ impl<'a> Resolver<'a> {
                 // covers a typical node_modules package dir; larger dirs
                 // still rehash from there (cheap relative to starting at 0).
                 new_entry.data.reserve(64);
-                if in_place.is_some() && open_dir.is_valid() {
+                if open_dir.is_valid() {
                     new_entry.identity =
                         Fs::file_system::ListingIdentity::read(open_dir).unwrap_or_default();
                 }
@@ -5207,11 +5269,6 @@ impl<'a> Resolver<'a> {
                             .expect("unreachable");
                     }
                 }
-                if let Some(existing) = in_place {
-                    // SAFETY: see block-wide note above.
-                    // NOTE: bun_collections::StringHashMap exposes `clear`, which drops all entries.
-                    unsafe { &mut *existing }.data.clear();
-                }
                 new_entry.fd = if self.store_fd { open_dir } else { FD::INVALID };
                 // NOTE: `DirEntry.data` is a `HashMap`
                 // (`NonNull` inside), so a zeroed slot is UB and `*ptr = new_entry` would drop it.
@@ -5219,7 +5276,7 @@ impl<'a> Resolver<'a> {
                 let dir_entries_ptr = match in_place {
                     Some(p) => {
                         // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
-                        unsafe { *p = new_entry };
+                        unsafe { (*p).replace_with(new_entry) };
                         p
                     }
                     None => bun_core::heap::into_raw(Box::new(new_entry)),

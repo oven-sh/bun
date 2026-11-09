@@ -1,7 +1,19 @@
 status: 0
-script: 79a073299cebc669
+script: a409411e32631159
 ---
-deep, nothing that is kept track of at the bottom: there is an answer: True; all objects: True; the referrers of its item: True
-deep, a list at the bottom: kept track of: True; among all objects: True; the referrers of its item: 1, it among them: True
-wide, nothing that is kept track of at the bottom: there is an answer: True; all objects: True; the referrers of its item: True
-wide, a list at the bottom: kept track of: True; among all objects: True; the referrers of its item: 1, it among them: True
+200,000 deep, nothing that is kept track of at the bottom
+   there is an answer: True
+200,000 deep, a list at the bottom
+   kept track of: True
+   among all objects: True
+forty levels, each an item of the next twice over, nothing that is kept track of at the bottom
+   there are answers
+forty levels, each an item of the next twice over, a list at the bottom
+   kept track of: True; among all objects: True; the referrers of its item: 1, it among them: True
+30,000 tuples share one tuple of 3,000,000 numbers
+   kept track of: False, False
+   among all objects: 0
+   among the referrers of what they share: 0
+an item of 1, 7, 8, 9, 10 numbers: kept track of: [False, False, False, False, False] | with a list in the place of the last: [True, True, True, True, True]
+one tuple holds one object 500,000 times
+   among the referrers of the object: 1 time(s)

@@ -1,5 +1,5 @@
 status: 0
-script: 231cf8ae3c0b87de
+script: b08f7760508c1210
 ---
 collected: with a factory 1 | without 1 | a plain dict 1 | a tree of four, made by a lambda 7
 saved: ['defaultdict']
@@ -14,4 +14,3 @@ Callable the defaultdict refers to ['Callable', 'type'] | to the factory itself:
 type     the defaultdict refers to ['type', 'type'] | to the factory itself: True | is named its referrer: False | the factory is among all objects: False
 str      the defaultdict refers to ['str', 'type'] | to the factory itself: True | is named its referrer: False | the factory is among all objects: False
 who refers to what the factories hold: ['D', 'L', 'S', 'T', 'dict', 'list', 'tuple']
-tuples of one type among all objects: 0

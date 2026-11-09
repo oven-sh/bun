@@ -291,18 +291,15 @@ keep = [(i, [i]) for i in range(5000)]
 print('referrers of tuple: fewer than 1000:', len(gc.get_referrers(tuple)) < 1000, '| of list:', len(gc.get_referrers(list)) < 1000)
 # The values of a struct sequence that are no items are among its referents.
 import os, time
+# (How many there are goes by the platform: each says it itself.)
 for name, o in (('os.stat()', os.stat('/')), ('time.localtime()', time.localtime()), ('sys.flags', sys.flags)):
-    print(name, sorted(collections.Counter(type(r).__name__ for r in gc.get_referents(o)).items()))
-# The factory of a defaultdict is an object of the program's, whatever its kind: a list is no memory of the defaultdict's.
-class CallableList(list):
-    def __call__(self): return 0
-for name, make in (('a list', lambda x: [x]), ('a tuple', lambda x: (x,)), ('a dict', lambda x: {'a': x}), ('a callable list', lambda x: CallableList([x])), ('a str', lambda x: 'text of a factory')):
-    x = X(); d = collections.defaultdict(); factory = make(x); d.default_factory = factory; of_x = gc.get_referrers(x)
-    print('the factory is %s: among the referents of the defaultdict: %s; x among them: %s; the defaultdict among the referrers of the factory: %s; of x: %s; the factory among the referrers of x: %s; among all objects: %s' % (
-        name, among(factory, gc.get_referents(d)), among(x, gc.get_referents(d)), among(d, gc.get_referrers(factory)), among(d, of_x), among(factory, of_x), among(factory, gc.get_objects())))
-    del of_x
+    values = [r for r in gc.get_referents(o) if not isinstance(r, type)]
+    print(name, 'as many as it has fields:', len(values) == o.n_fields, '| more than it has items:', len(values) > len(o), '|', sorted({type(r).__name__ for r in values}))
 # An object of a type that is not allocated does not refer to its type, unless it holds it as a value.
-for name, o in (('property(property)', property(property)), ('map(map, [])', map(map, [])), ('staticmethod(staticmethod)', staticmethod(staticmethod)), ('slice(slice)', slice(slice)), ('property(len)', property(len))):
-    print('%s: its type among its referents: %s; it among the referrers of its type: %s' % (name, among(type(o), gc.get_referents(o)), among(o, gc.get_referrers(type(o)))))
+of_type = {}
+rows = (('property(property)', property(property)), ('map(map, [])', map(map, [])), ('staticmethod(staticmethod)', staticmethod(staticmethod)), ('slice(slice)', slice(slice)), ('property(len)', property(len)))
+for name, o in rows:
+    if type(o) not in of_type: of_type[type(o)] = gc.get_referrers(type(o))
+    print('%s: its type among its referents: %s; it among the referrers of its type: %s' % (name, among(type(o), gc.get_referents(o)), among(o, of_type[type(o)])))
 # What lies in the namespace of such a type has a referrer all the same.
 print('the referrers of list.append:', len(gc.get_referrers(list.append)), '| of int.__add__:', len(gc.get_referrers(int.__add__)))

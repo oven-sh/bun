@@ -1,5 +1,5 @@
 status: 0
-script: d68ee5abf5b7d652
+script: 8ff946063000e3e6
 ---
 asked about tuple
    defaultdict(list)                                is named: False refers: False
@@ -73,4 +73,13 @@ asked about X
 of 2,000 defaultdicts with a factory, referrers of tuple: 0 | of list: 3
 the tuple of what is not kept track of: kept track of: False | among all objects: False
 how often a class refers to its base: 1 1 1 | to the base of its base: 0
+the types that refer to the namespace of X: ['X']
+the types that refer to the namespace of E: ['E']
+the types that refer to the namespace of list: []
+asked about (): an empty deque is named: False refers: False
+asked about (): a deque that was cleared is named: False refers: False
+asked about (): a frame that has ended without variables is named: False refers: False
+asked about (): a deque of which it is an item is named: True refers: True
+asked about (): of 1,000 empty deques are named: 0
+the slots of a list subclass, in their order: ['X', 'L', 'D'] | behind two collections: ['X', 'L', 'D']
 an OrderedDict refers to ["'a str made at run time 1'", "'k'", '1', 'X'] | ["'a str made at run time 1'", "'a str made at run time 1'", '1', '2', '2', 'X'] | []

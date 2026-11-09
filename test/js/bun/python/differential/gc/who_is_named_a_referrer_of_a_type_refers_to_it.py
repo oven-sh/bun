@@ -44,4 +44,19 @@ print('of 2,000 defaultdicts with a factory, referrers of tuple:', sum(type(o) i
 def names(l): return sorted(repr(o) if isinstance(o, (str, int)) else type(o).__name__ for o in l)
 print('the tuple of what is not kept track of: kept track of:', gc.is_tracked(of_atoms), '| among all objects:', any(o is of_atoms for o in gc.get_objects()))
 print('how often a class refers to its base:', sum(o is object for o in gc.get_referents(X)), sum(o is X for o in gc.get_referents(E)), sum(o is type for o in gc.get_referents(M)), '| to the base of its base:', sum(o is object for o in gc.get_referents(E)))
+# The namespace of a class: a program comes by it through the proxy that is the __dict__ of the class. (Whether the class gives it among its referents is the interpreter's business.)
+for cls in X, E, list:
+    print('the types that refer to the namespace of %s:' % cls.__name__, sorted(o.__name__ for o in gc.get_referrers(gc.get_referents(cls.__dict__)[0]) if isinstance(o, type)))
+# The one empty tuple is no memory of anybody's: every program has it. What has it where it keeps a buffer or values of its own (nothing there yet, or no more) does not refer to it. What holds it as an item does.
+def ended(): return sys._getframe()
+nothing = (); without, cleared, frame, holds = collections.deque(), collections.deque([1]), ended(), collections.deque([nothing]); cleared.clear(); many = [collections.deque() for i in range(1000)]
+of_it = gc.get_referrers(nothing)
+for name, o in (('an empty deque', without), ('a deque that was cleared', cleared), ('a frame that has ended without variables', frame), ('a deque of which it is an item', holds)):
+    print('asked about (): %s is named: %s refers: %s' % (name, any(r is o for r in of_it), any(r is nothing for r in gc.get_referents(o))))
+print('asked about (): of 1,000 empty deques are named:', sum(any(r is o for o in many) for r in of_it if type(r) is collections.deque))
+del of_it, many
+class Three(list): __slots__ = ('a', 'b', 'd')
+three = Three(); three.a = X(); three.b = L(); three.d = D()
+in_order = lambda: [type(o).__name__ for o in gc.get_referents(three) if not isinstance(o, type)]
+print('the slots of a list subclass, in their order:', in_order(), end=' '); gc.collect(); gc.collect(); print('| behind two collections:', in_order())
 print('an OrderedDict refers to', names(gc.get_referents(collections.OrderedDict([(s, 1), ('k', x)]))), '|', names(gc.get_referents(collections.OrderedDict([(s, 1), (2, x)]))), '|', names(gc.get_referents(collections.OrderedDict())))

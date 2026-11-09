@@ -1,5 +1,5 @@
 status: 0
-script: f5cd522526dc9db0
+script: 850fee051804bfdb
 ---
 attribute_of_a_dict_subclass                         found; the holder is come to from it
 attribute_of_a_dict_subclass_with_slots              found; the holder is come to from it
@@ -142,14 +142,9 @@ local_attribute                                      apart: x among its referent
 local_subclass_argument                              apart: x among its referents: False; its dict: False; it among the referrers of x: False; of its dict: False; its dict among the referrers of x: False
 local_subclass_keyword                               apart: x among its referents: False; its dict: False; it among the referrers of x: False; of its dict: False; its dict among the referrers of x: False
 referrers of tuple: fewer than 1000: True | of list: True
-os.stat() [('float', 3), ('int', 16), ('type', 1)]
-time.localtime() [('int', 10), ('str', 1), ('type', 1)]
-sys.flags [('bool', 2), ('int', 20)]
-the factory is a list: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: True; among all objects: True
-the factory is a tuple: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: True; among all objects: True
-the factory is a dict: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: True; among all objects: True
-the factory is a callable list: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: True; among all objects: True
-the factory is a str: among the referents of the defaultdict: True; x among them: False; the defaultdict among the referrers of the factory: True; of x: False; the factory among the referrers of x: False; among all objects: False
+os.stat() as many as it has fields: True | more than it has items: True | ['float', 'int']
+time.localtime() as many as it has fields: True | more than it has items: True | ['int', 'str']
+sys.flags as many as it has fields: True | more than it has items: True | ['bool', 'int']
 property(property): its type among its referents: True; it among the referrers of its type: True
 map(map, []): its type among its referents: True; it among the referrers of its type: True
 staticmethod(staticmethod): its type among its referents: True; it among the referrers of its type: True

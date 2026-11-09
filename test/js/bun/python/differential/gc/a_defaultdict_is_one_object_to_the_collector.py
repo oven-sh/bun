@@ -26,4 +26,3 @@ for factory in factories:
     print('%-8s' % type(factory).__name__, 'the defaultdict refers to', sorted(type(o).__name__ for o in gc.get_referents(d)), '| to the factory itself:', any(o is factory for o in gc.get_referents(d)),
           '| is named its referrer:', is_object and any(o is d for o in gc.get_referrers(factory)), '| the factory is among all objects:', is_object and gc.is_tracked(factory) and any(o is factory for o in gc.get_objects()))
 print('who refers to what the factories hold:', sorted(type(o).__name__ for o in gc.get_referrers(x) if o is not globals() and o is not factories))
-print('tuples of one type among all objects:', sum(1 for o in gc.get_objects() if type(o) is tuple and len(o) == 1 and o[0] is list))

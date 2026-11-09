@@ -40,6 +40,9 @@ impl ReferencePass<'_, '_> {
                         self.import_meta_may_be_modified = true;
                     }
                 }
+                ExprKind::String(text) if text == known::module || text == known::node_module => {
+                    self.names_node_module = true;
+                }
                 _ => {}
             }
         }

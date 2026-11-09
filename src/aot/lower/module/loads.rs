@@ -606,10 +606,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             _ => test_of_value,
         };
         let operation = find_operation(&site, answer, given.len())?;
+        // A test run leaves a file that is written after its build to the loader, which looks from the folder of the
+        // file that asks, not from the folder that this require was made for.
+        let is_left_to_loader_of_test_run = self.file.inputs.options.runs_tests
+            && matches!(answer, SiteAnswer::Module(ModuleRef::External { .. }));
         if matches!(
             path_to_resolve_from,
             Some(ResolvedFrom::PathFromOwnFolder(_))
-        ) && !matches!(answer, SiteAnswer::Module(_))
+        ) && (!matches!(answer, SiteAnswer::Module(_)) || is_left_to_loader_of_test_run)
         {
             return None;
         }

@@ -20,6 +20,12 @@ const doors: [name: string, head: string, statement: string, says: string | unde
     undefined,
   ],
   ["a key that is spelled", withRequire, `delete require.cache[require.resolve("./other.ts")];`, undefined],
+  [
+    "a key that a require made for the folder spells",
+    `import { createRequire } from "node:module"; const load = createRequire(__dirname + "/");`,
+    `delete load.cache[load.resolve("./other.ts")];`,
+    undefined,
+  ],
   ["Bun.plugin", "", `Bun.plugin({ name: "p", setup() {} });`, "This names Bun.plugin."],
   ["a file that is spelled, under a query", "", `await import("./other.ts?again");`, undefined],
   [

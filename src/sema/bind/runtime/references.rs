@@ -58,6 +58,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         has_direct_eval: Vec::new(),
         import_meta_may_be_modified: false,
         has_import_meta: false,
+        names_node_module: false,
     };
     pass.resolve_idents();
     pass.collect_eval_scopes();
@@ -84,19 +85,10 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         has_direct_eval,
         import_meta_may_be_modified,
         has_import_meta,
+        names_node_module,
         ..
     } = pass;
     let bound = &mut *input.bound;
-    let names_require_or_own_path = |&(_, binding): &(ExprId, Binding)| {
-        matches!(
-            binding,
-            Binding::CommonJs(
-                CommonJsVariable::Require | CommonJsVariable::Module | CommonJsVariable::Filename
-            )
-        )
-    };
-    let mut named = references.ident_bindings.iter();
-    bound.runtime.may_name_own_require = has_import_meta || named.any(names_require_or_own_path);
     let names_own_path = |&(_, binding): &(ExprId, Binding)| {
         matches!(
             binding,
@@ -105,6 +97,23 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
     };
     let mut named = references.ident_bindings.iter();
     bound.runtime.may_name_own_path = has_import_meta || named.any(names_own_path);
+    // A require is the file's own, which it reaches through `require`, `module` or `import.meta`, or one that
+    // `createRequire` of node:module makes of a path of the file.
+    let names_own_loader = |&(_, binding): &(ExprId, Binding)| {
+        matches!(
+            binding,
+            Binding::CommonJs(CommonJsVariable::Require | CommonJsVariable::Module)
+        )
+    };
+    let is_node_module =
+        |specifier: Atom| specifier == known::module || specifier == known::node_module;
+    let may_make_require = names_node_module
+        || (hir.imports.iter()).any(|import| !import.type_only && is_node_module(import.spec))
+        || (hir.import_equals.iter()).any(|import| is_node_module(import.target.spec()));
+    let mut named = references.ident_bindings.iter();
+    bound.runtime.may_name_own_require = has_import_meta
+        || named.any(names_own_loader)
+        || (may_make_require && bound.runtime.may_name_own_path);
     bound.runtime.references = references;
     exported_block_bindings.record(&mut bound.runtime.declarations);
     bound.runtime.depends_on_sloppy_mode |= has_sloppy_eval;
@@ -186,6 +195,7 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) has_direct_eval: Vec<FnId>,
     pub(super) import_meta_may_be_modified: bool,
     pub(super) has_import_meta: bool,
+    pub(super) names_node_module: bool,
 }
 
 impl ReferencePass<'_, '_> {

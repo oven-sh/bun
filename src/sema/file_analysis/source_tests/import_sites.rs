@@ -1444,6 +1444,101 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
         r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("./a");"#,
         Some(None),
     ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.ts",
+        r#"import { createRequire } from "node:module"; createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; createRequire(__dirname + "/")("./a");"#,
+        Some(None),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; createRequire(__dirname)("./a");"#,
+        Some(Some(".")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; createRequire(`${__dirname}/lib/index.js`)("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; createRequire(join(__dirname, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; const load = createRequire(__dirname + "/lib/"); load("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; createRequire(__dirname + "/lib/").resolve("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.ts",
+        r#"import m = require("node:module"); m.createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mts",
+        r#"import * as m from "module"; m.createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"const { createRequire } = process.getBuiltinModule("node:module"); createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"process.getBuiltinModule("module").createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mts",
+        r#"const { createRequire } = await import("node:module"); createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; import { fileURLToPath } from "node:url"; import path from "node:path"; createRequire(path.join(fileURLToPath(new URL(".", import.meta.url)), "x.js"))("./a");"#,
+        Some(None),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; import { fileURLToPath } from "node:url"; createRequire(fileURLToPath(new URL(".", import.meta.url)))("./a");"#,
+        Some(None),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; import { fileURLToPath } from "node:url"; createRequire(fileURLToPath(new URL("./lib/", import.meta.url)))("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; import { fileURLToPath } from "node:url"; import { join } from "node:path"; const here = fileURLToPath(new URL(".", import.meta.url)); createRequire(join(here, "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; import { fileURLToPath } from "node:url"; createRequire(fileURLToPath(new URL(".", other)))("./a");"#,
+        None,
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; import { fileURLToPath } from "node:url"; createRequire(fileURLToPath(new URL(name, import.meta.url)))("./a");"#,
+        None,
+    ),
 ];
 
 #[test]
@@ -1466,6 +1561,61 @@ fn call_of_require_made_for_path_from_own_folder_is_resolved_from_that_path() {
                 Vec::from_iter(expected),
                 "{text}"
             );
+        });
+    }
+}
+
+const FILES_THAT_MAY_NAME_OWN_REQUIRE: &[(&str, &str, bool)] = &[
+    ("a.ts", "f(1);", false),
+    ("a.ts", "f(__dirname);", false),
+    ("a.ts", "f(__filename);", false),
+    ("a.cjs", r#"require("a");"#, true),
+    ("a.cjs", "module.exports = 1;", true),
+    ("a.mts", "f(import.meta.url);", true),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; f(createRequire);"#,
+        false,
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "node:module"; f(createRequire, __dirname);"#,
+        true,
+    ),
+    (
+        "a.mts",
+        r#"import { createRequire } from "module"; f(createRequire, __filename);"#,
+        true,
+    ),
+    (
+        "a.mts",
+        r#"import type { createRequire } from "node:module"; f(__dirname);"#,
+        false,
+    ),
+    (
+        "a.ts",
+        r#"import m = require("node:module"); f(m, __dirname);"#,
+        true,
+    ),
+    (
+        "a.cjs",
+        r#"f(process.getBuiltinModule("node:module"), __dirname);"#,
+        true,
+    ),
+    (
+        "a.mts",
+        r#"f(await import("node:module"), __dirname);"#,
+        true,
+    ),
+    ("a.cjs", r#"f({ type: "module" }, __dirname);"#, true),
+    ("a.cjs", r#"f({ type: "modules" }, __dirname);"#, false),
+];
+
+#[test]
+fn only_a_file_that_names_where_a_require_comes_from_is_asked_for_its_own_require() {
+    for &(path, text, expected) in FILES_THAT_MAY_NAME_OWN_REQUIRE {
+        analyzed(path, text, |s| {
+            assert_eq!(s.bound.may_name_own_require(), expected, "{text}");
         });
     }
 }

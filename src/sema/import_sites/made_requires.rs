@@ -483,10 +483,13 @@ fn starts_at_own_folder(
             }) => Some(first),
             Some(ExprKind::Template { exprs }) => hir.ids(exprs).next(),
             Some(ExprKind::Call(call)) => {
-                let callee = hir[call].callee;
+                let Call { callee, args, .. } = hir[call];
                 let export = text.find_export_read_off_module(callee, left, PATH_MODULES);
                 let joins = export == Some(known::join) || export == Some(known::resolve);
-                hir.ids(hir[call].args).next().filter(|_| joins)
+                let converts = args.len() == 1
+                    && text.find_export_read_off_module(callee, left, URL_MODULES)
+                        == Some(known::fileURLToPath);
+                hir.ids(args).next().filter(|_| joins || converts)
             }
             _ => None,
         };
@@ -1273,14 +1276,28 @@ fn follow_each_side_once(
     left: StepsLeft,
     asked: &mut SidesAsked,
 ) -> Option<OwnRequire> {
+    let Text { hir, bound, .. } = text;
+    if !bound.may_name_own_require() && hir.imported_requires.is_empty() {
+        debug_assert!(
+            follow_where_require_may_be_named(text, e, left, asked).is_none(),
+            "a file that names nothing a require comes from holds one"
+        );
+        return None;
+    }
+    follow_where_require_may_be_named(text, e, left, asked)
+}
+
+fn follow_where_require_may_be_named(
+    text: Text<'_, '_, '_, '_>,
+    e: ExprId,
+    left: StepsLeft,
+    asked: &mut SidesAsked,
+) -> Option<OwnRequire> {
     let Text {
         hir,
         bound,
         decisions,
     } = text;
-    if !bound.may_name_own_require() && hir.imported_requires.is_empty() {
-        return None;
-    }
     let is_parameter_with_require_of_file = |e: ExprId| {
         left.parameters.checked_sub(1).is_some_and(|parameters| {
             find_settled_parameter(hir, bound, e).is_some_and(|parameter| {
@@ -1642,16 +1659,22 @@ pub(super) fn follow_settled_bindings(hir: &File<'_>, bound: &Bound<'_>, e: Expr
 }
 
 pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
-    if !bound.may_name_own_require()
-        || !matches!(
+    let holds = || {
+        let is_name = matches!(
             expr_kind(hir, hir.skip_type_assertions(e)),
             Some(ExprKind::Ident(_))
-        )
-    {
+        );
+        let mut held = settled_chain(hir, bound, e).skip(1);
+        is_name && held.any(|e| is_import_meta_require(hir, e))
+    };
+    if !bound.may_name_own_require() {
+        debug_assert!(
+            !holds(),
+            "a file that names nothing a require comes from holds one"
+        );
         return false;
     }
-    let mut held = settled_chain(hir, bound, e).skip(1);
-    held.any(|e| is_import_meta_require(hir, e))
+    holds()
 }
 
 pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {

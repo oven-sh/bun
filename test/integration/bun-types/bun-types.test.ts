@@ -1,7 +1,7 @@
 import { $ as Shell, fileURLToPath } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, makeTree } from "harness";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { cp, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
@@ -102,6 +102,8 @@ interface TypeTestConfig {
   packages?: string[];
   /** Expected empty interfaces */
   emptyInterfaces: Set<string>;
+  /** Expected result of `libOverlap`, in any order. Checked when it is given. */
+  libOverlap?: string[];
   /** Expected diagnostics - array for exact match, or function for custom assertions */
   diagnostics: Diagnostic[] | ((diagnostics: Diagnostic[]) => void);
 }
@@ -125,12 +127,16 @@ function typeTest(name: string, config: TypeTestConfig) {
   // so run the type-checking cases on release builds only.
   test.skipIf(isDebug)(name, async () => {
     const fixtureDir = await createIsolatedFixture(config.packages);
-    const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
+    const { diagnostics, emptyInterfaces, libOverlap } = await diagnose(fixtureDir, {
       options: config.options,
       files: config.files,
     });
 
     expect(emptyInterfaces).toEqual(config.emptyInterfaces);
+
+    if (config.libOverlap) {
+      expect(libOverlap()).toEqual([...config.libOverlap].sort());
+    }
 
     if (typeof config.diagnostics === "function") {
       config.diagnostics(diagnostics);
@@ -247,6 +253,7 @@ async function diagnose(
   return {
     diagnostics,
     emptyInterfaces: checkForEmptyInterfaces(program),
+    libOverlap: () => libOverlap(program, join(fixtureDir, "node_modules", "bun-types")),
   };
 }
 
@@ -301,6 +308,208 @@ function checkForEmptyInterfaces(program: ts.Program) {
   }
 
   return empties;
+}
+
+/**
+ * Every declaration of bun-types that lands on a symbol that a lib file of TypeScript also
+ * declares, for the `lib` of the program. The result is sorted.
+ *
+ *   Blob.slice                      a member that bun-types writes in `interface Blob`
+ *   Blob.json (not in the lib)      the same, when no lib declaration of Blob or of its bases has the member
+ *   Headers.count (not in the lib, from Bun.__internal.BunHeadersOverride)
+ *                                   a member of bun-types that Headers gets through a base
+ *   Headers extends Bun.__internal.BunHeadersOverride
+ *                                   a base that the lib does not give the interface and that is not empty
+ *   var console                     a `var` that is not typed with `Bun.__internal.UseLibDomIfAvailable`
+ *   function fetch                  an overload
+ *   namespace fetch                 a namespace, a class, an enum or a type alias that merges into a lib symbol
+ *
+ * `(2 declarations)` follows an entry that bun-types declares more than once.
+ *
+ * The list says which declarations land on the lib, not what they say: a changed signature of a
+ * listed member is a diff in ./inventory (packages/bun-types/scripts/inventory.ts), not here.
+ */
+function libOverlap(program: ts.Program, bunTypesDir: string): string[] {
+  const checker = program.getTypeChecker();
+  const toPosix = (path: string) => path.replaceAll("\\", "/");
+  // The real path: TypeScript names a file under node_modules by it.
+  const packageDir = toPosix(realpathSync.native(bunTypesDir)) + "/";
+
+  type Provider = "lib" | "bun-types" | "other";
+  const providers = new Map<ts.SourceFile, Provider>();
+  function providerOf(node: ts.Node): Provider {
+    const file = node.getSourceFile();
+    let provider = providers.get(file);
+    if (!provider) {
+      provider = program.isSourceFileDefaultLibrary(file)
+        ? "lib"
+        : toPosix(realpathSync.native(file.fileName)).startsWith(packageDir)
+          ? "bun-types"
+          : "other";
+      providers.set(file, provider);
+    }
+    return provider;
+  }
+  const isFrom = (provider: Provider) => (node: ts.Node) => providerOf(node) === provider;
+
+  const resolve = (symbol: ts.Symbol | undefined) =>
+    symbol && checker.getMergedSymbol(symbol.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(symbol) : symbol);
+  const baseSymbol = (base: ts.ExpressionWithTypeArguments) => resolve(checker.getSymbolAtLocation(base.expression));
+  const basesOf = (declaration: ts.InterfaceDeclaration | ts.ClassDeclaration) =>
+    (declaration.heritageClauses ?? []).flatMap(clause => clause.types);
+
+  function memberName(member: ts.Node): string {
+    const name = (member as ts.NamedDeclaration).name;
+    if (name) return name.getText();
+    if (ts.isCallSignatureDeclaration(member)) return "(call)";
+    if (ts.isConstructSignatureDeclaration(member) || ts.isConstructorDeclaration(member)) return "(new)";
+    return "(index)";
+  }
+
+  /** The names of the members that the lib declarations of an interface give it, those of its bases included. */
+  function libMembers(symbol: ts.Symbol, names = new Set<string>(), seen = new Set<ts.Symbol>()): Set<string> {
+    if (seen.has(symbol)) return names;
+    seen.add(symbol);
+    for (const declaration of symbol.declarations ?? []) {
+      if (!ts.isInterfaceDeclaration(declaration) || providerOf(declaration) !== "lib") continue;
+      for (const member of declaration.members) names.add(memberName(member));
+      for (const base of basesOf(declaration)) {
+        const target = baseSymbol(base);
+        if (target) libMembers(target, names, seen);
+      }
+    }
+    return names;
+  }
+
+  /** The interface, class or type alias that a member is written in. */
+  function containerOf(member: ts.Node): ts.Symbol | undefined {
+    for (let node = member.parent; node; node = node.parent) {
+      if (ts.isInterfaceDeclaration(node) || ts.isClassDeclaration(node) || ts.isTypeAliasDeclaration(node)) {
+        return node.name && resolve(checker.getSymbolAtLocation(node.name));
+      }
+    }
+    return undefined;
+  }
+
+  const isEmpty = (type: ts.Type) =>
+    !(type.flags & ts.TypeFlags.Any) &&
+    checker.getPropertiesOfType(type).length === 0 &&
+    type.getCallSignatures().length === 0 &&
+    type.getConstructSignatures().length === 0 &&
+    checker.getIndexInfosOfType(type).length === 0;
+
+  /** With lib.dom loaded, `Bun.__internal.UseLibDomIfAvailable<"X", ...>` is the type that lib.dom gives `X`. */
+  function takesTypeFromLibDom(declaration: ts.VariableDeclaration): boolean {
+    const type = declaration.type;
+    if (!type || !ts.isTypeReferenceNode(type)) return false;
+    const helper = ts.isQualifiedName(type.typeName) ? type.typeName.right : type.typeName;
+    const key = type.typeArguments?.[0];
+    return (
+      resolve(checker.getSymbolAtLocation(helper))?.name === "UseLibDomIfAvailable" &&
+      !!key &&
+      ts.isLiteralTypeNode(key) &&
+      ts.isStringLiteral(key.literal) &&
+      key.literal.text === declaration.name.getText()
+    );
+  }
+
+  /** On one line, and `A.B` for a name that the source breaks before the dot. */
+  const textOf = (node: ts.Node) =>
+    node
+      .getText()
+      .replace(/\s+/g, " ")
+      .replace(/ ?\. ?/g, ".");
+
+  const counts = new Map<string, number>();
+  const add = (entry: string) => counts.set(entry, (counts.get(entry) ?? 0) + 1);
+  const notes = (...parts: string[]) => (parts.length > 0 ? ` (${parts.join(", ")})` : "");
+
+  function visit(symbols: readonly ts.Symbol[], prefix: string) {
+    for (const symbol of new Set(symbols.map(symbol => checker.getMergedSymbol(symbol)))) {
+      const declarations = symbol.declarations ?? [];
+      const lib = declarations.filter(isFrom("lib"));
+      if (lib.length === 0) continue;
+      const name = prefix + symbol.name;
+
+      if (lib.some(ts.isInterfaceDeclaration)) {
+        let names: Set<string> | undefined;
+        const notInLib = (member: string) => ((names ??= libMembers(symbol)).has(member) ? [] : ["not in the lib"]);
+        const libBases = new Set(lib.filter(ts.isInterfaceDeclaration).flatMap(basesOf).map(baseSymbol));
+
+        for (const declaration of declarations) {
+          if (!ts.isInterfaceDeclaration(declaration) && !ts.isClassDeclaration(declaration)) continue;
+          const provider = providerOf(declaration);
+          if (provider === "lib") continue;
+
+          if (provider === "bun-types") {
+            for (const member of declaration.members) {
+              const key = memberName(member);
+              add(`${name}.${key}${notes(...notInLib(key))}`);
+            }
+          }
+
+          for (const base of basesOf(declaration)) {
+            // The lib has the same `extends`.
+            if (libBases.has(baseSymbol(base))) continue;
+            const type = checker.getTypeFromTypeNode(base);
+            if (provider === "bun-types" && !isEmpty(type)) add(`${name} extends ${textOf(base)}`);
+            // The `extends` can be in another package: @types/node gives its global URLSearchParams
+            // the members of the one of "node:url", which bun-types augments.
+            for (const property of checker.getPropertiesOfType(type)) {
+              for (const member of property.declarations ?? []) {
+                if (providerOf(member) !== "bun-types") continue;
+                const container = containerOf(member);
+                // A member that is written in an interface of a lib is an entry of that interface.
+                if (!container || container.declarations?.some(isFrom("lib"))) continue;
+                const key = memberName(member);
+                const from = `from ${checker.getFullyQualifiedName(container).replace(/^"bun"\./, "Bun.")}`;
+                add(`${name}.${key}${notes(...notInLib(key), from)}`);
+              }
+            }
+          }
+        }
+      }
+
+      for (const declaration of declarations) {
+        if (providerOf(declaration) !== "bun-types" || ts.isInterfaceDeclaration(declaration)) continue;
+        if (ts.isVariableDeclaration(declaration)) {
+          if (!takesTypeFromLibDom(declaration)) add(`var ${name}`);
+        } else if (ts.isFunctionDeclaration(declaration)) {
+          add(`function ${name}`);
+        } else if (ts.isModuleDeclaration(declaration)) {
+          // Two namespaces merge member by member, and the members are visited below.
+          if (!lib.some(ts.isModuleDeclaration)) add(`namespace ${name}`);
+        } else if (ts.isClassDeclaration(declaration)) {
+          add(`class ${name}`);
+        } else if (ts.isEnumDeclaration(declaration)) {
+          add(`enum ${name}`);
+        } else {
+          add(`type ${name}`);
+        }
+      }
+
+      const hasNamespace = (provider: Provider) =>
+        declarations.some(declaration => ts.isModuleDeclaration(declaration) && providerOf(declaration) === provider);
+      if (hasNamespace("lib") && (hasNamespace("bun-types") || hasNamespace("other"))) {
+        visit(checker.getExportsOfModule(symbol), `${name}.`);
+      }
+    }
+  }
+
+  const libFile = program.getSourceFiles().find(file => program.isSourceFileDefaultLibrary(file));
+  if (libFile) {
+    const kinds =
+      ts.SymbolFlags.Interface |
+      ts.SymbolFlags.Class |
+      ts.SymbolFlags.Variable |
+      ts.SymbolFlags.Function |
+      ts.SymbolFlags.Namespace |
+      ts.SymbolFlags.TypeAlias |
+      ts.SymbolFlags.Enum;
+    visit(checker.getSymbolsInScope(libFile, kinds), "");
+  }
+
+  return [...counts].map(([entry, count]) => (count > 1 ? `${entry} (${count} declarations)` : entry)).sort();
 }
 
 /**
@@ -1388,6 +1597,7 @@ describe("@types/bun integration test", () => {
       options: {
         lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
       },
+      libOverlap: expectedLibOverlapWithLibDom,
       emptyInterfaces: new Set([
         "ThisType",
         "GPUExternalTextureBindingLayout",
@@ -1779,3 +1989,333 @@ const expectedEmptyInterfacesThatReactDeclareWhenNoDOM = new Set([
   "MediaStream",
   "MediaSource",
 ]);
+
+/**
+ * What `libOverlap` finds with lib.dom loaded. A section says why its entries are not behind
+ * `Bun.__internal.LibDomIsLoaded`. When the result differs from this list:
+ *   - An entry is new: gate the declaration ("Declarations that lib.dom also has" in
+ *     packages/bun-types/authoring.md). If it cannot be gated, add the entry to the section
+ *     whose reason holds for it.
+ *   - An entry is gone: delete it here.
+ */
+const expectedLibOverlapWithLibDom = [
+  // Interfaces of lib.dom whose members bun-types writes inline. Nothing gates them. Without
+  // lib.dom they are the interface. With lib.dom each one merges into the interface of lib.dom,
+  // and a call tries the signature of bun-types before the signature of lib.dom.
+  "AbortController.abort",
+  "AbortController.signal",
+  "AbortSignal.aborted",
+  "AbortSignal.onabort",
+  "AbortSignal.reason",
+  "AbortSignal.throwIfAborted",
+  "AddEventListenerOptions.once",
+  "AddEventListenerOptions.passive",
+  "AddEventListenerOptions.signal",
+  "Blob.arrayBuffer",
+  "Blob.bytes",
+  "Blob.formData (not in the lib)",
+  "Blob.image (not in the lib)",
+  "Blob.json (not in the lib)",
+  "Blob.size",
+  "Blob.slice",
+  "Blob.stream",
+  "Blob.text",
+  "Blob.type",
+  "BlobPropertyBag.type",
+  "ByteLengthQueuingStrategy.highWaterMark",
+  "ByteLengthQueuingStrategy.size",
+  "CloseEvent.code",
+  "CloseEvent.reason",
+  "CloseEvent.wasClean",
+  "Console.[Symbol.asyncIterator] (not in the lib)",
+  "Console.assert",
+  "Console.clear",
+  "Console.count",
+  "Console.countReset",
+  "Console.debug",
+  "Console.dir",
+  "Console.dirxml",
+  "Console.error",
+  "Console.group",
+  "Console.groupCollapsed",
+  "Console.groupEnd",
+  "Console.info",
+  "Console.log",
+  "Console.table",
+  "Console.time",
+  "Console.timeEnd",
+  "Console.timeLog",
+  "Console.timeStamp",
+  "Console.trace",
+  "Console.warn",
+  "Console.write (not in the lib)",
+  "CountQueuingStrategy.highWaterMark",
+  "CountQueuingStrategy.size",
+  "Crypto.getRandomValues",
+  "Crypto.randomUUID",
+  "Crypto.subtle",
+  "Crypto.timingSafeEqual (not in the lib)",
+  "CustomEvent.detail",
+  "CustomEvent.initCustomEvent",
+  "DOMException.ABORT_ERR",
+  "DOMException.DATA_CLONE_ERR",
+  "DOMException.DOMSTRING_SIZE_ERR",
+  "DOMException.HIERARCHY_REQUEST_ERR",
+  "DOMException.INDEX_SIZE_ERR",
+  "DOMException.INUSE_ATTRIBUTE_ERR",
+  "DOMException.INVALID_ACCESS_ERR",
+  "DOMException.INVALID_CHARACTER_ERR",
+  "DOMException.INVALID_MODIFICATION_ERR",
+  "DOMException.INVALID_NODE_TYPE_ERR",
+  "DOMException.INVALID_STATE_ERR",
+  "DOMException.NAMESPACE_ERR",
+  "DOMException.NETWORK_ERR",
+  "DOMException.NOT_FOUND_ERR",
+  "DOMException.NOT_SUPPORTED_ERR",
+  "DOMException.NO_DATA_ALLOWED_ERR",
+  "DOMException.NO_MODIFICATION_ALLOWED_ERR",
+  "DOMException.QUOTA_EXCEEDED_ERR",
+  "DOMException.SECURITY_ERR",
+  "DOMException.SYNTAX_ERR",
+  "DOMException.TIMEOUT_ERR",
+  "DOMException.TYPE_MISMATCH_ERR",
+  "DOMException.URL_MISMATCH_ERR",
+  "DOMException.VALIDATION_ERR",
+  "DOMException.WRONG_DOCUMENT_ERR",
+  "DOMException.code",
+  "DOMException.message",
+  "DOMException.name",
+  "ErrorEvent.colno",
+  "ErrorEvent.error",
+  "ErrorEvent.filename",
+  "ErrorEvent.lineno",
+  "ErrorEvent.message",
+  "EventListener.(call)",
+  "EventListenerObject.handleEvent",
+  "EventSourceInit.withCredentials",
+  "File.lastModified",
+  "File.name",
+  "FormData.append (3 declarations)",
+  "FormData.delete",
+  "FormData.entries",
+  "FormData.forEach",
+  "FormData.get",
+  "FormData.getAll",
+  "FormData.has",
+  "FormData.keys",
+  "FormData.set (3 declarations)",
+  "FormData.values",
+  "ImportMeta.dir (not in the lib)",
+  "ImportMeta.dirname (not in the lib)",
+  "ImportMeta.env (not in the lib)",
+  "ImportMeta.file (not in the lib)",
+  "ImportMeta.filename (not in the lib)",
+  "ImportMeta.hot (not in the lib)",
+  "ImportMeta.main (not in the lib)",
+  "ImportMeta.path (not in the lib)",
+  "ImportMeta.require (not in the lib)",
+  "ImportMeta.resolveSync (not in the lib)",
+  "ImportMeta.url",
+  "MessageChannel.port1",
+  "MessageChannel.port2",
+  "Navigator.hardwareConcurrency",
+  "Navigator.platform",
+  "Navigator.userAgent",
+  "QueuingStrategy.highWaterMark",
+  "QueuingStrategy.size",
+  "QueuingStrategyInit.highWaterMark",
+  "QueuingStrategySize.(call)",
+  "ReadableStreamDefaultController.close",
+  "ReadableStreamDefaultController.desiredSize",
+  "ReadableStreamDefaultController.enqueue",
+  "ReadableStreamDefaultController.error",
+  "ReadableStreamDefaultReader.read",
+  "ReadableStreamDefaultReader.readMany (not in the lib)",
+  "ReadableStreamDefaultReader.releaseLock",
+  "ReadableStreamGenericReader.cancel",
+  "ReadableStreamGenericReader.closed",
+  "ReadableWritablePair.readable",
+  "ReadableWritablePair.writable",
+  "StreamPipeOptions.preventAbort",
+  "StreamPipeOptions.preventCancel",
+  "StreamPipeOptions.preventClose",
+  "StreamPipeOptions.signal",
+  "TextEncoder.encodeInto",
+  "TransformStream.readable",
+  "TransformStream.writable",
+  "TransformStreamDefaultController.desiredSize",
+  "TransformStreamDefaultController.enqueue",
+  "TransformStreamDefaultController.error",
+  "TransformStreamDefaultController.terminate",
+  "Transformer.flush",
+  "Transformer.readableType",
+  "Transformer.start",
+  "Transformer.transform",
+  "Transformer.writableType",
+  "WritableStreamDefaultController.error",
+  "WritableStreamDefaultWriter.abort",
+  "WritableStreamDefaultWriter.close",
+  "WritableStreamDefaultWriter.closed",
+  "WritableStreamDefaultWriter.desiredSize",
+  "WritableStreamDefaultWriter.ready",
+  "WritableStreamDefaultWriter.releaseLock",
+  "WritableStreamDefaultWriter.write",
+
+  // Interfaces of lib.es. There is no gate for the ES lib level, so every `lib` setting gets them.
+  "ArrayBuffer.byteLength",
+  "ArrayBuffer.resize",
+  "ArrayBuffer.slice",
+  "ArrayBufferConstructor.(new)",
+  "ArrayConstructor.fromAsync (2 declarations)",
+  "Error.cause",
+  "ErrorConstructor.(new)",
+  "ErrorConstructor.captureStackTrace (not in the lib)",
+  "ErrorConstructor.isError",
+  "ErrorConstructor.stackTraceLimit (not in the lib)",
+  "ErrorOptions.cause",
+  "PromiseConstructor.try",
+  "PromiseConstructor.withResolvers",
+  "RegExpConstructor.escape",
+  "SharedArrayBuffer.grow",
+  "Uint8Array.setFromBase64",
+  "Uint8Array.setFromHex",
+  "Uint8Array.toBase64",
+  "Uint8Array.toHex",
+  "Uint8ArrayConstructor.fromBase64",
+  "Uint8ArrayConstructor.fromHex",
+
+  // Bases that are not empty when lib.dom is loaded, and the members of bun-types that arrive
+  // through them.
+  "AddEventListenerOptions extends Bun.EventListenerOptions",
+  "AddEventListenerOptions.capture (from Bun.EventListenerOptions)",
+  "CryptoKey extends Bun.__internal.NodeCryptoWebcryptoCryptoKey",
+  "CryptoKeyPair extends Bun.__internal.NodeCryptoWebcryptoCryptoKeyPair",
+  "Headers extends Bun.__internal.BunHeadersOverride",
+  "Headers.count (not in the lib, from Bun.__internal.BunHeadersOverride)",
+  "Headers.getAll (not in the lib, from Bun.__internal.BunHeadersOverride)",
+  "Headers.toJSON (not in the lib, from Bun.__internal.BunHeadersOverride)",
+  "ImportMeta extends Bun.__internal.ImportMetaGlob",
+  "ImportMeta.glob (not in the lib, from Bun.__internal.ImportMetaGlob) (2 declarations)",
+  "MessageEvent extends Bun.MessageEvent<T>",
+  "Request extends Bun.__internal.BunRequestOverride",
+  "Request.headers (from Bun.__internal.BunRequestOverride)",
+  "Request.textStream (not in the lib, from Bun.__internal.BunRequestOverride)",
+  "Response extends Bun.__internal.BunResponseOverride",
+  "Response.headers (from Bun.__internal.BunResponseOverride)",
+  "Response.textStream (not in the lib, from Bun.__internal.BunResponseOverride)",
+  "WorkerOptions extends Bun.WorkerOptions",
+  "WorkerOptions.argv (not in the lib, from Bun.WorkerOptions)",
+  "WorkerOptions.credentials (from Bun.WorkerOptions)",
+  "WorkerOptions.env (not in the lib, from Bun.WorkerOptions)",
+  "WorkerOptions.name (from Bun.WorkerOptions)",
+  "WorkerOptions.preload (not in the lib, from Bun.WorkerOptions)",
+  "WorkerOptions.ref (not in the lib, from Bun.WorkerOptions)",
+  "WorkerOptions.smol (not in the lib, from Bun.WorkerOptions)",
+  "WorkerOptions.type (from Bun.WorkerOptions)",
+
+  // @types/node gives these global interfaces the members of the interface of its module
+  // ("node:console", "node:url"), with or without lib.dom. bun-types augments the module.
+  "Console.[Symbol.asyncIterator] (not in the lib, from console.Console)",
+  'URLSearchParams.toJSON (not in the lib, from "node:url".URLSearchParams)',
+
+  // `namespace WebAssembly`, which bun-types declares through `Bun.WebAssembly` for every `lib` setting.
+  "WebAssembly.CompileError extends Bun.WebAssembly.CompileError",
+  "WebAssembly.Global extends Bun.WebAssembly.Global<T>",
+  "WebAssembly.Global.value (from Bun.WebAssembly.Global)",
+  "WebAssembly.Global.valueOf (from Bun.WebAssembly.Global)",
+  "WebAssembly.GlobalDescriptor extends Bun.WebAssembly.GlobalDescriptor<T>",
+  "WebAssembly.GlobalDescriptor.mutable (from Bun.WebAssembly.GlobalDescriptor)",
+  "WebAssembly.GlobalDescriptor.value (from Bun.WebAssembly.GlobalDescriptor)",
+  "WebAssembly.Instance extends Bun.WebAssembly.Instance",
+  "WebAssembly.Instance.exports (from Bun.WebAssembly.Instance)",
+  "WebAssembly.LinkError extends Bun.WebAssembly.LinkError",
+  "WebAssembly.Memory extends Bun.WebAssembly.Memory",
+  "WebAssembly.Memory.buffer (from Bun.WebAssembly.Memory)",
+  "WebAssembly.Memory.grow (from Bun.WebAssembly.Memory)",
+  "WebAssembly.MemoryDescriptor extends Bun.WebAssembly.MemoryDescriptor",
+  "WebAssembly.MemoryDescriptor.initial (from Bun.WebAssembly.MemoryDescriptor)",
+  "WebAssembly.MemoryDescriptor.maximum (from Bun.WebAssembly.MemoryDescriptor)",
+  "WebAssembly.MemoryDescriptor.shared (from Bun.WebAssembly.MemoryDescriptor)",
+  "WebAssembly.ModuleExportDescriptor extends Bun.WebAssembly.ModuleExportDescriptor",
+  "WebAssembly.ModuleExportDescriptor.kind (from Bun.WebAssembly.ModuleExportDescriptor)",
+  "WebAssembly.ModuleExportDescriptor.name (from Bun.WebAssembly.ModuleExportDescriptor)",
+  "WebAssembly.ModuleImportDescriptor extends Bun.WebAssembly.ModuleImportDescriptor",
+  "WebAssembly.ModuleImportDescriptor.kind (from Bun.WebAssembly.ModuleImportDescriptor)",
+  "WebAssembly.ModuleImportDescriptor.module (from Bun.WebAssembly.ModuleImportDescriptor)",
+  "WebAssembly.ModuleImportDescriptor.name (from Bun.WebAssembly.ModuleImportDescriptor)",
+  "WebAssembly.RuntimeError extends Bun.WebAssembly.RuntimeError",
+  "WebAssembly.Table extends Bun.WebAssembly.Table",
+  "WebAssembly.Table.get (from Bun.WebAssembly.Table)",
+  "WebAssembly.Table.grow (from Bun.WebAssembly.Table)",
+  "WebAssembly.Table.length (from Bun.WebAssembly.Table)",
+  "WebAssembly.Table.set (from Bun.WebAssembly.Table)",
+  "WebAssembly.TableDescriptor extends Bun.WebAssembly.TableDescriptor",
+  "WebAssembly.TableDescriptor.element (from Bun.WebAssembly.TableDescriptor)",
+  "WebAssembly.TableDescriptor.initial (from Bun.WebAssembly.TableDescriptor)",
+  "WebAssembly.TableDescriptor.maximum (from Bun.WebAssembly.TableDescriptor)",
+  "WebAssembly.ValueTypeMap extends Bun.WebAssembly.ValueTypeMap",
+  "WebAssembly.ValueTypeMap.anyfunc (from Bun.WebAssembly.ValueTypeMap)",
+  "WebAssembly.ValueTypeMap.externref (from Bun.WebAssembly.ValueTypeMap)",
+  "WebAssembly.ValueTypeMap.f32 (from Bun.WebAssembly.ValueTypeMap)",
+  "WebAssembly.ValueTypeMap.f64 (from Bun.WebAssembly.ValueTypeMap)",
+  "WebAssembly.ValueTypeMap.i32 (from Bun.WebAssembly.ValueTypeMap)",
+  "WebAssembly.ValueTypeMap.i64 (from Bun.WebAssembly.ValueTypeMap)",
+  "WebAssembly.ValueTypeMap.v128 (from Bun.WebAssembly.ValueTypeMap)",
+  "WebAssembly.WebAssemblyInstantiatedSource extends Bun.WebAssembly.WebAssemblyInstantiatedSource",
+  "WebAssembly.WebAssemblyInstantiatedSource.instance (from Bun.WebAssembly.WebAssemblyInstantiatedSource)",
+  "WebAssembly.WebAssemblyInstantiatedSource.module (from Bun.WebAssembly.WebAssemblyInstantiatedSource)",
+  "function WebAssembly.compile",
+  "function WebAssembly.compileStreaming",
+  "function WebAssembly.instantiate (2 declarations)",
+  "function WebAssembly.instantiateStreaming",
+  "function WebAssembly.validate",
+  "var WebAssembly.CompileError",
+  "var WebAssembly.Global",
+  "var WebAssembly.Instance",
+  "var WebAssembly.LinkError",
+  "var WebAssembly.Memory",
+  "var WebAssembly.Module",
+  "var WebAssembly.RuntimeError",
+  "var WebAssembly.Table",
+
+  // Vars that write the type out. With lib.dom loaded it has to be the type that lib.dom gives
+  // the var, and `Bun.__internal.UseLibDomIfAvailable` takes it from there.
+  "var ByteLengthQueuingStrategy",
+  "var CloseEvent",
+  "var CountQueuingStrategy",
+  "var Crypto",
+  "var CryptoKey",
+  "var CustomEvent",
+  "var DOMException",
+  "var ErrorEvent",
+  "var Event",
+  "var EventTarget",
+  "var ReadableStreamDefaultController",
+  "var ReadableStreamDefaultReader",
+  "var SubtleCrypto",
+  "var TransformStream",
+  "var TransformStreamDefaultController",
+  "var WritableStreamDefaultController",
+  "var WritableStreamDefaultWriter",
+  "var console",
+  "var crypto",
+  "var navigator",
+
+  // A function declaration cannot be conditional. Each one is an overload beside the overloads
+  // of lib.dom, and a call tries it first.
+  "function addEventListener (2 declarations)",
+  "function alert",
+  "function clearInterval",
+  "function clearTimeout",
+  "function confirm",
+  "function fetch",
+  "function postMessage",
+  "function prompt",
+  "function queueMicrotask",
+  "function removeEventListener (2 declarations)",
+  "function reportError",
+  "function setInterval",
+  "function setTimeout",
+  "function structuredClone",
+  "namespace fetch",
+];

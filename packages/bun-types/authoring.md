@@ -108,6 +108,35 @@ Your type definitions must work properly in both environments. This ensures that
 
 For example, if you're adding types for a new API, you should just add code to `fixture/index.ts` that uses your new API. Doesn't need to work at runtime (e.g. you can fake api keys for example), it's just checking that the types are correct.
 
+## Declarations that lib.dom also has
+
+A project can load `lib.dom.d.ts` together with bun-types. The React templates of `bun init` write `"lib": ["ESNext", "DOM"]`. TypeScript then merges each global that both declare. bun-types is loaded after the lib files, so a call tries a signature that bun-types declares before the signature of lib.dom.
+
+So a declaration of bun-types for a global of lib.dom must add nothing when lib.dom is loaded. This is how to gate one:
+
+- An interface gets its members from a base that is `{}` when lib.dom is loaded.
+
+  ```typescript
+  declare module "bun" {
+    namespace __internal {
+      interface BunEvent {
+        // the members
+      }
+      type LibEmptyOrBunEvent = LibDomIsLoaded extends true ? {} : BunEvent;
+    }
+  }
+
+  interface Event extends Bun.__internal.LibEmptyOrBunEvent {}
+  ```
+
+- A `var` is typed with `Bun.__internal.UseLibDomIfAvailable<"Name", TypeWithoutLibDom>`.
+
+The case "checks with lib.dom.d.ts" of `test/integration/bun-types/bun-types.test.ts` finds every declaration of bun-types that is not gated. It compares the result with the list `expectedLibOverlapWithLibDom` in that file, and it fails when the two differ. The comment on `libOverlap` in that file says how to read an entry. The list also has the members that bun-types adds to the interfaces of lib.es, such as `ArrayBuffer` and `Error`.
+
+When the test fails for a declaration that you added, gate the declaration. Add an entry to the list only when the declaration cannot be gated, for example a function overload or a member that only Bun has. Put it in the section whose reason holds for it.
+
+The list says which declarations land on a lib symbol, not what they say. A changed signature of a member that is already listed is a diff in the inventory.
+
 ## The type inventory
 
 `test/integration/bun-types/inventory/<preset>.txt` lists every symbol that has a declaration in bun-types, with the shape the TypeScript checker resolves it to: the globals, the exports of the modules bun-types declares (`bun`, `bun:test`, `*.html`), and the exports it adds to node modules and namespaces (`node:tls`, `NodeJS`). The members of a listed symbol are printed in full, wherever they come from. Interface merging with `lib.dom.d.ts` and `@types/node`, `UseLibDomIfAvailable`, and every other conditional alias are resolved, so a file shows what a user sees, not what the `.d.ts` source says.

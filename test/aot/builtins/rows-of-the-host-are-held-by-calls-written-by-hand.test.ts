@@ -645,7 +645,7 @@ const cases: Case[] = [
     see: () => [{ value: parseEnv("FIRST=1\nSECOND=two\n7=seven") }, { value: parseEnv("") }],
   },
   // parse_args.rs: an object that holds `values` without a prototype, the list `positionals` and, where they are asked for, the list `tokens` of objects.
-  // A `default` comes back as the operand held it, so a list of a class of the program may lie in `values`.
+  // An element of `args` and a `default` come back as the operand held them, so an object of a class of the program may lie in `positionals`, in `tokens` and in `values`.
   {
     row: "native:Bindgen:parse_args.bind.ts:parseArgs",
     mode: "Call",
@@ -674,6 +674,21 @@ const cases: Case[] = [
         }),
       },
       { value: parseArgs({ args: [] }) },
+      {
+        value: parseArgs({
+          args: [
+            new (class Path {
+              toString() {
+                return "a/b";
+              }
+            })() as unknown as string,
+            "--",
+            5 as unknown as string,
+          ],
+          allowPositionals: true,
+          tokens: true,
+        }),
+      },
     ],
   },
   // html_rewriter.rs transform(): a string for a string, a new ArrayBuffer for a buffer or a view of any kind, a new Response for a Response.

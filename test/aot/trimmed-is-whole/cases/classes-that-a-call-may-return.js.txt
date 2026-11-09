@@ -89,7 +89,8 @@ const rewriter = new HTMLRewriter().on("p", {
 const read = () => rewriter.transform(new Response(Bun.file("page.html")));
 const decoder = new TextDecoder();
 console.log(await read().text());
-console.log(decoder.decode(await read().arrayBuffer()), await (await read().blob()).text(), decoder.decode(await read().bytes()));
+const blob = await read().blob();
+console.log(decoder.decode(await read().arrayBuffer()), blob.size, await blob.text(), decoder.decode(await read().bytes()));
 //// what-a-rewriter-of-HTML-refuses
 //@ removes Bun.build
 //@ removes bun:test
@@ -130,6 +131,17 @@ console.log(values.name.toUpperCase(), values.verbose, values.color, values.plai
 console.log(positionals.join(), tokens.map(token => `${token.kind}:${token.name ?? token.value}:${token.index}`).join(" "));
 const repeated = parseArgs({ args: ["--many", "1", "--many", "2"], options: { many: { type: "string", multiple: true } } });
 console.log(repeated.values.many.map(Number).join(), repeated.tokens);
+class Path {
+  toString() {
+    return "a/b";
+  }
+  parts() {
+    return `${this}`.split("/");
+  }
+}
+const path = new Path();
+const through = parseArgs({ args: [path, "--", 5], allowPositionals: true, tokens: true });
+console.log(through.positionals[0] === path, through.positionals[0].parts().join(), through.tokens[0].value.parts().length, typeof through.positionals[1]);
 try {
   parseArgs({ args: ["--nope"], options: {} });
 } catch (error) {

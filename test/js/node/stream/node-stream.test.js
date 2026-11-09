@@ -1542,6 +1542,86 @@ it("stream/iter consumers reject an unknown encoding with node's ERR_INVALID_ARG
   expect(exitCode).toBe(0);
 });
 
+it("stream/iter passes on an error of the source that inherits from Error.prototype", async () => {
+  // Node wraps only what its isError rejects: not a native error and not `instanceof Error`.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/iter/utils.js#L188
+  const script = `
+    const { pipeToSync, pipeTo, share, shareSync, push } = require("node:stream/iter");
+    function OldError(message) {
+      this.message = message;
+    }
+    require("node:util").inherits(OldError, Error);
+    const kinds = {
+      "an old-style error": () => new OldError("m"),
+      "a DOMException": () => new DOMException("m", "AbortError"),
+      "an object with the toStringTag Error": () => ({ [Symbol.toStringTag]: "Error" }),
+    };
+    const describe = (x, got) => (got === x ? "x itself" : got.name === "AbortError" ? "an AbortError" : got.code);
+    (async () => {
+      for (const [kind, make] of Object.entries(kinds)) {
+        const x = make();
+        const throwsSync = { *[Symbol.iterator]() { throw x; } };
+        const throwsAsync = { async *[Symbol.asyncIterator]() { throw x; } };
+        const got = {};
+        try {
+          pipeToSync(throwsSync, { writeSync: () => true, endSync: () => 0, fail: e => (got.pipeToSync = describe(x, e)) });
+        } catch {}
+        try {
+          await pipeTo(throwsAsync, { write() {}, end() {}, fail: e => (got.pipeTo = describe(x, e)) });
+        } catch {}
+        try {
+          for await (const _ of share(throwsAsync).pull()) {}
+        } catch (e) {
+          got.share = describe(x, e);
+        }
+        try {
+          for (const _ of shareSync(throwsSync).pull()) {}
+        } catch (e) {
+          got.shareSync = describe(x, e);
+        }
+        const controller = new AbortController();
+        const { readable } = push({ signal: controller.signal });
+        controller.abort(x);
+        try {
+          for await (const _ of readable) {}
+        } catch (e) {
+          got.push = describe(x, e);
+        }
+        console.log(kind + ": " + JSON.stringify(got));
+      }
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--experimental-stream-iter", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const itself = {
+    pipeToSync: "x itself",
+    pipeTo: "x itself",
+    share: "x itself",
+    shareSync: "x itself",
+    push: "x itself",
+  };
+  const wrapped = "ERR_OPERATION_FAILED";
+  expect(stdout.trim().split("\n")).toEqual([
+    "an old-style error: " + JSON.stringify(itself),
+    "a DOMException: " + JSON.stringify(itself),
+    "an object with the toStringTag Error: " +
+      JSON.stringify({
+        pipeToSync: wrapped,
+        pipeTo: wrapped,
+        share: wrapped,
+        shareSync: wrapped,
+        push: "an AbortError",
+      }),
+  ]);
+  expect(stderr).toContain("ExperimentalWarning");
+  expect(exitCode).toBe(0);
+});
+
 it("require.resolve.paths agrees with require about gated stream/iter specifiers", async () => {
   // Without the flag the introspection APIs must not report stream/iter as
   // a builtin (node returns a lookup-paths array there); with the flag they

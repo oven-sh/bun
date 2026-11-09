@@ -50,7 +50,10 @@ impl<'a> DiffFormatter<'a> {
             core::slice::from_ref(&received),
             1,
             &mut received_buf,
-            FormatOptions { matched_rows: rows, ..fmt_options },
+            FormatOptions {
+                matched_rows: rows,
+                ..fmt_options
+            },
         )?;
         let mut expected_buf: Vec<u8> = Vec::new();
         JestPrettyFormat::format(

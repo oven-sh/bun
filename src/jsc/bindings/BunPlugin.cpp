@@ -454,12 +454,15 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
 }
 
 // fileSystemPath() returns null if a percent escape in the specifier doesn't decode to UTF-8. Retry with every "%" escaped.
-static String relativeSpecifierToFileSystemPath(const URL& base, const String& specifier)
+static String relativeSpecifierToModuleKey(const URL& base, const String& specifier)
 {
-    String path = URL(base, specifier).fileSystemPath();
-    if (path.isNull()) [[unlikely]]
-        path = URL(base, makeStringByReplacingAll(specifier, "%"_s, "%25"_s)).fileSystemPath();
-    return path;
+    URL url(base, specifier);
+    String path = url.fileSystemPath();
+    if (path.isNull()) [[unlikely]] {
+        url = URL(base, makeStringByReplacingAll(specifier, "%"_s, "%25"_s));
+        path = url.fileSystemPath();
+    }
+    return path.isNull() ? path : Bun::moduleKeyFromFileURL(url);
 }
 
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
@@ -3025,7 +3028,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
             scope.throwException(globalObject, JSC::createTypeError(globalObject, "Invalid \"file:\" URL"_s));
             return false;
         }
-        specifier = path;
+        specifier = Bun::moduleKeyFromFileURL(fileURL);
         specifierString = jsString(vm, specifier);
 #if ENABLE(AOT)
         // A compiled importer is linked to the file. Where one writes this name for it, the mock stands for the file.
@@ -3078,7 +3081,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
     auto relativeURL = URL(url, specifier);
     if (!relativeURL.isValid())
         return false;
-    specifier = relativeURL.protocolIsFile() ? relativeSpecifierToFileSystemPath(url, specifier) : relativeURL.string();
+    specifier = relativeURL.protocolIsFile() ? relativeSpecifierToModuleKey(url, specifier) : relativeURL.string();
     specifierString = jsString(vm, specifier);
     return true;
 }
@@ -4939,7 +4942,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            joinedPath = relativeSpecifierToFileSystemPath(url, path);
+            joinedPath = relativeSpecifierToModuleKey(url, path);
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

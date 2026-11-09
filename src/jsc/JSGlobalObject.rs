@@ -1335,6 +1335,7 @@ extern "C" fn Zig__GlobalObject__resolve(
     specifier: &BunString,
     source: &BunString,
     query: &mut BunString,
+    split_query: bool,
 ) {
     crate::mark_binding();
     match VirtualMachine::resolve_maybe_needs_trailing_slash::<true>(
@@ -1343,6 +1344,7 @@ extern "C" fn Zig__GlobalObject__resolve(
         source,
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
+        split_query,
     ) {
         Ok(Ok(path)) => *res = ErrorableString::ok(path),
         Ok(Err(value)) => *res = ErrorableString::err(value),
@@ -1366,7 +1368,7 @@ extern "C" fn Bun__importMetaResolve(
         source,
         specifier
     );
-    Zig__GlobalObject__resolve(res, global, specifier, source, query)
+    Zig__GlobalObject__resolve(res, global, specifier, source, query, true)
 }
 
 /// `import.meta.resolve()` skips the resolver for a path or `file:` URL, so it runs `onResolve` plugins through this.
@@ -1397,6 +1399,7 @@ extern "C" fn Bun__resolveWithOnResolve(
         Some(query),
         crate::virtual_machine::ResolveMode::Esm,
         true,
+        specifier_path.is_none(),
     ) {
         Ok(None) => return false,
         Ok(Some(Ok(path))) => *res = ErrorableString::ok(path),

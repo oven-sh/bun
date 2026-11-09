@@ -509,12 +509,18 @@ public:
     // These outlive the patched module's eviction, so unmocking still restores it for whatever stays linked to it (a preload, say).
     WriteBarrier<JSC::JSModuleNamespaceObject> patchedNamespace;
     WriteBarrier<JSObject> originalExportsOfEvictedModule;
+    // The exports that have yet to be stored in the loaded module, by name: the body of the module that declares each had yet to
+    // run to its end when the mock patched it, and assigns its exports. Stored when that body ends: Bun::moduleBodyDidEnd().
+    WriteBarrier<JSObject> exportsWaitingForBody;
     // Patches are undone newest first: two modules can export one variable (`export *`), and each patch saved what it found there.
     unsigned patchOrder { 0 };
     State state { State::NotCalled };
     ModuleMockFunction function;
     // The factory's promise is pending and will patch the already-loaded module when it settles.
     bool hasPendingPatch { false };
+    // A mock without a factory is made of what the loaded module exports, which a body that has yet to run to its end has not
+    // assigned. It is made, and patches the module, when that body ends: Bun::moduleBodyDidEnd().
+    bool isMadeWhenBodyEnds { false };
     bool spy { false };
     bool isFromPreload { false };
     // unmockModule() registers that module under its own key again.
@@ -2252,6 +2258,133 @@ bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* glob
     return exports && exports->methodTable()->defineOwnProperty(exports, globalObject, propertyName, descriptor, shouldThrow);
 }
 
+// `record`, if it is a source text module whose body has yet to run to its end. That body assigns the exports that it declares over
+// whatever is stored in them, and what is left of it reads what is stored.
+static JSC::JSModuleRecord* moduleWithBodyYetToEnd(JSC::AbstractModuleRecord* record)
+{
+    auto* module = record ? dynamicDowncast<JSC::JSModuleRecord>(record) : nullptr;
+    return module && module->hasBodyYetToEnd() ? module : nullptr;
+}
+
+// `mock` hears of the end of the body of `module`, or of a module that a mock before it was told of: Bun::moduleBodyDidEnd().
+static void waitForBodyToEnd(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSModuleRecord* module = nullptr)
+{
+    if (module)
+        module->tellHostWhenBodyEnds();
+    auto& waiting = globalObject->onLoadPlugins.moduleMocksWaitingForBody;
+    if (!waiting.containsIf([&](auto& other) { return other.get() == mock; }))
+        waiting.append(JSC::Strong<JSC::JSObject> { JSC::getVM(globalObject), mock });
+}
+
+// `mock` has nothing left to do at the end of a body: it is done, or it is the mock of its module no more.
+static void stopWaitingForBodyToEnd(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    if (!mock->exportsWaitingForBody && !mock->isMadeWhenBodyEnds)
+        return;
+    mock->exportsWaitingForBody.clear();
+    mock->isMadeWhenBodyEnds = false;
+    globalObject->onLoadPlugins.moduleMocksWaitingForBody.removeFirstMatching([&](auto& other) { return other.get() == mock; });
+}
+
+// `mock` is laid over the module that `previous` patched. What that mock had yet to store stays to be stored, as what it had stored stays
+// stored: this mock keeps it, unless it has a value of its own for the export.
+static void keepExportsThatWaitedForBody(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSModuleMock* previous)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* left = previous->exportsWaitingForBody.get();
+    stopWaitingForBodyToEnd(globalObject, previous);
+    if (!left)
+        return;
+    JSObject* kept = mock->exportsWaitingForBody.get();
+    if (!kept) {
+        mock->exportsWaitingForBody.set(vm, mock, left);
+        waitForBodyToEnd(globalObject, mock);
+        return;
+    }
+    JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    left->getOwnPropertyNames(left, globalObject, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+    for (auto& name : names) {
+        bool hasOwnValue = kept->hasProperty(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, );
+        if (hasOwnValue)
+            continue;
+        JSValue value = left->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, );
+        kept->putDirectMayBeIndex(globalObject, name, value);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+// Before a mock stores over the export `name`: unmocking restores what is saved here. `overwritten` itself stands for "no value yet".
+static void saveExportBeforePatch(Zig::GlobalObject* globalObject, JSObject* overwritten, const ExportVariable& variable, const JSC::Identifier& name)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!variable.record)
+        return;
+    bool isSaved = overwritten->hasProperty(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, );
+    if (isSaved)
+        return;
+    // Read the variable directly, because the namespace object would force a builtin's lazy export.
+    JSValue original = variable.record->moduleEnvironment()->readVariable(vm, variable.offset);
+    scope.release();
+    overwritten->putDirectMayBeIndex(globalObject, name, original ? original : JSValue(overwritten));
+}
+
+// The body of a module whose exports `mock` has kept (JSModuleMock::exportsWaitingForBody) may have ended. Stores the ones that it has ended for.
+__attribute__((minsize)) static void storeExportsOfEndedBodies(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::JSModuleNamespaceObject* moduleNamespace)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* kept = mock->exportsWaitingForBody.get();
+    JSC::PropertyNameArrayBuilder keptNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    kept->getOwnPropertyNames(kept, globalObject, keptNames, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, );
+
+    // As in overrideLoadedModuleExports(), what every store overwrites is saved before any of them is made: two names may export one variable.
+    JSObject* overwritten = mock->originalExports.get();
+    JSObject* stillKept = nullptr;
+    Vector<JSC::Identifier, 4> names;
+    MarkedArgumentBuffer values;
+    for (auto& name : keptNames) {
+        JSValue value = kept->get(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, );
+        ExportVariable variable = findExportVariable(globalObject, moduleNamespace, name);
+        RETURN_IF_EXCEPTION(scope, );
+        if (moduleWithBodyYetToEnd(variable.record)) {
+            if (!stillKept)
+                stillKept = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+            stillKept->putDirectMayBeIndex(globalObject, name, value);
+            RETURN_IF_EXCEPTION(scope, );
+            continue;
+        }
+        // A body that threw, or that never ran because an import of the module failed, ends with nobody told. Nothing is stored in such a module.
+        if (auto* declaring = variable.record ? dynamicDowncast<JSC::CyclicModuleRecord>(variable.record) : nullptr; declaring && declaring->evaluationError())
+            continue;
+        if (overwritten) {
+            saveExportBeforePatch(globalObject, overwritten, variable, name);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        names.append(name);
+        values.append(value);
+    }
+    if (values.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    if (stillKept)
+        mock->exportsWaitingForBody.set(vm, mock, stillKept);
+    else
+        stopWaitingForBodyToEnd(globalObject, mock);
+    for (size_t i = 0; i < names.size(); ++i) {
+        moduleNamespace->overrideExportValue(globalObject, names[i], values.at(i));
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
 __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const LoadedModule& loaded)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2333,22 +2466,33 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
             return;
 
         static std::atomic<unsigned> patches { 0 };
-        if (JSObject* overwritten = moduleNamespaceObject ? mock->originalExports.get() : nullptr) {
-            if (!mock->patchOrder)
+        // An export whose module has yet to run its body to the end is not stored now: that body would assign over it, and what is
+        // left of the body would run on the mock. The mock keeps it, and stores it when the body ends: Bun::moduleBodyDidEnd().
+        Vector<bool, 8> waitsForBody;
+        waitsForBody.fill(false, names.size());
+        if (moduleNamespaceObject) {
+            JSObject* overwritten = mock->originalExports.get();
+            if (overwritten && !mock->patchOrder)
                 mock->patchOrder = ++patches;
-            for (auto& name : names) {
-                bool isSaved = overwritten->hasProperty(globalObject, name);
+            JSObject* kept = mock->exportsWaitingForBody.get();
+            for (size_t i = 0; i < names.size(); ++i) {
+                ExportVariable variable = findExportVariable(globalObject, moduleNamespaceObject, names[i]);
                 RETURN_IF_EXCEPTION(scope, );
-                if (isSaved)
+                if (auto* unfinished = moduleWithBodyYetToEnd(variable.record)) {
+                    if (!kept) {
+                        kept = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+                        mock->exportsWaitingForBody.set(vm, mock, kept);
+                    }
+                    kept->putDirectMayBeIndex(globalObject, names[i], values.at(i));
+                    RETURN_IF_EXCEPTION(scope, );
+                    waitForBodyToEnd(globalObject, mock, unfinished);
+                    waitsForBody[i] = true;
                     continue;
-                // Read the variable directly, because the namespace object would force a builtin's lazy export.
-                ExportVariable variable = findExportVariable(globalObject, moduleNamespaceObject, name);
-                RETURN_IF_EXCEPTION(scope, );
-                if (!variable.record)
-                    continue;
-                JSValue original = variable.record->moduleEnvironment()->readVariable(vm, variable.offset);
-                overwritten->putDirectMayBeIndex(globalObject, name, original ? original : JSValue(overwritten));
-                RETURN_IF_EXCEPTION(scope, );
+                }
+                if (overwritten) {
+                    saveExportBeforePatch(globalObject, overwritten, variable, names[i]);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
             }
         }
 
@@ -2371,7 +2515,7 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
         }
 #endif
         for (size_t i = 0; i < names.size(); ++i) {
-            if (moduleNamespaceObject) {
+            if (moduleNamespaceObject && !waitsForBody[i]) {
                 moduleNamespaceObject->overrideExportValue(globalObject, names[i], values.at(i));
                 RETURN_IF_EXCEPTION(scope, );
             }
@@ -2892,6 +3036,8 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
 
     if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules)
         virtualModules->remove(specifier);
+    // What it had yet to store was never stored: there is nothing of it to restore.
+    stopWaitingForBodyToEnd(globalObject, mock);
 #if ENABLE(AOT)
     Vector<JSC::AOT::ModuleID, 1> compiledModulesOfMockToRun;
     globalObject->onLoadPlugins.compiledMocksToRun.removeAllMatching([&](const auto& waiting) {
@@ -3203,46 +3349,6 @@ __attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObjec
     return false;
 }
 
-// The body of the module that `mock` patched has run since, and has given a value to the exports that had none. Resolves once the factory has settled too.
-JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionBodyOfPatchedModuleDidRun, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* mock = toModuleMock(globalObject, scope, callframe->argument(1));
-    RETURN_IF_EXCEPTION(scope, {});
-    String specifier = mock->specifier->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (registeredModuleMock(globalObject, specifier) != mock)
-        return JSValue::encode(jsUndefined());
-
-    LoadedModule loaded;
-    findLoadedESModule(globalObject, mock->specifier.get(), loaded);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (JSObject* overwritten = loaded.esmNamespace ? mock->originalExports.get() : nullptr) {
-        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        overwritten->getOwnPropertyNames(overwritten, globalObject, names, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, {});
-        for (auto& name : names) {
-            JSValue saved = overwritten->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (saved != overwritten)
-                continue;
-            ExportVariable variable = findExportVariable(globalObject, loaded.esmNamespace, name);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue original = variable.record ? variable.record->moduleEnvironment()->readVariable(vm, variable.offset) : JSValue();
-            if (!original)
-                continue;
-            overwritten->putDirectMayBeIndex(globalObject, name, original);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-
-    JSC::JSPromise* pending = mock->run(globalObject, false);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(pending ? JSValue(pending) : jsUndefined());
-}
-
 // Under `bun test` a mock that is made while nothing is loaded stores nothing: what require() answers behind it stays in the module object.
 static void keepModuleObjectLeftBehindMock(const JSModuleMock* mock, LoadedModule& loaded)
 {
@@ -3257,6 +3363,59 @@ static JSC::JSPromise* patchWhenFactorySettles(Zig::GlobalObject* globalObject, 
     pendingFactory->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionMockModuleFactoryResolve), globalObject->thenable(jsFunctionMockModuleFactoryReject), patched, mock);
     mock->hasPendingPatch = true;
     return patched;
+}
+
+// The body of a module has run to its end, and a mock had asked to hear of it: waitForBodyToEnd(). No module that imports it has run
+// since. Each mock that waited stores the exports that it kept for that body, and a mock that is made of what the module exports is
+// made and patches it. What is thrown here is the failure of the module whose body has ended.
+__attribute__((minsize)) static void patchModulesWhoseBodyHasEnded(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // In the order in which the mocks were made. Making a mock may run script, which may mock or unmock.
+    JSC::MarkedArgumentBuffer waiting;
+    for (auto& mock : globalObject->onLoadPlugins.moduleMocksWaitingForBody)
+        waiting.append(mock.get());
+    if (waiting.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    for (size_t i = 0; i < waiting.size(); ++i) {
+        auto* mock = uncheckedDowncast<JSModuleMock>(waiting.at(i));
+        if (!mock->exportsWaitingForBody && !mock->isMadeWhenBodyEnds)
+            continue;
+        String specifier = mock->specifier->tryGetValue().data;
+        LoadedModule loaded;
+        if (registeredModuleMock(globalObject, specifier) == mock) {
+            findLoadedESModule(globalObject, mock->specifier.get(), loaded);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+        // It is the mock of the module no more, or the module has left the registry and the next import of it loads the mock.
+        if (!loaded.esmNamespace || loaded.esmNamespace->moduleRecord()->hasLiveExports()) {
+            stopWaitingForBodyToEnd(globalObject, mock);
+            continue;
+        }
+        if (!mock->isMadeWhenBodyEnds) {
+            storeExportsOfEndedBodies(globalObject, mock, loaded.esmNamespace);
+            RETURN_IF_EXCEPTION(scope, );
+            continue;
+        }
+        if (moduleWithBodyYetToEnd(loaded.esmNamespace->moduleRecord()))
+            continue;
+        stopWaitingForBodyToEnd(globalObject, mock);
+        JSC::JSPromise* pendingFactory = mock->run(globalObject, false);
+        RETURN_IF_EXCEPTION(scope, );
+        if (registeredModuleMock(globalObject, specifier) != mock)
+            continue;
+        if (pendingFactory) {
+            patchWhenFactorySettles(globalObject, mock, pendingFactory);
+            continue;
+        }
+        LoadedModule made = findLoadedModule(globalObject, mock->specifier.get());
+        RETURN_IF_EXCEPTION(scope, );
+        overrideLoadedModuleExports(globalObject, mock, made);
+        RETURN_IF_EXCEPTION(scope, );
+    }
 }
 
 #if ENABLE(AOT)
@@ -3693,10 +3852,11 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         loaded.staleCommonJSEntry |= !!std::exchange(loaded.commonJSModule, nullptr);
     }
 
-    // Left for later, the body of a linked module would assign over the patch. It can't run ahead of an import whose own body is up the stack, though.
+    // A module that is linked and has yet to run runs first, so that the mock is laid over what it exports. It can't run ahead of an
+    // import whose own body is up the stack, though. Where its body does not end here (it waits for an import that is asynchronous, or
+    // at an await of its own), the mock stores its exports when the body ends: see overrideLoadedModuleExports().
     using Status = JSC::CyclicModuleRecord::Status;
     auto* linked = loaded.esmNamespace ? dynamicDowncast<JSC::CyclicModuleRecord>(loaded.esmNamespace->moduleRecord()) : nullptr;
-    JSC::JSPromise* bodyYetToRun = nullptr;
     if (linked && linked->status() == Status::Linked && !linked->hasLiveExports() && !anyUnevaluatedImport(linked, [](JSC::CyclicModuleRecord* imported) { return imported->status() == Status::Evaluating; })) {
         JSC::JSPromise* evaluating = linked->evaluate(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3705,9 +3865,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             scope.throwException(globalObject, evaluating->result());
             return {};
         }
-        // It waits for an import that is asynchronous, e.g. a module that a preload mocks with an async factory.
-        if (evaluating->status() == JSC::JSPromise::Status::Pending)
-            bodyYetToRun = evaluating;
         loaded = findLoadedModule(globalObject, specifierString);
         RETURN_IF_EXCEPTION(scope, {});
         previous = registeredModuleMock(globalObject, specifier);
@@ -3804,7 +3961,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     JSC::JSPromise* pendingFactory = nullptr;
     // False once the factory itself has re-mocked or unmocked the module, which wins.
     bool isCurrent = true;
-    if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
+    // A mock without a factory is made of what the module exports, and a body that has yet to run to its end has not assigned all
+    // of that. The mock is made, and patches the module, when the body ends: Bun::moduleBodyDidEnd().
+    if (auto* unfinished = !mock->factory.get() && loaded.esmNamespace ? moduleWithBodyYetToEnd(loaded.esmNamespace->moduleRecord()) : nullptr) {
+        mock->isMadeWhenBodyEnds = true;
+        waitForBodyToEnd(globalObject, mock, unfinished);
+    } else if (loaded.esmNamespace || loaded.compiledModule || loaded.commonJSModule) {
 #if ENABLE(AOT)
         pendingFactory = mock->run(globalObject, placeOfMockThatEnds && !mock->factory.get());
 #else
@@ -3855,7 +4017,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             mock->originalExportsOfEvictedModule.clear();
             mock->originalCommonJSExports.clear();
             mock->patchOrder = 0;
-            bodyYetToRun = nullptr;
         }
         RETURN_IF_EXCEPTION(scope, {});
     }
@@ -3874,7 +4035,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (before.commonJSModule && loaded.commonJSModule != before.commonJSModule)
             mock->originalCommonJSExports.clear();
 
-        if (!pendingFactory && isCurrent) {
+        if (!pendingFactory && isCurrent && !mock->isMadeWhenBodyEnds) {
             overrideLoadedModuleExports(globalObject, mock, loaded);
             RETURN_IF_EXCEPTION(scope, {});
             isCurrent = isStillRegisteredModuleMock(globalObject, specifier, previous);
@@ -3884,13 +4045,14 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             mock->testFileOfFirstLoad = globalObject->onLoadPlugins.testFile;
 #endif
     }
-    // Its functions are the mock's from here on. What the body assigns is the mock's once it is patched again.
-    if (bodyYetToRun && isCurrent)
-        pendingFactory = thenWithContext(globalObject, bodyYetToRun, jsFunctionBodyOfPatchedModuleDidRun, nullptr, mock);
 
     auto& plugins = globalObject->onLoadPlugins;
     if (isCurrent) {
         plugins.addModuleMock(vm, specifier, mock);
+        if (previous && !leavesLoadedModuleAlone) {
+            keepExportsThatWaitedForBody(globalObject, mock, previous);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 #if ENABLE(AOT)
         if (vm.hasCompiledCode() && !formsWait && !placeOfMockThatEnds && mock->factory.get()) {
             for (JSC::AOT::ModuleID form : JSC::AOT::formsThatAttributesAskFor(globalObject, specifier)) {
@@ -4849,6 +5011,7 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(mock->originalNamespace);
     visitor.append(mock->patchedNamespace);
     visitor.append(mock->originalExportsOfEvictedModule);
+    visitor.append(mock->exportsWaitingForBody);
 #if ENABLE(AOT)
     visitor.append(mock->errorOfLateFailure);
     visitor.append(mock->errorOwedToImports);
@@ -5353,6 +5516,11 @@ void evictModuleThatNothingFetches(Zig::GlobalObject* globalObject, const JSC::I
     auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(key);
     if (entry && Zig::isNeverFetched(entry)) [[unlikely]]
         Zig::evictModulesAndTheirImporters(globalObject, Vector<String> { key.string() });
+}
+
+__attribute__((minsize, noinline)) void moduleBodyDidEnd(Zig::GlobalObject* globalObject, JSC::JSModuleRecord*)
+{
+    Zig::patchModulesWhoseBodyHasEnded(globalObject);
 }
 
 JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock)

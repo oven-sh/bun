@@ -148,6 +148,9 @@ public:
         VirtualModuleMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
+        // The mocks that have yet to store exports in a loaded module, or to be made of what it exports, because a body has yet to
+        // run to its end. Oldest first. See Bun::moduleBodyDidEnd().
+        Vector<JSC::Strong<JSC::JSObject>> moduleMocksWaitingForBody = {};
 
         struct Matches {
             JSC::JSString* path { nullptr };
@@ -180,6 +183,7 @@ public:
             fetchesOfModulesAskedFor.clear();
             moduleMocksBeingLoaded.clear();
             loadedByImportActual.clear();
+            moduleMocksWaitingForBody.clear();
 #if ENABLE(AOT)
             compiledMocksToRun.clear();
             factoriesOfCompiledMocks.clear();
@@ -259,6 +263,7 @@ class GlobalObject;
 
 namespace JSC {
 class JSModuleNamespaceObject;
+class JSModuleRecord;
 class JSSourceCode;
 }
 
@@ -295,5 +300,8 @@ JSC::JSObject* objectHoldingExportOfCompiledModuleMock(JSC::JSGlobalObject*, JSC
 // Flushes modulesToEvictOnceLoaded after a synchronous load. Does nothing inside an outer synchronous load.
 void evictModulesThatHaveLoaded(Zig::GlobalObject*);
 void evictModuleThatNothingFetches(Zig::GlobalObject*, const JSC::Identifier& key);
+// The body of a module has run to its end, and a mock had asked to hear of it (JSC::JSModuleRecord::tellHostWhenBodyEnds()). No module
+// that imports it has run since. The mock stores the exports that it kept for that body.
+void moduleBodyDidEnd(Zig::GlobalObject*, JSC::JSModuleRecord*);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

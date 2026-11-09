@@ -38,6 +38,7 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is evaluated first, so the mock isn't assigned over ["--isolate=modules"]
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > is evaluated first, so the mock isn't assigned over []
 test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not evaluated yet, when it is mocked > isn't evaluated ahead of an import that is being evaluated, or if it is the module of an earlier mock
+test/js/bun/test/mock/mock-module.test.ts: a module whose body has yet to run to its end when it is mocked > the next test file gets the original []
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > after it has removed its mock, or all of them
 test/js/bun/test/mock/mock-module.test.ts: a running factory's imports don't wait for its own mock > while another running factory imports a module that waits for this one's mock
 test/js/bun/test/mock/mock-module.test.ts: a test file mocks a module that a preload has loaded > in one process > with jest.mock(), the mock reaches modules the preload loaded and mocked

@@ -373,6 +373,8 @@ test("mock.module", async () => {
 
 When the factory returns a promise that is still pending, Bun updates the already-imported module once the promise settles. In that case `mock.module()` returns a promise that resolves after the update, and otherwise it returns `undefined`. `await mock.module(...)` inside a test or hook covers both. At the top level of a test file, Bun waits for pending module mocks before it runs the file's tests.
 
+A module can also be mocked while it is still being evaluated, for example while it waits at a top-level `await`. Bun updates it when its body has run to the end, before any module that waits for it runs. The rest of its body runs with its own exports, not with the mock. `mock.module()` doesn't return a promise for that wait.
+
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, mock } from "bun:test";
 import { foo } from "./module";
@@ -801,7 +803,7 @@ test("lazy import", async () => {
 - Only test files and `--preload` scripts run their imports one at a time. Any other module's imports are all linked before the first one runs, as are those of a test file that uses `bun:test` and has no hoisted call. If one of them calls `vi.mock()` for a module that another one imports, that module is updated in place.
 - If a module that is imported with a static import calls `vi.mock()` with an async factory, a module that is imported after it can run before the factory settles. What that module reads from the mocked module while it loads is the original. What it reads later is the mock.
 - Where a loaded package is updated in place (see [Mocking a Package](#mocking-a-package)), a module inside `node_modules` that imports it gets the mock. In Vitest it gets the real package.
-- If a module that is imported with a static import calls `vi.mock()` for a module that is waiting for an import with an async factory, the original still runs, and assigns its `const`, `let` and `class` exports. A module that reads one of those while it loads gets the original. What it reads later is the mock, and so are the `function` exports all along.
+- If a module that is imported with a static import calls `vi.mock()` for a module that is still being evaluated (it is waiting for an import with an async factory, or at a top-level `await` of its own), the original still runs to the end. Bun updates it right after that, so a module that waits for it gets the mock, also while it loads. What runs before then, such as a module in an import cycle with it, reads the original.
 - Every module outside `node_modules` that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
 - If two factories import each other's modules, the one that asks last gets the original. Vitest calls one of the two factories a second time instead.
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.

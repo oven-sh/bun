@@ -1424,6 +1424,12 @@ static JSValue requireBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
     return DeclaredModuleLoad::requireNamedAtRunTime(uncheckedDowncast<GlobalObject>(globalObject), static_cast<InternalModuleRegistry::Field>(id), ErrorCode::ERR_MODULE_NOT_FOUND);
 }
 
+// Only for a module that a module mock of `bun test` asked about (JSC::JSModuleRecord::tellHostWhenBodyEnds()): a door of the feature Test.
+static void moduleBodyDidEnd(JSGlobalObject* globalObject, JSC::JSModuleRecord* record)
+{
+    JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::ReturnDefault, Bun::moduleBodyDidEnd>(defaultGlobalObject(globalObject), record);
+}
+
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
     static const JSC::GlobalObjectMethodTable table = {
@@ -1460,6 +1466,8 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         &trustedScriptStructure, // trustedScriptStructure
         &requireBuiltinModule,
         &JS2Native::nativeBinding,
+        nullptr, // moduleHost
+        &moduleBodyDidEnd,
     };
     return table;
 }
@@ -1500,6 +1508,8 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         &trustedScriptStructure, // trustedScriptStructure
         &requireBuiltinModule,
         &JS2Native::nativeBinding,
+        nullptr, // moduleHost
+        &moduleBodyDidEnd,
     };
     return table;
 }
@@ -1541,6 +1551,7 @@ const JSC::GlobalObjectMethodTable& StandaloneGlobalObject::globalObjectMethodTa
         &requireBuiltinModule,
         &JS2Native::nativeBinding,
         &Bun::compiledModuleHost,
+        &moduleBodyDidEnd,
     };
     return table;
 }

@@ -412,8 +412,24 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     expect(Bun.inspect(ReadableStream.prototype).length > 0).toBeTrue();
     expect(Bun.inspect(TransformStream.prototype).length > 0).toBeTrue();
     // Bun.inspect does not call the hook of a prototype. An object that inherits from one gets the call.
-    expect(Bun.inspect(Object.create(ReadableStream.prototype))).toStartWith("ReadableStream {");
-    expect(Bun.inspect(Object.create(TransformStream.prototype))).toStartWith("TransformStream {");
+    for (const { name, prototype } of [ReadableStream, TransformStream]) {
+      const original = Object.getOwnPropertyDescriptor(prototype, customSymbol);
+      const heir = Object.create(prototype);
+      const receivers = [];
+      Object.defineProperty(prototype, customSymbol, {
+        ...original,
+        value(...args) {
+          receivers.push(this === heir);
+          return original.value.apply(this, args);
+        },
+      });
+      try {
+        expect(Bun.inspect(heir)).toStartWith(name + " {");
+      } finally {
+        Object.defineProperty(prototype, customSymbol, original);
+      }
+      expect(receivers).toEqual([true]);
+    }
   });
 
   // Unlike the classes above, these two brand-check, matching Node.

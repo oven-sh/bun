@@ -1,14 +1,19 @@
 use bun_ast::{Kind, Log};
+use bun_trim::TrimPlan;
 
 use super::super::Diagnostics;
-use super::super::engine_records::{internal_error_text, package_with_slow_code};
+use super::super::engine_records::{
+    internal_error_text, log_locales_left_out, package_with_slow_code,
+};
+use super::super::ignore_comments::IgnoreComment;
 use super::{describe, kinds_and_texts, text, written};
 use crate::diagnostic_codes::Code;
+use crate::engine::testing::ResultRecords;
 use crate::engine::{
-    InternalErrorRecord, SourceLocation, TextRange, UserDiagnosticRecord, Witness,
+    InternalErrorRecord, LocaleUseRecord, SourceLocation, TextRange, UserDiagnosticRecord, Witness,
 };
 use crate::ir::generated::{
-    DiagnosticSeverity, InternalErrorKind, LimitId, TypeSiteKind, UserDiagnosticKind,
+    DiagnosticSeverity, InternalErrorKind, LimitId, LocaleUseKind, TypeSiteKind, UserDiagnosticKind,
 };
 use crate::ir::ids::ABSENT_WORD;
 use crate::report::{ModuleLocator, ModuleOrigin, ModuleSource, SourceTexts};
@@ -411,4 +416,165 @@ fn error_at_witness_stops_build() {
         describe(&written(diagnostics)),
         ["/p/node_modules/b/b.js:1:1 Err TS100050: --aot does not support --splitting"]
     );
+}
+
+const TAGS: &[u8] = b"de-DEen-USfr";
+const DE_DE: TextRange = TextRange {
+    offset: 0,
+    length: 5,
+};
+const EN_US: TextRange = TextRange {
+    offset: 5,
+    length: 5,
+};
+const FR: TextRange = TextRange {
+    offset: 10,
+    length: 2,
+};
+
+fn locale_use(kind: LocaleUseKind, tag: TextRange, location: SourceLocation) -> LocaleUseRecord {
+    LocaleUseRecord {
+        kind,
+        tag,
+        builtin: ABSENT_WORD,
+        witness: witness(location),
+    }
+}
+
+fn written_locales_with_silenced(
+    records: &[LocaleUseRecord],
+    plans: &[&TrimPlan],
+    silenced: &[u32],
+    lists_silenced: bool,
+) -> Log {
+    let records = ResultRecords {
+        text: TAGS,
+        locales_used: records,
+        ..ResultRecords::default()
+    };
+    let mut log = Log::init();
+    records.with_result(|engine| {
+        log_locales_left_out(engine, &texts(), plans, silenced, lists_silenced, &mut log);
+    });
+    log
+}
+
+fn written_locales_left_out(records: &[LocaleUseRecord], plans: &[&TrimPlan]) -> Log {
+    written_locales_with_silenced(records, plans, &[], false)
+}
+
+#[test]
+fn constant_locale_that_a_plan_leaves_out_warns_where_it_is_passed() {
+    let records = [
+        locale_use(LocaleUseKind::Unknown, NO_TEXT, at(PROGRAM, 0)),
+        locale_use(LocaleUseKind::HostDefault, NO_TEXT, at(PROGRAM, 0)),
+        locale_use(LocaleUseKind::Constant, FR, at(DEPENDENCY, 0)),
+        locale_use(LocaleUseKind::Constant, EN_US, at(PROGRAM, 0)),
+        locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 7)),
+    ];
+    let log = written_locales_left_out(&records, &[&TrimPlan::leaving_out(&["de", "fr"])]);
+    let french = sentence_of(Code::LocaleDataLeftOut, &[b"fr"]);
+    assert_eq!(
+        describe(&log),
+        [
+            "/p/a.ts:2:1 Warn TS100087: compile.trim.locales leaves out the data of \"de-DE\". A call that needs it exits the process with code 70 if it runs. Add \"de-DE\" to the list".to_owned(),
+            format!("/p/node_modules/b/b.js:1:1 Warn {french}"),
+        ]
+    );
+    assert_eq!((log.errors, log.warnings), (0, 2));
+}
+
+#[test]
+fn constant_locale_without_a_place_warns_without_one() {
+    let records = [locale_use(LocaleUseKind::Constant, DE_DE, NO_LOCATION)];
+    let log = written_locales_left_out(&records, &[&TrimPlan::leaving_out(&["de"])]);
+    let sentence = sentence_of(Code::LocaleDataLeftOut, &[b"de-DE"]);
+    assert_eq!(kinds_and_texts(&log), [(Kind::Warn, sentence)]);
+    assert!(log.msgs[0].data.location.is_none());
+}
+
+#[test]
+fn locale_that_no_plan_leaves_out_warns_nowhere() {
+    let records = [
+        locale_use(LocaleUseKind::Constant, EN_US, at(PROGRAM, 0)),
+        locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 7)),
+    ];
+    let french_left_out = TrimPlan::leaving_out(&["fr"]);
+    let nothing_left_out = TrimPlan::leaving_out(&[]);
+    for plans in [&[][..], &[&french_left_out], &[&nothing_left_out]] {
+        assert!(written_locales_left_out(&records, plans).msgs.is_empty());
+    }
+}
+
+#[test]
+fn locale_that_one_of_two_plans_leaves_out_warns_once() {
+    let records = [locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 7))];
+    let german_left_out = TrimPlan::leaving_out(&["de"]);
+    let french_left_out = TrimPlan::leaving_out(&["fr"]);
+    let sentence = sentence_of(Code::LocaleDataLeftOut, &[b"de-DE"]);
+    for plans in [
+        [&french_left_out, &german_left_out],
+        [&german_left_out, &german_left_out],
+    ] {
+        assert_eq!(
+            describe(&written_locales_left_out(&records, &plans)),
+            [format!("/p/a.ts:2:1 Warn {sentence}")]
+        );
+    }
+}
+
+#[test]
+fn silenced_locale_warns_nowhere_and_is_listed_where_asked() {
+    let records = [
+        locale_use(LocaleUseKind::Constant, FR, at(DEPENDENCY, 0)),
+        locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 7)),
+        locale_use(LocaleUseKind::Constant, EN_US, at(PROGRAM, 0)),
+    ];
+    let plan = TrimPlan::leaving_out(&["de", "fr"]);
+    let french = sentence_of(Code::LocaleDataLeftOut, &[b"fr"]);
+    let german = sentence_of(Code::LocaleDataLeftOut, &[b"de-DE"]);
+    let warned = format!("/p/node_modules/b/b.js:1:1 Warn {french}");
+    // The comment on the English one silences nothing here: the plan keeps English.
+    let log = written_locales_with_silenced(&records, &[&plan], &[1, 2], false);
+    assert_eq!(describe(&log), [warned.clone()]);
+    let log = written_locales_with_silenced(&records, &[&plan], &[1, 2], true);
+    assert_eq!(
+        describe(&log),
+        [
+            format!("/p/a.ts:2:1 Note Silenced by bun-ignore: {german}"),
+            warned,
+        ]
+    );
+    assert_eq!((log.errors, log.warnings), (0, 1));
+}
+
+#[test]
+fn comment_on_the_line_of_a_constant_locale_silences_its_warning() {
+    let records = [
+        locale_use(LocaleUseKind::Constant, FR, at(DEPENDENCY, 0)),
+        locale_use(LocaleUseKind::HostDefault, NO_TEXT, at(PROGRAM, 7)),
+        locale_use(LocaleUseKind::Constant, DE_DE, at(PROGRAM, 7)),
+        locale_use(LocaleUseKind::Constant, EN_US, at(PROGRAM, 0)),
+    ];
+    let records = ResultRecords {
+        text: TAGS,
+        locales_used: &records,
+        ..ResultRecords::default()
+    };
+    let number = Code::LocaleDataLeftOut.number();
+    let mut diagnostics = Diagnostics::new();
+    let silenced = |diagnostics: &mut Diagnostics| {
+        records.with_result(|engine| diagnostics.find_silenced_locales(engine, &texts()))
+    };
+    assert!(silenced(&mut diagnostics).is_empty());
+
+    let comments = &mut diagnostics.ignore_comments;
+    comments.push(IgnoreComment::on_line(b"/p/a.ts", 2, number));
+    // The English locale stands on this line: the comment names another warning.
+    comments.push(IgnoreComment::on_line(
+        b"/p/a.ts",
+        1,
+        Code::ShadowRealmIsAbsent.number(),
+    ));
+    assert_eq!(silenced(&mut diagnostics), [2]);
 }

@@ -3883,8 +3883,10 @@ declare module "bun" {
      * The only locales to keep, such as `"en"` or `"de-AT"`.
      *
      * Without it, Bun keeps the locales your code passes to `Intl` as constants, and every locale
-     * if one of them isn't a constant. If the program asks for a locale that was removed, the
-     * process exits with code 70. It has no effect on macOS, where Bun uses the system's ICU.
+     * if one of them isn't a constant. A call that needs the data of a locale that was removed
+     * exits the process with code 70. A call that passes no locale needs `"en"`. With `aot`, a
+     * warning in `BuildOutput.logs` says where your code passes a constant locale that the list
+     * leaves out. It has no effect on macOS, where Bun uses the system's ICU.
      *
      * Equivalent CLI flag: `--trim-locales`, which implies `--trim`
      */

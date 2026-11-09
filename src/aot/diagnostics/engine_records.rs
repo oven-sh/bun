@@ -1,15 +1,20 @@
+use bun_ast::{Log, Msg};
 use bun_core::strings;
 use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
+use bun_trim::TrimPlan;
 
+use super::ignore_comments::{silence, to_silenced_note};
 use super::int32_flows::write_int32_message;
 use super::sink::{append_location, to_driver_diagnostic, to_log_message};
-use super::{COMPILER_DIAGNOSTIC_CLASS, Diagnostic, Diagnostics, Severity, new_driver_diagnostic};
+use super::{
+    COMPILER_DIAGNOSTIC_CLASS, Diagnostic, Diagnostics, Entry, Severity, new_driver_diagnostic,
+};
 use crate::diagnostic_codes::Code;
 use crate::engine::{
-    EngineResult, InternalErrorRecord, Position, UserDiagnosticRecord, position_of,
+    EngineResult, InternalErrorRecord, LocaleUseRecord, Position, UserDiagnosticRecord, position_of,
 };
 use crate::ir::ModuleId;
-use crate::ir::generated::{DiagnosticSeverity, UserDiagnosticKind, Witness};
+use crate::ir::generated::{DiagnosticSeverity, LocaleUseKind, UserDiagnosticKind, Witness};
 use crate::report::{ModuleLocator, ModuleOrigin, SourceTexts};
 
 fn is_about_load_by_unknown_name(record: &UserDiagnosticRecord) -> bool {
@@ -43,6 +48,54 @@ pub(crate) fn package_with_slow_code<'t>(
     }
 }
 
+fn message_at_witness(
+    code: Code,
+    arguments: &[&[u8]],
+    witness: &Witness,
+    texts: &SourceTexts,
+) -> Msg {
+    let diagnostic = Diagnostic::new(code, None, arguments);
+    let reported = to_driver_diagnostic(None, &diagnostic);
+    let reported = match position_of(witness.location) {
+        Some(position) => ModuleLocator::new(texts).locate(position, reported),
+        None => reported,
+    };
+    to_log_message(&reported, diagnostic.severity)
+}
+
+fn locale_warning(engine: &EngineResult, record: &LocaleUseRecord, texts: &SourceTexts) -> Msg {
+    let tag = engine.text(record.tag);
+    message_at_witness(Code::LocaleDataLeftOut, &[tag], &record.witness, texts)
+}
+
+/// Runs behind the build: a plan is made of what the engine found.
+/// `plans`: one for each executable that the build writes. `silenced`: `Diagnostics::find_silenced_locales`.
+pub fn log_locales_left_out(
+    engine: &EngineResult,
+    texts: &SourceTexts,
+    plans: &[&TrimPlan],
+    silenced: &[u32],
+    lists_silenced: bool,
+    log: &mut Log,
+) {
+    let number = Code::LocaleDataLeftOut.number();
+    let mut diagnostics = Diagnostics::new();
+    for (index, record) in (0..).zip(engine.locales_used()) {
+        let tag = engine.text(record.tag);
+        let is_left_out = || plans.iter().any(|plan| plan.leaves_out_locale(tag));
+        if record.kind != LocaleUseKind::Constant || !is_left_out() {
+            continue;
+        }
+        let warning = locale_warning(engine, record, texts);
+        if silenced.binary_search(&index).is_err() {
+            diagnostics.add_message(number, warning);
+        } else if lists_silenced {
+            diagnostics.add_message(number, to_silenced_note(warning));
+        }
+    }
+    diagnostics.write_to(log);
+}
+
 impl Diagnostics {
     pub(crate) fn add_engine_records(
         &mut self,
@@ -74,16 +127,33 @@ impl Diagnostics {
         witness: &Witness,
         texts: &SourceTexts,
     ) {
-        let diagnostic = Diagnostic::new(code, None, arguments);
-        let reported = to_driver_diagnostic(None, &diagnostic);
-        let reported = match position_of(witness.location) {
-            Some(position) => ModuleLocator::new(texts).locate(position, reported),
-            None => reported,
-        };
-        self.add_message(
-            code.number(),
-            to_log_message(&reported, diagnostic.severity),
-        );
+        let message = message_at_witness(code, arguments, witness, texts);
+        self.add_message(code.number(), message);
+    }
+
+    /// The constant locales, by their positions in `EngineResult::locales_used`, whose warning a `bun-ignore` comment silences.
+    /// `log_locales_left_out` makes that warning behind the build, where the comments are gone. Whether or not a list leaves
+    /// the locale out of this build, the comment silences something: the list of another build may.
+    pub(crate) fn find_silenced_locales(
+        &mut self,
+        engine: &EngineResult,
+        texts: &SourceTexts,
+    ) -> Vec<u32> {
+        if self.ignore_comments.is_empty() {
+            return Vec::new();
+        }
+        let number = Code::LocaleDataLeftOut.number();
+        let mut silenced = Vec::new();
+        for (index, record) in (0..).zip(engine.locales_used()) {
+            if record.kind != LocaleUseKind::Constant {
+                continue;
+            }
+            let warning = Entry::new(number, locale_warning(engine, record, texts));
+            if silence(&mut self.ignore_comments, &warning) {
+                silenced.push(index);
+            }
+        }
+        silenced
     }
 
     pub(crate) fn add_worker_start_without_name(&mut self, witness: &Witness, texts: &SourceTexts) {

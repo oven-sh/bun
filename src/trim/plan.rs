@@ -12,11 +12,12 @@ use bun_removable_features::{
 
 use crate::decide::{CREATES_REALMS, STARTS_WORKERS, decide};
 use crate::error::{TrimError, TrimInternalError, TrimRequestError};
-use crate::locales::resolve_wanted_groups;
+use crate::locales::{count_groups, resolve_wanted_groups};
 use crate::model::{
-    Decision, EntryPointNeeds, FeatureEdges, IcuPackage, ModuleText, OptionRequirement,
-    PlannedIcuPackage, PlannedRange, RefusedEntryPoint, RemovableRange, RetainReason, SetIndex,
-    TrimInput, TrimPlan, TrimTable, UnrequestedCut, UsedFeatures, UsedLocales, WantedLocaleGroups,
+    Decision, EntryPointNeeds, FeatureEdges, IcuPackage, LocalesLeftOut, ModuleText,
+    OptionRequirement, PlannedIcuPackage, PlannedRange, RefusedEntryPoint, RemovableRange,
+    RetainReason, SetIndex, TrimInput, TrimPlan, TrimTable, UnrequestedCut, UsedFeatures,
+    UsedLocales, WantedLocaleGroups,
 };
 use crate::table::read_trim_table;
 
@@ -56,8 +57,23 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
     let runs_library_text = is_template
         || can_run_library_text(input.used, &decision.requirements)
         || can_start_worker_without_image(input.used, &decision);
-    let mut plan = plan_table(&table, decision, &wanted, runs_library_text);
+    // Only a compiled program names locales that a list can leave out, and a template tombstones nothing.
+    let holds_list_against_program =
+        input.request.locales.is_some() && input.is_program_compiled() && !is_template;
+    let mut tombstoned_groups =
+        holds_list_against_program.then(|| vec![false; count_groups(&table.icu_languages)]);
+    let mut plan = plan_table(
+        &table,
+        decision,
+        &wanted,
+        runs_library_text,
+        tombstoned_groups.as_deref_mut(),
+    );
     plan.refused_entry_points = find_refused_entry_points(&table, &plan.decision);
+    plan.locales_left_out = tombstoned_groups.map(|tombstoned_groups| LocalesLeftOut {
+        languages: table.icu_languages,
+        tombstoned_groups,
+    });
     if !is_template {
         return Ok(plan);
     }
@@ -146,6 +162,7 @@ pub(crate) fn plan_table(
     decision: Decision,
     wanted: &WantedLocaleGroups,
     runs_library_text: bool,
+    mut tombstoned_groups: Option<&mut [bool]>,
 ) -> TrimPlan {
     let removed = decision.removed();
     let removed_sets: Vec<bool> = table
@@ -185,7 +202,10 @@ pub(crate) fn plan_table(
     let icu_packages = table
         .icu_packages
         .iter()
-        .filter_map(|package| plan_icu_package(package, &removed_sets, wanted))
+        .filter_map(|package| {
+            let tombstoned_groups = tombstoned_groups.as_deref_mut();
+            plan_icu_package(package, &removed_sets, wanted, tombstoned_groups)
+        })
         .collect();
     TrimPlan {
         decision,
@@ -194,6 +214,7 @@ pub(crate) fn plan_table(
         icu_packages,
         keeps_table: false,
         unrequested: UnrequestedCut::Nothing,
+        locales_left_out: None,
     }
 }
 
@@ -274,16 +295,19 @@ fn plan_icu_package(
     package: &IcuPackage,
     removed_sets: &[bool],
     wanted: &WantedLocaleGroups,
+    mut tombstoned_groups: Option<&mut [bool]>,
 ) -> Option<PlannedIcuPackage> {
     let mut removed_items: Vec<Range<u32>> = Vec::new();
     let mut tombstoned_items: Vec<Range<u32>> = Vec::new();
     for run in &package.runs {
+        let unwanted_group = || run.locale_group.filter(|group| !wanted.contains(*group));
         let items = if is_set_removed(removed_sets, run.set) {
             &mut removed_items
-        } else if run
-            .locale_group
-            .is_some_and(|group| !wanted.contains(group))
-        {
+        } else if let Some(group) = unwanted_group() {
+            let groups = tombstoned_groups.as_deref_mut();
+            if let Some(is_tombstoned) = groups.and_then(|it| it.get_mut(usize::from(group.0))) {
+                *is_tombstoned = true;
+            }
             &mut tombstoned_items
         } else {
             continue;
@@ -981,6 +1005,129 @@ mod tests {
         assert!(
             matches!(result, Err(TrimError::Request(TrimRequestError::UnknownLocale(tag))) if *tag == *b"xx")
         );
+    }
+
+    fn left_out_of(plan: &TrimPlan) -> Vec<&'static str> {
+        let tags = ["de-DE", "en-US", "fr", "hi-IN", "xx-YY"];
+        let is_left_out = |tag: &&str| plan.leaves_out_locale(tag.as_bytes());
+        tags.into_iter().filter(is_left_out).collect()
+    }
+
+    #[test]
+    fn list_leaves_out_the_languages_that_it_tombstones() {
+        let table = table_with_three_languages();
+        let left_out = |tags: &[&str]| {
+            let request = wanting(tags, removing_internal(&[Feature::Jit]));
+            left_out_of(&plan_encoded_table(&table, &request))
+        };
+        assert_eq!(left_out(&["en"]), ["de-DE", "fr"]);
+        assert_eq!(left_out(&["fr", "de"]), ["en-US"]);
+        assert_eq!(left_out(&[]), ["de-DE", "en-US", "fr"]);
+        assert!(left_out(&["de", "en", "fr"]).is_empty());
+    }
+
+    #[test]
+    fn language_in_the_group_of_a_listed_one_is_not_left_out() {
+        let mut table = table_with_three_languages();
+        table.icu_languages.push(IcuLanguage {
+            name: *b"hi\0\0",
+            group: ENGLISH,
+        });
+        let left_out = |tags: &[&str]| {
+            let request = wanting(tags, removing_internal(&[Feature::Jit]));
+            left_out_of(&plan_encoded_table(&table, &request))
+        };
+        assert_eq!(left_out(&["en"]), ["de-DE", "fr"]);
+        assert_eq!(left_out(&["de"]), ["en-US", "fr", "hi-IN"]);
+    }
+
+    #[test]
+    fn language_whose_items_all_leave_with_their_set_is_not_left_out() {
+        let table = table_with_icu_items(&[
+            (JIT_SET, Some(GERMAN)),
+            (FFI_SET, Some(FRENCH)),
+            (FFI_SET, Some(ENGLISH)),
+        ]);
+        let request = wanting(&["en"], removing_internal(&[Feature::Jit]));
+        let planned = plan_encoded_table(&table, &request);
+        assert_eq!(
+            planned.icu_packages,
+            planned_icu_items(vec![0..1], vec![1..2])
+        );
+        assert_eq!(left_out_of(&planned), ["fr"]);
+    }
+
+    #[test]
+    fn only_a_list_over_a_compiled_program_leaves_out_languages() {
+        let table = table_with_three_languages();
+        let compiled = using_ffi_in_english();
+        let bundled = UsedFeatures::with_cause(UnseenCodeCause::ProgramNotCompiled);
+        let list = wanting(&["en"], removing_unused());
+        let no_list = removing_unused();
+        let template = TrimRequest {
+            is_template: true,
+            ..wanting(&["en"], TrimRequest::default())
+        };
+        let cases: [(&str, &UsedFeatures, &TrimRequest, &[&str]); 4] = [
+            ("a list", &compiled, &list, &["de-DE", "fr"]),
+            ("no list", &compiled, &no_list, &[]),
+            ("a program that is not compiled", &bundled, &list, &[]),
+            ("a template", &compiled, &template, &[]),
+        ];
+        for (name, used, request, left_out) in cases {
+            let input = TrimInput {
+                used,
+                settings: &ExecutableSettings::default(),
+                request,
+            };
+            let planned = plan_encoded_input(&table, &input);
+            assert_eq!(left_out_of(&planned), left_out, "{name}");
+        }
+    }
+
+    #[test]
+    fn table_without_languages_leaves_out_none() {
+        let table = TrimTable {
+            icu_languages: Vec::new(),
+            ..table_with_icu_items(&[(FFI_SET, None), (JIT_SET, None)])
+        };
+        let request = wanting(&["en"], removing_internal(&[Feature::Jit]));
+        assert!(left_out_of(&plan_encoded_table(&table, &request)).is_empty());
+    }
+
+    // As for `BUN_DEBUG_TEST_UNTRIMMED_OUTFILE`: one build, the same list, and a second executable that keeps what nothing uses.
+    #[test]
+    fn each_plan_of_a_build_answers_for_its_own_executable() {
+        const SQL_SET: SetIndex = SetIndex(0);
+        let table = TrimTable {
+            sets: vec![
+                FeatureSet::from_features(&[Feature::Sql]),
+                FeatureSet::from_features(&[Feature::Ffi]),
+            ],
+            ..table_with_icu_items(&[(SQL_SET, Some(GERMAN)), (FFI_SET, Some(ENGLISH))])
+        };
+        let used = UsedFeatures::from_features(&[Feature::Ffi]);
+        let plan_of = |request: &TrimRequest| {
+            let input = TrimInput {
+                used: &used,
+                settings: &ExecutableSettings::default(),
+                request,
+            };
+            plan_encoded_input(&table, &input)
+        };
+        let trimmed = plan_of(&wanting(&["en"], removing_unused()));
+        assert_eq!(
+            trimmed.icu_packages,
+            planned_icu_items(vec![0..1], Vec::new())
+        );
+        assert!(left_out_of(&trimmed).is_empty());
+
+        let whole = plan_of(&wanting(&["en"], TrimRequest::default()));
+        assert_eq!(
+            whole.icu_packages,
+            planned_icu_items(Vec::new(), vec![0..1])
+        );
+        assert_eq!(left_out_of(&whole), ["de-DE"]);
     }
 
     fn table_with_module_texts() -> TrimTable {

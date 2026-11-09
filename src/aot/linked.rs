@@ -7,11 +7,11 @@ use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::program::Files;
 use bun_sema::session::Arena;
-use bun_trim::UsedFeatures;
+use bun_trim::{TrimPlan, UsedFeatures};
 
 use crate::compile::{BuildFailed, CodeOfWorkers, Compilation, compile};
 use crate::diagnostic_codes::Code;
-use crate::diagnostics::log_diagnostic;
+use crate::diagnostics::{log_diagnostic, log_locales_left_out};
 use crate::engine::{self, EngineModuleId, EngineResult, RejectedOptionWord};
 use crate::load::data_modules::parse_json;
 use crate::load::source_provider::SourceProvider;
@@ -39,6 +39,7 @@ fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
         holds_source_paths: compilation.holds_source_paths,
         program_files: compilation.started_workers.program_files,
         names_added_to_builtins: compilation.names_added_to_builtins,
+        silenced_locales: compilation.silenced_locales,
         engine: interface::engine::EngineResult(Opaque::new(compilation.engine)),
         summary: interface::compile::ProgramSummary {
             entry_points: summary.entry_points,
@@ -80,6 +81,10 @@ interface::define_linked_functions! {
 
     fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) {
         log_diagnostic(log, code, arguments);
+    }
+
+    fn bun_aot_log_locales_left_out(engine: &interface::engine::EngineResult, texts: &interface::report::SourceTexts, plans: &[&TrimPlan], silenced: &[u32], lists_silenced: bool, log: &mut Log) {
+        log_locales_left_out(engine.0.get(), texts.0.get(), plans, silenced, lists_silenced, log);
     }
 
     fn bun_aot_parse_json<'s>(text: &[u8], arena: &'s Arena, atoms: &Interner<'s>) -> Option<&'s DataValue<'s>> {

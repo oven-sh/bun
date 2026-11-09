@@ -28,6 +28,8 @@ pub struct Compilation {
     pub holds_source_paths: bool,
     pub program_files: Vec<EntryPointPaths>,
     pub names_added_to_builtins: Vec<(u32, Vec<u8>)>,
+    /// The constant locales, by their positions in what the engine lists, whose warning a `bun-ignore` comment silences.
+    pub silenced_locales: Vec<u32>,
 }
 
 pub struct BuildFailed {

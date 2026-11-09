@@ -312,6 +312,15 @@ pub(crate) struct PlannedIcuPackage {
     pub(crate) tombstoned_items: Vec<Range<u32>>,
 }
 
+/// What a list of locales takes out of one executable.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct LocalesLeftOut {
+    /// The table's, by name.
+    pub(crate) languages: Vec<IcuLanguage>,
+    /// By `LocaleGroup`: the plan tombstones a run of the group.
+    pub(crate) tombstoned_groups: Vec<bool>,
+}
+
 #[derive(Clone, Debug)]
 pub struct TrimPlan {
     pub(crate) decision: Decision,
@@ -321,6 +330,8 @@ pub struct TrimPlan {
     pub(crate) icu_packages: Vec<PlannedIcuPackage>,
     pub(crate) keeps_table: bool,
     pub(crate) unrequested: UnrequestedCut,
+    /// Only where a list of locales stands in place of those that a compiled program names.
+    pub(crate) locales_left_out: Option<LocalesLeftOut>,
 }
 
 /// What the same executable loses if nobody asks to trim it. `apply` only counts its bytes.
@@ -341,6 +352,31 @@ impl TrimPlan {
             icu_packages: Vec::new(),
             keeps_table: false,
             unrequested: UnrequestedCut::Nothing,
+            locales_left_out: None,
+        }
+    }
+
+    /// The plan of a list that leaves out each of `languages`.
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn leaving_out(languages: &[&str]) -> TrimPlan {
+        let name_of = |language: &&str| {
+            let mut name = [0; 4];
+            name[..language.len()].copy_from_slice(language.as_bytes());
+            name
+        };
+        let mut names: Vec<[u8; 4]> = languages.iter().map(name_of).collect();
+        names.sort_unstable();
+        let tombstoned_groups = vec![true; names.len()];
+        let language = |(group, name)| IcuLanguage {
+            name,
+            group: LocaleGroup(group),
+        };
+        TrimPlan {
+            locales_left_out: Some(LocalesLeftOut {
+                languages: (0..).zip(names).map(language).collect(),
+                tombstoned_groups,
+            }),
+            ..TrimPlan::empty()
         }
     }
 

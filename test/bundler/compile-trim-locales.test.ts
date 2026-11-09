@@ -126,6 +126,130 @@ console.log(new Intl.RelativeTimeFormat("de").format(-1, "day"), new Intl.ListFo
   }
 });
 
+// Only a build with --aot knows the locales that a program passes as constants. --aot can make the pattern of such a locale itself, so a call
+// with an ordinary value asks for no data, and a test of the executable passes. The build warns where the locale is passed.
+describe.concurrent("--trim-locales with a constant locale that the list leaves out", () => {
+  const priceLine = (tag: string, currency: string) =>
+    `  return new Intl.NumberFormat("${tag}", { style: "currency", currency: "${currency}" }).format(amount);`;
+  // The date takes its locale from the command line, so the build makes no pattern for it: it asks the executable for the data.
+  const price = (tag: string, currency: string) => `function price(amount: number) {
+${priceLine(tag, currency)}
+}
+const [locale] = process.argv.slice(2);
+console.log(locale ? new Date(0).toLocaleDateString(locale, { timeZone: "UTC" }) : price(1234.5));`;
+  const files = {
+    "euros.ts": price("de-DE", "EUR"),
+    "dollars.ts": price("en-US", "USD"),
+    // Nothing of Intl is used, so none of its data stays for any language, and the list leaves out nothing that this call could ask for.
+    "upper.ts": `console.log("i".toLocaleUpperCase("tr"));`,
+    "silenced.ts": `// bun-ignore TS100087 every amount is a finite number
+console.log(new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }).format(1234.5));`,
+    "build.ts": `
+const built = await Bun.build({
+  entrypoints: ["./euros.ts"],
+  compile: { aot: true, outfile: process.argv[2], trim: { locales: ["en"] } },
+});
+if (!built.success) throw new AggregateError(built.logs);
+console.log(JSON.stringify(built.logs.map(log => ({ level: log.level, message: log.message, line: log.position?.line, column: log.position?.column }))));`,
+  };
+  const warning = (tag: string) =>
+    `TS100087: compile.trim.locales leaves out the data of "${tag}". A call that needs it exits the process with code 70 if it runs. Add "${tag}" to the list`;
+  const place = { line: 2, column: priceLine("de-DE", "EUR").indexOf('"de-DE"') + 1 };
+  const aot = ["build", "--compile", "--aot", ...withoutDebugInformation];
+  const silenced = "note: Silenced by bun-ignore: ";
+  const warningsOf = (stderr: string) =>
+    stderr.split("\n").filter(line => line.startsWith("warn: ") || line.startsWith(silenced));
+  const removed = {
+    stdout: "",
+    stderr: `error: the locale data this program needs was removed by --trim. Add the locale to compile.trim.locales to keep it.${isWindows ? "\r\n" : "\n"}`,
+    exitCode: 70,
+  };
+
+  test.skipIf(!canTrim || !!unsupported)(
+    "the build warns where the locale is passed, and writes the executable",
+    async () => {
+      using dir = tempDir("compile-trim-locales-left-out", files);
+      const folder = String(dir);
+      // The last: the locale of a call that passes none is en-US on every host, and a list leaves out its data like any other.
+      const builds: [how: string[], file: string, tag: string][] = [
+        [[...aot, "--trim-locales=en"], "euros.ts", "de-DE"],
+        [["compile", ...withoutDebugInformation, "--trim-locales=en"], "euros.ts", "de-DE"],
+        [[...aot, "--trim-locales=de"], "dollars.ts", "en-US"],
+      ];
+      const built = await Promise.all(
+        builds.map(([how, file], index) =>
+          inTurn(async () => {
+            const cmd = [bunExe(), ...how, file, "--outfile", join(folder, String(index), "price")];
+            const { stderr, exitCode } = await run(cmd, folder);
+            const at = stderr.includes(`${file}:${place.line}:${place.column}`);
+            return { how: how.join(" "), warnings: warningsOf(stderr), at, exitCode };
+          }),
+        ),
+      );
+      // On macOS the list removes nothing.
+      expect(built).toEqual(
+        builds.map(([how, , tag]) => ({
+          how: how.join(" "),
+          warnings: isMacOS ? [] : [`warn: ${warning(tag)}`],
+          at: !isMacOS,
+          exitCode: 0,
+        })),
+      );
+
+      const api = await inTurn(() => run([bunExe(), "build.ts", join(folder, "api", "price")], folder));
+      expect({ ...api, stdout: JSON.parse(api.stdout) }).toEqual({
+        stdout: isMacOS ? [] : [{ level: "warn", message: warning("de-DE"), ...place }],
+        stderr: "",
+        exitCode: 0,
+      });
+
+      // Each executable holds what its list names, and nothing of the locale that its build warned of.
+      const english = { stdout: "1/1/1970\n", stderr: "", exitCode: 0 };
+      const german = { stdout: "1.1.1970\n", stderr: "", exitCode: 0 };
+      const ran = async (index: number, locale: string) =>
+        await run([join(folder, String(index), "price"), locale], folder);
+      expect({
+        underEnglish: { en: await ran(0, "en"), de: await ran(0, "de") },
+        underGerman: { en: await ran(2, "en"), de: await ran(2, "de") },
+      }).toEqual({
+        underEnglish: { en: english, de: isMacOS ? german : removed },
+        underGerman: { en: isMacOS ? english : removed, de: german },
+      });
+    },
+  );
+
+  test.skipIf(!canTrim || !!unsupported)(
+    "the build warns only of data that one of its executables leaves out",
+    async () => {
+      using dir = tempDir("compile-trim-locales-not-left-out", files);
+      const folder = String(dir);
+      // The last: BUN_DEBUG_TEST_UNTRIMMED_OUTFILE, for a second executable that keeps what nothing uses. The list applies to it too.
+      const builds: [how: string[], warnings: string[], whole?: string][] = [
+        [[...aot, "--trim-locales=en,de", "euros.ts"], []],
+        [[...aot, "--trim", "euros.ts"], []],
+        [["build", "--compile", ...withoutDebugInformation, "--trim-locales=en", "euros.ts"], []],
+        [[...aot, "--trim", "--trim-locales=en", "upper.ts"], []],
+        [[...aot, "--trim-locales=en", "silenced.ts"], []],
+        [[...aot, "--trim-locales=en", "--explain", "silenced.ts"], isMacOS ? [] : [silenced + warning("de-DE")]],
+        [[...aot, "--trim", "--trim-locales=en", "upper.ts"], isMacOS ? [] : [`warn: ${warning("tr")}`], "whole"],
+      ];
+      const built = await Promise.all(
+        builds.map(([how, , whole], index) =>
+          inTurn(async () => {
+            const into = join(folder, String(index));
+            const env = { ...bunEnv, BUN_DEBUG_TEST_UNTRIMMED_OUTFILE: whole && join(into, whole) };
+            const { stderr, exitCode } = await run([bunExe(), ...how, "--outfile", join(into, "built")], folder, env);
+            return { how: how.join(" "), warnings: warningsOf(stderr), exitCode };
+          }),
+        ),
+      );
+      expect(built).toEqual(builds.map(([how, warnings]) => ({ how: how.join(" "), warnings, exitCode: 0 })));
+      // The warning is of the data, not of the call: this one asks for none.
+      expect(await run([join(folder, "6", "whole")], folder)).toEqual({ stdout: "İ\n", stderr: "", exitCode: 0 });
+    },
+  );
+});
+
 describe.concurrent("--trim-locales without --trim", () => {
   const files = {
     "month.ts": `console.log(new Date(0).toLocaleDateString(process.argv[2], { timeZone: "UTC", month: "long" }));`,

@@ -104,6 +104,7 @@ pub(crate) fn finish_build(
         holds_source_paths,
         program_files: _,
         names_added_to_builtins,
+        silenced_locales,
     } = compilation;
     let ProgramSummary {
         entry_points: entry_paths,
@@ -125,6 +126,7 @@ pub(crate) fn finish_build(
         holds_source_paths,
         names_plugin,
         names_added_to_builtins,
+        silenced_locales,
         further_package_names: Vec::new(),
         refused_data: Vec::new(),
         files_for_file_system: Default::default(),

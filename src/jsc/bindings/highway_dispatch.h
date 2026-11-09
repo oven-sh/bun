@@ -7,9 +7,20 @@
 
 namespace bun {
 
+inline int64_t highwayTargets()
+{
+    int64_t targets = hwy::SupportedTargets();
+#if HWY_ARCH_X86
+    // AVX3_SPR is not compiled (scripts/build/deps/highway.ts). Highway itself reports AVX3_ZEN4 for AMD CPUs only.
+    if ((targets & HWY_AVX3_SPR) && !(targets & HWY_AVX10_2))
+        targets |= HWY_AVX3_ZEN4;
+#endif
+    return targets;
+}
+
 inline void highwayChooseTarget()
 {
-    static const bool chosen = (hwy::GetChosenTarget().Update(hwy::SupportedTargets()), true);
+    static const bool chosen = (hwy::GetChosenTarget().Update(highwayTargets()), true);
     (void)chosen;
 }
 

@@ -107,6 +107,7 @@ pub(crate) fn promote_used_temporaries(
     let mut inter_state = InterState::new(inline_macro_operands);
     promote_interposed_block(
         &func.body,
+        None,
         &mut state,
         &mut inter_state,
         &mut consts,
@@ -702,26 +703,16 @@ impl<'a> InterState<'a> {
     }
 }
 
-/// The statements that print in front of an instruction: those of its block, then those around the scope of that block.
+/// What prints in front of an instruction: the statements of its block, then in `outer` those around that block.
 #[derive(Clone, Copy)]
 struct Before<'a> {
+    /// The terminal behind `statements` that holds the inner block, unless it is a label. Its other blocks can run first too.
+    terminal: Option<&'a ReactiveTerminalStatement>,
     statements: &'a [ReactiveStatement],
     outer: Option<&'a Before<'a>>,
 }
 
 fn promote_interposed_block(
-    block: &ReactiveBlock,
-    state: &mut State,
-    inter_state: &mut InterState<'_>,
-    consts: &mut IdBitSet<IdentifierId>,
-    globals: &mut IdBitSet<IdentifierId>,
-    env: &mut Environment,
-) {
-    promote_interposed_statements(block, None, state, inter_state, consts, globals, env);
-}
-
-/// `outer` is what prints in front of the statements when they are those of a scope.
-fn promote_interposed_statements(
     block: &ReactiveBlock,
     outer: Option<&Before<'_>>,
     state: &mut State,
@@ -736,6 +727,7 @@ fn promote_interposed_statements(
 
     for (index, stmt) in block.iter().enumerate() {
         let before = Before {
+            terminal: None,
             statements: &block[..index],
             outer,
         };
@@ -754,7 +746,7 @@ fn promote_interposed_statements(
             ReactiveStatement::Scope(scope) => {
                 // The memo block compares its dependencies first, and what writes must not print in it: it may not run.
                 inter_state.statement(Effect::Read);
-                promote_interposed_statements(
+                promote_interposed_block(
                     &scope.instructions,
                     Some(&before),
                     state,
@@ -765,7 +757,7 @@ fn promote_interposed_statements(
                 );
             }
             ReactiveStatement::PrunedScope(scope) => {
-                promote_interposed_statements(
+                promote_interposed_block(
                     &scope.instructions,
                     Some(&before),
                     state,
@@ -776,7 +768,15 @@ fn promote_interposed_statements(
                 );
             }
             ReactiveStatement::Terminal(terminal) => {
-                promote_interposed_terminal(terminal, state, inter_state, consts, globals, env);
+                promote_interposed_terminal(
+                    terminal,
+                    &before,
+                    state,
+                    inter_state,
+                    consts,
+                    globals,
+                    env,
+                );
             }
         }
     }
@@ -1095,6 +1095,7 @@ fn promote_interposed_value(
                 effect = effect.max(promote_interposed_instruction(
                     instr,
                     &Before {
+                        terminal: None,
                         statements: &[],
                         outer: None,
                     },
@@ -1180,9 +1181,20 @@ fn promote_late_method(
         load: None,
     };
     let mut before = Some(before);
-    while let Some(&Before { statements, outer }) = before
-        && !behind.walk(statements)
+    while let Some(&Before {
+        terminal,
+        statements,
+        outer,
+    }) = before
     {
+        if let Some(terminal) = terminal {
+            behind
+                .mutations
+                .visit_terminal(terminal, &mut behind.is_mutated);
+        }
+        if behind.walk(statements) {
+            break;
+        }
         before = outer;
     }
     let Behind {
@@ -1392,12 +1404,20 @@ fn promote_interposed_terminal_place(
 
 fn promote_interposed_terminal(
     stmt: &ReactiveTerminalStatement,
+    before: &Before<'_>,
     state: &mut State,
     inter_state: &mut InterState<'_>,
     consts: &mut IdBitSet<IdentifierId>,
     globals: &mut IdBitSet<IdentifierId>,
     env: &mut Environment,
 ) {
+    // A labeled block runs once, in sequence. An early return puts the statements of a memo block in one.
+    let is_sequence = matches!(stmt.terminal, ReactiveTerminal::Label { .. });
+    let around = Before {
+        terminal: (!is_sequence).then_some(stmt),
+        ..*before
+    };
+    let around = Some(&around);
     match &stmt.terminal {
         ReactiveTerminal::Break { .. } | ReactiveTerminal::Continue { .. } => {}
         ReactiveTerminal::Return { value, .. } | ReactiveTerminal::Throw { value, .. } => {
@@ -1412,7 +1432,7 @@ fn promote_interposed_terminal(
         } => {
             promote_interposed_terminal_value(init, state, inter_state, consts, globals, env);
             promote_interposed_terminal_value(test, state, inter_state, consts, globals, env);
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
             if let Some(update) = update {
                 promote_interposed_terminal_value(update, state, inter_state, consts, globals, env);
             }
@@ -1429,25 +1449,25 @@ fn promote_interposed_terminal(
             let test = promote_interposed_value(test, state, inter_state, consts, globals, env);
             inter_state.exit_value_block(outer);
             inter_state.statement(init.max(test));
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::ForIn {
             init, loop_block, ..
         } => {
             promote_interposed_terminal_value(init, state, inter_state, consts, globals, env);
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::DoWhile {
             loop_block, test, ..
         } => {
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
             promote_interposed_terminal_value(test, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::While {
             test, loop_block, ..
         } => {
             promote_interposed_terminal_value(test, state, inter_state, consts, globals, env);
-            promote_interposed_block(loop_block, state, inter_state, consts, globals, env);
+            promote_interposed_block(loop_block, around, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::If {
             test,
@@ -1456,9 +1476,9 @@ fn promote_interposed_terminal(
             ..
         } => {
             promote_interposed_terminal_place(test, state, inter_state, consts, env);
-            promote_interposed_block(consequent, state, inter_state, consts, globals, env);
+            promote_interposed_block(consequent, around, state, inter_state, consts, globals, env);
             if let Some(alt) = alternate {
-                promote_interposed_block(alt, state, inter_state, consts, globals, env);
+                promote_interposed_block(alt, around, state, inter_state, consts, globals, env);
             }
         }
         ReactiveTerminal::Switch { test, cases, .. } => {
@@ -1473,12 +1493,20 @@ fn promote_interposed_terminal(
             inter_state.statement(effect);
             for case in cases {
                 if let Some(block) = &case.block {
-                    promote_interposed_block(block, state, inter_state, consts, globals, env);
+                    promote_interposed_block(
+                        block,
+                        around,
+                        state,
+                        inter_state,
+                        consts,
+                        globals,
+                        env,
+                    );
                 }
             }
         }
         ReactiveTerminal::Label { block, .. } => {
-            promote_interposed_block(block, state, inter_state, consts, globals, env);
+            promote_interposed_block(block, around, state, inter_state, consts, globals, env);
         }
         ReactiveTerminal::Try {
             block,
@@ -1486,11 +1514,11 @@ fn promote_interposed_terminal(
             handler,
             ..
         } => {
-            promote_interposed_block(block, state, inter_state, consts, globals, env);
+            promote_interposed_block(block, around, state, inter_state, consts, globals, env);
             if let Some(binding) = handler_binding {
                 promote_interposed_place(binding, state, inter_state, consts, env);
             }
-            promote_interposed_block(handler, state, inter_state, consts, globals, env);
+            promote_interposed_block(handler, around, state, inter_state, consts, globals, env);
         }
     }
 }

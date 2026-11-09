@@ -4094,8 +4094,10 @@ describe("bundler", () => {
       "EarlierArgumentIsAMethodOfAProp=A:oldA:old | A:oldA:old | C:oldC:old",
       "EarlierArgumentOverAnotherLocal=A:old1 | A:old1 | C:old1",
       "KeyAheadOfAMemoBlock=B:oldalt;1i | B:oldalt;1i | B:oldalt;1i",
+      "KeyAheadOfAMemoBlockWithAnEarlyReturn=B:oldalt;1i | B:oldalt;1i | B:oldalt;1i",
       "KeyAheadOfAScopeThatAHookPrunes=A:old;2 | A:old;2 | C:old;2",
       "KeyAheadOfAScopeThatALoopPrunes=A:old;2A:old;2 | A:old;2A:old;2 | C:old;2C:old;2",
+      "KeyAheadOfASwitchThatHoldsTheCall=A:old | A:old | C:old",
       "KeyInAScopeThatAHookPrunes=A:old 0,key,statement | A:old 0,key,statement | C:old 0,key,statement",
       "KeyIsAConversionOfAMemberThatIsUpdated=A:first | A:first | C:first",
       "KeyIsAMemberThatIsUpdated=A:first | A:first | C:first",
@@ -4105,8 +4107,11 @@ describe("bundler", () => {
       "LaterArgumentBehindAStatement=A:old | A:old | C:old",
       "MemoBlocksAheadOfTheReceiver=A:old16 | A:old16 | C:old16",
       "MethodAheadOfAMemoBlock=A:old;1 | A:old;1 | C:old;1",
+      "MethodAheadOfAMemoBlockWithAnEarlyReturn=A:old;1 | A:old;1 | C:old;1",
       "MethodAheadOfAScopeThatAHookPrunes=A:old;2 | A:old;2 | C:old;2",
       "MethodAheadOfAScopeThatALoopPrunes=A1:old;2A2:old;2 | A1:old;2A2:old;2 | C1:old;2C2:old;2",
+      "MethodAheadOfASwitchThatHoldsTheCall=A:old | A:old | C:old",
+      "MethodAheadOfASwitchWithACaseThatFallsThrough=A:old | A:old | C:old",
       "MethodHasItsOwnCall=A:old | A:old | C:old",
       "MethodInAMemoBlockAheadOfTheCall=A:old;1 | A:old;1 | C:old;1",
       "MethodIsAProxy=A:old | A:old | C:old",
@@ -4428,6 +4433,40 @@ describe("bundler", () => {
               const result = o.who((() => { o.who = other; return <i>{o}{n}</i>; })(), (last = [], "")) + ";";
               last.push(result);
               return <div>{result + last.length}</div>;
+            }
+            // An early return puts the statements of the memo block of \`last\` in a labeled block.
+            export function MethodAheadOfAMemoBlockWithAnEarlyReturn(p) {
+              const o = make(p.name);
+              const [n] = useState(0);
+              let last;
+              const result = o.who((() => { o.who = other; return <i>{o}{n}</i>; })(), (last = [], "")) + ";";
+              if (p.n > 100) return null;
+              last.push(result);
+              return <div>{result + last.length}</div>;
+            }
+            export function KeyAheadOfAMemoBlockWithAnEarlyReturn(p) {
+              const o = make("B");
+              const frozen = <i>{o}</i>;
+              let key = same("who");
+              let last;
+              const result = o[key]((key = "alt"), (last = [], "")) + ";";
+              if (p.n > 100) return null;
+              last.push(result);
+              return <div>{result + last.length + frozen.type}</div>;
+            }
+            // The inlined function has its one return in a case, so the call and all behind it stand in that case.
+            export function MethodAheadOfASwitchThatHoldsTheCall(p) {
+              const o = make(p.name);
+              return <div>{o.who((() => { switch (p.n) { default: o.who = other; return ""; } })())}</div>;
+            }
+            // The statement stands in another case, which falls through to the case of the call.
+            export function MethodAheadOfASwitchWithACaseThatFallsThrough(p) {
+              const o = make(p.name);
+              return <div>{o.who((() => { switch (p.n) { case 2: o.who = other; default: return ""; } })())}</div>;
+            }
+            export function KeyAheadOfASwitchThatHoldsTheCall(p) {
+              let key = "who";
+              return <div>{p.api[key]((() => { switch (p.n) { default: key = "alt"; return ""; } })())}</div>;
             }
             // Without a hook the memo block of \`o\` holds the load of the method, and codegen cannot print the call behind it.
             export function MethodInAMemoBlockAheadOfTheCall(p) {

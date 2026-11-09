@@ -8,7 +8,6 @@
 # -- end of source
 # Five accesses of one row, at two positions. Each held its position against the row's length for itself. In the arm for a view the stretch may still run as written while nothing was done in it: there each of
 # the two positions is held below the length once, in front of its first read, and the accesses that follow, the two stores among them, lie inside the view without a test of their own.
-# REQUIRES: entries-of-bun
 # RUN: walk f1 mechanisms=all
 # CHECK: = GetTypedArrayElement {{*}}isInsideView
 # CHECK: = GetTypedArrayElement {{*}}isInsideView

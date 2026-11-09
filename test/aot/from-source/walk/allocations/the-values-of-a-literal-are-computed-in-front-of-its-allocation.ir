@@ -6,7 +6,6 @@
 # -- end of source
 # Nobody can see a literal before it is whole. Its values branch; the cell is made behind the last of them and the four definitions stand side by side.
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: = NewObject
 # CHECK-NOT: Branch
 # CHECK: = PutSlotOrAdd {{*}}key="type"

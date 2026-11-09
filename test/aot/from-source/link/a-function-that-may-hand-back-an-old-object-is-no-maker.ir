@@ -15,7 +15,6 @@
 # declare function print(text: string): void;
 # print((one === two) + " " + Object.keys(one).join() + " " + one.shared + " " + one.plume!.tip);
 # -- end of source
-# REQUIRES: entries-of-bun
 # RUN: link fields mechanisms=all
 # CHECK: "id" appended {{*}}stored-by-follower-of-maker
 # RUN(NONE): link fields mechanisms=all

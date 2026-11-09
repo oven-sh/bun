@@ -54,8 +54,6 @@ declare const CAN_REPLACE_BUILT_IN_FUNCTIONS: boolean;
 declare const PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES: boolean;
 /** False in what was compiled ahead of time from a program that cannot tell whether `node:events` was loaded: nothing in it loads the module or may hand `process` on, and it does not look at the prototype chain of `process`. */
 declare const WARNINGS_LOAD_NODE_EVENTS: boolean;
-/** False in what was compiled ahead of time from a program that cannot come by `node:path`: nothing in it loads the module or one of its two halves, by a written name or by one made at run time. Nobody can then have replaced `basename()`. */
-declare const WARNINGS_ASK_NODE_PATH: boolean;
 /** True in an executable that was compiled ahead of time, false in `bun run`. Only for a choice between two ways that a program cannot tell apart. */
 declare const IS_COMPILED_AHEAD_OF_TIME: boolean;
 /** Calls `callee`. A compiled executable never inlines the call. Only a compiled executable has it: use it behind `IS_COMPILED_AHEAD_OF_TIME`. */

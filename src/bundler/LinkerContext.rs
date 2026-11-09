@@ -2562,9 +2562,30 @@ impl<'a> LinkerContext<'a> {
             bits.set(i);
             reach.push(bits);
         }
+        // An import is visited before its importer: without cycles the first round finds everything.
+        let mut order: Vec<usize> = Vec::with_capacity(n);
+        let mut seen = vec![false; n];
+        let mut stack: Vec<(usize, usize)> = Vec::new();
+        for root in 0..n {
+            if core::mem::replace(&mut seen[root], true) {
+                continue;
+            }
+            stack.push((root, 0));
+            while let Some((node, next)) = stack.last_mut() {
+                let Some(&import) = edges[*node].get(*next) else {
+                    order.push(*node);
+                    stack.pop();
+                    continue;
+                };
+                *next += 1;
+                if !core::mem::replace(&mut seen[import as usize], true) {
+                    stack.push((import as usize, 0));
+                }
+            }
+        }
         loop {
             let mut changed = false;
-            for i in 0..n {
+            for &i in &order {
                 for &j in &edges[i] {
                     let j = j as usize;
                     if j == i || reach[j].subset_of(&reach[i]) {

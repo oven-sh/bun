@@ -10,11 +10,9 @@
 # `held.length` and `held[i].v` in one loop are two reads of one place: a list is expected of it. Where the elements are only reckoned with (they may be bytes), and where another name is read off it, nothing
 # f1 = inVariable, f2 = inField, f3 = reckoned, f4 = named
 # RUN: walk f1:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: testedType=Array
 # RUN(FIELD): walk f2:Body mechanisms=all
-# REQUIRES(FIELD): entries-of-bun
 # FIELD: testedType=Array
 # RUN(BYTES): walk f3:Body mechanisms=all
 # BYTES: testedType=Array<number>

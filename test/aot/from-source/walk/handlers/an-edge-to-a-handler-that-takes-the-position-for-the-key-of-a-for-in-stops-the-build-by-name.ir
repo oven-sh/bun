@@ -9,5 +9,4 @@
 # Where Code is verified the walk holds each argument of the edge against the name at the head and stops the build by name.
 # DIAGNOSTIC: HandlerEdgeHandsOnStandIn
 # RUN: walk-where-handler-edges-take-stand-ins f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: the walk of f1:Body failed

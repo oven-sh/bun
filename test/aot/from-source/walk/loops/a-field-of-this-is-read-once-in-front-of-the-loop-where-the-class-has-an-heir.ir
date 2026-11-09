@@ -6,7 +6,6 @@
 # -- end of source
 # The class has an heir: `this` is of two layouts, and the plan says that the field lies in one slot of both. The slot is asked and read once in front of the loop as for one layout.
 # RUN(WALK): walk f2 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK: = IsSlotFilled {{*}}key="items" receivers=[L0, L1]
 # WALK: [[given]]: {{*}} = GetSlot {{*}}key="items" receivers=[L0, L1]
 # WALK: = TypeTest [[given]] testedType=Array<number>

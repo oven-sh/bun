@@ -3,10 +3,8 @@
 // # The text of the file that the require names lays a function declaration under that name: that function is expected at the call: a test of the callee, the direct call.
 // # f1 = asks
 // # RUN(LINK): link variables mechanisms=all
-// # REQUIRES(LINK): entries-of-bun
 // # LINK: taken-out-of-required-file g{{*}} f
 // # RUN(WALK): walk f1 mechanisms=all
-// # REQUIRES(WALK): entries-of-bun
 // # WALK: TypeTest {{*}}testedType=f
 // # WALK: CallDirect {{*}}function=f
 const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");

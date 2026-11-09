@@ -5,7 +5,6 @@
 # -- end of source
 # `this` is proven; of the field nothing is known. In front of the loop the slot is asked whether it is filled, failing to the closed copy, and read once; what it gives is told apart as what a parameter brings is. In the copies no turn reads the slot.
 # RUN(WALK): walk f2 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK: = IsSlotFilled {{*}}key="items"
 # WALK: [[given]]: {{*}} = GetSlot {{*}}key="items"
 # WALK: = TypeTest [[given]] testedType=Array<number>

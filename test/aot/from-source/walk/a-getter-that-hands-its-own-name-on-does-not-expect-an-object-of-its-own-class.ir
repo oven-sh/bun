@@ -8,6 +8,5 @@
 # at every call, a call of the getter by itself on the side that never runs, and the read by name behind a rare edge. Where each name used off a value is answered by the very getter that is being walked, the
 # names say nothing.
 # RUN: walk f3 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-NOT: ShapeTest
 # CHECK: PropGet {{*}} key="width"

@@ -5,7 +5,6 @@
 # All that is stored into the field is 0 and its own sum with an element of which nothing is known: it is held to numbers, texts and nothing. In the copy of the loop for a list of numbers the element is a number or missing,
 # and what stands beside it in the sum is expected to be a number: one test, the sum in numbers, and the store of a number behind it in the same arm.
 # RUN(WALK): walk f2 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK: [[total]]: {{*}} = GetSlot {{*}} key="total"
 # WALK: [[test]]: boolean {{*}} = TypeTest [[total]] testedType=number
 # WALK: = Add {{*}} form=Numbers

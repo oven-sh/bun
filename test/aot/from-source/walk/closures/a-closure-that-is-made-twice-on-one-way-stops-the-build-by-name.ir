@@ -9,5 +9,4 @@
 # the second but through the block of the first, and the first is used behind the second before its own block is passed again: two cells stand for one operation at one time.
 # DIAGNOSTIC: OperationMakesTwoCells
 # RUN: walk-where-every-closure-stands-behind-copies f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: the walk of f1:Body failed

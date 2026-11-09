@@ -7,7 +7,6 @@
 # -- end of source
 # The loop is built for a list of numbers, a list, bytes and views: a guess by use at what may come. What is none of them (an object with keys "0", "1", .. and "length") runs in the closed copy: that copy
 # opens no guess, but it is a loop like the others: its blocks bear the marks of a loop, and the length, which no built-in answers there, is read at its site.
-# REQUIRES: entries-of-bun
 # RUN: walk f1 mechanisms=all
 # CHECK: int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true
 # CHECK: PropGet {{*}} key="length" [receiverIsAskedForNameOfNoBuiltin]

@@ -6,7 +6,6 @@
 # -- end of source
 # Nothing is known of what the list holds, and nothing but its truth is asked of an element. The typed copy's read names no storage. The turns are laid out once for whole numbers, once for doubles, and once without
 # the question. Behind the question the read is left to the branch on its truth: the word of a whole number is held against zero as it lies, a double against zero and NaN; the hole of either is as false as undefined.
-# REQUIRES: entries-of-bun
 # RUN: compile LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked LoopsLaidOutForOneKindOfStorage mechanisms=all
 # CHECK: statistic LoopsLaidOutForWholeNumbersWhoseTruthAloneIsAsked 1
 # CHECK: statistic LoopsLaidOutForOneKindOfStorage 2

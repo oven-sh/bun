@@ -12,14 +12,11 @@
 # has made it. Where the needle is a parameter of which nothing is known (findGiven) nothing is asked, as before.
 # f1 = find, f2 = findGiven
 # RUN(FIND): walk f1 mechanisms=all
-# REQUIRES(FIND): entries-of-bun
 # FIND: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
 # FIND: GetArrayElement {{*}}arrayStorage=Double
 # RUN(BEHIND): compile LoopsWithCopyForListsOfAnything mechanisms=all
-# REQUIRES(BEHIND): entries-of-bun
 # BEHIND: statistic LoopsWithCopyForListsOfAnything 1
 # RUN(GIVEN): walk f2 mechanisms=all
-# REQUIRES(GIVEN): entries-of-bun
 # GIVEN: GetArrayElement
 # GIVEN-NOT: arrayStorage=Double
 

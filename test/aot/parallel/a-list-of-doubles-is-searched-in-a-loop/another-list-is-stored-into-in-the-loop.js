@@ -1,4 +1,5 @@
 // STATISTIC: LoopsLaidOutForOneKindOfStorage >= 9
+// Under: --aot-testing=EmittersAloneTestEveryPosition: the turns are laid out as users build them, and every raw access asks its position at the run
 // Under: --aot-harden=proof-checks: the kind found in front of the turns is held against the cell at every read
 'use strict';
 const n = +process.argv[2] || 3; const said = [];

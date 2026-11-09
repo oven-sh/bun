@@ -2698,3 +2698,30 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
   });
 });
+
+test("the hash in a chunk's name follows everything that the chunk reaches, through a chain and round a cycle", async () => {
+  const count = 24;
+  const files: Record<string, string> = { "apart.js": `export const value = "apart";` };
+  // The chain runs from the last file to the first, and the first closes the cycle.
+  const text = (i: number, value: number) =>
+    `export const value = ${value}; export const next = () => import("./m${i === 0 ? count - 1 : i - 1}.js");`;
+  for (let i = 0; i < count; i++) files[`m${i}.js`] = text(i, i);
+  using dir = tempDir("chunk-names-follow-what-is-reached", files);
+  const names = async () => {
+    const build = await Bun.build({
+      entrypoints: [`${dir}/m${count - 1}.js`, `${dir}/apart.js`],
+      splitting: true,
+      naming: "[name]-[hash].[ext]",
+    });
+    return build.outputs.map(output => output.path.replaceAll("\\", "/").split("/").pop()!).sort();
+  };
+  const first = await names();
+  const again = await names();
+  writeFileSync(`${dir}/m0.js`, text(0, -1));
+  const changed = await names();
+  // Beside the files of the cycle: the file apart and a chunk of helpers, which reach none of them.
+  expect(first).toHaveLength(count + 2);
+  expect(again).toEqual(first);
+  expect(first.filter(name => !changed.includes(name))).toHaveLength(count);
+  expect(changed).toContain(first.find(name => name.startsWith("apart-"))!);
+});

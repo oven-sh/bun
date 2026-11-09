@@ -27,14 +27,11 @@
 # console.log(both(list), halved(list));
 # -- end of source
 # RUN(BOTH): walk f1 mechanisms=all-Inlining
-# REQUIRES(BOTH): entries-of-bun
 # BOTH-LABEL: code f1:Body
 # BOTH: number @JSValue = Add {{*}}form=Numbers
 # RUN(NEVER): walk f1 mechanisms=all-Inlining-LoopInvariants
-# REQUIRES(NEVER): entries-of-bun
 # NEVER-NOT: @Double = Add
 # RUN(HALVED): walk f2 mechanisms=all-Inlining
-# REQUIRES(HALVED): entries-of-bun
 # HALVED-LABEL: code f2:Body
 # HALVED: number @Double = Add {{*}}form=Numbers
 # HALVED: number @Double = Mul {{*}}form=Numbers

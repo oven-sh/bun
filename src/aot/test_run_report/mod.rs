@@ -111,6 +111,16 @@ pub(crate) fn say_files_that_may_run_again(count: usize) {
     }
 }
 
+fn line_of_files_taken_out_behind_factories(count: usize) -> String {
+    format!("AOT test run | files that a factory in flight may take out {count}")
+}
+
+pub(crate) fn say_files_taken_out_behind_factories(count: usize) {
+    if logs_stages() {
+        say(&line_of_files_taken_out_behind_factories(count));
+    }
+}
+
 fn line_of_es_packages_that_mocks_name(count: usize) -> String {
     format!("AOT modules | ES packages that mocks name, which may run again {count}")
 }

@@ -1,0 +1,40 @@
+# (new EventTarget()).__proto__.removeEventListener = (type, target) => target(); performance.removeEventListener("tick", second)
+# performance > Performance.prototype > EventTarget.prototype: no holder on the way is locked. Whoever has an instance of the class has the prototype, and the store through it is one through a value that nobody follows.
+# The row of removeEventListener only looks at its listener. If the call were taken for the row, `second`, which the function of the program calls, would be left out.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="EventTarget" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(EventTarget) flags=[IsExpected]}
+    v3 = Construct v2 calleeName="EventTarget"
+    v4 = Convert v3 declared={type=anything flags=[IsExpected]}
+    v5 = PropGet v4 key="__proto__"
+    v6 = NewClosure function=f1
+    PropSet v5, v6 key="removeEventListener"
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="performance" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(GlobalThis_performance) flags=[IsExpected]}
+    v11 = PropGet v10 key="removeEventListener"
+    v12 = Convert v11 declared={type=builtin(EventTargetPrototypeRemoveEventListener) flags=[IsExpected]}
+    v13 = String string="tick"
+    v14 = NewClosure function=f2
+    v15 = Call v12, v10, v13, v14 calleeKey="removeEventListener" calleeName="performance.removeEventListener"
+    v16 = Undefined
+    Return v16
+}
+function f1 module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, -
+    Return v2
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

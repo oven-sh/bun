@@ -1,3 +1,4 @@
+// DIAGNOSTIC: TS100096 a-call-that-names-create-require-vouches-for-what-it-makes.cjs:22
 // RUN: lower
 // OPTIONS: builtin-modules
 // Where code may come from disk, a require() is the program's only where compiled code names createRequire(): there the real one is handed, as `this`, a function that no program comes by.

@@ -97,7 +97,6 @@ const named = secondTexts
 
 // A text that a program cannot name loads while one of these does.
 const loadedWith: Record<string, string> = {
-  "internal/cluster/isPrimary.ts": "node:cluster",
   "internal/http.ts": "node:http2",
   "internal/http/FakeSocket.ts": "node:_http_outgoing",
   "internal/http1_server_fallback.ts": "node:http2",
@@ -105,12 +104,6 @@ const loadedWith: Record<string, string> = {
   "internal/net/symbols.ts": "node:net",
   "internal/primordials.js": "node:util",
   "internal/process/next_tick_queue.ts": "node:stream",
-  "internal/readline/callbacks.ts": "node:readline",
-  "internal/readline/emitKeypressEvents.ts": "node:readline",
-  "internal/readline/interface.ts": "node:readline",
-  "internal/readline/utils.ts": "node:readline",
-  "internal/repl/node-primordials.ts": "node:repl",
-  "internal/shared.ts": "node:stream",
   "internal/stream.ts": "node:stream",
   "internal/streams/destroy.ts": "node:stream",
   "internal/streams/duplex.ts": "node:stream",
@@ -123,27 +116,15 @@ const loadedWith: Record<string, string> = {
   "internal/streams/utils.ts": "node:stream",
   "internal/streams/writable.ts": "node:stream",
   "internal/timers.ts": "node:net",
-  "internal/trace_event_recorder.ts": "node:trace_events",
-  "internal/trace_events.ts": "node:trace_events",
-  "internal/validators.ts": "node:stream",
-  "internal/worker/stdio.ts": "node:worker_threads",
 };
 // Each loads at a first use, while no module loads.
 const loadedLater = [
-  "internal/fs/file_handles.ts",
-  "internal/fs/glob.ts",
   "internal/fs/streams.ts",
   "internal/process/tick_ring.ts",
-  "internal/repl/history.ts",
-  "internal/repl/node-shims.ts",
   // At the first read of WriteStream of node:tty: an-accessor-under-get-color-depth-hears-one-store.test.ts asks it.
   "internal/tty.ts",
-  "internal/util/inspect.ts",
   "internal/validate_function.ts",
 ];
-// Each loads with a module that only a flag of the command line opens.
-const behindFlag = ["internal/quic/quic.ts", "internal/streams/iter/from.ts"];
-
 // They make no call while they load.
 const makeNone = ["bun:ffi", "node:path", "node:trace_events"];
 
@@ -154,7 +135,7 @@ test("node:http has a second text", () => {
 test("every second text is asked", () => {
   // A file of builtins/ holds functions that native code calls: nothing loads it.
   const others = secondTexts.filter(file => !file.startsWith("node/") && !file.startsWith("builtins/"));
-  expect(others).toEqual(["bun/ffi.ts", ...Object.keys(loadedWith), ...loadedLater, ...behindFlag].sort());
+  expect(others).toEqual(["bun/ffi.ts", ...Object.keys(loadedWith), ...loadedLater].sort());
 });
 
 // node:test loads a stream with events of its own.

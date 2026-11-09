@@ -1,0 +1,26 @@
+# scan() of Bun.Glob is written in JavaScript. No operation names Bun.Glob here: Link follows Bun to it and is told of the construction, which lays scan() above what it makes. The program does not hold its function: a call would find nothing to run.
+# A function of the host's library is listed as one of the engine's is. What only the product of native code and the names of protocols brings is not: a build does not stop for it.
+# new Bun.Glob("*.js").scan(".");
+# LIBRARY: own
+# RUN(FOUND): link lookups mechanisms=all
+# FOUND: lookup called BunGlob
+# FOUND: lookup native-code-may-hold-objects
+# RUN: lacked
+# CHECK: lacked GlobScan
+# RUN(PRODUCT): lacked
+# PRODUCT-NOT: lacked JSIteratorPrototypeDispose
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = PropGet v0 key="Glob"
+    v2 = String string="*.js"
+    v3 = Construct v1, -, v2 calleeName="Bun.Glob"
+    v4 = PropGet v3 key="scan"
+    v5 = String string="."
+    v6 = Call v4, v3, v5 calleeKey="scan"
+    v7 = Undefined
+    Return v7
+}

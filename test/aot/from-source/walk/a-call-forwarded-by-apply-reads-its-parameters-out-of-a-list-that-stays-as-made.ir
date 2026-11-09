@@ -14,7 +14,6 @@
 # `ringer.apply(this, notes)` is forwarded to the one function that the list of ringers holds. The list of notes is made by whoever calls ring(), not here. Link says of it what it says of a list that is
 # spread: it stays as its class makes it. So the parameters are read out of the list and the function is called directly, also in a loop, where the walk forgets what it knew of a list handed to a call.
 # RUN: walk f3 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: isLoopHead=true
 # CHECK: GetArrayElement {{*}} level=Proven
 # CHECK: GetArrayElement {{*}} level=Proven

@@ -5,7 +5,6 @@
 # turn(grid, grid.length, 0, 0.5, 0.25); console.log(Array.from(grid[1]).join());
 # -- end of source
 # The row is spelled five times in the turn and is one view: its length and its vector are loaded for the row, and each access names them.
-# REQUIRES: entries-of-bun
 # RUN: walk f1 mechanisms=all
 # CHECK: GetTypedArrayLength {{*}} typedArrayType=10
 # CHECK: GetTypedArrayVector

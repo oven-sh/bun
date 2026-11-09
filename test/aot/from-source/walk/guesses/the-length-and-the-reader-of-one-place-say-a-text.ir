@@ -9,9 +9,7 @@
 # A reader of characters and the length off one place are two reads: both say a text: the length is read as a text's, though a class of the file has a `length`
 # f1 = ofFile, f2 = ofField
 # RUN(COUNT): compile TextsExpectedByNamesOfPlaces mechanisms=all
-# REQUIRES(COUNT): entries-of-bun
 # COUNT-NOT: statistic TextsExpectedByNamesOfPlaces 0
 # RUN: walk f1:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = GetStringLength

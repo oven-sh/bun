@@ -8,7 +8,7 @@
 # by itself and runs no code of the library or of the program. So outside Windows the read bears what its row of the table says (the heap, a throw), and it stands in front of a loop whose every turn asks for it.
 # f3 = counted
 # RUN: walk f3:Body mechanisms=all
-# REQUIRES: entries-of-bun not-windows
+# REQUIRES: not-windows
 # CHECK: = GetBuiltinValue builtin=ProcessEnv overload=ProcessEnv/0 traits=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory]
 # CHECK: = GetValueAtSiteOrAbsent {{*}} key="LOG_LEVEL"
 # CHECK: isLoopHead=true

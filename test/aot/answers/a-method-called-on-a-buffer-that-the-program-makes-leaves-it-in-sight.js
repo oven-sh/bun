@@ -3,7 +3,6 @@
 // # so the call hands neither the Buffer nor its arguments to code that nobody has seen, though no mark at run time says that a Buffer is as its class makes it.
 // # The second Buffer gets a method of the program's own under the name: it is no longer as made.
 // # RUN(LINK): link variables mechanisms=all
-// # REQUIRES(LINK): entries-of-bun
 // # LINK: variable g0 {{*}}Buffer {{*}}stays-as-made
 // # LINK-NOT: variable g1 {{*}}stays-as-made
 const kept = Buffer.alloc(16, 3);

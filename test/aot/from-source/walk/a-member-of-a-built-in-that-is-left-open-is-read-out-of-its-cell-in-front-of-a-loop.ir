@@ -9,7 +9,7 @@
 # typed copy, and where it answers absent the other copy runs, whose own read fills the cell.
 # f1 = counted
 # RUN: walk f1:Body mechanisms=all
-# REQUIRES: entries-of-bun not-windows
+# REQUIRES: not-windows
 # CHECK: = GetWatchedBuiltinValue builtin=ProcessEnv
 # CHECK: = GetWatchedBuiltinValueOrAbsent builtin=ProcessEnv
 # CHECK: isLoopHead=true

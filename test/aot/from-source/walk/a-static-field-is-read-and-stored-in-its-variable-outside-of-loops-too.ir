@@ -8,6 +8,5 @@
 # object whole: the fields move out of their variables for good, and every look at a variable fails from then on, in every loop of the program. So where the receiver is proven to be the class object
 # the field is read and stored in its variable behind the look, outside of loops as in them.
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: GetStaticFieldOrAbsent {{*}} variable=g
 # CHECK: PutStaticField {{*}} variable=g

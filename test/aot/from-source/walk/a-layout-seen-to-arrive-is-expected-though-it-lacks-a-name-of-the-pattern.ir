@@ -9,6 +9,5 @@
 # layout answers EVERY name used off the value: `depth` is none of the literal's, so the word was dropped whole and `width` and `height` went by name too. The held reading says of the parameter nothing
 # but that layout: it is kept.
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: GetSlot {{*}} key="width" receivers=[L{{*}}] level=Expected
 # CHECK: GetSlot {{*}} key="height" receivers=[L{{*}}] level=Expected

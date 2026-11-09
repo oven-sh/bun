@@ -12,14 +12,11 @@
 # for (let turn = 0; turn < 3; turn++) { fillWords(buf, 4096); sink(sumWords(buf, 4096), copyInto(buf, other, 100)); }
 # -- end of source
 # RUN(READ): walk f1 mechanisms=all
-# REQUIRES(READ): entries-of-bun
 # READ: = IsPristine {{*}}builtinClass=Buffer aspects=[Names]
 # READ: TryCallInline {{*}}inlineBuiltin=BufferAccess
 # RUN(WRITE): walk f2 mechanisms=all
-# REQUIRES(WRITE): entries-of-bun
 # WRITE: = IsPristine {{*}}builtinClass=Buffer aspects=[Names]
 # WRITE: TryCallInline {{*}}inlineBuiltin=BufferAccess
 # RUN(COPY): walk f3 mechanisms=all
-# REQUIRES(COPY): entries-of-bun
 # COPY: = IsPristine {{*}}builtinClass=Buffer aspects=[Names]
 # COPY: TryCallInline {{*}}inlineBuiltin=BufferCopy

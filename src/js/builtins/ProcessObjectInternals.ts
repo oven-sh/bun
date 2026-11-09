@@ -698,6 +698,35 @@ export function createOnWarning(process, redirectPath, disabledArr, writeWarning
     process.stderr.write(message + "\n");
   }
 
+  // path.basename(), without node:path: neither the module nor what a program has stored under its name is asked.
+  function basename(path: string) {
+    if (typeof path !== "string")
+      return (
+        process.platform === "win32"
+          ? $bindgen("node_path.bind.ts", "basenameWin32")
+          : $bindgen("node_path.bind.ts", "basenamePosix")
+      )(path);
+    const isWindows = process.platform === "win32";
+    let start = 0;
+    if (isWindows && path.length >= 2 && path.charCodeAt(1) === 58 /* : */) {
+      const letter = path.charCodeAt(0) | 32;
+      if (letter >= 97 /* a */ && letter <= 122 /* z */) start = 2;
+    }
+    let end = -1;
+    for (let i = path.length - 1; i >= start; --i) {
+      const code = path.charCodeAt(i);
+      if (code === 47 /* / */ || (isWindows && code === 92) /* \\ */) {
+        if (end !== -1) {
+          start = i + 1;
+          break;
+        }
+      } else if (end === -1) {
+        end = i + 1;
+      }
+    }
+    return end === -1 ? "" : path.slice(start, end);
+  }
+
   interface ProcessWarning extends Error {
     detail?: unknown;
   }
@@ -727,7 +756,6 @@ export function createOnWarning(process, redirectPath, disabledArr, writeWarning
     writeOut(msg);
     if (!trace && !traceWarningHelperShown) {
       traceWarningHelperShown = true;
-      const { basename } = require("node:path");
       writeOut(
         `(Use \`${basename(process.argv0 || "node")} --trace-warnings ...\` to show where the warning was created)`,
       );

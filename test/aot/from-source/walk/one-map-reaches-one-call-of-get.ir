@@ -9,6 +9,5 @@
 # -- end of source
 # The twin: every receiver of the call is in sight, one Map of the program that holds whole numbers: what it holds is proven at the call, and the read is typed by it.
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: undefined|i32 {{*}} CallInline {{*}} inlineBuiltin=MapGet
 # CHECK: kind=ProvenContents subjectKind=Operation type=i32

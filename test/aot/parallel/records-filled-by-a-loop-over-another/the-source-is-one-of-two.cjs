@@ -1,4 +1,4 @@
-// STATISTIC: FlowAppendedFields >= 2
+// STATISTIC: FlowAppendedFields = 0
 "use strict";
 function add(a, b) { return (a + b) | 0; }
 function mul(a, b) { return (a * b) % 1009; }

@@ -4,7 +4,6 @@
 // # OPTIONS: check=Validate
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 8 of 8 of 8
 // # CHECK-NEXT: exited with 0
 function put(list, key, value) { list[key] = value; }

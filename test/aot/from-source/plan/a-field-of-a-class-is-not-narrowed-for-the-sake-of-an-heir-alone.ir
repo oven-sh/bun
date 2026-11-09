@@ -7,7 +7,6 @@
 # -- end of source
 # N fills its cell with wide slots and would gain no byte from narrow ones. M alone would. The slots that both share stay wide: a read of N's pays nothing for M's byte.
 # RUN: plan mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: layout L0 CompiledObject size=48
 # CHECK: "l" JSValue Inline
 # CHECK: "r" JSValue Inline

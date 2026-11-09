@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "0f29ce70899864dc96679e0c05bac6af2346c76e";
+export const WEBKIT_VERSION = "autobuild-preview-pr-1021-35f796a2";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -777,6 +777,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
     ...aotRuntimeFactsStep(wk, lists.jsc),
     ...aotReadsThatAssumeStep(wk),
     ...aotLateStoresStep(wk),
+    ...aotForcedJumpsStep(wk),
     ...aotGeneratedFiles(lists.jsc, "SCHEMA"),
     ...aotGeneratedFiles(lists.jsc, "BUILTIN_TABLE"),
   ];
@@ -1501,6 +1502,27 @@ function aotLateStoresStep(wk: WebKitBuild): string[] {
         .map(name => join(bindings, name)),
     ],
     desc: "AOTLateStoresChecked.h",
+  });
+  return outputs;
+}
+
+/** AOT_CHECK_FORCED_JUMPS of aot/AOT.cmake. What it writes says only that the sources have passed. */
+function aotForcedJumpsStep(wk: WebKitBuild): string[] {
+  const script = join(wk.JSC, "aot", "runtime", "generator", "forced-jumps.py");
+  const fixtures = join(wk.JSC, "aot", "runtime", "generator", "forced-jumps-fixtures");
+  const outputs = [join(aotGeneratedDirectory(wk), "AOTForcedJumpsChecked.h")];
+  gen(wk, {
+    outputs,
+    cmd: [wk.python, script, "--javascriptcore", wk.JSC, "--out", aotGeneratedDirectory(wk)],
+    inputs: [
+      script,
+      join(wk.JSC, "aot", "runtime", "AOTForcedJumps.txt"),
+      ...readdirSync(fixtures)
+        .sort()
+        .map(name => join(fixtures, name)),
+      ...handwrittenAotFiles(wk.JSC),
+    ],
+    desc: "AOTForcedJumpsChecked.h",
   });
   return outputs;
 }

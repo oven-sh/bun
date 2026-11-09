@@ -10,7 +10,6 @@
 # As built the answers look right even so, because a list into which a written text is pushed is born with boxed storage and fails that front. THE WRONG NUMBERS SHOW UNDER COLLECTIONS, where it is born otherwise:
 # test/aot/parallel/a-push-into-a-list-made-here-writes-that-list-alone/a-written-text-is-pushed-into-the-list-whose-veiled-self-is-read-as-numbers.cjs, built with this word, is wrong in 105 of 144 cells, silently.
 # f2 = text
-# REQUIRES: entries-of-bun
 # RUN: walk f2 mechanisms=all
 # CHECK-NOT: GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN, admitsInt32Storage]
 # RUN(LIE): walk f2 mechanisms=all testing=ValuesThatComeLaterAreTakenForOthersThanWhatIsMadeHere

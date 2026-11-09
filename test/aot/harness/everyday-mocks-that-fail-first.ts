@@ -8,7 +8,7 @@ const partsWhereFileFailsFirst: [cases: RegExp, what: string][] = [
     "a mock that needs the original, behind resetModules(): the load throws an EvalError",
   ],
   [
-    /^an-es-file--(imported-at-run-time|required)--a-factory-over-(the-original|import-actual)--mocked-the-second-time--nothing-between--/,
+    /^an-es-file--required--a-factory-over-(the-original|import-actual)--mocked-the-second-time--nothing-between--/,
     "the kiln does not run again for the mock that needs it: the first failure is answered",
   ],
   [
@@ -16,7 +16,7 @@ const partsWhereFileFailsFirst: [cases: RegExp, what: string][] = [
     "require() answers the first failure of the kiln, not the mock",
   ],
   [
-    /^an-es-file--imported-by-a-file--a-factory-over-import-actual--mocked-the-second-time--nothing-between--/,
+    /^an-es-file--imported-by-a-file--a-factory-over-import-actual--mocked-the-second-time--nothing-between--in-the-next-test-file$/,
     "the potter keeps the first failure of the kiln, and the factory fails the test",
   ],
   [
@@ -24,12 +24,8 @@ const partsWhereFileFailsFirst: [cases: RegExp, what: string][] = [
     "the potter keeps the first failure of the kiln for the next test file",
   ],
   [
-    /^an-es-file--required--a-factory-over-import-actual--mocked-both-times--(nothing-between|unmocked)--/,
-    "the kiln failed under the first mock and does not run again for the second",
-  ],
-  [
-    /^an-es-file--required--a-factory-over-the-original--mocked-both-times--(nothing-between|unmocked)--in-the-next-test-file$/,
-    "the same, for the next test file",
+    /^an-es-file--required--a-factory-over-(the-original|import-actual)--mocked-both-times--(nothing-between|unmocked)--in-the-next-test-file$/,
+    "the kiln failed under the first mock and does not run again for the second, in the next test file",
   ],
   [
     /^an-es-package--imported-by-a-file--a-factory--mocked-the-second-time--nothing-between--in-the-next-test-file$/,

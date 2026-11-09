@@ -7,6 +7,6 @@
 # -- end of source
 # Outside loops a store into a list has one arm in line, for the kind of storage that it expects: the storage of values. A list that has only ever held small integers has the storage of int32, so every such store
 # left for the stub. An int32 is stored as the same boxed word in both kinds, so the one arm admits both: the storage of values is asked first, as before, the storage of int32 behind it.
-# REQUIRES: entries-of-bun as-written
+# REQUIRES: as-written
 # RUN: compile StoresOfInt32ThatAdmitTwoKindsOfStorage mechanisms=all
 # CHECK: statistic StoresOfInt32ThatAdmitTwoKindsOfStorage 1

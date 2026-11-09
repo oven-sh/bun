@@ -8,6 +8,5 @@
 # The list went out: nobody knows its contents. What the step hands out is added to a number: the list is asked for doubles in front.
 # f1 = sum
 # RUN: walk f1:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = HasArrayStorage {{*}} arrayStorage=Double

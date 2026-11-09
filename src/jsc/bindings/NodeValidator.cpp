@@ -34,10 +34,6 @@ static WTF::String conjunctiveRange(double lower, double upper)
 
 using namespace JSC;
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateInteger(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
 template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max, T* out)
 {
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
@@ -75,10 +71,6 @@ template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& sco
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateNumber, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateNumber(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
 JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue min, JSValue max)
 {
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
@@ -132,10 +124,6 @@ JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFiniteNumber, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateFiniteNumber(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
 JSC::EncodedJSValue V::validateFiniteNumber(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue number, JSValue name)
 {
     if (number.isUndefined()) {
@@ -152,11 +140,6 @@ JSC::EncodedJSValue V::validateFiniteNumber(JSC::ThrowScope& scope, JSC::JSGloba
     RETURN_IF_EXCEPTION(scope, {});
 
     return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "a finite number"_s, number);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::checkRangesOrGetDefault(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
 }
 
 JSC::EncodedJSValue V::validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
@@ -176,20 +159,6 @@ JSC::EncodedJSValue V::validateBoolean(JSC::ThrowScope& scope, JSC::JSGlobalObje
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validatePort(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateAbortSignal, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateAbortSignal(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateArray, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateArray(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
 JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue minLength)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -235,11 +204,6 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, makeString("must be longer than "_s, minLength_num));
     }
     return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateInt32(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
 }
 
 EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue min, JSValue max)
@@ -295,10 +259,6 @@ EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalOb
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUint32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateUint32(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
 JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue positive, uint32_t* out)
 {
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
@@ -338,23 +298,9 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateEncoding(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
-
 // Matches Node's validateBuffer, which throws ERR_INVALID_ARG_TYPE with the
 // "must be an instance of Buffer, TypedArray, or DataView" message:
 // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/internal/validators.js#L396
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateBuffer(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateOneOf(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
 
 JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, std::span<const int32_t> oneOf, int32_t* out)
 {
@@ -379,10 +325,6 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
 // kValidateObjectAllowNullable | kValidateObjectAllowArray | kValidateObjectAllowFunction.
 // The values must match internal/validators.ts. They are node's:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L224-L270
-JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return NodeValidators::validateObject(globalObject, Bindgen::ArgumentsInFrame { *callFrame });
-}
 
 JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
 {

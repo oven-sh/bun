@@ -8,5 +8,4 @@
 # name in each turn, where `this.options.span` written out had none. The read that asks its site alone runs no code, throws nothing and answers "absent" for what is no object, so it takes the holder from in
 # front of the test.
 # RUN: compile ReadsThatAskTheirSitesBuiltInFrontOfLoops mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: statistic ReadsThatAskTheirSitesBuiltInFrontOfLoops 2

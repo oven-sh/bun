@@ -9,7 +9,6 @@
 # globalThis.kept = later;
 # console.log(at(process.argv.length));
 # -- end of source
-# REQUIRES: entries-of-bun
 # RUN: plan deferred mechanisms=all
 # CHECK-NOT: deferred g1 made-by
 # CHECK-NOT: deferred g2 made-by

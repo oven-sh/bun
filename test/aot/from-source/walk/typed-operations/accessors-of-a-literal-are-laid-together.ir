@@ -10,7 +10,6 @@
 # One operation lays the accessors that stand side by side but for their closures: the run time is entered once. (In slots of their own: the-accessors-of-a-literal-are-created-in-their-slots.ir.)
 # Who goes with whom is read off the body as it is written. A getter that stands alone is defined as it is written (`either`).
 # RUN: walk f1 f3 mechanisms=all-Inlining
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: DefineGetter
 # CHECK: [[made]]: L0 {{*}} = NewObject layout=L0
@@ -23,7 +22,6 @@
 # CHECK: DefineGetter {{*}}key="m"
 # CHECK-NOT: DefineAccessors
 # RUN(CLOSED): walk f1 mechanisms=none
-# REQUIRES(CLOSED): entries-of-bun
 # CLOSED-NOT: DefineAccessors
 # CLOSED: DefineGetter {{*}}key="a"
 # CLOSED: DefineGetter {{*}}key="b"

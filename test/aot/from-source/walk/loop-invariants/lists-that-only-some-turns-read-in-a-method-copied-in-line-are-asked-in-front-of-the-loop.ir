@@ -16,7 +16,6 @@
 # for lists in the loop's own text. A hole among the keys leaves the turn.
 # f3 = weigh
 # RUN: walk f3 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f3:Body
 # CHECK-COUNT-2: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isPresent]
 # CHECK: undefined|i32 @OptionalInt64 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]

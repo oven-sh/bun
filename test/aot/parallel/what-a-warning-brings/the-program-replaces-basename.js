@@ -1,4 +1,4 @@
-// For a name that is no text the printer asks the module node:path that the program sees, as plain Bun does.
+// For a name that is no text the printer asks the native basename, which throws: what the program has stored under the name is not asked.
 // Env: NODE_REDIRECT_WARNINGS=/dev/stdout
 const path = require("node:path");
 path.basename = path.posix.basename = path.win32.basename = () => "REPLACED";

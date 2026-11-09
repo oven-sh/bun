@@ -9,7 +9,6 @@
 // # FORM: = Greater [[read]],
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 4 of 4 of 4
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;

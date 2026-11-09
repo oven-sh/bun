@@ -5,7 +5,6 @@
 # -- end of source
 # The element is used twice in the turn: it goes through no one operator. The field's word from use says numbers alone, and that suffices, as it does for a parameter.
 # RUN(WALK): walk f1 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK: [[given]]: {{*}} = GetSlot {{*}}key="bytes"
 # WALK: = TypeTest [[given]] testedType=Uint8Array
 # WALK: = GetTypedArrayElement {{*}}typedArrayType=2 {{*}}isInsideView

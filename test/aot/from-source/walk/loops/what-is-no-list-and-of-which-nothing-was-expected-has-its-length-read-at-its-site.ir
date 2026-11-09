@@ -6,6 +6,5 @@
 # -- end of source
 # Nothing is expected of `held`, so what is neither a list nor bytes nor a view runs in the copy for the rest, which is walked as without a guess. Every test for a built-in has failed in front of that copy too:
 # the length, which no built-in answers there, is read at its site.
-# REQUIRES: entries-of-bun
 # RUN: walk f1 mechanisms=all
 # CHECK: PropGet {{*}} key="length" [receiverIsAskedForNameOfNoBuiltin]

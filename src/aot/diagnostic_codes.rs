@@ -53,6 +53,8 @@ diagnostic_codes! {
         FilesLeftOutByPattern = 100089, Warning, "The executable doesn't embed {0}, which this path may name. {1}";
         ModuleMayBeNamedAtRunTime = 100094, Warning, "This call may load a module, and the build can't work out its name. If it names code that isn't in the executable, the call throws at run time. Import the module by its name to keep it, or build with --aot-allow-code-from-disk";
         FoldersOfResolveAreNotRead = 100095, Warning, "The build can't work out the folders that this call looks in, so what they hold may not be in the executable. The call may then find a module of the same name in a folder above them, or none. Write the list of folders in the call, each as a path from __dirname or import.meta.dirname";
+        MadeRequireGoesOutOfSight = 100096, Warning, "The build can't follow the require() that is made here to every call of it. If such a call names code that isn't in the executable, it throws at run time. Make it for the file's own path or URL, keep it in a const and call it by that name, or build with --aot-allow-code-from-disk";
+        SearchGoesOnAboveListedFolder = 100097, Warning, "One of the folders that this call looks in isn't there or doesn't hold the module, so the search goes on in the folders above it and finds {0}. In an executable the search doesn't go on above a listed folder, so the call may find another module of the same name, or none. List the folder that holds the module";
         DataFilesFoundByPattern = 100088, Note, "This path isn't a constant, so the executable embeds every file that it may name. These aren't code: {0}";
 
 

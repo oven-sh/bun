@@ -1,3 +1,5 @@
+// DIAGNOSTIC: TS100096 main.mjs:8
+// DIAGNOSTIC: TS100096 main.mjs:26
 // RUN: link
 // CHECK-NOT: path="/$bunfs/root/mixed.cjs"
 // CHECK-NOT: path="/$bunfs/root/each.cjs"

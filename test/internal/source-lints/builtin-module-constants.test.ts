@@ -44,17 +44,7 @@ function declaredConstants() {
 test("a constant that several built-in modules declare has one value", () => {
   const constants = declaredConstants();
   expect(constants.get("ESCAPE_CODE_TIMEOUT")).toEqual(
-    new Map([
-      [
-        "500",
-        [
-          "ahead-of-time/internal/readline/emitKeypressEvents.ts",
-          "ahead-of-time/internal/readline/interface.ts",
-          "internal/readline/emitKeypressEvents.ts",
-          "internal/readline/interface.ts",
-        ],
-      ],
-    ]),
+    new Map([["500", ["internal/readline/emitKeypressEvents.ts", "internal/readline/interface.ts"]]]),
   );
 
   const differing: Record<string, string[]> = {};

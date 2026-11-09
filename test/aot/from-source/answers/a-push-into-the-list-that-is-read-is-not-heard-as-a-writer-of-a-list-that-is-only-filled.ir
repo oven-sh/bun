@@ -6,7 +6,6 @@
 # A push in a tried loop is heard as a writer of its receiver alone only where that receiver is a list made here that the loop's text only fills: what is known of every OTHER object then outlives the head of the loop.
 # Here the list that is pushed is the list that is read, and its length is the loop's bound. THE LIE, testing=ReceiversOfMethodsOfListsAreTakenToBeMadeHere: every receiver is heard so, and is booked among no objects that are
 # written: the length that stood in front of the loop is remembered all round it: three turns in place of three hundred, silently. Under the check of proofs at run time the remembered length is held against memory.
-# REQUIRES: entries-of-bun
 # RUN: run-in-shell mechanisms=all
 # CHECK: 15450 300
 # CHECK-NEXT: exited with 0

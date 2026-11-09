@@ -5,6 +5,6 @@
 # sink(sum([1.5, 2.5, 3.5], width)); sink(sum([1, 2, 3], width));
 # -- end of source
 # The inner loop reads one list, at places that nobody has held against its length.
-# REQUIRES: entries-of-bun as-written
+# REQUIRES: as-written
 # RUN: compile LoopsLaidOutForOneKindOfStorage mechanisms=all
 # CHECK: statistic LoopsLaidOutForOneKindOfStorage 4

@@ -5,8 +5,6 @@
 # -- end of source
 # `next` is read behind `&&`: not every turn passes there. In a typed copy no guess is opened in a turn: what is not asked in front leaves the copy for good. Beside `row`, which every turn reads, `next` is asked the same test in front, and stays among the lists tested there: all four reads stand under proven lists.
 # RUN(WALK): walk f1 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK-COUNT-2: = IsPristine {{*}}builtinClass=Array
 # RUN(READS): walk f1 mechanisms=all
-# REQUIRES(READS): entries-of-bun
 # READS-COUNT-4: = GetArrayElement {{*}}level=Proven

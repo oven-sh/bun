@@ -1,5 +1,5 @@
-// Runs the tests of the compiler's engine: WebKit's Source/JavaScriptCore/aot/tests.
-// `testaot` runs them. CI packs it beside the Bun under test, with `jsc` and the folder `aot-tests`.
+// Runs the tests of the compiler's engine: WebKit's Source/JavaScriptCore/aot/tests, and ../engine-tests: the IR tests that name entries of
+// Bun's table of built-ins. `testaot` runs them. CI packs it beside the Bun under test, with `jsc` and the folder `aot-tests`.
 //
 //   testaot      $TESTAOT, or beside the Bun under test, or in build/release-local, or in build/release
 //   aot-tests    $AOT_ENGINE_TESTS, or beside the Bun under test, or aot/tests in $BUN_WEBKIT_PATH or vendor/WebKit
@@ -31,6 +31,7 @@ export const engineTests =
       .filter(path => path !== undefined)
       .map(path => join(path, "Source", "JavaScriptCore", "aot", "tests")),
   ].find(existsSync);
+const engineTestsOfBun = join(import.meta.dir, "..", "engine-tests");
 
 // Neither tool destroys its VM before it exits.
 export const toolEnv = bunEnv.ASAN_OPTIONS
@@ -208,17 +209,22 @@ export function irTestAlone(nth: number) {
   test(alone[nth - 1]!, async () => void (await expectEveryTestPasses(["run", alone[nth - 1]!], engineTests)), 600_000);
 }
 
-/** Every `parts`-th IR test, from the `part`-th on. A new test needs no list: it is in one of the parts. */
+/** Every `parts`-th IR test of each folder, from the `part`-th on. A new test needs no list: it is in one of the parts. */
 export function irTests(part: number, parts: number) {
   if (whyNoEngineTests) return void skipOrFail(whyNoEngineTests);
   expect(alone.filter((_, at) => !existsSync(join(import.meta.dir, `ir-alone-${at + 1}.test.ts`)))).toEqual([]);
-  const mine = readdirSync(engineTests!, { recursive: true, encoding: "utf8" })
-    .filter(path => path.endsWith(".ir") && !alone.includes(path.replaceAll("\\", "/")))
-    .sort()
-    .filter((_, index) => index % parts === part - 1);
-  test(`${mine.length} IR tests of the engine`, async () => {
-    for (const paths of inCommandLines(mine)) await expectEveryTestPasses(["run", ...paths], engineTests);
-  }, 600_000);
+  for (const [folder, whose] of [
+    [engineTests!, "the engine"],
+    [engineTestsOfBun, "Bun"],
+  ] as const) {
+    const mine = readdirSync(folder, { recursive: true, encoding: "utf8" })
+      .filter(path => path.endsWith(".ir") && !alone.includes(path.replaceAll("\\", "/")))
+      .sort()
+      .filter((_, index) => index % parts === part - 1);
+    test(`${mine.length} IR tests of ${whose}`, async () => {
+      for (const paths of inCommandLines(mine)) await expectEveryTestPasses(["run", ...paths], folder);
+    }, 600_000);
+  }
 }
 
 // `testaot native` runs one test at a time, and one test takes a hundred times as long as another. So a file has many small shares, and

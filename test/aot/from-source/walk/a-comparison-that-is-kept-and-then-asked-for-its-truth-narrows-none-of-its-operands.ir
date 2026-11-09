@@ -8,7 +8,6 @@
 # compared. Whoever asked which operands the test narrows heard "not known" as soon as there was more than one use, and the comparison kept its general form: 14 instructions in every turn, where
 # `if (x === "const")` stood in front of the loop. Now: the first user asks its truth, a branch alone uses that truth, and the proofs on its edges make up all the other uses: none of its operands is narrowed.
 # RUN: compile ComparisonsWithTextsThatStandInFrontOfLoops mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: statistic ComparisonsWithTextsThatStandInFrontOfLoops 1
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0

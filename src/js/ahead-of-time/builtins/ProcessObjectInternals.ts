@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/builtins/ProcessObjectInternals.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 a9b344c78c8718e03fd2ae4f7d4758b5a458b751bdb387f12310246c3f5e285f.
+// Written against that file with the SHA-256 a460fde8ae5bb69af5496319d339ced92217c2d6a08344b44771c628d7ebcd53.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 /*
@@ -732,12 +732,8 @@ export function createOnWarning(
     if (IS_COMPILED_AHEAD_OF_TIME && WARNINGS_LOAD_NODE_EVENTS && wroteInPlaceOfStream) require("node:events");
   }
 
-  // path.basename(), without node:path where the program cannot come by the module.
+  // path.basename(), without node:path: neither the module nor what a program has stored under its name is asked.
   function basename(path: string) {
-    if (!IS_COMPILED_AHEAD_OF_TIME || WARNINGS_ASK_NODE_PATH) {
-      const { basename } = require("node:path");
-      return basename(path);
-    }
     if (typeof path !== "string")
       return (
         process.platform === "win32"

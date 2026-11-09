@@ -27,13 +27,13 @@ use crate::load::{PerProject, ProjectId, Sources};
 use crate::modules::asks_for_original_beside_mock;
 use crate::statistics::{Stage, StepClock};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
-use bun_paths::platform::Posix;
-use bun_paths::resolve_path::join_spill;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::FoldInputs;
 use bun_sema::hir::{ExprId, ExprKind};
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier, is_load_found_late};
+use bun_sema::import_sites::{
+    ImportSiteKind, ImportSpecifier, find_made_requires_that_go_out_of_sight, is_load_found_late,
+};
 use bun_sema::node::NodeData;
 use bun_sema::program::{CodeAnswer, CodeView, EntryPointsFound, FileId, Files};
 use bun_sema::resolve::{CodeHost, CodeOptions};
@@ -169,8 +169,10 @@ fn warn_of_guesses_left_out(
     let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
     for &file in files.compiled_files() {
         let folder = host.directory_of(files.file_name(file));
-        let is_held =
-            |name: &[u8]| held.contains(join_spill::<Posix>(&mut Vec::new(), &[&folder[..], name]));
+        let is_held = |name: &[u8]| {
+            let found = host.find_file_that_require_finds(&folder, name);
+            found.is_some_and(|path| held.contains(&path[..]))
+        };
         let guessed = files.analysis(file).names_out_of_data_files.iter();
         let guessed = guessed.filter(|it| it.2 && !is_held(files.atoms().bytes(it.0)));
         let guessed: Vec<(ExprId, Atom)> = guessed.map(|it| (it.1, it.0)).collect();
@@ -208,12 +210,58 @@ fn warn_of_names_unread_at_loads_found_late(
     }
 }
 
-fn warn_of_folders_unread_at_resolves(diagnostics: &mut Diagnostics, view: ProgramView<'_, '_>) {
+fn warn_of_folders_unread_at_resolves(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+    host: &LoadHost<'_>,
+) {
     let files = view.files();
     for &file in files.compiled_files() {
         for &options in files.analysis(file).options_of_resolves_with_unread_folders {
             let span = Span::of_node(files.hir(file), file, NodeData::Expr(options));
             let code = Code::FoldersOfResolveAreNotRead;
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
+        }
+    }
+    let noted = host.resolves_whose_folders_bring_nothing();
+    if noted.is_empty() {
+        return;
+    }
+    let compiled = files.compiled_files().iter();
+    let held: FxHashSet<&[u8]> = compiled.map(|&it| files.file_name(it)).collect();
+    for resolve in &noted {
+        let found = &resolve.found_by_search_that_goes_on_above;
+        if resolve.is_found_in_listed_folders_alone && held.contains(&found[..]) {
+            continue;
+        }
+        if let Some(file) = files.by_path.get(&resolve.file[..]) {
+            let span = Span::of_node(files.hir(file), file, NodeData::Expr(resolve.written_at));
+            let code = Code::SearchGoesOnAboveListedFolder;
+            let found = host.display_path_of(found);
+            diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[&found]));
+        }
+    }
+}
+
+fn warn_of_made_requires_that_go_out_of_sight(
+    diagnostics: &mut Diagnostics,
+    view: ProgramView<'_, '_>,
+) {
+    let files = view.files();
+    for &file in files.compiled_files() {
+        let (analysis, hir) = (files.analysis(file), files.hir(file));
+        let names_module_of_maker = |specifier: &ImportSpecifier| {
+            matches!(*specifier, ImportSpecifier::Constant(name)
+                if matches!(files.atoms().bytes(name), b"module" | b"node:module"))
+        };
+        let mut sites = analysis.import_sites.iter();
+        if !sites.any(|site| names_module_of_maker(&site.specifier)) {
+            continue;
+        }
+        let decisions = &analysis.decisions;
+        for made in find_made_requires_that_go_out_of_sight(hir, files.bound(file), decisions) {
+            let span = Span::of_node(hir, file, NodeData::Expr(made));
+            let code = Code::MadeRequireGoesOutOfSight;
             diagnostics.add(Some(view), Diagnostic::new(code, Some(span), &[]));
         }
     }
@@ -714,7 +762,8 @@ impl<'a> Build<'a> {
             warn_of_guesses_left_out(&mut self.diagnostics, view, host);
             if !options.aot.loads_code_from_disk {
                 warn_of_names_unread_at_loads_found_late(&mut self.diagnostics, view);
-                warn_of_folders_unread_at_resolves(&mut self.diagnostics, view);
+                warn_of_folders_unread_at_resolves(&mut self.diagnostics, view, host);
+                warn_of_made_requires_that_go_out_of_sight(&mut self.diagnostics, view);
             }
         }
         if !options.aot.checks_only {
@@ -809,9 +858,6 @@ impl<'a> Build<'a> {
                         || contents.loads_by_unknown_name
                         || contents.inspects_prototype_chain_of_process
                         || roots.loads_events,
-                    warnings_ask_path: can_load_code_at_run_time
-                        || contents.loads_by_unknown_name
-                        || roots.loads_path,
                     takes_first_texts: options.aot.takes_first_texts,
                 },
             ),

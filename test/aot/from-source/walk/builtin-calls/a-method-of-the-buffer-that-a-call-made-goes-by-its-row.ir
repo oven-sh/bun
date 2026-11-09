@@ -8,12 +8,10 @@
 # sink(text([Buffer.alloc(2)]), first([Buffer.alloc(2)]));
 # -- end of source
 # RUN(TEXT): walk f1 mechanisms=all
-# REQUIRES(TEXT): entries-of-bun
 # TEXT: = CallBuiltin {{*}}overload=BufferConcat/0
 # TEXT-NOT: = PropGet
 # TEXT: = CallBuiltin {{*}}overload=BufferPrototypeToString/0
 # RUN(FIRST): walk f2 mechanisms=all
-# REQUIRES(FIRST): entries-of-bun
 # FIRST: = CallBuiltin {{*}}overload=BufferConcat/0
 # FIRST-NOT: = PropGet
 # FIRST: {{*}}overload=BufferPrototypeReadUInt8/0

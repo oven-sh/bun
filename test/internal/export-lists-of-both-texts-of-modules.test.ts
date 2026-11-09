@@ -87,8 +87,6 @@ function textOf(transpiler: Bun.Transpiler, file: string): Text {
 const leftOutOfSecondText: Record<string, string[]> = {
   // The second text of node:_http_server does this work in functions of its own.
   "internal/http.ts": ["callCloseCallback", "emitCloseNT"],
-  // The second text of node:repl names the global object itself.
-  "internal/repl/node-primordials.ts": ["globalThis"],
   // The second texts take these from internal/streams/state.
   "internal/streams/utils.ts": [
     "kOnConstructed",

@@ -1,4 +1,5 @@
 mod changed_on_disk;
+mod factories_in_flight;
 mod keys_of_cache;
 #[cfg(test)]
 mod tests;
@@ -18,6 +19,9 @@ use self::changed_on_disk::{
     ChangedOnDisk, FilesNamedWithQueries, find_file_in_front_of_query, names_file_with_query,
     write_whole_start,
 };
+use self::factories_in_flight::{
+    find_files_taken_out_behind_factories, look_at_factories_that_may_wait,
+};
 use self::keys_of_cache::{TextOfRun, find_library_modules_that_entries_may_answer, look_at_keys};
 use crate::builtins::resolve::{is_module_cache, is_table_of_loaders};
 use crate::builtins::{ResolvedBuiltins, RuntimeModule, table};
@@ -26,7 +30,8 @@ use crate::diagnostics::{Diagnostic, Diagnostics, ProgramView, Span, range_of_no
 use crate::load::sources::parsed_source;
 use crate::options::Options;
 use crate::test_run_report::{
-    say_entries_may_answer, say_file_changed_on_disk, say_why_every_file,
+    say_entries_may_answer, say_file_changed_on_disk, say_files_taken_out_behind_factories,
+    say_why_every_file,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -104,6 +109,7 @@ pub(crate) struct LoadsOfFile {
     pub paths_in_front_of_queries: Vec<(Atom, u32)>,
     pub starts_of_keys_stored: Vec<(Atom, Option<Atom>)>,
     pub stores_under_key_nobody_reads: bool,
+    pub sites_mocked_by_factories_that_may_wait: Vec<u32>,
 }
 
 fn is_object_of_member(hir: &File<'_>, bound: &Bound<'_>, mut object: ExprId) -> bool {
@@ -177,6 +183,7 @@ pub(crate) fn look_at_loads_of_file(
     };
     look_at_what_goes_out_of_sight(request, builtins, &mut found);
     look_at_keys(request, builtins, &mut found);
+    look_at_factories_that_may_wait(request, &mut found);
     found
 }
 
@@ -254,6 +261,7 @@ pub(crate) fn collect_loads_of_run(files: &Files<'_>, options: &Options<'_>) -> 
     let mut changed = ChangedOnDisk::default();
     let mut keys_stored: Vec<(Atom, Option<Atom>)> = Vec::new();
     let mut is_any_key_stored = false;
+    let mut mocked_by_factories_that_may_wait: Vec<FileId> = Vec::new();
     for &file in files.compiled_files() {
         let Some(source) = parsed_source(files, file) else {
             run.is_every_file = true;
@@ -263,6 +271,10 @@ pub(crate) fn collect_loads_of_run(files: &Files<'_>, options: &Options<'_>) -> 
         let loads = &source.of_run.loads;
         for &key in &loads.files_taken_out {
             add_files_of_key(files, file, key, &mut run.files_taken_out);
+        }
+        for &site in &loads.sites_mocked_by_factories_that_may_wait {
+            let mocked = &mut mocked_by_factories_that_may_wait;
+            add_files_of_key(files, file, FileOfKey::Site(site), mocked);
         }
         for &(start, end) in &loads.parts_of_keys_taken_out {
             let (start, end) = (
@@ -325,6 +337,12 @@ pub(crate) fn collect_loads_of_run(files: &Files<'_>, options: &Options<'_>) -> 
     run.is_every_file |= !run.why_every_file.is_empty();
     run.is_any_file_taken_out |= run.why_every_file.iter().any(|why| why.1.takes_files_out());
     (run.why_every_file).shared_sort_unstable_by_key(|&(file, _, at)| (file, at));
+    mocked_by_factories_that_may_wait.shared_sort_unstable();
+    mocked_by_factories_that_may_wait.dedup();
+    let behind_factories =
+        find_files_taken_out_behind_factories(files, &mocked_by_factories_that_may_wait);
+    say_files_taken_out_behind_factories(behind_factories.len());
+    run.files_taken_out.extend(behind_factories);
     run.files_taken_out.retain(|&file| files.is_compiled(file));
     run.files_taken_out.shared_sort_unstable();
     run.files_taken_out.dedup();

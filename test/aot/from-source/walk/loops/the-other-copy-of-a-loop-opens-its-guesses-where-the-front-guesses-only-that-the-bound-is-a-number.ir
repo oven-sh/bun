@@ -10,7 +10,6 @@
 # if (which) console.log(which, loops[which](rounds)); else for (const name in loops) console.log(name, loops[name](rounds), loops[name](3), loops[name]());
 # -- end of source
 # RUN: walk f5:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f5:Body
 # CHECK-NOT: CallTable
 # CHECK: = CallDirect {{*}}function=f4

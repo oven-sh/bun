@@ -13,6 +13,5 @@
 # -- end of source
 # Two Maps reach the call of get(), one that holds whole numbers and one that holds texts: what one of them holds says nothing of what the receiver of this call holds, so the read is not typed by it.
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: CallInline {{*}} inlineBuiltin=MapGet
 # CHECK-NOT: kind=ProvenContents subjectKind=Operation type=i32

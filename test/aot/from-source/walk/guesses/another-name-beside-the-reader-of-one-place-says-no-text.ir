@@ -6,5 +6,4 @@
 # -- end of source
 # Where a name that no text has is read off the place too, its length says nothing
 # RUN(COUNT): compile TextsExpectedByNamesOfPlaces mechanisms=all
-# REQUIRES(COUNT): entries-of-bun
 # COUNT: statistic TextsExpectedByNamesOfPlaces 0

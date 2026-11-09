@@ -532,11 +532,17 @@ public:
 #if ENABLE(AOT)
     // The same of a compiled file, of which the loader holds nothing to move.
     bool hasSetCompiledModuleAside { false };
+    unsigned numberOfDroppedFetchesThatFollow { 0 };
+    bool liesOverFileThatFailedGraphLinked { false };
+    bool liesOverFileThatEarlierTestFileLinked { false };
+    bool tookFileWithoutBodyAsOriginal { false };
     // A mock of a test file that was laid over a preload's. The loader holds nothing of a compiled module to set aside: where it would have set aside what stood under the key, the second word says so: hasSetLoadedModuleAside, of the preload's instance.
     bool wasLaidOverMockOfPreload { false };
     bool hasSetMockOfPreloadAside { false };
     // It has patched the CommonJS module that had come back, and its end restores that.
     bool patchesMockOfPreload { false };
+    // Of a compiled file with several forms: whether `bun test` has saved originals for this mock. A mock saves nothing of a compiled file, so originalExports cannot say it.
+    bool foundFormsUnderKey { false };
     // A preload's mock that such a one has displaced, and not the test file's own vi.doUnmock().
     bool isDisplacedByMockOfTestFile { false };
     // One that the end of that mock has registered again. Under `bun test` it stays displaced until the end of the test file, which empties its key.
@@ -1327,6 +1333,16 @@ static Vector<JSObject*, 2> factoriesInAsyncContext(Zig::GlobalObject* globalObj
 
 #if ENABLE(AOT)
 static bool isInNodeModules(const String& path);
+
+static bool isOneInstanceWithItsOriginal(const JSModuleMock* mock, const String& specifier)
+{
+    return mock->isOfVitest() && (isInNodeModules(specifier) || mock->liesOverFileThatFailedGraphLinked);
+}
+
+static bool takesFileWithoutBodyAsOriginal(const JSModuleMock* mock, JSC::AOT::ModuleID file)
+{
+    return mock->isOfVitest() && !mock->factory && JSC::AOT::isESModule(file) && !JSC::AOT::hasBodyOfItsOwn(file);
+}
 #endif
 
 #if ENABLE(AOT)
@@ -1375,8 +1391,11 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
         RETURN_IF_EXCEPTION(scope, nullptr);
         mock->compiledModuleThatNeverRan = std::nullopt;
     }
+    std::optional<unsigned> fileThatNeverRan = mock->compiledModuleThatNeverRan;
+    if (auto compiled = !fileThatNeverRan && mock->liesOverFileThatFailedGraphLinked ? Bun::compiledModuleForPath(specifier) : std::nullopt)
+        fileThatNeverRan = compiled->index();
     // unmockModule() brings the original of such a package back under the package's own key: one instance. So its own body runs now, once, beside the mock, which goes on waiting and comes to stand in its place.
-    if (auto file = mock->compiledModuleThatNeverRan; file && !exports && mock->isOfVitest() && isInNodeModules(specifier) && JSC::AOT::isESModule(JSC::AOT::ModuleID(*file))) {
+    if (auto file = fileThatNeverRan; file && !exports && isOneInstanceWithItsOriginal(mock, specifier) && JSC::AOT::isESModule(JSC::AOT::ModuleID(*file))) {
         exports = JSC::AOT::packageItselfBesideMock(globalObject, JSC::AOT::ModuleID(*file));
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (exports)
@@ -1384,7 +1403,7 @@ __attribute__((minsize)) static JSC::JSPromise* importOriginalModule(Zig::Global
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     // Where it cannot run beside the mock, the mock is laid over it.
-    if (auto file = mock->compiledModuleThatNeverRan; file && !exports && mock->isOfVitest() && isInNodeModules(specifier) && JSC::AOT::isESModule(JSC::AOT::ModuleID(*file))) {
+    if (auto file = fileThatNeverRan; file && !exports && isOneInstanceWithItsOriginal(mock, specifier) && JSC::AOT::isESModule(JSC::AOT::ModuleID(*file))) {
         bool hasRun = JSC::AOT::runBodyOfImportedModuleAheadOfMock(globalObject, JSC::AOT::ModuleID(*file));
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (hasRun)
@@ -1701,6 +1720,20 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
         bool hasWaitedForTurn = std::exchange(hasWaitedForTurnOfLoader, false);
         JSValue thrownByBody = errorThrownByBodyOfCompiledModule(globalObject, this);
         RETURN_IF_EXCEPTION(scope, true);
+        // `bun test` takes the entry of a file that threw with no importer above it out where a mock of Vitest is made over it: the next load runs the file again, ahead of the factory.
+        // A compiled file does not run again: its text does, under the key of the original. The factory is called once that has loaded, and is handed it.
+        auto compiled = thrownByBody && factoryValue && !synchronous ? Bun::compiledModuleForPath(specifier->tryGetValue().data) : std::nullopt;
+        if (compiled && JSC::AOT::keepsFailureThatMockTakesOut(globalObject, *compiled)) {
+            JSObject* loadedAgain = namespaceOfLoadedOriginal(globalObject, specifier->tryGetValue().data);
+            RETURN_IF_EXCEPTION(scope, true);
+            if (loadedAgain)
+                return false;
+            JSC::JSPromise* loadingAgain = importModuleKey(globalObject, originalModuleKey(specifier->tryGetValue().data));
+            RETURN_IF_EXCEPTION(scope, true);
+            waitsForBodyUnderWay = true;
+            answer = loadingAgain;
+            return true;
+        }
         if (thrownByBody) {
             // The loader answers a load of a module that has failed with a promise that is rejected already. importModuleKeySync() throws what it holds and lets it go.
             if (JSC::AOT::requireRunsMocks(vm))
@@ -1742,6 +1775,17 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
     };
     if (JSValue answer; importsOriginal && factoryValue && factoryValue.isCallable() && globalObject->aotInstance() && answersByBodyOfOriginal(answer))
         return answer;
+    if (givesFileItself && synchronous) {
+        JSValue file = requireOriginalModule(globalObject, this);
+        // The require() names the file, and so does the error that says that it cannot wait for it.
+        JSC::Exception* thrown = scope.exception();
+        auto* error = thrown ? dynamicDowncast<JSC::ErrorInstance>(thrown->value()) : nullptr;
+        JSValue message = error ? error->getDirect(vm, vm.propertyNames->message) : JSValue();
+        String path = specifier->tryGetValue().data;
+        if (message && message.isString() && asString(message)->tryGetValue().data.startsWith(makeString("require() async module \""_s, originalModuleKey(path), '"')) && scope.tryClearException()) [[unlikely]]
+            throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, path));
+        return file;
+    }
 #endif
     if (factoryValue && factoryValue.isCallable()) {
         JSC::JSFunction* importOriginal = JSC::JSFunction::create(vm, globalObject, 0, "importOriginal"_s, jsFunctionModuleMockImportOriginal, ImplementationVisibility::Public);
@@ -1835,15 +1879,18 @@ __attribute__((minsize)) JSValue JSModuleMock::callFactory(Zig::GlobalObject* gl
 
 #if ENABLE(AOT)
     // As in importOriginalModule(): the original of a package is the package itself, one instance, and its body runs beside the mock.
-    if (!factoryValue && !spy && isOfVitest() && compiledModuleThatNeverRan && JSC::AOT::isESModule(JSC::AOT::ModuleID(*compiledModuleThatNeverRan))) {
+    if (!factoryValue && isOfVitest() && compiledModuleThatNeverRan && JSC::AOT::isESModule(JSC::AOT::ModuleID(*compiledModuleThatNeverRan))) {
         String path = specifier->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        JSObject* own = isInNodeModules(path) ? JSC::AOT::packageItselfBesideMock(globalObject, JSC::AOT::ModuleID(*compiledModuleThatNeverRan)) : nullptr;
+        bool hasNoBody = takesFileWithoutBodyAsOriginal(this, JSC::AOT::ModuleID(*compiledModuleThatNeverRan));
+        bool isOneInstance = hasNoBody || ((!spy || liesOverFileThatEarlierTestFileLinked) && isOneInstanceWithItsOriginal(this, path));
+        JSObject* own = isOneInstance ? JSC::AOT::packageItselfBesideMock(globalObject, JSC::AOT::ModuleID(*compiledModuleThatNeverRan)) : nullptr;
         RETURN_IF_EXCEPTION(scope, {});
         if (own) {
+            tookFileWithoutBodyAsOriginal = hasNoBody;
             own = withoutUninitializedExports(globalObject, own);
             RETURN_IF_EXCEPTION(scope, {});
-            RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, own, false, true));
+            RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, own, spy, true));
         }
     }
 #endif
@@ -3524,7 +3571,7 @@ static void forEachMockOfPreload(Zig::GlobalObject* globalObject, const Functor&
 // What unmockModule() asks for packagesToBringBack, of a compiled file.
 static bool bringsBackCompiledFile(const JSModuleMock* mock, const String& specifier)
 {
-    return mock->hasSetCompiledModuleAside || (mock->isOfVitest() && isInNodeModules(specifier));
+    return mock->hasSetCompiledModuleAside || mock->tookFileWithoutBodyAsOriginal || isOneInstanceWithItsOriginal(mock, specifier);
 }
 
 static bool isFormThatNobodyHasLoaded(Zig::GlobalObject* globalObject, const String& specifier, uint32_t module)
@@ -3589,22 +3636,33 @@ __attribute__((minsize)) static void unmockModule(Zig::GlobalObject* globalObjec
     bool wasLoadedOverCompiledModule = false;
 #if ENABLE(AOT)
     wasLoadedOverCompiledModule = loaded.compiledModule && JSC::AOT::hasMockInPlace(globalObject, *loaded.compiledModule) && !JSC::AOT::isKeyOfMockInPlaceEmpty(globalObject, *loaded.compiledModule);
+    // A file with several forms is found under none of them: its mock was loaded where it is in place over one.
+    if (globalObject->vm().hasCompiledCode() && !loaded.compiledModule && !loaded.esmNamespace && !loaded.commonJSModule) {
+        auto forms = JSC::AOT::formsThatAttributesAskFor(globalObject, specifier);
+        if (auto file = Bun::moduleThatMockReplaces(specifier); file && !forms.contains(*file))
+            forms.append(*file);
+        wasLoadedOverCompiledModule = std::ranges::count_if(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::hasBegunToLoad(globalObject, form); }) > 1 && std::ranges::any_of(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::hasMockInPlace(globalObject, form) && !JSC::AOT::isKeyOfMockInPlaceEmpty(globalObject, form); });
+    }
     // "Several import types" is for the laying of a mock. Its end goes to what the loader holds.
     if (globalObject->vm().hasCompiledCode() && !loaded.esmNamespace) {
         findLoadedESModule(globalObject, mock->specifier.get(), loaded);
         RETURN_IF_EXCEPTION(scope, );
     }
+    if (auto* broughtBack = mock->patchesMockOfPreload ? mockOfPreloadThatEndBringsBack(globalObject, mock, specifier) : nullptr; broughtBack && loaded.esmNamespace && loaded.esmNamespace->moduleRecord()->liveExportsSource() == mock)
+        loaded.esmNamespace->moduleRecord()->setLiveExportsSource(vm, broughtBack);
     // Also of a file that was evicted behind the mock.
     auto compiledModule = globalObject->vm().hasCompiledCode() ? JSC::AOT::formThatMockFinds(globalObject, specifier, Bun::moduleThatMockReplaces(specifier)) : std::nullopt;
     // Behind the end of a mock the file itself may be loaded, which ends the fetch that the factory held in flight. A mock that takes its place leaves it.
     for (auto& each : globalObject->onLoadPlugins.newestCallsOfFactoriesOfCompiledMocks) {
-        if (compiledModule && !laterMock && each.first == compiledModule->index())
+        if (compiledModule && !laterMock && each.first == compiledModule->index()) {
             each.second |= markOfCallWhoseMockHasEnded;
+            JSC::AOT::noteThatFetchInFlightOutlivesMock(globalObject, *compiledModule);
+        }
     }
     // A mock that patched a file that had run goes by patchedCommonJSModules under `bun test`, whether or not the key still lies there: the file stays and the pass is made.
     // One that had set such a file aside goes by packagesToBringBack, whether or not anybody loaded the mock.
     // Not over a file that the loader had let go: `bun test` finds nothing loaded there, and sets nothing aside.
-    evict.endsMockOverCompiledFileThatHadRun |= (mock->hasSetCompiledModuleAside && !(compiledModule && JSC::AOT::wasLetGoByLoader(globalObject, *compiledModule))) || (compiledModule && JSC::AOT::hasMockLaidOverFileThatHadRun(globalObject, *compiledModule));
+    evict.endsMockOverCompiledFileThatHadRun |= (mock->hasSetCompiledModuleAside && !(compiledModule && JSC::AOT::wasLetGoByLoader(globalObject, *compiledModule))) || (compiledModule && JSC::AOT::hasMockLaidOverFileThatHadRun(globalObject, *compiledModule)) || (compiledModule && JSC::AOT::wasLinkedByGraphThatFailedAndNeverRan(globalObject, *compiledModule));
     // The program deleted the file's key under the mock, and a require() has made a module object of the mock. The run time holds what the file itself exported: the object gets it back below, as one that was patched.
     // Not where the mock had been laid over a preload's: what it was laid over is that mock, and the key is emptied.
     if (compiledModule && loaded.commonJSModule && !mock->wasLaidOverMockOfPreload && !mock->lostCommonJSExportsToReset && !mock->originalCommonJSExports && !JSC::AOT::isESModule(*compiledModule) && JSC::AOT::isEvictedFile(globalObject, *compiledModule)) {
@@ -4197,11 +4255,11 @@ JSC::JSPromise* evaluateOriginalOfCompiledMock(Zig::GlobalObject* globalObject, 
         return nullptr;
     hasFactory = !!factory;
     mock->wasAskedFor = true;
-    bool isPackageUnderMockOfVitest = mock->isOfVitest() && isInNodeModules(mock->specifier->tryGetValue().data);
+    bool isOneInstance = isOneInstanceWithItsOriginal(mock, mock->specifier->tryGetValue().data);
     // A spy and an automock take the original too, and have no factory that would wait for its turn: nothing is run for them ahead of the factories.
-    if (isPackageUnderMockOfVitest && !hasFactory)
+    if ((isOneInstance && !hasFactory) || takesFileWithoutBodyAsOriginal(mock, module))
         return nullptr;
-    if (isPackageUnderMockOfVitest) {
+    if (isOneInstance) {
         JSObject* package = JSC::AOT::packageItselfBesideMock(globalObject, module);
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (!package)
@@ -4272,7 +4330,7 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     bool isPending = hasPendingFactory(mock);
     String requirer = JSC::AOT::pathOfModuleThatRequires(globalObject, module);
     bool isHiddenFromRequirer = !requirer.isNull() && !JSC::AOT::isLeftAloneByMock(globalObject, module) && Bun::keyOfImportByPackage(globalObject, mock->specifier->tryGetValue().data, requirer, false) != mock->specifier->tryGetValue().data;
-    if (JSC::AOT::requireRunsMocks(vm) && !JSC::AOT::isESModule(module) && (isPending || isHiddenFromRequirer || Bun::canRequireOriginalOfModuleMock(globalObject, mock))) {
+    if (JSC::AOT::requireRunsMocks(vm) && !JSC::AOT::isESModule(module) && (isHiddenFromRequirer || ((!JSC::AOT::requireAsksForAnotherFile(globalObject, module) || JSC::AOT::hasBegunToLoad(globalObject, module)) && (isPending || Bun::canRequireOriginalOfModuleMock(globalObject, mock))))) {
         mock->compiledModuleThatNeverRan = module.index();
         // There, too, nothing falsy is left under the key: `require.cache[key] = undefined`. The loader comes there only past an entry that is not truthy: what the program stored to stand for the file stays.
         JSC::JSMap* requireMap = Bun::testFileRequireMap(globalObject);
@@ -4346,6 +4404,9 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     // `bun test` books who fetched a key at the fetch, and this is one: what comes back under the key at the end of the mock is this test file's.
     if (mock->testFileOfFirstLoad)
         JSC::AOT::noteThatKeyIsOfThisTestFile(globalObject, module);
+    // A preload's mock outlives the test file that loads it: the key that the end of an earlier test file emptied is filled from here on.
+    if (mock->testFileOfFirstLoad && mock->isFromPreload)
+        JSC::AOT::noteThatMockOfPreloadFilledKey(globalObject, module);
     // The owner is the key's: what lies under the key of the original comes back under a key that this load has written over.
     if (auto* displaced = displacedMockOfPreload(globalObject, mock->specifier->tryGetValue().data); displaced && displaced->liesUnderKeyOfOriginal)
         displaced->testFileOfFirstLoad = mock->testFileOfFirstLoad;
@@ -4359,7 +4420,8 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     // Nothing was loaded when the mock was made. Since then the host has answered a require(): of a name that the build does not know, or from code outside the image.
     mock->keepsModuleObject = !!loaded.commonJSModule;
     // A file of a `__mocks__` folder may await at its top, and so may the file that a mock without a factory is made of: an import waits for it, and a require() refuses it, as in `bun test`.
-    bool requiresFile = (!mock->factory.get() || mock->factory.get().isString()) && JSC::AOT::requireRunsMocks(vm);
+    // So does a mock that gives the file itself: `bun test` has undone it, and a require() gets the file at once.
+    bool requiresFile = (!mock->factory.get() || mock->factory.get().isString() || mock->givesFileItself) && JSC::AOT::requireRunsMocks(vm);
     // Behind an ES module that awaits nothing the loader makes such a mock in the same evaluation, ahead of the jobs that the body has queued.
     bool followsBodyAtOnce = !mock->factory.get() && JSC::AOT::isESModuleThatWaitsForNothing(globalObject, module);
     // A load that goes on behind a reset registers nothing anew.
@@ -4368,10 +4430,10 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
     JSObject* original = originalLoadedAheadOfFactory(vm, mock);
     mock->loadOfOriginalAheadOfFactory.clear();
     bool comesToFetchInFlight = globalObject->onLoadPlugins.newestCallsOfFactoriesOfCompiledMocks.containsIf([&](const auto& newest) {
-        return newest.first == module.index() && !((newest.second & markOfCallWhoseMockHasEnded) && mock->hasSetCompiledModuleAside) && globalObject->onLoadPlugins.factoriesOfCompiledMocks.containsIf([&](const auto& earlier) { return earlier.call == (newest.second & ~markOfCallWhoseMockHasEnded) && earlier.cameToFetchInFlightWhenCalled && earlier.patched->status() == JSC::JSPromise::Status::Pending && uncheckedDowncast<JSModuleMock>(earlier.mock.get())->factory.get() != mock->factory.get(); });
+        return newest.first == module.index() && !((newest.second & markOfCallWhoseMockHasEnded) && !JSC::AOT::doesFetchInFlightOutliveMock(globalObject, module)) && globalObject->onLoadPlugins.factoriesOfCompiledMocks.containsIf([&](const auto& earlier) { return earlier.call == (newest.second & ~markOfCallWhoseMockHasEnded) && earlier.cameToFetchInFlightWhenCalled && earlier.patched->status() == JSC::JSPromise::Status::Pending && uncheckedDowncast<JSModuleMock>(earlier.mock.get())->factory.get() != mock->factory.get(); });
     });
     JSC::JSPromise* pendingFactory = mock->run(globalObject, requiresFile || followsBodyAtOnce, original);
-    if (!pendingFactory && !scope.exception())
+    if (!pendingFactory && !scope.exception() && !JSC::AOT::requireAsksFor(globalObject, module))
         globalObject->onLoadPlugins.newestCallsOfFactoriesOfCompiledMocks.removeAllMatching([&](const auto& each) { return each.first == module.index(); });
     if (!scope.exception()) [[likely]] {
         // The factory may have require()d the module itself: `() => ({ ...require("./m"), extra })`.
@@ -4401,16 +4463,25 @@ bool runCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
         patchWhenFactorySettles(globalObject, mock, pendingFactory)->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionFactoryOfCompiledMockSettled), globalObject->thenable(jsFunctionFactoryOfCompiledMockFailed), JSC::jsUndefined(), patched);
         auto& newestCalls = plugins.newestCallsOfFactoriesOfCompiledMocks;
         size_t newest = newestCalls.findIf([&](const auto& each) { return each.first == module.index(); });
-        bool wasFileLoadedSince = newest != notFound && (newestCalls[newest].second & markOfCallWhoseMockHasEnded) && mock->hasSetCompiledModuleAside;
+        bool wasFileLoadedSince = newest != notFound && (newestCalls[newest].second & markOfCallWhoseMockHasEnded) && !JSC::AOT::doesFetchInFlightOutliveMock(globalObject, module);
         bool cameToFetchInFlight = newest != notFound && !wasFileLoadedSince && plugins.factoriesOfCompiledMocks.containsIf([&](const auto& earlier) { return earlier.call == (newestCalls[newest].second & ~markOfCallWhoseMockHasEnded) && earlier.patched->status() == JSC::JSPromise::Status::Pending; });
         plugins.factoriesOfCompiledMocks.append({ module.index(), false, JSC::Strong<JSC::JSObject> { vm, mock }, JSC::Strong<JSC::JSPromise> { vm, patched } });
-        plugins.factoriesOfCompiledMocks.last().cameToFetchInFlight = cameToFetchInFlight;
+        plugins.factoriesOfCompiledMocks.last().cameToFetchInFlight = cameToFetchInFlight && JSC::AOT::requireRunsMocks(vm);
         plugins.factoriesOfCompiledMocks.last().cameToFetchInFlightWhenCalled = cameToFetchInFlight;
         plugins.factoriesOfCompiledMocks.last().wasStartedByRequire = JSC::AOT::requireRunsMocks(vm);
         plugins.factoriesOfCompiledMocks.last().isOfWalkUnderWay = JSC::AOT::requireRunsMocks(vm);
         mock->nobodyWaitsForFactory = JSC::AOT::requireRunsMocks(vm);
         plugins.factoriesOfCompiledMocks.last().isWaitedForByImporter = !JSC::AOT::importAsksFor(globalObject, module);
         plugins.factoriesOfCompiledMocks.last().call = ++plugins.callsOfFactoriesOfCompiledMocks;
+        // Under `bun test` the fetch that a require() dropped follows the mock that stands.
+        unsigned followed = std::exchange(mock->numberOfDroppedFetchesThatFollow, 0);
+        if (cameToFetchInFlight)
+            plugins.factoriesOfCompiledMocks.last().numberOfRequiresRefusedMeanwhile += followed;
+        for (size_t earlier = 0; cameToFetchInFlight && earlier + 1 < plugins.factoriesOfCompiledMocks.size(); ++earlier) {
+            auto& displaced = plugins.factoriesOfCompiledMocks[earlier];
+            if (displaced.module == module.index() && displaced.patched->status() == JSC::JSPromise::Status::Pending)
+                plugins.factoriesOfCompiledMocks.last().numberOfRequiresRefusedMeanwhile += std::exchange(displaced.numberOfRequiresRefusedMeanwhile, 0) + std::exchange(displaced.cameToFetchInFlight, false);
+        }
         if (newest == notFound)
             newestCalls.append({ module.index(), plugins.callsOfFactoriesOfCompiledMocks });
         else
@@ -4443,6 +4514,18 @@ static bool isWrittenIn(JSModuleMock* mock, JSC::AOT::ModuleID file)
     if (!factory)
         return false;
     return (JSC::AOT::CompiledCallee::isCompiledCallee(factory) ? JSC::AOT::pathOfFileThatDeclares(factory) : fileOfFunction(factory)) == JSC::AOT::pathOfFileOfModule(file);
+}
+
+// As keyOfImportWhileModuleMocksRun() has it: a file on the import chain of a running factory counts as that factory asking.
+// A call of import() that is held is made again later: a factory that was called since is nothing to it, see waitsForMockOf().
+static Vector<JSObject*, 2> factoriesThatAskThrough(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID fileThatWroteLoad, uint32_t momentOfCall = UINT32_MAX)
+{
+    Vector<JSObject*, 2> callers = factoriesInAsyncContext(globalObject);
+    for (const auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+        if (fileThatWroteLoad && running.compiledImportChain.get(fileThatWroteLoad.index()) && uncheckedDowncast<JSModuleMock>(running.mock.get())->calledAt <= momentOfCall && !callers.contains(running.mock.get()))
+            callers.append(running.mock.get());
+    }
+    return callers;
 }
 
 static bool waitsForMockOf(Zig::GlobalObject* globalObject, JSModuleMock* running, const Vector<JSObject*, 2>& callers, std::optional<JSC::AOT::ImportThatAsks> import)
@@ -4614,6 +4697,20 @@ uint64_t callOfFactoryOfCompiledMockThatHasNotSettled(Zig::GlobalObject* globalO
     return 0;
 }
 
+bool wroteFactoryOfCompiledMockThatHasNotSettled(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID file, JSC::AOT::ModuleID mocked)
+{
+    for (const auto& factory : globalObject->onLoadPlugins.factoriesOfCompiledMocks | std::views::reverse) {
+        if (factory.module != mocked.index() || factory.patched->status() != JSC::JSPromise::Status::Pending)
+            continue;
+        auto* mock = uncheckedDowncast<JSModuleMock>(factory.mock.get());
+        if (mock->state == JSModuleMock::State::NotCalled || registeredModuleMock(globalObject, mock->specifier->tryGetValue().data) != mock)
+            continue;
+        auto* running = findRunningModuleMock(globalObject, mock);
+        return isWrittenIn(mock, file) || (running && (running->compiledImportChain.get(file.index()) || running->importChain.contains(JSC::AOT::pathOfFileOfModule(file))));
+    }
+    return true;
+}
+
 // `state`: a list: the factories that whoever asks was called from, as a list, and behind it the promises of those that it has started and not waited for yet. Its `source` is the file that wrote the import. The loader's first question brings the key of its fetch, and the list begins with that.
 JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isAskedAbout, JSC::AOT::FactoryAskedForBy askedBy, JSC::JSValue& state)
 {
@@ -4664,8 +4761,9 @@ JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, 
             auto* registered = registeredModuleMock(globalObject, uncheckedDowncast<JSModuleMock>(factory.mock.get())->specifier->tryGetValue().data);
             if (factory.patched->status() != JSC::JSPromise::Status::Pending || registered == factory.mock.get() || !isAskedAbout(JSC::AOT::ModuleID(factory.module)))
                 continue;
-            factory.cameToFetchInFlight = false;
-            factory.numberOfRequiresRefusedMeanwhile = 0;
+            unsigned dropped = std::exchange(factory.numberOfRequiresRefusedMeanwhile, 0) + std::exchange(factory.cameToFetchInFlight, false);
+            if (registered)
+                registered->numberOfDroppedFetchesThatFollow += dropped;
             if (!registered)
                 globalObject->onLoadPlugins.newestCallsOfFactoriesOfCompiledMocks.removeAllMatching([&](const auto& each) { return each.first == factory.module; });
         }
@@ -4677,9 +4775,10 @@ JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, 
     }
     bool asksForFirstTime = !state || state.isString();
     if (asksForFirstTime) {
+        auto import = askedBy == JSC::AOT::FactoryAskedForBy::ImportCall ? JSC::AOT::importThatAsks(globalObject) : std::nullopt;
         JSC::MarkedArgumentBuffer callers;
         if (askedBy == JSC::AOT::FactoryAskedForBy::ImportCall) {
-            for (JSObject* factory : factoriesInAsyncContext(globalObject))
+            for (JSObject* factory : factoriesThatAskThrough(globalObject, import ? import->fileThatWroteIt : JSC::AOT::ModuleID(), import ? import->momentOfCall : UINT32_MAX))
                 callers.append(factory);
         }
         JSC::JSArray* listOfCallers = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), callers);
@@ -4688,7 +4787,7 @@ JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, 
         list.append(state ? state : JSValue(listOfCallers));
         JSC::JSArray* newState = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), list);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (auto import = askedBy == JSC::AOT::FactoryAskedForBy::ImportCall ? JSC::AOT::importThatAsks(globalObject) : std::nullopt) {
+        if (import) {
             newState->putDirect(JSC::getVM(globalObject), JSC::getVM(globalObject).propertyNames->source, JSC::jsNumber(import->fileThatWroteIt.index()));
             newState->putDirect(JSC::getVM(globalObject), JSC::getVM(globalObject).propertyNames->index, JSC::jsNumber(import->momentOfCall));
         }
@@ -4820,24 +4919,59 @@ uint32_t addToImportChainsOfCompiledFactories(Zig::GlobalObject* globalObject, J
         }
         return booked;
     };
+    Vector<BunPlugin::OnLoad::RunningModuleMock*, 2> factoriesThatBook;
     for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
         auto* mock = uncheckedDowncast<JSModuleMock>(running.mock.get());
         // Nobody says who wrote a call of a function that createRequire() made.
         bool isOfFactoryItself = callers.contains(mock);
-        if (!isOfFactoryItself && (!importer || (callers.isEmpty() ? !running.compiledImportChain.get(importer.index()) && !isWrittenIn(mock, importer) : waitsForMockOf(globalObject, mock, callers, JSC::AOT::ImportThatAsks { importer, asked, moment }))))
-            continue;
-        // Whoever does not wait for the mock of the module that is asked for gets its original.
-        bool getsOriginal = mock->compiledModuleThatNeverRan == asked.index();
-        running.compiledImportChain.merge(listWhatIsBooked(getsOriginal ? JSC::AOT::LoadOf::Original : JSC::AOT::LoadOf::WhatStandsForModule));
-        if (mock->compiledModuleThatNeverRan && !getsOriginal)
-            running.compiledImportChain.clear(*mock->compiledModuleThatNeverRan);
+        if (isOfFactoryItself || (importer && (callers.isEmpty() ? running.compiledImportChain.get(importer.index()) || isWrittenIn(mock, importer) : !waitsForMockOf(globalObject, mock, callers, JSC::AOT::ImportThatAsks { importer, asked, moment }))))
+            factoriesThatBook.append(&running);
+    }
+    // Whoever does not wait for the mock of the module that is asked for gets its original, and every factory that it counts for books what it gets.
+    auto isOfModuleAskedFor = [&](auto* running) { return uncheckedDowncast<JSModuleMock>(running->mock.get())->compiledModuleThatNeverRan == asked.index(); };
+    bool getsOriginal = factoriesThatBook.containsIf(isOfModuleAskedFor);
+    for (auto* running : factoriesThatBook) {
+        running->compiledImportChain.merge(listWhatIsBooked(getsOriginal ? JSC::AOT::LoadOf::Original : JSC::AOT::LoadOf::WhatStandsForModule));
+        if (auto own = uncheckedDowncast<JSModuleMock>(running->mock.get())->compiledModuleThatNeverRan; own && !isOfModuleAskedFor(running))
+            running->compiledImportChain.clear(*own);
     }
     return moment;
 }
 
+// As Bun::keyOfImportWhileModuleMocksRun() has it of a require().
+bool isRequiredForSakeOfOwnFactoryOfCompiledMock(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID required, JSC::AOT::ModuleID requirer)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    Vector<JSObject*, 2> callers = factoriesThatAskThrough(globalObject, requirer);
+    for (size_t index = 0; index < callers.size(); ++index) {
+        auto mocked = uncheckedDowncast<JSModuleMock>(callers[index])->compiledModuleThatNeverRan;
+        for (const auto& running : plugins.runningModuleMocks) {
+            if (mocked && running.compiledImportChain.get(*mocked) && !callers.contains(running.mock.get()))
+                callers.append(running.mock.get());
+        }
+    }
+    return plugins.factoriesOfCompiledMocks.containsIf([&](const auto& factory) {
+        if (factory.module != required.index() || factory.patched->status() != JSC::JSPromise::Status::Pending)
+            return false;
+        auto* own = uncheckedDowncast<JSModuleMock>(factory.mock.get());
+        String path = own->specifier->tryGetValue().data;
+        // The original is asked for under a key of its own, and a require() cannot wait for that load either.
+        auto* original = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), originalModuleKey(path)));
+        auto* cyclic = original && original->record() ? dynamicDowncast<JSC::CyclicModuleRecord>(original->record()) : nullptr;
+        if (original && (!original->record() || (cyclic && !cyclic->isSCCEvaluated())))
+            return false;
+        if (callers.contains(own))
+            return true;
+        if (own->isDetached || registeredModuleMock(globalObject, path) != own || !isWrittenIn(own, requirer))
+            return false;
+        return callers.isEmpty() || !Bun::haveUnfinishedImporterInCommon(globalObject, path, uncheckedDowncast<JSModuleMock>(callers[0])->specifier->tryGetValue().data);
+    });
+}
+
 bool isCalledFromFactoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject, JSC::AOT::ModuleID module)
 {
-    Vector<JSObject*, 2> callers = factoriesInAsyncContext(globalObject);
+    auto import = JSC::AOT::importThatAsks(globalObject);
+    Vector<JSObject*, 2> callers = factoriesThatAskThrough(globalObject, import ? import->fileThatWroteIt : JSC::AOT::ModuleID(), import ? import->momentOfCall : UINT32_MAX);
     if (callers.isEmpty())
         return false;
     for (const auto& factory : globalObject->onLoadPlugins.factoriesOfCompiledMocks) {
@@ -4846,7 +4980,6 @@ bool isCalledFromFactoryOfCompiledMockThatWaits(Zig::GlobalObject* globalObject,
         // A factory that has ended runs no more for an import(), though whoever waited for it has yet to hear of it.
         // Where it failed below a load of another file, that load has the failure to itself until it has heard of it.
         auto* mock = uncheckedDowncast<JSModuleMock>(factory.mock.get());
-        auto import = JSC::AOT::importThatAsks(globalObject);
         bool hasFailedBelowAnotherFile = mock->state == JSModuleMock::State::NotCalled && mock->moduleThatLoadAskedFor != module.index();
         if (import && mock->state != JSModuleMock::State::Running && !hasFailedBelowAnotherFile)
             continue;
@@ -5248,7 +5381,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 
 #if ENABLE(AOT)
     // Where a load will come to the module, the mock waits for it, as under `bun test`. So it does where the end of the earlier mock has brought a preload's back.
-    if (placeOfMockThatEnds && (JSC::AOT::loadComesToModuleWhoseMockEnded(globalObject, JSC::AOT::ModuleID(*placeOfMockThatEnds)) || JSC::AOT::hasMockInPlace(globalObject, JSC::AOT::ModuleID(*placeOfMockThatEnds))))
+    // So does a factory that awaits: called here it would leave the place empty until it settles, and whoever loads the module meanwhile would get the file itself.
+    if (placeOfMockThatEnds && (JSC::AOT::loadComesToModuleWhoseMockEnded(globalObject, JSC::AOT::ModuleID(*placeOfMockThatEnds)) || JSC::AOT::hasMockInPlace(globalObject, JSC::AOT::ModuleID(*placeOfMockThatEnds)) || Bun::hasModuleMockUnsettledAsyncFactory(mock)))
         placeOfMockThatEnds = std::nullopt;
     if (placeOfMockThatEnds) {
         mock->compiledModuleThatNeverRan = placeOfMockThatEnds;
@@ -5267,7 +5401,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
                                                                                                                                                                                                                            : "a factory"_s);
     }
     // A load that failed has registered the file and never linked it: its entry is stale under `bun test` (findLoadedESModule()), and the eviction that takes it out takes every failed module out too.
-    bool hasStaleEntryUnderPlain = failedEntryStaysUnderKey || (loaded.compiledModule && JSC::AOT::wasPulledInByLoadThatFailed(globalObject, *loaded.compiledModule));
+    bool wasLinkedByFailedGraphOfEarlierTestFile = loaded.compiledModule && leavesLoadedModuleAlone && JSC::AOT::wasLinkedByGraphThatFailedAndNeverRan(globalObject, *loaded.compiledModule, true);
+    bool hasStaleEntryUnderPlain = failedEntryStaysUnderKey || (loaded.compiledModule && JSC::AOT::wasPulledInByLoadThatFailed(globalObject, *loaded.compiledModule)) || wasLinkedByFailedGraphOfEarlierTestFile;
+    mock->liesOverFileThatFailedGraphLinked = loaded.compiledModule && leavesLoadedModuleAlone && JSC::AOT::wasLinkedByGraphThatFailedAndNeverRan(globalObject, *loaded.compiledModule);
+    mock->liesOverFileThatEarlierTestFileLinked = wasLinkedByFailedGraphOfEarlierTestFile;
     bool isLinkedBelowMocksAlone = false;
     if (loaded.compiledModule && !placeOfMockThatEnds && !loaded.esmNamespace && !loaded.commonJSModule) {
         isLinkedBelowMocksAlone = JSC::AOT::runBodyOfLinkedModuleAheadOfMock(globalObject, *loaded.compiledModule, wasMocked, mock->isOfVitest(), leavesLoadedModuleAlone);
@@ -5295,7 +5432,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     // evictModulesAndTheirImporters() finds no compiled module with the loader. One that it would have taken out has run, and the mock comes ahead of its next load all the same.
     bool isOutOfLoader = loaded.compiledModule && (waitsBehindMockThatNobodyLoaded || JSC::AOT::wasLetGoByLoader(globalObject, *loaded.compiledModule));
     bool leavesCompiledModuleAlone = (leavesLoadedModuleAlone || isOutOfLoader) && loaded.compiledModule && !placeOfMockThatEnds && !loaded.esmNamespace && !loaded.commonJSModule && hasLoaded(*loaded.compiledModule)
-        && JSC::AOT::willLeaveModuleAlone(globalObject, *loaded.compiledModule, !isOutOfLoader && !loadedByTestFile && !staysTheOriginal && !isDoMock, Bun::compiledModuleForPath(callerPath(vm, callframe)), !mock->importsOriginal);
+        && JSC::AOT::willLeaveModuleAlone(globalObject, *loaded.compiledModule, !isOutOfLoader && !loadedByTestFile && !staysTheOriginal && !isDoMock, Bun::compiledModuleForPath(callerPath(vm, callframe)), !mock->importsOriginal || mock->factory.get());
     RETURN_IF_EXCEPTION(scope, {});
     if (leavesCompiledModuleAlone && wasLoadedByImportActual && Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(vm, originalModuleKey(specifier)))) {
         evictModulesAndTheirImporters(globalObject, Vector<String> { originalModuleKey(specifier) });
@@ -5326,6 +5463,13 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         if (auto file = Bun::moduleThatMockReplaces(specifier); file && !forms.contains(*file))
             forms.append(*file);
         if (std::ranges::count_if(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::hasBegunToLoad(globalObject, form); }) > 1) {
+            // The loader holds a form from its load to the eviction that takes its key out, and again once somebody has asked for it: under a mock (the mock is in place over it) or under none.
+            // Asked ahead of the loop below, which lets this mock wait over every form.
+            Vector<JSC::AOT::ModuleID, 2> formsThatLoaderHolds;
+            for (JSC::AOT::ModuleID form : forms) {
+                if (JSC::AOT::hasBegunToLoad(globalObject, form) && (JSC::AOT::hasMockInPlace(globalObject, form) || !JSC::AOT::didLayingTakeFormOutOfLoader(globalObject, form)))
+                    formsThatLoaderHolds.append(form);
+            }
             for (JSC::AOT::ModuleID form : forms) {
                 JSC::AOT::willLeaveModuleAlone(globalObject, form, false, Bun::compiledModuleForPath(callerPath(vm, callframe)));
                 RETURN_IF_EXCEPTION(scope, {});
@@ -5336,16 +5480,32 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             // Under `bun test` an entry registered under several import types is stale (findLoadedESModule()), and the eviction that takes it out takes every failed module out too.
             // What require() alone has loaded is not registered with the loader.
             // So does the eviction of what an earlier test file or a preload has loaded: see wasLoadedByEarlierTestFile below.
-            bool wasSomeFormLoadedAheadOfThisTestFile = !mock->isFromPreload && (!previous || previous->isFromPreload) && globalObject->onLoadPlugins.testFile > 1
-                && std::ranges::any_of(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::hasBegunToLoad(globalObject, form) && JSC::AOT::wasLoadedAheadOfThisTestFile(globalObject, form); });
-            bool hasStaleEntry = std::ranges::count_if(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::hasBegunToLoad(globalObject, form) && (JSC::AOT::isHeldForImport(globalObject, form) || JSC::AOT::wasLoadedByImport(globalObject, form)); }) > 1;
+            // A mock that leaves the loaded module alone takes whatever it still finds under the key for stale. It finds nothing where it has set the module aside: under vi.doMock() what this test file has loaded stays the original.
+            // vi.mock() patches what a test file has loaded. The loader has fetched nothing for a compiled file, so who loaded it is asked of the forms.
+            bool leavesFormsAlone = leavesLoadedModuleAlone && (isDoMock || staysTheOriginal || std::ranges::any_of(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::didPreloadRegisterForm(globalObject, form); }));
+            bool setsAside = staysTheOriginal || (isDoMock && std::ranges::any_of(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::didThisTestFileFetchForm(globalObject, form); }));
+            bool hasStaleEntry = std::ranges::count_if(formsThatLoaderHolds, [&](JSC::AOT::ModuleID form) { return JSC::AOT::isHeldForImport(globalObject, form) || JSC::AOT::wasLoadedByImport(globalObject, form); }) > 1
+                || (leavesFormsAlone && !setsAside && !formsThatLoaderHolds.isEmpty());
+            // The other eviction is made for a mock that patches and has saved originals: with a mock before it, it inherits what that mock saved; with none, it saves what it finds.
+            mock->foundFormsUnderKey = !leavesFormsAlone && (previous ? previous->foundFormsUnderKey : !hasStaleEntry && !formsThatLoaderHolds.isEmpty());
+            // The key is booked, not a form: to the test file that last fetched any of them.
+            bool wasSomeFormLoadedAheadOfThisTestFile = mock->foundFormsUnderKey && !mock->isFromPreload && (!previous || previous->isFromPreload) && globalObject->onLoadPlugins.testFile > 1
+                && std::ranges::any_of(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::hasBegunToLoad(globalObject, form) && JSC::AOT::wasLoadedAheadOfThisTestFile(globalObject, form); })
+                && std::ranges::none_of(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::didThisTestFileFetchForm(globalObject, form); });
             if (wasSomeFormLoadedAheadOfThisTestFile || hasStaleEntry) {
                 forgetFailuresKeptByCompiledProgram(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
                 // That eviction takes the key out unless the mock patches what lies under it: whoever loads a form from here on is this test file.
                 if ((leavesLoadedModuleAlone && (isDoMock || staysTheOriginal)) || hasStaleEntry) {
-                    for (JSC::AOT::ModuleID form : forms)
+                    for (JSC::AOT::ModuleID form : forms) {
                         JSC::AOT::didLeaveLoaderInThisTestFile(globalObject, form);
+                        JSC::AOT::noteThatLayingTookFormOutOfLoader(globalObject, form);
+                    }
+                    // What a preload has registered and a test file's eviction takes out comes back at the end of the test file, under one type: see keepPreloadModule() and giveBackPreloadModules().
+                    if (!mock->isFromPreload && !formsThatLoaderHolds.isEmpty()
+                        && std::ranges::any_of(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::didPreloadRegisterForm(globalObject, form); })
+                        && std::ranges::none_of(forms, [&](JSC::AOT::ModuleID form) { return JSC::AOT::didThisTestFileFetchForm(globalObject, form); }))
+                        JSC::AOT::giveKeyBackAtEndOfTestFile(globalObject, formsThatLoaderHolds.first(), forms);
                 }
             }
         }
@@ -5551,7 +5711,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             RETURN_IF_EXCEPTION(scope, {});
             // The loader holds no compiled file, but it may hold what it made of the text of a file that imports one: code from disk, or a compiled file that was loaded a second time.
             // The pass also takes out whatever failed, so it is made only where `bun test` makes one of its own: an earlier test file or a preload has run the module.
-            if (!previous && (ranAheadOfThisTestFile || hasEntryThatFailedUnderPlain)) {
+            if (!previous && (ranAheadOfThisTestFile || hasEntryThatFailedUnderPlain || wasLinkedByFailedGraphOfEarlierTestFile)) {
                 ModulesToEvict evict;
                 evict.keepsFailuresOfCompiledProgram = true;
                 evict.onlyImportersFromEarlierTestFiles = true;
@@ -6385,6 +6545,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
                 mock->testFileOfFirstLoad = 0;
                 JSC::AOT::didEmptyKeyOfMockInPlace(globalObject, *compiled);
             }
+            // Nothing lies under it until somebody loads the file again: no mock of a later test file finds what an earlier one has loaded there.
+            // A mock saves nothing of a compiled file. What a preload ran, its mock has patched: under `bun test` that mock has saved originals and does not come here.
+            // Where somebody has asked for the preload's mock, `bun test` finds it under the key again in the next test file.
+            if (compiled && mock->state == JSModuleMock::State::NotCalled && JSC::AOT::whoLoaded(globalObject, *compiled) == JSC::AOT::LoadedBy::EarlierTestFile && !compiledFilesThatStayLoaded.contains(specifier))
+                JSC::AOT::noteThatEndOfTestFileEmptiedKey(globalObject, *compiled);
 #endif
             evict.modules.append(specifier);
             continue;
@@ -6514,9 +6679,17 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__letImportsHeldGetFilesThemselves
     auto& vm = JSC::getVM(globalObject);
     JSC::JSFunction* givesFileItself = nullptr;
     JSC::AOT::didFinishTestsOfFile(globalObject);
+    // `bun test` abandons the factories that still run there, a preload's too: a load that comes to stand behind one of them goes no further, and nobody waits for it. Not one whose mock the program has taken away: a later load gets the file.
+    for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
+        auto* mock = uncheckedDowncast<JSModuleMock>(running.mock.get());
+        String mocked = mock->specifier->tryGetValue().data;
+        if (auto file = isStillRegisteredModuleMock(globalObject, mocked, mock) ? Bun::compiledModuleForPath(mocked) : std::nullopt)
+            JSC::AOT::noteFactoryRunsOnWhereTestsAreDone(globalObject, *file);
+    }
     for (auto& waiting : globalObject->onLoadPlugins.compiledMocksToRun) {
         auto* mock = dynamicDowncast<JSModuleMock>(waiting.second.get());
-        if (!mock || mock->state != JSModuleMock::State::NotCalled || !JSC::AOT::isImportHeldThatAsksForMockOf(globalObject, JSC::AOT::ModuleID(waiting.first)))
+        // A mock of a preload is not undone where the tests of a file are done: its factory is called.
+        if (!mock || mock->isFromPreload || mock->state != JSModuleMock::State::NotCalled)
             continue;
         // The load in flight of a mock that is a file of a `__mocks__` folder has the name of that file already, and gets it.
         if (JSValue manualMock = mock->factory.get(); manualMock && manualMock.isString())
@@ -6525,6 +6698,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__letImportsHeldGetFilesThemselves
             givesFileItself = JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionModuleMockGivesFileItself, ImplementationVisibility::Private);
         mock->factory.set(vm, mock, givesFileItself);
         mock->givesFileItself = true;
+        JSC::AOT::noteMockGivesFileItself(globalObject, JSC::AOT::ModuleID(waiting.first));
     }
 #else
     UNUSED_PARAM(globalObject);
@@ -7349,6 +7523,21 @@ JSC::JSPromise* runModuleMock(Zig::GlobalObject* globalObject, JSC::JSObject* mo
         return settled;
     }
 
+#if ENABLE(AOT)
+    if (synchronous && vm.hasCompiledCode() && mock->state == Zig::JSModuleMock::State::NotCalled) {
+        auto& plugins = globalObject->onLoadPlugins;
+        auto file = Bun::compiledModuleForPath(mock->specifier->value(globalObject));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        bool comesToCallInFlight = file && plugins.newestCallsOfFactoriesOfCompiledMocks.containsIf([&](const auto& newest) {
+            return newest.first == file->index() && !((newest.second & Zig::markOfCallWhoseMockHasEnded) && !JSC::AOT::doesFetchInFlightOutliveMock(globalObject, *file)) && plugins.factoriesOfCompiledMocks.containsIf([&](const auto& earlier) { return earlier.call == (newest.second & ~Zig::markOfCallWhoseMockHasEnded) && earlier.patched->status() == JSC::JSPromise::Status::Pending; });
+        });
+        JSC::JSPromise* pending = mock->run(globalObject, synchronous);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (pending && comesToCallInFlight)
+            pending->performPromiseThen(vm, globalObject, JSC::jsUndefined(), JSC::jsUndefined(), JSC::JSPromise::create(vm, globalObject->promiseStructure()));
+        return pending;
+    }
+#endif
     RELEASE_AND_RETURN(scope, mock->run(globalObject, synchronous));
 }
 

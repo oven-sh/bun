@@ -7,5 +7,4 @@
 # an-edge-to-a-handler-that-takes-the-position-for-the-key-of-a-for-in-stops-the-build-by-name.ir is the same program under that lie.
 # OPTIONS: check=Validate
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: code f1:Body

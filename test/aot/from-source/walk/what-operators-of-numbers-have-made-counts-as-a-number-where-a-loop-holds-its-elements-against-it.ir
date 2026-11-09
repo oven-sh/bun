@@ -10,11 +10,9 @@
 # operands is a number by what makes it. (t & 3) + 0.5 is one: the list is asked for storage of numbers. (t & 3) + ".5" is none: nothing is asked.
 # f1 = bySum, f2 = byText
 # RUN(SUM): walk f1 mechanisms=all
-# REQUIRES(SUM): entries-of-bun
 # SUM: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
 # SUM: GetArrayElement {{*}}arrayStorage=Double
 # RUN(TEXT): walk f2 mechanisms=all
-# REQUIRES(TEXT): entries-of-bun
 # TEXT: GetArrayElement
 # TEXT-NOT: arrayStorage=Double
 

@@ -8,7 +8,6 @@
 # -- end of source
 # A row that is no list was asked for a Float64Array alone; rows that are Float32Arrays ran the stretch as written, five accesses by stubs. Behind the Float64Array the row is asked for each kind of view that is
 # seen to arrive at the read, and each kind has an arm of its own: the row's length is read once in it.
-# REQUIRES: entries-of-bun
 # RUN: walk f1 mechanisms=all
 # CHECK: = TypeTest {{*}} testedType=Float64Array
 # CHECK: = TypeTest {{*}} testedType=Float32Array

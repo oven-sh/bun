@@ -16,34 +16,6 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
-  "aot/a-require-made-for-another-folder-finds-there-a-file-written-after-a-test-run-was-built.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/a-require-made-for-another-folder-finds-there-a-package-left-outside-the-executable.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/engine/ir-alone-1.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/engine/ir-alone-2.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/engine/the-tests-that-run-as-users-build-were-run.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/the-late-failure-of-a-factory-is-reported-as-often-as-under-bun-test.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
-  "aot/the-validators-answer-alike-on-either-side-of-what-they-pass-at-once.test.ts": {
-    "default": 60000,
-    "asan": 240000
-  },
   "aot/a-birth-that-a-door-interrupts-is-finished-where-the-literal-ends.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -648,6 +620,10 @@
     "default": 19500,
     "asan": 78000
   },
+  "aot/a-read-that-a-loop-lays-in-front-of-itself-claims-nothing-of-its-variable.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/a-require-at-every-step-of-an-import-call-of-a-graph-left-to-the-loader.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -661,6 +637,14 @@
     "asan": 240000
   },
   "aot/a-require-made-for-a-folder-above-the-entry-point.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-require-made-for-another-folder-finds-there-a-file-written-after-a-test-run-was-built.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-require-made-for-another-folder-finds-there-a-package-left-outside-the-executable.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -759,6 +743,10 @@
   "aot/a-symbol-of-an-earlier-test-file-is-not-the-symbol-of-this-realm.test.ts": {
     "default": 8800,
     "asan": 35200
+  },
+  "aot/a-test-cannot-lay-symbol-has-instance-on-a-built-in-constructor.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/a-test-file-finds-what-it-imports-in-require-cache-though-none-of-it-has-anything-to-run.test.ts": {
     "default": 11200,
@@ -1448,6 +1436,14 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/engine/ir-alone-1.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/engine/ir-alone-2.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/engine/native-10.test.ts": {
     "default": 14500,
     "asan": 58000
@@ -1463,6 +1459,10 @@
   "aot/engine/native-9.test.ts": {
     "default": 11400,
     "asan": 45600
+  },
+  "aot/engine/the-tests-that-run-as-users-build-were-run.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/engine/what-a-todo-of-an-ir-test-stands-for.test.ts": {
     "default": 60000,
@@ -2300,6 +2300,10 @@
     "default": 91300,
     "asan": 365200
   },
+  "aot/reports-of-a-failure-behind-requires-that-gave-up.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/require-in-vm.test.ts": {
     "default": 28100,
     "asan": 112400
@@ -2688,6 +2692,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-build-has-to-read-a-name-that-a-test-adds-to-object-prototype.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-build-points-at-a-deletion-from-require-cache-only-where-the-key-may-name-a-file-of-the-program.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -2740,6 +2748,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-first-warning-of-an-executable-asks-no-replaced-basename.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-form-of-a-descriptor-is-planned-only-on-a-layout-that-the-definition-may-come-to.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -2759,6 +2771,10 @@
   "aot/the-global-object-that-goes-somewhere-opens-no-test-run.test.ts": {
     "default": 1600,
     "asan": 6400
+  },
+  "aot/the-late-failure-of-a-factory-is-reported-as-often-as-under-bun-test.test.ts": {
+    "default": 60000,
+    "asan": 240000
   },
   "aot/the-length-of-a-view-that-is-as-its-class-made-it-is-read-by-its-type.test.ts": {
     "default": 60000,
@@ -2888,6 +2904,10 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-texts-of-functions-out-of-order-stop-the-build-by-name.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-ticks-of-a-burst-are-let-go-as-they-run.test.ts": {
     "default": 60000,
     "asan": 240000
@@ -2896,11 +2916,23 @@
     "default": 60000,
     "asan": 240000
   },
+  "aot/the-types-of-a-file-do-not-depend-on-which-file-was-lowered-before-it.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-validators-answer-alike-on-either-side-of-what-they-pass-at-once.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/the-values-of-a-long-written-table-are-gathered-in-time-that-grows-with-its-length.test.ts": {
     "default": 60000,
     "asan": 240000
   },
   "aot/the-variables-of-a-file-that-may-run-again-hang-on-its-scope-in-a-heap-snapshot.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/the-variables-that-a-turn-of-a-loop-stores-first-are-found-in-time-that-grows-with-their-number.test.ts": {
     "default": 60000,
     "asan": 240000
   },
@@ -3033,6 +3065,10 @@
     "asan": 240000
   },
   "aot/what-a-function-that-calls-itself-wraps-lies-at-every-depth.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/what-a-loop-asks-of-a-variable-in-front-of-its-turns-decides-which-copy-runs.test.ts": {
     "default": 60000,
     "asan": 240000
   },

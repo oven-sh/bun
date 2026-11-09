@@ -31,12 +31,12 @@
 # sink(run(limits[0] | 0));
 # -- end of source
 # Twelve loops stand inside one another and each grows a text of its own, so each wants a second walk, for its text in a builder. A loop that has loops inside it tells the walk
-# around it what it wants, and that walk is walked again once: three walks a level; the innermost loop alone meets its wish at once: two walks more. Where every level met its wish at once, each level walked itself and all inside it again: 103 walks
+# around it what it wants, and that walk is walked again: once for the texts, and once more because every loop is then found to run no other code: four walks a level; the innermost loop alone meets its wish at once: two walks more. Where every level met its wish at once, each level walked itself and all inside it again: 103 walks
 # for these twelve, 40,600 for two hundred.
 # f1 = run
 # OPTIONS: check=Validate
 # RUN: compile WalksOfLoops
-# CHECK: statistic WalksOfLoops 38
+# CHECK: statistic WalksOfLoops 50
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 12
 # SHELL: exited with 0

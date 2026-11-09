@@ -50,12 +50,10 @@ second-mock one module+rejects+two.js.late 2 rejects names: loud | import threw 
 second-mock one module+rejects+two.js.late 3 two held: SILENT | late real,real,real top none
 plains-accident one module+rejects+two.js.late 3 two names: loud | import flag late flag threw No "nobodyExportsThis" export is defined threw No "toJSON" export is defined on the moc top none
 second-mock one module+rejects+two.js.late 3 two values: loud | import two3 require two3 late threw No "plain" export is defined on the mock top none
-body-awaits+ one one+rejects+single-over.js.required.awaits 1 body the body: SILENT | nothing
-body-awaits one one+rejects+single-over.js.required.awaits 2 rejects names: loud | nothing
-body-awaits one one+rejects+single-over.js.required.awaits 2 rejects values: loud | nothing
-body-awaits one one+rejects+single-over.js.required.awaits 3 single-over held: loud | nothing
-body-awaits one one+rejects+single-over.js.required.awaits 3 single-over names: loud | nothing
-body-awaits one one+rejects+single-over.js.required.awaits 3 single-over values: loud | nothing
+body-awaits+ one one+rejects+single-over.js.required.awaits 1 body the body: SILENT | runs behind 3 single-over
+body-awaits one one+rejects+single-over.js.required.awaits 2 rejects names: loud | import threw tardy boom 3 late threw require() async module "user-late.js" is top none
+body-awaits one one+rejects+single-over.js.required.awaits 2 rejects values: loud | import threw tardy boom 1 require threw require() async module "dep.js" is unsup late threw require() async module "user-late.js" is top none
+body-awaits one one+rejects+single-over.js.required.awaits 3 single-over held: loud | late threw Cannot access 'flag' before initializati top none
 late-rejection one one+rejects-over+one.cjs.late 3 one held: SILENT | late real,real,real top none
 late-rejection one one+rejects-over+one.js.late 3 one held: loud | late threw Cannot access 'flag' before initializati top none
 asks-for-the-original one one+throws-late+reset.js.late 3 reset held: loud | late threw Cannot access 'flag' before initializati top none
@@ -65,10 +63,8 @@ asks-for-the-original one original+actual+throws-late.cjs.late 2 body the body: 
 asks-for-the-original one original+actual+throws-late.cjs.required 2 body the body: SILENT | runs behind 3 throws-late
 asks-for-the-original one original+actual+throws-late.cjs.required 3 throws-late names: SILENT | import threw overdue boom 2 over real late default+flag+plain undefined {"default":{"flag":"real","plain":"real"},"flag":"real","plain":"real"} top none
 asks-for-the-original one original+actual+throws-late.cjs.required 3 throws-late values: SILENT | import threw overdue boom 1 over real require real late ,, top none
-asks-for-the-original one original+actual+throws-late.js.required 3 throws-late names: loud | import threw overdue boom 2 over real late threw Cannot access 'flag' before initializati top none
-asks-for-the-original one original+actual+throws-late.js.required 3 throws-late values: loud | import threw overdue boom 1 over real require real late threw Cannot access 'flag' before initializati top none
-body-awaits one original+actual+throws-late.js.required.awaits 3 throws-late names: loud | import threw overdue boom 2 over real late threw Cannot access 'flag' before initializati top none
-body-awaits one original+actual+throws-late.js.required.awaits 3 throws-late values: loud | import threw overdue boom 1 over real require real late threw Cannot access 'flag' before initializati top none
+asks-for-the-original one original+actual+throws-late.js.required 3 throws-late names: loud | import threw overdue boom 2 over real late threw require() async module "user-late.js" is top none
+body-awaits one original+actual+throws-late.js.required.awaits 3 throws-late names: loud | import threw overdue boom 2 over real late threw require() async module "user-late.js" is top none
 second-mock one over+module+throws.js.late 3 throws names: loud | import threw boom 4 late threw boom 5 top none
 plains-accident one over+throws+bare.cjs.late 3 bare names: SILENT | import default+flag+plain late default+flag+plain undefined {"flag":"real","plain":"real","default":{"flag":"real","plain":"real"}} top none
 plains-accident one over+throws+bare.cjs.late 3 bare values: SILENT | import real require real late real,real,real top none
@@ -137,6 +133,3 @@ second-mock one throws-over+one+throws-over.cjs.late 1 body the body: SILENT | n
 second-mock one throws-over+two+throws.cjs.late 1 body the body: SILENT | nothing
 second-mock one two+throws+throws.cjs.late 3 throws names: loud | import threw boom 8 late threw boom 7 top none
 second-mock one two+throws+throws.cjs.late 3 throws values: loud | import threw boom 5 require threw boom 6 late threw boom 7 top none
-body-throws+ one two+two+rejects.js.required.throws 1 body the body: SILENT | nothing
-body-throws one two+two+rejects.js.required.throws 3 rejects names: loud | nothing
-body-throws one two+two+rejects.js.required.throws 3 rejects values: loud | nothing

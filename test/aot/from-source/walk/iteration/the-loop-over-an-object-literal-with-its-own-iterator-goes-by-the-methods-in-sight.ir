@@ -8,7 +8,6 @@
 # sink(total(make(3)), total(make(4)));
 # -- end of source
 # RUN: walk f2:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # CHECK: frame 1 callee=f3
 # CHECK: frame 2 callee=f4

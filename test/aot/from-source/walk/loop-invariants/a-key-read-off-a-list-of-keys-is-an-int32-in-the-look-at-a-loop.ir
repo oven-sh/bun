@@ -32,12 +32,10 @@
 # read off a list of keys, is a whole number or undefined. The element of a list that is found with storage of int32s is an int32 or a hole in the typed copy: it counts as an int32 in the look,
 # be it read by index or handed out by the step of a for-of: the list under it is tested in front, and the access asks the key for a number.
 # RUN(STEPPED): walk f2 mechanisms=all
-# REQUIRES(STEPPED): entries-of-bun
 # STEPPED-COUNT-2: = HasArrayStorage {{*}}arrayStorage=Int32
 # STEPPED: = TypeTest {{*}}testedType=number
 # STEPPED: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
 # RUN(COUNTED): walk f3 mechanisms=all
-# REQUIRES(COUNTED): entries-of-bun
 # COUNTED-COUNT-2: = HasArrayStorage {{*}}arrayStorage=Int32
 # COUNTED: = IsElementPresent {{*}}arrayStorage=Int32
 # COUNTED: i32 @Int32 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds, isPresent]

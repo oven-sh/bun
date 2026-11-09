@@ -53,11 +53,13 @@ void didStartImportOfCompiledFile(Zig::GlobalObject*, const ScopedLambda<bool(JS
 bool layMocksOfBodiesAgain(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isReached);
 JSC::JSPromise* factoryOfCompiledMockThatWaits(Zig::GlobalObject*, const WTF::ScopedLambda<bool(JSC::AOT::ModuleID)>& isAskedAbout, JSC::AOT::FactoryAskedForBy, JSC::JSValue& state);
 uint64_t callOfFactoryOfCompiledMockThatHasNotSettled(Zig::GlobalObject*, JSC::AOT::ModuleID, bool& refusesEveryRequire);
+bool wroteFactoryOfCompiledMockThatHasNotSettled(Zig::GlobalObject*, JSC::AOT::ModuleID file, JSC::AOT::ModuleID mocked);
 bool isCompiledModulePatchedOnceFactorySettles(Zig::GlobalObject*, const WTF::String& path);
 uint32_t addToImportChainsOfCompiledFactories(Zig::GlobalObject*, JSC::AOT::ModuleID importer, JSC::AOT::ModuleID asked, JSC::AOT::LoadByName);
 JSC::JSPromise* turnOfCompiledMockThatLoaderFetches(Zig::GlobalObject*, uint32_t module, const String& key);
 void giveBackTurnOfCompiledMockUnlessItRuns(Zig::GlobalObject*, JSC::JSValue holder);
 bool isCalledFromFactoryOfCompiledMockThatWaits(Zig::GlobalObject*, JSC::AOT::ModuleID);
+bool isRequiredForSakeOfOwnFactoryOfCompiledMock(Zig::GlobalObject*, JSC::AOT::ModuleID required, JSC::AOT::ModuleID requirer);
 }
 #endif
 
@@ -1863,6 +1865,13 @@ static uint64_t callOfFactoryThatHasNotSettled(JSGlobalObject* globalObject, AOT
     BUN_END_REMOVABLE_ENTRY_POINT
 }
 
+static bool wroteFactoryThatHasNotSettled(JSGlobalObject* globalObject, AOT::ModuleID file, AOT::ModuleID mocked)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return Zig::wroteFactoryOfCompiledMockThatHasNotSettled(defaultGlobalObject(globalObject), file, mocked);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static bool isPatchedOnceFactorySettles(JSGlobalObject* globalObject, const String& path)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
@@ -2003,6 +2012,13 @@ static void callInLaterTurn(JSGlobalObject* globalObject)
     deliverTextInLaterTurn(context, false);
 }
 
+static bool isRequiredForSakeOfOwnFactory(JSGlobalObject* globalObject, AOT::ModuleID required, AOT::ModuleID requirer)
+{
+    BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
+    return Zig::isRequiredForSakeOfOwnFactoryOfCompiledMock(defaultGlobalObject(globalObject), required, requirer);
+    BUN_END_REMOVABLE_ENTRY_POINT
+}
+
 static bool isCalledFromFactoryThatWaits(JSGlobalObject* globalObject, AOT::ModuleID module)
 {
     BUN_BEGIN_REMOVABLE_ENTRY_POINT(Test, ReturnDefault, bool)
@@ -2073,9 +2089,11 @@ const AOT::ModuleHost compiledModuleHost = {
     &didForgetRunOfModuleObject,
     &isPatchedOnceFactorySettles,
     &willLoad,
+    &wroteFactoryThatHasNotSettled,
+    &isRequiredForSakeOfOwnFactory,
 };
 // A member missing from the initializer would be null, which tells the engine that the host does not support it.
-static_assert(sizeof(AOT::ModuleHost) == 50 * sizeof(void*));
+static_assert(sizeof(AOT::ModuleHost) == 52 * sizeof(void*));
 
 void recordRefusedLoad(JSGlobalObject*, const String& path);
 bool recordAddonLoadedFromDisk(JSGlobalObject*, const String& path);

@@ -9,7 +9,6 @@
 # -- end of source
 # The twin: ONE of the two names is laid by a descriptor; the other is still required, read and written nowhere: one such name is enough: no layout of the program can be a whole pair.
 # f1 = lengths
-# REQUIRES: entries-of-bun
 # RUN: print
 # CHECK: function f1 name="lengths" {{*}}parameters=[{type=anything 
 # RUN(RIGHT): run-in-shell mechanisms=all

@@ -18,6 +18,5 @@
 # block of the second, which the branch leads to, had no end: the build stopped.
 # f1 = count
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: = TypeTest {{*}}testedType=number
 # CHECK: = IntegerBound

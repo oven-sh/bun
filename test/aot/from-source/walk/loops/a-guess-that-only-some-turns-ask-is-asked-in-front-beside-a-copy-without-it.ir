@@ -5,5 +5,4 @@
 # `get(i)` stands behind `i < size &&`: not every turn asks whether `modules` is a list. The closure is copied into the loop only while the turn is walked, so no look in front of the loop sees its reads. The guess is asked in front of the typed copy all the same: where it fails, the loop goes on in ONE more typed copy, which is walked without such guesses, not in the closed copy.
 # The inner loop has three heads: the copy with the guesses in front, the copy beside it, the closed copy; with the two of the loop around that is five.
 # RUN(HEADS): walk f2 mechanisms=all
-# REQUIRES(HEADS): entries-of-bun
 # HEADS-COUNT-5: isLoopHead=true

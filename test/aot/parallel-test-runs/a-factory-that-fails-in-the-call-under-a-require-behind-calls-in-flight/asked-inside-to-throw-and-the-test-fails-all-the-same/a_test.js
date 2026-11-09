@@ -12,7 +12,6 @@ test("a", async () => {
   vi.doMock("./wick.mjs", async () => { throw new RangeError("the third fails at once"); });
   expect(() => require("./spark.mjs")).toThrow();
   console.log("all three threw");
-  console.log("all three threw");
   await turns(5);
   console.log("the end");
 });

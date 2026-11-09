@@ -10,7 +10,6 @@
 # console.log(one.read() + " " + two.read());
 # -- end of source
 # RUN: plan layouts mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: Environment size=32
 # CHECK-NEXT: slot 0 {{*}}JSValue Inline offset=8
 # CHECK-NEXT: slot 1 {{*}}OptionalDouble Inline offset=16

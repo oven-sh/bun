@@ -2,7 +2,7 @@
 // Attribution: derived from Node.js, MIT licensed (Node.js contributors).
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
-var __node_module__ = { exports: {} };
+var __node_module__ = { exports: {} as Exports };
 
 const {
   ArrayFrom,
@@ -32,7 +32,6 @@ const {
   StringPrototypeSlice,
   StringPrototypeSplit,
   StringPrototypeStartsWith,
-  Symbol,
   SymbolAsyncIterator,
   SymbolDispose,
 } = primordials;
@@ -53,14 +52,14 @@ const { getStringWidth, stripVTControlCharacters } = nodeInspect;
 const EventEmitter = require("node:events");
 const { addAbortListener } = require("internal/abort_listener");
 const { charLengthAt, charLengthLeft, commonPrefix, kSubstringSearch } = require("internal/readline/utils");
-let emitKeypressEvents;
-let kFirstEventParam;
+let emitKeypressEvents: $BunModules["internal/readline/emitKeypressEvents"] | undefined;
+let kFirstEventParam: symbol | undefined;
 const { clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 
 const { StringDecoder } = require("node:string_decoder");
 // Keep history.js lazy so a bare require("node:readline") for cursorTo/clearLine
 // stays cheap. Constructing an Interface always calls setupHistoryManager.
-let ReplHistory;
+let ReplHistory: $BunModules["internal/repl/history"]["ReplHistory"] | undefined;
 
 const kMaxUndoRedoStackSize = 2048;
 const kMincrlfDelay = 100;
@@ -144,7 +143,80 @@ const kMultilineMove = Symbol("_multilineMove");
 const kPreviousPrevRows = Symbol("_previousPrevRows");
 const kAddNewLineOnTTY = Symbol("_addNewLineOnTTY");
 
-function InterfaceConstructor(input, output, completer, terminal) {
+declare global {
+  namespace $Node {
+    type ReadlineCompleterResult = [completions: string[], completeOn: string];
+    /** What `node:readline` (not `node:readline/promises`) stores: its `_tabComplete` calls it. */
+    type ReadlineCallbackCompleter = (
+      line: string,
+      callback: (err: unknown, result?: ReadlineCompleterResult) => void,
+    ) => void;
+    type ReadlineCompleter =
+      | ((line: string) => ReadlineCompleterResult | Promise<ReadlineCompleterResult>)
+      | ReadlineCallbackCompleter;
+
+    interface ReadlineHistoryOptions {
+      size?: number;
+      history?: string[];
+      removeHistoryDuplicates?: boolean;
+      filePath?: string;
+      /** `context`: the interface that owns the history. */
+      onHistoryFileLoaded?(err: Error | null, context: object): void;
+    }
+
+    interface ReadlineInput extends Readable, ReadlineHistoryOptions {
+      input?: undefined;
+      isRaw?: boolean;
+      setRawMode?(mode: boolean): unknown;
+    }
+
+    interface ReadlineOutput extends Writable {
+      columns?: number;
+      isTTY?: boolean;
+    }
+
+    interface ReadlineOptions {
+      input: ReadlineInput;
+      output?: ReadlineOutput | null;
+      completer?: ReadlineCompleter;
+      terminal?: boolean;
+      signal?: AbortSignal;
+      historySize?: number;
+      history?: string[];
+      removeHistoryDuplicates?: boolean;
+      tabSize?: number;
+      prompt?: string;
+      escapeCodeTimeout?: number;
+      crlfDelay?: number;
+    }
+  }
+}
+
+type CompleterResult = $Node.ReadlineCompleterResult;
+type Completer = $Node.ReadlineCompleter;
+type HistoryOptions = $Node.ReadlineHistoryOptions;
+type InputStream = $Node.ReadlineInput;
+type OutputStream = $Node.ReadlineOutput;
+type InterfaceOptions = $Node.ReadlineOptions;
+type KeyLike = Partial<$Node.ReadlineKey>;
+
+interface Position {
+  cols: number;
+  rows: number;
+}
+
+interface Edit {
+  text: string;
+  cursor: number;
+}
+
+function InterfaceConstructor(
+  this: Interface,
+  input: InputStream | InterfaceOptions,
+  output?: OutputStream | null,
+  completer?: Completer,
+  terminal?: boolean,
+) {
   this[kSawReturnAt] = 0;
   // upstream-todo(BridgeAR): Document this property. The name is not ideal, so we
   // might want to expose an alias and document that instead.
@@ -156,9 +228,9 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   FunctionPrototypeCall(EventEmitter, this);
 
-  let crlfDelay;
+  let crlfDelay: number | undefined;
   let prompt = "> ";
-  let signal;
+  let signal: AbortSignal | undefined;
 
   if (input?.input) {
     // An options object was given
@@ -237,11 +309,11 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   this.terminal = !!terminal;
 
-  function onerror(err) {
+  function onerror(err: unknown) {
     self.emit("error", err);
   }
 
-  function ondata(data) {
+  function ondata(data: string | Uint8Array) {
     self[kNormalWrite](data);
   }
 
@@ -259,14 +331,14 @@ function InterfaceConstructor(input, output, completer, terminal) {
     self.close();
   }
 
-  function onkeypress(s, key) {
+  function onkeypress(s: string | undefined, key: KeyLike | undefined) {
     self[kTtyWrite](s, key);
     if (key?.sequence) {
       // If the key.sequence is half of a surrogate pair
       // (>= 0xd800 and <= 0xdfff), refresh the line so
       // the character is displayed appropriately.
       const ch = StringPrototypeCodePointAt(key.sequence, 0);
-      if (ch >= 0xd800 && ch <= 0xdfff) self[kRefreshLine]();
+      if (ch! >= 0xd800 && ch! <= 0xdfff) self[kRefreshLine]();
     }
   }
 
@@ -280,9 +352,9 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   if (!this.terminal) {
     function onSelfCloseWithoutTerminal() {
-      input.removeListener("data", ondata);
-      input.removeListener("error", onerror);
-      input.removeListener("end", onend);
+      (input as InputStream).removeListener("data", ondata);
+      (input as InputStream).removeListener("error", onerror);
+      (input as InputStream).removeListener("end", onend);
     }
 
     input.on("data", ondata);
@@ -291,9 +363,9 @@ function InterfaceConstructor(input, output, completer, terminal) {
     this[kDecoder] = new StringDecoder("utf8");
   } else {
     function onSelfCloseWithTerminal() {
-      input.removeListener("keypress", onkeypress);
-      input.removeListener("error", onerror);
-      input.removeListener("end", ontermend);
+      (input as InputStream).removeListener("keypress", onkeypress);
+      (input as InputStream).removeListener("error", onerror);
+      (input as InputStream).removeListener("end", ontermend);
       if (output !== null && output !== undefined) {
         output.removeListener("resize", onresize);
       }
@@ -335,7 +407,53 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
 $toClass(InterfaceConstructor, "InterfaceConstructor", EventEmitter);
 
-class Interface extends InterfaceConstructor {
+class Interface extends (InterfaceConstructor as unknown as new (
+  input: InputStream | InterfaceOptions,
+  output?: OutputStream | null,
+  completer?: Completer,
+  terminal?: boolean,
+) => $Node.EventEmitter) {
+  declare isCompletionEnabled: boolean;
+  declare escapeCodeTimeout: number;
+  declare tabSize: number;
+  declare line: string;
+  declare cursor: number;
+  declare input: InputStream;
+  declare output: OutputStream | null | undefined;
+  declare crlfDelay: number;
+  declare completer: Completer | undefined;
+  declare terminal: boolean;
+  declare paused: boolean | undefined;
+  declare closed: boolean | undefined;
+  declare prevRows: number | undefined;
+  declare historyManager: InstanceType<NonNullable<typeof ReplHistory>>;
+  declare history: string[];
+  declare historyIndex: number;
+  declare readonly historySize: number;
+  declare readonly isFlushing: boolean;
+  declare [kSawReturnAt]: number;
+  declare [kSawKeyPress]: boolean;
+  declare [kPreviousKey]: KeyLike | null;
+  declare [kIsMultiline]: boolean;
+  declare [kSubstringSearch]: string | null;
+  declare [kUndoStack]: Edit[];
+  declare [kRedoStack]: Edit[];
+  declare [kPreviousCursorCols]: number;
+  declare [kKillRing]: string[];
+  declare [kKillRingCursor]: number;
+  declare [kYanking]: boolean | undefined;
+  declare [kLineObjectStream]: ReturnType<typeof EventEmitter.on> | undefined;
+  declare [kDecoder]: import("node:string_decoder").StringDecoder;
+  declare [kPrompt]: string;
+  declare [kOldPrompt]: string;
+  declare [kLine_buffer]: string | null | undefined;
+  declare [kQuestionCallback]: ((answer: string) => void) | null | undefined;
+  declare [kQuestionReject]: ((reason: unknown) => void) | null | undefined;
+  declare [kLastCommandErrored]: boolean | undefined;
+  declare [kPreviousLine]: string;
+  declare [kPreviousCursor]: number;
+  declare [kPreviousPrevRows]: number | undefined;
+
   get columns() {
     if (this.output?.columns) return this.output.columns;
     return Infinity;
@@ -346,7 +464,7 @@ class Interface extends InterfaceConstructor {
    * @param {string} prompt
    * @returns {void}
    */
-  setPrompt(prompt) {
+  setPrompt(prompt: string) {
     this[kPrompt] = prompt;
   }
 
@@ -358,7 +476,7 @@ class Interface extends InterfaceConstructor {
     return this[kPrompt];
   }
 
-  setupHistoryManager(options) {
+  setupHistoryManager(options: HistoryOptions) {
     ReplHistory ??= require("internal/repl/history").ReplHistory;
     this.historyManager = new ReplHistory(this, options);
 
@@ -370,10 +488,10 @@ class Interface extends InterfaceConstructor {
       __proto__: null,
       configurable: true,
       enumerable: true,
-      get() {
+      get(this: Interface) {
         return this.historyManager.history;
       },
-      set(newHistory) {
+      set(this: Interface, newHistory: string[]) {
         return (this.historyManager.history = newHistory);
       },
     });
@@ -382,10 +500,10 @@ class Interface extends InterfaceConstructor {
       __proto__: null,
       configurable: true,
       enumerable: true,
-      get() {
+      get(this: Interface) {
         return this.historyManager.index;
       },
-      set(historyIndex) {
+      set(this: Interface, historyIndex: number) {
         return (this.historyManager.index = historyIndex);
       },
     });
@@ -394,7 +512,7 @@ class Interface extends InterfaceConstructor {
       __proto__: null,
       configurable: true,
       enumerable: true,
-      get() {
+      get(this: Interface) {
         return this.historyManager.size;
       },
     });
@@ -403,13 +521,13 @@ class Interface extends InterfaceConstructor {
       __proto__: null,
       configurable: true,
       enumerable: true,
-      get() {
+      get(this: Interface) {
         return this.historyManager.isFlushing;
       },
     });
   }
 
-  [kSetRawMode](mode) {
+  [kSetRawMode](mode: boolean) {
     const wasInRawMode = this.input.isRaw;
 
     if (typeof this.input.setRawMode === "function") {
@@ -424,7 +542,7 @@ class Interface extends InterfaceConstructor {
    * @param {boolean} [preserveCursor]
    * @returns {void}
    */
-  prompt(preserveCursor) {
+  prompt(preserveCursor?: boolean) {
     if (this.paused) this.resume();
     if (this.terminal && process.env.TERM !== "dumb") {
       if (!preserveCursor) this.cursor = 0;
@@ -434,7 +552,7 @@ class Interface extends InterfaceConstructor {
     }
   }
 
-  [kQuestion](query, cb) {
+  [kQuestion](query: string, cb: (answer: string) => void) {
     if (this.closed) {
       throw new ERR_USE_AFTER_CLOSE("readline");
     }
@@ -453,7 +571,7 @@ class Interface extends InterfaceConstructor {
     this[kIsMultiline] = StringPrototypeIncludes(line, "\n");
   }
 
-  [kOnLine](line) {
+  [kOnLine](line: string) {
     if (this[kQuestionCallback]) {
       const cb = this[kQuestionCallback];
       this[kQuestionCallback] = null;
@@ -464,7 +582,7 @@ class Interface extends InterfaceConstructor {
     }
   }
 
-  [kBeforeEdit](oldText, oldCursor) {
+  [kBeforeEdit](oldText: string, oldCursor: number) {
     this[kPushToUndoStack](oldText, oldCursor);
   }
 
@@ -476,7 +594,7 @@ class Interface extends InterfaceConstructor {
     }
   }
 
-  [kWriteToOutput](stringToWrite) {
+  [kWriteToOutput](stringToWrite: string) {
     validateString(stringToWrite, "stringToWrite");
 
     if (this.output !== null && this.output !== undefined) {
@@ -484,7 +602,7 @@ class Interface extends InterfaceConstructor {
     }
   }
 
-  [kAddHistory]() {
+  [kAddHistory](): string {
     return this.historyManager.addHistory(this[kIsMultiline], this[kLastCommandErrored]);
   }
 
@@ -516,7 +634,7 @@ class Interface extends InterfaceConstructor {
 
       // For continuation lines, add the "|" prefix
       for (let i = 1; i < lines.length; i++) {
-        this[kWriteToOutput](`\n${kMultilinePrompt.description}` + lines[i]);
+        this[kWriteToOutput](`\n${kMultilinePrompt.description!}` + lines[i]);
       }
     } else {
       // Write the prompt and the current buffer content.
@@ -595,23 +713,23 @@ class Interface extends InterfaceConstructor {
    *   }} [key]
    * @returns {void}
    */
-  write(d, key) {
+  write(d: string | Uint8Array | null | undefined, key?: KeyLike) {
     if (this.closed) {
       throw new ERR_USE_AFTER_CLOSE("readline");
     }
     if (this.paused) this.resume();
     if (this.terminal) {
-      this[kTtyWrite](d, key);
+      this[kTtyWrite](d as string | null | undefined, key);
     } else {
       this[kNormalWrite](d);
     }
   }
 
-  [kNormalWrite](b) {
+  [kNormalWrite](b: string | Uint8Array | null | undefined) {
     if (b === undefined) {
       return;
     }
-    let string = this[kDecoder].write(b);
+    let string = this[kDecoder].write(b!);
     if (this[kSawReturnAt] && DateNow() - this[kSawReturnAt] <= this.crlfDelay) {
       if (StringPrototypeCodePointAt(string) === 10) string = StringPrototypeSlice(string, 1);
       this[kSawReturnAt] = 0;
@@ -628,8 +746,8 @@ class Interface extends InterfaceConstructor {
       }
       this[kSawReturnAt] = StringPrototypeEndsWith(string, "\r") ? DateNow() : 0;
 
-      const indexes = [0, newPartContainsEnding.index, lineEnding.lastIndex];
-      let nextMatch;
+      const indexes = [0, newPartContainsEnding!.index, lineEnding.lastIndex];
+      let nextMatch: RegExpExecArray | null;
       while ((nextMatch = RegExpPrototypeExec(lineEnding, string)) !== null) {
         ArrayPrototypePush(indexes, nextMatch.index, lineEnding.lastIndex);
       }
@@ -649,7 +767,7 @@ class Interface extends InterfaceConstructor {
     }
   }
 
-  [kInsertString](c) {
+  [kInsertString](c: string) {
     this[kBeforeEdit](this.line, this.cursor);
     if (!this.isCompletionEnabled) {
       if (this.cursor < this.line.length) {
@@ -683,12 +801,12 @@ class Interface extends InterfaceConstructor {
     }
   }
 
-  async [kTabComplete](lastKeypressWasTab) {
+  async [kTabComplete](lastKeypressWasTab: boolean | null | undefined) {
     this.pause();
     const string = StringPrototypeSlice(this.line, 0, this.cursor);
-    let value;
+    let value: CompleterResult;
     try {
-      value = await this.completer(string);
+      value = await (this.completer as (line: string) => CompleterResult | Promise<CompleterResult>)(string);
     } catch (err) {
       this[kWriteToOutput](`Tab completion error: ${nodeInspect.inspect(err)}`);
       return;
@@ -698,7 +816,7 @@ class Interface extends InterfaceConstructor {
     this[kTabCompleter](lastKeypressWasTab, value);
   }
 
-  [kTabCompleter](lastKeypressWasTab, { 0: completions, 1: completeOn }) {
+  [kTabCompleter](lastKeypressWasTab: boolean | null | undefined, { 0: completions, 1: completeOn }: CompleterResult) {
     // Result and the text that was completed.
 
     if (!completions || completions.length === 0) {
@@ -768,7 +886,7 @@ class Interface extends InterfaceConstructor {
       const leading = StringPrototypeSlice(this.line, 0, this.cursor);
       const reversed = ArrayPrototypeJoin(ArrayPrototypeReverse(ArrayFrom(leading)), "");
       const match = RegExpPrototypeExec(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
-      this[kMoveCursor](-match[0].length);
+      this[kMoveCursor](-match![0].length);
     }
   }
 
@@ -776,7 +894,7 @@ class Interface extends InterfaceConstructor {
     if (this.cursor < this.line.length) {
       const trailing = StringPrototypeSlice(this.line, this.cursor);
       const match = RegExpPrototypeExec(/^(?:\s+|[^\w\s]+|\w+)\s*/, trailing);
-      this[kMoveCursor](match[0].length);
+      this[kMoveCursor](match![0].length);
     }
   }
 
@@ -814,7 +932,7 @@ class Interface extends InterfaceConstructor {
       let leading = StringPrototypeSlice(this.line, 0, this.cursor);
       const reversed = ArrayPrototypeJoin(ArrayPrototypeReverse(ArrayFrom(leading)), "");
       const match = RegExpPrototypeExec(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
-      leading = StringPrototypeSlice(leading, 0, leading.length - match[0].length);
+      leading = StringPrototypeSlice(leading, 0, leading.length - match![0].length);
       this.line = leading + StringPrototypeSlice(this.line, this.cursor, this.line.length);
       this.cursor = leading.length;
       this[kRefreshLine]();
@@ -826,7 +944,7 @@ class Interface extends InterfaceConstructor {
       this[kBeforeEdit](this.line, this.cursor);
       const trailing = StringPrototypeSlice(this.line, this.cursor);
       const match = RegExpPrototypeExec(/^(?:\s+|\W+|\w+)\s*/, trailing);
-      this.line = StringPrototypeSlice(this.line, 0, this.cursor) + StringPrototypeSlice(trailing, match[0].length);
+      this.line = StringPrototypeSlice(this.line, 0, this.cursor) + StringPrototypeSlice(trailing, match![0].length);
       this[kRefreshLine]();
     }
   }
@@ -848,7 +966,7 @@ class Interface extends InterfaceConstructor {
     this[kRefreshLine]();
   }
 
-  [kPushToKillRing](del) {
+  [kPushToKillRing](del: string) {
     if (!del || del === this[kKillRing][0]) return;
     ArrayPrototypeUnshift(this[kKillRing], del);
     this[kKillRingCursor] = 0;
@@ -935,7 +1053,7 @@ class Interface extends InterfaceConstructor {
     this.cursor += 1;
 
     const hasContentAfterCursor = afterCursor.length > 0;
-    const cursorIsNotOnFirstLine = this.prevRows > 0;
+    const cursorIsNotOnFirstLine = this.prevRows! > 0;
     let needsRewriteFirstLine = false;
 
     // Handle cursor positioning based on different scenarios
@@ -955,7 +1073,7 @@ class Interface extends InterfaceConstructor {
         const dy = splitEnd.length + 1;
 
         // Calculate how many Xs we need to move on the right to get to the end of the line
-        const dxEndOfLineAbove = (splitBeg[splitBeg.length - 2] || "").length + kMultilinePrompt.description.length;
+        const dxEndOfLineAbove = (splitBeg[splitBeg.length - 2] || "").length + kMultilinePrompt.description!.length;
         moveCursor(this.output, dxEndOfLineAbove, -dy);
 
         // This is the line that was split in the middle
@@ -976,9 +1094,9 @@ class Interface extends InterfaceConstructor {
     }
 
     if (needsRewriteFirstLine) {
-      this[kWriteToOutput](`${this[kPrompt]}${beforeCursor}\n${kMultilinePrompt.description}`);
+      this[kWriteToOutput](`${this[kPrompt]}${beforeCursor}\n${kMultilinePrompt.description!}`);
     } else {
-      this[kWriteToOutput](kMultilinePrompt.description);
+      this[kWriteToOutput](kMultilinePrompt.description!);
     }
 
     // Write the rest and restore the cursor to where the user left it
@@ -987,7 +1105,7 @@ class Interface extends InterfaceConstructor {
       const oldCursor = this.getCursorPos();
 
       // Write everything after the cursor which has been deleted by clearScreenDown
-      const formattedEndContent = StringPrototypeReplaceAll(afterCursor, "\n", `\n${kMultilinePrompt.description}`);
+      const formattedEndContent = StringPrototypeReplaceAll(afterCursor, "\n", `\n${kMultilinePrompt.description!}`);
 
       this[kWriteToOutput](formattedEndContent);
 
@@ -1006,7 +1124,7 @@ class Interface extends InterfaceConstructor {
     }
   }
 
-  [kPushToUndoStack](text, cursor) {
+  [kPushToUndoStack](text: string, cursor: number) {
     if (ArrayPrototypePush(this[kUndoStack], { text, cursor }) > kMaxUndoRedoStackSize) {
       ArrayPrototypeShift(this[kUndoStack]);
     }
@@ -1017,7 +1135,7 @@ class Interface extends InterfaceConstructor {
 
     ArrayPrototypePush(this[kRedoStack], { text: this.line, cursor: this.cursor });
 
-    const entry = ArrayPrototypePop(this[kUndoStack]);
+    const entry = ArrayPrototypePop(this[kUndoStack])!;
     this[kSetLine](entry.text);
     this.cursor = entry.cursor;
 
@@ -1029,19 +1147,19 @@ class Interface extends InterfaceConstructor {
 
     ArrayPrototypePush(this[kUndoStack], { text: this.line, cursor: this.cursor });
 
-    const entry = ArrayPrototypePop(this[kRedoStack]);
+    const entry = ArrayPrototypePop(this[kRedoStack])!;
     this[kSetLine](entry.text);
     this.cursor = entry.cursor;
 
     this[kRefreshLine]();
   }
 
-  [kMultilineMove](direction, splitLines, { rows, cols }) {
+  [kMultilineMove](direction: number, splitLines: string[], { rows, cols }: Position) {
     const curr = splitLines[rows];
     const down = direction === 1;
     const adj = splitLines[rows + direction];
-    const promptLen = kMultilinePrompt.description.length;
-    let amountToMove;
+    const promptLen = kMultilinePrompt.description!.length;
+    let amountToMove: number;
     // Clamp distance to end of current + prompt + next/prev line + newline
     const clamp = down ? curr.length - cols + promptLen + adj.length + 1 : -cols + 1;
     const shouldClamp = cols > adj.length + 1;
@@ -1094,7 +1212,7 @@ class Interface extends InterfaceConstructor {
     }
 
     this[kBeforeEdit](this.line, this.cursor);
-    this[kSetLine](this.historyManager.navigateToNext(this[kSubstringSearch]));
+    this[kSetLine](this.historyManager.navigateToNext(this[kSubstringSearch])!);
     this.cursor = this.line.length; // Set cursor to end of line.
     this[kRefreshLine]();
   }
@@ -1116,13 +1234,13 @@ class Interface extends InterfaceConstructor {
     }
 
     this[kBeforeEdit](this.line, this.cursor);
-    this[kSetLine](this.historyManager.navigateToPrevious(this[kSubstringSearch]));
+    this[kSetLine](this.historyManager.navigateToPrevious(this[kSubstringSearch])!);
     this.cursor = this.line.length; // Set cursor to end of line.
     this[kRefreshLine]();
   }
 
   // Returns the last character's display position of the given string
-  [kGetDisplayPos](str) {
+  [kGetDisplayPos](str: string): Position {
     let offset = 0;
     const col = this.columns;
     let rows = 0;
@@ -1133,7 +1251,7 @@ class Interface extends InterfaceConstructor {
         // Rows must be incremented by 1 even if offset = 0 or col = +Infinity.
         rows += MathCeil(offset / col) || 1;
         // Only add prefix offset for continuation lines in user input (not prompts)
-        offset = this[kIsMultiline] ? kMultilinePrompt.description.length : 0;
+        offset = this[kIsMultiline] ? kMultilinePrompt.description!.length : 0;
         continue;
       }
       // Tabs must be aligned by an offset of the tab size.
@@ -1175,7 +1293,7 @@ class Interface extends InterfaceConstructor {
 
   // This function moves cursor dx places to the right
   // (-dx for left) and refreshes the line if it is needed.
-  [kMoveCursor](dx) {
+  [kMoveCursor](dx: number) {
     if (dx === 0) {
       return;
     }
@@ -1201,9 +1319,9 @@ class Interface extends InterfaceConstructor {
   }
 
   // Handle a write from the tty
-  [kTtyWrite](s, key) {
+  [kTtyWrite](s: string | null | undefined, key?: KeyLike) {
     const previousKey = this[kPreviousKey];
-    key ||= kEmptyObject;
+    key ||= kEmptyObject as KeyLike;
     this[kPreviousKey] = key;
     let shouldResetPreviousCursorCols = true;
 
@@ -1450,6 +1568,7 @@ class Interface extends InterfaceConstructor {
           this[kMoveDownOrHistoryNext]();
           break;
 
+        // @ts-expect-error falls through
         case "tab":
           // If tab completion enabled, do that...
           if (typeof this.completer === "function" && this.isCompletionEnabled) {
@@ -1462,7 +1581,7 @@ class Interface extends InterfaceConstructor {
           if (typeof s === "string" && s) {
             // Erase state of previous searches.
             lineEnding.lastIndex = 0;
-            let nextMatch;
+            let nextMatch: RegExpExecArray | null;
             // Keep track of the end of the last match.
             let lastIndex = 0;
             while ((nextMatch = RegExpPrototypeExec(lineEnding, s)) !== null) {
@@ -1501,12 +1620,56 @@ class Interface extends InterfaceConstructor {
   }
 }
 Interface.prototype[SymbolDispose] = ObjectDefineProperty(
-  function () {
+  function (this: Interface) {
     this.close();
   },
   "name",
   { __proto__: null, configurable: true, value: "[Symbol.dispose]" },
 );
+
+interface Exports {
+  Interface: typeof Interface;
+  InterfaceConstructor: typeof InterfaceConstructor;
+  kAddHistory: typeof kAddHistory;
+  kDecoder: typeof kDecoder;
+  kDeleteLeft: typeof kDeleteLeft;
+  kDeleteLineLeft: typeof kDeleteLineLeft;
+  kDeleteLineRight: typeof kDeleteLineRight;
+  kDeleteRight: typeof kDeleteRight;
+  kDeleteWordLeft: typeof kDeleteWordLeft;
+  kDeleteWordRight: typeof kDeleteWordRight;
+  kGetDisplayPos: typeof kGetDisplayPos;
+  kHistoryNext: typeof kHistoryNext;
+  kHistoryPrev: typeof kHistoryPrev;
+  kInsertString: typeof kInsertString;
+  kIsMultiline: typeof kIsMultiline;
+  kLine: typeof kLine;
+  kLine_buffer: typeof kLine_buffer;
+  kMoveCursor: typeof kMoveCursor;
+  kNormalWrite: typeof kNormalWrite;
+  kOldPrompt: typeof kOldPrompt;
+  kOnLine: typeof kOnLine;
+  kSetLine: typeof kSetLine;
+  kPreviousKey: typeof kPreviousKey;
+  kPrompt: typeof kPrompt;
+  kQuestion: typeof kQuestion;
+  kQuestionCallback: typeof kQuestionCallback;
+  kQuestionCancel: typeof kQuestionCancel;
+  kQuestionReject: typeof kQuestionReject;
+  kRefreshLine: typeof kRefreshLine;
+  kSawKeyPress: typeof kSawKeyPress;
+  kSawReturnAt: typeof kSawReturnAt;
+  kSetRawMode: typeof kSetRawMode;
+  kTabComplete: typeof kTabComplete;
+  kTabCompleter: typeof kTabCompleter;
+  kTtyWrite: typeof kTtyWrite;
+  kWordLeft: typeof kWordLeft;
+  kWordRight: typeof kWordRight;
+  kWriteToOutput: typeof kWriteToOutput;
+  kMultilinePrompt: typeof kMultilinePrompt;
+  kAddNewLineOnTTY: typeof kAddNewLineOnTTY;
+  kLastCommandErrored: typeof kLastCommandErrored;
+}
 
 __node_module__.exports = {
   Interface,

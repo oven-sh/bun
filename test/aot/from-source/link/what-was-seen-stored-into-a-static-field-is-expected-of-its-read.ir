@@ -8,14 +8,11 @@
 # Whoever holds the class object can store into a static field, so Link proves nothing of the field's variable: it counts as shared with code that nobody has read. What was seen to be stored is a number.
 # The reading that says what is expected says so, and the walk asks it at the read: one test for a number, and the sum is a sum of numbers.
 # RUN: link variables held mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: variable g3 proven=i32
 # The proving reading says what it said: nothing.
 # RUN(PROVEN): link variables mechanisms=all
-# REQUIRES(PROVEN): entries-of-bun
 # PROVEN-NOT: variable g3 proven=
 # RUN(WALK): walk f1 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK: GetStaticFieldOrAbsent {{*}} variable=g3
 # WALK: TypeTest {{*}} testedType=i32
 # WALK: Add {{*}} form=Numbers

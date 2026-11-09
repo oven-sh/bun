@@ -172,6 +172,7 @@ pub(crate) struct LoadHost<'a> {
     other_products: Vec<Vec<u8>>,
     files_left_out_by_patterns: Guarded<FxHashSet<FileLeftOutByPattern>>,
     guesses_left_out: Guarded<Option<Option<Vec<u8>>>>,
+    resolves_whose_folders_bring_nothing: Guarded<FxHashSet<ResolveWhoseFoldersBringNothing>>,
     found_entry_point_paths: Guarded<Vec<Vec<u8>>>,
     has_found_entry_points: AtomicBool,
     may_store_path_of_main_module: AtomicBool,
@@ -283,6 +284,14 @@ fn is_javascript_too(typescript_options: &CompileParseOptions<'_>, text: &[u8]) 
         && diagnostics.all(|it| it.class != hir::DiagnosticClass::EarlyError)
 }
 
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct ResolveWhoseFoldersBringNothing {
+    pub(crate) file: Vec<u8>,
+    pub(crate) written_at: ExprId,
+    pub(crate) found_by_search_that_goes_on_above: Vec<u8>,
+    pub(crate) is_found_in_listed_folders_alone: bool,
+}
+
 impl<'a> LoadHost<'a> {
     pub(crate) fn begin_at_text(&self, url: &[u8], levels: Option<usize>) -> Option<Vec<u8>> {
         let text = EntryText {
@@ -380,6 +389,7 @@ impl<'a> LoadHost<'a> {
                 .collect(),
             files_left_out_by_patterns: Guarded::new(FxHashSet::default()),
             guesses_left_out: Guarded::new(None),
+            resolves_whose_folders_bring_nothing: Guarded::new(FxHashSet::default()),
             found_entry_point_paths: Guarded::new(Vec::new()),
             has_found_entry_points: AtomicBool::new(false),
             may_store_path_of_main_module: AtomicBool::new(false),
@@ -407,6 +417,23 @@ impl<'a> LoadHost<'a> {
 
     pub(crate) fn guesses_left_out(&self) -> Option<Option<Vec<u8>>> {
         self.guesses_left_out.lock().clone()
+    }
+
+    pub(crate) fn note_resolve_whose_folders_bring_nothing(
+        &self,
+        resolve: ResolveWhoseFoldersBringNothing,
+    ) {
+        let mut noted = self.resolves_whose_folders_bring_nothing.lock();
+        noted.insert(resolve);
+    }
+
+    pub(crate) fn resolves_whose_folders_bring_nothing(
+        &self,
+    ) -> Vec<ResolveWhoseFoldersBringNothing> {
+        let noted = self.resolves_whose_folders_bring_nothing.lock();
+        let mut noted: Vec<ResolveWhoseFoldersBringNothing> = noted.iter().cloned().collect();
+        noted.shared_sort_unstable();
+        noted
     }
 
     pub(crate) fn files_left_out_by_patterns(&self) -> Vec<FileLeftOutByPattern> {
@@ -532,6 +559,28 @@ impl<'a> LoadHost<'a> {
             self.note_way_named(&way);
         }
         find_file_on_way(paths, way)
+    }
+
+    pub(crate) fn find_file_that_require_finds(
+        &self,
+        directory: &[u8],
+        name: &[u8],
+    ) -> Option<Vec<u8>> {
+        let search = FileSearch {
+            directory,
+            specifier: name,
+            kind: CodeImportKind::Require,
+            prefers_module_field: self.input.options.code.prefers_module_field,
+        };
+        match self.find_code_file(&search) {
+            FoundCode::File {
+                path,
+                links_followed: true,
+                ..
+            } => Some(path),
+            FoundCode::File { path, .. } => Some(self.disk.realpath(&path)),
+            FoundCode::External(_) | FoundCode::NotFound(_) => None,
+        }
     }
 
     fn find_code_file_named_as_in_executable(&self, request: &CodeRequest<'_>) -> Option<Vec<u8>> {

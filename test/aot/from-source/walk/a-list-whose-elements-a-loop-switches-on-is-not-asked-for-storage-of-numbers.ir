@@ -10,11 +10,9 @@
 # for the switch: an instruction an element more than switching on the boxed value. So where the elements are switched on the list has its one copy as before; where they are compared it is asked.
 # f1 = weigh, f2 = count
 # RUN(SWITCHED): walk f1 mechanisms=all
-# REQUIRES(SWITCHED): entries-of-bun
 # SWITCHED: GetArrayElement
 # SWITCHED-NOT: arrayStorage=Double
 # RUN(COMPARED): walk f2 mechanisms=all
-# REQUIRES(COMPARED): entries-of-bun
 # COMPARED: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0

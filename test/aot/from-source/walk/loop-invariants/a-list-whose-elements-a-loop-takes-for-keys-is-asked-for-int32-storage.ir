@@ -27,12 +27,10 @@
 # The value that the step hands out is then an int32 or a hole, and the list under it is tested in front as well. `sum` takes the same elements for numbers: there nothing is asked for storage of int32s alone.
 # f1 = sum, f3 = count
 # RUN(KEYS): walk f3 mechanisms=all
-# REQUIRES(KEYS): entries-of-bun
 # KEYS: = HasArrayStorage {{*}}arrayStorage=Int32
 # KEYS: isLoopHead=true
 # KEYS: undefined|i32 @OptionalInt64 = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral, isInBounds]
 # KEYS: = TypeTest {{*}}testedType=number
 # KEYS: = GetArrayElement {{*}}arrayStorage=Int32 level=Proven [keyIsIntegral]
 # RUN(NUMBERS): walk f1 mechanisms=all
-# REQUIRES(NUMBERS): entries-of-bun
 # NUMBERS-NOT: = HasArrayStorage {{*}}arrayStorage=Int32

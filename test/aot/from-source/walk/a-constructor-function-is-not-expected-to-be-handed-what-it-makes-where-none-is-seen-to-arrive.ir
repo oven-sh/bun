@@ -10,7 +10,6 @@
 # the one that this very code lays, so in the copy of the constructor the parameter was expected to be a Plate: a test that failed at every row, and the copy left for the slow version, where every store goes
 # by the stub for any field. The callers of a function that instances name as their constructor are not all known; no Plate was seen to arrive: nothing is expected of the parameter.
 # RUN: walk f4 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-NOT: ShapeTest
 # CHECK: PropGet {{*}} key="wide"
 # CHECK: PutSlotOrAdd {{*}} key="wide"

@@ -10,7 +10,6 @@
 # console.log(entry[0](data[0], data[1], 99));
 # -- end of source
 # The bound is a local that no turn stores: the least of two results of calls, a number as far as anybody knows. The turns call a function that is not copied, so a copy that counts on quiet turns is left in every turn. The loop is built twice all the same, with the calls staying in the typed copy.
-# REQUIRES: entries-of-bun
 # RUN: walk f3 mechanisms=all
 # The bound is asked once, in front of the loop.
 # CHECK: TypeTest {{*}} testedType=i32

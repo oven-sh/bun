@@ -11,7 +11,6 @@
 # sink(total(new Float64Array([1, 2, 3, 4])), total(new Float64Array([5, 6])));
 # -- end of source
 # RUN: walk f2:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f2:Body
 # CHECK: frame 1 callee=f1
 # CHECK: isLoopHead=true

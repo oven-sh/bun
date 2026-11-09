@@ -25,7 +25,7 @@ use crate::builtins::ResolvedBuiltins;
 use crate::builtins::table::{self, BuiltinFlags, BuiltinId, Origin};
 use crate::compile::EntryPointPaths;
 use crate::load::externals::contains;
-use crate::load::host::LoadHost;
+use crate::load::host::{LoadHost, ResolveWhoseFoldersBringNothing};
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::module_paths::{
     FOLDER_ABOVE_ROOT, compute_relative_path, count_folders, spell_folder_above_root,
@@ -480,6 +480,23 @@ impl<'a, 'h> EntryPointFinder<'a, 'h> {
                     .iter()
                     .all(|it| host.is_dir(it) && !answers_from_above(it))
                 {
+                    let find_from =
+                        |folder: &Vec<u8>| host.find_file_that_require_finds(folder, name);
+                    let holds_it = |folder: &&Vec<u8>| {
+                        host.is_dir(folder) && (package.is_none() || holds_package(folder))
+                    };
+                    if let Some(found) = folders.iter().find_map(find_from) {
+                        let found_there = folders.iter().filter(holds_it).find_map(find_from);
+                        host.note_resolve_whose_folders_bring_nothing(
+                            ResolveWhoseFoldersBringNothing {
+                                file: code.file_name(file).to_vec(),
+                                written_at: of_site[0].2,
+                                is_found_in_listed_folders_alone: found_there.as_ref()
+                                    == Some(&found),
+                                found_by_search_that_goes_on_above: found,
+                            },
+                        );
+                    }
                     continue;
                 }
                 mentions.extend(folders.iter().map(|folder| Mention {

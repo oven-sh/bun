@@ -7,6 +7,5 @@
 # `loops = false`: the value is what the read finds or, where it finds nothing, the constant. Nothing is known of the read, so the join was expected to be what the constant is: the typed copy of the loop
 # asked `is it false`, and an option given as true left it for the closed copy in the first turn of every call. A number that stands in already speaks for numbers; a boolean now speaks for booleans.
 # RUN: walk f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-NOT: TypeTest {{*}} testedType=false
 # CHECK: TypeTest {{*}} testedType=boolean

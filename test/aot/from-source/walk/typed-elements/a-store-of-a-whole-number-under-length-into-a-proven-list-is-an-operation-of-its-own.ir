@@ -11,22 +11,18 @@
 # A program restores or trims a list to a length that it mostly has already: then nothing is stored.
 # f1 = restore, f2 = storeAnyNumber, f3 = emptyInTurns
 # RUN(STORE): walk f1 mechanisms=all
-# REQUIRES(STORE): entries-of-bun
 # STORE-LABEL: code f1:Body
 # STORE: = SetArrayLength
 # STORE-NOT: PropSet
 # A number of which nothing more is known may be a fraction or lie below nought, which throws: that store stays as written.
 # RUN(NUMBER): walk f2 mechanisms=all
-# REQUIRES(NUMBER): entries-of-bun
 # NUMBER-LABEL: code f2:Body
 # NUMBER-NOT: SetArrayLength
 # NUMBER: PropSet {{*}} key="length"
 # Outside of loops the code is a call with the list and the length; in a loop what the stub asks first is asked in line: the kind of the storage and the length.
 # RUN(OUTSIDE): emit f1 mechanisms=all
-# REQUIRES(OUTSIDE): entries-of-bun
 # OUTSIDE-NOT: PutByIdAtSite
 # RUN(INSIDE): walk f3 mechanisms=all
-# REQUIRES(INSIDE): entries-of-bun
 # INSIDE-LABEL: code f3:Body
 # INSIDE: isInLoop=true
 # INSIDE: = SetArrayLength

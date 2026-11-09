@@ -5,7 +5,6 @@
 # console.log(entry[0](like), entry[0]([1, 2]), entry[0](new Uint8Array(3)));
 # -- end of source
 # The loop is told apart in front for lists and for views. What is neither has a copy of its own, walked with guesses open: an ordinary object that keeps its elements as a list does.
-# REQUIRES: entries-of-bun
 # RUN: walk f1 mechanisms=all
 # CHECK: TypeTest {{*}} testedType=Array
 # CHECK: TypeTest {{*}} testedType=Buffer|Uint8Array

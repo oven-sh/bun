@@ -16,7 +16,6 @@
 # The plain walk begins the guards in every turn, and to begin them is to write them. The turns of the typed copy write none, so what its front has asked holds in every turn and no turn asks again.
 # f4 = run, f5 = row
 # RUN: walk f4 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: = BeginMemberGuards layout=L0
 # CHECK-NEXT: = AreMembersUnchanged conditions=[{layout=L0 key="sum"}, {kind=ClassEvaluatedOnce layout=L0}]
 # CHECK: isInLoop=true isLoopHead=true
@@ -24,7 +23,6 @@
 # CHECK: = BitAnd
 # CHECK-NOT: AreMembersUnchanged
 # RUN(ROW): walk f5 mechanisms=all
-# REQUIRES(ROW): entries-of-bun
 # The birth of a Below asks whether `call` is still the built-in on Base: that guard, too, is begun and asked in front, in the same test.
 # ROW: = BeginMemberGuards layout=L2
 # ROW-NEXT: = BeginMemberGuards layout=L1

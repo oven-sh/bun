@@ -61,6 +61,14 @@ const filesThatDeclareAGlobalInterface = (size: number, declared: (index: number
 const rowBehindAFunctionWithALoop = (size: number, row: (index: number) => string, first = "") =>
   `function pick(x, n) { while (n-- > 0) x = x.next; return x; }\nlet sum = 0;\nfunction show() { console.log(sum); }\n${first}${lines(size, row)}show();\n`;
 
+const functionThatHoldsValuesAcrossItsBlocks = (size: number, body: string) => ({
+  "main.ts":
+    `const a: number[] = [], b: number[] = [];\nfor (let i = 0; i < ${size}; i++) { a.push(i + 0.25); b.push(i * 7); }\n` +
+    `function mix(s: number, v: number): number { return (s * 33 + v) % 1000000007; }\n` +
+    `function big(a: number[], b: number[], rare: boolean): number {\nlet s = 1;\n${body}return s;\n}\nconsole.log(big(a, b, false), big(a, b, true));\n`,
+});
+const elementHeldAcrossBlocks = (index: number) => `${index % 3 ? "a" : "b"}[${index}]`;
+
 const constructorThatStoresOneOfTwoValues = (size: number) => ({
   "main.js":
     `class Panel {\n  constructor(flag) {\n    let work = 0;\n    for (let i = 0; i < 2; i++) work = (work + i) | 0;\n    this.work = work;\n` +
@@ -632,6 +640,38 @@ export const shapes: Shape[] = [
       "a.test.js":
         `import { expect, mock, test } from "bun:test";\nmock.module("./mocked.js", () => ({ x: 2 }));\nimport { asked } from "./big.ts";\n` +
         `test("it loads", () => { expect(asked()).toBe(2); });\n`,
+    }),
+  },
+  // A mock's factory may ask for the original, and the search for that word reads a function's text as the printer would write it: with the consts that stand in front of the function's body, of the bodies
+  // around it and of the file written out. Each function read all of those anew.
+  {
+    name: "consts that are functions, in front of a callback's body, in a test run with a mock that asks for the original",
+    counted: "consts",
+    size: 3000,
+    entry: "a.test.mjs",
+    isTestRun: true,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "dep.mjs": `export const a = 1, b = 1;\n`,
+      "a.test.mjs":
+        `import { describe, expect, test, vi } from "bun:test";\nvi.mock("./dep.mjs", async importOriginal => ({ ...(await importOriginal()), b: 2 }));\n` +
+        `describe("d", () => {\n${lines(size, index => `const f${index} = () => ${index};`)}` +
+        `test("t", async () => { expect((await import("./dep.mjs")).b + ${size ? `f${size - 1}()` : -1}).toBe(${size + 1}); });\n});\n`,
+    }),
+  },
+  {
+    name: "consts that are numbers, in front of a callback's body, and as many functions that each read one, in a test run with a mock that asks for the original",
+    counted: "consts",
+    size: 3000,
+    entry: "a.test.mjs",
+    isTestRun: true,
+    write: size => ({
+      "package.json": `{ "name": "p", "type": "module" }\n`,
+      "dep.mjs": `export const a = 1, b = 1;\n`,
+      "a.test.mjs":
+        `import { describe, expect, test, vi } from "bun:test";\nvi.mock("./dep.mjs", async importOriginal => ({ ...(await importOriginal()), b: 2 }));\n` +
+        `describe("d", () => {\n${lines(size, index => `const c${index} = ${index};`)}${lines(size, index => `function f${index}() { return c${index}; }`)}` +
+        `test("t", async () => { expect((await import("./dep.mjs")).b + ${size ? `f${size - 1}()` : -1}).toBe(${size + 1}); });\n});\n`,
     }),
   },
   {
@@ -2558,6 +2598,28 @@ export const shapes: Shape[] = [
     entry: "main.js",
     write: size => ({
       "main.js": `function run(list) {\n  let sum = 0;\n${lines(size, index => `  for (let i = 0; i < list.length; i++) sum = (sum + list[i] * ${index}) | 0;`)}  return sum;\n}\nconsole.log(run([1, 2, 3]));\n`,
+    }),
+  },
+  // Each loop measures a list of its own, which a constant of the file holds, and reads another list. Whoever walks the function once for each such constant, to learn whether the
+  // function does more with it than measure it, works by the loop times the function: 3,200 loops took 530,000 M instructions, 474,000 M of them in that walk.
+  {
+    name: "loops in a row that each measure a list of their own, held by a constant of the file",
+    counted: "loops",
+    size: 200,
+    entry: "main.mjs",
+    write: size => ({
+      "main.mjs": `const other = JSON.parse("[1,2,3,4]");\n${lines(size, index => `const list${index} = JSON.parse("[${index},2,3]");`)}function run() {\n  let sum = 0;\n${lines(size, index => `  for (let i = 0; i < list${index}.length; i++) sum += other[i];`)}  return sum;\n}\nconsole.log(run());\n`,
+    }),
+  },
+  // One loop reads many lists under one counter, each a parameter of the function. Whoever walks the lists found so far, or what was guessed of them in front of the loop, once for each read,
+  // or looks for the loop anew for each list in front of it, works by the lists times the lists.
+  {
+    name: "lists that one loop reads under one counter, each a parameter",
+    counted: "lists",
+    size: 400,
+    entry: "main.js",
+    write: size => ({
+      "main.js": `function run(${upTo(size, index => `list${index}`).join(", ")}) {\n  let sum = 0;\n  for (let i = 0; i < list0.length; i++) {\n${lines(size, index => `    sum += list${index}[i] * 2;`)}  }\n  return sum;\n}\nconst table = { run };\nconst lists = Array.from({ length: ${size} }, (_, place) => [place + 0.5, place + 1.5, place + 2.5]);\nconsole.log(table[JSON.parse('"run"')](...lists));\n`,
     }),
   },
   {
@@ -6133,6 +6195,62 @@ console.log(typeof outmost.inner);
         `function list(c) { return [\n${lines(size, index => `{ v: c, i: ${index} },`)}]; }\n` +
         `const c = JSON.parse('{"k":1}'), d = JSON.parse('{"k":2}');\nconsole.log(fill(new Pair(), c, d).a.k, list(c).length);\n`,
     }),
+  },
+  {
+    name: "values of one function, all made and then used in that order, in a build that verifies its code",
+    counted: "values",
+    size: 1500,
+    entry: "main.ts",
+    flags: ["--aot-check=VerifyEachStage"],
+    frameOutgrowsOffsetsOfArm64: true,
+    write: size =>
+      functionThatHoldsValuesAcrossItsBlocks(
+        size,
+        lines(size, index => `const v${index} = ${elementHeldAcrossBlocks(index)};`) + lines(size, index => `s = mix(s, v${index} * 4);`),
+      ),
+  },
+  {
+    name: "values of one function, all made and then used in the opposite order, in a build that verifies its code",
+    counted: "values",
+    size: 1500,
+    entry: "main.ts",
+    flags: ["--aot-check=VerifyEachStage"],
+    frameOutgrowsOffsetsOfArm64: true,
+    write: size =>
+      functionThatHoldsValuesAcrossItsBlocks(
+        size,
+        lines(size, index => `const v${index} = ${elementHeldAcrossBlocks(index)};`) + lines(size, index => `s = mix(s, v${size - 1 - index} * 4);`),
+      ),
+  },
+  {
+    name: "values of one function carried round a loop, in a build that verifies its code",
+    counted: "values",
+    size: 1000,
+    entry: "main.ts",
+    flags: ["--aot-check=VerifyEachStage"],
+    frameOutgrowsOffsetsOfArm64: true,
+    write: size =>
+      functionThatHoldsValuesAcrossItsBlocks(
+        size,
+        lines(size, index => `let v${index} = 0;`) +
+          `for (let turn = 0; turn < 3; turn++) {\n${lines(size, index => `v${index} = v${index} + ${elementHeldAcrossBlocks((index + 1) % size)};`)}s = mix(s, turn);\n}\n` +
+          lines(size, index => `s = mix(s, v${index} * 4);`),
+      ),
+  },
+  {
+    name: "values of one function stored under try and read in the handler, in a build that verifies its code",
+    counted: "values",
+    size: 2000,
+    entry: "main.ts",
+    flags: ["--aot-check=VerifyEachStage"],
+    frameOutgrowsOffsetsOfArm64: true,
+    write: size =>
+      functionThatHoldsValuesAcrossItsBlocks(
+        size,
+        lines(size, index => `let v${index} = 0;`) +
+          `try {\n${lines(size, index => `v${index} = ${elementHeldAcrossBlocks(index)};${index === size >> 1 ? ` if (rare) throw new Error("rare");` : ""}`)}} catch (e) {\ns = mix(s, 5);\n` +
+          `${lines(size, index => `s = mix(s, v${size - 1 - index} * 4);`)}}\n`,
+      ),
   },
   // At the end of a block with two targets each owner that a later barrier covers at the first was looked for through the whole list of the second.
   {

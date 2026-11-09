@@ -10,7 +10,6 @@
 # Both names that nobody stores are laid by descriptors under written keys: the program itself makes such pairs, so the record keeps the family that it had (L1 = the literal on which they are laid): the parameter's type names that layout, and what it says is tested:
 # the pair out of JSON and the pair that was laid both answer as plain.
 # f1 = lengths
-# REQUIRES: entries-of-bun
 # RUN: print
 # CHECK: function f1 name="lengths" {{*}}parameters=[{type=undefined|null|L1 
 # RUN(RIGHT): run-in-shell mechanisms=all

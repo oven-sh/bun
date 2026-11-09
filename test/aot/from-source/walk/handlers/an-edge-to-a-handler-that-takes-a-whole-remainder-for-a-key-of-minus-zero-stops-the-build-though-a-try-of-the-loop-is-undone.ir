@@ -9,5 +9,4 @@
 # would come out right where the build without it is wrong. So this kind of failure outlives tries.
 # DIAGNOSTIC: HandlerEdgeHandsOnStandIn
 # RUN: walk-where-handler-edges-take-stand-ins f1 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: the walk of f1:Body failed

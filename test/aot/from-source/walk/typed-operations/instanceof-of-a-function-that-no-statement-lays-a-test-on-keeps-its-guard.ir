@@ -18,14 +18,11 @@
 # That is a word that says "may": no record expects that function on one of the three. The shape is asked behind the guard of the name, and the guard answers at run time for whoever lays a test.
 # f2 = Mid, f4 = isTop, f5 = isMid, f6 = isLow
 # RUN: walk f4 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: = AreMembersUnchanged {{*}}key=@@hasInstance
 # RUN(LOW): walk f6 mechanisms=all
-# REQUIRES(LOW): entries-of-bun
 # LOW: = AreMembersUnchanged {{*}}key=@@hasInstance
 # What the statement lays on Mid nobody can replace and no record names: the program's own deed ends the guard.
 # RUN(MID): walk f5 mechanisms=all
-# REQUIRES(MID): entries-of-bun
 # MID: = AreMembersUnchanged {{*}}key=@@hasInstance
 # RUN(LINK): link members mechanisms=all
 # LINK-NOT: on-function {{*}} @@hasInstance

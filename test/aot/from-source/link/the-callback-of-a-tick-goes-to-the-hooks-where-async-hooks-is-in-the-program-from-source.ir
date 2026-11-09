@@ -1,6 +1,8 @@
 # With node:async_hooks in the program the function that it stores at `whileHooked.push` is called with the callback of every tick: an init hook is shown the tick and may call its callback with anything: not every caller is known.
+# f1 = told. Where every caller is known the line reads `function f1 callers-known cycle=..`.
+# OPTIONS: exclude=CodeOutsideImage
 # RUN: link functions mechanisms=all
-# CHECK-NOT: function f1 callers-known
+# CHECK: function f1 cycle=
 # -- source: the-callback-of-a-tick-goes-to-the-hooks-where-async-hooks-is-in-the-program-from-source.cjs
 # function told(count) { console.log(typeof count, count); }
 # require("node:async_hooks").createHook({ init(id, type, trigger, tick) { const callback = tick.callback; callback("by the hook"); } }).enable();

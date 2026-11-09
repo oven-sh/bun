@@ -8,7 +8,6 @@
 # The value is in sight and it is one function, so Mid's record expects `always` under Symbol.hasInstance. The guard of the name holds as long as `always` lies there, and says nothing of Function.prototype's test: the operation stays as written.
 # f1 = Mid, f2 = isMid
 # RUN: walk f2 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-NOT: ShapeTest
 # CHECK: = InstanceOf
 # CHECK-NOT: ShapeTest

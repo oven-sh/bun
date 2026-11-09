@@ -2,13 +2,11 @@
 // # run() is small and is copied in where it is called in a loop. Its own loop calls step(): in run's own unit that call is copied in. Inside the copy it gets the same: else copying the small outer function would lose the copy of the inner one, and every step would be a call.
 // # f1 = Reader, f2 = step, f3 = run, f4 = total
 // # RUN(WALK): walk f4 mechanisms=all
-// # REQUIRES(WALK): entries-of-bun
 // # WALK: frame {{*}}callee=f3
 // # WALK: frame {{*}}callee=f2 {{*}}parent=
 // # WALK-NOT: CallDirect {{*}}function=f2
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 3 of 3 of 3
 // # CHECK-NEXT: exited with 0
 class Reader { constructor(text) { this.text = text; this.at = 0; this.sum = 0; } step() { const code = this.text.charCodeAt(this.at); this.at = this.at + 1; this.sum = (this.sum + code) | 0; return this.at < this.text.length; } run() { while (this.step()); return this.sum; } }

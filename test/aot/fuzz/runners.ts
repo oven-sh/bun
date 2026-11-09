@@ -1135,7 +1135,11 @@ export function compare(runner: Runner, program: Program, plain: Run, compiled: 
       `${run.signal} ${normalized(/^.*(panic|ASSERTION FAILED|SHOULD NEVER BE REACHED|Segmentation fault|AOT: |FATAL: out of memory).*$/m.exec(run.stderr)?.[0] ?? "")}`.trim(),
     );
   if (run.timedOut) return failure("hang", run.ranOutOfMemory ? "took too much memory" : "");
-  if (run.stdout === plain.stdout && run.exitCode === plain.exitCode) return { kind: "same" };
+  if (run.stdout === plain.stdout && run.exitCode === plain.exitCode) {
+    // The compiler may give up on a part of a function and go on without it. The build ends with an executable all the same, and says so in a line of its own.
+    const gaveUp = /^AOT: .*$/m.exec(said)?.[0];
+    return gaveUp ? failure("internal compiler error", normalized(gaveUp)) : { kind: "same" };
+  }
   const why = program.meant?.(plain.stdout, run.stdout);
   if (why) return { kind: "skipped", why };
   const exits =

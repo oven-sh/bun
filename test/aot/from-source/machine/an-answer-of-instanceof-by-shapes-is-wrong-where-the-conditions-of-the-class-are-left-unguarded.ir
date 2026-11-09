@@ -1,0 +1,26 @@
+# In a loop `x instanceof Dog` is answered by shapes behind a guard of what the class itself must keep: no Symbol.hasInstance of its own among it. Out of sight Dog gets one that says yes to all.
+# THE LIE, testing=ConditionsOfClassAskedForAreLeftUnguarded: that guard is not built.
+# Under --aot-harden=proof-checks (testing=CheckProofsAtRunTime) the answer is also held to a look that gives way: from the class asked for up its own chain the first own property under
+# Symbol.hasInstance must be the engine's own, by identity, as a data property, or the process ends. The look runs no code.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 2 5
+# RIGHT-NEXT: exited with 0
+# RUN(WRONG): run-in-shell mechanisms=all testing=ConditionsOfClassAskedForAreLeftUnguarded
+# WRONG: 2 2
+# WRONG-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=ConditionsOfClassAskedForAreLeftUnguarded,CheckProofsAtRunTime
+# HELD: AOT: f{{*}}what an operation gives is not of the type that the compiler has proven of it
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# class Animal { n: number; constructor(n: number) { this.n = n; } }
+# class Dog extends Animal { bark(): number { return 1; } }
+# class Cat extends Animal { purr(): number { return 2; } }
+# const answer: (constructor: object) => void = id((constructor: object): void => { Object.defineProperty(constructor, Symbol.hasInstance, { value: () => true }); });
+# const things: unknown[] = id([new Dog(1), new Cat(2), new Animal(3), new Dog(4), new Cat(5)]);
+# function dogs(): number { let sum = 0; for (let i = 0; i < things.length; i++) { if (things[i] instanceof Dog) sum++; } return sum; }
+# const first = dogs();
+# answer(Dog);
+# print(first, dogs());
+# -- end of source

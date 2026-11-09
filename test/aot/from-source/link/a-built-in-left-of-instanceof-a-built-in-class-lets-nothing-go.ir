@@ -3,5 +3,4 @@
 # -- end of source
 # The control of a-built-in-left-of-instanceof-is-handed-to-the-hook-of-the-right.ir: no built-in class takes a method under Symbol.hasInstance.
 # RUN: link lookups mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-NOT: lookup called-out-of-sight

@@ -1005,6 +1005,27 @@ test("only plain's stack overflow is put down to the depth of the stack", () => 
   expect(detail(`a ${overflow}\n`, `a done\n`)).toEndWith(" | the line tells of a stack overflow");
 });
 
+test("an executable that prints as plain is a finding where its build says that the compiler gave something up", () => {
+  const ran = (stdout: string, stderr = "") => ({ stdout, stderr, exitCode: 0, signal: null, timedOut: false });
+  const verdict = (said: string, compiled = "1\n") =>
+    compare(
+      standIn(() => {}),
+      { text: "", extension: "js" },
+      ran("1\n"),
+      { build: ran("", said), run: ran(compiled) },
+    );
+  expect(verdict("")).toEqual({ kind: "same" });
+  expect(verdict("  [12ms]  bundle  1 modules\n")).toEqual({ kind: "same" });
+  const words = "AOT: the walk of fN Body failed, in fN: made up";
+  expect(verdict("  [12ms]  bundle  1 modules\nAOT: the walk of f11 Body failed, in f11: made up\n")).toEqual({
+    kind: "internal compiler error",
+    detail: words,
+    signature: words,
+  });
+  // What the executable prints comes first.
+  expect(verdict("AOT: made up\n", "2\n").kind).toBe("different output");
+});
+
 test("for two long lines that differ, the shown part starts a little before the first difference", () => {
   const ran = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null, timedOut: false });
   const detail = (plain: string, compiled: string) => {

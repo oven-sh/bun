@@ -10,6 +10,5 @@
 # -- end of source
 # Node has an heir, so it stands in a family; Point is a stranger. The two that meet in the list are still two layouts by name: what is read out of the list and stored into a field lets neither go.
 # RUN: link layouts mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
 # CHECK: layout L2 {{*}}changes=[] stays-with-compiled-code

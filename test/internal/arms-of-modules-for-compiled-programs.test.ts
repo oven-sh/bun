@@ -24,12 +24,6 @@ const callsOfLibrary = "the-library-calls-the-same-built-ins-compiled-as-plain.t
 
 // The line of the arm as it is written, without the blanks around it, and what reaches it. A line that stands twice in a file is listed twice.
 const witnessed: Record<string, [line: string, witness: string][]> = {
-  "ahead-of-time/builtins/ProcessObjectInternals.ts": [
-    [
-      "if (!IS_COMPILED_AHEAD_OF_TIME || WARNINGS_ASK_NODE_PATH) {",
-      "parallel/what-a-warning-brings/the-program-replaces-basename.js",
-    ],
-  ],
   "ahead-of-time/internal/process/next_tick_queue.ts": [
     [
       'if (CAN_LOAD_CODE_AT_RUN_TIME) require("node:async_hooks");',
@@ -232,7 +226,7 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
       "parallel/node-http/what-lies-under-reading-more-of-the-state-of-a-request-takes-the-store.cjs",
     ],
   ],
-  "ahead-of-time/internal/util/inspect.ts": [
+  "internal/util/inspect.ts": [
     [
       "const ObjectPrototypeIsPrototypeOf = IS_COMPILED_AHEAD_OF_TIME ? Object.prototype.isPrototypeOf : undefined;",
       arm("what-stands-below-the-prototype-of-functions-is-printed.cjs"),
@@ -304,10 +298,10 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
 
 // How many arms of a file name no program yet. A number here only goes down: whoever writes an arm brings its program.
 const owed: Record<string, number> = {
-  "ahead-of-time/builtins/BundlerPlugin.ts": 1,
+  "builtins/BundlerPlugin.ts": 1,
   "ahead-of-time/builtins/CommonJS.ts": 1,
   "ahead-of-time/builtins/ProcessObjectInternals.ts": 3,
-  "ahead-of-time/internal/cluster/isPrimary.ts": 2,
+  "internal/cluster/isPrimary.ts": 2,
   "ahead-of-time/internal/fs/streams.ts": 3,
   "ahead-of-time/internal/streams/destroy.ts": 1,
   "ahead-of-time/internal/streams/end-of-stream.ts": 11,

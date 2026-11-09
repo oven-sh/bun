@@ -10,9 +10,10 @@
 # And the hole of `w[i & 7]`: in a product undefined and NaN give the same, so the read may give NaN for its hole where a number or nothing stands beside it. The second key is written behind the first read, so the
 # first read did not see what the second gives, kept its hole apart, and the product asked it again. A key that is a number cut by a written mask is an index whoever reads it first.
 # One call of eight turns: 263 > 227 instructions; a turn 16 > 11.
+# Thirteen since the name of a position behind the test of a length is handed to its read alone: the key and its name were widened apart, now the key is widened once, and one more copy of the loop is laid out.
 # f1 = go
 # RUN: compile RelationsOfTurnsAskedOnceInFrontOfTurnsLaidOut mechanisms=all
-# CHECK: statistic RelationsOfTurnsAskedOnceInFrontOfTurnsLaidOut 12
+# CHECK: statistic RelationsOfTurnsAskedOnceInFrontOfTurnsLaidOut 13
 # RUN(WALK): walk f1:Body mechanisms=all
 # WALK: number @Double = GetArrayElement {{*}}readsHoleAsNaN
 # WALK-NEXT: number @Double = GetArrayElement {{*}}readsHoleAsNaN

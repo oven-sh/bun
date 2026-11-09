@@ -5,5 +5,4 @@
 # -- end of source
 # `extra` is mentioned in no block that every turn passes. It is told apart in front of the loop into four members; what is none of them (null, a record, a text) went to the closed copy, and with it every turn's read of `flags`. Now a copy for the rest stands behind the members: the loop as it would be walked without that guess.
 # RUN(WALK): walk f1 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK-COUNT-6: isLoopHead=true

@@ -9,6 +9,5 @@
 # The getter was handed to Object.defineProperty with `shared`, so `shared` is what was seen to arrive as its `this`; it answers none of the names that the getter uses off `this`. Such a word is dropped as it
 # was, and the names find the layout that does hold `_core`: the objects that wrap() makes.
 # RUN: walk f3 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: GetSlot {{*}} key="_core" receivers=[L{{*}}] level=Expected
 # CHECK: GetSlot {{*}} key="depth" receivers=[L{{*}}] level=Expected

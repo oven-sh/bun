@@ -6,5 +6,4 @@
 # closed arm. Both cells are needed and the first stands above the second, but on the way through the closed arm nobody reads the first: one cell stands for the operation at a time. Two records, and no diagnostic.
 # OPTIONS: check=Validate
 # RUN(WALK): walk f1 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK-COUNT-2: = NewClosure

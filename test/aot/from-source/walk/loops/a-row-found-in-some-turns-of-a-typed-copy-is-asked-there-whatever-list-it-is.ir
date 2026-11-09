@@ -5,8 +5,6 @@
 # -- end of source
 # `modules[r + 1]` is found behind `&&`. In the turn of the typed copy that row is asked there: a list, as made, and of which storage, the failing side beginning the turn again in the closed copy. That was so for rows expected to hold numbers alone; these hold booleans.
 # RUN(WALK): walk f1 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK-COUNT-5: isLoopHead=true
 # RUN(ASKED): walk f1 mechanisms=all
-# REQUIRES(ASKED): entries-of-bun
 # ASKED-COUNT-4: = IsPristine {{*}}builtinClass=Array

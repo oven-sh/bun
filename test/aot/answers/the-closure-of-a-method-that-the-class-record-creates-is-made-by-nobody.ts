@@ -8,13 +8,11 @@
 // # f2 = plain
 // # OPTIONS: testing=WritesBodiesStraight
 // # RUN(STRAIGHT): compile UnitsWrittenStraight mechanisms=all
-// # REQUIRES(STRAIGHT): entries-of-bun
 // # STRAIGHT-NOT: statistic UnitsWrittenStraight 0
 // # RUN(FRAME): bytes f2:Body mechanisms=all
 // # REQUIRES(FRAME): x86_64 as-written
 // # FRAME: frame=80@
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 16 of 16 of 16
 // # CHECK-NEXT: exited with 0
 declare function report(value: unknown): void;

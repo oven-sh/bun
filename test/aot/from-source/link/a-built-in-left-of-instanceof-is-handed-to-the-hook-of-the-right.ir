@@ -10,5 +10,4 @@
 # -- end of source
 # The left of instanceof is the argument of the method that lies under Symbol.hasInstance on the right.
 # RUN: link lookups mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: lookup called-out-of-sight

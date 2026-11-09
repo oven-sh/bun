@@ -102,10 +102,33 @@ fn stands_outside(
     false
 }
 
+#[derive(Clone, Copy)]
+struct ConstOfPrefix {
+    value: ExprId,
+    is_dropped: bool,
+    prefix: u32,
+}
+
+struct Prefix {
+    last_search_that_noted_it: u32,
+    number_of_consts: usize,
+}
+
 #[derive(Default)]
-struct ConstsOfPrefixes {
-    written_out: FxHashMap<PatId, ExprId>,
-    dropped: FxHashSet<PatId>,
+pub(in crate::lower) struct ConstsOfPrefixes {
+    consts: FxHashMap<PatId, ConstOfPrefix>,
+    prefixes_of_lists: FxHashMap<IdList<StmtId>, u32>,
+    prefixes: Vec<Prefix>,
+    search: u32,
+    number_in_sight: usize,
+}
+
+impl ConstsOfPrefixes {
+    fn find(&self, name: PatId) -> Option<ConstOfPrefix> {
+        let found = *self.consts.get(&name)?;
+        let prefix = &self.prefixes[found.prefix as usize];
+        (prefix.last_search_that_noted_it == self.search).then_some(found)
+    }
 }
 
 #[derive(Default)]
@@ -221,6 +244,16 @@ impl FileLowering<'_, '_, '_, '_> {
         is_block: bool,
         consts: &mut ConstsOfPrefixes,
     ) {
+        if let Some(&read) = consts.prefixes_of_lists.get(&list) {
+            let prefix = &mut consts.prefixes[read as usize];
+            if prefix.last_search_that_noted_it != consts.search {
+                prefix.last_search_that_noted_it = consts.search;
+                consts.number_in_sight += prefix.number_of_consts;
+            }
+            return;
+        }
+        let prefix = consts.prefixes.len() as u32;
+        let number_known = consts.consts.len();
         let hir = self.hir;
         let is_plain_function = |statement: StmtId| matches!(hir[statement].kind, StmtKind::Fn(it) if matches!(hir[it].body, FnBody::Block(_)) && !hir[it].flags.intersects(Flags::ASYNC | Flags::GENERATOR | Flags::AMBIENT));
         let mut are_declarations_dropped = !is_block || !hir.ids(list).any(is_plain_function);
@@ -253,29 +286,37 @@ impl FileLowering<'_, '_, '_, '_> {
                 if declaration.init.is_none() || is_sum_of_texts(declaration.init) {
                     continue;
                 }
-                consts
-                    .written_out
-                    .entry(declaration.pat)
-                    .or_insert(declaration.init);
-                if are_declarations_dropped {
-                    consts.dropped.insert(declaration.pat);
-                }
+                consts.consts.insert(
+                    declaration.pat,
+                    ConstOfPrefix {
+                        value: declaration.init,
+                        is_dropped: are_declarations_dropped,
+                        prefix,
+                    },
+                );
             }
         }
+        let number_of_consts = consts.consts.len() - number_known;
+        consts.prefixes_of_lists.insert(list, prefix);
+        consts.prefixes.push(Prefix {
+            last_search_that_noted_it: consts.search,
+            number_of_consts,
+        });
+        consts.number_in_sight += number_of_consts;
     }
 
-    fn find_consts_that_printer_writes_out(&self, function: FnId) -> ConstsOfPrefixes {
+    fn begin_search_among_consts(&self, function: FnId, consts: &mut ConstsOfPrefixes) {
         let (hir, bound) = (self.hir, self.bound);
-        let mut names = ConstsOfPrefixes::default();
+        consts.search += 1;
+        consts.number_in_sight = 0;
         let mut around = function;
         while around.is_some() {
             if let FnBody::Block(list) = hir[around].body {
-                self.note_consts_in_front_of_all_else(list, false, &mut names);
+                self.note_consts_in_front_of_all_else(list, false, consts);
             }
             around = bound.fns[around.idx()].enclosing;
         }
-        self.note_consts_in_front_of_all_else(hir.body, false, &mut names);
-        names
+        self.note_consts_in_front_of_all_else(hir.body, false, consts);
     }
 
     fn may_word_come_from_outside_function(&mut self) -> bool {
@@ -292,7 +333,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_value_that_printer_prints(
         &mut self,
         written: ExprId,
-        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
+        consts_that_printer_writes_out: &ConstsOfPrefixes,
     ) -> Option<Constant> {
         let hir = self.hir;
         let decisions = self.decisions();
@@ -313,7 +354,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         let symbol = self.symbol_named_by(part)?;
                         let mut declarations = self.bound.symbol(symbol).decls.iter();
                         let is_written_out = declarations.all(|it| {
-                            matches!(*it, Decl::Var(name) if consts_that_printer_writes_out.get(&name).is_some_and(|&value| hir[value].end <= hir[part].pos))
+                            matches!(*it, Decl::Var(name) if consts_that_printer_writes_out.find(name).is_some_and(|it| hir[it.value].end <= hir[part].pos))
                         });
                         if !is_written_out {
                             return None;
@@ -329,8 +370,8 @@ impl FileLowering<'_, '_, '_, '_> {
                 }
                 _ => {
                     let followed = &mut self.values_that_consts_were_followed_to;
-                    if followed.number_of_consts != consts_that_printer_writes_out.len() {
-                        followed.number_of_consts = consts_that_printer_writes_out.len();
+                    if followed.number_of_consts != consts_that_printer_writes_out.number_in_sight {
+                        followed.number_of_consts = consts_that_printer_writes_out.number_in_sight;
                         followed.values.clear();
                     }
                     if let Some(&known) = followed.values.get(&written) {
@@ -352,7 +393,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_what_is_left_over(
         &mut self,
         written: ExprId,
-        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
+        consts_that_printer_writes_out: &ConstsOfPrefixes,
     ) -> Option<ExprId> {
         let hir = self.hir;
         match hir[written].kind {
@@ -361,7 +402,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 let [Decl::Var(read)] = *self.bound.symbol(symbol).decls else {
                     return None;
                 };
-                let &value = consts_that_printer_writes_out.get(&read)?;
+                let value = consts_that_printer_writes_out.find(read)?.value;
                 (hir[value].end <= hir[written].pos).then(|| hir.skip_type_assertions(value))
             }
             ExprKind::Cond { test, branches } => {
@@ -377,7 +418,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_member_that_printer_names(
         &mut self,
         printed: ExprId,
-        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
+        consts_that_printer_writes_out: &ConstsOfPrefixes,
     ) -> Option<Atom> {
         let mut left_over = printed;
         loop {
@@ -393,7 +434,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_side_that_printer_keeps(
         &mut self,
         test: ExprId,
-        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
+        consts_that_printer_writes_out: &ConstsOfPrefixes,
     ) -> Option<bool> {
         let hir = self.hir;
         if let ExprKind::Dot {
@@ -416,7 +457,7 @@ impl FileLowering<'_, '_, '_, '_> {
     fn find_name_that_search_reads(
         &mut self,
         argument: ExprId,
-        consts_that_printer_writes_out: &FxHashMap<PatId, ExprId>,
+        consts_that_printer_writes_out: &ConstsOfPrefixes,
     ) -> Option<Atom> {
         let hir = self.hir;
         let mut first = hir.skip_type_assertions(argument);
@@ -464,14 +505,26 @@ impl FileLowering<'_, '_, '_, '_> {
         function: FnId,
         text: SourceRange,
     ) -> OriginalsAskedFor {
+        if !self.inputs.modules.is_any_module_named_by_mock() {
+            return OriginalsAskedFor::default();
+        }
+        let mut consts = std::mem::take(&mut self.consts_of_prefixes);
+        let asked = self.search_text_for_originals_asked_for(function, text, &mut consts);
+        self.consts_of_prefixes = consts;
+        asked
+    }
+
+    fn search_text_for_originals_asked_for(
+        &mut self,
+        function: FnId,
+        text: SourceRange,
+        consts: &mut ConstsOfPrefixes,
+    ) -> OriginalsAskedFor {
         let own = OriginalsAskedFor {
             may_be_own: true,
             names: Vec::new(),
         };
         let mut asked = OriginalsAskedFor::default();
-        if !self.inputs.modules.is_any_module_named_by_mock() {
-            return asked;
-        }
         self.values_that_consts_were_followed_to.values.clear();
         let hir = self.hir;
         let Some(written) = hir.text.get(text.start as usize..text.end as usize) else {
@@ -493,7 +546,7 @@ impl FileLowering<'_, '_, '_, '_> {
         let mut imports: Vec<u32> = Vec::new();
         let mut dropped: FxHashSet<StmtId> = FxHashSet::default();
         let mut read_by_their_values: Vec<(u32, u32)> = Vec::new();
-        let mut consts = self.find_consts_that_printer_writes_out(function);
+        self.begin_search_among_consts(function, consts);
         let mut declarations_written_out: Vec<(u32, u32)> = Vec::new();
         let mut has_direct_eval = false;
         let mut printed_as_written: FxHashSet<ExprId> = FxHashSet::default();
@@ -534,11 +587,10 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                     if let StmtKind::Block(list) = hir[statement].kind {
                         self.note_statements_behind_a_jump(list, &mut in_dead_flow);
-                        self.note_consts_in_front_of_all_else(list, true, &mut consts);
+                        self.note_consts_in_front_of_all_else(list, true, consts);
                     }
                     if let StmtKind::Expr(alone) = hir[statement].kind
-                        && (self.find_value_that_printer_prints(alone, &consts.written_out))
-                            .is_some()
+                        && (self.find_value_that_printer_prints(alone, consts)).is_some()
                     {
                         dropped.insert(statement);
                     }
@@ -547,9 +599,8 @@ impl FileLowering<'_, '_, '_, '_> {
                     {
                         for declaration in declarations.iter().map(|it| hir[it]) {
                             let value = declaration.init;
-                            if consts.dropped.contains(&declaration.pat)
-                                && (self.find_value_that_printer_prints(value, &consts.written_out))
-                                    .is_some()
+                            if consts.find(declaration.pat).is_some_and(|it| it.is_dropped)
+                                && (self.find_value_that_printer_prints(value, consts)).is_some()
                             {
                                 let whole = declaration.loc;
                                 declarations_written_out.push((whole.pos, whole.end));
@@ -567,8 +618,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         continue;
                     }
                     if let StmtKind::If { test, yes, no } = hir[statement].kind
-                        && let Some(is_true) =
-                            self.find_side_that_printer_keeps(test, &consts.written_out)
+                        && let Some(is_true) = self.find_side_that_printer_keeps(test, consts)
                     {
                         let (live, dead) = if is_true { (yes, no) } else { (no, yes) };
                         not_printed.push((hir[test].pos, hir[test].end));
@@ -586,8 +636,7 @@ impl FileLowering<'_, '_, '_, '_> {
                     let is_read_by_its_value = !printed_as_written.contains(&expr);
                     if !matches!(hir[expr].kind, ExprKind::String(_))
                         && is_read_by_its_value
-                        && let Some(printed) =
-                            self.find_value_that_printer_prints(expr, &consts.written_out)
+                        && let Some(printed) = self.find_value_that_printer_prints(expr, consts)
                     {
                         if matches!(printed, Constant::String(text) if names_word(self.queries.atom_bytes(text)))
                         {
@@ -601,8 +650,7 @@ impl FileLowering<'_, '_, '_, '_> {
                             }
                             ExprKind::Index { .. } if is_member_of_enum => {}
                             _ => {
-                                let named =
-                                    self.find_member_that_printer_names(expr, &consts.written_out);
+                                let named = self.find_member_that_printer_names(expr, consts);
                                 if named.is_some_and(|it| names_word(self.queries.atom_bytes(it))) {
                                     return own;
                                 }
@@ -675,9 +723,7 @@ impl FileLowering<'_, '_, '_, '_> {
                             }
                         }
                         ExprKind::Cond { test, branches } => {
-                            if let Some(is_true) =
-                                self.find_side_that_printer_keeps(test, &consts.written_out)
-                            {
+                            if let Some(is_true) = self.find_side_that_printer_keeps(test, consts) {
                                 let Branches { yes, no } = hir.branches(branches);
                                 let (live, dead) = if is_true { (yes, no) } else { (no, yes) };
                                 not_printed.push((hir[test].pos, hir[test].end));
@@ -697,8 +743,7 @@ impl FileLowering<'_, '_, '_, '_> {
                             && WORDS[1..].iter().any(|word| called.ends_with(word))
                             && hir[id].chain == Chain::No
                             && let Some(first) = first
-                            && let Some(module) =
-                                self.find_name_that_search_reads(first, &consts.written_out)
+                            && let Some(module) = self.find_name_that_search_reads(first, consts)
                         {
                             let whole = hir
                                 .text
@@ -736,7 +781,7 @@ impl FileLowering<'_, '_, '_, '_> {
                         lists_of_statements.push((whole.start, whole.end));
                         self.note_statements_behind_a_jump(list, &mut in_dead_flow);
                         if inner != function {
-                            self.note_consts_in_front_of_all_else(list, false, &mut consts);
+                            self.note_consts_in_front_of_all_else(list, false, consts);
                         }
                     }
                 }

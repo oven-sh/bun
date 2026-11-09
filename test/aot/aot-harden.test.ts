@@ -600,6 +600,38 @@ describe.concurrent("--aot-harden=proof-checks", () => {
   }, 120_000);
 });
 
+// The compiler hands the ground of a position below a sum that has passed below a length over without its prover: the store by another list's length lands behind the end of its own list.
+// The lie is never run alone: it writes where nothing of the list lies.
+const unprovenGround = "--aot-testing=GroundsOfPositionsBelowSumsAreHandedOverUnproven";
+const storedBelowSums = join(import.meta.dir, "parallel", "a-position-below-a-sum-that-has-passed-below-the-length");
+const storesByAnotherListsLength = [
+  "a-store-by-another-lists-length-into-fractions.cjs",
+  "a-store-by-another-lists-length-into-whole-numbers.cjs",
+].flatMap(name =>
+  ["--aot-harden=proof-checks", "--aot-harden=ignore-told-ranges", "--aot-testing=EmittersAloneTestEveryPosition"].map(
+    word => [name, word] as const,
+  ),
+);
+
+describe.concurrent("a ground that is handed over unproven", () => {
+  test.each(storesByAnotherListsLength)(
+    "%s stops by name under %s",
+    async (name, word) => {
+      using folder = tempDir("aot-harden", { "program.cjs": readFileSync(join(storedBelowSums, name), "utf8") });
+      const built = await spawned(
+        [bunExe(), "build", "--compile", "--aot", word, unprovenGround, "program.cjs", "--outfile", "built"],
+        String(folder),
+      );
+      expect(built.stderr).not.toContain("error:");
+      expect(built.exitCode).toBe(0);
+      const { stderr, exitCode } = await runBuilt(String(folder));
+      expect(stderr).toMatch(/^AOT: f\d+ at \d+:\d+: /m);
+      expect(exitCode).not.toBe(0);
+    },
+    120_000,
+  );
+});
+
 describe.concurrent("--aot-harden=ignore-told-ranges", () => {
   test("stops the program at a bound that is false", async () => {
     using folder = tempDir("aot-harden", { "program.ts": storeBehindTheEnd });

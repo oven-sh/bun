@@ -32,9 +32,14 @@ const refused = new Set([
   "37049-an-exported-constant--another-file-imports-it-at-run-time--plus-true--an-arrow--at.ts",
 ]);
 
-// A program is one text. A first line `// @entry: ./main.ts` names the file that it is laid out as, and `// @filename: ./other.mjs` begins another file.
+// One for each set of flags. The stride leaves 32 when it is divided by their number, 75, and the two have no factor in common.
+const more = new Map([["write-build-flag-sweep.ts", 75]]);
+
+// A program is one text. A first line `// @entry: ./main.ts` names the file that it is laid out as, and `// @filename: ./other.mjs` begins another file. A first line `// Flags: --minify` names flags that its
+// build takes.
 function laidOut(name: string, text: string) {
   const lines = text.split("\n");
+  const flags = /^\/\/ Flags: (.+)$/.exec(lines[0])?.[1].split(" ") ?? [];
   const named = /^\/\/ @entry: \.\/(.+)$/.exec(lines[0]);
   const entry = named ? named[1] : "p" + name.slice(name.lastIndexOf("."));
   const files: Record<string, string[]> = { [entry]: [] };
@@ -44,7 +49,11 @@ function laidOut(name: string, text: string) {
     if (next) into = files[next[1]] ??= [];
     else into.push(line);
   }
-  return { entry, files: Object.fromEntries(Object.entries(files).map(([file, all]) => [file, all.join("\n")])) };
+  return {
+    entry,
+    flags,
+    files: Object.fromEntries(Object.entries(files).map(([file, all]) => [file, all.join("\n")])),
+  };
 }
 
 export function aFewOfEverySweepIn(part: number, parts: number) {
@@ -56,13 +65,13 @@ export function aFewOfEverySweepIn(part: number, parts: number) {
     using dir = tempDir("aot-a-few-of-every-sweep", {});
     // The stride has no factor in common with the length of any cross.
     const { exitCode, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), join(writers, writer), String(dir), "1", "12", "10007"],
+      cmd: [bunExe(), join(writers, writer), String(dir), "1", String(more.get(writer) ?? 12), "10007"],
       env: bunEnv,
       stderr: "pipe",
     });
     if (exitCode !== 0) throw new Error(`${writer} ended with ${exitCode}: ${stderr}`);
     for (const name of readdirSync(String(dir)).sort()) {
-      const { entry, files } = laidOut(name, readFileSync(join(String(dir), name), "utf8"));
+      const { entry, flags, files } = laidOut(name, readFileSync(join(String(dir), name), "utf8"));
       test(`${writer.slice("write-".length, -"-sweep.ts".length)}: ${name}`, async () => {
         using home = tempDir("aot-one-of-a-sweep", files);
         const folder = String(home);
@@ -70,7 +79,7 @@ export function aFewOfEverySweepIn(part: number, parts: number) {
         const [plain, build] = await Promise.all([
           run([bunExe(), "./" + entry], folder, bunEnv),
           run(
-            [bunExe(), "build", "--compile", "--aot", checked, "./" + entry, "--outfile", executable],
+            [bunExe(), "build", "--compile", "--aot", checked, ...flags, "./" + entry, "--outfile", executable],
             folder,
             bunEnv,
           ),

@@ -2,11 +2,9 @@
 // # What a Map gives may be a list that the program makes or a text. `sort` is a method of lists; above a text nobody knows it. Code that nobody has seen and that is found above a text gets the text as `this`:
 // # the list is answered by its own class, so neither the list nor its rows go out of sight with the call. The arguments leave and the answer is anything, as before.
 // # RUN(LINK): link layouts mechanisms=all
-// # REQUIRES(LINK): entries-of-bun
 // # LINK: layout L0 {{*}}changes=[] stays-with-compiled-code
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 5 of 5 of 5
 // # CHECK-NEXT: exited with 0
 class Row { constructor(a) { this.a = a; } }

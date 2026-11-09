@@ -922,7 +922,8 @@ pub struct LazyCells {
     pub(crate) has_ambient_nodes: LazyCell<bool>,
     pub(crate) ambient_ranges_hold_every_ambient_node: LazyCell<bool>,
     pub(crate) names_that_hold_own_requires: LazyCell<Box<[(crate::bind::SymbolId, bool)]>>,
-    pub(crate) names_used_otherwise_than_called: LazyCell<Box<[(crate::bind::SymbolId, bool)]>>,
+    pub(crate) names_used_otherwise_than_called:
+        LazyCell<Box<[(crate::bind::SymbolId, crate::import_sites::OtherUse)]>>,
 }
 
 /// A `OnceLock` that can be emptied while nothing reads the file.

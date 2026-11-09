@@ -7,7 +7,6 @@
 // # f6 = quiet, f8 = entered
 // # In a plain build the guards stand in front of the typed turns, and nothing of the construction is left in them.
 // # RUN(PLAIN): walk f6 mechanisms=all
-// # REQUIRES(PLAIN): entries-of-bun
 // # PLAIN-LABEL: code f6:Body
 // # PLAIN: = AreMembersUnchanged conditions=[{layout=L0 key="sum"}
 // # PLAIN: isInLoop=true isLoopHead=true
@@ -15,7 +14,6 @@
 // # PLAIN-NOT: = GetConstructPrototype
 // # Under the word the turns are the same turns, with the checks beside them.
 // # RUN(WORD): walk f6 mechanisms=all testing=CheckProofsAtRunTime
-// # REQUIRES(WORD): entries-of-bun
 // # WORD-LABEL: code f6:Body
 // # WORD: isInLoop=true isLoopHead=true
 // # WORD-NOT: = GetConstructPrototype
@@ -30,7 +28,6 @@
 // # WORD-NOT: = GetConstructPrototype
 // # The road on which the body is entered by a call and the allocation lists no store.
 // # RUN(ENTERED): walk f8 mechanisms=all testing=CheckProofsAtRunTime
-// # REQUIRES(ENTERED): entries-of-bun
 // # ENTERED-LABEL: code f8:Body
 // # ENTERED: isInLoop=true isLoopHead=true
 // # ENTERED-NOT: = GetConstructPrototype
@@ -38,17 +35,14 @@
 // # ENTERED: = GetClassPrototype {{*}}[readsClassObjectItself]
 // # Right programs go on under the word: the same object stored again under `prototype` ends the guard of that name and changes nothing; another object, or a setter above a field, sends the turns to the slow copy.
 // # RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime mechanisms=all $SHELL
-// # REQUIRES(CHECKED): entries-of-bun
 // # CHECKED: 12 of 12 of 12
 // # CHECKED-NEXT: exited with 0
 // # A lie: the guards in front of the loops are taken to hold, so the typed turns go on behind another object under `prototype`. Under the word the process stops by name.
 // # RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,GuardsAndFactsAreTakenToHold $SHELL
-// # REQUIRES(LIE): entries-of-bun
 // # LIE: AOT: f{{*}} at {{*}}: what memory holds where the compiler remembers another value is not of the type that the compiler has proven of it.
 // # LIE: crashed with
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 12 of 12 of 12
 // # CHECK-NEXT: exited with 0
 const unseen = x => [x][JSON.parse("0")];

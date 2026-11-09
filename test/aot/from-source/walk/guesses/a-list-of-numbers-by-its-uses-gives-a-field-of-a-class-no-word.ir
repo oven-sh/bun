@@ -6,7 +6,6 @@
 # RUN(WORD): print
 # WORD: layout {{*}}name="Box"{{*}}key="items" declared={type=anything}
 # RUN(WALK): walk f2 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK: [[given]]: {{*}} = GetSlot {{*}}key="items"
 # WALK: = TypeTest [[given]] testedType=Array<number>
 # WALK: = TypeTest [[given]] testedType=Uint8Array

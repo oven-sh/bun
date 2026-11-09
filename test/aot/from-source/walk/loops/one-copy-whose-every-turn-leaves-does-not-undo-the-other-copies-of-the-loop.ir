@@ -7,7 +7,6 @@
 # -- end of source
 # The field is stored elsewhere in the file too. In the copy for lists of anything the element is asked nothing, so every turn of that copy leaves at the sum. That is a word about one copy: the copies for lists of numbers and for byte arrays keep their turns.
 # RUN(WALK): walk f1 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK: [[given]]: {{*}} = GetSlot {{*}}key="bytes"
 # WALK: = TypeTest [[given]] testedType=Array<number>
 # WALK: = TypeTest [[given]] testedType=Uint8Array

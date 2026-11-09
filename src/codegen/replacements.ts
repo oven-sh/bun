@@ -206,8 +206,6 @@ export const define: Record<string, string> = {
   "PROCESS_REACHES_CODE_ON_ITS_PROTOTYPES": "true",
   // `bun compile` replaces the value: false for a program that cannot tell whether node:events was loaded.
   "WARNINGS_LOAD_NODE_EVENTS": "true",
-  // `bun compile` replaces the value: false for a program that cannot come by node:path, and so cannot have replaced its basename().
-  "WARNINGS_ASK_NODE_PATH": "true",
   // `bun compile` replaces the value: true where these files are compiled ahead of time.
   "IS_COMPILED_AHEAD_OF_TIME": "false",
 

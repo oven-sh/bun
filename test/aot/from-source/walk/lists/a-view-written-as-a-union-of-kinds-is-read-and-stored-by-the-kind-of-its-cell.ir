@@ -12,7 +12,6 @@
 # console.log(tools[JSON.parse('"fill"')](seen), tools[JSON.parse('"total"')](seen));
 # -- end of source
 # RUN: walk f1:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: = IsPristine {{*}}builtinClass=TypedArray
 # CHECK: = GetTypedArrayLength

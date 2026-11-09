@@ -10,7 +10,7 @@
 # -- end of source
 # By its text the body of a loop of three turns does not stand on every way through a turn of the loop around it, and neither does a read under a condition: so the storage and the length of the lists
 # read there were loaded anew at each read, though nothing in the turns writes them. The two are loads that never fail of what is a list by its own type: they stand in front.
-# REQUIRES: entries-of-bun as-written
+# REQUIRES: as-written
 # RUN: compile KnownInductionsUsed mechanisms=all
 # blur() is a nest four deep: the loop over x, inside the typed copy of the loop over y, holds a loop that holds a loop: its other copy buys the innermost loop alone: 27 inductions became 15 with one loop fewer built twice.
 # CHECK: statistic KnownInductionsUsed 15

@@ -98,7 +98,10 @@ const partsInAChain: [cases: RegExp, what: string][] = [
     /^(bare|a-spy|a-file-among-the-mocks)--required--one--unmocked-meanwhile$/,
     "the mock is ended while a file that requires the spring is loaded",
   ],
-  [/^a-factory-over-the-original--required--/, "require() meets a factory that waits for the original"],
+  [
+    /^a-factory-over-the-original--required--(?!(one|two)--(laid-in-a-preload|loads-begun-in-another-file)$)/,
+    "require() meets a factory that waits for the original",
+  ],
   [
     /^a-factory-that-waits--(imported-at-run-time|required)--(one|two|three)--unmocked-meanwhile$/,
     "the mock is ended while its factory waits",
@@ -106,10 +109,6 @@ const partsInAChain: [cases: RegExp, what: string][] = [
   [
     /^a-factory-that-waits--(imported-at-run-time|required)--one--laid-in-the-test$/,
     "the brook itself asks for the spring while the factory waits",
-  ],
-  [
-    /^a-factory-that-waits--required--((one|two)--loads-begun-in-another-file|two--laid-in-a-preload|one--modules-reset-meanwhile)$/,
-    "require() meets a factory that waits",
   ],
   [
     /^a-factory-that-waits--imported--((one|two|three)--laid-in-the-test|three--(loads-begun-in-another-file|laid-in-a-preload)|(two|three)--modules-reset-meanwhile)$/,

@@ -5,7 +5,6 @@
 # -- end of source
 # The field is read in every turn. In front of the loop the box is asked for its shape and whether the slot is filled, failing to the closed copy; the slot is read once, and what it gives is told apart as what a variable holds is. In the copy for byte arrays no turn reads the slot.
 # RUN(WALK): walk f1 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK: = ShapeTest
 # WALK: = IsSlotFilled {{*}}key="bytes"
 # WALK: [[given]]: {{*}} = GetSlot {{*}}key="bytes"

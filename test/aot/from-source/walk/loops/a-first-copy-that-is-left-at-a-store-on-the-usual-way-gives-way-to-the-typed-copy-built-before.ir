@@ -10,7 +10,6 @@
 # -- end of source
 # push() and shift() of a ring are copied into the loop of f; shift() stands behind an `if`. Each stores into the list under a key that is no whole number by its type, and into fields. A first copy of the loop that keeps other code out of its turns is left for the closed copy at the first store, on the usual way: it gives way: the loop is built as it was before there was such a copy: the stores stand in the typed copy.
 # RUN(STORES): walk f1 mechanisms=all
-# REQUIRES(STORES): entries-of-bun
 # STORES-COUNT-4: PutArrayElement
 
 module m0 path="main.js" displayPath="main.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0

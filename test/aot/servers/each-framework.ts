@@ -341,13 +341,30 @@ export function testFramework(framework: string) {
   async function build() {
     const executable = join(String(dir), isWindows ? "compiled.exe" : "compiled");
     const built = await run(
-      [bunExe(), "build", "--compile", "--aot", ...moreFlags, ...flags, entry, "--outfile", executable],
+      [
+        bunExe(),
+        "build",
+        "--compile",
+        "--aot",
+        "--explain=statistics",
+        ...moreFlags,
+        ...flags,
+        entry,
+        "--outfile",
+        executable,
+      ],
       app,
       bunEnv,
     );
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+    // A loop whose typed copy could not be finished keeps its plain copy and answers rightly: nothing but this count says that the copy is lost.
+    expect({
+      stderr: built.stderr,
+      exitCode: built.exitCode,
+      purchasesOfLoopsThatFailed: Number(/^PurchasesOfLoopsThatFailed (\d+)$/m.exec(built.stderr)?.[1]),
+    }).toEqual({
       stderr: expect.not.stringMatching(/^error\b/m),
       exitCode: 0,
+      purchasesOfLoopsThatFailed: 0,
     });
     return executable;
   }

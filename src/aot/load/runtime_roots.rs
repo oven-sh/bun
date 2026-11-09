@@ -23,7 +23,6 @@ pub(crate) struct RuntimeRoots {
     pub modules_named_at_run_time: Vec<RuntimeModule>,
     pub imports_cluster: bool,
     pub loads_events: bool,
-    pub loads_path: bool,
     pub imports_uncompiled_code: bool,
     pub asks: RuntimeUses,
     pub holds_what_unseen_code_finds: bool,
@@ -172,12 +171,6 @@ pub(crate) fn collect_runtime_roots(
     let imports_cluster = modules.contains(&RuntimeModule::NodeCluster);
     modules.extend(&host_loaded_modules);
     let loads_events = modules.contains(&RuntimeModule::NodeEvents);
-    let loads_path = modules.iter().any(|module| {
-        matches!(
-            module,
-            RuntimeModule::NodePath | RuntimeModule::NodePathPosix | RuntimeModule::NodePathWin32
-        )
-    });
     let functions: Vec<RuntimeFunction> = functions.into_iter().collect();
     RuntimeRoots {
         paths: order_root_paths(runtime_modules, modules, functions),
@@ -185,7 +178,6 @@ pub(crate) fn collect_runtime_roots(
         modules_named_at_run_time: named,
         imports_cluster,
         loads_events,
-        loads_path,
         imports_uncompiled_code,
         holds_what_unseen_code_finds,
         holds_it_for_uses_of_files_alone: holds_what_unseen_code_finds

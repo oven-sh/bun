@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/bun/ffi.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 dd6bb7f7938bf856abb8112839947c1ad3f8ac2f066a4cf8dba793011f96f44e.
+// Written against that file with the SHA-256 61729387d07bbc1d660ef35053b022fb0ad6e6f309a018b8a549df55104f8888.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 const FFIType = {
   "0": 0,

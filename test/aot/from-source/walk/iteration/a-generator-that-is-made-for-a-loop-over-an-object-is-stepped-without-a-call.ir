@@ -10,12 +10,10 @@
 # sink(total(shelf));
 # -- end of source
 # RUN: walk f1:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK-NOT: callee=f3
 # CHECK: = TypeTest {{*}}testedType=builtin(GeneratorPrototypeNext)
 # CHECK: = StepGenerator {{*}}check=IsGenerator
 # RUN(WITHHELD): walk f1:Body mechanisms=all-Guesses
-# REQUIRES(WITHHELD): entries-of-bun
 # WITHHELD-LABEL: code f1:Body
 # WITHHELD-NOT: StepGenerator

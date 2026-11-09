@@ -10,7 +10,6 @@
 # gathered (a phantom brand is required and never written), so a Pair used to be every literal of the program that has a `kind`: the function began with a test for those shapes, took left and right for undefined behind it,
 # and the real pair went the rare way all through. A name that is required, never written AND READ says that the record is made outside: it has no layout of the program for a member, and its type says nothing.
 # f1 = lengths
-# REQUIRES: entries-of-bun
 # RUN: walk f1 mechanisms=all
 # CHECK-NOT: ShapeTest
 # RUN(RIGHT): run-in-shell mechanisms=all

@@ -38,14 +38,15 @@ pub use jsx::{
 pub use macro_calls::{macro_callee, macro_import_symbols};
 pub use made_requires::{
     ExportedRequire, OwnRequire, find_base_that_a_call_made_of_own_file, find_exported_requires,
-    find_holder_of_require_made_for_choice, find_other_values_of_own_require, find_own_require,
-    find_result_expression, gives_first_argument_to_own_require, holds_import_meta_require,
-    is_call_of_create_require, is_create_require_behind_get_builtin_module,
-    is_create_require_called_through_call, is_made_require, is_require_made_for_own_file,
-    may_be_modified, may_call_have_made_base_of_require, may_call_have_made_path,
-    may_require_get_members, may_still_be_undefined,
+    find_holder_of_require_made_for_choice, find_made_requires_that_go_out_of_sight,
+    find_other_values_of_own_require, find_own_require, find_result_expression,
+    gives_first_argument_to_own_require, holds_import_meta_require, is_call_of_create_require,
+    is_create_require_behind_get_builtin_module, is_create_require_called_through_call,
+    is_made_require, is_require_made_for_own_file, may_be_modified,
+    may_call_have_made_base_of_require, may_call_have_made_path, may_require_get_members,
+    may_still_be_undefined,
 };
-pub(crate) use made_requires::{find_imported_export, names_own_file, settled_symbol};
+pub(crate) use made_requires::{OtherUse, find_imported_export, names_own_file, settled_symbol};
 pub use parameters::{
     ExportedNames, find_names_exported_for, find_parameter_named, find_values_of_parameter,
     find_values_passed_for, is_exported,

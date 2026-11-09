@@ -7,7 +7,6 @@
 # console.log(tools[JSON.parse('"total"')](new Float64Array(9)));
 # -- end of source
 # RUN: emit f1:ParameterGuard mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: = Load8Z({{*}}JSCell_typeInfoType
 # CHECK-NEXT: = Add(
 # CHECK-NEXT: = Below({{*}}, @[[seven]], origin

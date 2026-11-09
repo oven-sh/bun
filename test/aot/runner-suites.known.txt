@@ -99,7 +99,6 @@ test/js/bun/test/mock/mock-hoist.test.ts: not hoisted > a call into another bloc
 test/js/bun/test/mock/mock-hoist.test.ts: not hoisted > a call into another block of a TypeScript namespace keeps its this: a file without any test API
 test/js/bun/test/mock/mock-module.test.ts: a factory doesn't wait for an onLoad() callback in an unrelated load > a module that the factory shares with the importers of the mock stays linked to the mock
 test/js/bun/test/mock/mock-module.test.ts: a factory that require()s a module that is waiting for the mock
-test/js/bun/test/mock/mock-module.test.ts: a failing factory that import()s its own module, whose original imports itself, is only called once
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > files that mock it between files that don't
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > a mocked package that another package imports > later files mock a package that a library loaded while the first file mocked it
 test/js/bun/test/mock/mock-module.test.ts: a module mocked without a factory > what vi.importMock() gives inherits from Object.prototype, the exports of a mocked module from nothing

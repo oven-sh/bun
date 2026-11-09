@@ -44,7 +44,6 @@
 # the block of that meeting, which two edges lead to, had no end: the build stopped.
 # f2 = turn
 # RUN: walk f2 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: = CallTable {{*}}key="bump"
 # CHECK: = PropGet {{*}}key="bump"
 # CHECK: = TypeTest {{*}}testedType=f

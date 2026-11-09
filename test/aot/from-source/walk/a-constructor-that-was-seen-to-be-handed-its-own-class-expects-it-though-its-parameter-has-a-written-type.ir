@@ -11,6 +11,5 @@
 # A constructor does not expect its own class of what it takes apart unless one was seen to arrive. What was seen to arrive was kept only for parameters WITHOUT a written type, so for a typed parameter the
 # question was always answered "none", and a copying constructor beside which parsed data may arrive lost its typed reads. It is kept beside a written type too: here a Member is seen to arrive, and is expected.
 # RUN: walk f2 mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK: ShapeTest {{*}} layouts=[L
 # CHECK: GetSlot {{*}} key="id"

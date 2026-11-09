@@ -5,11 +5,9 @@
 // # STATISTIC: RemaindersByDivisorsOfOneInteger >= 1
 // # At the end the shell runs the same text itself: every answer is the same.
 // # RUN: run-in-shell $SHELL
-// # REQUIRES: entries-of-bun
 // # CHECK: 5 of 5 of 5
 // # CHECK-NEXT: exited with 0
 // # RUN(PROOFS): run-in-shell testing=CheckProofsAtRunTime $SHELL
-// # REQUIRES(PROOFS): entries-of-bun
 // # PROOFS: 5 of 5 of 5
 // # PROOFS-NEXT: exited with 0
 declare function report(value: unknown): void;

@@ -5,11 +5,8 @@
 # -- end of source
 # The second row's key, `r + 1`, is made in the inner loop out of what stands in front of it. Both rows count as found by reads from in front: the inner loop is bought as a quiet one, both rows are read in front of its typed copy (each asked whether it is present, a list, as made), and the turn reads two elements under proven lists.
 # RUN(WALK): walk f1 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK-COUNT-5: isLoopHead=true
 # RUN(ROWS): walk f1 mechanisms=all
-# REQUIRES(ROWS): entries-of-bun
 # ROWS-COUNT-2: = IsElementPresent
 # RUN(READS): walk f1 mechanisms=all
-# REQUIRES(READS): entries-of-bun
 # READS-COUNT-4: = GetArrayElement {{*}}level=Proven

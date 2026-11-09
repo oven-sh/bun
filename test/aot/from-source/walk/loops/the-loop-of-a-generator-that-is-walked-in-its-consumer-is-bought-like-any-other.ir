@@ -10,7 +10,6 @@
 # sink(total(new Shelf([1, 2, 3])), grown(new Shelf([4])), nested(new Shelf([5])));
 # -- end of source
 # RUN: walk f1:Body mechanisms=all
-# REQUIRES: entries-of-bun
 # CHECK-LABEL: code f1:Body
 # CHECK: frame 1 callee=f5
 # CHECK: isLoopHead=true
@@ -19,7 +18,6 @@
 # CHECK: = Add
 # the turn stores into a list
 # RUN(GROWN): walk f2:Body mechanisms=all
-# REQUIRES(GROWN): entries-of-bun
 # GROWN-LABEL: code f2:Body
 # GROWN: frame 1 callee=f5
 # GROWN-NOT: arrayStorage=

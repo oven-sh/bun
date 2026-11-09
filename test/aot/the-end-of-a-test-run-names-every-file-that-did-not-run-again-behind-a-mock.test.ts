@@ -195,6 +195,20 @@ const runs = {
     },
     named: ["kiln.mjs, while b.test.mjs ran"],
   },
+  "a file threw, a factory that takes the original is made over it, and require() asks again": {
+    files: {
+      ...kiln,
+      "b.test.mjs":
+        `import { createRequire } from "node:module";\n` +
+        inTest(
+          fire("first") +
+            `  vi.doMock("./kiln.mjs", async original => ({ heat: (await original()).heat }));\n` +
+            requireKiln +
+            `  await new Promise(done => setTimeout(done, 300));\n`,
+        ),
+    },
+    named: ["kiln.mjs, while b.test.mjs ran"],
+  },
   "a file threw below its importer, where `bun test` keeps the failure too": {
     files: {
       ...kiln,

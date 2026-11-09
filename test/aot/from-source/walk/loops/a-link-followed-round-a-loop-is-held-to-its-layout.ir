@@ -5,6 +5,6 @@
 # sink(climb(new Node(1, new Node(2, new Node(3, null)))));
 # -- end of source
 # RUN: walk f2:Body mechanisms=all
-# CHECK: undefined|null|L{{*}} @JSValue{{*}}isLoopHead=true
+# CHECK: : L{{*}} @Cell{{*}}isLoopHead=true
 # RUN(SHELL): run-in-shell globalThis.sink = print;
 # SHELL: 2

@@ -15,7 +15,6 @@
 # What is stored into a view says nothing of what is read out of it: a store converts. A sort compares copies of the elements: it never hands out undefined; a traversal may, where the buffer is made shorter under it.
 # f1 = ofInts, f2 = ofBytes, f3 = ofWords, f4 = ofFloats, f5 = ofBigs, f6 = ofEither
 # RUN(KINDS): walk f1 f2 f3 f4 f5 f6 mechanisms=all
-# REQUIRES(KINDS): entries-of-bun
 # KINDS-LABEL: code f1:Body
 # KINDS: b0(v0: i32 @{{*}}, v1: i32 @
 # KINDS-LABEL: code f2:Body

@@ -12,7 +12,6 @@
 # -- end of source
 # `off` is an integer or nothing, and the view comes out of a field that may hold null. The view is read under the integer in line; the read under nothing stands on the rare side, by the key as it is.
 # RUN(WALK): walk f2 mechanisms=all
-# REQUIRES(WALK): entries-of-bun
 # WALK: undefined|i32 @JSValue
 # WALK: = TypeTest {{*}}testedType=i32
 # WALK: frequency=Rare

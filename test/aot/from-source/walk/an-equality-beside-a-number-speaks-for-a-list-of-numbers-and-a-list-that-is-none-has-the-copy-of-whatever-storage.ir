@@ -10,11 +10,9 @@
 # reads whatever storage, the copy that stood there before: a guess that fails costs one test. Where no second copy can be bought the guess is not made. Not in a loop that stands in another.
 # f1 = unlike, f2 = f
 # RUN(ASKED): walk f1 mechanisms=all
-# REQUIRES(ASKED): entries-of-bun
 # ASKED: HasArrayStorage {{*}}arrayStorage=Double [admitsInt32Storage]
 # ASKED: GetArrayElement {{*}}arrayStorage=Double
 # RUN(BEHIND): compile LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage mechanisms=all
-# REQUIRES(BEHIND): entries-of-bun
 # BEHIND-NOT: statistic LoopsBoughtOnceMoreForListsOfAnotherKindOfStorage 0
 
 module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0

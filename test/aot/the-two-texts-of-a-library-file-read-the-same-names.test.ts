@@ -11,16 +11,8 @@ const library = join(import.meta.dir, "..", "..", "src", "js");
 
 const expected: string[] = [
   // Names of types.
-  "builtins/BundlerPlugin.ts BuildOutput",
-  "builtins/ProcessObjectInternals.ts process",
-  // Read off an object of Bun's own that no program gets hold of. The ahead-of-time text asks for each function by itself.
-  "bun/ffi.ts linkSymbols",
-  "bun/ffi.ts viewSource",
   // It answers false, always.
-  "internal/repl/history.ts isEnabled",
   // `globalThis.TypeError` and `Function.prototype.call`, each kept in a variable.
-  "node/child_process.ts TypeError",
-  "node/v8.ts call",
   // Read by a pattern: `const { subject, subjectaltname: altNames } = cert`.
   "node/tls.ts subject",
   "node/tls.ts subjectaltname",
@@ -41,7 +33,17 @@ function namesReadIn(file: string): Set<string> {
 test("what plain's text of a library file reads off an object, the ahead-of-time text reads too", () => {
   const entries = readdirSync(join(library, "ahead-of-time"), { recursive: true }) as string[];
   const files = entries.map(entry => entry.replaceAll("\\", "/")).filter(file => file.endsWith(".ts"));
-  const compiled = new Set(files.flatMap(file => [...namesReadIn(join(library, "ahead-of-time", file))]));
+  // A file without a second text has one text, which the compiler reads too.
+  const withOneText = (readdirSync(library, { recursive: true }) as string[])
+    .map(entry => entry.replaceAll("\\", "/"))
+    .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts") && !file.startsWith("ahead-of-time/"))
+    .filter(file => !files.includes(file));
+  const compiled = new Set(
+    [
+      ...files.map(file => join(library, "ahead-of-time", file)),
+      ...withOneText.map(file => join(library, file)),
+    ].flatMap(path => [...namesReadIn(path)]),
+  );
   const found: string[] = [];
   for (const file of files.filter(file => existsSync(join(library, file)))) {
     for (const name of namesReadIn(join(library, file))) {

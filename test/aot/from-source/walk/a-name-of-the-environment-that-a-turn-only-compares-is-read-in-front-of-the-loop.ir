@@ -6,7 +6,7 @@
 # to a variable of the file. Holders that lead back to a built-in that the text names are as good: the built-in stands in front of every loop. So the read asks its site once, in front of the typed copy.
 # f1 = counted
 # RUN: walk f1:Body mechanisms=all
-# REQUIRES: entries-of-bun not-windows
+# REQUIRES: not-windows
 # CHECK: = GetValueAtSiteOrAbsent {{*}} key="MADE_UP_HOME"
 # CHECK: isLoopHead=true
 # CHECK-NOT: key="MADE_UP_HOME"

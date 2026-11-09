@@ -803,11 +803,18 @@ fn find_require_among_all_that_is_stored(
     })
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum OtherUse {
+    HandedOn,
+    KeptInSight,
+    OfAnswer,
+}
+
 fn list_names_used_otherwise_than_called(
     hir: &File<'_>,
     bound: &Bound<'_>,
-) -> Box<[(SymbolId, bool)]> {
-    let mut names: Vec<(SymbolId, bool)> = Vec::new();
+) -> Box<[(SymbolId, OtherUse)]> {
+    let mut names: Vec<(SymbolId, OtherUse)> = Vec::new();
     for mention in (0..hir.exprs.len() as u32).map(ExprId) {
         if !bound.is_evaluated_ident(mention) || bound.is_store_target(mention) {
             continue;
@@ -821,12 +828,25 @@ fn list_names_used_otherwise_than_called(
         if !is_called_or_asked_to_resolve(hir, bound, mention)
             && !is_only_tested(hir, bound, written)
         {
-            names.push((name, false));
+            let is_kept_in_sight = match bound.parent_of_expr(written) {
+                Parent::Expr(member) => {
+                    (hir.member_key(member)).is_some_and(|(object, _)| object == written)
+                }
+                Parent::VarInit(declaration) => {
+                    matches!(bound.initialized_binding(hir[declaration].pat),
+                        Binding::Symbol(taker) if bound.is_stable_binding(taker))
+                }
+                _ => false,
+            };
+            names.push(match is_kept_in_sight {
+                true => (name, OtherUse::KeptInSight),
+                false => (name, OtherUse::HandedOn),
+            });
         } else if let (true, Parent::Expr(answer)) = (is_callee, bound.parent_of_expr(written))
             && !is_called_or_asked_to_resolve(hir, bound, answer)
             && !is_only_tested(hir, bound, outermost_cast(hir, bound, answer))
         {
-            names.push((name, true));
+            names.push((name, OtherUse::OfAnswer));
         }
     }
     names.shared_sort_unstable();
@@ -837,7 +857,14 @@ fn list_names_used_otherwise_than_called(
 fn is_used_otherwise_than_called(hir: &File<'_>, bound: &Bound<'_>, name: SymbolId) -> bool {
     let names = &hir.lazy.cells.names_used_otherwise_than_called;
     let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
-    names.binary_search(&(name, false)).is_ok()
+    let start = names.partition_point(|it| it.0 < name);
+    (names[start..].first()).is_some_and(|it| it.0 == name && it.1 != OtherUse::OfAnswer)
+}
+
+fn is_handed_on(hir: &File<'_>, bound: &Bound<'_>, name: SymbolId) -> bool {
+    let names = &hir.lazy.cells.names_used_otherwise_than_called;
+    let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
+    names.binary_search(&(name, OtherUse::HandedOn)).is_ok()
 }
 
 fn is_answer_used_otherwise_than_called(
@@ -847,8 +874,7 @@ fn is_answer_used_otherwise_than_called(
 ) -> bool {
     let names = &hir.lazy.cells.names_used_otherwise_than_called;
     let names = names.get_or_init(|| list_names_used_otherwise_than_called(hir, bound));
-    names.binary_search(&(function, true)).is_ok()
-        || names.binary_search(&(function, false)).is_ok()
+    names.binary_search_by_key(&function, |it| it.0).is_ok()
 }
 
 thread_local! {
@@ -865,6 +891,20 @@ fn is_called_or_asked_to_resolve(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -
         || matches!(bound.parent_of_expr(e), Parent::Expr(member)
             if matches!(hir.member_key(member), Some((object, MemberKey::Name(known::resolve))) if object == e)
                 && is_callee(outermost_cast(hir, bound, member)))
+}
+
+fn find_choice_that_hands_on(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> Option<ExprId> {
+    let Parent::Expr(above) = bound.parent_of_expr(e) else {
+        return None;
+    };
+    let hands_on = match expr_kind(hir, above) {
+        Some(ExprKind::Cond { test, .. }) => test != e,
+        Some(ExprKind::Binary { op, .. }) => {
+            matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma)
+        }
+        _ => false,
+    };
+    hands_on.then(|| outermost_cast(hir, bound, above))
 }
 
 fn goes_out_of_sight(hir: &File<'_>, bound: &Bound<'_>, made: ExprId) -> bool {
@@ -895,6 +935,18 @@ fn goes_out_of_sight(hir: &File<'_>, bound: &Bound<'_>, made: ExprId) -> bool {
                     && !is_answer_used_otherwise_than_called(hir, bound, name)
             })
         };
+        let call_where_written = |function: FnId| match bound.fns[function.idx()].owner {
+            FnOwner::Expr(written) => {
+                let written = outermost_cast(hir, bound, written);
+                match bound.parent_of_expr(written) {
+                    Parent::Expr(call) => (matches!(expr_kind(hir, call), Some(ExprKind::Call(id))
+                        if hir[id].callee == written))
+                    .then_some(call),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
         let above = match bound.parent_of_expr(e) {
             Parent::Expr(above) => above,
             Parent::VarInit(declaration) => {
@@ -909,7 +961,13 @@ fn goes_out_of_sight(hir: &File<'_>, bound: &Bound<'_>, made: ExprId) -> bool {
                     _ => true,
                 };
             }
-            Parent::FnBody(function) => return !is_answer_in_sight(function),
+            Parent::FnBody(function) => match call_where_written(function) {
+                Some(call) => {
+                    e = outermost_cast(hir, bound, call);
+                    continue;
+                }
+                None => return !is_answer_in_sight(function),
+            },
             Parent::Stmt(statement) => {
                 return match hir[statement].kind {
                     StmtKind::Expr(_) => false,
@@ -930,26 +988,92 @@ fn goes_out_of_sight(hir: &File<'_>, bound: &Bound<'_>, made: ExprId) -> bool {
             }
             _ => return true,
         };
-        match expr_kind(hir, above) {
-            Some(ExprKind::Cond { test, .. }) if test != e => {}
-            Some(ExprKind::Binary {
-                op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
-                ..
-            }) => {}
-            Some(ExprKind::Assign {
-                op: None | Some(BinOp::Or | BinOp::Nullish),
-                target,
-                value,
-            }) if value == e => match (expr_kind(hir, target), bound.binding(target)) {
+        if let Some(around) = find_choice_that_hands_on(hir, bound, e) {
+            e = around;
+            continue;
+        }
+        let Some(ExprKind::Assign {
+            op: None | Some(BinOp::Or | BinOp::Nullish),
+            target,
+            value,
+        }) = expr_kind(hir, above)
+        else {
+            return true;
+        };
+        let stays_in_sight = value == e
+            && matches!((expr_kind(hir, target), bound.binding(target)),
                 (Some(ExprKind::Ident(_)), Binding::Symbol(name))
                     if !is_used_otherwise_than_called(hir, bound, name)
-                        && !is_exported(bound, name) => {}
-                _ => return true,
-            },
-            _ => return true,
+                        && !is_exported(bound, name));
+        if !stays_in_sight {
+            return true;
         }
         e = outermost_cast(hir, bound, above);
     }
+}
+
+fn find_name_that_takes(hir: &File<'_>, bound: &Bound<'_>, made: ExprId) -> Option<SymbolId> {
+    let mut e = outermost_cast(hir, bound, made);
+    while let Some(around) = find_choice_that_hands_on(hir, bound, e) {
+        e = around;
+    }
+    let taker = match bound.parent_of_expr(e) {
+        Parent::VarInit(declaration) => bound.initialized_binding(hir[declaration].pat),
+        Parent::Expr(above) => match expr_kind(hir, above) {
+            Some(ExprKind::Assign { target, value, .. }) if value == e => bound.binding(target),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    match taker {
+        Binding::Symbol(name) => Some(name),
+        _ => None,
+    }
+}
+
+fn is_followed_to_every_call(text: Text<'_, '_, '_, '_>, made: ExprId) -> bool {
+    let Text { hir, bound, .. } = text;
+    if goes_out_of_sight(hir, bound, made) {
+        return false;
+    }
+    let is_base_read = find_made_require(text, made, StepsLeft::ALL).is_some();
+    let Some(holder) = find_name_that_takes(hir, bound, made) else {
+        let written = outermost_cast(hir, bound, made);
+        return is_base_read
+            || is_only_tested(hir, bound, written)
+            || matches!(bound.parent_of_expr(written), Parent::Stmt(statement)
+                if matches!(hir[statement].kind, StmtKind::Expr(_)));
+    };
+    if bound.is_stable_binding(holder) {
+        let is_made_for_choice =
+            || find_require_made_for_choice(text, made, Some(holder), StepsLeft::ALL).is_some();
+        return (is_base_read || is_made_for_choice())
+            && (is_exported(bound, holder) || !is_handed_on(hir, bound, holder));
+    }
+    if IS_ASKING_WHOLE_FILE.replace(true) {
+        return true;
+    }
+    let holders = &hir.lazy.cells.names_that_hold_own_requires;
+    let holders = holders.get_or_init(|| list_names_that_hold_own_requires(text));
+    IS_ASKING_WHOLE_FILE.set(false);
+    holders.binary_search_by_key(&holder, |it| it.0).is_ok()
+}
+
+pub fn find_made_requires_that_go_out_of_sight(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    decisions: &Decisions<'_>,
+) -> Vec<ExprId> {
+    let text = Text::of(hir, bound, None);
+    let early = StepsLeft::ALL.without_late();
+    let calls = (0..hir.exprs.len() as u32).map(ExprId);
+    let made = calls.filter(|&e| {
+        matches!(expr_kind(hir, e), Some(ExprKind::Call(_)))
+            && !decisions.is_dead_expr(e)
+            && find_arguments_of_create_require(text, e, early).is_some()
+    });
+    made.filter(|&made| !is_followed_to_every_call(text, made))
+        .collect()
 }
 
 fn lets_made_requires_out_of_sight(text: Text<'_, '_, '_, '_>) -> bool {

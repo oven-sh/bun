@@ -158,8 +158,8 @@ test.skipIf(!isWindows)("probe", async () => {
           block[4 + i] = 0x01; // FOPEN
           view.setBigUint64(7 + i * 8, std[i], true);
         }
-        startup.setUint16(48, block.byteLength, true); // cbReserved2
-        startup.setBigUint64(56, BigInt(ptr(block)), true); // lpReserved2
+        startup.setUint16(66, block.byteLength, true); // cbReserved2
+        startup.setBigUint64(72, BigInt(ptr(block)), true); // lpReserved2
       }
     }
     let attributes: Uint8Array | null = null;

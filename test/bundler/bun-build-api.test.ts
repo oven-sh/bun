@@ -2698,3 +2698,94 @@ describe.concurrent("Bun.build with a path longer than the path buffer", () => {
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n", stderr: "", exitCode: 0 });
   });
 });
+
+// The writer opens `outdir` through the OS, which follows a symlink before it applies `..`. Every
+// path the build reports, the metafile writer and the source map `sources` fold `..` as text.
+describe.concurrent("Bun.build with '..' in outdir", () => {
+  async function build(outdir: string) {
+    using dir = tempDir("bun-build-outdir-dotdot", {
+      "src/index.ts": `import asset from "./asset.txt" with { type: "file" };\nconsole.log(asset);\nimport("./lazy");`,
+      "src/lazy.ts": `console.log("lazy");`,
+      "src/asset.txt": "asset",
+      "real/inner/keep": "",
+      "build.ts": `
+        import { existsSync, readdirSync } from "node:fs";
+        import { dirname, relative, resolve } from "node:path";
+
+        const cwd = process.cwd();
+        const build = await Bun.build({
+          entrypoints: ["./src/index.ts"],
+          outdir: process.argv[2].replace("<cwd>", cwd),
+          splitting: true,
+          sourcemap: "external",
+          metafile: { json: "meta.json", markdown: "meta.md" },
+        });
+        const folders = new Set<string>();
+        const unreadable: string[] = [];
+        const sourcesNotFound: string[] = [];
+        for (const output of build.outputs) {
+          folders.add(relative(cwd, dirname(output.path)).replaceAll("\\\\", "/"));
+          const text = await output.text().catch(() => null);
+          if (text === null) unreadable.push(output.kind);
+          else if (output.kind === "sourcemap")
+            for (const source of JSON.parse(text).sources)
+              if (!existsSync(resolve(dirname(output.path), source))) sourcesNotFound.push(source);
+        }
+        const foldersIn = (folder: string) =>
+          readdirSync(folder, { withFileTypes: true }).filter(entry => !entry.isFile()).map(entry => entry.name).sort();
+        console.log(JSON.stringify({
+          kinds: build.outputs.map(output => output.kind).sort(),
+          folders: [...folders],
+          unreadable,
+          sourcesNotFound,
+          besideTheSymlink: foldersIn(cwd),
+          besideItsTarget: foldersIn("real"),
+        }));
+      `,
+    });
+    symlinkSync(join(String(dir), "real", "inner"), join(String(dir), "link"), "junction");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts", outdir],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  const built = (folder: string, besideTheSymlink: string[]) => ({
+    result: {
+      kinds: ["asset", "chunk", "entry-point", "metafile-json", "metafile-markdown", "sourcemap", "sourcemap"],
+      folders: [folder],
+      unreadable: [],
+      sourcesNotFound: [],
+      besideTheSymlink,
+      besideItsTarget: ["inner"],
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+
+  test.each([
+    ["after a symlink, absolute", "<cwd>/link/../out"],
+    ["after a symlink, relative", "link/../out"],
+    ["after a symlink, with '.' and doubled separators", "./link/./..//out/"],
+    ["after a folder that does not exist", "missing/../out"],
+    ["after a file", "src/asset.txt/../../out"],
+  ])("'..' %s: every output is in the folder its path names", async (_, outdir) => {
+    expect(await build(outdir)).toEqual(built("out", ["link", "out", "real", "src"]));
+  });
+
+  test("'..' that leaves only the working directory", async () => {
+    expect(await build("link/..")).toEqual(built("", ["link", "real", "src"]));
+  });
+
+  test.each([
+    ["<cwd>/link", "link"],
+    ["link/sub", "link/sub"],
+  ])("a symlink with no '..' after it keeps its spelling in every path: %s", async (outdir, folder) => {
+    expect(await build(outdir)).toEqual(built(folder, ["link", "real", "src"]));
+  });
+});

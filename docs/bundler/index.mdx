@@ -335,6 +335,8 @@ for (const res of result.outputs) {
 
 When `outdir` is set, the `path` property on a `BuildArtifact` is the absolute path it was written to.
 
+Bun resolves a `..` in `outdir` that follows a folder name as text, like `path.resolve()`, before it opens the directory. `link/../out` is `out`, also when `link` is a symlink.
+
 ### target
 
 The intended execution environment for the bundle.

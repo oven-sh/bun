@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { readdirSync, readFileSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -76,6 +76,20 @@ describe.concurrent("bun build --dts", () => {
         : "",
     );
     expect(readdirSync(join(String(dir), "out"))).toContain("index.aot.ts");
+  });
+
+  test("--outdir with '..' after a symlink: every file is in one folder", async () => {
+    using dir = tempDir("build-dts-outdir-dotdot", { ...project, "real/inner/keep": "" });
+    symlinkSync(join(String(dir), "real/inner"), join(String(dir), "link"), "junction");
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "link/../out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(readdirSync(join(String(dir), "out")).sort()).toEqual([
+      "index.aot.ts",
+      "index.d.ts",
+      "index.js",
+      "join.d.ts",
+    ]);
+    expect(readdirSync(join(String(dir), "real"))).toEqual(["inner"]);
   });
 
   test("a type error fails the build", async () => {

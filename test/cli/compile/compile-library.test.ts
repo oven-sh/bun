@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { cpSync, existsSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -487,6 +487,22 @@ describe.concurrent("bun compile --library", () => {
       stderr: `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${String(dir)}). Use a folder inside it, such as --outdir=dist\n`,
       exitCode: 1,
     });
+  });
+
+  test("--outdir with '..' after a symlink is the folder that the checks name", async () => {
+    using dir = tempDir("library-outdir-dotdot", {
+      ...sources,
+      "package.json": JSON.stringify(packageJson),
+      "deep/keep": "",
+    });
+    // Through the symlink, `deep/link/..` is the project folder. As text, it is `deep`.
+    symlinkSync(join(String(dir), "src"), join(String(dir), "deep", "link"), "junction");
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--outdir", "deep/link/..");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    expect(json(join(String(dir), "package.json"))).toEqual(packageJson);
+    expect(json(join(String(dir), "deep/package.json")).name).toBe(packageJson.name);
+    expect(existsSync(join(String(dir), "deep/index.js"))).toBe(true);
   });
 
   test.each([

@@ -463,6 +463,58 @@ test("--outdir creates folders beside the working directory", async () => {
   expect(out).toContain("built");
 });
 
+test.each<[string, string[], string[]]>([
+  ["a plain build", [], ["entry.js"]],
+  ["a build with a source map", ["--sourcemap=external"], ["entry.js", "entry.js.map"]],
+])("--outdir folds '..' as text, also after a symlink: %s", async (_, flags, written) => {
+  using dir = tempDir("build-outdir-dotdot", {
+    "src/entry.ts": `export const x: number = 1;\nconsole.log("built", x);`,
+    "real/inner/keep": "",
+  });
+  fs.symlinkSync(join(String(dir), "real", "inner"), join(String(dir), "link"), "junction");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "src/entry.ts", "--outdir", "link/../dist", ...flags],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+
+  // Beside the symlink, not beside its target.
+  expect(fs.readdirSync(join(String(dir), "dist")).sort()).toEqual(written);
+  expect(fs.readdirSync(join(String(dir), "real"))).toEqual(["inner"]);
+  // The source map names its source from the folder it is in.
+  if (written.includes("entry.js.map")) {
+    expect((await Bun.file(join(String(dir), "dist", "entry.js.map")).json()).sources).toEqual(["../src/entry.ts"]);
+  }
+});
+
+test("an --outdir that is a file is named as it is opened", async () => {
+  using dir = tempDir("build-outdir-is-a-file", {
+    "entry.ts": `console.log("built");`,
+    "blocked": "a file",
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--outdir", "missing/../blocked"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toStartWith("error: Failed to create output directory ");
+  // Windows keeps the text of the option, and folds it before each NT call.
+  expect(stderr).toContain(isWindows ? 'missing/../blocked"' : '"blocked"');
+  expect(exitCode).toBe(1);
+  expect(fs.readdirSync(String(dir)).sort()).toEqual(["blocked", "entry.ts"]);
+});
+
 test("multi-entry build writes each entry point into the output directory", async () => {
   using dir = tempDir("build-multi-entry-outdir", {
     "a.ts": `export const a: number = 1;\nconsole.log("A" + a);`,

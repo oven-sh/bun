@@ -4,9 +4,9 @@ This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of th
 
 4 wrong answers in 3 files stand under a mark. They are no goals, and are not counted among them.
 
-236 goals in 134 files: 170 on what a program reaches of the library and what --trim keeps, 15 on how a build grows with its program, 51 on other things.
+237 goals in 135 files: 170 on what a program reaches of the library and what --trim keeps, 15 on how a build grows with its program, 52 on other things.
 
-75 of them are a yes or a no. Of the others 38 are held to what is reached today by a case beside them, 2 could be, 2 cannot grow worse, 68 are counted at every run and compared between runs, 51 move with the platform and with every change, and 0 say no measured number.
+76 of them are a yes or a no. Of the others 38 are held to what is reached today by a case beside them, 2 could be, 2 cannot grow worse, 68 are counted at every run and compared between runs, 51 move with the platform and with every change, and 0 say no measured number.
 
 57 cases in 18 files are declared `todo` and never run.
 
@@ -245,6 +245,7 @@ what does. What is not run, or not judged, stands in tables of its own further d
 | test/aot/trimmed-is-whole/programs-2.test.ts | an executable built with --trim behaves like one built without it > function-constructor: proxy-get (the compiler sees no use of Function where a proxy of a function hands out its constructor, so --trim removes it, and the refusal has other words) | no | yes | no number: the goal is a yes or a no |
 | test/aot/trimmed-is-whole/programs-3.test.ts | an executable built with --trim behaves like one built without it > this-of-a-listener: prototype-method-bare-call (the build only warns, and both executables then end alike, with the TypeError that names the assignment: where a host object is read under a computed name the build does not see that every run comes to it) | no | yes | no number: the goal is a yes or a no |
 | test/aot/trimmed-is-whole/programs-3.test.ts | an executable built with --trim behaves like one built without it > this-of-a-listener: prototype-method-this (the build only warns, and both executables then end alike, with the TypeError that names the assignment: where a host object is read under a computed name the build does not see that every run comes to it) | no | yes | no number: the goal is a yes or a no |
+| test/bundler/bun-build-api-dts.test.ts | Bun.build({ dts: true }) > a member with override that is written as a declaration type checks | no | yes | no number: the goal is a yes or a no |
 | test/bundler/compile-trim-by-use.test.ts | --compile --aot --trim removes what the program doesn't use > a Bun.serve route with the style option doesn't count as a use of the bundler, and throws a catchable error: the bundler is kept by 1 call of Bun.serve, the goal is 0 | 1 | 0 | the case beside it: --compile --aot --trim removes what the program doesn't use > a Bun.serve route with the style option doesn't count as a use of the bundler, and throws a catchable error: what is reached |
 | test/bundler/compile-trim-by-use.test.ts | --compile --aot --trim removes what the program doesn't use > a server that never names bun:test has none of it, whatever names it reads off values nobody knows: 1 feature is kept, the goal is 0 | 1 | 0 | the case beside it: --compile --aot --trim removes what the program doesn't use > a server that never names bun:test has none of it, whatever names it reads off values nobody knows: what is reached |
 | test/bundler/compile-trim-by-use.test.ts | --compile --aot --trim removes what the program doesn't use > a server whose options ask for neither has no bundler and no transpiler: 2 features are kept, the goal is 0 | 2 | 0 | the case beside it: --compile --aot --trim removes what the program doesn't use > a server whose options ask for neither has no bundler and no transpiler: what is reached |

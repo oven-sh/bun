@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 const project = {
@@ -29,6 +29,37 @@ const described = (root: string, outputs: Bun.BuildArtifact[]) =>
   outputs
     .map(({ path, kind, loader }) => [path.replace(root, "").replaceAll("\\", "/").replace(/^\.\//, ""), kind, loader])
     .sort();
+// What a build of the project with these files says, its `index.aot.ts`, and what `bun check` says of a project that
+// has that file among its own. The build judges the file as a project that installs the package does: it is told less.
+async function typedFile(files: Record<string, string>) {
+  using dir = tempDir("build-api-dts-typed-file", {
+    ...project,
+    // Few libraries, and none of them checked: that keeps the check of the one file short.
+    "tsconfig.own.json": JSON.stringify({
+      extends: "./tsconfig.json",
+      compilerOptions: { skipLibCheck: true, lib: ["es2015"] },
+      files: ["out/index.aot.ts"],
+    }),
+    ...files,
+  });
+  const root = String(dir);
+  const built = await Bun.build({
+    entrypoints: [join(root, "src/index.ts")],
+    outdir: join(root, "out"),
+    tsconfig: join(root, "tsconfig.json"),
+    dts: true,
+  });
+  const typed = built.outputs.find(output => output.path.endsWith("index.aot.ts"));
+  await using check = Bun.spawn({
+    cmd: [bunExe(), "check", "-p", "tsconfig.own.json"],
+    cwd: root,
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([check.stdout.text(), check.stderr.text(), check.exited]);
+  return { logs: built.logs, typed: await typed?.text(), own: { said: (stdout + stderr).match(/TS\d+/g), exitCode } };
+}
 
 describe("Bun.build({ dts: true })", () => {
   test("writes the bundle, its declaration files and the bundle with its types kept to outdir", async () => {
@@ -171,6 +202,151 @@ export { join };
     expect(filesIn(join(root, "a/out"))).toEqual(WRITTEN);
     expect(filesIn(join(root, "b/out"))).toEqual(WRITTEN.filter(path => path !== "join.d.ts"));
     expect(readFileSync(join(root, "b/out/index.d.ts"), "utf8")).toBe("export declare const other: number;\n");
+  });
+
+  test("a static field with a computed key has no `!`, and a field of an object keeps it", async () => {
+    const { logs, typed, own } = await typedFile({
+      "src/index.ts": `const key = "computed";
+const sym = Symbol("sym");
+export class Sizes {
+  static [key]: number;
+  static readonly [sym]: string;
+  static ["lit"]: boolean;
+  static [1]: number;
+  static [Symbol.toStringTag]: string;
+  static plain: number;
+  [key]: number;
+  size: number;
+  constructor(size: number) {
+    this[key] = size;
+    this.size = size;
+  }
+}
+export const Expression = class {
+  static [key]: number;
+  [key]: number = 2;
+};
+`,
+    });
+    expect(logs).toEqual([]);
+    // TypeScript takes no `!` on a static field (TS1255).
+    expect(typed).toContain(`class Sizes {
+  static [key]: number;
+  static readonly [sym]: string;
+  static ["lit"]: boolean;
+  static [1]: number;
+  static [Symbol.toStringTag]: string;
+  static plain: number;
+  [key]!: number;
+  size: number;
+  constructor(size: number) {`);
+    expect(typed).toContain(`const Expression = class {
+  static [key]: number;
+  [key]: number = 2;
+};`);
+    expect(own).toEqual({ said: null, exitCode: 0 });
+  });
+
+  test("a field of an object keeps its `!` where the bundle declares its key with var", async () => {
+    const { logs, typed, own } = await typedFile({
+      "src/key.ts": `export const key = "computed";\n`,
+      // The import() makes a module object of key.ts, and the bundle then declares its constants with var.
+      "src/index.ts": `import { key } from "./key";
+export class Counter {
+  static [key]: number;
+  [key]: number;
+  constructor(start: number) {
+    this[key] = start;
+  }
+  get count(): number {
+    return this[key];
+  }
+}
+export const lazy = () => import("./key");
+`,
+    });
+    expect(logs).toEqual([]);
+    expect(typed).toMatch(/^var key\b/m);
+    expect(typed).toContain(`class Counter {
+  static [key]: number;
+  [key]!: number;
+  constructor(start: number) {`);
+    // Through a var, TypeScript does not see that the constructor stores to the field: without the `!` this is TS2564.
+    expect(own).toEqual({ said: null, exitCode: 0 });
+  });
+
+  // Under these options the bundle has no field for a field without a value. The package.json states them too.
+  const withoutFields = (more: Record<string, boolean> = {}) => {
+    const compilerOptions = { strict: true, useDefineForClassFields: false };
+    const written = JSON.parse(project["tsconfig.json"]).compilerOptions;
+    return {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { ...written, ...compilerOptions, ...more } }),
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", compilerOptions }),
+    };
+  };
+
+  test("a field that is written as a declaration has no `!`", async () => {
+    const { logs, typed, own } = await typedFile({
+      ...withoutFields(),
+      "src/index.ts": `export class Shape {
+  late!: number;
+  protected readonly name!: string;
+  ["lit"]!: number;
+  spaced /* kept */ !: number;
+  size: number;
+  constructor(size: number) {
+    this.size = size;
+    this.measure();
+  }
+  measure(): void {
+    this.late = this.size * 2;
+  }
+}
+`,
+    });
+    expect(logs).toEqual([]);
+    // A declaration takes no `!` (TS1255).
+    expect(typed).toContain(`class Shape {
+  declare late: number;
+  declare protected readonly name: string;
+  declare ["lit"]: number;
+  declare spaced /* kept */ : number;
+  declare size: number;
+  constructor(size: number) {`);
+    expect(own).toEqual({ said: null, exitCode: 0 });
+  });
+
+  // Both declarations are written with `override`, which `declare` does not take (TS1243).
+  let overridden: ReturnType<typeof typedFile> | undefined;
+  const withOverride = () =>
+    (overridden ??= typedFile({
+      ...withoutFields({ noImplicitOverride: true }),
+      "src/index.ts": `export class Base {
+  label: string = "base";
+  constructor(readonly id: number) {}
+}
+export class Shape extends Base {
+  override label: string;
+  constructor(
+    public override readonly id: number,
+    size: number,
+  ) {
+    super(id);
+    this.label = "shape" + size;
+  }
+}
+`,
+    }));
+
+  // What holds today: the test below fails for these two errors and for nothing else.
+  test("a member with override that is written as a declaration type checks but for its override", async () => {
+    const { logs, own } = await withOverride();
+    expect({ logs, own }).toEqual({ logs: [], own: { said: ["TS1243", "TS1243"], exitCode: 1 } });
+  });
+
+  // Once the file type checks this test fails: change `test.failing` to `test`, and take the test above out.
+  test.failing("a member with override that is written as a declaration type checks", async () => {
+    expect((await withOverride()).own).toEqual({ said: null, exitCode: 0 });
   });
 
   test("cannot be used with compile", () => {

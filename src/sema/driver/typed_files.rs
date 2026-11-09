@@ -40,6 +40,7 @@ enum Place {
 #[derive(Copy, Clone, Debug)]
 struct Slot {
     place: Place,
+    is_computed_instance_property: bool,
     key: u32,
     start: u32,
     end: u32,
@@ -49,6 +50,7 @@ impl Slot {
     fn new(place: Place, key: u32, (start, end): (u32, u32)) -> Slot {
         Slot {
             place,
+            is_computed_instance_property: false,
             key,
             start,
             end,
@@ -460,25 +462,6 @@ impl<'a, 's> Syntax<'a, 's> {
         }
     }
 
-    fn is_in_computed_key(&self, mut name: u32) -> bool {
-        while name > 0 {
-            let before = self.before_trivia(name) - 1;
-            match self.byte(before) {
-                b'[' => return true,
-                b'.' => {
-                    name = self.before_trivia(before);
-                    while name > 0
-                        && matches!(self.byte(name - 1), b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$' | 0x80..)
-                    {
-                        name -= 1;
-                    }
-                }
-                _ => return false,
-            }
-        }
-        false
-    }
-
     fn member_key(&self, member: &Member) -> u32 {
         if self.byte(member.name_pos) != b'[' {
             return member.name_pos;
@@ -538,7 +521,11 @@ impl<'a, 's> Syntax<'a, 's> {
                 }
                 None => start,
             };
-            slots.push(Slot::new(Place::MemberType, key, (start, end)));
+            slots.push(Slot {
+                is_computed_instance_property: member.flags.contains(Flags::COMPUTED_NAME)
+                    && !member.flags.contains(Flags::STATIC),
+                ..Slot::new(Place::MemberType, key, (start, end))
+            });
         }
     }
 
@@ -1527,6 +1514,17 @@ impl Written<'_, '_> {
         }
         text.extend_from_slice(&self.text(at, statement.loc.end));
         text
+    }
+
+    fn declaration_text(&self, member: &Member) -> Vec<u8> {
+        let end = self.syntax.type_span(member.ty).1;
+        if !member.flags.contains(Flags::DEFINITE) {
+            return self.text(member.start, end);
+        }
+        let mark = self
+            .syntax
+            .after_trivia(self.syntax.member_name_end(member));
+        [self.text(member.start, mark), self.text(mark + 1, end)].concat()
     }
 }
 
@@ -2950,12 +2948,11 @@ fn add_types(
                 };
                 source_slots.insert(
                     (place, index as u32, binding.key),
-                    Slot {
+                    Slot::new(
                         place,
-                        key: binding.key,
-                        start: modifier.pos,
-                        end: syntax.token_end(modifier.pos),
-                    },
+                        binding.key,
+                        (modifier.pos, syntax.token_end(modifier.pos)),
+                    ),
                 );
             }
         }
@@ -3078,10 +3075,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                 continue;
             };
             let text = module.trimmed_text(found.start, found.end);
-            let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
                 Place::MemberType
-                    if is_computed
+                    if found.is_computed_instance_property
                         && text.starts_with(b":")
                         && output.byte(output.after_trivia(slot.start)) != b'=' =>
                 {
@@ -3933,12 +3929,7 @@ impl<'a> Transfer<'_, 'a, '_> {
                     {
                         add(
                             place,
-                            &[
-                                &b"declare "[..],
-                                &module.text(member.start, syntax.type_span(member.ty).1),
-                                b";",
-                            ]
-                            .concat(),
+                            &[&b"declare "[..], &module.declaration_text(member), b";"].concat(),
                         );
                     }
                     let Some(constructor) = member

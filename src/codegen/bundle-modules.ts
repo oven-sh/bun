@@ -25,6 +25,7 @@ import { createInternalModuleRegistry, idToEnumName } from "./internal-module-re
 import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
 import { recordedPointer, removableFeatures } from "./removable-entry-points.ts";
 import { assertNoDestructuredGlobalThis, assertNoStoredFunctionBehindComma, define } from "./replacements";
+import { stripIndentation } from "./strip-indentation";
 
 const builtinUsesFlag = "--builtin-uses=";
 const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
@@ -302,6 +303,8 @@ for (const [i, entrypoint] of bundledEntryPoints.entries()) {
   if (errors.length) {
     throw new Error(`Errors in ${entrypoint}:\n${errors.map(x => x[1]).join("\n")}`);
   }
+
+  if (!debug) captured = stripIndentation(captured);
 
   const outputPath = path.join(JS_DIR, file_path);
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });

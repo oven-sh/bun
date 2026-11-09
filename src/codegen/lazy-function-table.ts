@@ -86,7 +86,7 @@ function isPropertyName(tokens: Token[], index: number) {
   return previous === "." || previous === "?.";
 }
 
-function tokenize(source: string): Token[] {
+export function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
   const brackets: { text: string; regexpAllowedAfterClose: boolean }[] = [];
   let regexpAllowedAfterLastClose = false;

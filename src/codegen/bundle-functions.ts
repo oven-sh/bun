@@ -57,6 +57,7 @@ import {
   assertNoStoredFunctionBehindComma,
   define,
 } from "./replacements";
+import { stripIndentation } from "./strip-indentation";
 
 const PARALLEL = false;
 const KEEP_TMP = true;
@@ -361,7 +362,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     let usesDebug = output.includes("$debug_log");
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
-    const finalReplacement =
+    let finalReplacement =
       captured
         .replace(
           /function\s*\(.*?\)\s*{/,
@@ -377,6 +378,8 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     if (errors.length) {
       throw new Error(`Errors in ${basename}.ts:\n${errors.map(x => x[1]).join("\n")}`);
     }
+
+    if (define.IS_BUN_DEVELOPMENT === "false") finalReplacement = stripIndentation(finalReplacement);
 
     bundledFunctions.push({
       name: fn.name,

@@ -2,6 +2,7 @@ import { internalModuleBytecode } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug } from "harness";
 import { encodeLazyFunctionTable, findLazyFunctions } from "../../src/codegen/lazy-function-table";
+import { stripIndentation } from "../../src/codegen/strip-indentation";
 
 const wrap = (body: string) => `(function (){"use strict";${body}})\n`;
 const lazyFunctionsOf = (body: string) => {
@@ -105,4 +106,36 @@ test("internal modules load the same with and without the source provider cache"
   const [withCache, withoutCache] = await Promise.all([run({}), run({ BUN_JSC_useSourceProviderCache: "0" })]);
   expect(withCache).toEqual(withoutCache);
   expect(withCache.exitCode).toBe(0);
+});
+
+test("stripIndentation() takes the blanks at the start of lines, and no others", () => {
+  const source = wrap(`
+  var a = @natives.Blob,  b;
+    /* @__PURE__ */ f(\`
+      \${a
+        + b}
+      \`, /  /.test("  \\
+      "));
+
+  return a
+    - b;
+`);
+  expect(stripIndentation(source)).toBe(
+    wrap(`
+var a = @natives.Blob,  b;
+/* @__PURE__ */ f(\`
+      \${a
++ b}
+      \`, /  /.test("  \\
+      "));
+
+return a
+- b;
+`),
+  );
+  // The tokenizer takes the slash behind the block for a division.
+  const misread = wrap("\nif (a) {}\n/`/.test(a);\nvar t = `\n   x`;\nif (b) {}\n/`/.test(b);\n");
+  expect(stripIndentation(misread)).toBe(misread);
+  const unterminated = wrap("\nif (a) {}\n/`/.test(a);\n  b;\n");
+  expect(stripIndentation(unterminated)).toBe(unterminated);
 });

@@ -378,7 +378,15 @@ describe("scripts/ci-slowest-tests.ts findBuild", () => {
 // do not resolve as executables on Windows, hence the skip.
 describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `bk`", () => {
   const script = join(import.meta.dir, "..", "..", "scripts", "ci-slowest-tests.ts");
-  const fakeGh = ["#!/bin/sh", 'echo "gh $*" >> "$FAKE/calls"', 'cat "$FAKE/merged.json"', ""].join("\n");
+  const fakeGh = [
+    "#!/bin/sh",
+    'echo "gh $*" >> "$FAKE/calls"',
+    'case " $* " in',
+    '  *" --base main "*) cat "$FAKE/merged-into-main.json" ;;',
+    '  *) cat "$FAKE/merged.json" ;;',
+    "esac",
+    "",
+  ].join("\n");
   const fakeBk = [
     "#!/bin/sh",
     'echo "bk $*" >> "$FAKE/calls"',
@@ -395,8 +403,8 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
   ].join("\n");
 
   interface Canned {
-    /** `gh pr list --state merged` */
-    merged?: MergedPR[];
+    /** `gh pr list --state merged`. A PR with no `baseRefName` merged into main. */
+    merged?: (MergedPR & { baseRefName?: string })[];
     /** `bk build list --branch <key>`. For a branch that is not here, `bk` fails. */
     lists?: Record<string, Build[]>;
     /** `bk build view <number>` */
@@ -425,6 +433,7 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
       "bin/bk": fakeBk,
       "calls": "",
       "merged.json": JSON.stringify(merged),
+      "merged-into-main.json": JSON.stringify(merged.filter(pr => (pr.baseRefName ?? "main") === "main")),
       ...Object.fromEntries(
         Object.entries(lists).map(([branch, builds]) => [`list-${branch}.json`, JSON.stringify(builds.map(served))]),
       ),
@@ -510,17 +519,20 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
     });
   });
 
-  scenario("no build number: takes the first build in which every test-bun job started", async () => {
+  scenario("no build number: takes the first complete build of a PR that merged into main", async () => {
     const untested = finishedBuild(127137, "failed", noJobStarted(127137));
     const complete = finishedBuild(126925, "passed", everyJobStarted(126925));
     const result = await runSlowest(["--json"], {
       merged: [
+        // 2026-11-07: merged into the branch of another PR, so build 138376 is not a build of main's tree.
+        { number: 48112, headRefName: "one-walk-fixes-2", baseRefName: "one-walk-fixes" },
         { number: 45639, headRefName: "hot-loop-no-inline" },
         { number: 45620, headRefName: "list-fails" },
         { number: 45600, headRefName: "merged-earlier" },
         { number: 45599, headRefName: "never-listed" },
       ],
       lists: {
+        "one-walk-fixes-2": [finishedBuild(138376, "passed", everyJobStarted(138376))],
         "hot-loop-no-inline": [
           { number: 127153, state: "running", jobs: everyJobStarted(127153) },
           untested,
@@ -531,6 +543,7 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
       // `bk build view` can answer for both builds. The script must not need it.
       views: [untested, complete],
       logs: {
+        "138376-a": log([0, "[1/1] test/not-on-main.test.ts"], [9000, "End"]),
         "126925-a": log([0, "[1/3] test/a.test.ts"], [3000, "[2/3] test/b.test.ts"], [4000, "End"]),
         "126925-b": log([0, "[3/3] test/c.test.ts"], [2000, "End"]),
         "126925-c": log([0, "[1/1] test/a.test.ts"], [5000, "End"]),
@@ -561,7 +574,7 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
       exitCode: 0,
       // The jobs come with the build list, so there is no `bk build view`.
       calls: [
-        "gh pr list --state merged --limit 10 --json number,headRefName",
+        "gh pr list --state merged --base main --limit 10 --json number,headRefName",
         "bk build list --branch hot-loop-no-inline",
         "bk build list --branch list-fails",
         "bk build list --branch merged-earlier",
@@ -601,13 +614,13 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
           "  skipped build #102 (PR #1, partial, state=failed): 2 of 3 test-bun jobs started",
           "  skipped build #101 (PR #1, partial, state=failed): 2 of 3 test-bun jobs started",
           "  failed to list the builds of list-fails (PR #2): Error: 429 Too Many Requests",
-          "error: no finished build in which every test-bun job started among the last 3 merged PRs",
+          "error: no finished build in which every test-bun job started among the last 3 PRs merged into main",
           "note: build #102 has timings from 2 of 3 test-bun jobs. Pass its number to report on it.",
           "",
         ],
         exitCode: 1,
         calls: [
-          "gh pr list --state merged --limit 10 --json number,headRefName",
+          "gh pr list --state merged --base main --limit 10 --json number,headRefName",
           "bk build list --branch untested",
           "bk build list --branch list-fails",
           "bk build list --branch partial",
@@ -630,12 +643,12 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
         "no build given, finding a recent merged-PR build...",
         "  failed to list the builds of a (PR #2): Error: 429 Too Many Requests",
         "  failed to list the builds of b (PR #1): Error: 429 Too Many Requests",
-        "error: `bk build list` failed for each of the last 2 merged PRs, so no build was examined",
+        "error: `bk build list` failed for each of the last 2 PRs merged into main, so no build was examined",
         "",
       ],
       exitCode: 1,
       calls: [
-        "gh pr list --state merged --limit 10 --json number,headRefName",
+        "gh pr list --state merged --base main --limit 10 --json number,headRefName",
         "bk build list --branch a",
         "bk build list --branch b",
       ],
@@ -671,7 +684,10 @@ describe.skipIf(isWindows)("scripts/ci-slowest-tests.ts with a canned `gh` and `
           "",
         ],
         exitCode: 1,
-        calls: ["gh pr list --state merged --limit 10 --json number,headRefName", "bk build list --branch picked"],
+        calls: [
+          "gh pr list --state merged --base main --limit 10 --json number,headRefName",
+          "bk build list --branch picked",
+        ],
         requested: ["201-a"],
       });
     },

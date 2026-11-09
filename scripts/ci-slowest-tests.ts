@@ -155,8 +155,9 @@ if (import.meta.main) {
   let coverage: JobCoverage | undefined;
   if (!BUILD) {
     console.error("no build given, finding a recent merged-PR build...");
+    // `--base main`: a PR that merged into the branch of another PR is merged too, and its tree is not main's.
     const prs: { number: number; headRefName: string }[] =
-      await $`gh pr list --state merged --limit 10 --json number,headRefName`.json();
+      await $`gh pr list --state merged --base main --limit 10 --json number,headRefName`.json();
     const { picked, skipped, failedLists } = await findBuild(prs, branch =>
       $`bk build list --branch ${branch}`.quiet().json(),
     );
@@ -174,8 +175,8 @@ if (import.meta.main) {
     if (!picked) {
       console.error(
         failedLists.length && failedLists.length === prs.length
-          ? `error: \`bk build list\` failed for each of the last ${prs.length} merged PRs, so no build was examined`
-          : `error: no finished build in which every test-bun job started among the last ${prs.length} merged PRs`,
+          ? `error: \`bk build list\` failed for each of the last ${prs.length} PRs merged into main, so no build was examined`
+          : `error: no finished build in which every test-bun job started among the last ${prs.length} PRs merged into main`,
       );
       // The skipped build with the most timings, the first one listed on a tie.
       let best: (typeof skipped)[number] | undefined;

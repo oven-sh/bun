@@ -6447,8 +6447,8 @@ extern "C" void JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(JSC::Encod
     forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false, true);
 }
 
-// Returns true if Bun__JestMatchedRows__forEachPropertyOrderedWithNonEnumerable is sure to visit the same properties.
-extern "C" bool Bun__JestMatchedRows__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace), JSC::EncodedJSValue rows, uint32_t place)
+// Returns true if JSC__JSValue__forEachPropertyOrderedWithNonEnumerableWithRows is sure to visit the same properties.
+extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGettersWithRows(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace), JSC::EncodedJSValue rows, uint32_t place)
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
     bool hasOnlyEnumerableValues = object && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
@@ -6456,7 +6456,7 @@ extern "C" bool Bun__JestMatchedRows__forEachPropertyOrderedCallingGetters(JSC::
     return hasOnlyEnumerableValues;
 }
 
-extern "C" void Bun__JestMatchedRows__forEachPropertyOrderedWithNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace), JSC::EncodedJSValue rows, uint32_t place)
+extern "C" void JSC__JSValue__forEachPropertyOrderedWithNonEnumerableWithRows(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol, uint32_t childPlace), JSC::EncodedJSValue rows, uint32_t place)
 {
     forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, MatchedRowsVisitor { iter, JSC::JSValue::decode(rows).asCell(), place }, false, true);
 }

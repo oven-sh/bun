@@ -1,0 +1,21 @@
+# -- source: a-read-names-the-kind-of-storage-that-is-written-of-the-list.ts
+# function pick(texts: string[], at: number) { return texts[at]; }
+# function count(numbers: number[], at: number) { return numbers[at]; }
+# declare function sink(...all: unknown[]): number;
+# const many: string[] = []; many.push("a", "b");
+# const some: number[] = []; some.push(1, 2);
+# sink(pick(many, sink()), pick(many, sink()), count(some, sink()), count(some, sink()));
+# -- end of source
+# f1 = pick, f2 = count
+# Link proves that a list arrives, and a proven type says nothing of the elements. What is written of them stands in what is expected of the parameter: texts lie in storage for any value.
+# The kind is a guess that the read tests: one short test of the cell's byte in the place of a longer one.
+# RUN(TEXTS): walk f1 mechanisms=all
+# REQUIRES(TEXTS): entries-of-bun
+# TEXTS-LABEL: code f1:Body
+# TEXTS: = GetArrayElement {{*}}arrayStorage=Contiguous level=Expected
+# `number[]` says nothing of fractions: no kind is named.
+# RUN(NUMBERS): walk f2 mechanisms=all
+# REQUIRES(NUMBERS): entries-of-bun
+# NUMBERS-LABEL: code f2:Body
+# NUMBERS-NOT: arrayStorage=
+# NUMBERS: = GetArrayElement {{*}}level=Expected

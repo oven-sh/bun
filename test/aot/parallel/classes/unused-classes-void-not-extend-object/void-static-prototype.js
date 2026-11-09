@@ -1,3 +1,0 @@
-void class {
-  static ["prototype"]() {}
-};

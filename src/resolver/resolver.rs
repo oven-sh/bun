@@ -347,8 +347,8 @@ pub struct Bufs {
 
     // NOTE: `DirEntryResolveQueueItem` holds
     // `&'static [u8]` fields, so a zeroed bit-pattern is UB. Use
-    // `MaybeUninit` and `assume_init_{ref,mut}` at the (linear write-then-read)
-    // use sites in `dir_info_cached_maybe_log`.
+    // `MaybeUninit` and `assume_init_ref` at the (linear write-then-read)
+    // use site in `dir_info_cached_miss`.
     pub(crate) dir_entry_paths_to_resolve: [core::mem::MaybeUninit<DirEntryResolveQueueItem>; 256],
     pub(crate) open_dirs: [FD; 256],
     pub(crate) resolve_without_remapping: PathBuffer,
@@ -440,13 +440,9 @@ macro_rules! bufs {
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
-// `BoundedArray` has no const constructor; init lazily under
-// `BIN_FOLDERS_LOADED`.
-static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+static BIN_FOLDERS: bun_core::RacyCell<BinFolderArray> =
+    bun_core::RacyCell::new(BoundedArray::new());
 static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
-static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
 
 // LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
 // register directory watches. The concrete callback lives in `bun_watcher`
@@ -542,7 +538,9 @@ pub struct Resolver<'a> {
     pub env_loader: Option<NonNull<DotEnv::Loader>>,
     pub store_fd: bool,
 
-    pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
+    pub standalone_module_graph: Option<&'static dyn StandaloneModuleGraph>,
+    /// `Resolver::pass_over_outfile`
+    pub(crate) outfile_of_build: Option<&'static [u8]>,
 
     // These are sets that represent various conditions for the "exports" field
     // in package.json.
@@ -638,10 +636,8 @@ impl<'a> Resolver<'a> {
     /// fresh `BundleOptions` subset and arena-allocates its own `Log`).
     ///
     /// # Safety
-    /// `from`'s `standalone_module_graph` / `env_loader` borrow data that
-    /// outlives the returned resolver (process-lifetime singletons in every
-    /// caller). The lifetime is widened from `'from` to `'a` here; callers
-    /// must uphold that the borrowed data outlives `'a`.
+    /// `env_loader()` returns `&'a Loader` and the caller picks `'a`: the
+    /// loader that `from.env_loader` points to must outlive `'a`.
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
         log: NonNull<bun_ast::Log>,
@@ -668,16 +664,8 @@ impl<'a> Resolver<'a> {
             on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
             store_fd: from.store_fd,
-            // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
-            // vtable layout is identical (only the borrow-checker tag differs);
-            // a raw-pointer `as`-cast cannot change the `+ 'b` bound, so widen
-            // via a layout-preserving transmute on the `Option<&dyn>`.
-            standalone_module_graph: unsafe {
-                core::mem::transmute::<
-                    Option<&'_ dyn StandaloneModuleGraph>,
-                    Option<&'a dyn StandaloneModuleGraph>,
-                >(from.standalone_module_graph)
-            },
+            standalone_module_graph: from.standalone_module_graph,
+            outfile_of_build: from.outfile_of_build,
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
@@ -1037,6 +1025,7 @@ impl<'a> Resolver<'a> {
             env_loader: None,
             store_fd: false,
             standalone_module_graph: None,
+            outfile_of_build: None,
             prefer_module_field: true,
             custom_dir_paths: None,
             esm_failure: None,
@@ -1177,23 +1166,6 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    /// Code from disk that names a package which the disk does not hold gets the one that the executable holds.
-    fn resolve_package_of_program_for_code_from_disk(
-        &self,
-        specifier: &[u8],
-        kind: ast::ImportKind,
-    ) -> Option<&'static [u8]> {
-        let graph = self.standalone_module_graph?;
-        if !graph.compiled_program()?.allows_code_from_disk {
-            return None;
-        }
-        let public_root = graph.base_public_path_with_default_suffix();
-        match self.resolve_embedded_package(public_root, specifier, kind) {
-            PackageLookup::Found(file_name) => Some(file_name),
-            PackageLookup::Hidden | PackageLookup::Unknown => None,
-        }
-    }
-
     /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
     pub fn resolve_embedded_package(
         &self,
@@ -1214,6 +1186,118 @@ impl<'a> Resolver<'a> {
             return PackageLookup::Unknown;
         };
         graph.resolve_package(source_dir, specifier, is_require(kind), &search)
+    }
+
+    /// What the executable holds under `import_path` for whoever looks from `source_dir`.
+    fn look_in_executable(
+        &self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> PackageLookup {
+        let Some(graph) = self.standalone_module_graph else {
+            return PackageLookup::Unknown;
+        };
+        let followed = graph.compiled_program().and_then(|program| {
+            let public_root = graph.base_public_path_with_default_suffix();
+            program.find_name_that_build_followed(
+                public_root,
+                source_dir,
+                import_path,
+                is_require(kind),
+            )
+        });
+        if let Some(file_name) = followed {
+            return PackageLookup::Found(file_name);
+        }
+        let is_left_outside = graph.compiled_program().is_some_and(|program| {
+            let public_root = graph.base_public_path_with_default_suffix();
+            program.leaves_outside(source_dir, import_path)
+                || program.looks_for_package_from_disk(public_root, source_dir, import_path)
+        });
+        if is_left_outside {
+            return PackageLookup::Unknown;
+        }
+        match self.resolve_embedded_module(source_dir, import_path, kind) {
+            Some(file_name) => PackageLookup::Found(file_name),
+            None => self.resolve_embedded_package(source_dir, import_path, kind),
+        }
+    }
+
+    /// `bun run` looks for a relative name beside the importer, and no folder on disk is known to stand for that of a file of the executable.
+    /// With `--aot-allow-code-from-disk` the build has written down where its root lay.
+    pub fn looks_in_executable_alone(&self, source_dir: &[u8], import_path: &[u8]) -> bool {
+        self.custom_dir_paths.is_none()
+            && self.looks_in_executable_alone_from(source_dir, import_path)
+    }
+
+    /// The same for one folder, be it the importer's or one that `require.resolve(name, { paths })` was given.
+    fn looks_in_executable_alone_from(&self, source_dir: &[u8], import_path: &[u8]) -> bool {
+        let graph = self.standalone_module_graph;
+        let program = graph.and_then(|graph| graph.compiled_program());
+        program.is_some_and(|program| {
+            !program.allows_code_from_disk
+                && ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
+                && crate::compiled_program::is_relative_specifier(import_path)
+                && !program.leaves_outside(source_dir, import_path)
+        })
+    }
+
+    /// The same from one of the folders that `require.resolve(name, { paths })` was given, in a compiled program.
+    /// `None`: the executable says nothing, and the search goes on.
+    fn look_in_executable_from_given_folder(
+        &self,
+        folder: &[u8],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+    ) -> Option<ResultUnion<'static>> {
+        let is_compiled =
+            (self.standalone_module_graph).is_some_and(|graph| graph.compiled_program().is_some());
+        if !is_compiled {
+            return None;
+        }
+        match self.look_in_executable(folder, import_path, kind) {
+            PackageLookup::Found(file_name) => {
+                let found = Self::result_of_module_in_executable(file_name, kind);
+                Some(ResultUnion::Success(found))
+            }
+            PackageLookup::Hidden => Some(ResultUnion::NotFound),
+            PackageLookup::Unknown => None,
+        }
+    }
+
+    /// Where the disk is asked for what is looked for from `folder`. A folder of the executable stands for one on disk, as it does for a module that imports.
+    fn folder_on_disk_of_given_folder<'f>(&self, folder: &'f [u8]) -> std::borrow::Cow<'f, [u8]> {
+        let graph = (self.standalone_module_graph).filter(|graph| {
+            graph.compiled_program().is_some()
+                && ::bun_options_types::standalone_path::is_bun_standalone_file_path(folder)
+        });
+        let Some(graph) = graph else {
+            return std::borrow::Cow::Borrowed(folder);
+        };
+        let root_on_disk = graph.root_on_disk();
+        let base = root_on_disk
+            .as_deref()
+            .unwrap_or_else(|| Fs::FileSystem::get().top_level_dir());
+        // The deepest comes first. The root directory has no folder below the root.
+        let folders = graph.directories_of_importer(folder, base);
+        std::borrow::Cow::Owned(folders.into_iter().next().unwrap_or_else(|| base.to_vec()))
+    }
+
+    fn result_of_module_in_executable(
+        file_name: &'static [u8],
+        kind: ast::ImportKind,
+    ) -> Result<'static> {
+        Result {
+            import_kind: kind,
+            path_pair: PathPair {
+                primary: Path::init(file_name),
+                secondary: None,
+            },
+            module_type: options::ModuleType::Esm,
+            flags: ResultFlags::IS_STANDALONE_MODULE,
+            ..Default::default()
+        }
     }
 
     /// The module of `CompiledProgram::resolve_entry_point`.
@@ -1547,19 +1631,19 @@ impl<'a> Resolver<'a> {
         // ...unless you pass a relative path that exists in the standalone module graph executable.
         let mut source_dir_resolver = bun_paths::PosixToWinNormalizer::default();
         let importer_directory: Vec<u8>;
+        let mut looks_beside_source = false;
         let source_dir_normalized: &[u8] = 'brk: {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
-                let program = graph.compiled_program();
-                let is_left_outside =
-                    program.is_some_and(|program| program.leaves_outside(source_dir, import_path));
-                let embedded = match is_left_outside {
+                // `require.resolve("dep", { paths: [folder] })` says where to look from, and what the importer's own folder finds is another file:
+                // resolve_without_symlinks() asks the executable from each of the folders in its turn. A whole path is looked for from nowhere.
+                let looks_from_given_folders = graph.compiled_program().is_some()
+                    && self.custom_dir_paths.is_some()
+                    && !bun_paths::is_absolute(import_path);
+                let embedded = match looks_from_given_folders {
                     true => PackageLookup::Unknown,
-                    false => match self.resolve_embedded_module(source_dir, import_path, kind) {
-                        Some(file_name) => PackageLookup::Found(file_name),
-                        None => self.resolve_embedded_package(source_dir, import_path, kind),
-                    },
+                    false => self.look_in_executable(source_dir, import_path, kind),
                 };
                 if embedded == PackageLookup::Hidden {
                     self.extension_order = original_order;
@@ -1567,21 +1651,16 @@ impl<'a> Resolver<'a> {
                 }
                 if let PackageLookup::Found(file_name) = embedded {
                     self.extension_order = original_order;
-                    return ResultUnion::Success(Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(file_name),
-                            secondary: None,
-                        },
-                        module_type: options::ModuleType::Esm,
-                        flags: ResultFlags::IS_STANDALONE_MODULE,
-                        ..Default::default()
-                    });
+                    return ResultUnion::Success(Self::result_of_module_in_executable(
+                        file_name, kind,
+                    ));
                 }
                 if specifier_is_embedded_path
                     || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
                 {
-                    if specifier_is_embedded_path {
+                    if specifier_is_embedded_path
+                        || self.looks_in_executable_alone(source_dir, import_path)
+                    {
                         self.extension_order = original_order;
                         return ResultUnion::NotFound;
                     }
@@ -1597,6 +1676,7 @@ impl<'a> Resolver<'a> {
                         .find(|directory| self.read_dir_info_ignore_error(directory).is_some())
                     {
                         importer_directory = directory;
+                        looks_beside_source = true;
                         break 'brk &importer_directory[..];
                     }
                     break 'brk top_level_dir;
@@ -1653,6 +1733,15 @@ impl<'a> Resolver<'a> {
 
         let mut tmp =
             self.resolve_without_symlinks(source_dir_normalized, import_path, kind, global_cache);
+        // `bun build --compile` looks from the working directory. A package name has been walked up for, and what ended that walk stands.
+        if looks_beside_source
+            && matches!(tmp, ResultUnion::NotFound)
+            && crate::compiled_program::is_relative_specifier(import_path)
+            && self.custom_dir_paths.is_none()
+        {
+            let top_level_dir = Fs::FileSystem::get().top_level_dir();
+            tmp = self.resolve_without_symlinks(top_level_dir, import_path, kind, global_cache);
+        }
         if matches!(tmp, ResultUnion::NotFound)
             && let Some(path) =
                 self.resolve_at_source_path(source_dir_normalized, import_path, kind)
@@ -1709,9 +1798,16 @@ impl<'a> Resolver<'a> {
                         return ResultUnion::Failure(err);
                     }
                     // The name of a package leads to a file on disk. Where that file was compiled, the module of the executable answers.
+                    let is_left_to_disk = self.standalone_module_graph.is_some_and(|graph| {
+                        let public_root = graph.base_public_path_with_default_suffix();
+                        graph.compiled_program().is_some_and(|program| {
+                            program.leaves_package_to_disk(public_root, source_dir, import_path)
+                        })
+                    });
                     let found = result.path().map(|path| path.text());
-                    let found =
-                        found.and_then(|path| self.resolve_embedded_module(b"", path, kind));
+                    let found = found
+                        .filter(|_| !is_left_to_disk)
+                        .and_then(|path| self.resolve_embedded_module(b"", path, kind));
                     if let Some(module) = found {
                         result.path_pair = PathPair {
                             primary: Path::init(module),
@@ -1753,19 +1849,7 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::Failure(e) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
-                    Some(file_name) => ResultUnion::Success(Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(file_name),
-                            secondary: None,
-                        },
-                        module_type: options::ModuleType::Esm,
-                        flags: ResultFlags::IS_STANDALONE_MODULE,
-                        ..Default::default()
-                    }),
-                    None => ResultUnion::Failure(e),
-                }
+                ResultUnion::Failure(e)
             }
             ResultUnion::Pending(pending) => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
@@ -1773,19 +1857,7 @@ impl<'a> Resolver<'a> {
             }
             ResultUnion::NotFound => {
                 let _ = self.flush_debug_logs(FlushMode::Fail);
-                match self.resolve_package_of_program_for_code_from_disk(import_path, kind) {
-                    Some(file_name) => ResultUnion::Success(Result {
-                        import_kind: kind,
-                        path_pair: PathPair {
-                            primary: Path::init(file_name),
-                            secondary: None,
-                        },
-                        module_type: options::ModuleType::Esm,
-                        flags: ResultFlags::IS_STANDALONE_MODULE,
-                        ..Default::default()
-                    }),
-                    None => ResultUnion::NotFound,
-                }
+                ResultUnion::NotFound
             }
         };
 
@@ -1874,7 +1946,7 @@ impl<'a> Resolver<'a> {
             }
 
             let mut needs_side_effects = true;
-            if let Some(existing) = Result::deref_package_json(result.package_json) {
+            if let Some(existing) = result.package_json {
                 // if we don't have it here, they might put it in a sideEfffects
                 // map of the parent package.json
                 // TODO: check if webpack also does this parent lookup
@@ -1892,12 +1964,10 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            result.package_json = result
-                .package_json
-                .or_else(|| dir.enclosing_package_json.map(std::ptr::from_ref));
+            result.package_json = result.package_json.or_else(|| dir.enclosing_package_json);
 
             if needs_side_effects {
-                if let Some(package_json) = Result::deref_package_json(result.package_json) {
+                if let Some(package_json) = result.package_json {
                     result.primary_side_effects_data =
                         primary_side_effects(&package_json.side_effects, path.text());
                 }
@@ -2179,16 +2249,23 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    match self.check_relative_path(
+                    // From each folder in its turn: the disk, as in an executable built without --aot, then what the executable holds there.
+                    // Where no folder on disk is known to stand for a folder of the executable, the disk is not asked: the working directory is none.
+                    if !self.looks_in_executable_alone_from(custom_utf8.slice(), import_path) {
+                        let on_disk = self.folder_on_disk_of_given_folder(custom_utf8.slice());
+                        match self.check_relative_path(&on_disk, import_path, kind, global_cache) {
+                            ResultUnion::Success(res) => return ResultUnion::Success(res),
+                            ResultUnion::Pending(p) => return ResultUnion::Pending(p),
+                            ResultUnion::Failure(p) => return ResultUnion::Failure(p),
+                            ResultUnion::NotFound => {}
+                        }
+                    }
+                    if let Some(answer) = self.look_in_executable_from_given_folder(
                         custom_utf8.slice(),
                         import_path,
                         kind,
-                        global_cache,
                     ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
+                        return answer;
                     }
                 }
                 debug_assert!(!check_package); // always from JavaScript
@@ -2238,10 +2315,7 @@ impl<'a> Resolver<'a> {
                     {
                         result.path_pair.primary = fallback_module.path;
                         result.module_type = options::ModuleType::Cjs;
-                        // @ptrFromInt(@intFromPtr(...)) — cast away constness
-                        result.package_json = Some(std::ptr::from_ref::<PackageJSON>(
-                            fallback_module.package_json,
-                        ));
+                        result.package_json = Some(fallback_module.package_json);
                         result.flags.set_is_from_node_modules(true);
                         return ResultUnion::Success(result);
                     }
@@ -2320,16 +2394,29 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    // From each folder in its turn. From a folder on disk: the disk, as in an executable built without --aot, then what the executable
+                    // holds there. From a folder of the executable: the executable first, as for a file of it that imports.
+                    let given = custom_utf8.slice();
+                    let is_of_executable =
+                        ::bun_options_types::standalone_path::is_bun_standalone_file_path(given);
+                    if is_of_executable
+                        && let Some(answer) =
+                            self.look_in_executable_from_given_folder(given, import_path, kind)
+                    {
+                        return answer;
+                    }
+                    let on_disk = self.folder_on_disk_of_given_folder(given);
+                    match self.check_package_path(&on_disk, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),
                         ResultUnion::NotFound => {}
+                    }
+                    if !is_of_executable
+                        && let Some(answer) =
+                            self.look_in_executable_from_given_folder(given, import_path, kind)
+                    {
+                        return answer;
                     }
                 }
             } else {
@@ -2459,7 +2546,7 @@ impl<'a> Resolver<'a> {
                             return ResultUnion::Success(Result {
                                 path_pair: match_result.path_pair,
                                 dirname_fd: match_result.dirname_fd,
-                                package_json: Some(std::ptr::from_ref(pkg)),
+                                package_json: Some(pkg),
                                 jsx: self.opts.jsx.clone(),
                                 module_type: match_result.module_type,
                                 flags,
@@ -2597,7 +2684,7 @@ impl<'a> Resolver<'a> {
                                 return ResultUnion::Success(Result {
                                     path_pair: pair,
                                     dirname_fd: node_module.dirname_fd,
-                                    package_json: Some(std::ptr::from_ref(package_json)),
+                                    package_json: Some(package_json),
                                     jsx: self.opts.jsx.clone(),
                                     ..Default::default()
                                 });
@@ -3266,7 +3353,7 @@ impl<'a> Resolver<'a> {
                                                 package_json.source.path.text,
                                             )
                                             .is_node_module(),
-                                            package_json: Some(std::ptr::from_ref(package_json)),
+                                            package_json: Some(package_json),
                                             dir_info: Some(dir_info),
                                             ..Default::default()
                                         };
@@ -3781,7 +3868,7 @@ impl<'a> Resolver<'a> {
                                                 .source
                                                 .path
                                                 .is_node_module(),
-                                            package_json: Some(std::ptr::from_ref(package_json)),
+                                            package_json: Some(package_json),
                                             dir_info: Some(dir_info),
                                             ..Default::default()
                                         };
@@ -4103,7 +4190,7 @@ impl<'a> Resolver<'a> {
         mut esm_resolution: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
@@ -4126,7 +4213,7 @@ impl<'a> Resolver<'a> {
         esm_resolution: &mut crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         package_subpath: &[u8],
         out: &mut MatchResult,
     ) -> MatchStatus {
@@ -4302,12 +4389,7 @@ impl<'a> Resolver<'a> {
                     file_fd: entry_query.entry().cache().fd,
                     dir_info: Some(resolved_dir_info),
                     is_node_module: true,
-                    package_json: Some(
-                        resolved_dir_info
-                            .package_json()
-                            .map(std::ptr::from_ref)
-                            .unwrap_or_else(|| std::ptr::from_ref(package_json)),
-                    ),
+                    package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
                     module_type,
                     ..Default::default()
                 };
@@ -4322,9 +4404,7 @@ impl<'a> Resolver<'a> {
                     .is_success()
                 {
                     out.is_node_module = true;
-                    out.package_json = out
-                        .package_json
-                        .or_else(|| Some(std::ptr::from_ref(package_json)));
+                    out.package_json = out.package_json.or(Some(package_json));
                     return MatchStatus::Success;
                 }
                 esm_resolution.status = Status::ModuleNotFound;
@@ -4345,7 +4425,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
-        package_json: &PackageJSON,
+        package_json: &'static PackageJSON,
         base: &[u8],
         extension_order: options::ExtOrder,
         is_wildcard: bool,
@@ -4434,8 +4514,8 @@ impl<'a> Resolver<'a> {
         &mut self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
-        package_json: &PackageJSON,
-        query: &crate::fs::EntryLookup<'static>,
+        package_json: &'static PackageJSON,
+        query: &crate::fs::EntryLookup,
         out: &mut MatchResult,
     ) -> bool {
         let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
@@ -4469,12 +4549,7 @@ impl<'a> Resolver<'a> {
             file_fd: query.entry().cache().fd,
             dir_info: Some(resolved_dir_info),
             is_node_module: true,
-            package_json: Some(
-                resolved_dir_info
-                    .package_json()
-                    .map(std::ptr::from_ref)
-                    .unwrap_or_else(|| std::ptr::from_ref(package_json)),
-            ),
+            package_json: Some(resolved_dir_info.package_json().unwrap_or(package_json)),
             module_type,
             ..Default::default()
         };
@@ -4572,18 +4647,15 @@ impl<'a> Resolver<'a> {
         }
 
         // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
-        // ownership — intermediate configs in an extends-chain are dropped via
-        // `heap::take`, the final one is interned into the DirInfo cache.
+        // ownership — intermediate configs in an extends-chain are dropped,
+        // the final one is interned into the DirInfo cache.
         Ok(Some(result))
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
-        if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-            return &[];
-        }
-        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites;
-        // `BIN_FOLDERS_LOADED` (acquire) guarantees init.
-        unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
+        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites. The only caller is
+        // `bun getcompletes`, whose one resolver runs on the calling thread: nothing appends.
+        unsafe { (*BIN_FOLDERS.get()).const_slice() }
     }
 
     pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
@@ -4927,7 +4999,7 @@ impl<'a> Resolver<'a> {
             if i >= queue.len() {
                 return Ok(None);
             }
-            queue[i].write(DirEntryResolveQueueItem {
+            let slot = queue[i].write(DirEntryResolveQueueItem {
                 unsafe_path: bun_ptr::RawSlice::new(top),
                 result,
                 safe_path: b"",
@@ -4937,8 +5009,6 @@ impl<'a> Resolver<'a> {
             if let Some(top_entry) = rfs!().entries.get(top) {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                        // SAFETY: slot was written immediately above.
-                        let slot = unsafe { queue[i].assume_init_mut() };
                         slot.safe_path = entries.dir;
                         slot.fd = entries.fd;
                     }
@@ -4965,7 +5035,7 @@ impl<'a> Resolver<'a> {
                 if i >= queue.len() {
                     return Ok(None);
                 }
-                queue[i].write(DirEntryResolveQueueItem {
+                let slot = queue[i].write(DirEntryResolveQueueItem {
                     unsafe_path: bun_ptr::RawSlice::new(root_path),
                     result,
                     safe_path: b"",
@@ -4974,8 +5044,6 @@ impl<'a> Resolver<'a> {
                 if let Some(top_entry) = rfs!().entries.get(top) {
                     match top_entry {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                            // SAFETY: slot was written immediately above.
-                            let slot = unsafe { queue[i].assume_init_mut() };
                             slot.safe_path = entries.dir;
                             slot.fd = entries.fd;
                         }
@@ -5784,7 +5852,7 @@ impl<'a> Resolver<'a> {
                                     primary: _path,
                                     secondary: None,
                                 },
-                                package_json: Some(std::ptr::from_ref(browser_json)),
+                                package_json: Some(browser_json),
                                 ..Default::default()
                             };
                             dec_ret!(MatchStatus::Success);
@@ -5811,7 +5879,7 @@ impl<'a> Resolver<'a> {
                         primary: Fs::Path::init(result.path),
                         secondary: None,
                     },
-                    package_json: Some(std::ptr::from_ref(package_json)),
+                    package_json: Some(package_json),
                     dirname_fd: result.dirname_fd,
                     ..Default::default()
                 };
@@ -5958,7 +6026,7 @@ impl<'a> Resolver<'a> {
                             primary: Path::init(out_buf),
                             secondary: None,
                         },
-                        package_json: Some(std::ptr::from_ref(package_json)),
+                        package_json: Some(package_json),
                         dirname_fd,
                         ..Default::default()
                     };
@@ -6044,7 +6112,7 @@ impl<'a> Resolver<'a> {
                                     primary: _path,
                                     secondary: None,
                                 },
-                                package_json: Some(std::ptr::from_ref(browser_json)),
+                                package_json: Some(browser_json),
                                 ..Default::default()
                             };
                             return MatchStatus::Success;
@@ -6119,7 +6187,7 @@ impl<'a> Resolver<'a> {
                                     secondary: None,
                                 },
                                 dirname_fd: file.dirname_fd,
-                                package_json: Some(std::ptr::from_ref(package_json)),
+                                package_json: Some(package_json),
                                 file_fd: file.file_fd,
                                 ..Default::default()
                             };
@@ -6176,11 +6244,11 @@ impl<'a> Resolver<'a> {
                 dec_ret!(MatchStatus::NotFound);
             }
         };
-        let mut package_json: Option<*const PackageJSON> = None;
+        let mut package_json: Option<&'static PackageJSON> = None;
 
         // Try using the main field(s) from "package.json"
         if let Some(pkg_json) = dir_info.package_json() {
-            package_json = Some(std::ptr::from_ref(pkg_json));
+            package_json = Some(pkg_json);
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
                 // BACKREF: `RawSlice` detaches the `&self.opts.main_fields`
@@ -6382,7 +6450,7 @@ impl<'a> Resolver<'a> {
                 self.generation,
                 self.store_fd,
             ) {
-                Ok(e) => bun_ptr::BackRef::new(&*e),
+                Ok(e) => bun_ptr::BackRef::new(e),
                 Err(_) => dec_ret!(None),
             };
 
@@ -6442,11 +6510,18 @@ impl<'a> Resolver<'a> {
                     dec_ret!(None);
                 };
 
-                dec_ret!(Some(LoadResult {
-                    path: abs_path.as_bytes(),
-                    dirname_fd: plain_dirname_fd,
-                    file_fd: query.entry().cache().fd,
-                }));
+                // The listing ignores case, so the test is made on what it answers.
+                let is_outfile_of_build = self.outfile_of_build.is_some_and(|outfile| {
+                    crate::compiled_program::compare_source_paths(outfile, abs_path.as_bytes())
+                        .is_eq()
+                });
+                if !is_outfile_of_build {
+                    dec_ret!(Some(LoadResult {
+                        path: abs_path.as_bytes(),
+                        dirname_fd: plain_dirname_fd,
+                        file_fd: query.entry().cache().fd,
+                    }));
+                }
             }
         }
 
@@ -6702,13 +6777,6 @@ impl<'a> Resolver<'a> {
             'append_bin_dir: {
                 if info.has_node_modules() {
                     if entries!().has_comptime_query(b"node_modules") {
-                        // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
-                        if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-                            // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                            unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
-                            BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
-                        }
-
                         let Ok(file) = bun_sys::open_dir_z(
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
@@ -6724,9 +6792,7 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                         unsafe {
-                            for existing_folder in
-                                (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
-                            {
+                            for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
                                 if *existing_folder == bin_path {
                                     break 'append_bin_dir;
                                 }
@@ -6736,7 +6802,7 @@ impl<'a> Resolver<'a> {
                             else {
                                 break 'append_bin_dir;
                             };
-                            let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
+                            let _ = (*BIN_FOLDERS.get()).append(stored);
                         }
                     }
                 }
@@ -6746,14 +6812,6 @@ impl<'a> Resolver<'a> {
                         if q.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::Dir
                         {
-                            // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
-                            if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-                                // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                                unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
-                                BIN_FOLDERS_LOADED
-                                    .store(true, core::sync::atomic::Ordering::Release);
-                            }
-
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
                             else {
                                 break 'append_bin_dir;
@@ -6767,9 +6825,7 @@ impl<'a> Resolver<'a> {
 
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                             unsafe {
-                                for existing_folder in
-                                    (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
-                                {
+                                for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
                                     if *existing_folder == bin_path {
                                         break 'append_bin_dir;
                                     }
@@ -6779,7 +6835,7 @@ impl<'a> Resolver<'a> {
                                 else {
                                     break 'append_bin_dir;
                                 };
-                                let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
+                                let _ = (*BIN_FOLDERS.get()).append(stored);
                             }
                         }
                     }
@@ -7015,9 +7071,9 @@ impl<'a> Resolver<'a> {
         tsconfigpath: &[u8],
         fd: FD,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
-        let parsed_tsconfig: Option<*mut TSConfigJSON> = match self.parse_tsconfig(tsconfigpath, fd)
+        let parsed_tsconfig: Option<Box<TSConfigJSON>> = match self.parse_tsconfig(tsconfigpath, fd)
         {
-            Ok(v) => v.map(bun_core::heap::into_raw),
+            Ok(v) => v,
             Err(err) => {
                 let pretty = tsconfigpath;
                 if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -7042,16 +7098,9 @@ impl<'a> Resolver<'a> {
                 None
             }
         };
-        if let Some(tsconfig_json) = parsed_tsconfig {
-            let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
-            parent_configs.append(tsconfig_json)?;
-            // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
-            // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
-            // this extends-chain walk and freed via heap::take below. Hold as
-            // `BackRef` (pointee outlives holder) so the loop body reads via safe
-            // `Deref` instead of three open-coded raw-ptr derefs.
-            let mut current =
-                bun_ptr::BackRef::from(core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"));
+        if let Some(mut current) = parsed_tsconfig {
+            // With `current`, a chain of up to 64 configs.
+            let mut parent_configs: BoundedArray<Box<TSConfigJSON>, 63> = BoundedArray::default();
             while !current.extends.is_empty() {
                 let ts_dir_name = Dirname::dirname(&current.abs_path);
                 // `extends` comes from the config file and can be any length.
@@ -7069,8 +7118,8 @@ impl<'a> Resolver<'a> {
                         &current.extends[..],
                     )),
                 };
-                let parent_config_maybe: Option<*mut TSConfigJSON> = match parsed {
-                    Ok(v) => v.map(bun_core::heap::into_raw),
+                let parent_config_maybe: Option<Box<TSConfigJSON>> = match parsed {
+                    Ok(v) => v,
                     Err((err, shown_path)) => {
                         let _ = self.log_mut().add_debug_fmt(
                             None,
@@ -7085,23 +7134,17 @@ impl<'a> Resolver<'a> {
                     }
                 };
                 if let Some(parent_config) = parent_config_maybe {
-                    parent_configs.append(parent_config)?;
-                    current = bun_ptr::BackRef::from(
-                        core::ptr::NonNull::new(parent_config).expect("heap alloc"),
-                    );
+                    parent_configs.append(core::mem::replace(&mut current, parent_config))?;
                 } else {
                     break;
                 }
             }
 
-            let merged_config = parent_configs.pop().unwrap();
+            let mut merged_config = current;
             // starting from the base config (end of the list)
             // successively apply the inheritable attributes to the next config
-            while let Some(parent_config_ptr) = parent_configs.pop() {
-                // SAFETY: see loop-wide note above.
-                let parent_config = unsafe { &mut *parent_config_ptr };
-                // SAFETY: see loop-wide note above.
-                let mc = unsafe { &mut *merged_config };
+            while let Some(mut parent_config) = parent_configs.pop() {
+                let mc = &mut *merged_config;
                 mc.own_abs_path = core::mem::take(&mut parent_config.own_abs_path);
                 mc.own_source_hash = parent_config.own_source_hash;
                 mc.emit_decorator_metadata =
@@ -7138,18 +7181,10 @@ impl<'a> Resolver<'a> {
                     // JSON), so this is a no-op but documents the ownership.
                     // (Drop handles parent_config.paths.)
                 }
-                // Every scalar/reference we need has been copied into merged_config
-                // (strings live in dirname_store or default_allocator and outlive the
-                // struct). The heap-allocated TSConfigJSON itself is no longer needed;
-                // without this, every intermediate config in an extends chain leaks on
-                // each dir_info_uncached() call, which is especially bad under HMR where
-                // bust_dir_cache triggers a re-parse of the whole chain on every reload.
-                // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
-                TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
+                // `destroy` logs what tsconfig-extends-leak.test.ts counts.
+                TSConfigJSON::destroy(parent_config);
             }
-            // SAFETY: from `parse_tsconfig` (heap::into_raw) above; the walk is over, so this
-            // is the only pointer to it.
-            return Ok(Some(unsafe { bun_core::heap::take(merged_config) }));
+            return Ok(Some(merged_config));
         }
         Ok(None)
     }
@@ -7316,7 +7351,7 @@ pub(crate) struct BrowserMapPath<'b> {
     pub(crate) cleaned: &'b [u8],
     pub(crate) input_path: &'b [u8],
     pub(crate) extension_order: &'b [Box<[u8]>],
-    pub(crate) map: &'b BrowserMap,
+    pub(crate) map: &'static BrowserMap,
 }
 
 impl<'b> BrowserMapPath<'b> {
@@ -7329,11 +7364,7 @@ impl<'b> BrowserMapPath<'b> {
         let cleaned = self.cleaned;
         // Check for equality
         if let Some(result) = map.get(path_to_check) {
-            // SAFETY: ARENA — `BrowserMap` values are `Box<[u8]>` owned by a `'static`
-            // PackageJSON (allocated in `parse_package_json`, never freed — DirInfo
-            // cache is process-global); the `'b` borrow on `map` artificially shortens
-            // what is process-lifetime storage. `Interned` is the canonical proof type.
-            self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
+            self.remapped = result;
             return true;
         }
 
@@ -7354,8 +7385,7 @@ impl<'b> BrowserMapPath<'b> {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {
-                    // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                    self.remapped = _remapped;
                     return true;
                 }
             }
@@ -7374,8 +7404,7 @@ impl<'b> BrowserMapPath<'b> {
         };
 
         if let Some(_remapped) = map.get(index_path) {
-            // SAFETY: ARENA — see `result` note above.
-            self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+            self.remapped = _remapped;
             return true;
         }
 
@@ -7393,8 +7422,7 @@ impl<'b> BrowserMapPath<'b> {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {
-                    // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                    self.remapped = _remapped;
                     return true;
                 }
             }

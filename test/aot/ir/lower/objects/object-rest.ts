@@ -1,14 +1,13 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="split"
 // CHECK: [[key]] = ToPropertyKey
-// CHECK: [[head]] = NewObject layout=[[layout]] @
-// CHECK-NEXT: CopyDataProperties [[head]], [[source]], [[key]] excludedKeys=["a"]
-// CHECK-NEXT: = FinishObject [[head]]
+// CHECK: = CopyObject [[source]], [[key]] excludedKeys=["a"]
 
 // RUN(PLAIN): lower
 // PLAIN-LABEL: function {{*}}name="pick"
 // PLAIN-NOT: = NewObject
 // PLAIN-NOT: CopyDataProperties
+// PLAIN-NOT: CopyObject
 // PLAIN: Return
 
 export function split(o: Record<string, unknown>, k: string) {

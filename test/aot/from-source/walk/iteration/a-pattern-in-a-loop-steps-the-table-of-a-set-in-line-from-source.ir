@@ -1,0 +1,24 @@
+# `const [a, b] = set` in a loop, on what is written to be a Set: one test that it is a Set as made, two steps through its table in line, and the stub for patterns on the failing side alone. Outside of a loop the pattern stays the one stub: no byte there.
+# A pattern over a generator in a loop is no matter of that stub at all.
+# OPTIONS: check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = IsPristine {{*}} builtinClass=Set
+# CHECK: = SetNext
+# CHECK: = SetNext
+# RUN(COUNT): walk f2 mechanisms=all
+# COUNT-COUNT-1: = DestructureIterable
+# COUNT-NOT: = DestructureIterable
+# RUN(ONCE): walk f3 mechanisms=all
+# ONCE-NOT: = SetNext
+# ONCE: = DestructureIterable
+# RUN(GENERATOR): walk f4 mechanisms=all
+# GENERATOR-NOT: = DestructureIterable
+# -- source: a-pattern-in-a-loop-steps-the-table-of-a-set-in-line-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function often(set: Set<number>, turns: number): number { let sum = 0; for (let i = 0; i < turns; i++) { const [a, b] = set; sum += a! + b!; } return sum; }
+# function once(set: Set<number>): number { const [a, b] = set; return a! + b!; }
+# function drawn(turns: number): number { let sum = 0; for (let i = 0; i < turns; i++) { const [a, b] = count(); sum += a! + b!; } return sum; }
+# function* count(): Generator<number> { yield 1; yield 2; yield 3; }
+# sink(often, once, drawn);
+# -- end of source

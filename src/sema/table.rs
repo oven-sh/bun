@@ -10,6 +10,7 @@
 //! A table's third type parameter determines who writes an entry and when it becomes visible to
 //! whom: `Frozen`, `Buffered`, `FileLocal`. See `Policy`.
 
+use crate::check::commit::View;
 use crate::check::task::{Stored, Task};
 use crate::local::{
     Buffer, HashedInTask, LOCAL, ListInTask, MaybeLocal, Slot, SlotNumber, is_local_number,
@@ -417,7 +418,7 @@ pub struct Frozen;
 
 /// The default for a field of `Program`. A task stores into the table's task-local part
 /// (`crate::local::Half`), which no other task sees. The table holds the shared part. Commits write
-/// to it (`Publish::store_logged`), and so does `insert` where `Task::may_write_immediately` allows it.
+/// to it (`Publish::store_prepared`), and so does `insert` where `Task::may_write_immediately` allows it.
 pub struct Buffered<W: Location = AtRunTime>(PhantomData<fn() -> W>);
 
 /// Where a task stores the task-local part of a `Buffered` table.
@@ -469,6 +470,10 @@ impl Policy for FileLocal {
 
 /// `number_tables` hasn't assigned a slot yet. A `Frozen` table doesn't need one.
 const NO_SLOT: u32 = u32::MAX;
+
+/// Set in a cell of `ByNode::stamps`, beside the commit's number, once a task other than the one that stored the entry has
+/// found it. See `Program::count_entries_found`.
+const FOUND: u32 = 1 << 31;
 
 /// Returns the slot of a table with policy `P` whose `slot` field is `slot`.
 #[inline]
@@ -750,14 +755,6 @@ impl<K: NodeKey, T, A: Alloc> ByNodeIndirect<K, T, Frozen, A> {
         self.values.get(self.handles.insert(key, handle).0)
     }
 
-    #[inline]
-    pub fn get(&self, key: &K) -> Option<T>
-    where
-        T: Clone,
-    {
-        self.get_ref(key).cloned()
-    }
-
     pub fn insert(&self, key: K, value: T) -> T
     where
         T: Clone,
@@ -827,6 +824,20 @@ fn is_for_all_tasks(task: &Task, value: &impl Follow) -> bool {
     task.writes_immediately() && !value.is_bound(&task.own)
 }
 
+/// `stamp`: of an entry that the task of `view` has found.
+#[cold]
+#[inline(never)]
+fn note_found_under(view: &View, stamp: &AtomicU32) {
+    let commit = stamp.load(Ordering::Relaxed);
+    if commit != 0
+        && commit & FOUND == 0
+        && !view.is_own(commit)
+        && stamp.fetch_or(FOUND, Ordering::Relaxed) & FOUND == 0
+    {
+        view.note_found();
+    }
+}
+
 impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V, Buffered<W>, A> {
     #[inline]
     fn own_slot(&self) -> u32 {
@@ -839,37 +850,38 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         (self.bits_at(at, |cell| cell.load(Ordering::Relaxed)) & Self::MASK) as u32
     }
 
-    /// `published_at` for a task that sees the commits up to `snapshot` in the key's file.
-    #[inline]
-    fn seen_up_to(&self, snapshot: u32, at: usize) -> u32 {
-        let raw = (self.bits_at(at, |cell| cell.load(Ordering::Acquire)) & Self::MASK) as u32;
-        match raw != 0 && self.stamp_at(at) > snapshot {
-            true => 0,
-            false => raw,
-        }
-    }
-
     /// `published_at`, limited to what `task` sees. `file` is the key's file.
     #[inline]
     fn seen_at(&self, task: &Task, file: u32, at: usize) -> u32 {
-        match task.view() {
-            None => self.published_at(at),
-            // `snapshot_of` runs before the load, because a miss counts as a look at the file too.
-            Some(view) => {
-                let raw = self.seen_up_to(view.snapshot_of(FileId(file)), at);
-                match raw != 0 && view.hides(FileId(file), self.stamp_at(at)) {
-                    true => 0,
-                    false => raw,
-                }
-            }
+        let Some(view) = task.view() else {
+            return self.published_at(at);
+        };
+        // `snapshot_of` runs before the load, because a miss counts as a look at the file too.
+        let snapshot = view.snapshot_of(FileId(file));
+        let raw = (self.bits_at(at, |cell| cell.load(Ordering::Acquire)) & Self::MASK) as u32;
+        if raw == 0 {
+            return 0;
         }
+        let stamp = self.stamps.existing_acquire(at as u32);
+        let marked_commit = stamp.map_or(0, |stamp| stamp.load(Ordering::Relaxed));
+        let commit = marked_commit & !FOUND;
+        if commit > snapshot || view.hides(FileId(file), commit) {
+            return 0;
+        }
+        if view.counts_found()
+            && marked_commit == commit
+            && let Some(stamp) = stamp
+        {
+            note_found_under(view, stamp);
+        }
+        raw
     }
 
     /// Returns the `stamps` value of the key at `at`. The caller has already loaded the key's entry.
     #[inline]
     fn stamp_at(&self, at: usize) -> u32 {
         let stamp = self.stamps.existing_acquire(at as u32);
-        stamp.map_or(0, |stamp| stamp.load(Ordering::Relaxed))
+        stamp.map_or(0, |stamp| stamp.load(Ordering::Relaxed) & !FOUND)
     }
 
     /// Returns the number of the commit that stored the entry under `key`, or `None` if nothing is published there.
@@ -955,6 +967,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
 
     /// Returns the cell that holds the task's entry for the node, or that a new entry goes into. If the task sees a
     /// published entry, returns `Err` with that entry.
+    #[inline]
     fn cell_for<'b>(
         &self,
         task: &Task,
@@ -1023,6 +1036,7 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> ByNode<K, V
         V::unpack(self.put(task, key.file().0, key.index(), value.pack(), false))
     }
 
+    #[inline]
     pub fn rewrite(&self, task: &Task, key: K, value: V, _: Stored) -> V {
         if key.index() != u32::MAX {
             self.put(task, key.file().0, key.index(), value.pack(), true);
@@ -1292,6 +1306,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
     }
 
     /// `insert_ref` for a key that the task has just looked up and not found.
+    #[inline]
     fn insert_absent(&self, task: &Task<'s>, key: I, mut value: T, stored: Stored) -> Handle {
         let is_for_all = key.local_number().is_none()
             && task.shares_what_it_stores()
@@ -1313,7 +1328,7 @@ impl<'s, I: Id + Follow, T: Follow + Send + 's, W: Location, A: Alloc>
         }
         // A value that loses the race stays allocated, and nothing refers to it.
         let new_handle = Handle(self.values.push(value));
-        self.handles.insert(task, key, new_handle, stored)
+        (self.handles).insert_for_every_task(task, key, new_handle, stored)
     }
 
     #[inline]
@@ -1358,24 +1373,33 @@ where
         task: &Task<'s>,
         (spread, key, value): (u64, &K, V),
         stored: Stored,
-    ) -> Result<V, bool> {
+    ) -> Result<V, (bool, Option<crate::local::Vacancy>)> {
         if !task.writes_immediately() || key.is_bound(&task.own) || value.is_bound(&task.own) {
-            return Err(true);
+            return Err((true, None));
+        }
+        if !task.may_write_immediately(self.slot.number(), stored) {
+            task.hold_back();
+            return Err((true, None));
         }
         // If the task already has a deferred entry under the key, it keeps using that one.
-        let own = || task.buffer().typed(&self.slot)?.get(spread, key).copied();
-        if !task.may_write_immediately(self.slot.number(), stored) || own().is_some() {
-            task.hold_back();
-            return Err(true);
-        }
+        let vacancy = match task.buffer().typed(&self.slot) {
+            Some(own) => match own.vacancy_for(spread, key) {
+                Some(vacancy) => Some(vacancy),
+                None => {
+                    task.hold_back();
+                    return Err((true, None));
+                }
+            },
+            None => None,
+        };
         if stays_in_task(task, key) {
-            return Err(false);
+            return Err((false, vacancy));
         }
         let is_first = self.published.add_if_absent(spread, key, value);
         if is_first {
             return Ok(value);
         }
-        (self.published.get_acquire(spread, key).copied()).ok_or(true)
+        (self.published.get_acquire(spread, key).copied()).ok_or((true, vacancy))
     }
 
     /// `spread` is `key`'s hash.
@@ -1400,19 +1424,24 @@ where
         stored: Stored,
         replaces: bool,
     ) -> V {
-        let is_committed = match self.put_immediately(task, (spread, &key, value), stored) {
-            Ok(shared_value) => return shared_value,
-            Err(is_committed) => is_committed,
-        };
+        let (is_committed, vacancy) =
+            match self.put_immediately(task, (spread, &key, value), stored) {
+                Ok(shared_value) => return shared_value,
+                Err(left_to_task) => left_to_task,
+            };
         let is_shared = is_committed && !key.is_local();
         let own = task.buffer().typed_or_new(&self.slot);
         let new_index = own.len();
-        let current = match replaces {
-            true => {
+        let current = match (vacancy, replaces) {
+            (Some(vacancy), _) => {
+                own.insert_absent(vacancy, spread, key, value);
+                value
+            }
+            (None, true) => {
                 own.replace(spread, key, value);
                 value
             }
-            false => *own.insert(spread, key, value),
+            (None, false) => *own.insert(spread, key, value),
         };
         // An existing entry is already logged, and a commit stores whatever value it has at that point.
         if is_shared && own.len() != new_index {
@@ -1485,13 +1514,34 @@ where
 
 // ───────────────────────────── `Buffered`: commits ─────────────────────────────
 
+/// An entry of a task's `Log` that `Publish::prepare_logged` has looked up, with all that `Publish::store_prepared` needs.
+#[derive(Copy, Clone)]
+pub(crate) struct Prepared {
+    /// In a table with one cell per key, the shared-part key. In a `ByKey`, the key's hash.
+    key: u64,
+    /// In a table with one cell per key, the packed value. In a `ByKey`, what `WindowedMap::push` returned.
+    value: u32,
+    /// The table's slot.
+    pub(crate) slot: u32,
+}
+
 /// The part of a `Buffered` table's interface that commits use.
+///
+/// A commit stores `task`'s entry under a key of its `Log` in the shared part, unless the entry is bound or the shared part
+/// already has one. The task keeps its entry. That takes two calls, on the task's thread, with nothing in progress in the
+/// task in between.
 pub(crate) trait Publish<'s>: Sync {
-    /// Stores `task`'s entry under `key` in the shared part, unless the entry is bound or the shared part already has
-    /// one. Returns true if it was stored. The task keeps its entry. Runs in a commit of `task`, on its thread, under
-    /// the commit mutex, while other tasks read the table. `key` comes from the task's `Log`. `number` is the commit's
-    /// number.
-    fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool;
+    /// Does everything that doesn't depend on the order of the commits, so the caller doesn't hold the commit mutex. It
+    /// looks up the entry, and it touches the memory that `store_prepared` writes to, so that the page faults and the
+    /// cache misses happen here. No lookup finds anything that it writes.
+    ///
+    /// Returns `None` if there's nothing to store. An entry in the shared part stays, so one that's there now is there
+    /// when the commit stores. `slot` is the table's.
+    fn prepare_logged(&self, task: &Task<'s>, slot: u32, key: u64) -> Option<Prepared>;
+
+    /// Stores the entry unless the shared part has one by now. Returns true if it was stored. Runs under the commit
+    /// mutex, while other tasks read the table. `number` is the commit's number.
+    fn store_prepared(&self, prepared: Prepared, number: u32) -> bool;
 
     /// Returns a number that identifies the entry `task` has logged under `key`, and that's the same in every task that
     /// stores an entry for the same thing. A published id and a node are already such numbers.
@@ -1504,11 +1554,9 @@ pub(crate) trait Publish<'s>: Sync {
 /// number: the node's index in the concatenation of all nodes, or the id's number.
 pub(crate) trait Dense: Sync {
     type Value: Packed<Cell = AtomicU32>;
-    /// Returns the published entry, or 0 if there is none.
-    fn load(&self, key: u32) -> u32;
-    /// Precondition: the cell is empty, and the caller is the only thread that writes to the table.
-    /// The store is a release, because other threads read during a commit.
-    fn store(&self, key: u32, raw: u32);
+    /// Returns false if `key` has an entry. Otherwise touches what `store_in_commit` writes to. Any thread may call it
+    /// at any time.
+    fn prepare_cell(&self, key: u32) -> bool;
     /// Returns a task's entry under `key`, which comes from its `Log`, or 0 if there is none.
     fn own(&self, buffer: &Buffer<'_>, key: u64) -> u32;
     /// Returns the shared-part key for `key`, which comes from a `Log`, or `None` if `key -> value` is bound.
@@ -1523,17 +1571,13 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     type Value = V;
 
     #[inline]
-    fn load(&self, key: u32) -> u32 {
-        self.published_at(key as usize)
-    }
-
-    #[inline]
-    fn store(&self, key: u32, raw: u32) {
+    fn prepare_cell(&self, key: u32) -> bool {
         let (cell, shift) = self.field_at(key as usize);
-        cell.store(
-            cell.load(Ordering::Relaxed) | raw << shift,
-            Ordering::Release,
-        );
+        let is_free = u64::from(cell.load(Ordering::Relaxed) >> shift) & Self::MASK == 0;
+        if is_free {
+            let _ = self.stamps.cell(key).load(Ordering::Relaxed);
+        }
+        is_free
     }
 
     #[inline]
@@ -1558,10 +1602,12 @@ impl<K: NodeKey, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     /// Only commits write to the table, one at a time. The commit number is stored before the entry.
     #[inline]
     fn store_in_commit(&self, key: u32, raw: u32, number: u32) -> bool {
-        let is_first = self.load(key) == 0;
+        let (cell, shift) = self.field_at(key as usize);
+        let stored = cell.load(Ordering::Relaxed);
+        let is_first = u64::from(stored >> shift) & Self::MASK == 0;
         if is_first {
             self.stamps.cell(key).store(number, Ordering::Relaxed);
-            self.store(key, raw);
+            cell.store(stored | raw << shift, Ordering::Release);
         }
         is_first
     }
@@ -1573,13 +1619,8 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     type Value = V;
 
     #[inline]
-    fn load(&self, key: u32) -> u32 {
-        self.published(key)
-    }
-
-    #[inline]
-    fn store(&self, key: u32, raw: u32) {
-        self.cells.cell(key).store(raw, Ordering::Release);
+    fn prepare_cell(&self, key: u32) -> bool {
+        self.cells.cell(key).load(Ordering::Relaxed) == 0
     }
 
     #[inline]
@@ -1602,58 +1643,79 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32>, W: Location, A: Alloc> Dense
     }
 }
 
-/// `Publish::store_logged` for a table with one cell per key.
-fn store_logged_cell<D: Dense<Value: Follow>>(
+/// `Publish::prepare_logged` for a table with one cell per key.
+#[inline]
+fn prepare_logged_cell<D: Dense<Value: Follow>>(
     table: &D,
     task: &Task,
+    slot: u32,
     key: u64,
-    number: u32,
-) -> bool {
-    let raw = table.own(task.buffer(), key);
+    raw: u32,
+) -> Option<Prepared> {
     if raw == 0 {
-        return false;
+        return None;
     }
     let computed = D::Value::unpack(raw);
-    let Some(shared_key) = table.shared_key(key, &computed, &task.own) else {
-        return false;
-    };
-    table.store_in_commit(shared_key, raw, number)
+    let shared_key = table.shared_key(key, &computed, &task.own)?;
+    table.prepare_cell(shared_key).then_some(Prepared {
+        key: u64::from(shared_key),
+        value: raw,
+        slot,
+    })
 }
 
-/// `Publish::store_logged` for an indirect table. A value whose handle has `LOCAL` is bound (see `store_value`).
-fn store_logged_handle<D: Dense<Value = Handle>>(
+/// `Publish::prepare_logged` for an indirect table. A value whose handle has `LOCAL` is bound (see `store_value`).
+fn prepare_logged_handle<D: Dense<Value = Handle>>(
     handles: &D,
     task: &Task,
+    slot: u32,
     key: u64,
-    number: u32,
-) -> bool {
+) -> Option<Prepared> {
     let raw = handles.own(task.buffer(), key);
     if raw == 0 || Handle::unpack(raw).local_number().is_some() {
-        return false;
+        return None;
     }
-    store_logged_cell(handles, task, key, number)
+    prepare_logged_cell(handles, task, slot, key, raw)
+}
+
+/// `Publish::store_prepared` for a table with one cell per key.
+#[inline]
+fn store_prepared_cell(table: &impl Dense, prepared: Prepared, number: u32) -> bool {
+    table.store_in_commit(prepared.key as u32, prepared.value, number)
 }
 
 /// A table whose values fit in a cell.
 impl<'s, D: Dense<Value: Follow>> Publish<'s> for D {
-    fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
-        store_logged_cell(self, task, key, number)
+    fn prepare_logged(&self, task: &Task<'s>, slot: u32, key: u64) -> Option<Prepared> {
+        prepare_logged_cell(self, task, slot, key, self.own(task.buffer(), key))
+    }
+
+    fn store_prepared(&self, prepared: Prepared, number: u32) -> bool {
+        store_prepared_cell(self, prepared, number)
     }
 }
 
 impl<'s, K: NodeKey, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Publish<'s>
     for ByNodeIndirect<K, T, Buffered<W>, A>
 {
-    fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
-        store_logged_handle(&self.handles, task, key, number)
+    fn prepare_logged(&self, task: &Task<'s>, slot: u32, key: u64) -> Option<Prepared> {
+        prepare_logged_handle(&self.handles, task, slot, key)
+    }
+
+    fn store_prepared(&self, prepared: Prepared, number: u32) -> bool {
+        store_prepared_cell(&self.handles, prepared, number)
     }
 }
 
 impl<'s, I: Id + Follow, T: Follow + Send + Sync + 's, W: Location, A: Alloc> Publish<'s>
     for ByIdIndirect<I, T, Buffered<W>, A>
 {
-    fn store_logged(&self, task: &Task<'s>, key: u64, number: u32) -> bool {
-        store_logged_handle(&self.handles, task, key, number)
+    fn prepare_logged(&self, task: &Task<'s>, slot: u32, key: u64) -> Option<Prepared> {
+        prepare_logged_handle(&self.handles, task, slot, key)
+    }
+
+    fn store_prepared(&self, prepared: Prepared, number: u32) -> bool {
+        store_prepared_cell(&self.handles, prepared, number)
     }
 }
 
@@ -1663,16 +1725,24 @@ where
     V: Copy + Follow + Send + Sync + 's,
 {
     /// `key` is the entry's index in the task's `Hashed`.
-    fn store_logged(&self, task: &Task<'s>, key: u64, _: u32) -> bool {
-        let own = task.buffer().typed(&self.slot);
-        let Some((key, value)) = own.and_then(|own| own.entry(key as u32)) else {
-            return false;
-        };
+    fn prepare_logged(&self, task: &Task<'s>, slot: u32, key: u64) -> Option<Prepared> {
+        let (key, value) = task.buffer().typed(&self.slot)?.entry(key as u32)?;
         if key.is_bound(&task.own) || value.is_bound(&task.own) {
-            return false;
+            return None;
         }
         let spread = spread_in_window(key);
-        self.published.add_if_absent(spread, key, *value)
+        if self.published.get_acquire(spread, key).is_some() {
+            return None;
+        }
+        Some(Prepared {
+            key: spread,
+            value: self.published.push(spread, key, *value),
+            slot,
+        })
+    }
+
+    fn store_prepared(&self, prepared: Prepared, _: u32) -> bool {
+        (self.published).add_pushed_if_absent(prepared.key, prepared.value)
     }
 
     /// `key` is an index into the task's own `Hashed`, which is meaningless to another task. Only keys without

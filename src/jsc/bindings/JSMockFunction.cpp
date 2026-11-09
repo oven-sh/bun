@@ -865,9 +865,6 @@ public:
 
     bool isRestoredSpy() const { return isSpy && !m_spyTarget; }
 
-    // What the spy replaced, while it is installed. Empty if it replaced nothing.
-    JSValue replacedValue() const { return m_spyTarget ? m_spyOriginal.get() : JSValue(); }
-
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
     void clearSpy(JSGlobalObject* globalObject, bool shouldReset = true)
     {
@@ -2872,13 +2869,6 @@ extern "C" bool JSMock__isRestoredSpy(JSC::EncodedJSValue value)
 {
     auto* mock = dynamicDowncast<JSMockFunction>(JSValue::decode(value));
     return mock && mock->isRestoredSpy();
-}
-
-extern "C" JSC::EncodedJSValue JSMock__replacedBySpy(JSC::EncodedJSValue value)
-{
-    JSValue spy = JSValue::decode(value);
-    auto* mock = spy ? dynamicDowncast<JSMockFunction>(spy) : nullptr;
-    return JSValue::encode(mock ? mock->replacedValue() : JSValue());
 }
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

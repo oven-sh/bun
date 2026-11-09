@@ -21,11 +21,6 @@ unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
     safe fn JSMock__isRestoredSpy(value: JSValue) -> bool;
-    /// What `value` replaced, if it is a spy that is installed. Empty otherwise.
-    safe fn JSMock__replacedBySpy(value: JSValue) -> JSValue;
-    /// What the first `vi.stubGlobal()` of `globalThis[name]` replaced: `undefined` for nothing or an accessor. Empty if
-    /// it isn't stubbed.
-    safe fn ViUtils__replacedByStub(global: &JSGlobalObject, name: &bun_core::String) -> JSValue;
 }
 
 unsafe extern "C" {
@@ -145,11 +140,6 @@ impl Api {
             Api::Performance => bun_jsc::cpp::Bun__FakeTimers__performanceObject(global),
             _ => global.to_js_value(),
         }
-    }
-
-    /// Whether `owner()` is the global object, where `vi.stubGlobal()` replaces the same property.
-    fn is_global(self) -> bool {
-        !matches!(self, Api::NextTick | Api::Date | Api::Performance)
     }
 }
 
@@ -488,8 +478,7 @@ pub(crate) struct FakeTimers {
     fakes_abort_signal_timeout: bool,
     /// A preload script set up the current mock, so `on_test_file_end` keeps it.
     from_preload: bool,
-    /// A hook of the preload installed the fakes, after the first test file loaded. `on_test_file_end` keeps them only
-    /// while each one is where it was put.
+    /// A hook of the preload installed the fakes, so `on_test_file_end` keeps them only while each one is on its global.
     from_hook: bool,
     /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
     installs: u32,
@@ -1027,29 +1016,28 @@ impl FakeTimers {
         }
     }
 
-    /// Whether each fake is where `install` put it. The first test file loads before a hook of the preload installs
-    /// them, so a spy, a stub or an assignment of that file can be what a fake replaced, and undoing it takes the fake
-    /// off its global.
-    #[optimize(size)]
-    fn is_whole(&self, global: &JSGlobalObject) -> bool {
-        self.replaced.iter().all(|replaced| {
-            let (api, fake, original) = (replaced.api, replaced.fake.get(), replaced.original.get());
-            let owner = api.owner(global);
-            // The builtin `now` is its own fake, so nothing was put on that property.
-            if fake == original || !owner.is_object() {
+    /// Whether each fake is on its global. A test file takes one off when it undoes or replaces what is there. Runs no JS.
+    fn is_whole(global: &JSGlobalObject) -> bool {
+        let mut index = 0;
+        loop {
+            // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
+            let replaced = unsafe { &(*timer_all()).fake_timers.replaced }
+                .get(index)
+                .map(|replaced| (replaced.api, replaced.fake.get(), replaced.original.get()));
+            let Some((api, fake, original)) = replaced else {
                 return true;
+            };
+            index += 1;
+            // The builtin `now` is its own fake, so the clock put nothing on that property.
+            if fake == original {
+                continue;
             }
+            let owner = api.owner(global);
             let name = bun_core::String::static_(api.property());
-            let on_global = Bun__FakeTimers__getDirect(global, owner, &name);
-            on_global == fake
-                // The builtin `now` reads this clock itself. It is back when a spy under the fake is restored.
-                || (matches!(api, Api::Date | Api::Performance)
-                    && !on_global.is_empty()
-                    && Bun__FakeTimers__isNativeFunction(on_global))
-                // The preload made a spy or a stub over its fake.
-                || JSMock__replacedBySpy(on_global) == fake
-                || (api.is_global() && ViUtils__replacedByStub(global, &name) == fake)
-        })
+            if !owner.is_object() || Bun__FakeTimers__getDirect(global, owner, &name) != fake {
+                return false;
+            }
+        }
     }
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.
@@ -1780,13 +1768,13 @@ fn advance(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
 }
 
 pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
-    // SAFETY: per-thread `timer::All`; nothing below re-enters it.
-    let (active, kept) = unsafe {
+    // SAFETY: per-thread `timer::All`; field reads only.
+    let (active, from_preload, from_hook) = unsafe {
         let this = &(*timer_all()).fake_timers;
-        // A clock of a preload's hook ends with a test file that took one of its fakes off a global.
-        let kept = this.from_preload && (!this.from_hook || this.is_whole(global));
-        (this.active, kept)
+        (this.active, this.from_preload, this.from_hook)
     };
+    // A hook's fakes go over what the first file left on the globals, and any file can take one off again.
+    let kept = from_preload && (!from_hook || FakeTimers::is_whole(global));
     let mocked = active || !bun_jsc::cpp::Bun__FakeTimers__overriddenDateNow(global).is_nan();
     if mocked && !kept {
         // SAFETY: the live event loop of the per-thread VM.

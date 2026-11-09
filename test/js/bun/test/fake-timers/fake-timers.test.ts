@@ -2005,7 +2005,12 @@ describe.concurrent("the end of a test file", () => {
 
     async function clocks(
       preload: string,
-      { flags = [] as string[], files = {} as Record<string, string>, module = "bun:test" } = {},
+      {
+        flags = [] as string[],
+        files = {} as Record<string, string>,
+        module = "bun:test",
+        packages = {} as Record<string, string>,
+      } = {},
     ) {
       files = { "a.test.ts": sees("a"), "b.test.ts": sees("b"), "c.test.ts": sees("c"), ...files };
       using dir = tempDir("fake-timers-preload-hooks", {
@@ -2016,6 +2021,7 @@ describe.concurrent("the end of a test file", () => {
           ${preload}
         `,
         ...files,
+        ...packages,
       });
       const { stdout, stderr, exitCode } = await run(
         ["test", "--preload=./preload.ts", ...flags, ...Object.keys(files).map(file => "./" + file)],
@@ -2093,36 +2099,44 @@ describe.concurrent("the end of a test file", () => {
       });
     });
 
-    test("a clock set in beforeAll() with --rerun-each=2", async () => {
-      const { seen, stderr, exitCode } = await clocks(setsTheTime, { flags: ["--rerun-each=2"] });
+    test.each([
+      ["setSystemTime()", setsTheTime, "real 1970"],
+      ["useFakeTimers()", `beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, "fake 1970"],
+    ])("a clock set in beforeAll() with %s stays under --rerun-each=2", async (_, hook, clock) => {
+      const { seen, stderr, exitCode } = await clocks(hook, { flags: ["--rerun-each=2"] });
       expect({ seen, exitCode }, stderr).toEqual({
-        seen: ["a module: real now", "a test: real 1970", ...inEach(["a", "b", "b", "c", "c"], "real 1970")],
+        seen: ["a module: real now", `a test: ${clock}`, ...inEach(["a", "b", "b", "c", "c"], clock)],
         exitCode: 0,
       });
     });
 
-    // The preload and its hooks run again for each file, so the end of each file undoes the clock.
-    test("a clock set in beforeAll() with --isolate=modules", async () => {
-      using dir = tempDir("fake-timers-preload-hooks-isolate", {
-        "preload.ts": `
-          import { beforeAll, vi } from "bun:test";
-          globalThis.seen = where => console.log(where + ":", Date.now() < 1e12 ? new Date().getUTCFullYear() : "now");
-          ${setsTheTime}
-        `,
-        "a.test.ts": sees("a"),
-        "b.test.ts": sees("b"),
-      });
-      const { stdout, stderr, exitCode } = await run(
-        ["test", "--preload=./preload.ts", "--isolate=modules", "./a.test.ts", "./b.test.ts"],
-        String(dir),
-      );
-      expect({ seen: stdout.split("\n").filter(line => /^[ab] /.test(line)), exitCode }, stderr).toEqual({
-        seen: ["a module: now", "a test: 1970", "b module: now", "b test: 1970"],
-        exitCode: 0,
-      });
-    });
+    // The preload's hooks run again for each file, so the end of each file ends the clock that they set.
+    test.each(["--isolate", "--isolate=modules", "--parallel=2 --parallel-delay=1000000 --no-isolate"])(
+      "a clock set in beforeAll() starts again in each file with %s",
+      async flags => {
+        using dir = tempDir("fake-timers-preload-hooks-each-file", {
+          "preload.ts": `
+            import { beforeAll, vi } from "bun:test";
+            globalThis.seen = where => console.log(where + ":", Date.now() < 1e12 ? new Date().getUTCFullYear() : "now");
+            ${setsTheTime}
+          `,
+          "a.test.ts": sees("a"),
+          "b.test.ts": sees("b"),
+        });
+        const { stdout, stderr, exitCode } = await run(
+          ["test", "--preload=./preload.ts", ...flags.split(" "), "./a.test.ts", "./b.test.ts"],
+          String(dir),
+        );
+        // A --parallel worker prints to stderr.
+        const seen = (stdout + "\n" + stderr).split("\n").filter(line => /^[ab] /.test(line));
+        expect({ seen: seen.sort(), exitCode }, stderr).toEqual({
+          seen: ["a module: now", "a test: 1970", "b module: now", "b test: 1970"],
+          exitCode: 0,
+        });
+      },
+    );
 
-    test("a clock set in beforeAll() ends with each run of a single file under --rerun-each", async () => {
+    test("a clock set in beforeAll() reaches each run of a single file under --rerun-each", async () => {
       using dir = tempDir("fake-timers-preload-hooks-one-file", {
         "preload.ts": `
           import { beforeAll, vi } from "bun:test";
@@ -2135,8 +2149,8 @@ describe.concurrent("the end of a test file", () => {
         ["test", "--preload=./preload.ts", "--rerun-each=2", "./a.test.ts"],
         String(dir),
       );
-      expect({ seen: stdout.split("\n").filter(line => line.startsWith("a ")), exitCode }, stderr).toEqual({
-        seen: ["a module: now", "a test: 1970", "a module: now", "a test: 1970"],
+      expect({ seen: stdout.split("\n").filter(line => line.startsWith("a test")), exitCode }, stderr).toEqual({
+        seen: ["a test: 1970", "a test: 1970"],
         exitCode: 0,
       });
     });
@@ -2170,6 +2184,18 @@ describe.concurrent("the end of a test file", () => {
       });
       expect({ seen, exitCode }, stderr).toEqual({
         seen: [...inEach(["a"], "fake 1970"), ...inEach(["b", "c"], "fake 1985")],
+        exitCode: 0,
+      });
+    });
+
+    test("a clock that the preload sets again in its afterEach() ends with each file, as before", async () => {
+      const { seen, stderr, exitCode } = await clocks(
+        `import { afterEach } from "bun:test";
+        ${setsTheTime}
+        afterEach(() => void vi.setSystemTime(new Date(0)));`,
+      );
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: ["a module: real now", "a test: real 1970", ...inEach(["b", "c"], "real now")],
         exitCode: 0,
       });
     });
@@ -2301,6 +2327,17 @@ describe.concurrent("the end of a test file", () => {
         afterAll(() => void delete globalThis.requestAnimationFrame);`,
       ],
       ["stubs requestAnimationFrame into being", `vi.stubGlobal("requestAnimationFrame", () => 0);`],
+      ["has a spy on Date.now at its top level", `spyOn(Date, "now");`],
+      [
+        "puts back a Date.now that it had replaced before the hook ran",
+        `const real = Date.now;
+        Date.now = function wrapper() { return 1234; };
+        afterAll(() => void (Date.now = real));`,
+      ],
+      [
+        "has a spy on Date.now and deletes Date.prototype.constructor",
+        `spyOn(Date, "now"); afterAll(() => void delete Date.prototype.constructor);`,
+      ],
     ])("fake timers from beforeAll() end with a first file that %s, as before", async (_, atTheTop) => {
       const { stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
         files: {
@@ -2321,11 +2358,16 @@ describe.concurrent("the end of a test file", () => {
       });
     });
 
-    test("fake timers from beforeAll() end with a later file that leaves a function over a fake", async () => {
+    // The check runs at the end of every file: a later file can also put back a function from before the fakes.
+    test.each([
+      ["leaves a function over a fake", `globalThis.setTimeout = function assigned() {};`, "assigned"],
+      ["puts back the setTimeout that the first file saved", `globalThis.setTimeout = saved;`, "saved"],
+    ])("fake timers from beforeAll() end with a later file that %s", async (_, inB, has) => {
       const { seen, stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
         files: {
-          "b.test.ts": sees("b", `globalThis.setTimeout = function assigned() {};`),
-          "c.test.ts": sees("c", `console.log("setTimeout:", setTimeout.name);`),
+          "a.test.ts": `globalThis.saved = setTimeout;\n${sees("a")}`,
+          "b.test.ts": sees("b", inB),
+          "c.test.ts": sees("c", `console.log("setTimeout:", setTimeout === saved ? "saved" : setTimeout.name);`),
         },
       });
       expect({ seen, exitCode }, stderr).toEqual({
@@ -2334,8 +2376,28 @@ describe.concurrent("the end of a test file", () => {
           "a test: fake 1970",
           ...inEach(["b"], "fake 1970"),
           ...inEach(["c"], "real now"),
-          "setTimeout: assigned",
+          `setTimeout: ${has}`,
         ],
+        exitCode: 0,
+      });
+    });
+
+    test("a function that the first file assigns after it restores its top-level spy stays for later files", async () => {
+      const { seen, stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
+        files: {
+          "a.test.ts": `
+            import { spyOn, test } from "bun:test";
+            const spy = spyOn(globalThis, "setTimeout");
+            test("a", () => {
+              spy.mockRestore();
+              globalThis.setTimeout = function assigned() {};
+            });
+          `,
+          "b.test.ts": sees("b", `console.log("setTimeout:", setTimeout.name);`),
+        },
+      });
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: [...inEach(["b"], "real now"), "setTimeout: assigned", ...inEach(["c"], "real now")],
         exitCode: 0,
       });
     });
@@ -2353,71 +2415,149 @@ describe.concurrent("the end of a test file", () => {
       });
     });
 
-    // What the hook puts on a global after its own fake is no reason to end the clock.
+    // The fake is then not on its global at the end of the first file.
     test.each([
-      ["a spy on setTimeout", `spyOn(globalThis, "setTimeout");`, "mock"],
-      [
-        "a stub of setTimeout",
-        `vi.stubGlobal("setTimeout", function stub(...args) { return fake(...args); });`,
-        "stub",
-      ],
-      ["a spy on Date.now", `spyOn(Date, "now");`, "fake"],
-    ])("fake timers from beforeAll() stay on with %s that the hook makes over them", async (_, over, has) => {
+      ["a spy", `spyOn(globalThis, "setTimeout");`, "mock"],
+      ["a stub", `vi.stubGlobal("setTimeout", function stub(...args) { return fake(...args); });`, "stub"],
+      ["a function", `globalThis.setTimeout = function wrapper(...args) { return fake(...args); };`, "wrapper"],
+      ["jest.fn()", `globalThis.setTimeout = jest.fn(fake);`, "mock"],
+    ])(
+      "fake timers from beforeAll() end with the first file when the hook puts %s over setTimeout, as before",
+      async (_, over, has) => {
+        const { seen, stderr, exitCode } = await clocks(
+          `import { jest, spyOn } from "bun:test";
+          beforeAll(() => {
+            vi.useFakeTimers({ now: 0 });
+            const fake = setTimeout;
+            ${over}
+            globalThis.has = () => ("mock" in setTimeout ? "mock" : setTimeout.name);
+          });`,
+          { files: { "c.test.ts": sees("c", `console.log("setTimeout:", has());`) } },
+        );
+        expect({ seen, exitCode }, stderr).toEqual({
+          seen: ["a module: real now", "a test: fake 1970", ...inEach(["b", "c"], "real now"), `setTimeout: ${has}`],
+          exitCode: 0,
+        });
+      },
+    );
+
+    // The clock leaves the builtin Date.now where it is, so the spy replaced no fake.
+    test("fake timers from beforeAll() stay on with a spy on Date.now that the hook makes", async () => {
       const { seen, stderr, exitCode } = await clocks(
         `import { spyOn } from "bun:test";
         beforeAll(() => {
           vi.useFakeTimers({ now: 0 });
-          const fake = setTimeout;
-          ${over}
-          globalThis.has = () => (setTimeout === fake ? "fake" : "mock" in setTimeout ? "mock" : setTimeout.name);
+          spyOn(Date, "now");
         });`,
         {
           files: {
-            "b.test.ts": sees("b", `console.log("b:", has());`),
             "c.test.ts": sees(
               "c",
               `let fired = false;
               setTimeout(() => void (fired = true), 1000);
               vi.advanceTimersByTime(1000);
-              console.log("c:", has(), fired, Date.now());`,
+              console.log("fired:", fired, Date.now());`,
             ),
           },
         },
       );
       expect({ seen, exitCode }, stderr).toEqual({
+        seen: ["a module: real now", "a test: fake 1970", ...inEach(["b", "c"], "fake 1970"), "fired: true 1000"],
+        exitCode: 0,
+      });
+    });
+
+    // The end of a file undoes every stub and makes the preload's stubs again, over the fake.
+    test("fake timers from beforeAll() end with the first file over a global that the preload stubbed, as before", async () => {
+      const { seen, stderr, exitCode } = await clocks(
+        `vi.stubGlobal("requestAnimationFrame", callback => setTimeout(callback, 16));
+        beforeAll(() => void vi.useFakeTimers({ now: 0 }));`,
+      );
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: ["a module: real now", "a test: fake 1970", ...inEach(["b", "c"], "real now")],
+        exitCode: 0,
+      });
+    });
+
+    const frames = (name: string, pragma = "") =>
+      `${pragma}${sees(
+        name,
+        `let fired = false;
+      requestAnimationFrame(() => void (fired = true));
+      vi.advanceTimersByTime(16);
+      console.log("frame:", "${name}", fired);`,
+      )}`;
+
+    test("fake timers from beforeAll() stay on over a function that the preload assigned", async () => {
+      const { seen, stderr, exitCode } = await clocks(
+        `globalThis.requestAnimationFrame = callback => setTimeout(callback, 16);
+        beforeAll(() => void vi.useFakeTimers({ now: 0 }));`,
+        { files: { "c.test.ts": frames("c") } },
+      );
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: ["a module: real now", "a test: fake 1970", ...inEach(["b", "c"], "fake 1970"), "frame: c true"],
+        exitCode: 0,
+      });
+    });
+
+    // Split in two, because Bun looks for this name in the whole text of a test file, and so in this one.
+    const inAWindow = "// @vitest" + "-environment happy-dom\n";
+    // Bun keeps one window for the files of one environment, and a window has requestAnimationFrame.
+    const happyDOM = {
+      "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+      "node_modules/happy-dom/index.js": `
+        exports.Window = class Window {
+          document = { defaultView: this };
+          happyDOM = { cancelAsync() {} };
+          requestAnimationFrame(callback) {
+            return setTimeout(callback, 16);
+          }
+          cancelAnimationFrame(id) {
+            clearTimeout(id);
+          }
+        };
+      `,
+    };
+
+    test("fake timers from beforeAll() stay on for every file of one window", async () => {
+      const { seen, stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
+        files: {
+          "a.test.ts": frames("a", inAWindow),
+          "b.test.ts": frames("b", inAWindow),
+          "c.test.ts": frames("c", inAWindow),
+        },
+        packages: happyDOM,
+      });
+      expect({ seen, exitCode }, stderr).toEqual({
         seen: [
           "a module: real now",
           "a test: fake 1970",
+          "frame: a true",
           ...inEach(["b"], "fake 1970"),
-          `b: ${has}`,
+          "frame: b true",
           ...inEach(["c"], "fake 1970"),
-          `c: ${has} true 1000`,
+          "frame: c true",
         ],
         exitCode: 0,
       });
     });
 
-    test("Date.now is the real function again after the first file's spy on it is undone", async () => {
+    // The window's requestAnimationFrame leaves the global with the window, and the fake with it.
+    test("fake timers from beforeAll() that replaced a window's function end with the first file without a window", async () => {
       const { seen, stderr, exitCode } = await clocks(`beforeAll(() => void vi.useFakeTimers({ now: 0 }));`, {
-        files: {
-          "a.test.ts": `
-            import { spyOn, test } from "bun:test";
-            globalThis.realNow = Date.now;
-            spyOn(Date, "now");
-            test("a", () => {});
-          `,
-          "b.test.ts": `
-            import { test, vi } from "bun:test";
-            test("b", () => {
-              console.log("faked:", Date.now === realNow, Date.now());
-              vi.useRealTimers();
-              console.log("real:", Date.now === realNow, Date.now() > 1e12);
-            });
-          `,
-          "c.test.ts": `import { test } from "bun:test"; test("c", () => {});`,
-        },
+        files: { "a.test.ts": frames("a", inAWindow), "d.test.ts": sees("d") },
+        packages: happyDOM,
       });
-      expect({ seen, exitCode }, stderr).toEqual({ seen: ["faked: true 0", "real: true true"], exitCode: 0 });
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: [
+          "a module: real now",
+          "a test: fake 1970",
+          "frame: a true",
+          ...inEach(["b"], "fake 1970"),
+          ...inEach(["c", "d"], "real now"),
+        ],
+        exitCode: 0,
+      });
     });
 
     test("a function that a later file leaves on Date.now doesn't end the clock", async () => {

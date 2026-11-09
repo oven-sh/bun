@@ -94,9 +94,6 @@ pub(crate) struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub(crate) sequences: Box<[ExecutionSequence]>,
     pub(crate) group_index: usize,
-    /// Groups `[0, n)` set up a preload's `aroundAll()` and `beforeAll()` hooks that run once for all test files.
-    /// See `bun_test::is_preload_for_the_run`.
-    pub(crate) once_per_run_groups: usize,
     /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
     /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
@@ -427,7 +424,6 @@ impl Execution {
             groups: Box::default(),
             sequences: Box::default(),
             group_index: 0,
-            once_per_run_groups: 0,
             on_stack: core::cell::Cell::new(None),
         }
     }

@@ -6807,7 +6807,7 @@ describe("db.progressHandler()", () => {
     )("when %s", (_, commit) => {
       using dir = tempDir("sqlite-progress-commit", {});
       const file = path.join(String(dir), "x.sqlite");
-      const db = new Database(file);
+      using db = new Database(file);
       // An FTS5 table writes to its shadow tables at the commit, so the commit runs statements.
       db.run("CREATE VIRTUAL TABLE ft USING fts5(x)");
       const insert = db.prepare("INSERT INTO ft VALUES ('a') RETURNING 1");
@@ -6819,7 +6819,6 @@ describe("db.progressHandler()", () => {
       commit({ db, insert, rows });
       using other = new Database(file, { readonly: true });
       expect(other.query("SELECT count(*) AS n FROM ft").get()).toEqual({ n: 1 });
-      db.close();
     });
   });
 

@@ -921,7 +921,7 @@ class Database {
   onInsert: UpdateHook | null;
   onUpdate: UpdateHook | null;
   onDelete: UpdateHook | null;
-  progressHandler(callback: (() => unknown) | null, n?: number): void;
+  progressHandler(callback?: (() => unknown) | null, n?: number): void;
 
   readonly inTransaction: boolean;
   readonly filename: string;

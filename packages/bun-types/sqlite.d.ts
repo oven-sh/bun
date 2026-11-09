@@ -579,8 +579,8 @@ declare module "bun:sqlite" {
      * (`PRAGMA busy_timeout`).
      *
      * A later statement on this `Database` calls `callback` again. Pass `null`
-     * to remove the handler. A second call replaces the first: a `Database` has
-     * one progress handler.
+     * or nothing to remove the handler. A second call replaces the first: a
+     * `Database` has one progress handler.
      *
      * While `callback` runs, every other use of this `Database` and of its
      * statements throws `TypeError: This database connection is busy executing a query`.
@@ -598,7 +598,7 @@ declare module "bun:sqlite" {
      * }
      * ```
      */
-    progressHandler(callback: (() => unknown) | null, n?: number): void;
+    progressHandler(callback?: (() => unknown) | null, n?: number): void;
 
     /**
      * Save the database to an in-memory {@link Buffer} object.

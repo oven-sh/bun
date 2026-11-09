@@ -165,29 +165,37 @@ async function seeInAnExecutable(program: string, seen: string[], warned: string
   expect(await seenBy([executable], cwd)).toEqual(asWritten);
 }
 
-test("at the constructor, the name is the file that the Worker starts from", async () => {
+test.concurrent("at the constructor, the name is the file that the Worker starts from", async () => {
   await seeInAnExecutable(head(`{ ask } from "./ask.mjs"`) + atTheConstructor, answers, []);
 });
 
-test("handed to a function of another file or of a package, the name is a file that a Worker may start from", async () => {
-  const handed = said((code, index) => (index % 2 ? `run({ filename: ${code} })` : `start(${code})`));
-  const program = head(`{ start } from "./pool.mjs";\nimport { run } from "a-pool"`) + handed;
-  // One start in the file of the project, one in the package.
-  await seeInAnExecutable(program, answers, ["TS100082", "TS100082"]);
-});
+test.concurrent(
+  "handed to a function of another file or of a package, the name is a file that a Worker may start from",
+  async () => {
+    const handed = said((code, index) => (index % 2 ? `run({ filename: ${code} })` : `start(${code})`));
+    const program = head(`{ start } from "./pool.mjs";\nimport { run } from "a-pool"`) + handed;
+    // One start in the file of the project, one in the package.
+    await seeInAnExecutable(program, answers, ["TS100082", "TS100082"]);
+  },
+);
 
-test("a file that hands its own path to a function of another file is a file that a Worker may start from", async () => {
-  const imports = jobs.map(([, , job]) => `import { answer as ${job} } from "./${job}.mjs";\n`).join("");
-  const says = jobs.map(([name, , job]) => `await say(${JSON.stringify(name)}, () => ${job});\n`).join("");
-  await seeInAnExecutable(imports + head(`"./pool.mjs"`) + says, answersOfJobs, ["TS100082"]);
-});
+test.concurrent(
+  "a file that hands its own path to a function of another file is a file that a Worker may start from",
+  async () => {
+    const imports = jobs.map(([, , job]) => `import { answer as ${job} } from "./${job}.mjs";\n`).join("");
+    const says = jobs.map(([name, , job]) => `await say(${JSON.stringify(name)}, () => ${job});\n`).join("");
+    await seeInAnExecutable(imports + head(`"./pool.mjs"`) + says, answersOfJobs, ["TS100082"]);
+  },
+);
 
 // A test run has no switch for one thread, so a debug build of Bun is left out here.
-test.skipIf(isDebug)("a test run compiles the file of each Worker that is named at the constructor", async () => {
-  const files = {
-    ...project,
-    // A file that was compiled answers with what it said when the build read it.
-    "src/starts.test.mjs": `import { test } from "bun:test";
+test.concurrent.skipIf(isDebug)(
+  "a test run compiles the file of each Worker that is named at the constructor",
+  async () => {
+    const files = {
+      ...project,
+      // A file that was compiled answers with what it said when the build read it.
+      "src/starts.test.mjs": `import { test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 ${head(`{ ask } from "./ask.mjs"`)}test("the Workers answer", async () => {
   for (let n = 1; process.env.WRITES_OVER_WORKERS && n <= ${ways.length}; n++) {
@@ -196,18 +204,19 @@ ${head(`{ ask } from "./ask.mjs"`)}test("the Workers answer", async () => {
   }
 ${atTheConstructor}});
 `,
-  };
-  const see = async (flags: string[], env: Record<string, string>) => {
-    using dir = tempDir("aot-workers-named-through-the-library", files);
-    const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), { ...bunEnv, ...env });
-    return { seen: seenIn(stdout), stderr: exitCode ? stderr : "", exitCode };
-  };
-  const plain = await see([], {});
-  expect(plain).toEqual({ seen: answers, stderr: "", exitCode: 0 });
-  expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1" })).toEqual(plain);
-});
+    };
+    const see = async (flags: string[], env: Record<string, string>) => {
+      using dir = tempDir("aot-workers-named-through-the-library", files);
+      const { stdout, stderr, exitCode } = await run([bunExe(), "test", ...flags], String(dir), { ...bunEnv, ...env });
+      return { seen: seenIn(stdout), stderr: exitCode ? stderr : "", exitCode };
+    };
+    const plain = await see([], {});
+    expect(plain).toEqual({ seen: answers, stderr: "", exitCode: 0 });
+    expect(await see(["--aot"], { WRITES_OVER_WORKERS: "1" })).toEqual(plain);
+  },
+);
 
-test("import(), require() and createRequire() load the file that such a name names", async () => {
+test.concurrent("import(), require() and createRequire() load the file that such a name names", async () => {
   const loads = roads.map(([name, code], index) =>
     index < moduleRoads.length
       ? `await say(${JSON.stringify(name)}, async () => ${code});\n`
@@ -217,23 +226,26 @@ test("import(), require() and createRequire() load the file that such a name nam
   await seeInAnExecutable(imports + head(`"./ask.mjs"`) + loads.join(""), answersOfRoads, []);
 });
 
-test("a file that the constructor names stops the build if it can't be compiled, and one that is handed on doesn't", async () => {
-  using dir = tempDir("aot-workers-named-through-the-library", {
-    "named.mjs": `new Worker(Bun.fileURLToPath(new URL("./w.mjs", import.meta.url)));\n`,
-    "handed.mjs": `import { start } from "./pool.mjs";\nstart(Bun.fileURLToPath(new URL("./w.mjs", import.meta.url)));\n`,
-    "pool.mjs": `export const start = entry => new Worker(entry);\n`,
-    "w.mjs": `import "a-package-that-nobody-installed";\n`,
-  });
-  const build = async (entry: string) => {
-    const executable = join(String(dir), entry.replace(".mjs", isWindows ? ".exe" : ""));
-    const built = await run(compile(executable, entry), String(dir), bunEnv);
-    return {
-      errors: [...built.stderr.matchAll(/^error: (TS\d+)/gm)].map(match => match[1]),
-      warnings: warnings(built.stderr).sort(),
-      exitCode: built.exitCode,
+test.concurrent(
+  "a file that the constructor names stops the build if it can't be compiled, and one that is handed on doesn't",
+  async () => {
+    using dir = tempDir("aot-workers-named-through-the-library", {
+      "named.mjs": `new Worker(Bun.fileURLToPath(new URL("./w.mjs", import.meta.url)));\n`,
+      "handed.mjs": `import { start } from "./pool.mjs";\nstart(Bun.fileURLToPath(new URL("./w.mjs", import.meta.url)));\n`,
+      "pool.mjs": `export const start = entry => new Worker(entry);\n`,
+      "w.mjs": `import "a-package-that-nobody-installed";\n`,
+    });
+    const build = async (entry: string) => {
+      const executable = join(String(dir), entry.replace(".mjs", isWindows ? ".exe" : ""));
+      const built = await run(compile(executable, entry), String(dir), bunEnv);
+      return {
+        errors: [...built.stderr.matchAll(/^error: (TS\d+)/gm)].map(match => match[1]),
+        warnings: warnings(built.stderr).sort(),
+        exitCode: built.exitCode,
+      };
     };
-  };
-  expect(await build("named.mjs")).toEqual({ errors: ["TS100151"], warnings: [], exitCode: 1 });
-  // There the build says that it can't resolve the package, and goes on.
-  expect(await build("handed.mjs")).toEqual({ errors: [], warnings: ["TS100082", "TS100151"], exitCode: 0 });
-});
+    expect(await build("named.mjs")).toEqual({ errors: ["TS100151"], warnings: [], exitCode: 1 });
+    // There the build says that it can't resolve the package, and goes on.
+    expect(await build("handed.mjs")).toEqual({ errors: [], warnings: ["TS100082", "TS100151"], exitCode: 0 });
+  },
+);

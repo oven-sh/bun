@@ -1,0 +1,28 @@
+mock.module("../dep", ..) is the last call of a helper, which a test calls and which the runner calls as a hook: native code finds the file that the name is written in by the frame of its caller.
+#### src/a.test.ts
+import { expect, test } from "bun:test";
+import { run } from "./app";
+import { mockDep } from "./helpers/mocks";
+test("the test calls the helper", async () => {
+  await mockDep("a test");
+  console.log("| CASE", run());
+  expect(run()).toBe("mock of a test");
+});
+#### src/app.ts
+import { who } from "./dep";
+export const run = () => who();
+#### src/b.test.ts
+import { beforeAll, expect, test } from "bun:test";
+import { run } from "./app";
+import { asHook } from "./helpers/mocks";
+beforeAll(asHook);
+test("the runner calls the helper", () => {
+  console.log("| CASE", run());
+  expect(run()).toBe("mock of a hook");
+});
+#### src/dep.ts
+export function who() { return "real"; }
+#### src/helpers/mocks.ts
+import { mock } from "bun:test";
+export const mockDep = (name: string) => mock.module("../dep", () => ({ who: () => "mock of " + name }));
+export function asHook() { return mock.module("../dep", () => ({ who: () => "mock of a hook" })); }

@@ -516,6 +516,9 @@ known_atoms! {
     use_asm = "use asm",
     hot = "hot",
     charCodeAt = "charCodeAt",
+    expect = "expect",
+    addEqualityTesters = "addEqualityTesters",
+    addSnapshotSerializer = "addSnapshotSerializer",
 }
 
 /// Name prefix of a symbol-keyed property: `InternalSymbolNamePrefix` and `@`. Source text never

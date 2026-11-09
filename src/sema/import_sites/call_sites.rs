@@ -375,6 +375,18 @@ fn is_name_that_transpiler_knows(
     }
 }
 
+/// The transpiler keeps no frame for a `mock.module()` whose path is handed on.
+fn names_module_in_text(hir: &File<'_>, call: CallId) -> bool {
+    let Some(name) = hir.ids(hir[call].args).next() else {
+        return false;
+    };
+    match expr_kind(hir, hir.skip_type_assertions(name)) {
+        Some(ExprKind::String(_)) => true,
+        Some(ExprKind::Template { exprs }) => exprs.is_empty(),
+        _ => false,
+    }
+}
+
 fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> bool {
     let callee = hir.skip_type_assertions(hir[call].callee);
     let Some((object, MemberKey::Name(name))) = hir.member_key(callee) else {
@@ -404,6 +416,10 @@ fn reads_frame_of_caller(hir: &File<'_>, bound: &Bound<'_>, call: CallId) -> boo
         .contains(&name) =>
         {
             &[known::jest]
+        }
+        _ if name == known::module && names_module_in_text(hir, call) => &[known::mock],
+        _ if [known::addEqualityTesters, known::addSnapshotSerializer].contains(&name) => {
+            &[known::expect]
         }
         _ => return false,
     };

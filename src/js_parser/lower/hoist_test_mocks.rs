@@ -10,7 +10,7 @@ use bun_collections::VecExt;
 use crate::p::P;
 use crate::parser::{Jest, RefMap};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MockApi {
     Vi,
     Jest,
@@ -26,6 +26,25 @@ impl MockApi {
     }
 }
 
+/// An export of a test module that `bun test` knows by name.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TestApi {
+    /// Its `mock()` and `unmock()` calls are hoisted.
+    Mocks(MockApi),
+    Mock,
+    Expect,
+}
+
+impl TestApi {
+    pub(crate) fn from_export_name(name: &[u8]) -> Option<TestApi> {
+        match name {
+            b"mock" => Some(TestApi::Mock),
+            b"expect" => Some(TestApi::Expect),
+            _ => MockApi::from_export_name(name).map(TestApi::Mocks),
+        }
+    }
+}
+
 pub(crate) use bun_ast::import_record::is_test_module;
 
 #[derive(Clone, Copy)]
@@ -34,6 +53,12 @@ pub(crate) enum MockHoistOrder {
     Hoisted,
     LoweredImport,
     InPlace,
+}
+
+/// A path that a wrapper hands on stays a path of the wrapper's caller, as in every release: a preload that lends
+/// `vi.mock()` as `(path, factory) => mock.module(path, factory)` relies on it. A folded `"a" + "b"` has a `next`.
+fn names_module_in_text(call: &E::Call) -> bool {
+    matches!(call.args.slice().first().map(|name| &name.data), Some(ExprData::EString(name)) if name.next.is_none())
 }
 
 /// Rewrites a lowered import's callee to `(0, ns.fn)`, so the call doesn't pass `ns` as `this`.
@@ -116,12 +141,26 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
+    /// What `ref_` names: a global that `bun test` injects, or a named import of a test module.
     #[optimize(size)]
-    fn mock_api(&self, ref_: Ref) -> Option<MockApi> {
-        if let Some(global) = self.jest.refs.iter().position(|global| global.eql(ref_)) {
-            return self.global_mock_api(Jest::GLOBALS[global].as_bytes());
+    fn test_api(&self, ref_: Ref) -> Option<TestApi> {
+        let Some(global) = self.jest.refs.iter().position(|global| global.eql(ref_)) else {
+            let mut imported = self.imported_test_apis.iter();
+            return imported
+                .find(|(name, _)| name.eql(ref_))
+                .map(|&(_, api)| api);
+        };
+        match Jest::GLOBALS[global].as_bytes() {
+            b"expect" => Some(TestApi::Expect),
+            name => self.global_mock_api(name).map(TestApi::Mocks),
         }
-        self.imported_mock_apis.get(&ref_).copied()
+    }
+
+    fn mock_api(&self, ref_: Ref) -> Option<MockApi> {
+        match self.test_api(ref_)? {
+            TestApi::Mocks(api) => Some(api),
+            TestApi::Mock | TestApi::Expect => None,
+        }
     }
 
     #[optimize(size)]
@@ -400,29 +439,26 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     /// These find the file or the position of the call in the frame of their caller, which a tail call drops.
     fn reads_frame_of_caller(&self, call: &E::Call) -> bool {
+        const VI: TestApi = TestApi::Mocks(MockApi::Vi);
+        const JEST: TestApi = TestApi::Mocks(MockApi::Jest);
         let ExprData::EDot(dot) = call.target.data else {
             return false;
         };
-        let api = match dot.name.slice() {
+        let holders: &[TestApi] = match dot.name.slice() {
             b"toMatchInlineSnapshot" | b"toThrowErrorMatchingInlineSnapshot" => return true,
-            b"mock" | b"doMock" | b"unmock" => None,
-            b"doUnmock" | b"importActual" | b"importMock" => Some(MockApi::Vi),
-            b"dontMock" | b"requireActual" | b"requireMock" | b"createMockFromModule" => {
-                Some(MockApi::Jest)
-            }
+            b"mock" | b"doMock" | b"unmock" => &[VI, JEST],
+            b"doUnmock" | b"importActual" | b"importMock" => &[VI],
+            b"dontMock" | b"requireActual" | b"requireMock" | b"createMockFromModule" => &[JEST],
+            b"module" if names_module_in_text(call) => &[TestApi::Mock],
+            b"addEqualityTesters" | b"addSnapshotSerializer" => &[TestApi::Expect],
             _ => return false,
         };
-        let found = match dot.target.data {
-            ExprData::EIdentifier(id) => self.mock_api(id.ref_),
-            ExprData::EImportIdentifier(id) => self.mock_api(id.ref_),
+        let holder = match dot.target.data {
+            ExprData::EIdentifier(id) => self.test_api(id.ref_),
+            ExprData::EImportIdentifier(id) => self.test_api(id.ref_),
             _ => None,
         };
-        match (api, found) {
-            (_, None) => false,
-            (None, Some(_)) => true,
-            (Some(MockApi::Vi), Some(found)) => matches!(found, MockApi::Vi),
-            (Some(MockApi::Jest), Some(found)) => matches!(found, MockApi::Jest),
-        }
+        holder.is_some_and(|holder| holders.contains(&holder))
     }
 
     fn ends_in_call_that_reads_frame_of_caller(&self, value: &Expr) -> bool {

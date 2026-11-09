@@ -1397,6 +1397,89 @@ describe("expect.addEqualityTesters", () => {
     },
   );
 
+  // A tail call drops the frame that tells what the test file adds from what a module that it imports adds.
+  describe("a tester and a snapshot serializer that the call at the end of a function adds", () => {
+    const added = `
+      const tester = () => undefined;
+      const serializer = { test: () => false, serialize: () => "" };
+    `;
+    // The serializer that counts is a plugin too.
+    const counts = (testers: number, serializers: number) => `
+      let testers = -1;
+      expect.extend({ toCountTesters() { testers = this.customTesters.length; return { pass: true, message: () => "" }; } });
+      expect(1).toCountTesters();
+      let serializers = -1;
+      expect.addSnapshotSerializer({
+        test: value => value === "counts",
+        serialize: (value, config) => ((serializers = config.plugins.length - 1), "counted"),
+      });
+      expect("counts").toMatchInlineSnapshot("counted");
+      expect({ testers, serializers }).toEqual({ testers: ${testers}, serializers: ${serializers} });
+    `;
+
+    // Not concurrent: beside these, the --isolate=modules cases of this block pass the time limit on a debug build.
+    test("in a hook of the test file: they last until the end of that file", async () => {
+      const adds = (head: string) => `
+        ${head}
+        ${added}
+        beforeAll(() => expect.addEqualityTesters([tester]));
+        beforeAll(() => expect.addSnapshotSerializer(serializer));
+        test("the file that adds them has them", () => {${counts(1, 1)}});
+      `;
+      const doesNot = `
+        import { expect, test } from "bun:test";
+        test("the next file does not", () => {${counts(0, 0)}});
+      `;
+      const { results, exitCode } = await runTests({
+        "a-adds.test.ts": adds(`import { beforeAll, expect, test } from "bun:test";`),
+        "b-does-not.test.ts": doesNot,
+        "c-adds-by-the-globals.test.ts": adds(""),
+        "d-does-not.test.ts": doesNot,
+        "e-adds-by-jest-globals.test.ts": adds(`import { beforeAll, expect, test } from "@jest/globals";`),
+        "f-does-not.test.ts": doesNot,
+        "g-adds-by-vitest.test.ts": adds(`import { beforeAll, expect, test } from "vitest";`),
+        "h-does-not.test.ts": doesNot,
+        "i-adds-in-strict-commonjs.test.cjs": adds(`"use strict";`),
+        "j-does-not.test.ts": doesNot,
+      });
+      const afterOneFile = ["(pass) the file that adds them has them", "(pass) the next file does not"];
+      expect(results).toEqual(Array(5).fill(afterOneFile).flat());
+      expect(exitCode).toBe(0);
+    });
+
+    test("in a module that a test file imports: every test file has them once", async () => {
+      const file = (name: string, adds: string) => `
+        import { expect, test } from "bun:test";
+        ${adds}
+        test("${name}", () => {${counts(2, 2)}});
+      `;
+      const adds = (head: string) => `
+        ${head}
+        ${added}
+        export const addTester = () => expect.addEqualityTesters([tester]);
+        export const addSerializer = () => expect.addSnapshotSerializer(serializer);
+      `;
+      const { results, exitCode } = await runTests({
+        "adds.ts": adds(`import { expect } from "bun:test";`),
+        "adds-by-the-global.ts": adds(""),
+        "a.test.ts": file(
+          "a",
+          `
+            import * as one from "./adds";
+            import * as other from "./adds-by-the-global";
+            for (const { addTester, addSerializer } of [one, other, one, other]) {
+              addTester();
+              addSerializer();
+            }
+          `,
+        ),
+        "b.test.ts": file("b", ""),
+      });
+      expect(results).toEqual(["(pass) a", "(pass) b"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test.concurrent.each(isolationFlags)("a tester from a preload script lasts for every file %j", async args => {
     const { results, exitCode } = await runTests(
       {

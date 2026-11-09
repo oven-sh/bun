@@ -195,9 +195,9 @@ export const allowed: { paths: RegExp; lines?: RegExp; reason: string }[] = [
   {
     paths: /^src\/sema\/import_sites\/call_sites\.rs$/,
     lines:
-      /known::(?:module|mock|doMock|unmock|doUnmock|dontMock|importActual|importMock)\b|^if requires\.contains\(&name\)/,
+      /known::(?:module|mock|doMock|unmock|doUnmock|dontMock|importActual|importMock|addEqualityTesters)\b|^if requires\.contains\(&name\)/,
     reason:
-      "a member of `mock`, `jest` or `vi`, which may_be_export_of_test_runner() finds by the record of the import from the test runner, and of the parameter that the binder finds for `build.module()`",
+      "a member of `mock`, `jest`, `vi` or `expect`, which may_be_export_of_test_runner() finds by the record of the import from the test runner, and of the parameter that the binder finds for `build.module()`",
   },
   {
     paths: /^src\/sema\/import_sites\/call_sites\.rs$/,

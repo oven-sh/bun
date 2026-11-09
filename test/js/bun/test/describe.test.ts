@@ -280,6 +280,8 @@ test("deeply nested describe() doesn't overflow the native stack", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toMatch(/\n +d2\n +d1\n +d0\n +\(pass\) leaf/);
+  // Only the innermost 64 scopes print, so `d0` sits at depth 63 and the leaf at 64.
+  expect(stderr).toInclude(`\n${" ".repeat(126)}d0\n${" ".repeat(128)}(pass) leaf`);
   expect(stderr).toInclude("\n 1 pass");
   expect(stderr).toInclude("\n 0 fail");
   expect(exitCode).toBe(0);

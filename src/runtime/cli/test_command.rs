@@ -2144,12 +2144,20 @@ pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct ReportScope<'a> {
+    pub name: &'a [u8],
+    pub line: u32,
+    /// Distinguishes same-named siblings; `line` is 0 unless JUnit is on.
+    pub id: u64,
+}
+
 /// One finished test as structured reporters see it.
 pub(crate) struct TestCaseReport<'a> {
     /// Relative to the project root.
     pub file: &'a [u8],
-    /// Enclosing named `describe` blocks, outermost first: (name, line).
-    pub scopes: Vec<(&'a [u8], u32)>,
+    /// Enclosing named `describe` blocks, outermost first.
+    pub scopes: Vec<ReportScope<'a>>,
     pub name: &'a [u8],
     pub status: bun_test::Execution::Result,
     pub assertions: u32,
@@ -2731,8 +2739,8 @@ impl JunitReporter {
 
         if self.suites == JunitSuites::Flat {
             let mut name: Vec<u8> = Vec::new();
-            for &(scope, _) in &t.scopes {
-                name.extend_from_slice(scope);
+            for scope in &t.scopes {
+                name.extend_from_slice(scope.name);
                 name.extend_from_slice(b" > ");
             }
             name.extend_from_slice(t.name);
@@ -2741,7 +2749,7 @@ impl JunitReporter {
 
         // Only the flat form includes describe blocks with an empty title, like Vitest.
         let mut scopes = t.scopes.clone();
-        scopes.retain(|(name, _)| !name.is_empty());
+        scopes.retain(|s| !s.name.is_empty());
 
         // Keep the longest prefix of open describe suites that matches
         // `scopes`; close the rest, then open what is missing.
@@ -2749,22 +2757,22 @@ impl JunitReporter {
         let keep = open
             .iter()
             .zip(&scopes)
-            .take_while(|(suite, (name, _))| strings::eql(&suite.name, name))
+            .take_while(|(suite, scope)| strings::eql(&suite.name, scope.name))
             .count();
         for _ in keep..open.len() {
             self.end_test_suite(None)?;
         }
-        for &(name, line) in &scopes[keep..] {
-            self.begin_test_suite_with_line(name, line, false)?;
+        for scope in &scopes[keep..] {
+            self.begin_test_suite_with_line(scope.name, scope.line, false)?;
         }
 
         // Innermost scope first, matching what the serial reporter always did.
         let mut class_name: Vec<u8> = Vec::new();
-        for (i, &(name, _)) in scopes.iter().rev().enumerate() {
+        for (i, scope) in scopes.iter().rev().enumerate() {
             if i > 0 {
                 class_name.extend_from_slice(b" > ");
             }
-            class_name.extend_from_slice(name);
+            class_name.extend_from_slice(scope.name);
         }
 
         self.write_test_case(t, t.name, &class_name)
@@ -3090,9 +3098,9 @@ pub(crate) struct CommandLineReporter {
     pub(crate) skips_to_repeat_buf: Vec<u8>,
     pub(crate) todos_to_repeat_buf: Vec<u8>,
 
-    /// Describe scopes `(name, line)`, outermost first, whose headers have
-    /// already been printed. Reset on file entry; see `emit_scope_headers`.
-    pub(crate) printed_scopes: Vec<(Vec<u8>, u32)>,
+    /// Ids of describe scopes, outermost first, whose headers have already
+    /// been printed. Reset on file entry; see `emit_scope_headers`.
+    pub(crate) printed_scopes: Vec<u64>,
 
     pub(crate) reporters: ReportersConfig,
 
@@ -3133,8 +3141,17 @@ impl CommandLineReporter {
     }
 
     fn write_indent(writer: &mut impl bun_io::Write, depth: usize) {
-        let n = core::cmp::min(depth * 2, INDENT_SPACES.len());
-        let _ = writer.write_all(&INDENT_SPACES[..n]);
+        let mut n = depth * 2;
+        while n > 0 {
+            let chunk = core::cmp::min(n, INDENT_SPACES.len());
+            let _ = writer.write_all(&INDENT_SPACES[..chunk]);
+            n -= chunk;
+        }
+    }
+
+    /// Stable for the scope's lifetime, which spans the file's run.
+    pub(crate) fn scope_id(scope: &bun_test::DescribeScope) -> u64 {
+        core::ptr::from_ref(scope) as usize as u64
     }
 
     /// Print the describe headers among `scopes` (outermost first; unnamed ones
@@ -3145,20 +3162,20 @@ impl CommandLineReporter {
     /// concurrent tests complete out of scope order, so a scope legitimately
     /// needs re-announcing when the path changes.
     pub(crate) fn emit_scope_headers<'s>(
-        printed: &mut Vec<(Vec<u8>, u32)>,
-        scopes: impl Iterator<Item = (&'s [u8], u32)> + Clone,
+        printed: &mut Vec<u64>,
+        scopes: impl Iterator<Item = (&'s [u8], u64)> + Clone,
         writer: &mut impl bun_io::Write,
     ) {
         let scopes = scopes.filter(|(name, _)| !name.is_empty());
         let common = printed
             .iter()
             .zip(scopes.clone())
-            .take_while(|((pn, pl), (n, l))| pn.as_slice() == *n && pl == l)
+            .take_while(|(pid, (_, id))| *pid == id)
             .count();
         printed.truncate(common);
 
         let colors = Output::enable_ansi_colors_stderr();
-        for (depth, (name, line)) in scopes.enumerate().skip(common) {
+        for (depth, (name, id)) in scopes.enumerate().skip(common) {
             Self::write_indent(writer, depth);
             if colors {
                 let _ = writer.write_all(&Output::pretty_fmt::<true>("<r><d>"));
@@ -3168,7 +3185,7 @@ impl CommandLineReporter {
                 let _ = writer.write_all(name);
             }
             let _ = writer.write_all(b"\n");
-            printed.push((name.to_vec(), line));
+            printed.push(id);
         }
     }
 
@@ -3397,7 +3414,7 @@ impl CommandLineReporter {
         let file = junit_file_name(file);
 
         // Innermost first while walking up; reversed below.
-        let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
+        let mut scopes: Vec<ReportScope<'a>> = Vec::new();
         let mut parent = test_entry.base.parent.map(|p| p.cast_const());
         while let Some(scope) = parent {
             if scopes.len() == 64 {
@@ -3406,7 +3423,11 @@ impl CommandLineReporter {
             // SAFETY: describe scopes outlive the file's test run.
             let scope: &'a bun_test::DescribeScope = unsafe { &*scope };
             if let Some(name) = scope.base.name.as_deref() {
-                scopes.push((name, scope.base.line_no));
+                scopes.push(ReportScope {
+                    name,
+                    line: scope.base.line_no,
+                    id: Self::scope_id(scope),
+                });
             }
             parent = scope.base.parent.map(|p| p.cast_const());
         }
@@ -3616,7 +3637,7 @@ impl CommandLineReporter {
             let writer = Output::error_writer();
             if let Some(scopes) = &nested_scopes {
                 let scopes = scopes.as_slice().iter().rev();
-                let scopes = scopes.map(|s| (Self::scope_name(s), s.base.line_no));
+                let scopes = scopes.map(|s| (Self::scope_name(s), Self::scope_id(s)));
                 Self::emit_scope_headers(&mut this.printed_scopes, scopes, writer);
             }
             let _ = writer.write_all(formatted_line);

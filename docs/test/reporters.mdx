@@ -41,7 +41,7 @@ test/package-json-lint.test.ts:
 Ran 4 tests across 1 file. [9.00ms]
 ```
 
-Tests inside a `describe` block are nested beneath their scope, which is printed once:
+Tests inside a `describe` block are nested beneath their scope. The scope header appears before its first displayed result and may appear again if results from another scope or file intervene:
 
 ```sh terminal icon="terminal"
 test/math.test.ts:

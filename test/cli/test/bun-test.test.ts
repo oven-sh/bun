@@ -2075,6 +2075,22 @@ describe("nested describe output", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("same-named sibling describe scopes each get a header", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, it } from "bun:test";
+          for (const n of [1, 2]) describe("group", () => { it("t" + n, () => {}); });
+        `,
+      },
+      ["a.test.ts"],
+      "nested-output-same-name",
+    );
+
+    expect(stderr).toContain("a.test.ts:\ngroup\n  (pass) t1\ngroup\n  (pass) t2\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("each file re-announces its describe scopes under --parallel", async () => {
     const { stderr, exitCode } = await run(
       { "a.test.ts": fixture, "b.test.ts": fixture },
@@ -2085,6 +2101,43 @@ describe("nested describe output", () => {
     for (const file of ["a.test.ts", "b.test.ts"]) {
       expect(stderr).toContain(`${file}:\ngroup one\n  sub A\n    (pass) zero`);
     }
+    expect(exitCode).toBe(0);
+  });
+
+  test("a file's scopes are re-announced when its results resume under --parallel", async () => {
+    // Markers force result order a1 → b1 → a2.
+    const waitFor = `
+      import { existsSync, writeFileSync } from "node:fs";
+      const waitFor = async (f: string) => { while (!existsSync(f)) await Bun.sleep(5); };
+    `;
+    const { stderr, exitCode } = await run(
+      {
+        "a.test.ts": `
+          import { describe, it } from "bun:test";
+          ${waitFor}
+          describe("A", () => {
+            it("a1", () => {});
+            it("a2", async () => { writeFileSync("a2-started", ""); await waitFor("b2-started"); });
+          });
+        `,
+        "b.test.ts": `
+          import { describe, it } from "bun:test";
+          ${waitFor}
+          describe("B", () => {
+            it("b1", async () => { await waitFor("a2-started"); });
+            it("b2", () => { writeFileSync("b2-started", ""); });
+          });
+        `,
+      },
+      ["--parallel=2", "a.test.ts", "b.test.ts"],
+      "nested-output-parallel-resume",
+    );
+
+    const b1 = stderr.indexOf("(pass) b1");
+    const a2 = stderr.indexOf("(pass) a2");
+    expect(b1).toBeGreaterThan(-1);
+    expect(a2).toBeGreaterThan(b1);
+    expect(stderr.slice(b1)).toContain("a.test.ts:\nA\n  (pass) a2");
     expect(exitCode).toBe(0);
   });
 

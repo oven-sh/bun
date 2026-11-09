@@ -64,9 +64,9 @@ pub(crate) struct Coordinator<'a> {
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
     pub(crate) last_header_idx: Option<u32>,
-    /// Describe scopes `(name, line)` whose headers have already been printed
-    /// under `last_header_idx`. Cleared whenever the file header is re-emitted.
-    pub(crate) printed_scopes: Vec<(Vec<u8>, u32)>,
+    /// Ids of describe scopes whose headers have already been printed under
+    /// `last_header_idx`. Cleared whenever the file header is re-emitted.
+    pub(crate) printed_scopes: Vec<u64>,
     /// Where the run ends as in one process: the file that the worker has begun. It has printed the header itself.
     pub(crate) header_printed_by_worker: Option<u32>,
     pub frame: Frame,
@@ -943,7 +943,7 @@ impl<'a> Coordinator<'a> {
                     {
                         CommandLineReporter::emit_scope_headers(
                             &mut self.printed_scopes,
-                            test.scopes.iter().copied(),
+                            test.scopes.iter().map(|s| (s.name, s.id)),
                             Output::error_writer(),
                         );
                     }

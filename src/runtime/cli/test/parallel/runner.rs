@@ -1205,9 +1205,10 @@ fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {
     wf.u32(t.line_number);
     wf.str(t.name);
     wf.u32(u32::try_from(t.scopes.len()).expect("int cast"));
-    for &(name, line) in &t.scopes {
-        wf.str(name);
-        wf.u32(line);
+    for s in &t.scopes {
+        wf.str(s.name);
+        wf.u32(s.line);
+        wf.u64(s.id);
     }
     // Earlier attempts' failures first, then the last attempt's if it failed.
     wf.u32(u32::from(t.failure.is_some()));
@@ -1239,7 +1240,11 @@ pub(crate) fn decode_test_case<'a>(
     }
     let mut scopes = Vec::with_capacity(n);
     for _ in 0..n {
-        scopes.push((rd.str(), rd.u32()));
+        scopes.push(test_command::ReportScope {
+            name: rd.str(),
+            line: rd.u32(),
+            id: rd.u64(),
+        });
     }
     let has_failure = rd.u32() != 0;
     let earlier = rd.u32() as usize;

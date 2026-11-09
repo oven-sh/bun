@@ -2432,13 +2432,13 @@ export function exampleSite(protocol: "https" | "http" = "https") {
 export function flattenNestedTestOutput(output: string): string {
   const result = /^((?:  )*)(\((?:pass|fail|skip|todo|pending)\)) (.*)$/;
   // Error output that can directly precede a result line whose headers were already printed.
-  const noise = /^\s*(?:\w*(?:Error|error|warn)\b.*:|\d+ \||at |\^|-{3,}|# |Expected|Received|\S+\.\w+:$)/;
+  const noise = /^\s*(?:\w*(?:Error|error|warn)\b.*:|\d+ \||at |\^|-{3,}|# |(?:Expected|Received)\b.*:|\S+\.\w+:$)/;
   const lines = output.split("\n");
   const out: string[] = [];
   const scopes: string[] = [];
   let pending: string[] = [];
   let lastIndent = "";
-  const depthOf = (line: string) => line.match(/^ */)![0].length;
+
   for (let line of lines) {
     const m = line.match(result);
     if (!m) {
@@ -2453,10 +2453,16 @@ export function flattenNestedTestOutput(output: string): string {
     // `pending` while each line sits exactly one level shallower than the next.
     let taken = 0;
     while (taken < depth && taken < pending.length) {
-      const candidate = pending[pending.length - 1 - taken];
+      const idx = pending.length - 1 - taken;
+      const candidate = pending[idx];
       const want = depth - 1 - taken;
-      if (candidate.trim() === "" || depthOf(candidate) !== want * 2 || noise.test(candidate)) break;
-      scopes[want] = candidate.trim();
+      const indent = "  ".repeat(want);
+      // Title may itself start with a space, so only the indent prefix is stripped.
+      const title = candidate.startsWith(indent) ? candidate.slice(indent.length) : "";
+      if (title.trim() === "" || title.startsWith("  ") || noise.test(candidate)) break;
+      // Raw thrown/rejected values print as `error: X` then bare `X`.
+      if (idx > 0 && pending[idx - 1] === `error: ${candidate}`) break;
+      scopes[want] = title.replace(/\r$/, "");
       taken++;
     }
     out.push(...pending.slice(0, pending.length - taken));

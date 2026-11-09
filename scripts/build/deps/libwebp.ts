@@ -134,6 +134,13 @@ export const libwebp: Dependency = {
     // src/webp/*.h is the public API; internal headers use "src/..."
     // includes from the repo root, sharpyuv uses "sharpyuv/...".
     includes: [".", "src"],
+    defines: {
+      // Upstream's own switches for what codec_webp.rs never asks for: pixel layouts other than RGBA, scaling while
+      // decoding, the search for a loop filter strength (`config.autofilter`), and the near-lossless mode.
+      WEBP_REDUCE_CSP: true,
+      WEBP_REDUCE_SIZE: true,
+      WEBP_NEAR_LOSSLESS: 0,
+    },
   }),
 
   provides: () => ({

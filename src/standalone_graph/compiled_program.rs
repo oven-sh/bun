@@ -828,6 +828,16 @@ fn load_graph_file(descriptor: Fd, size: usize) -> Option<*mut u8> {
     (file.pread_all(bytes, 0).ok()? == size).then_some(base)
 }
 
+/// What the parts of a path under the virtual root lead through.
+enum LeadsThrough {
+    /// The path without the parts that are resolved.
+    Folders(Vec<u8>),
+    /// A further part stands behind a file.
+    File,
+    /// A `..` stands behind a name that is no folder of the graph, or behind the root. No folder that was empty at the build is one.
+    Nothing,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SourcePathKind {
     File,
@@ -1002,6 +1012,111 @@ impl StandaloneModuleGraph {
         Some(buffer)
     }
 
+    /// The file that a POSIX disk with the files of the graph has at a path that is no key of `files` and has a part to resolve, one that is empty, `.` or `..`: `/$bunfs/root/a/../b.txt` is `/$bunfs/root/b.txt` where `a` is a folder, and a path that ends in `/`, `/.` or `/..` asks for a folder.
+    #[cold]
+    pub(crate) fn find_file_as_read(&self, name: &[u8]) -> Option<&File> {
+        #[cfg(windows)]
+        let mut buffer = path_buffer_pool::get();
+        #[cfg(windows)]
+        let name = normalize_file_key(name, &mut buffer);
+        let _first_part_to_resolve = bun_highway::index_of_untidy_slash(name)?;
+        let ends_as_folder = [&b"/"[..], b"/.", b"/.."]
+            .iter()
+            .any(|end| name.ends_with(end));
+        if ends_as_folder {
+            return None;
+        }
+        match self.leads_through(name, false) {
+            LeadsThrough::Folders(key) => self.lookup_file(&key),
+            LeadsThrough::File | LeadsThrough::Nothing => None,
+        }
+    }
+
+    /// What `name` leads through on a POSIX disk that holds what the graph holds, read once: a part that is empty or `.` is left out, and a `..` takes the folder in front of it away. With `asks_for_files` a name that a further part follows is looked up as a file too. (`key_under_own_root` resolves by the text alone, and parts a path at a backslash on every host.)
+    fn leads_through(&self, name: &[u8], asks_for_files: bool) -> LeadsThrough {
+        let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
+        let root = &root[..root.len() - 1];
+        let mut read = Vec::with_capacity(name.len());
+        // The folder above a folder is one: a `..` behind a `..` asks nothing.
+        let mut is_folder = false;
+        let mut is_asked_as_file = true;
+        for part in strings::split(name, b"/") {
+            if asks_for_files && !is_asked_as_file {
+                if self.lookup_file(&read).is_some() {
+                    return LeadsThrough::File;
+                }
+                is_asked_as_file = true;
+            }
+            match part {
+                b"" | b"." => {}
+                b".." => {
+                    // What lay above the root has a mount of its own and holds no file. Windows takes a `..` out of the text of a path before it looks anything up.
+                    if read == root
+                        || (cfg!(not(windows)) && !is_folder && !self.holds_folder_at(&read))
+                    {
+                        return LeadsThrough::Nothing;
+                    }
+                    read.truncate(strings::last_index_of_char(&read, b'/').unwrap_or(0));
+                    is_folder = true;
+                }
+                _ => {
+                    // `B:/~BUN/root` begins with no separator.
+                    if !read.is_empty() || name.starts_with(b"/") {
+                        read.push(b'/');
+                    }
+                    read.extend_from_slice(part);
+                    is_folder = false;
+                    is_asked_as_file = false;
+                }
+            }
+        }
+        LeadsThrough::Folders(read)
+    }
+
+    /// Whether a file of the graph stands in the way of `name`: each name above it is looked up as it is written, and a compiled program then reads the path as a POSIX disk does, where a `/` or a further part behind a file lies below it.
+    pub fn lies_below_file(&self, name: &[u8]) -> bool {
+        let written = name;
+        let name = strings::without_trailing_slash(written);
+        let mut rest = name;
+        while let Some(parent) = bun_paths::dirname(rest)
+            .filter(|parent| parent.len() < rest.len() && is_bun_standalone_file_path(parent))
+        {
+            if self.lookup_file(parent).is_some() {
+                return true;
+            }
+            rest = strings::without_trailing_slash(parent);
+        }
+        if self.compiled_program.is_none() {
+            return false;
+        }
+        let mut end = written.len();
+        while end > 1 && written[end - 1] == b'/' {
+            end -= 1;
+        }
+        if end < written.len() && self.find_ref(&written[..end]).is_some() {
+            return true;
+        }
+        bun_highway::index_of_untidy_slash(name).is_some()
+            && matches!(self.leads_through(name, true), LeadsThrough::File)
+    }
+
+    /// Whether `resolved` names what `written` names, for a `written` that the executable has: a file or a folder whose own key holds a `..` is not what `path.resolve()` makes of its path.
+    pub fn names_the_same(&self, written: &[u8], resolved: &[u8]) -> bool {
+        let (mut first, mut second) = (path_buffer_pool::get(), path_buffer_pool::get());
+        match (self.find_ref(written), self.find_ref(resolved)) {
+            (Some(written), Some(resolved)) => core::ptr::eq(written, resolved),
+            (None, None) => match (
+                self.directory_key(written, &mut first),
+                self.directory_key(resolved, &mut second),
+            ) {
+                (Some(written), Some(resolved)) => written == resolved,
+                (None, None) => self.source_path_kind(resolved).is_some(),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// Whether `key`, as `absolute_key` makes it, can be a file or a directory that the graph answers for outside of its own root: each of those begins as all of them do, or is a directory above them all.
     fn is_near_source_paths(&self, program: &CompiledProgram, key: &[u8]) -> bool {
         if cfg!(windows) {
@@ -1163,23 +1278,26 @@ impl StandaloneModuleGraph {
         (!is_on_disk).then(|| &self.files.values()[file_index])
     }
 
+    /// Whether `key` is a folder of the graph as it is written: a key of `dirs`, or a path that a compiled module lies below.
+    fn holds_folder_at(&self, key: &[u8]) -> bool {
+        let program = self.compiled_program.as_ref();
+        self.dirs.contains_key(key)
+            || program.is_some_and(|program| program.holds_module_below(key))
+    }
+
     pub(crate) fn directory_key<'a>(
         &self,
         name: &'a [u8],
         buffer: &'a mut PathBuffer,
     ) -> Option<&'a [u8]> {
         if is_bun_standalone_file_path(name) {
-            let program = self.compiled_program.as_ref();
-            let is_directory = |key: &[u8]| {
-                self.dirs.contains_key(key)
-                    || program.is_some_and(|program| program.holds_module_below(key))
-            };
-            if is_directory(Self::normalize_dir_path(name, buffer)) {
+            if self.holds_folder_at(Self::normalize_dir_path(name, buffer)) {
                 return Some(Self::normalize_dir_path(name, buffer));
             }
             let written = Self::normalize_dir_path(name, buffer);
-            let as_read = Self::key_under_own_root(program?, written)?;
-            if as_read.len() > buffer.len() || !is_directory(&as_read) {
+            let program = self.compiled_program.as_ref()?;
+            let as_read = Self::key_under_own_root(program, written)?;
+            if as_read.len() > buffer.len() || !self.holds_folder_at(&as_read) {
                 return None;
             }
             buffer[..as_read.len()].copy_from_slice(&as_read);
@@ -1192,10 +1310,8 @@ impl StandaloneModuleGraph {
             let mut on_build_machine = path_buffer_pool::get();
             let key = absolute_key(name, &mut on_build_machine)?;
             let under_own_root = Self::key_under_own_root(program, key.as_bytes())?;
-            let is_directory = self.dirs.contains_key(&under_own_root[..])
-                || program.holds_module_below(&under_own_root);
             let length = under_own_root.len();
-            if !is_directory
+            if !self.holds_folder_at(&under_own_root)
                 || length > buffer.len()
                 || matches!(bun_sys::directory_exists_at(Fd::cwd(), key), Ok(true))
             {
@@ -1752,18 +1868,38 @@ pub(crate) mod tests {
         entry_point_indices: [Option<u32>; 2],
         use_request: impl FnOnce(&GraphRequest<'_>) -> R,
     ) -> R {
+        let further = [];
+        with_further_assets(
+            folder,
+            preserves_source_paths,
+            entry_point_indices,
+            &further,
+            use_request,
+        )
+    }
+
+    /// `further_assets` are files beside the two entry points and the two assets, each with its contents.
+    fn with_further_assets<R>(
+        folder: &TemporaryFolder,
+        preserves_source_paths: bool,
+        entry_point_indices: [Option<u32>; 2],
+        further_assets: &[(&[u8], &[u8])],
+        use_request: impl FnOnce(&GraphRequest<'_>) -> R,
+    ) -> R {
         let names = ["main.js", "plugins/a.js", "data/note.txt", "lib/libx.so.1"];
         let [main, plugin, note, library] = names.map(|name| folder.join(name));
         let (skipped, module_prefix) = match preserves_source_paths {
             true => (0, Vec::new()),
             false => (folder.0.len() + 1, in_virtual_root("")),
         };
-        let output_files = [
+        let mut output_files = vec![
             entry_point_file(&main[skipped..], entry_point_indices[0]),
             entry_point_file(&plugin[skipped..], entry_point_indices[1]),
             asset(&note[skipped..], b"a note"),
             asset(&library[skipped..], b"a library"),
         ];
+        let further = further_assets.iter();
+        output_files.extend(further.map(|(path, contents)| asset(path, contents)));
         let entry_points = [entry_point(1, &main), entry_point(2, &plugin)];
         let program = program(&IMAGE, ALIGNMENT, &entry_points, preserves_source_paths);
         use_request(&GraphRequest {
@@ -2080,6 +2216,199 @@ pub(crate) mod tests {
         assert!(graph.source_path_kind(&plugins).is_none());
         assert!(graph.source_path_stat(&plugins).is_none());
         assert_eq!(find_module_id(&graph, "plugins/a.js"), None);
+    }
+
+    #[test]
+    fn a_file_is_found_by_a_path_with_parts_to_resolve() {
+        let folder = TemporaryFolder::create("parts-to-resolve");
+        let further: [(&[u8], &[u8]); 3] = [
+            (b"data/back\\slash.txt", b"a backslash in its name"),
+            (
+                b"data/back\\folder/in.txt",
+                b"in a folder with a backslash in its name",
+            ),
+            (b"data/sub/deep.txt", b"in a folder of a folder"),
+        ];
+        let entry_points = [Some(0), Some(1)];
+        let mut graph = with_further_assets(&folder, false, entry_points, &further, read_graph);
+        let note = in_virtual_root("data/note.txt");
+        let find = |graph: &StandaloneModuleGraph, name: &str| {
+            let file = graph.find_ref(&in_virtual_root(name));
+            file.map(|file| file.name.to_vec())
+        };
+        for name in [
+            "data/note.txt",
+            "data/./note.txt",
+            "data//note.txt",
+            "./data/note.txt",
+            "plugins/../data/note.txt",
+            "data/../plugins/.././data//note.txt",
+        ] {
+            assert_eq!(find(&graph, name), Some(note.clone()), "{name}");
+        }
+        for name in [
+            "data/./none.txt",
+            "data/../note.txt",
+            "data/./note.txt/below",
+            // What lay above the root has a mount of its own, and no file lies there.
+            "../data/note.txt",
+            "../root/data/note.txt",
+            "data/../../root/data/note.txt",
+            // Each asks for a folder.
+            "data/note.txt/",
+            "data/./note.txt/",
+            "data/note.txt/.",
+            "data/note.txt/..",
+            "data/note.txt/below/..",
+        ] {
+            assert_eq!(find(&graph, name), None, "{name}");
+        }
+        // A `..` behind what is no folder: a POSIX disk has nothing there, and Windows reads the text.
+        for name in [
+            "none/../data/note.txt",
+            "data/note.txt/../note.txt",
+            "main.js/../data/note.txt",
+            "plugins/../none/../data/note.txt",
+        ] {
+            let found = cfg!(windows).then(|| note.clone());
+            assert_eq!(find(&graph, name), found, "{name}");
+        }
+        // A backslash is a byte of a name on a POSIX disk.
+        if cfg!(not(windows)) {
+            let with_backslash = in_virtual_root("data/back\\slash.txt");
+            for name in [
+                "data/back\\slash.txt",
+                "data/./back\\slash.txt",
+                "plugins/../data//back\\slash.txt",
+            ] {
+                assert_eq!(find(&graph, name), Some(with_backslash.clone()), "{name}");
+            }
+            assert_eq!(
+                find(&graph, "data/back\\folder/../note.txt"),
+                Some(note.clone())
+            );
+            for name in [
+                "data\\note.txt",
+                "data/./back/slash.txt",
+                "data/./x\\..\\note.txt",
+                "data/./note.txt\\",
+                // `data/sub` is a folder, and `data\sub` is the name of nothing.
+                "data\\sub/../main.js",
+                "data/back/folder/../note.txt",
+            ] {
+                assert_eq!(find(&graph, name), None, "{name}");
+            }
+            for name in [
+                "data/./note.txt\\below",
+                "data/note.txt\\",
+                "data\\sub/../main.js/below",
+            ] {
+                assert!(!graph.lies_below_file(&in_virtual_root(name)), "{name}");
+            }
+        }
+
+        // However many parts there are, the path is read once.
+        let many_parts = ["plugins/../".repeat(500).as_str(), "data/./note.txt"].concat();
+        assert_eq!(find(&graph, &many_parts), Some(note.clone()));
+
+        for (name, lies_below_file) in [
+            ("data/note.txt", false),
+            ("data/./note.txt", false),
+            ("data/note.txt/below", true),
+            ("data/note.txt/below/deeper", true),
+            ("data/note.txt/../note.txt", true),
+            ("main.js/../data/note.txt", true),
+            ("data/./note.txt/below", true),
+            ("data/./note.txt/.", true),
+            ("data/./note.txt/../note.txt", true),
+            ("data/./note.txt/below/..", true),
+            ("plugins/../data/note.txt/below", true),
+            ("data/none.txt/below", false),
+            ("data/./none.txt/below", false),
+            // A missing name in front of a `..` ends the path, as on disk. Windows reads the text.
+            ("none/../data/note.txt/below", cfg!(windows)),
+            ("data/./none/../note.txt/below", cfg!(windows)),
+            // A `/` behind a file asks for what lies below it.
+            ("data/note.txt/", true),
+            ("data/note.txt//", true),
+            ("data/./note.txt/", true),
+            ("data/none.txt/", false),
+            ("data/", false),
+        ] {
+            let path = in_virtual_root(name);
+            assert_eq!(graph.lies_below_file(&path), lies_below_file, "{name}");
+        }
+
+        // The name of an asset at the root answers behind the parts too.
+        let program = graph.compiled_program.take().expect("a program");
+        let program = program.with_assets_named_at_root(b"data/note.txt");
+        graph.compiled_program = Some(program.with_levels_above_root(2));
+        assert_eq!(find(&graph, "note.txt"), Some(note.clone()));
+        assert_eq!(find(&graph, "plugins/../note.txt"), Some(note.clone()));
+        // With files above the root a path below the root is read as before.
+        assert_eq!(find(&graph, "data/./note.txt"), Some(note.clone()));
+        assert_eq!(find(&graph, "../root/data/note.txt"), None);
+
+        // Without a compiled program a path is a key as it is written, and nothing else.
+        graph.compiled_program = None;
+        assert_eq!(find(&graph, "data/note.txt"), Some(note));
+        assert_eq!(find(&graph, "data/./note.txt"), None);
+        assert!(!graph.lies_below_file(&in_virtual_root("data/./note.txt/below")));
+        assert!(!graph.lies_below_file(&in_virtual_root("data/note.txt/")));
+    }
+
+    #[test]
+    fn a_key_that_holds_parts_itself_is_found_as_it_is_written_alone() {
+        let folder = TemporaryFolder::create("key-with-parts");
+        let further: [(&[u8], &[u8]); 2] = [
+            (b"../lib/data.txt", b"above the root"),
+            (b"data/../data/note.txt", b"another note"),
+        ];
+        let graph = with_further_assets(&folder, false, [Some(0), Some(1)], &further, read_graph);
+        let contents = |name: &str| {
+            let file = graph.find_ref(&in_virtual_root(name));
+            file.map(|file| file.contents.as_bytes())
+        };
+        assert_eq!(contents("../lib/data.txt"), Some(further[0].1));
+        assert_eq!(contents(".././lib/data.txt"), None);
+        assert_eq!(contents("data/../../lib/data.txt"), None);
+        assert_eq!(contents("data/../data/note.txt"), Some(further[1].1));
+        assert_eq!(contents("data/note.txt"), Some(&b"a note"[..]));
+
+        // `realpath` answers what `path.resolve()` makes of a path only where that names the same file or folder.
+        let above_root = |name: &str| [BASE_PUBLIC_PATH.as_bytes(), name.as_bytes()].concat();
+        for (written, resolved, names_the_same) in [
+            (
+                in_virtual_root("data/./note.txt"),
+                in_virtual_root("data/note.txt"),
+                true,
+            ),
+            (
+                in_virtual_root("plugins/../data/note.txt"),
+                in_virtual_root("data/note.txt"),
+                true,
+            ),
+            (in_virtual_root("data/"), in_virtual_root("data"), true),
+            (
+                in_virtual_root("data/../plugins"),
+                in_virtual_root("plugins"),
+                true,
+            ),
+            (
+                in_virtual_root("data/../data/note.txt"),
+                in_virtual_root("data/note.txt"),
+                false,
+            ),
+            (
+                in_virtual_root("../lib/data.txt"),
+                above_root("lib/data.txt"),
+                false,
+            ),
+            (in_virtual_root("../lib"), above_root("lib"), false),
+        ] {
+            let answer = graph.names_the_same(&written, &resolved);
+            assert_eq!(answer, names_the_same, "{}", written.escape_ascii());
+        }
     }
 
     #[test]

@@ -414,17 +414,7 @@ fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut PathBuffer) -> &'a Z
 }
 
 fn lies_below_embedded_file(path: &[u8]) -> bool {
-    let Some(graph) = graph_in_front_of_disk(path) else {
-        return false;
-    };
-    let mut rest = strings::without_trailing_slash(path);
-    while let Some(parent) = bun_paths::dirname(rest).filter(|parent| parent.len() < rest.len()) {
-        if graph.contains_file(parent) {
-            return true;
-        }
-        rest = strings::without_trailing_slash(parent);
-    }
-    false
+    graph_in_front_of_disk(path).is_some_and(|graph| graph.lies_below_file(path))
 }
 
 /// An error names each path as the caller wrote it, and nothing lies below a file: ENOTDIR, which Windows reports as ENOENT.
@@ -543,6 +533,32 @@ fn embedded_file_of_compiled_program(path: &[u8]) -> Option<&'static bun_standal
 
 fn is_embedded_in_compiled_program(path: &[u8]) -> bool {
     compiled_program_graph().is_some_and(|graph| graph.contains_file(path) || graph.find_dir(path))
+}
+
+/// `realpath` of what the disk does not have and the executable does. Nothing in the executable is a link, so the answer is the path without the parts that `path.resolve()` takes out of it.
+fn real_path_in_executable(path: &[u8], encoding: Encoding) -> Maybe<ret::Realpath> {
+    // Most such paths are absolute and hold no such part.
+    let is_resolved = cfg!(not(windows))
+        && path.len() > 1
+        && path[0] == b'/'
+        && path[path.len() - 1] != b'/'
+        && bun_highway::index_of_untidy_slash(path).is_none();
+    if is_resolved {
+        return Ok(encode_path_result(path, encoding));
+    }
+    let parts = [path];
+    let len = bun_node_path::resolve_buf_len(cfg!(windows), &parts);
+    let mut buffers = vec![0u8; 2 * len];
+    let (buffer, scratch) = buffers.split_at_mut(len);
+    #[cfg(windows)]
+    let resolved = bun_node_path::resolve_windows_t(&parts, buffer, scratch)?;
+    #[cfg(not(windows))]
+    let resolved = bun_node_path::resolve_posix_t(&parts, buffer, scratch)?;
+    // What `path.resolve()` makes of a path can name something else in the executable, or nothing: so for a file whose own key holds `..`, and for what lay above the root, which is `/$bunfs/root/..`.
+    let names_the_same =
+        compiled_program_graph().is_some_and(|graph| graph.names_the_same(path, resolved));
+    let answer = if names_the_same { resolved } else { path };
+    Ok(encode_path_result(answer, encoding))
 }
 
 /// For a path that the disk does not have: `Graph::source_path_kind`.
@@ -8027,7 +8043,7 @@ impl NodeFS {
                     && (is_source_path(args.path.slice())
                         || is_embedded_in_compiled_program(args.path.slice()))
                 {
-                    return Ok(encode_path_result(args.path.slice(), args.encoding));
+                    return real_path_in_executable(args.path.slice(), args.encoding);
                 }
                 return Err(err.with_path(args.path.slice()));
             }
@@ -8090,7 +8106,7 @@ impl NodeFS {
             #[cfg(target_os = "macos")]
             let buf = match Syscall::get_full_path(path, &mut outbuf) {
                 Err(err) if is_only_in_the_executable(&err) => {
-                    return Ok(encode_path_result(path.as_bytes(), args.encoding));
+                    return real_path_in_executable(path.as_bytes(), args.encoding);
                 }
                 Err(err) => return Err(err),
                 Ok(buf_) => buf_,
@@ -8104,7 +8120,7 @@ impl NodeFS {
 
                 let fd = match sys::open(path, flags, 0) {
                     Err(err) if is_only_in_the_executable(&err) => {
-                        return Ok(encode_path_result(path.as_bytes(), args.encoding));
+                        return real_path_in_executable(path.as_bytes(), args.encoding);
                     }
                     Err(err) => return Err(err.with_path(path)),
                     Ok(fd_) => fd_,

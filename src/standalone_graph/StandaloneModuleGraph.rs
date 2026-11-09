@@ -223,7 +223,11 @@ impl StandaloneModuleGraph {
         if !is_bun_standalone_file_path(name) {
             return self.find_at_source_path(name);
         }
-        self.lookup_file(name)
+        self.lookup_file(name).or_else(|| {
+            self.compiled_program
+                .as_ref()
+                .and_then(|_| self.find_file_as_read(name))
+        })
     }
 
     pub fn contains_file(&self, name: &[u8]) -> bool {

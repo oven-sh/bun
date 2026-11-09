@@ -1,0 +1,203 @@
+diff --git a/src/win/internal.h b/src/win/internal.h
+index 0a941b9..c4d3835 100644
+--- a/src/win/internal.h
++++ b/src/win/internal.h
+@@ -283,6 +283,7 @@ void uv__stdio_destroy(BYTE* buffer);
+ void uv__stdio_noinherit(BYTE* buffer);
+ int uv__stdio_verify(BYTE* buffer, WORD size);
+ WORD uv__stdio_size(BYTE* buffer);
++int uv__stdio_count(BYTE* buffer);
+ HANDLE uv__stdio_handle(BYTE* buffer, int fd);
+ 
+ 
+diff --git a/src/win/process-stdio.c b/src/win/process-stdio.c
+index 181db92..d92b355 100644
+--- a/src/win/process-stdio.c
++++ b/src/win/process-stdio.c
+@@ -412,6 +412,11 @@ WORD uv__stdio_size(BYTE* buffer) {
+ }
+ 
+ 
++int uv__stdio_count(BYTE* buffer) {
++  return (int) CHILD_STDIO_COUNT(buffer);
++}
++
++
+ HANDLE uv__stdio_handle(BYTE* buffer, int fd) {
+   HANDLE handle;
+   memcpy(&handle, CHILD_STDIO_HANDLE(buffer, fd), sizeof(HANDLE));
+diff --git a/src/win/process.c b/src/win/process.c
+index 267f0c8..dc608d9 100644
+--- a/src/win/process.c
++++ b/src/win/process.c
+@@ -890,6 +890,47 @@ void uv__process_endgame(uv_loop_t* loop, uv_process_t* handle) {
+ #define PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE 0x00020016
+ #endif
+ 
++/* Allocate a PROC_THREAD_ATTRIBUTE_LIST with one attribute and set it.
++ * On failure *out stays NULL and nothing is left to delete. Returns a Win32
++ * error code. */
++static DWORD uv__spawn_attr_list(LPPROC_THREAD_ATTRIBUTE_LIST* out,
++                                 DWORD_PTR attribute,
++                                 PVOID value,
++                                 SIZE_T size) {
++  LPPROC_THREAD_ATTRIBUTE_LIST attr_list;
++  SIZE_T attr_list_size = 0;
++  DWORD err;
++
++  *out = NULL;
++
++  InitializeProcThreadAttributeList(NULL, 1, 0, &attr_list_size);
++  attr_list = uv__malloc(attr_list_size);
++  if (attr_list == NULL)
++    return ERROR_OUTOFMEMORY;
++
++  if (!InitializeProcThreadAttributeList(attr_list, 1, 0, &attr_list_size)) {
++    err = GetLastError();
++    uv__free(attr_list);
++    return err;
++  }
++
++  if (!UpdateProcThreadAttribute(attr_list,
++                                 0,
++                                 attribute,
++                                 value,
++                                 size,
++                                 NULL,
++                                 NULL)) {
++    err = GetLastError();
++    DeleteProcThreadAttributeList(attr_list);
++    uv__free(attr_list);
++    return err;
++  }
++
++  *out = attr_list;
++  return 0;
++}
++
+ int uv_spawn(uv_loop_t* loop,
+              uv_process_t* process,
+              const uv_process_options_t* options) {
+@@ -903,7 +944,9 @@ int uv_spawn(uv_loop_t* loop,
+   PROCESS_INFORMATION info;
+   DWORD process_flags, cwd_len;
+   BYTE* child_stdio_buffer;
+-  SIZE_T attr_list_size = 0;
++  HANDLE* handle_list = NULL;
++  int handle_count = 0;
++  BOOL inherit_handles;
+   LPPROC_THREAD_ATTRIBUTE_LIST attr_list = NULL;
+ 
+   uv__process_init(loop, process);
+@@ -1030,36 +1073,19 @@ int uv_spawn(uv_loop_t* loop,
+   startup.StartupInfo.lpTitle = NULL;
+ 
+   if (options->pseudoconsole != NULL) {
+-    startup.StartupInfo.cb = sizeof(startup);
+     /* STARTF_USESTDHANDLES with NULL handles: prevents Windows from
+      * duplicating the parent's redirected std handles into the child, which
+      * would otherwise override the pseudoconsole. See
+      * https://github.com/microsoft/terminal/discussions/15814 */
+     startup.StartupInfo.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
++    inherit_handles = FALSE;
+ 
+-    InitializeProcThreadAttributeList(NULL, 1, 0, &attr_list_size);
+-    attr_list = uv__malloc(attr_list_size);
+-    if (attr_list == NULL) {
+-      err = ERROR_OUTOFMEMORY;
+-      goto done;
+-    }
+-    if (!InitializeProcThreadAttributeList(attr_list, 1, 0, &attr_list_size)) {
+-      err = GetLastError();
+-      uv__free(attr_list);
+-      attr_list = NULL;
+-      goto done;
+-    }
+-    if (!UpdateProcThreadAttribute(attr_list,
+-                                   0,
+-                                   PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+-                                   options->pseudoconsole,
+-                                   sizeof(options->pseudoconsole),
+-                                   NULL,
+-                                   NULL)) {
+-      err = GetLastError();
++    err = uv__spawn_attr_list(&attr_list,
++                              PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
++                              options->pseudoconsole,
++                              sizeof(options->pseudoconsole));
++    if (err)
+       goto done;
+-    }
+-    startup.lpAttributeList = attr_list;
+   } else {
+     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+     startup.StartupInfo.cbReserved2 = uv__stdio_size(child_stdio_buffer);
+@@ -1068,14 +1094,48 @@ int uv_spawn(uv_loop_t* loop,
+     startup.StartupInfo.hStdInput = uv__stdio_handle(child_stdio_buffer, 0);
+     startup.StartupInfo.hStdOutput = uv__stdio_handle(child_stdio_buffer, 1);
+     startup.StartupInfo.hStdError = uv__stdio_handle(child_stdio_buffer, 2);
++
++    /* Inherit only the handles prepared for this child. Without an explicit
++     * list CreateProcessW copies every inheritable handle of this process,
++     * so a concurrent uv_spawn on another thread leaks its child's stdio
++     * handles into this child, and that child then keeps the other child's
++     * pipes open until it exits. */
++    handle_list = uv__malloc(uv__stdio_count(child_stdio_buffer) *
++                             sizeof(HANDLE));
++    if (handle_list == NULL) {
++      err = ERROR_OUTOFMEMORY;
++      goto done;
++    }
++    for (i = 0; i < uv__stdio_count(child_stdio_buffer); i++) {
++      HANDLE h = uv__stdio_handle(child_stdio_buffer, i);
++      if (h != INVALID_HANDLE_VALUE)
++        handle_list[handle_count++] = h;
++    }
++
++    /* An empty list is not a valid PROC_THREAD_ATTRIBUTE_HANDLE_LIST. With
++     * nothing to pass on, inherit nothing. */
++    inherit_handles = handle_count > 0;
++    if (inherit_handles) {
++      err = uv__spawn_attr_list(&attr_list,
++                                PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
++                                handle_list,
++                                handle_count * sizeof(HANDLE));
++      if (err)
++        goto done;
++    }
+   }
+ 
+   process_flags = CREATE_UNICODE_ENVIRONMENT;
+ 
+-  if (options->pseudoconsole != NULL) {
++  if (attr_list != NULL) {
++    startup.StartupInfo.cb = sizeof(startup);
++    startup.lpAttributeList = attr_list;
+     process_flags |= EXTENDED_STARTUPINFO_PRESENT;
+-  } else if ((options->flags & UV_PROCESS_WINDOWS_HIDE_CONSOLE) ||
+-      (options->flags & UV_PROCESS_WINDOWS_HIDE)) {
++  }
++
++  if (options->pseudoconsole == NULL &&
++      ((options->flags & UV_PROCESS_WINDOWS_HIDE_CONSOLE) ||
++      (options->flags & UV_PROCESS_WINDOWS_HIDE))) {
+     /* Avoid creating console window if stdio is not inherited. */
+     for (i = 0; i < options->stdio_count; i++) {
+       if (options->stdio[i].flags & UV_INHERIT_FD)
+@@ -1111,7 +1171,7 @@ int uv_spawn(uv_loop_t* loop,
+                      arguments,
+                      NULL,
+                      NULL,
+-                     options->pseudoconsole != NULL ? FALSE : TRUE,
++                     inherit_handles,
+                      process_flags,
+                      env,
+                      cwd,
+@@ -1211,6 +1271,7 @@ int uv_spawn(uv_loop_t* loop,
+     DeleteProcThreadAttributeList(attr_list);
+     uv__free(attr_list);
+   }
++  uv__free(handle_list);
+ 
+   if (child_stdio_buffer != NULL) {
+     /* Clean up child stdio handles. */

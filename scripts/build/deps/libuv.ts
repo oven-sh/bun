@@ -70,11 +70,21 @@ export const libuv: Dependency = {
   // win-poll-no-reendgame-after-close: doesn't queue the endgame after poll_cb
   // if a nested uv_run inside poll_cb already ran it. Otherwise close_cb runs
   // twice.
+  //
+  // win-spawn-inherit-only-stdio-handles: uv_spawn passes the child's stdio
+  // handles as a PROC_THREAD_ATTRIBUTE_HANDLE_LIST, so the child inherits
+  // those and nothing else. Without the list, CreateProcessW copies every
+  // inheritable handle of the process, including the pipe ends of a child
+  // that another thread is spawning at the same moment; that child then
+  // holds the other child's pipes open until it exits. Upstream
+  // libuv/libuv#5100 adapted to the fork's ConPTY path (oven-sh/libuv#20;
+  // workarounds.ts fails configure when the pin changes).
   patches: [
     "patches/libuv/win-poll-rearm-before-callback.patch",
     "patches/libuv/win-poll-abort-with-disconnect.patch",
     "patches/libuv/win-poll-no-reendgame-after-close.patch",
     "patches/libuv/win-pipe-read-req-count-across-callback.patch",
+    "patches/libuv/win-spawn-inherit-only-stdio-handles.patch",
   ],
 
   build: () => ({

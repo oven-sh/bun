@@ -89,8 +89,7 @@ pub(crate) struct SpawnContext<'a> {
     pub(crate) cwd: &'a [u8],
     pub(crate) argv: &'a [bun_spawn::CStrPtr],
     pub(crate) envps: &'a [bun_dotenv::NullDelimitedEnvMap],
-    /// Windows hands it over as an inherited handle, which the worker's arguments name.
-    #[cfg_attr(windows, expect(dead_code))]
+    /// The worker gets it as descriptor 4, after the channel to the coordinator.
     pub(crate) compiled_program: Option<bun_sys::Fd>,
     #[cfg(windows)]
     pub(crate) windows_job: Option<*mut c_void>,
@@ -256,7 +255,10 @@ impl Worker {
                 stderr: Stdio::Buffer(bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
                     uv::Pipe,
                 >()))),
-                extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
+                // The compiled program follows the channel as CRT fd 4, as on POSIX.
+                extra_fds: core::iter::once(Stdio::Ipc(ipc_pipe))
+                    .chain(coord.compiled_program.map(Stdio::Pipe))
+                    .collect(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
                     loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),

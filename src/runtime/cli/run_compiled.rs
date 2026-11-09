@@ -823,11 +823,7 @@ fn start_second_process(
 }
 
 #[cfg(windows)]
-const HANDLE_FLAG_INHERIT: u32 = 1;
-
-#[cfg(windows)]
 unsafe extern "system" {
-    fn SetHandleInformation(handle: *mut core::ffi::c_void, mask: u32, flags: u32) -> i32;
     fn GetStartupInfoW(startup_info: *mut bun_sys::windows::STARTUPINFOW);
 }
 
@@ -850,14 +846,14 @@ fn list_open_extra_descriptors(block: &[u8]) -> Vec<bool> {
 }
 
 #[cfg(windows)]
-fn list_inherited_extra_descriptors() -> Box<[bool]> {
+fn list_inherited_extra_descriptors() -> Vec<bool> {
     // SAFETY: integers and null pointers are a valid STARTUPINFOW.
     let mut startup_info: bun_sys::windows::STARTUPINFOW =
         unsafe { bun_core::ffi::zeroed_unchecked() };
     // SAFETY: the call fills the structure it is given.
     unsafe { GetStartupInfoW(&mut startup_info) };
     if startup_info.lpReserved2.is_null() {
-        return Box::default();
+        return Vec::new();
     }
     // SAFETY: the block is part of the parameters of this process, which are never freed.
     let block = unsafe {
@@ -887,8 +883,13 @@ fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8], bytes_after: &[u8]) 
     Ok(file.into_raw())
 }
 
+/// `extra_descriptors`: what the second process gets from descriptor 3 up.
 #[cfg(windows)]
-fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u32 {
+fn run_second_process(
+    arguments: Vec<Vec<u8>>,
+    original_cwd: Option<&[u8]>,
+    extra_descriptors: Box<[crate::api::bun_process::sync::SyncStdio]>,
+) -> u32 {
     use crate::api::bun_process::{Status, sync};
 
     let executable = match bun_core::self_exe_path() {
@@ -921,7 +922,7 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
             )),
             ..Default::default()
         },
-        inherited_extra_fds: list_inherited_extra_descriptors(),
+        extra_fds: extra_descriptors,
         ..Default::default()
     });
     match spawned {
@@ -954,50 +955,61 @@ fn start_second_process(
     handover: Handover<'_>,
     original_cwd: Option<&[u8]>,
 ) -> ! {
+    use crate::api::bun_process::sync::SyncStdio;
+    use bun_sys::FdExt;
+
+    // The second process stands for this one: it has the descriptors that this one was given, under the same numbers.
+    let mut extra_descriptors: Vec<SyncStdio> = list_inherited_extra_descriptors()
+        .into_iter()
+        .map(|is_inherited| match is_inherited {
+            true => SyncStdio::Inherit,
+            false => SyncStdio::Ignore,
+        })
+        .collect();
     let Some(bytes) = handover.bytes else {
         let arguments =
             second_process_arguments(typed, own_count, &[handover.flag, NO_DESCRIPTOR].concat());
         Output::flush();
-        Global::exit(run_second_process(arguments, original_cwd))
+        Global::exit(run_second_process(
+            arguments,
+            original_cwd,
+            extra_descriptors.into(),
+        ))
     };
     let path = temporary_path(bun_resolver::fs::RealFS::tmpdir_path());
-    let descriptor = match write_to_named_file(&path, bytes, handover.bytes_after) {
-        Ok(descriptor) => descriptor,
-        Err(error) => {
-            let _ = bun_sys::unlinkat(Fd::cwd(), &path);
-            exit_write_failed(&error)
-        }
-    };
-    let handle = descriptor.native();
-    // SAFETY: `handle` is the open file handle this function owns until the close below.
-    unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) };
-    let descriptor_text = (handle as usize).to_string();
+    let descriptor =
+        match write_to_named_file(&path, bytes, handover.bytes_after).and_then(|descriptor| {
+            descriptor
+                .make_lib_uv_owned_for_syscall(bun_sys::Tag::open, bun_sys::ErrorCase::CloseOnFail)
+        }) {
+            Ok(descriptor) => descriptor,
+            Err(error) => {
+                let _ = bun_sys::unlinkat(Fd::cwd(), &path);
+                exit_write_failed(&error)
+            }
+        };
+    // The file is the descriptor after those the second process inherits. A child gets only the descriptors its spawn names.
+    let descriptor_text = (3 + extra_descriptors.len()).to_string();
+    extra_descriptors.push(SyncStdio::Pipe(descriptor));
     let arguments = second_process_arguments(
         typed,
         own_count,
         &[handover.flag, descriptor_text.as_bytes()].concat(),
     );
     Output::flush();
-    let exit_code = run_second_process(arguments, original_cwd);
+    let exit_code = run_second_process(arguments, original_cwd, extra_descriptors.into());
     let _ = bun_sys::close(descriptor);
     let _ = bun_sys::unlinkat(Fd::cwd(), &path);
     Global::exit(exit_code)
 }
 
+/// A descriptor number, as the C runtime of the process counts them.
 fn parse_descriptor(text: &[u8]) -> Option<Fd> {
     if text.is_empty() || !text.iter().all(u8::is_ascii_digit) {
         return None;
     }
     let text = core::str::from_utf8(text).ok()?;
-    #[cfg(unix)]
-    {
-        text.parse::<i32>().ok().map(Fd::from_native)
-    }
-    #[cfg(windows)]
-    {
-        let handle = text.parse::<isize>().ok()?;
-        Some(Fd::from_system(handle as *mut core::ffi::c_void))
-    }
+    text.parse::<i32>().ok().map(Fd::from_uv)
 }
 
 #[cold]
@@ -1184,14 +1196,9 @@ pub(crate) fn graph_descriptor() -> Option<Fd> {
 
 /// Tells a worker of `bun test --parallel` where the compiled program is.
 pub(crate) fn graph_flag_of_test_worker() -> Option<Vec<u8>> {
-    let descriptor = graph_descriptor()?;
-    let number = match cfg!(windows) {
-        // A worker inherits the handle, as this process did.
-        true => descriptor.native() as usize,
-        // After stdio and the channel to the coordinator.
-        false => 4,
-    };
-    Some([GRAPH_FLAG, number.to_string().as_bytes()].concat())
+    graph_descriptor()?;
+    // After stdio and the channel to the coordinator.
+    Some([GRAPH_FLAG, b"4"].concat())
 }
 
 #[inline]

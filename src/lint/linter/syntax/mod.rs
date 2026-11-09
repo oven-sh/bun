@@ -482,6 +482,8 @@ pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
 /// Prettier's `isFlowFile`. If true, Prettier parses the file with `babel-flow` instead of `babel`. That's the case if
 /// a comment before the code has `@flow` or `@noflow`, or the file name ends with `.js.flow`.
 pub fn is_flow_file(text: &[u8], path: &[u8]) -> bool {
+    // Prettier takes a byte order mark off before it looks.
+    let text = bun_core::strings::without_utf8_bom(text);
     let after_shebang = match text.starts_with(b"#!") {
         true => bun_core::strings::index_of_any(text, b"\n\r").unwrap_or(text.len()),
         false => 0,

@@ -100,7 +100,13 @@ impl FormatCommand {
             Global::exit(u32::from(!ran));
         }
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
-        let options = match Options::parse(&args) {
+        // `--both-ways <bundle> <flags>`, for `test/cli/format/short-cuts.test.ts`. Formats the texts of the bundle
+        // with the flags, in memory, with the short cuts and without, and names those that come out differently.
+        let (bundle, args) = match &args[..] {
+            [b"--both-ways", bundle, flags @ ..] if HAS_TEST_RUNNER => (Some(*bundle), flags),
+            _ => (None, &args[..]),
+        };
+        let options = match Options::parse(args) {
             Ok(options) => options,
             Err(UsageError(message)) => usage_error("fmt", &message),
         };
@@ -125,12 +131,26 @@ impl FormatCommand {
                 },
             );
             let options =
-                match defaults.map(|defaults| Options::parse_with_defaults(defaults, &args)) {
+                match defaults.map(|defaults| Options::parse_with_defaults(defaults, args)) {
                     None => options,
                     Some(Ok(options)) => options,
                     Some(Err(UsageError(message))) => usage_error("fmt", &message),
                 };
-            bun_lint_driver::fmt::run(&options, environment)
+            let Some(bundle) = bundle else {
+                return bun_lint_driver::fmt::run(&options, environment);
+            };
+            let bytes = bun_format_conformance::read_file(bundle);
+            let Some(bundle) = bytes.as_deref().and_then(Bundle::parse) else {
+                return bun_lint_driver::Outcome {
+                    stderr: b"cannot read the bundle\n".to_vec(),
+                    exit_code: 2,
+                    ..Default::default()
+                };
+            };
+            let texts: Vec<_> = (bundle.paths())
+                .filter_map(|path| Some((path, bundle.read(path)?)))
+                .collect();
+            bun_lint_driver::fmt::compare_ways_for_tests(&options, environment, &texts)
         })
     }
 }

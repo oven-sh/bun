@@ -1405,6 +1405,10 @@ struct Run<'r> {
     is_native: bool,
     /// Some matched files were skipped, so the summary can't claim anything about all files.
     has_skipped_files: bool,
+    /// [`compare_ways_for_tests`]: the texts to compare the two ways for, in place of everything else.
+    compared: Option<&'r [(&'r [u8], &'r [u8])]>,
+    /// For one of those: the buffers to format it with, which the text before it has used, and where its names go.
+    kept: Option<(&'r mut Scratches, &'r dyn Intern, &'r Session)>,
 }
 
 impl Run<'_> {
@@ -1603,6 +1607,98 @@ impl Run<'_> {
         path.map_or_else(|| b"(stdin)\n".to_vec(), |it| paths::to_native(it.to_vec()))
     }
 
+    /// [`compare_ways_for_tests`]. `configs` are those of the options, which take the short cuts.
+    fn compare_ways(mut self, configs: &Configs, texts: &[(&[u8], &[u8])]) -> Outcome {
+        let (environment, is_native, began) = (self.environment, self.is_native, self.began);
+        let mut long = self.options.clone();
+        long.no_short_cuts = true;
+        let long_configs = Configs::new(&long, environment);
+        // The texts are in no directory that there is, so the options of each are those of the working directory.
+        let scopes = [configs, &long_configs].map(|it| it.for_directory(&environment.cwd));
+        let [short_scope, long_scope] = match scopes {
+            [Ok(short), Ok(long)] => [short, long],
+            [Err(Fatal(error)), _] | [_, Err(Fatal(error))] => {
+                return self.fail_to_start(configs.flavor, &error);
+            }
+        };
+        let ways = [
+            (self.options, configs, &short_scope),
+            (&long, &long_configs, &long_scope),
+        ];
+        let (next, different) = (AtomicUsize::new(0), Guarded::new(Vec::new()));
+        // How many texts and scripts a short cut has printed, for each way.
+        let taken = [AtomicUsize::new(0), AtomicUsize::new(0)];
+        // A thread has an interner, buffers and the options that it knows for each way, and keeps them from text to
+        // text, as a thread that formats files does. What a text is printed into is that of the text before.
+        let compare_some = |_| {
+            let names = [Session::new(), Session::new()];
+            let atoms = names.each_ref().map(Interner::new_in);
+            let mut kept: [(Scratches, KnownOptions); 2] = Default::default();
+            kept.iter_mut().for_each(|it| it.0.count_quick_way());
+            while let Some(&(name, text)) = texts.get(next.fetch_add(1, Ordering::Relaxed)) {
+                let path = paths::resolve(&environment.cwd, &paths::from_native(name));
+                let mut said = [0, 1].map(|way| {
+                    let (options, configs, scope) = ways[way];
+                    let (scratch, known) = &mut kept[way];
+                    let run = Run {
+                        options,
+                        environment,
+                        out: Outcome::default(),
+                        began,
+                        modules: None,
+                        is_native,
+                        has_skipped_files: false,
+                        compared: None,
+                        kept: Some((scratch, &atoms[way], &names[way])),
+                    };
+                    bun_format::whole_texts::take();
+                    let said = match configs.options_for_one_of_many(known, scope, &path).0 {
+                        Ok(resolved) => {
+                            run.format_named(configs, (name, &path), text.to_vec(), resolved)
+                        }
+                        Err(Fatal(error)) => run.fail_to_start(configs.flavor, &error),
+                    };
+                    let whole_texts = bun_format::whole_texts::take() as usize;
+                    taken[way].fetch_add(whole_texts, Ordering::Relaxed);
+                    said
+                });
+                let [short, long] = &said;
+                if (&short.stdout, &short.stderr, short.exit_code)
+                    != (&long.stdout, &long.stderr, long.exit_code)
+                {
+                    different.lock().push(name);
+                }
+                for (kept, said) in kept.iter_mut().zip(&mut said) {
+                    kept.0.spare = std::mem::take(&mut said.stdout);
+                }
+            }
+            for (kept, taken) in kept.iter().zip(&taken) {
+                let scripts = kept.0.quick_way_counts().map(|it| it.printed.texts);
+                taken.fetch_add(scripts.sum::<u64>() as usize, Ordering::Relaxed);
+            }
+        };
+        // As deep a text is formatted as among files: on the threads that format files, which have the stack for it.
+        bun_sema_driver::use_dedicated_pool("Bun Format");
+        bun_threading::thread_pool::exit_without_any_thread();
+        let pool = Pool::new(self.options.threads);
+        let threads = pool.threads().min(texts.len().div_ceil(16)).max(1);
+        pool.for_each_on(threads, threads, 1, &compare_some);
+        let mut different = std::mem::take(&mut *different.lock());
+        sort_slice_by(&mut different[..], |a, b| a.cmp(b));
+        for name in different {
+            self.out
+                .stdout
+                .extend_from_slice(&[b"different: ", name, b"\n"].concat());
+        }
+        let [short, long] = taken.map(AtomicUsize::into_inner);
+        let _ = writeln!(
+            self.out.stdout,
+            "short cuts taken: {short}, and {long} the long way\ncompared: {}",
+            texts.len()
+        );
+        self.out
+    }
+
     /// Prettier's `formatStdin`
     fn format_stdin(mut self, configs: &Configs, ignored: &Ignored, name: &[u8]) -> Outcome {
         let text = match read_stdin() {
@@ -1611,8 +1707,6 @@ impl Run<'_> {
         };
         let path = paths::resolve(&self.environment.cwd, &paths::from_native(name));
         let is_read_only = self.options.check || self.options.list_different;
-        // Prettier's `listDifferent` prints the `error.message` of what `check` throws and does nothing else.
-        let exits_zero_on_error = configs.flavor == Flavor::Prettier && is_read_only;
         // An ignored file's config isn't even read.
         let is_inside_package =
             configs.flavor == Flavor::Prettier && ignored.is_in_node_modules(&path);
@@ -1640,7 +1734,7 @@ impl Run<'_> {
             let config = configs.config_file_path(&scope);
             return self.format_stdin_with_prettier((Some(&path), config), (name, &text));
         }
-        let mut options = match configs.options_for(&scope, &path) {
+        let options = match configs.options_for(&scope, &path) {
             Ok(options) => options,
             Err(Fatal(error)) => return self.fail_to_start(configs.flavor, &error),
         };
@@ -1667,23 +1761,39 @@ impl Run<'_> {
             self.report_skipped_for_plugins(1, &names);
             return self.out;
         }
-        if Kind::with_options(&path, &options.options).is_none() {
+        self.format_named(configs, (name, &path), text, options)
+    }
+
+    /// Formats `text` with the `options` of the file at `path`, which is called `name`, and prints it like standard
+    /// input.
+    fn format_named(
+        self,
+        configs: &Configs,
+        (name, path): (&[u8], &[u8]),
+        text: Vec<u8>,
+        mut options: Resolved,
+    ) -> Outcome {
+        let is_read_only = self.options.check || self.options.list_different;
+        // Prettier's `listDifferent` prints the `error.message` of what `check` throws and does nothing else.
+        let exits_zero_on_error = configs.flavor == Flavor::Prettier && is_read_only;
+        if Kind::with_options(path, &options.options).is_none() {
             // `handleError` stays silent with `--ignore-unknown`. `listDifferent` runs before it and prints the error.
             if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !is_read_only {
                 return self.out;
             }
-            let mut out = self.fail_to_start(configs.flavor, &has_no_parser(configs, path));
+            let mut out =
+                self.fail_to_start(configs.flavor, &has_no_parser(configs, path.to_vec()));
             if exits_zero_on_error {
                 out.exit_code = 0;
             }
             return out;
         }
-        let kind = Kind::with_options(&path, &options.options);
+        let kind = Kind::with_options(path, &options.options);
         tailwind::only_where_sorted(&mut options.options, kind);
         let piped = Piped {
             text,
             display_name: name,
-            paths: &[&path],
+            paths: &[path],
         };
         self.print_stdin(configs, piped, options)
     }
@@ -1829,19 +1939,33 @@ impl Run<'_> {
         for warning in std::mem::take(&mut *configs.warnings.lock()) {
             self.warn(&warning);
         }
-        let names = Session::new();
         // Prettier's `listDifferent` runs first and returns, so `--debug-check` never happens.
         let verifies = self.options.debug_check && !is_read_only;
-        let mut scratch = Scratches::default();
+        let mut own;
+        let (scratch, atoms, names) = match self.kept.take() {
+            Some((scratch, atoms, names)) => (scratch, Some(atoms), names),
+            None => {
+                own = (Scratches::default(), Session::new());
+                (&mut own.0, None, &own.1)
+            }
+        };
         let mut format_text = |options: &Resolved| {
             let mut first_failure = None;
             for path in paths {
+                let own_atoms;
+                let atoms = match atoms {
+                    Some(atoms) => atoms,
+                    None => {
+                        own_atoms = Interner::new_in(names);
+                        &own_atoms
+                    }
+                };
                 match format(
                     path,
                     &text,
                     options,
-                    (&Interner::new_in(&names), &names),
-                    &mut scratch,
+                    (atoms, names),
+                    &mut *scratch,
                     verifies,
                 ) {
                     Err(failure @ Failure::Syntax(_)) => _ = first_failure.get_or_insert(failure),
@@ -2741,7 +2865,9 @@ impl Run<'_> {
         // `--doctor` already lists it with its own notes.
         let prints_note = options.log_level >= LogLevel::Warn && !options.doctor;
         let colors = self.colors();
-        let mut out = if is_unnamed {
+        let mut out = if let Some(texts) = self.compared.take() {
+            self.compare_ways(&configs, texts)
+        } else if is_unnamed {
             self.format_unnamed_stdin(&configs)
         } else {
             let (cwd, is_native) = (&environment.cwd, self.is_native);
@@ -2773,6 +2899,16 @@ pub fn run(options: &Options, environment: &Environment) -> Outcome {
 }
 
 fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules>) -> Outcome {
+    run_with(options, environment, modules, None)
+}
+
+/// `compared`: [`Run::compared`]
+fn run_with(
+    options: &Options,
+    environment: &Environment,
+    modules: Option<&Modules>,
+    compared: Option<&[(&[u8], &[u8])]>,
+) -> Outcome {
     let mut options = options.clone();
     let mut loaded = options.load_pipes(&environment.cwd);
     let as_oxfmt = options
@@ -2790,9 +2926,24 @@ fn run_in(options: &Options, environment: &Environment, modules: Option<&Modules
         modules,
         is_native: false,
         has_skipped_files: false,
+        compared,
+        kept: None,
     };
     match loaded {
         Ok(()) => run.execute(),
         Err(why) => run.fail(&why),
     }
+}
+
+/// For the tests. Formats each of `texts`, a name and what a file of that name holds, and prints it or what is wrong
+/// with it the way `--stdin-filepath` does for standard input: once with the short cuts and once the long way, each
+/// with buffers that texts before it have used. No file is looked for but the configuration of the working directory,
+/// and what there is to say about options is left out. Prints the names of those for which the two ways print or say
+/// something else, how many texts and scripts a short cut has printed each way, and how many texts it has compared.
+pub fn compare_ways_for_tests(
+    options: &Options,
+    environment: &Environment,
+    texts: &[(&[u8], &[u8])],
+) -> Outcome {
+    run_with(options, environment, None, Some(texts))
 }

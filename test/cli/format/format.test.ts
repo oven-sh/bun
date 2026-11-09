@@ -8160,8 +8160,13 @@ try {
     ["js", "x = (a);\n"],
   ])("a parser that takes something back on every line takes linear time: .%s %j", async (ending, unit) => {
     const count = isDebug || isASAN ? 1_000 : 16_000;
-    const run = (times: number) =>
-      format({ [`a.${ending}`]: repeated(unit, times) }, ["--check", "--experimental-ternaries", "--threads=1"]);
+    // One file takes about a tick of Windows' clock, which is too coarse to tell 4 from 6.
+    const copies = isWindows ? 8 : 1;
+    const run = (times: number) => {
+      const text = repeated(unit, times);
+      const files = Object.fromEntries(Array.from({ length: copies }, (_, index) => [`${index}.${ending}`, text]));
+      return format(files, ["--check", "--experimental-ternaries", "--threads=1"]);
+    };
     const [long, short] = [await run(4 * count), await run(count)];
     // 3 to 4 when all is well, 8 to 13 when it is not.
     expect(slowdown(long, short)).toBeLessThan(6);

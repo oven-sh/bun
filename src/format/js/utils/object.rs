@@ -225,10 +225,7 @@ fn unquoted<'a>(
                     && is_canonical_simple_number(content)
                     && !f.file().is_flow()
                     && (f.options().flavor.is_oxfmt()
-                        || !is_flow_file(
-                            bun_core::strings::without_utf8_bom(f.file().text()),
-                            f.filepath(),
-                        )))
+                        || !is_flow_file(f.file().text(), f.filepath())))
         }
     };
     is_safe.then_some(content)

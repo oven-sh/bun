@@ -50,8 +50,7 @@ impl Quick {
             return true;
         }
         let mut p = self.text.src_start;
-        // (behind a byte order mark the long way takes `#!` for no line of its own)
-        if !self.had_bom && self.t.at(p) == 35 && self.t.at(p + 1) == 33 {
+        if self.t.at(p) == 35 && self.t.at(p + 1) == 33 {
             while p < self.text.src_end && self.t.at(p) != 10 && self.t.at(p) != 13 {
                 p += 1;
             }

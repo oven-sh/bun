@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
+import { concatenate } from "./bundle.ts";
 
 afterAll(endChildren);
 
@@ -32,6 +33,8 @@ async function formatBothWays(files: Record<string, string>, flags: string[], pa
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // One that is ended, as when it runs out of time, leaves files as they were, and those differ for no other reason.
+    if (proc.signalCode) throw new Error(`bun fmt, the ${way} way, was ended by ${proc.signalCode}`);
     const written = Object.keys(files).map(name => [name, readFileSync(join(cwd, name), "latin1")]);
     return { files: Object.fromEntries(written) as Record<string, string>, stdout, stderr, exitCode };
   };
@@ -50,14 +53,55 @@ async function differences(name: string, texts: string[], flags: string[]) {
   return { different, said: said(short), expected: said(long) };
 }
 
+/**
+ * What `bun fmt --both-ways` prints about `files`. One process formats them all from one file that holds them, each the
+ * way `--stdin-filepath` formats standard input, with the short cuts and without, and compares what the two ways print
+ * and say. Nothing is written: as files, written and read back for each way, the texts took most of this file's time.
+ */
+async function compareWays(files: Record<string, string>, flags: string[]) {
+  const texts = new Map(Object.entries(files).map(([name, text]) => [name, Buffer.from(text)]));
+  using dir = tempDir("format-short-cuts", { texts: concatenate(texts) });
+  await using proc = spawn({
+    cmd: [bunExe(), "fmt", "--both-ways", join(String(dir), "texts"), ...plainly, ...flags],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  return stdout.split("\n");
+}
+
+/** The names of the `files` that come out differently with and without the short cuts. */
+async function differing(files: Record<string, string>, flags: string[]) {
+  const lines = await compareWays(files, flags);
+  // The long way is one: it takes no short cut. And every text was read.
+  expect(lines.slice(-3).map(line => line.replace(/^short cuts taken: \d+, and /, ""))).toEqual([
+    "0 the long way",
+    `compared: ${Object.keys(files).length}`,
+    "",
+  ]);
+  return lines.flatMap(line => (line.startsWith("different: ") ? [line.slice("different: ".length)] : []));
+}
+
+/** None of the `files` comes out differently with and without the short cuts. */
+async function expectNoDifference(files: Record<string, string>, flags: string[]) {
+  const names = await differing(files, flags);
+  // What differs is shown as two runs over files leave it.
+  if (names.length > 0) {
+    const odd = Object.fromEntries(names.map(name => [name, files[name]]));
+    const [short, long] = await formatBothWays(odd, [...plainly, ...flags]);
+    expect(short).toEqual(long);
+  }
+  expect(names).toEqual([]);
+}
+
 function expectSame(name: string, texts: string[], options: string[][]) {
+  const files = Object.fromEntries(texts.map((text, index) => [`${index}/${name}`, text]));
   test.skipIf(!hasFlag).concurrent.each(options.map(flags => [flags.join(" ") || "defaults", flags] as const))(
     "%s",
-    async (_, flags) => {
-      const { different, said, expected } = await differences(name, texts, flags);
-      expect(different).toEqual([]);
-      expect(said).toEqual(expected);
-    },
+    async (_, flags) => expectNoDifference(files, flags),
   );
 }
 
@@ -174,6 +218,12 @@ describe.skipIf(!hasFlag)("a typical text takes the short cut", () => {
       [[], ["--no-short-cuts"]].map(own => bench(name, text.trimEnd() + "\n", own)),
     );
     expect([short.wholeTexts, long.wholeTexts]).toEqual([1, 0]);
+  });
+
+  // Most of this file compares the two ways in one process, which could pass with the same way twice.
+  test("the texts that one process formats both ways go one way each", async () => {
+    const files = { "a.js": script, "a.css": "a {\n  color: red;\n}\n", "a.yaml": "a: 1\nb:\n  - c\n" };
+    expect(await compareWays(files, [])).toEqual(["short cuts taken: 3, and 0 the long way", "compared: 3", ""]);
   });
 });
 
@@ -451,15 +501,12 @@ describe("JSON", () => {
 });
 
 describe("GraphQL", () => {
-  /** Formats `texts` as files, with and without the short cuts. */
-  async function format(texts: string[], flags: string[]) {
-    const files = Object.fromEntries(texts.map((text, index) => [`${index}.graphql`, text]));
-    const ways = await formatBothWays(files, [...plainly, ...flags]);
-    return ways.map(it => ({
-      texts: texts.map((_, index) => it.files[`${index}.graphql`]),
-      said: `${it.stdout}${it.stderr}`,
-      exitCode: it.exitCode,
-    }));
+  const named = (texts: string[]) => Object.fromEntries(texts.map((text, index) => [`${index}.graphql`, text]));
+
+  /** What files of `texts` hold once they are formatted. */
+  async function formatted(texts: string[]) {
+    const [short] = await formatBothWays(named(texts), plainly);
+    return texts.map((_, index) => short.files[`${index}.graphql`]);
   }
 
   const long = "a".repeat(30);
@@ -820,17 +867,11 @@ describe("GraphQL", () => {
         ["--require-pragma"],
       ].map(flags => [flags.join(" ") || "defaults", flags] as const),
     )("%s", async (_, flags) => {
-    const [short, long] = await format(texts, flags);
-    expect(short.texts).toEqual(long.texts);
-    expect(short.said).toEqual(long.said);
-    expect(short.exitCode).toBe(long.exitCode);
+    await expectNoDifference(named(texts), flags);
   });
 
   test.skipIf(!hasFlag)("what has been formatted", async () => {
-    const [formatted] = await format(texts, []);
-    const [short, long] = await format(formatted.texts, []);
-    expect(short.texts).toEqual(long.texts);
-    expect(short.said).toEqual(long.said);
+    await expectNoDifference(named(await formatted(texts)), []);
   });
 
   test.skipIf(!hasFlag)("long names with nothing but a `$` between them take linear time", async () => {
@@ -2894,8 +2935,7 @@ describe.skipIf(!hasFlag)("HTML", () => {
     ["--embedded-language-formatting=off"],
     ["--end-of-line=crlf"],
   ])("the same with and without short cuts: %j", async (...options: string[]) => {
-    const { short, long } = await bothWays(files, options);
-    expect(short).toEqual(long);
+    await expectNoDifference(files, options);
   });
 
   test("what is read from the bytes is formatted", async () => {
@@ -3069,8 +3109,7 @@ describe.skipIf(!hasFlag)("Vue", () => {
     ["--bracket-same-line", "--print-width=30"],
     ["--embedded-language-formatting=off"],
   ])("the same with and without short cuts: %j", async (...options: string[]) => {
-    const { short, long } = await bothWays(files, options);
-    expect(short).toEqual(long);
+    await expectNoDifference(files, options);
   });
 
   test("classes in code that is written as it is printed are sorted", async () => {
@@ -3302,8 +3341,7 @@ describe.skipIf(!hasFlag)("the blocks of a Vue file", () => {
     ["--insert-pragma"],
     ["--require-pragma"],
   ])("the same with and without short cuts: %j", async (...options: string[]) => {
-    const { short, long } = await bothWays(files, options);
-    expect(short).toEqual(long);
+    await expectNoDifference(files, options);
   });
 
   test("no block is formatted twice where another one takes a document", async () => {
@@ -3635,8 +3673,7 @@ describe.skipIf(!hasFlag)("code in a Vue file that is read from the bytes", () =
     ["--end-of-line=crlf"],
     ["--vue-indent-script-and-style"],
   ])("the same with and without short cuts: %j", async (...options: string[]) => {
-    const { short, long } = await bothWays(files, options);
-    expect(short).toEqual(long);
+    await expectNoDifference(files, options);
   });
 
   // 1 in a release build, and 60 when each `<script` looked for the `>` behind all of them.
@@ -4620,7 +4657,8 @@ describe("JavaScript that is deep, long or full of comments", () => {
         nest("", "a", "(b)", 5000),
         nest("", "a", ".b()", 5000),
         nest("", "a", "[0]", 7000),
-        nest("a ? b : ", "c", "", 5000),
+        // On CI, a release build with ASAN left this one as it is the long way: such a build runs out of stack sooner.
+        ...(isASAN && !isDebug ? [] : [nest("a ? b : ", "c", "", 5000)]),
         nest("", "a", ".b", 20000),
         // The frames of such a build are larger, and the long way's more so: it runs out of stack first.
         ...(isDebug || isASAN
@@ -6499,10 +6537,11 @@ describe("what the quick way for scripts is asked about, and what is done around
         "// @flow\n/* flow-include type A = 1; */\n",
         "#!/usr/bin/env node\n// @flow\ntype A = ?B;\n",
         "a;\n// @flow\ntype A = ?B;\n",
-        // a byte order mark in front of a `#!` line: the comment behind that line is not the first of the file
+        // a byte order mark in front of a `#!` line
         "\ufeff#!/usr/bin/env node\n// @flow\nvar x /*: number */ = 1;\n",
         "\ufeff#!/usr/bin/env node\n// @flow\ntype A = number;\nfunction f(a: A): A {\n  return a;\n}\n",
         "\ufeff// @flow\nvar x /*: number */ = 1;\n",
+        '\ufeff#!/usr/bin/env node\n/** @noflow */\nfoo = { "1": bar };\n',
       ],
       [[]],
     ));

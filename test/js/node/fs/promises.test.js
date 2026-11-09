@@ -553,26 +553,18 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
   });
 });
 
+const arrayIterationCounters = fs.readFileSync(
+  join(import.meta.dir, "..", "array-iteration-counters-fixture.cjs"),
+  "utf8",
+);
+
 // Node v26.12.1 prints the same. The counters are on the two things of the array iteration protocol that a script can
 // replace, and they stay on until the promise of each call has settled.
 it("readFile, writeFile, appendFile and readLines do not iterate an array, by path or by FileHandle", async () => {
   using dir = tempDir("fs-promises-array-iterator", {
     "read.txt": "read",
     "lines.txt": "one\ntwo\nthree\n",
-    "hooks.cjs": `
-      // Pass-through counters on the two things of the array iteration protocol that a script can replace.
-      const arrayIteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
-      const realIterator = Array.prototype[Symbol.iterator];
-      const realNext = arrayIteratorPrototype.next;
-      const apply = Reflect.apply;
-      let iterations = 0;
-      exports.install = () => {
-        iterations = 0;
-        Array.prototype[Symbol.iterator] = function () { iterations++; return apply(realIterator, this, arguments); };
-        arrayIteratorPrototype.next = function () { iterations++; return apply(realNext, this, arguments); };
-      };
-      exports.remove = () => { Array.prototype[Symbol.iterator] = realIterator; arrayIteratorPrototype.next = realNext; return iterations; };
-    `,
+    "hooks.cjs": arrayIterationCounters,
     "forms.cjs": `
       // Prints the same under Node v26.12.1.
       const fs = require("node:fs"); const fsp = require("node:fs/promises");

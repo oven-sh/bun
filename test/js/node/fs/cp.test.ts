@@ -430,26 +430,18 @@ test("cp with missing callback throws", () => {
   }).toThrow(/"cb"/);
 });
 
+const arrayIterationCounters = fs.readFileSync(
+  join(import.meta.dir, "..", "array-iteration-counters-fixture.cjs"),
+  "utf8",
+);
+
 // Node v26.12.1 prints the same: its cp and cpSync never call these three exports, so a spy on one of them sees no call,
 // and a spy that is restored does not break a later copy.
 test("cpSync iterates no array, and cp and cpSync call no fs.readdirSync, fs.existsSync or fs.promises.readdir", async () => {
   using dir = tempDir("cp-readdir-spy", {
     "from/a.txt": "a",
     "from/inner/b.txt": "b",
-    "hooks.cjs": `
-      // Pass-through counters on the two things of the array iteration protocol that a script can replace.
-      const arrayIteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
-      const realIterator = Array.prototype[Symbol.iterator];
-      const realNext = arrayIteratorPrototype.next;
-      const apply = Reflect.apply;
-      let iterations = 0;
-      exports.install = () => {
-        iterations = 0;
-        Array.prototype[Symbol.iterator] = function () { iterations++; return apply(realIterator, this, arguments); };
-        arrayIteratorPrototype.next = function () { iterations++; return apply(realNext, this, arguments); };
-      };
-      exports.remove = () => { Array.prototype[Symbol.iterator] = realIterator; arrayIteratorPrototype.next = realNext; return iterations; };
-    `,
+    "hooks.cjs": arrayIterationCounters,
     "spy.cjs": `
       // Prints the same under Node v26.12.1.
       const fs = require("node:fs"); const fsp = require("node:fs/promises");

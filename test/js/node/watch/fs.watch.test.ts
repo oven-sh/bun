@@ -1953,24 +1953,16 @@ test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target d
   expect(runs).toEqual(runs.map(() => ({ stdout: "OK", stderr: "", exitCode: 0 })));
 });
 
+const arrayIterationCounters = fs.readFileSync(
+  path.join(import.meta.dir, "..", "array-iteration-counters-fixture.cjs"),
+  "utf8",
+);
+
 // Node v26.12.1 prints the same.
 test("fs.watch and fs.promises.watch with an ignore list do not iterate an array, and take a RegExp of another realm", async () => {
   using dir = tempDir("fs-watch-ignore-array-iterator", {
     "watched/.keep": "",
-    "hooks.cjs": `
-      // Pass-through counters on the two things of the array iteration protocol that a script can replace.
-      const arrayIteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
-      const realIterator = Array.prototype[Symbol.iterator];
-      const realNext = arrayIteratorPrototype.next;
-      const apply = Reflect.apply;
-      let iterations = 0;
-      exports.install = () => {
-        iterations = 0;
-        Array.prototype[Symbol.iterator] = function () { iterations++; return apply(realIterator, this, arguments); };
-        arrayIteratorPrototype.next = function () { iterations++; return apply(realNext, this, arguments); };
-      };
-      exports.remove = () => { Array.prototype[Symbol.iterator] = realIterator; arrayIteratorPrototype.next = realNext; return iterations; };
-    `,
+    "hooks.cjs": arrayIterationCounters,
     "ignore.cjs": `
       // Prints the same under Node v26.12.1.
       const fs = require("node:fs"); const fsp = require("node:fs/promises"); const vm = require("node:vm");
@@ -2029,8 +2021,24 @@ test("fs.watch and fs.promises.watch with an ignore list do not iterate an array
           stop?.(); abort.abort();
         }
 
-        // A RegExp of another realm is a RegExp.
-        try { fs.watch(dir, { ignore: vm.runInNewContext("/x/") }).close(); out.otherRealm = "accepted"; } catch (error) { out.otherRealm = error.code; }
+        // A RegExp of another realm is a RegExp, and what matches is the built-in exec, not an exec of its own.
+        {
+          const seen = new Set();
+          const { promise, resolve } = Promise.withResolvers();
+          let watcher;
+          try {
+            const otherRealm = vm.runInNewContext("/\\\\.tmp$/");
+            otherRealm.exec = () => null;
+            watcher = fs.watch(dir, { ignore: otherRealm });
+          } catch (error) { out.otherRealm = error.code; }
+          if (watcher) {
+            watcher.on("change", (event, name) => { seen.add(name); if (name === "kept.txt") resolve(); });
+            const stop = writeUntilStopped(seen);
+            await promise;
+            stop(); watcher.close();
+            out.otherRealm = seen.has("a.tmp") ? "its own exec matched" : "the built-in exec matched";
+          }
+        }
         console.log(JSON.stringify(out));
       })();
     `,
@@ -2046,7 +2054,7 @@ test("fs.watch and fs.promises.watch with an ignore list do not iterate an array
   const expected = {
     "fs.watch": { iterations: 0, ignoredNamesSeen: 0 },
     "fs.promises.watch": { iterations: 0, ignoredNamesSeen: 0 },
-    otherRealm: "accepted",
+    otherRealm: "the built-in exec matched",
   };
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
 });

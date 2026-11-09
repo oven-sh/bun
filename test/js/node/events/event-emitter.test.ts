@@ -2,6 +2,7 @@ import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { createRequire } from "module";
+import { readFileSync } from "node:fs";
 import { join } from "path";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -531,34 +532,35 @@ describe("EventEmitter.on", () => {
     expect(result).toEqual([[1], [2]]);
   });
 
-  // Node v26.12.1 counts 0 too. The counters are on the two things of the array iteration protocol that a script can
-  // replace.
-  test("a 'close' event removes the listeners without iterating an array", () => {
-    const emitter = new EventEmitter();
-    EventEmitter.on(emitter, "hey", { close: ["close"] } as any);
-    const listeners = () =>
-      emitter.listenerCount("hey") + emitter.listenerCount("error") + emitter.listenerCount("close");
-    expect(listeners()).toBe(3);
-
-    const arrayIteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
-    const realIterator = Array.prototype[Symbol.iterator];
-    const realNext = arrayIteratorPrototype.next;
-    let iterations = 0;
-    Array.prototype[Symbol.iterator] = function (this: unknown[]) {
-      iterations++;
-      return realIterator.call(this);
-    };
-    arrayIteratorPrototype.next = function () {
-      iterations++;
-      return realNext.call(this);
-    };
-    try {
-      emitter.emit("close");
-    } finally {
-      Array.prototype[Symbol.iterator] = realIterator;
-      arrayIteratorPrototype.next = realNext;
-    }
-    expect({ iterations, listeners: listeners() }).toEqual({ iterations: 0, listeners: 0 });
+  // Node v26.12.1 prints the same.
+  test("a 'close' event removes the listeners without iterating an array", async () => {
+    using dir = tempDir("events-on-close", {
+      "hooks.cjs": readFileSync(join(import.meta.dir, "..", "array-iteration-counters-fixture.cjs"), "utf8"),
+      "close.cjs": `
+        const events = require("node:events");
+        const hooks = require("./hooks.cjs");
+        const emitter = new events.EventEmitter();
+        events.on(emitter, "hey", { close: ["close"] });
+        const listeners = () => emitter.listenerCount("hey") + emitter.listenerCount("error") + emitter.listenerCount("close");
+        const before = listeners();
+        hooks.install();
+        emitter.emit("close");
+        console.log(JSON.stringify({ before, iterations: hooks.remove(), after: listeners() }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "close.cjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ before: 3, iterations: 0, after: 0 }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("Queue events before first next() call", async () => {

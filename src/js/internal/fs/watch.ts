@@ -25,7 +25,8 @@ function makeGlobOrBasenameMatcher(glob: Glob): Matcher {
 }
 function makeRegexMatcher(matcher: RegExp): Matcher {
   return function matchRegex(filename) {
-    return matcher.exec(filename) !== null;
+    // Not `matcher.exec`: Node calls the built-in exec, whatever the object or its realm has under that name.
+    return RegExp.prototype.exec.$call(matcher, filename) !== null;
   };
 }
 

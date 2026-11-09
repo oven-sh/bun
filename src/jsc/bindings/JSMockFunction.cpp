@@ -2536,20 +2536,31 @@ __attribute__((minsize)) NEVER_INLINE JSValue putBackWhatRestoredSpyReplaced(JSG
     RETURN_IF_EXCEPTION(scope, {});
 
     // The restored spies are undone as putBackOriginal() undoes them, the one that was installed last first: a spy on an accessor only if the accessor still has it.
-    PropertyHalves halves(descriptor);
+    // `storage` is what getOwnPropertyStorage() gives putBackOriginal() then.
+    JSValue storage = descriptor.isAccessorDescriptor() ? JSValue(GetterSetter::create(globalObject->vm(), globalObject, descriptor.getterObject(), descriptor.setterObject())) : descriptor.value();
     InternalFieldTuple* undo = nullptr;
     for (auto* next = record; next; next = dynamicDowncast<InternalFieldTuple>(next->getInternalField(1))) {
         auto* entry = uncheckedDowncast<InternalFieldTuple>(next->getInternalField(0));
         auto* spy = uncheckedDowncast<JSMockFunction>(entry->getInternalField(0));
         auto* replaced = uncheckedDowncast<InternalFieldTuple>(entry->getInternalField(1));
         bool isOnAccessor = replaced->getInternalField(1).asUInt32() & JSMockFunction::SpyAttributeAccessor;
-        if (!spy->isRestoredSpy() || (isOnAccessor && !halves.holds(spy)))
+        auto* accessor = tryJSDynamicCast<GetterSetter*>(storage);
+        if (!spy->isRestoredSpy() || (isOnAccessor && !(accessor && spy->isAccessorOf(accessor))))
             continue;
         undo = replaced;
-        halves = PropertyHalves(undo->getInternalField(0));
+        storage = undo->getInternalField(0);
     }
     if (!undo)
         return saved;
+
+    // putBack() asks no attribute. So this throws what the define of `saved` throws for a stub with no restored spy under it (restoreGlobal() in ViUtils.cpp). With no object, it only validates.
+    PropertyDescriptor current;
+    bool exists = target->getOwnPropertyDescriptor(globalObject, key, current);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isExtensible = target->isExtensible(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    validateAndApplyPropertyDescriptor(globalObject, nullptr, key, isExtensible, descriptor, exists, current, true);
+    RETURN_IF_EXCEPTION(scope, {});
 
     scope.release();
     JSMockFunction::putBack(globalObject, target, key, undo->getInternalField(0), undo->getInternalField(1).asUInt32());

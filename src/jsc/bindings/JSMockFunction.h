@@ -99,6 +99,7 @@ public:
 // A spy on `globalThis` is installed on the global object, so that is its `target`, not the proxy.
 JSC::JSValue withWhatSpiesReplaced(JSC::JSGlobalObject*, JSC::JSObject* target, const JSC::Identifier& key, const JSC::PropertyDescriptor& own, JSC::JSValue saved);
 
-// If a spy of `record` was restored since, puts back what that spy replaced and returns empty. Otherwise returns the record's `saved`.
+// If spies of `record` were restored since, puts back what their restores leave with the one that was installed last restored first, and returns empty.
+// Throws what a defineProperty() of `saved` throws, and then puts nothing back. If no spy was restored, returns the record's `saved`.
 JSC::JSValue putBackWhatRestoredSpyReplaced(JSC::JSGlobalObject*, JSC::JSObject* target, const JSC::Identifier& key, JSC::InternalFieldTuple* record);
 }

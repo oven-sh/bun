@@ -1377,13 +1377,13 @@ describe("uid/gid options", () => {
     } catch (e) {
       thrown = e;
     }
-    expect(setuidDeniedCodes).toContain(thrown?.code);
+    expect(thrown?.code).toBeOneOf(setuidDeniedCodes);
     expect(thrown?.errno).toBe(-os.constants.errno[thrown.code as "EPERM" | "ENOSYS"]);
     expect(thrown?.syscall).toBe("spawn");
 
     const r = spawnSync("id", [], { uid: 0, encoding: "utf8" });
     const error = r.error as NodeJS.ErrnoException | undefined;
-    expect(setuidDeniedCodes).toContain(error?.code);
+    expect(error?.code).toBeOneOf(setuidDeniedCodes);
     expect(error?.errno).toBe(-os.constants.errno[error!.code as "EPERM" | "ENOSYS"]);
     expect(error?.syscall).toBe("spawnSync id");
     expect(r.stdout == null).toBe(true);

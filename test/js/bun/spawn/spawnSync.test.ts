@@ -283,7 +283,7 @@ describe("uid/gid", () => {
     } catch (e) {
       thrown = e;
     }
-    expect(setuidDeniedCodes).toContain(thrown?.code);
+    expect(thrown?.code).toBeOneOf(setuidDeniedCodes);
   });
 });
 

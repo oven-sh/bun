@@ -1,0 +1,14 @@
+# -- source: a-direct-call-of-another-closure-in-a-function-that-calls-its-parameter-is-held-against-that-function.js
+# let last = 0;
+# let seen = 0;
+# function borrow(value, visit) { const note = (k) => { let turns = 0; for (let i = 0; i < 2; i++) turns = (turns + i) | 0; seen = seen + k + turns; }; let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; note(value); visit(value); return work; }
+# function maker(start) { let count = start; borrow(start, (x) => { count += x & 1; last = count; }); return count; }
+# print(maker(1), maker(2), last, seen);
+# -- end of source
+# The red control of a-direct-call-of-the-closure-that-a-called-parameter-holds-is-left-to-the-caller.ir: borrow() also calls note(), a closure that it makes itself, directly. That one is no closure of its caller's: the effects of borrow() given its arguments must name what it writes.
+# They are taken to name no write of ModuleVariables: the verifier stops on the call of note().
+# f1 = borrow
+# OPTIONS: check=Validate testing=RowSaysLess:Summary/f1/ModuleVariables
+# DIAGNOSTIC: EffectsNotCounted
+# RUN: walk f1 mechanisms=all
+# CHECK-NOT: code f1:Body

@@ -1,0 +1,39 @@
+A test file imports a helper that mocks a package, and beside it a file that comes to that package through another file. The whole graph is linked before the helper runs, so the body of the package runs ahead of the mock and the mock is laid over it. Over layers the package, the files of the project and the test file lie in three images. Here: the helper is a package, and it mocks two.
+#### demo.test.ts
+console.log("| CASE ran the test file");
+import { test } from "bun:test";
+import "helper";
+import demo from "./demo.ts";
+test("t", () => {
+  console.log("| CASE", demo());
+});
+#### demo.ts
+console.log("| CASE ran demo"); import { confirm, select } from "./prompts.ts"; export default () => confirm("enter") + " | " + select("up");
+#### node_modules/confirm/index.ts
+console.log("| CASE ran confirm"); import { create } from "core"; export default create("confirm");
+#### node_modules/confirm/package.json
+{ "name": "confirm", "type": "module", "exports": "./index.ts" }
+#### node_modules/core/index.ts
+console.log("| CASE ran core"); export const create = (name: string) => (key: string) => name + " " + key;
+#### node_modules/core/package.json
+{ "name": "core", "type": "module", "exports": "./index.ts" }
+#### node_modules/helper/index.ts
+console.log("| CASE ran helper");  import { mock, vi } from "bun:test"; vi.mock("confirm", async importOriginal => {
+  const actual: any = await importOriginal();
+  console.log("| CASE has the original", typeof actual.default);
+  return { ...actual, default: (key: string) => "wrapped " + actual.default(key) };
+}); vi.mock("select", async importOriginal => {
+  const actual: any = await importOriginal();
+  console.log("| CASE has the original", typeof actual.default);
+  return { ...actual, default: (key: string) => "wrapped " + actual.default(key) };
+});
+#### node_modules/helper/package.json
+{ "name": "helper", "type": "module", "exports": "./index.ts" }
+#### node_modules/select/index.ts
+console.log("| CASE ran select"); import { create } from "core"; export default create("select");
+#### node_modules/select/package.json
+{ "name": "select", "type": "module", "exports": "./index.ts" }
+#### package.json
+{ "name": "mock-linked-layers", "type": "module" }
+#### prompts.ts
+console.log("| CASE ran prompts"); export { default as confirm } from "confirm"; export { default as select } from "select";

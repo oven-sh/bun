@@ -1,17 +1,31 @@
-use super::{Diagnostics, Int32Flow, Int32FlowValue, ProgramView};
-use crate::engine::{Position, UserDiagnosticRecord, position_of};
-use crate::ir::generated::{Int32ProofFailure, TypeSiteKind, UserDiagnosticKind};
-use crate::link::ProgramNames;
+use super::{Int32Flow, Int32FlowValue};
+use crate::engine::UserDiagnosticRecord;
+use crate::ir::generated::{Int32ProofFailure, UserDiagnosticKind};
 
 const INT32_RANGE: &str = "an int32 is a whole number from -2147483648 to 2147483647";
 const ANY_NUMBER: &str =
     "it is a 'number', which can have a fraction, be out of range, or be NaN or -0";
+const ADVICE: &str = " Write '| 0' to make it one.";
+const NO_NUMBER: &str = "it is not a number";
+const ADVICE_AT_SPREAD: &str =
+    " If it is a spread argument, pass its elements as separate arguments.";
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
-pub(super) struct Int32FlowKey {
-    display_path: Vec<u8>,
-    position: u32,
-    site: Option<(u32, TypeSiteKind)>,
+struct Bounds {
+    minimum: i64,
+    maximum: i64,
+}
+
+fn bounds_of(record: &UserDiagnosticRecord) -> Bounds {
+    Bounds {
+        minimum: record.minimum as i64,
+        maximum: record.maximum as i64,
+    }
+}
+
+fn is_constant(record: &UserDiagnosticRecord, failure: Int32ProofFailure) -> bool {
+    let Bounds { minimum, maximum } = bounds_of(record);
+    record.kind == UserDiagnosticKind::ConstantNotInt32
+        || (failure == Int32ProofFailure::OutOfRange && minimum == maximum)
 }
 
 fn describe_constant(failure: Int32ProofFailure) -> &'static str {
@@ -19,18 +33,23 @@ fn describe_constant(failure: Int32ProofFailure) -> &'static str {
         Int32ProofFailure::NotANumber => "it is NaN",
         Int32ProofFailure::NegativeZero => "it is -0",
         Int32ProofFailure::Fraction => "it has a fraction",
-        _ => INT32_RANGE,
+        Int32ProofFailure::Unknown
+        | Int32ProofFailure::OutOfRange
+        | Int32ProofFailure::AnyNumber
+        | Int32ProofFailure::Untyped
+        | Int32ProofFailure::Product
+        | Int32ProofFailure::Quotient
+        | Int32ProofFailure::NegatedZero
+        | Int32ProofFailure::Remainder
+        | Int32ProofFailure::Power
+        | Int32ProofFailure::WorkLimit => INT32_RANGE,
     }
 }
 
-fn describe_failure(
-    record: &UserDiagnosticRecord,
-    failure: Int32ProofFailure,
-    is_any: bool,
-) -> String {
+fn describe_failure(record: &UserDiagnosticRecord, failure: Int32ProofFailure) -> String {
     let text = match failure {
         Int32ProofFailure::OutOfRange => {
-            let (minimum, maximum) = (record.minimum as i64, record.maximum as i64);
+            let Bounds { minimum, maximum } = bounds_of(record);
             return format!("it can be anything from {minimum} to {maximum}");
         }
         Int32ProofFailure::Product => "a product can be too large to be exact, and it can be -0",
@@ -38,23 +57,55 @@ fn describe_failure(
         Int32ProofFailure::NegatedZero => "the negative of 0 is -0, which is not an int32",
         Int32ProofFailure::Remainder => "a remainder can be -0 or NaN",
         Int32ProofFailure::Power => "a power can be out of range or have a fraction",
-        Int32ProofFailure::WorkLimit => "the expression is too large to check",
-        _ => match is_any {
-            true => "its type is 'any'",
-            false => ANY_NUMBER,
-        },
+        Int32ProofFailure::Unknown => NO_NUMBER,
+        Int32ProofFailure::AnyNumber
+        | Int32ProofFailure::Untyped
+        | Int32ProofFailure::NotANumber
+        | Int32ProofFailure::NegativeZero
+        | Int32ProofFailure::Fraction
+        | Int32ProofFailure::WorkLimit => ANY_NUMBER,
     };
     text.to_owned()
 }
 
+fn advice_for(failure: Int32ProofFailure) -> &'static str {
+    if failure == Int32ProofFailure::Unknown {
+        ADVICE_AT_SPREAD
+    } else {
+        ADVICE
+    }
+}
+
+fn failure_of(record: &UserDiagnosticRecord) -> Int32ProofFailure {
+    Int32ProofFailure::from_wire(record.count).unwrap_or(Int32ProofFailure::AnyNumber)
+}
+
+fn write_message_without_flow(record: &UserDiagnosticRecord) -> Vec<u8> {
+    let failure = failure_of(record);
+    let message = if is_constant(record, failure) {
+        let reason = describe_constant(failure);
+        format!("The value is declared 'int32', but it is not an int32: {reason}.")
+    } else {
+        let reason = describe_failure(record, failure);
+        let advice = advice_for(failure);
+        format!("The value is declared 'int32', but it might not be an int32: {reason}.{advice}")
+    };
+    message.into_bytes()
+}
+
+fn is_untyped(failure: Int32ProofFailure) -> bool {
+    matches!(
+        failure,
+        Int32ProofFailure::AnyNumber | Int32ProofFailure::Untyped
+    )
+}
+
 fn write_message(record: &UserDiagnosticRecord, flow: &Int32Flow) -> Vec<u8> {
-    let failure = Int32ProofFailure::from_wire(record.count).unwrap_or(Int32ProofFailure::Unknown);
+    let failure = failure_of(record);
     let mut message = flow.subject.clone();
     message.extend_from_slice(b" is declared 'int32', but ");
     match &flow.value {
-        Int32FlowValue::Expression { text, .. }
-            if record.kind == UserDiagnosticKind::ConstantNotInt32 =>
-        {
+        Int32FlowValue::Expression { text, .. } if is_constant(record, failure) => {
             let parts: [&[u8]; 5] = [
                 b"'",
                 text,
@@ -70,7 +121,10 @@ fn write_message(record: &UserDiagnosticRecord, flow: &Int32Flow) -> Vec<u8> {
             is_any,
             ..
         } => {
-            let reason = describe_failure(record, failure, *is_any);
+            let reason = match *is_any && is_untyped(failure) {
+                true => "its type is 'any'".to_owned(),
+                false => describe_failure(record, failure),
+            };
             let parts: [&[u8]; 7] = [
                 b"'",
                 text,
@@ -97,61 +151,26 @@ fn write_message(record: &UserDiagnosticRecord, flow: &Int32Flow) -> Vec<u8> {
     message
 }
 
-fn write_message_without_flow(record: &UserDiagnosticRecord) -> Vec<u8> {
-    let failure = Int32ProofFailure::from_wire(record.count).unwrap_or(Int32ProofFailure::Unknown);
-    let message = if record.kind == UserDiagnosticKind::ConstantNotInt32 {
-        let reason = describe_constant(failure);
-        format!("The value is declared 'int32', but it is not an int32: {reason}.")
-    } else {
-        let reason = describe_failure(record, failure, false);
-        format!("The value is declared 'int32', but it might not be an int32: {reason}.")
+pub(super) fn write_int32_message(
+    record: &UserDiagnosticRecord,
+    flow: Option<&Int32Flow>,
+) -> Option<(Vec<u8>, Option<u32>)> {
+    let is_int32_error = matches!(
+        record.kind,
+        UserDiagnosticKind::UnprovenInt32 | UserDiagnosticKind::ConstantNotInt32
+    );
+    if !is_int32_error {
+        return None;
+    }
+    let shown = match flow.map(|flow| &flow.value) {
+        Some(&Int32FlowValue::Expression { start, .. }) => Some(start),
+        Some(Int32FlowValue::PatternTarget(_) | Int32FlowValue::SpreadArgument) | None => None,
     };
-    message.into_bytes()
-}
-
-impl Diagnostics {
-    pub(super) fn add_int32_flow(&mut self, view: ProgramView<'_, '_>, flow: Int32Flow) {
-        let key = Int32FlowKey {
-            display_path: view.sources.module_paths(flow.file).display_path.to_vec(),
-            position: flow.position,
-            site: flow.site,
-        };
-        self.int32_flows.insert(key, flow);
-    }
-
-    /// The message, and where it points: at the expression that flows, where there is one, in place of the statement around it.
-    pub(super) fn write_int32_message(
-        &self,
-        record: &UserDiagnosticRecord,
-        names: &ProgramNames,
-    ) -> Option<(Vec<u8>, Option<Position>)> {
-        let is_about_flow = matches!(
-            record.kind,
-            UserDiagnosticKind::UnprovenInt32 | UserDiagnosticKind::ConstantNotInt32
-        );
-        if !is_about_flow {
-            return None;
-        }
-        let flow = position_of(record.location).and_then(|position| {
-            self.int32_flows.get(&Int32FlowKey {
-                display_path: names.module_path(position.module).to_vec(),
-                position: position.offset,
-                site: position_of(record.origin).map(|origin| (origin.offset, record.site_kind)),
-            })
-        });
-        let shown = match (position_of(record.location), flow.map(|flow| &flow.value)) {
-            (Some(position), Some(&Int32FlowValue::Expression { start, .. })) => Some(Position {
-                offset: start,
-                ..position
-            }),
-            (position, _) => position,
-        };
-        let message = match flow {
-            Some(flow) => write_message(record, flow),
-            None => write_message_without_flow(record),
-        };
-        Some((message, shown))
-    }
+    let message = match flow {
+        Some(flow) => write_message(record, flow),
+        None => write_message_without_flow(record),
+    };
+    Some((message, shown))
 }
 
 #[cfg(test)]
@@ -161,14 +180,10 @@ mod tests {
 
     use super::*;
     use crate::engine::{SourceLocation, TextRange};
-    use crate::ir::generated::LimitId;
+    use crate::ir::generated::{LimitId, TypeSiteKind};
     use crate::ir::ids::ABSENT_WORD;
 
     fn record(kind: UserDiagnosticKind, failure: Int32ProofFailure) -> UserDiagnosticRecord {
-        let location = SourceLocation {
-            module: 0,
-            position: 4,
-        };
         UserDiagnosticRecord {
             kind,
             function: ABSENT_WORD,
@@ -176,24 +191,35 @@ mod tests {
             value: ABSENT_WORD,
             layout: ABSENT_WORD,
             limit: LimitId::None,
-            count: failure as u32,
-            location,
+            count: failure.to_wire(),
+            location: SourceLocation {
+                module: 0,
+                position: 4,
+            },
             message: TextRange {
                 offset: 0,
                 length: 0,
             },
-            origin: location,
-            site_kind: TypeSiteKind::Variable,
+            origin: SourceLocation {
+                module: ABSENT_WORD,
+                position: 0,
+            },
+            site_kind: TypeSiteKind::Unknown,
             minimum: -4294967296.0,
             maximum: 4294967294.0,
         }
+    }
+
+    fn message_of(record: &UserDiagnosticRecord) -> String {
+        let (written, shown) = write_int32_message(record, None).expect("an error about an int32");
+        assert_eq!(shown, None);
+        BStr::new(&written).to_string()
     }
 
     fn flow(value: Int32FlowValue) -> Int32Flow {
         Int32Flow {
             file: FileId(0),
             position: 4,
-            site: Some((4, TypeSiteKind::Variable)),
             subject: b"'kept'".to_vec(),
             value,
         }
@@ -208,40 +234,105 @@ mod tests {
         }
     }
 
-    fn unproven(failure: Int32ProofFailure, value: Int32FlowValue) -> String {
-        let record = record(UserDiagnosticKind::UnprovenInt32, failure);
-        BStr::new(&write_message(&record, &flow(value))).to_string()
+    fn described(
+        kind: UserDiagnosticKind,
+        failure: Int32ProofFailure,
+        value: Int32FlowValue,
+    ) -> (String, Option<u32>) {
+        let (written, shown) = write_int32_message(&record(kind, failure), Some(&flow(value)))
+            .expect("an error about an int32");
+        (BStr::new(&written).to_string(), shown)
+    }
+
+    #[test]
+    fn described_flow_names_the_position_quotes_the_expression_and_says_what_to_write() {
+        let kind = UserDiagnosticKind::UnprovenInt32;
+        assert_eq!(
+            described(kind, Int32ProofFailure::OutOfRange, expression(false)),
+            (
+                "'kept' is declared 'int32', but 'a + b' might not be an int32: it can be anything from -4294967296 to 4294967294. Write '(a + b) | 0'.".to_owned(),
+                Some(11)
+            )
+        );
+        let (any, _) = described(kind, Int32ProofFailure::Untyped, expression(true));
+        assert!(
+            any.contains("might not be an int32: its type is 'any'. Write"),
+            "{any}"
+        );
+        let (unknown, _) = described(kind, Int32ProofFailure::Untyped, expression(false));
+        assert!(
+            unknown.contains("might not be an int32: it is a 'number', which"),
+            "{unknown}"
+        );
+    }
+
+    #[test]
+    fn described_constant_is_not_told_what_to_write() {
+        let kind = UserDiagnosticKind::ConstantNotInt32;
+        let (message, _) = described(kind, Int32ProofFailure::Fraction, expression(false));
+        assert_eq!(
+            message,
+            "'kept' is declared 'int32', but 'a + b' is not an int32: it has a fraction."
+        );
+    }
+
+    #[test]
+    fn value_without_expression_is_described() {
+        let kind = UserDiagnosticKind::UnprovenInt32;
+        let target = Int32FlowValue::PatternTarget(b"kept".to_vec());
+        assert_eq!(
+            described(kind, Int32ProofFailure::AnyNumber, target),
+            (
+                "'kept' is declared 'int32', but the value assigned to 'kept' might not be an int32: a value assigned by destructuring, or by a 'for...of' or 'for...in' loop, cannot be checked. Assign it to a 'number' variable first, then convert that with '| 0'.".to_owned(),
+                None
+            )
+        );
+        assert_eq!(
+            described(
+                kind,
+                Int32ProofFailure::Unknown,
+                Int32FlowValue::SpreadArgument
+            )
+            .0,
+            "'kept' is declared 'int32', but the value passed by this spread might not be an int32: the elements of a spread argument cannot be checked. Pass it as a separate argument."
+        );
+    }
+
+    fn unproven(failure: Int32ProofFailure) -> String {
+        message_of(&record(UserDiagnosticKind::UnprovenInt32, failure))
     }
 
     fn constant(failure: Int32ProofFailure) -> String {
-        let record = record(UserDiagnosticKind::ConstantNotInt32, failure);
-        BStr::new(&write_message(&record, &flow(expression(false)))).to_string()
+        message_of(&record(UserDiagnosticKind::ConstantNotInt32, failure))
     }
 
     #[test]
     fn range_is_printed_in_whole_numbers() {
         assert_eq!(
-            unproven(Int32ProofFailure::OutOfRange, expression(false)),
-            "'kept' is declared 'int32', but 'a + b' might not be an int32: it can be anything from -4294967296 to 4294967294. Write '(a + b) | 0'."
+            unproven(Int32ProofFailure::OutOfRange),
+            "The value is declared 'int32', but it might not be an int32: it can be anything from -4294967296 to 4294967294. Write '| 0' to make it one."
         );
     }
 
     #[test]
-    fn untyped_value_is_any_only_where_checker_says_so() {
-        let expected_number = unproven(Int32ProofFailure::AnyNumber, expression(true));
-        assert!(
-            expected_number.contains("might not be an int32: its type is 'any'. Write"),
-            "{expected_number}"
-        );
-        let any = unproven(Int32ProofFailure::Untyped, expression(true));
-        assert!(
-            any.contains("might not be an int32: its type is 'any'. Write"),
-            "{any}"
-        );
-        let unknown = unproven(Int32ProofFailure::Untyped, expression(false));
-        assert!(
-            unknown.contains("might not be an int32: it is a 'number', which"),
-            "{unknown}"
+    fn every_unproven_value_is_told_what_to_write() {
+        for failure in Int32ProofFailure::ALL {
+            if failure == Int32ProofFailure::Unknown {
+                continue;
+            }
+            let message = unproven(failure);
+            assert!(
+                message.ends_with(". Write '| 0' to make it one."),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn value_that_is_no_number_is_not_told_to_write_or_zero() {
+        assert_eq!(
+            unproven(Int32ProofFailure::Unknown),
+            "The value is declared 'int32', but it might not be an int32: it is not a number. If it is a spread argument, pass its elements as separate arguments."
         );
     }
 
@@ -265,28 +356,43 @@ mod tests {
                 Int32ProofFailure::Power,
                 "a power can be out of range or have a fraction",
             ),
-            (
-                Int32ProofFailure::WorkLimit,
-                "the expression is too large to check",
-            ),
         ];
         for (failure, reason) in reasons {
-            let message = unproven(failure, expression(false));
+            let message = unproven(failure);
             assert!(
-                message.contains(&format!("int32: {reason}. Write '")),
+                message.contains(&format!("might not be an int32: {reason}. ")),
                 "{message}"
             );
         }
     }
 
     #[test]
+    fn failure_without_reason_of_its_own_is_any_number() {
+        let any_number = unproven(Int32ProofFailure::AnyNumber);
+        assert!(
+            any_number.contains("might not be an int32: it is a 'number', which"),
+            "{any_number}"
+        );
+        assert_eq!(unproven(Int32ProofFailure::Untyped), any_number);
+        assert_eq!(unproven(Int32ProofFailure::WorkLimit), any_number);
+        let undeclared = UserDiagnosticRecord {
+            count: u32::MAX,
+            ..record(
+                UserDiagnosticKind::UnprovenInt32,
+                Int32ProofFailure::Unknown,
+            )
+        };
+        assert_eq!(message_of(&undeclared), any_number);
+    }
+
+    #[test]
     fn constant_says_what_it_is() {
         assert_eq!(
-            constant(Int32ProofFailure::Fraction),
-            "'kept' is declared 'int32', but 'a + b' is not an int32: it has a fraction."
+            constant(Int32ProofFailure::NotANumber),
+            "The value is declared 'int32', but it is not an int32: it is NaN."
         );
-        assert!(constant(Int32ProofFailure::NotANumber).ends_with(": it is NaN."));
         assert!(constant(Int32ProofFailure::NegativeZero).ends_with(": it is -0."));
+        assert!(constant(Int32ProofFailure::Fraction).ends_with(": it has a fraction."));
         assert!(
             constant(Int32ProofFailure::OutOfRange)
                 .ends_with(": an int32 is a whole number from -2147483648 to 2147483647.")
@@ -294,35 +400,27 @@ mod tests {
     }
 
     #[test]
-    fn flow_that_was_not_described_keeps_its_reason() {
-        let unproven = record(
-            UserDiagnosticKind::UnprovenInt32,
-            Int32ProofFailure::Quotient,
-        );
-        assert_eq!(
-            BStr::new(&write_message_without_flow(&unproven)).to_string(),
-            "The value is declared 'int32', but it might not be an int32: a division can produce a fraction."
-        );
-        let constant = record(
-            UserDiagnosticKind::ConstantNotInt32,
-            Int32ProofFailure::NotANumber,
-        );
-        assert_eq!(
-            BStr::new(&write_message_without_flow(&constant)).to_string(),
-            "The value is declared 'int32', but it is not an int32: it is NaN."
-        );
+    fn single_number_out_of_range_is_a_constant() {
+        let single = UserDiagnosticRecord {
+            minimum: 4294967296.0,
+            maximum: 4294967296.0,
+            ..record(
+                UserDiagnosticKind::UnprovenInt32,
+                Int32ProofFailure::OutOfRange,
+            )
+        };
+        let expected = constant(Int32ProofFailure::OutOfRange);
+        assert_eq!(message_of(&single), expected);
     }
 
     #[test]
-    fn value_without_expression_is_described() {
-        let target = Int32FlowValue::PatternTarget(b"kept".to_vec());
-        assert_eq!(
-            unproven(Int32ProofFailure::AnyNumber, target),
-            "'kept' is declared 'int32', but the value assigned to 'kept' might not be an int32: a value assigned by destructuring, or by a 'for...of' or 'for...in' loop, cannot be checked. Assign it to a 'number' variable first, then convert that with '| 0'."
-        );
-        assert_eq!(
-            unproven(Int32ProofFailure::AnyNumber, Int32FlowValue::SpreadArgument),
-            "'kept' is declared 'int32', but the value passed by this spread might not be an int32: the elements of a spread argument cannot be checked. Pass it as a separate argument."
-        );
+    fn other_kinds_keep_the_words_of_the_engine() {
+        for kind in [
+            UserDiagnosticKind::Int32OfDependencyNotProven,
+            UserDiagnosticKind::InvalidRegExpLiteral,
+        ] {
+            let record = record(kind, Int32ProofFailure::AnyNumber);
+            assert_eq!(write_int32_message(&record, None), None);
+        }
     }
 }

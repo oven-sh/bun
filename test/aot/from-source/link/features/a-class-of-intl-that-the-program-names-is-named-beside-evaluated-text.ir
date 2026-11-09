@@ -1,0 +1,13 @@
+# the same program names one class: that one is named, its neighbors are not
+# -- source: a-class-of-intl-that-the-program-names-is-named-beside-evaluated-text.ts
+# declare const input: any;
+# declare const table: any;
+# new Function(input)();
+# table[input]();
+# new Intl.Segmenter("en");
+# -- end of source
+# RUN: features
+# CHECK: by IntlSegmenter named
+# RUN(NEVER): features
+# NEVER-NOT: by IntlCollator named
+# NEVER-NOT: by Temporal{{*}} named

@@ -1,0 +1,24 @@
+# THE LYING CONTROLS of ways-that-meet-in-front-of-the-promise-from-source.ir: EACH OF THE TWELVE IS REPORTED
+# f1 insideTwo: unequal to a value inside the range cuts nothing . f2 two: room for one is not room for two . f3 otherArm: the step stands in the arm in which the two ARE equal . f4 otherValue: the relation is of another value
+# f5 oneArmOnly: one arm is proven, the other is not . f6 zeroStays: 0 is still there in front of the minus . f7 orWide, f8 andWide: the arm is the wide one . f9 behindTheMeeting: what has met has all that both arms bring
+# f10 inLoop: no turn of a loop is followed . f11 defaultWide . f12 whoCalls: THE ONE CALL IN SIGHT PASSES 1, 2 AND true: the walk never enters the other arm, and the sum is reported all the same: until 0-int32-promises-2 a conditional was judged as the walk has it
+# -- source: ways-that-meet-prove-no-more-than-they-bring-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# function insideTwo(a: Bun.int32): Bun.int32 { return a !== -2147483647 ? a - 2 : a; }
+# function two(a: Bun.int32): Bun.int32 { return a !== -2147483648 ? a - 2 : a; }
+# function otherArm(a: Bun.int32): Bun.int32 { return a !== -2147483648 ? a : a - 1; }
+# function otherValue(a: Bun.int32, b: Bun.int32): Bun.int32 { return b !== -2147483648 ? a - 1 : a; }
+# function oneArmOnly(a: Bun.int32, c: boolean): Bun.int32 { return c ? a + 1 : (a < 5 ? a + 1 : a); }
+# function zeroStays(a: Bun.int32): Bun.int32 { const low = a & 255; return low !== 1 ? -low : 0; }
+# function orWide(a: Bun.int32): Bun.int32 { return a < -1000 || a > 1000 ? a * 1000 : 0; }
+# function andWide(a: Bun.int32): Bun.int32 { return a > 0 && a < 10000000 ? a * 1000 : 0; }
+# function behindTheMeeting(a: Bun.int32, c: boolean): Bun.int32 { const x = c ? a : 0; return x + 1; }
+# function inLoop(a: Bun.int32, n: Bun.int32): Bun.int32 { let s: Bun.int32 = a; for (let i = 0; i < n; i++) s = s !== 2147483646 ? s + 2 : s; return s; }
+# function defaultWide(a: Bun.int32 | undefined): Bun.int32 { return (a ?? 0) + 1; }
+# function whoCalls(a: Bun.int32, b: Bun.int32, c: boolean): Bun.int32 { return c ? a + b : 0; }
+# sink(insideTwo, two, otherArm, otherValue, oneArmOnly, zeroStays, orWide, andWide, behindTheMeeting, inLoop, defaultWide);
+# sink(whoCalls(1, 2, true));
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 12
+# RUN: walk f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 mechanisms=all
+# CHECK: the walk of f1:Body failed

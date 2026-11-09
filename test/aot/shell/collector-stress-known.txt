@@ -1,5 +1,4 @@
 # Programs that collector-stress.py does not judge, and why.
-external-data/json-parse-type-argument-keys-another    counts calls into the runtime
 external-data/json-parse-type-argument-undeclared-stay    counts calls into the runtime
 classes-and-closures/property-stores-on-new-functions    counts calls into the runtime
 private-members/members-added-at-once-untyped    counts calls into the runtime

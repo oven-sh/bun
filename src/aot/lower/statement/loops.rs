@@ -28,37 +28,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.pop_jump_target();
     }
 
+    fn lower_test_of_dead_loop(&mut self, test: ExprId, body: StmtId) {
+        let in_bun_run = self.file.decisions().as_folded_by_bun_run();
+        self.lower_test_with_known_answer(test, in_bun_run.is_dead_stmt(body));
+    }
+
     pub(super) fn lower_while(&mut self, statement: StmtId, test: ExprId, body: StmtId) {
         if self.file.decisions().is_dead_stmt(body) {
-            self.lower_decided_test(test);
-            self.hold_names_of_removed_statement(body);
+            self.lower_test_of_dead_loop(test, body);
             return;
         }
         let body_block = self.create_block();
         let after = self.create_block();
         let header = self.begin_loop(statement);
-        let recorded = self.lower_loop_test(test, body_block, after);
+        self.lower_condition(test, body_block, after);
         self.continue_in(body_block);
 
         self.lower_loop_body(statement, body, after, header);
         self.jump(header);
         self.builder.seal(header);
         self.continue_in(after);
-        self.record_again(recorded);
-    }
-
-    // JSC writes the test of a `while` or `for` loop once more behind the body, so what follows the loop follows the records of the test.
-    fn lower_loop_test(&mut self, test: ExprId, body: BlockId, after: BlockId) -> Option<u32> {
-        let records = self.builder.number_of_records();
-        self.lower_condition(test, body, after);
-        let recorded = self.builder.last_recorded_position();
-        recorded.filter(|_| self.builder.number_of_records() != records)
-    }
-
-    fn record_again(&mut self, recorded: Option<u32>) {
-        if let Some(position) = recorded {
-            self.builder.record_position(position);
-        }
     }
 
     pub(super) fn lower_do_while(&mut self, statement: StmtId, body: StmtId, test: ExprId) {
@@ -83,10 +72,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 });
             }
             None => {
-                if init.is_some() {
-                    // The source map knows no `let` in the head of a loop.
-                    self.joined_declarations_end = Some(self.file.hir[statement].start);
-                    self.lower_statement(init);
+                match init.some().map(|init| self.file.hir[init].kind) {
+                    Some(StmtKind::Expr(opening)) => self.lower_taken_value_for_effect(opening),
+                    Some(_) => self.lower_statement(init),
+                    None => {}
                 }
                 self.lower_for_loop(statement);
             }
@@ -105,27 +94,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         else {
             unreachable!("lower_for_loop takes a For statement");
         };
-        if self.file.decisions().is_dead_stmt(body) {
-            self.lower_decided_test(test);
-            self.hold_names_of_removed_statement(body);
-            return;
-        }
         let scope = self.file.bound.own_scope(statement);
         let copied_scope = (scope.is_some() && is_let_declaration(hir, init)).then_some(scope);
         if let Some(scope) = copied_scope {
             self.copy_iteration_bindings(scope);
         }
+        if self.file.decisions().is_dead_stmt(body) {
+            self.lower_test_of_dead_loop(test, body);
+            return;
+        }
         let body_block = self.create_block();
         let update_block = self.create_block();
         let after = self.create_block();
         let header = self.begin_loop(statement);
-        let recorded = match test.some() {
-            Some(test) => self.lower_loop_test(test, body_block, after),
-            None => {
-                self.jump(body_block);
-                None
-            }
-        };
+        match test.some() {
+            Some(test) => self.lower_condition(test, body_block, after),
+            None => self.jump(body_block),
+        }
         self.continue_in(body_block);
 
         self.lower_loop_body(statement, body, after, update_block);
@@ -136,11 +121,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.copy_iteration_bindings(scope);
         }
         if update.is_some() {
-            self.lower_expression_for_effect(update);
+            self.lower_taken_value_for_effect(update);
         }
         self.jump(header);
         self.builder.seal(header);
         self.continue_in(after);
-        self.record_again(recorded);
     }
 }

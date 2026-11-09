@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "./harness/default-timeout";
+
+const nameOfExecutable = isWindows ? "executable.exe" : "executable";
 
 // Next.js's server makes the paths of its pages and manifests out of `__dirname` and require()s them, behind a hook on
 // Module._resolveFilename. The pages are further entry points of the build and the manifests are files that --asset gave it.
@@ -67,7 +70,7 @@ test("names made at run time out of __dirname find the files of the executable",
     "site/.next/server/chunks/1.js": `exports.name = "chunk";`,
   });
   const site = join(String(dir), "site");
-  const executable = join(String(dir), "executable");
+  const executable = join(String(dir), nameOfExecutable);
   const run = async (cmd: string[], hooks = "") => {
     await using proc = Bun.spawn({ cmd, cwd: site, env: { ...bunEnv, HOOKS: hooks }, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

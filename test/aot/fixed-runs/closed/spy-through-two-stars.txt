@@ -1,0 +1,41 @@
+vi.spyOn() on the namespace of a file that only hands on a name of a mocked module: two stars deep, under another name, an import that is exported.
+#### bindings.js
+import { fn } from "./outer.js"; import { again } from "./renamed.js"; import { third } from "./local.js"; export const seen = () => [fn(), again(), third()].join();
+#### dep.js
+export function fn() { return "real-fn"; } export function other() { return "real-other"; } export const value = "real";
+#### local.js
+import { other } from "./dep.js"; export { other as third };
+#### outer.js
+export * from "./star.js";
+#### renamed.js
+export { fn as again } from "./dep.js";
+#### star.js
+export * from "./dep.js";
+#### x.test.js
+import { test, vi, mock } from "bun:test";
+const said = run => { try { return String(run()); } catch (error) { return error.constructor.name + ": " + error.message.slice(0, 60); } };
+import * as ns from "./dep.js";
+import * as outer from "./outer.js";
+import * as renamed from "./renamed.js";
+import * as local from "./local.js";
+import { seen } from "./bindings.js";
+const exports = vi.hoisted(() => ({ fn: () => "fn", other: () => "other" }));
+vi.mock("./dep.js", () => exports);
+test("outer", () => {
+  const spy = vi.spyOn(outer, "fn").mockReturnValue("spied");
+  console.log("| CASE", exports.fn === spy, ns.fn(), outer.fn(), renamed.again(), seen());
+  spy.mockRestore();
+  console.log("| CASE", ns.fn(), outer.fn(), seen());
+});
+test("renamed", () => {
+  const spy = vi.spyOn(renamed, "again").mockReturnValue("spied");
+  console.log("| CASE", exports.fn === spy, "again" in exports, ns.fn(), outer.fn(), renamed.again(), seen());
+  spy.mockRestore();
+  console.log("| CASE", ns.fn(), renamed.again(), seen());
+});
+test("local", () => {
+  const spy = vi.spyOn(local, "third").mockReturnValue("spied");
+  console.log("| CASE", exports.other === spy, ns.other(), local.third(), seen());
+  spy.mockRestore();
+  console.log("| CASE", ns.other(), local.third(), seen());
+});

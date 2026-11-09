@@ -2,8 +2,8 @@
 // `visitor.visit<Leaf>(node)` calls a member of an interface: a declaration without a body, with a written type argument. Whatever runs there is a function of the program, which
 // allocates what it allocates, or code that the compiler does not see, which cannot make an object with one of the program's layouts. So the call makes no Leaf, and none of what a
 // Leaf leads to: Leaf and Inner only describe objects.
-// CHECK: layout {{*}}name="Leaf" {{*}}flags=[IsNeverAllocated]
-// CHECK: layout {{*}}name="Inner" {{*}}flags=[IsNeverAllocated]
+// CHECK: layout {{*}}fields=[{key="inner"{{*}}flags=[IsNeverAllocated]
+// CHECK: layout {{*}}fields=[{key="depth"{{*}}flags=[IsNeverAllocated]
 interface Inner {
   depth: number;
 }

@@ -5,10 +5,14 @@
 // Without an argument, they are those of the `typescript7` package that test/package.json installs. They have to be of
 // the version of typescript-go that the type checker is a port of. test/cli/check/check.test.ts compares them.
 //
+// What most comments say is left out: what is read of them are JSDoc's tags, and what `@deprecated` says. Copyright notices
+// stay as well. Spaces take its place, so a declaration keeps the position that TypeScript reports.
+//
 // The format is described in src/runtime/cli/typescript_libs.rs.
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { constants, zstdCompressSync } from "node:zlib";
+import { blankComments } from "../src/codegen/comments";
 
 function installed() {
   const test = join(import.meta.dir, "..", "test");
@@ -32,7 +36,10 @@ const dictionaryOf = (name: string) =>
 const names = readdirSync(from)
   .filter(name => /^lib(\.[a-z0-9]+)*\.d\.ts$/.test(name))
   .sort();
-const text = (name: string) => readFileSync(join(from, name));
+const texts = new Map(
+  names.map(name => [name, Buffer.from(blankComments(name, readFileSync(join(from, name), "utf8")))]),
+);
+const text = (name: string) => texts.get(name)!;
 const frames = names.map(name => {
   const dictionary = dictionaryOf(name);
   return zstdCompressSync(text(name), {

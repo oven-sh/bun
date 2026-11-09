@@ -466,22 +466,62 @@ describe.concurrent("bun check", () => {
     });
 
     // scripts/update-typescript-libs.ts writes typescript_libs.bin.
-    test.skipIf(!typescript7)("match TypeScript 7's byte for byte", () => {
+    const bundledLibs = () => {
       const bundle = readFileSync(join(import.meta.dir, "../../../src/runtime/cli/typescript_libs.bin"));
-      const dictionaries = [undefined, "lib.es5.d.ts", "lib.dom.d.ts"].map(
-        name => name && readFileSync(join(typescript7!, name)),
-      );
-      const bundled = Array.from({ length: bundle.readUInt32LE(0) }, (_, i) => {
-        const record = bundle.subarray(4 + i * 52);
+      const records = Array.from({ length: bundle.readUInt32LE(0) }, (_, i) => bundle.subarray(4 + i * 52));
+      const nameOf = (record: Buffer) => record.toString("latin1", 1, 1 + record[0]);
+      const read = (record: Buffer, dictionaries: Buffer[]) => {
         const [at, length, dictionary] = [40, 44, 48].map(field => record.readUInt32LE(field));
-        const text = zstdDecompressSync(bundle.subarray(at, at + length), { dictionary: dictionaries[dictionary] });
-        return [record.toString("latin1", 1, 1 + record[0]), text] as const;
-      });
+        return zstdDecompressSync(bundle.subarray(at, at + length), { dictionary: dictionaries[dictionary - 1] });
+      };
+      const dictionaries = ["lib.es5.d.ts", "lib.dom.d.ts"].map(name =>
+        read(
+          records.find(it => nameOf(it) === name)!,
+          [],
+        ),
+      );
+      return records.map(record => [nameOf(record), read(record, dictionaries).toString("latin1")] as const);
+    };
+    const commentOrString = /"[^"\n]*"|'[^'\n]*'|`[^`]*`|\/\*[^]*?\*\/|\/\/[^\r\n]*/g;
+
+    test.skipIf(!typescript7)("match TypeScript 7's, but for what most comments say", () => {
+      const bundled = bundledLibs();
       const published = readdirSync(typescript7!).filter(name => /^lib(\..+)?\.d\.ts$/.test(name));
       expect(bundled.map(it => it[0])).toEqual(published.sort());
-      expect(
-        bundled.filter(([name, text]) => !readFileSync(join(typescript7!, name)).equals(text)).map(it => it[0]),
-      ).toEqual([]);
+      const spaces = Buffer.alloc(1024, " ").toString();
+      const isRead = /^["'`]|^\/\/\/|copyright|licen[cs]e|attribution|@deprecated\b/i;
+      const blank = (comment: string) => {
+        let out = comment.replace(/[^\r\n]+/g, line => spaces.slice(0, line.length));
+        const keep = (at: number, text: string) => (out = out.slice(0, at) + text + out.slice(at + text.length));
+        keep(0, /^\/(?:\/|\*\*?(?!\/))/.exec(comment)![0]);
+        if (comment[1] === "*") keep(comment.length - 2, "*/");
+        if (!comment.startsWith("/**")) return out;
+        for (const match of comment.matchAll(/^(?:\/\*\*|[ \t]*\*?)[ \t]*(@[A-Za-z]+)/gm)) {
+          keep(match.index + match[0].length - match[1].length, match[1]);
+        }
+        return out;
+      };
+      const differ = bundled.filter(([name, text]) => {
+        const original = readFileSync(join(typescript7!, name), "latin1");
+        // A debug build would take seconds.
+        if (isDebug && /^lib\.(?:dom|webworker)\.d\.ts$/.test(name)) return text.length !== original.length;
+        return text !== original.replace(commentOrString, it => (isRead.test(it) ? it : blank(it)));
+      });
+      expect(differ.map(it => it[0])).toEqual([]);
+    });
+
+    test.skipIf(!typescript7)("report what they declare at the positions of TypeScript 7's", async () => {
+      using dir = project({
+        "tsconfig.json": `{ "compilerOptions": { "noEmit": true, "types": [], "lib": ["es5"] } }`,
+        "index.ts": `const text: string = [1].lenght;\n`,
+      });
+      const { stdout, exitCode } = await check(dir, ["--pretty"]);
+      const place = /lib\.es5\.d\.ts:(\d+):(\d+)/;
+      expect(Bun.stripANSI(stdout)).toMatch(place);
+      const [, line, column] = place.exec(Bun.stripANSI(stdout))!;
+      const text = readFileSync(join(typescript7!, "lib.es5.d.ts"), "utf8");
+      expect(text.split("\n")[Number(line) - 1].slice(Number(column) - 1)).toStartWith("length: number;");
+      expect(exitCode).toBe(1);
     });
   });
 

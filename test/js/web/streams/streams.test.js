@@ -2369,6 +2369,21 @@ describe("ReadableStream for a File that fails to open", () => {
       expect(outcomes).toEqual(Object.fromEntries(Object.keys(promiseConsumers).map(name => [name, expected])));
     });
 
+    // It did until 1.3.14, and threw at the call from 1.4.0.
+    it("values() returns an iterator whose next() rejects", async () => {
+      const stream = makeStream();
+      const iterator = stream.values();
+      const error = await iterator.next().catch(e => e);
+      expect(error).toEqual(expected);
+      expect(await Array.fromAsync(makeStream()).catch(e => e)).toEqual(expected);
+      expect(
+        await ReadableStream.from(makeStream())
+          .getReader()
+          .read()
+          .catch(e => e),
+      ).toEqual(expected);
+    });
+
     it("pipeTo() aborts its destination and leaves the stream errored", async () => {
       const stream = makeStream();
       const aborts = [];

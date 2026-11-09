@@ -1351,6 +1351,24 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     test.skipIf(isWindows)("a file descriptor that is not open", async () => {
       expect(await codes(Bun.file(1_000_000))).toEqual(["EBADF", "EBADF"]);
     });
+
+    // A stream over a descriptor is not lifted into a Blob, so clone() tees it. The tee starts the stream.
+    test.skipIf(isWindows)("a stream over a file descriptor that is not open", async () => {
+      const results: unknown[] = [];
+      for (const make of [
+        () => new Response(Bun.file(1_000_000).stream()),
+        () => new Request("http://example.com/", { method: "POST", body: Bun.file(1_000_000).stream() }),
+      ]) {
+        const original = make();
+        const clone = original.clone();
+        const settled = await Promise.allSettled([original.text(), clone.text()]);
+        results.push(settled.map(result => (result.status === "rejected" ? result.reason?.code : result.status)));
+      }
+      expect(results).toEqual([
+        ["EBADF", "EBADF"],
+        ["EBADF", "EBADF"],
+      ]);
+    });
   });
 });
 

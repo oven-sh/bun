@@ -1989,46 +1989,47 @@ describe.concurrent("the end of a test file", () => {
     });
   });
 
-  describe("a preload's beforeAll() and aroundAll(), which run once", () => {
-    // Each file prints what its module and its test see: fake or real timers, and the year, or "now" for the real one.
-    const sees = (name: string, inTest = "", module = "bun:test") => `
-      import { test, vi } from "${module}";
-      seen("${name} module");
-      test("${name}", () => {
-        seen("${name} test");
-        ${inTest}
-      });
-    `;
-    const inEach = (files: string[], clock: string) =>
-      files.flatMap(name => [`${name} module: ${clock}`, `${name} test: ${clock}`]);
-    const setsTheTime = `beforeAll(() => void vi.setSystemTime(new Date(0)));`;
+  // Each file prints what its module and its test see: fake or real timers, and the year, or "now" for the real one.
+  const sees = (name: string, inTest = "", module = "bun:test") => `
+    import { test, vi } from "${module}";
+    seen("${name} module");
+    test("${name}", () => {
+      seen("${name} test");
+      ${inTest}
+    });
+  `;
+  const inEach = (files: string[], clock: string) =>
+    files.flatMap(name => [`${name} module: ${clock}`, `${name} test: ${clock}`]);
 
-    async function clocks(
-      preload: string,
-      {
-        flags = [] as string[],
-        files = {} as Record<string, string>,
-        module = "bun:test",
-        packages = {} as Record<string, string>,
-      } = {},
-    ) {
-      files = { "a.test.ts": sees("a"), "b.test.ts": sees("b"), "c.test.ts": sees("c"), ...files };
-      using dir = tempDir("fake-timers-preload-hooks", {
-        "preload.ts": `
-          import { afterAll, aroundAll, beforeAll, beforeEach, vi } from "${module}";
-          globalThis.seen = where =>
-            console.log(where + ":", vi.isFakeTimers() ? "fake" : "real", Date.now() < 1e12 ? new Date().getUTCFullYear() : "now");
-          ${preload}
-        `,
-        ...files,
-        ...packages,
-      });
-      const { stdout, stderr, exitCode } = await run(
-        ["test", "--preload=./preload.ts", ...flags, ...Object.keys(files).map(file => "./" + file)],
-        String(dir),
-      );
-      return { seen: stdout.split("\n").filter(line => /^(\w module|\w test|\w+):/.test(line)), stderr, exitCode };
-    }
+  async function clocks(
+    preload: string,
+    {
+      flags = [] as string[],
+      files = {} as Record<string, string>,
+      module = "bun:test",
+      packages = {} as Record<string, string>,
+    } = {},
+  ) {
+    files = { "a.test.ts": sees("a"), "b.test.ts": sees("b"), "c.test.ts": sees("c"), ...files };
+    using dir = tempDir("fake-timers-preload-hooks", {
+      "preload.ts": `
+        import { afterAll, afterEach, aroundAll, aroundEach, beforeAll, beforeEach, vi } from "${module}";
+        globalThis.seen = where =>
+          console.log(where + ":", vi.isFakeTimers() ? "fake" : "real", Date.now() < 1e12 ? new Date().getUTCFullYear() : "now");
+        ${preload}
+      `,
+      ...files,
+      ...packages,
+    });
+    const { stdout, stderr, exitCode } = await run(
+      ["test", "--preload=./preload.ts", ...flags, ...Object.keys(files).map(file => "./" + file)],
+      String(dir),
+    );
+    return { seen: stdout.split("\n").filter(line => /^(\w module|\w test|\w+):/.test(line)), stderr, exitCode };
+  }
+
+  describe("a preload's beforeAll() and aroundAll(), which run once", () => {
+    const setsTheTime = `beforeAll(() => void vi.setSystemTime(new Date(0)));`;
 
     test.each([
       ["beforeAll()", "bun:test", setsTheTime, "real 1970"],
@@ -2188,14 +2189,13 @@ describe.concurrent("the end of a test file", () => {
       });
     });
 
-    test("a clock that the preload sets again in its afterEach() ends with each file, as before", async () => {
+    test("a clock set in beforeAll() and again in the preload's afterEach() stays for every file", async () => {
       const { seen, stderr, exitCode } = await clocks(
-        `import { afterEach } from "bun:test";
-        ${setsTheTime}
+        `${setsTheTime}
         afterEach(() => void vi.setSystemTime(new Date(0)));`,
       );
       expect({ seen, exitCode }, stderr).toEqual({
-        seen: ["a module: real now", "a test: real 1970", ...inEach(["b", "c"], "real now")],
+        seen: ["a module: real now", "a test: real 1970", ...inEach(["b", "c"], "real 1970")],
         exitCode: 0,
       });
     });
@@ -2592,6 +2592,390 @@ describe.concurrent("the end of a test file", () => {
       expect({ seen, exitCode }, stderr).toEqual({
         seen: ["a module: real now", "a test: fake 1970", ...inEach(["b", "c"], "fake 1970")],
         exitCode: 0,
+      });
+    });
+  });
+
+  // The preload's module, or a hook of it that runs once, gave the preload a clock. Its other hooks set that clock for the preload.
+  describe("a preload's hooks that run for each test", () => {
+    const setsTheTime = `vi.setSystemTime(new Date(0));`;
+    const fakesTheTimers = `vi.useFakeTimers({ now: 0 });`;
+    // Ordered by the event loop, so nothing waits on a real clock.
+    const anImmediate = `await new Promise(resolve => setImmediate(resolve));`;
+    const seesAsync = (name: string, inTest: string) => `
+      import { test, vi } from "bun:test";
+      seen("${name} module");
+      test("${name}", async () => {
+        seen("${name} test");
+        ${inTest}
+      });
+    `;
+    const inAll = (module: string) =>
+      Object.fromEntries(["a", "b", "c"].map(name => [`${name}.test.ts`, sees(name, "", module)]));
+
+    test.each([
+      ["afterEach()", "bun:test", `${setsTheTime} afterEach(() => void vi.setSystemTime(new Date(0)));`, "real 1970"],
+      ["beforeEach()", "bun:test", `${setsTheTime} beforeEach(() => void vi.setSystemTime(new Date(0)));`, "real 1970"],
+      [
+        "beforeEach() with useFakeTimers()",
+        "bun:test",
+        `${fakesTheTimers} beforeEach(() => void vi.useFakeTimers({ now: 0 }));`,
+        "fake 1970",
+      ],
+      [
+        "afterEach() with useFakeTimers()",
+        "bun:test",
+        `${fakesTheTimers} afterEach(() => void vi.useFakeTimers({ now: 0 }));`,
+        "fake 1970",
+      ],
+      [
+        "beforeEach() with jest.useFakeTimers()",
+        "bun:test",
+        `import { jest } from "bun:test";
+        jest.useFakeTimers({ now: 0 });
+        beforeEach(() => void jest.useFakeTimers({ now: 0 }));`,
+        "fake 1970",
+      ],
+      [
+        "aroundEach(), before and after runTest()",
+        "bun:test",
+        `${setsTheTime}
+        aroundEach(async runTest => {
+          vi.setSystemTime(new Date(0));
+          await runTest();
+          vi.setSystemTime(new Date(0));
+        });`,
+        "real 1970",
+      ],
+      [
+        "afterEach() after an await",
+        "bun:test",
+        `${setsTheTime}
+        afterEach(async () => {
+          ${anImmediate}
+          vi.setSystemTime(new Date(0));
+        });`,
+        "real 1970",
+      ],
+      [
+        "a timer that afterEach() starts",
+        "bun:test",
+        `${setsTheTime}
+        afterEach(done => {
+          setImmediate(() => {
+            vi.setSystemTime(new Date(0));
+            done();
+          });
+        });`,
+        "real 1970",
+      ],
+      [
+        "onTestFinished() that beforeEach() calls",
+        "bun:test",
+        `import { onTestFinished } from "bun:test";
+        ${setsTheTime}
+        beforeEach(() => void onTestFinished(() => void vi.setSystemTime(new Date(0))));`,
+        "real 1970",
+      ],
+      [
+        "afterEach() of vitest",
+        "vitest",
+        `${fakesTheTimers} afterEach(() => void vi.useFakeTimers({ now: 0 }));`,
+        "fake 1970",
+      ],
+      [
+        "the function that a vitest beforeEach() returns",
+        "vitest",
+        `${setsTheTime} beforeEach(() => () => void vi.setSystemTime(new Date(0)));`,
+        "real 1970",
+      ],
+    ])("a clock that the preload sets again in %s stays for every file", async (_, module, preload, clock) => {
+      const { seen, stderr, exitCode } = await clocks(preload, { module, files: inAll(module) });
+      expect({ seen, exitCode }, stderr).toEqual({ seen: inEach(["a", "b", "c"], clock), exitCode: 0 });
+    });
+
+    // The runner cannot tell from where it is which of the tests of a group runs.
+    test.each([
+      ["at once", `afterEach(() => void vi.setSystemTime(new Date(0)));`],
+      [
+        "after an await",
+        `afterEach(async () => {
+          ${anImmediate}
+          vi.setSystemTime(new Date(0));
+        });`,
+      ],
+    ])(
+      "a clock that the preload sets again %s in a group of concurrent tests stays for every file",
+      async (_, hook) => {
+        const concurrently = (name: string) => `
+        import { test } from "bun:test";
+        seen("${name} module");
+        test.concurrent("${name} 1", async () => {
+          seen("${name} test");
+          ${anImmediate}
+        });
+        test.concurrent("${name} 2", async () => {
+          ${anImmediate}
+        });
+      `;
+        const { seen, stderr, exitCode } = await clocks(`${setsTheTime} ${hook}`, {
+          files: { "a.test.ts": concurrently("a"), "b.test.ts": concurrently("b"), "c.test.ts": concurrently("c") },
+        });
+        expect({ seen, exitCode }, stderr).toEqual({ seen: inEach(["a", "b", "c"], "real 1970"), exitCode: 0 });
+      },
+    );
+
+    test.each([
+      [
+        "a system time that a test set",
+        `${setsTheTime} afterEach(() => void vi.setSystemTime(new Date(0)));`,
+        `vi.setSystemTime(new Date(5e11));`,
+        "real",
+      ],
+      [
+        "fake timers that a test turned on, with useFakeTimers()",
+        `${fakesTheTimers} afterEach(() => void vi.useFakeTimers({ now: 0 }));`,
+        `vi.useFakeTimers({ now: 5e11 });`,
+        "fake",
+      ],
+      [
+        "fake timers that a test turned on, with setSystemTime()",
+        `${fakesTheTimers} afterEach(() => void vi.setSystemTime(0));`,
+        `vi.useFakeTimers({ now: 5e11 });`,
+        "fake",
+      ],
+    ])("the preload's afterEach() takes back %s", async (_, preload, inTest, timers) => {
+      const { seen, stderr, exitCode } = await clocks(preload, {
+        files: { "a.test.ts": sees("a", `${inTest} seen("took");`) },
+      });
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: [...inEach(["a"], `${timers} 1970`), `took: ${timers} 1985`, ...inEach(["b", "c"], `${timers} 1970`)],
+        exitCode: 0,
+      });
+    });
+
+    test("the preload's beforeEach() turns fake timers on again in the file after the one that ended them", async () => {
+      const { seen, stderr, exitCode } = await clocks(
+        `${fakesTheTimers} beforeEach(() => void vi.useFakeTimers({ now: 0 }));`,
+        { files: { "a.test.ts": sees("a", `vi.useRealTimers();`) } },
+      );
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: [...inEach(["a"], "fake 1970"), "b module: real now", "b test: fake 1970", ...inEach(["c"], "fake 1970")],
+        exitCode: 0,
+      });
+    });
+
+    // The hook puts new fakes on the globals. The file's spy then puts back the fake that it replaced.
+    test("fake timers that beforeEach() turns on again end with a file that has a spy on a faked timer", async () => {
+      const { seen, stderr, exitCode } = await clocks(
+        `${fakesTheTimers} beforeEach(() => void vi.useFakeTimers({ now: 0 }));`,
+        {
+          files: {
+            "a.test.ts": `
+              import { spyOn, test } from "bun:test";
+              spyOn(globalThis, "setTimeout");
+              seen("a module");
+              test("a", () => seen("a test"));
+            `,
+          },
+        },
+      );
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: [...inEach(["a"], "fake 1970"), "b module: real now", "b test: fake 1970", ...inEach(["c"], "fake 1970")],
+        exitCode: 0,
+      });
+    });
+
+    test.each([
+      [
+        "a test that an aroundEach() of the preload runs",
+        `${setsTheTime}
+        aroundEach(async runTest => void (await runTest()));`,
+        `${anImmediate} vi.setSystemTime(new Date(5e11));`,
+      ],
+      [
+        "a timer of the test file that fires while a hook of the preload is pending",
+        `${setsTheTime}
+        afterEach(async () => {
+          ${anImmediate}
+          ${anImmediate}
+        });`,
+        `setImmediate(() => vi.setSystemTime(new Date(5e11)));`,
+      ],
+    ])("a system time that %s sets still ends with the file", async (_, preload, inTest) => {
+      const { seen, stderr, exitCode } = await clocks(preload, { files: { "a.test.ts": seesAsync("a", inTest) } });
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: [...inEach(["a"], "real 1970"), ...inEach(["b", "c"], "real now")],
+        exitCode: 0,
+      });
+    });
+
+    // Only the preload's module and its hooks that run once give the preload a clock to keep.
+    test.each([
+      [
+        "ends it in afterEach()",
+        `${fakesTheTimers}
+        beforeEach(() => void vi.useFakeTimers({ now: 0 }));
+        afterEach(() => void vi.useRealTimers());`,
+        "fake 1970",
+      ],
+      [
+        "ended it at its top level",
+        `${fakesTheTimers}
+        vi.useRealTimers();
+        beforeEach(() => void vi.useFakeTimers({ now: 0 }));`,
+        "real now",
+      ],
+      [
+        "reset the system time at its top level",
+        `${setsTheTime}
+        vi.setSystemTime();
+        beforeEach(() => void vi.useFakeTimers({ now: 0 }));`,
+        "real now",
+      ],
+    ])("a clock from beforeEach() ends with each file when the preload %s", async (_, preload, first) => {
+      const { seen, stderr, exitCode } = await clocks(preload);
+      expect({ seen, exitCode }, stderr).toEqual({
+        seen: [
+          `a module: ${first}`,
+          "a test: fake 1970",
+          ...["b", "c"].flatMap(name => [`${name} module: real now`, `${name} test: fake 1970`]),
+        ],
+        exitCode: 0,
+      });
+    });
+
+    describe("over a system time that the preload set", () => {
+      const turnsOnFakeTimers = `${setsTheTime} beforeEach(() => void vi.useFakeTimers());`;
+
+      // A module that waits for a timer does not load under fake timers that nothing advances.
+      test("fake timers from beforeEach() end with each file, and the system time stays", async () => {
+        const waitsForATimer = (name: string) => `
+          import { test } from "bun:test";
+          await new Promise(resolve => setTimeout(resolve, 1));
+          seen("${name} module");
+          test("${name}", () => seen("${name} test"));
+        `;
+        const { seen, stderr, exitCode } = await clocks(turnsOnFakeTimers, {
+          files: {
+            "a.test.ts": waitsForATimer("a"),
+            "b.test.ts": waitsForATimer("b"),
+            "c.test.ts": waitsForATimer("c"),
+          },
+        });
+        expect({ seen, exitCode }, stderr).toEqual({
+          seen: ["a", "b", "c"].flatMap(name => [`${name} module: real 1970`, `${name} test: fake 1970`]),
+          exitCode: 0,
+        });
+      });
+
+      test("fake timers from beforeEach() are the test file's after a test ended the system time", async () => {
+        const { seen, stderr, exitCode } = await clocks(turnsOnFakeTimers, {
+          files: {
+            "a.test.ts": sees("a", `vi.useRealTimers();`),
+            "c.test.ts": `
+              import { test, vi } from "bun:test";
+              console.log("mocked:", vi.getMockedSystemTime());
+              test("c", () => {});
+            `,
+          },
+        });
+        expect({ seen, exitCode }, stderr).toEqual({
+          seen: ["a module: real 1970", "a test: fake 1970", "b module: real now", "b test: fake now", "mocked: null"],
+          exitCode: 0,
+        });
+      });
+    });
+
+    test.each([
+      ["--rerun-each=2", ["a", "a", "b", "b", "c", "c"]],
+      ["--parallel=1 --no-isolate", ["a", "b", "c"]],
+      ["--isolate", ["a", "b", "c"]],
+      ["--isolate=modules", ["a", "b", "c"]],
+    ])("a clock that the preload sets again in afterEach() stays for every file with %s", async (flags, files) => {
+      using dir = tempDir("fake-timers-preload-hooks-flags", {
+        "preload.ts": `
+          import { afterEach, vi } from "bun:test";
+          globalThis.seen = where => console.log(where + ":", Date.now() < 1e12 ? new Date().getUTCFullYear() : "now");
+          ${setsTheTime}
+          afterEach(async () => {
+            ${anImmediate}
+            vi.setSystemTime(new Date(0));
+          });
+        `,
+        "a.test.ts": sees("a"),
+        "b.test.ts": sees("b"),
+        "c.test.ts": sees("c"),
+      });
+      const { stdout, stderr, exitCode } = await run(
+        ["test", "--preload=./preload.ts", ...flags.split(" "), "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+        String(dir),
+      );
+      // A --parallel worker prints to stderr.
+      const seen = (stdout + "\n" + stderr).split("\n").filter(line => /^[abc] (module|test):/.test(line));
+      expect({ seen, exitCode }, stderr).toEqual({ seen: inEach(files, "1970"), exitCode: 0 });
+    });
+
+    describe("and AsyncLocalStorage", () => {
+      const withStorage = `
+        import { AsyncLocalStorage } from "node:async_hooks";
+        const storage = new AsyncLocalStorage();
+        globalThis.store = () => storage.getStore();
+        ${setsTheTime}
+      `;
+
+      test.each([
+        ["and the test's system time ends with the file", "", "real now"],
+        ["and the hook takes the clock back after it", `vi.setSystemTime(new Date(0));`, "real 1970"],
+      ])("a test that aroundEach() runs inside a store sees the store, %s", async (_, afterTheTest, later) => {
+        const { seen, stderr, exitCode } = await clocks(
+          `${withStorage}
+          aroundEach(async runTest => {
+            await storage.run("of the hook", runTest);
+            ${afterTheTest}
+          });`,
+          {
+            files: {
+              "a.test.ts": seesAsync(
+                "a",
+                `${anImmediate}
+                console.log("store:", store());
+                vi.setSystemTime(new Date(5e11));`,
+              ),
+            },
+          },
+        );
+        expect({ seen, exitCode }, stderr).toEqual({
+          seen: [...inEach(["a"], "real 1970"), "store: of the hook", ...inEach(["b", "c"], later)],
+          exitCode: 0,
+        });
+      });
+
+      // The hook leaves its own async context for the call, but it is still the hook that calls.
+      test("a hook of the preload that sets the time inside another async context sets the preload's clock", async () => {
+        const { seen, stderr, exitCode } = await clocks(
+          `${withStorage}
+          const atTheTop = AsyncLocalStorage.snapshot();
+          afterEach(() => atTheTop(() => void vi.setSystemTime(new Date(0))));`,
+        );
+        expect({ seen, exitCode }, stderr).toEqual({ seen: inEach(["a", "b", "c"], "real 1970"), exitCode: 0 });
+      });
+
+      test("a hook that the preload registered inside a store runs in the store and sets the preload's clock", async () => {
+        const { seen, stderr, exitCode } = await clocks(
+          `${withStorage}
+          storage.run("of the preload", () =>
+            afterEach(async () => {
+              ${anImmediate}
+              console.log("store:", store());
+              vi.setSystemTime(new Date(0));
+            }),
+          );`,
+        );
+        expect({ seen, exitCode }, stderr).toEqual({
+          seen: ["a", "b", "c"].flatMap(name => [...inEach([name], "real 1970"), "store: of the preload"]),
+          exitCode: 0,
+        });
       });
     });
   });

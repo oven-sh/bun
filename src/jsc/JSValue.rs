@@ -2548,7 +2548,7 @@ impl JSValue {
         JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(self, global, ctx, callback);
         scope.return_if_exception()
     }
-    /// `for_each_property_ordered_calling_getters` for the object at `place`: a matched row is passed in place of its property, which is not read. SAFETY: `rows` is the matched rows cell of a `jest_deep_match` call and `place` is one of its places.
+    /// `for_each_property_ordered_calling_getters` for the object at `place`: a matched row is passed in place of its property, which is not read. SAFETY: `rows` is the live matched rows cell that a `jest_deep_match` call returned. Any `place` is safe: C++ treats a number that is not a place of the cell as a place without rows.
     #[inline(always)]
     pub(crate) unsafe fn for_each_property_ordered_calling_getters_with_rows(
         self,
@@ -2570,7 +2570,7 @@ impl JSValue {
         }
         debug_assert!(rows.is_cell() && place != 0);
         crate::top_scope!(scope, global);
-        // SAFETY: the caller vouches for `rows` and `place`; the rest is the contract of `JSC__JSValue__forEachProperty` above.
+        // SAFETY: the caller vouches for `rows`, C++ answers for any `place`, and the rest is the contract of `JSC__JSValue__forEachProperty` above.
         let is_same = unsafe {
             JSC__JSValue__forEachPropertyOrderedCallingGettersWithRows(
                 self, global, ctx, callback, rows, place,
@@ -2600,7 +2600,7 @@ impl JSValue {
         }
         debug_assert!(rows.is_cell() && place != 0);
         crate::top_scope!(scope, global);
-        // SAFETY: the caller vouches for `rows` and `place`; the rest is the contract of `JSC__JSValue__forEachProperty` above.
+        // SAFETY: the caller vouches for `rows`, C++ answers for any `place`, and the rest is the contract of `JSC__JSValue__forEachProperty` above.
         unsafe {
             JSC__JSValue__forEachPropertyOrderedWithNonEnumerableWithRows(
                 self, global, ctx, callback, rows, place,

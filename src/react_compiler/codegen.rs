@@ -229,9 +229,7 @@ pub(crate) fn codegen_function(
     context: &mut ProgramContext,
     unique_identifiers: HashSet<String>,
 ) -> Result<CodegenFunction, CompilerError> {
-    // Not in upstream: `codegen_explicit_receiver_call` prints the global `Function`. The identifiers say what the
-    // function binds, and the host what is around it. The question comes first, so that a function that stays as
-    // it is written has no use of that name on record.
+    // Not in upstream: asked first, so that a function that stays as written has no use of `Function` on record.
     if !env.explicit_receiver_calls.is_empty() {
         let binds_function = env.identifiers.iter().any(|identifier| {
             (identifier.name.as_ref()).is_some_and(|name| name.value() == b"Function")
@@ -2339,12 +2337,7 @@ fn codegen_base_instruction_value(
 // Function expression codegen
 // =============================================================================
 
-/// Not in upstream: the call of a method that PromoteUsedTemporaries read ahead of a statement, as
-/// `Function.prototype.call.call(method, receiver, ...args)`. `method.call(receiver, ...args)` reads `call` of the
-/// method, which a member call does not: a proxy or a method with a `call` of its own answers that read.
-/// `Reflect.apply(method, receiver, [...args])` makes an array for each call, and is many times slower under
-/// JavaScriptCore. A method that is not callable throws from `Function.prototype.call`, and the message does not
-/// name the member.
+/// Not in upstream: `Function.prototype.call.call(method, receiver, ...args)`, which reads nothing of the method.
 fn codegen_explicit_receiver_call(
     cx: &mut Context,
     method: Expr,

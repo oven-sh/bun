@@ -1109,11 +1109,7 @@ fn promote_interposed_value(
     }
 }
 
-/// Not in upstream. Codegen prints the property of a MethodCall inside the call, so that the call has its
-/// receiver. So the method is read behind every statement between its load and the call. When such a statement
-/// can mutate the receiver, the property gets a name here, and codegen calls it with the receiver given.
-/// Otherwise the method stays in the call, and a computed key gets a name like any other operand.
-/// A statement that writes stands there in most member calls. Only the mutation analysis tells the few that can.
+/// Not in upstream: names a method that a statement behind its load can change, or else the key of a computed one.
 #[cold]
 #[allow(clippy::too_many_arguments)]
 fn promote_late_method(
@@ -1179,14 +1175,13 @@ fn promote_late_method(
     }
 }
 
-/// What the inference says without a look at the statements. A receiver that nothing mutates once it is made keeps
-/// its methods. A property that has the signature of a method is taken for that method, whatever a statement does
-/// to the receiver. A hook has its signature from its name alone, so it does not count.
+/// False for a receiver that nothing mutates once it is made, and for a property that has the signature of a method.
 fn can_method_change(receiver: &Place, property: &Place, env: &Environment) -> bool {
     let range = &env.identifiers[receiver.identifier.0 as usize].mutable_range;
     let type_ = &env.types[env.identifiers[property.identifier.0 as usize].type_.0 as usize];
     range.end.0 > range.start.0 + 1
         && !(env.get_function_signature(type_).ok().flatten())
+            // A hook has its signature from its name alone.
             .is_some_and(|signature| signature.hook_kind.is_none())
 }
 
@@ -1272,9 +1267,7 @@ struct Mutations<'a> {
     env: &'a Environment,
     consts: &'a IdBitSet<IdentifierId>,
     globals: &'a IdBitSet<IdentifierId>,
-    /// The values that are mutated together have one mutable range. A memo block mutates only what it declares,
-    /// so what is in a memo block has another range. `None` without memoization: no two values share a range
-    /// there, and every mutation counts.
+    /// The mutable range that the receiver shares. `None` without memoization, where every mutation counts.
     receiver: Option<MutableRangeId>,
 }
 

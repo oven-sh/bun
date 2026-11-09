@@ -4635,6 +4635,10 @@ describe("bundler", () => {
                 return () => name + ":" + v;
               },
             });
+          const note = log => {
+            log.push("argument");
+            return "";
+          };
 
           // The pass does not run in a function inside the component: "A:second".
           function CallInACallback(p) {
@@ -4673,6 +4677,18 @@ describe("bundler", () => {
             const list = ["x"];
             return <div>{o.who(...list, (() => { list.push("y"); return ""; })())}</div>;
           }
+          // Nothing mutates a prop, so its method is read at the call, behind the argument: "TypeError, ran: argument".
+          function MethodOfAPropThatIsNull(p) {
+            const log = [];
+            const state = { i: 0 };
+            let out;
+            try {
+              out = p.none.who(note(log), state.i++);
+            } catch (e) {
+              out = (e instanceof TypeError ? "TypeError" : e) + ", ran: " + (log.length ? log : "nothing");
+            }
+            return <div>{out}</div>;
+          }
           for (const Form of [
             CallInACallback,
             MethodOfTheProps,
@@ -4680,6 +4696,7 @@ describe("bundler", () => {
             MethodOfAnArrayIsReplaced,
             GetterReadsModuleState,
             SpreadIsIteratedBehindAStatement,
+            MethodOfAPropThatIsNull,
           ]) {
             console.log(Form.name + "=" + Form({ name: "A", who }).props.children);
           }
@@ -4706,6 +4723,7 @@ describe("bundler", () => {
           MethodOfAnArrayIsReplaced=A-x
           GetterReadsModuleState=A:0
           SpreadIsIteratedBehindAStatement=A:oldx
+          MethodOfAPropThatIsNull=TypeError, ran: nothing
         `,
       },
     });

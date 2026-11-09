@@ -123,10 +123,7 @@ pub struct Environment {
     // Matches Babel's generateUid behavior of checking hasBinding/hasReference.
     uid_known_names: Option<HashSet<StoreStr>>,
 
-    /// Not in upstream: the properties of the MethodCalls that PromoteUsedTemporaries gave a name, to read the
-    /// method ahead of a statement. Codegen prints such a call with its receiver as an argument. A property that
-    /// has its name as the declaration of a memo block is not in the set, and stays the invariant error that it
-    /// is upstream (facebook/react#34072).
+    /// Not in upstream: the MethodCall properties that phase 3 named, not those of facebook/react#34072.
     pub(crate) explicit_receiver_calls: IdBitSet<IdentifierId>,
 }
 

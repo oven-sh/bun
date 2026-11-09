@@ -149,8 +149,7 @@ pub trait Host {
         self.new_generated(name)
     }
 
-    /// Whether `name` is the global around the function being compiled: no scope from its body outward binds it.
-    /// The lookup records no use, so a caller can ask ahead of a decision not to print the name.
+    /// Whether no scope from the body of the function outward binds `name`. The lookup records no use.
     fn is_unbound_global(&mut self, _name: &'static [u8]) -> bool {
         false
     }

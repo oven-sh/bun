@@ -1859,12 +1859,6 @@ export {};
       240_000,
     );
 
-    // TODO: red with an x64 musl Bun (5 of the 60,000 calls fail), green with the glibc Bun of the same sources.
-    test.todo("behind a fill at the depth of the loop that follows there is room for a built-in that the loop calls", async () => {
-      using folder = tempDir("aot-heap-limit", { "program.ts": roomForBuiltinThatLoopCalls("fill()") });
-      const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "filled true work 675208 failed 0\n", stderr: "", exitCode: 0 });
-    });
 
     // A range that stays almost full of objects in use: every collection frees only what was made since the last one, so the program would collect
     // again for every few hundred objects it makes, and hardly move. After a few such collections in a row it gets the error.

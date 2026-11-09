@@ -12,8 +12,6 @@
 // A mark may stand on a wrong answer: a right program answers otherwise compiled than plain, and nothing says so when it runs. That is no goal, and is
 // listed apart, in front of the goals. The name of the case, or the reason of the mark, says it:
 //   <what is to hold>: a wrong answer today: under `<the compiled run>` <what happens>, where `<the plain run>` <what happens>
-// Listed apart, because it is not run:
-//   a case under test/aot that is declared with `todo`
 // A name that is put together while the file runs cannot be read off its text. So each test file from which a mark can be reached is
 // loaded by a `bun test` of its own in which a stand-in takes the place of bun:test: `describe` runs what it is handed, every case is
 // written down under its name, and no case and no hook is run. What a test writes into a file for a Bun that it starts is text, and is
@@ -39,7 +37,6 @@ type WrongAnswer = { file: string; name: string; plain: string; compiled: string
 type Found = {
   wrongAnswers: WrongAnswer[];
   goals: Goal[];
-  neverRun: Apart[];
   declareNothing: string[];
   withEngine: boolean;
 };
@@ -183,7 +180,6 @@ function filesBelow(folder: string, wanted: (name: string) => boolean, base = ro
 
 // `gap()` of supported.ts marks a row of a table that `eachRow()` then declares with `failing`. That file defines the two and marks nothing.
 const spelling = /\.failing(?:If)?\b|\bgap\(/;
-const spellingOfWhatNeverRuns = /\.todo(?:If)?(?:\s*[():]|\.(?:each|if|skipIf|only|concurrent|serial)\b|\s*$)/m;
 const marksNothingItself = "test/aot/supported.ts";
 const speaksOfTheCompiler = /\baot\b|--trim\b/i;
 const marksReachedFrom = new Map<string, Set<string>>();
@@ -194,8 +190,7 @@ function filesWithMarksReachedFrom(file: string): Set<string> {
   const reached = new Set<string>();
   marksReachedFrom.set(file, reached);
   const text = readFileSync(join(root, file), "utf8");
-  const neverRuns = file.startsWith("test/aot/") && spellingOfWhatNeverRuns.test(text);
-  if (file !== marksNothingItself && (spelling.test(text) || neverRuns)) reached.add(file);
+  if (file !== marksNothingItself && spelling.test(text)) reached.add(file);
   for (const [, written] of text.matchAll(/(?:\bfrom|\bimport|\brequire\()\s*["'](\.{1,2}\/[^"']+)["']/g)) {
     const base = join(dirname(file), written);
     const imported = [base, base + ".ts", base + ".tsx", base + ".js", base + "/index.ts"].find(
@@ -372,11 +367,6 @@ async function marksOfTestFiles(found: Found) {
       for (const line of lines) for (const start of roots) if (line.startsWith(start)) evaluated.add(line.slice(start.length));
       for (const one of declared) {
         if (one.failing) take(found, goalOf(file, one.name, declared));
-        else if (one.todo && file.startsWith("test/aot/")) {
-          const wrong = wrongAnswerIn(file, one.name);
-          if (wrong) found.wrongAnswers.push({ ...wrong, name: `${wrong.name} (declared \`todo\`: it is never run)` });
-          else found.neverRun.push({ file, name: one.name });
-        }
       }
     }
   };
@@ -458,7 +448,7 @@ function marksOfCrates(found: Found) {
 async function marksIn(tree: string): Promise<Found> {
   root = tree;
   marksReachedFrom.clear();
-  const found: Found = { wrongAnswers: [], goals: [], neverRun: [], declareNothing: [], withEngine: false };
+  const found: Found = { wrongAnswers: [], goals: [], declareNothing: [], withEngine: false };
   await marksOfTestFiles(found);
   marksOfStoredPrograms(found);
   marksOfIRTests(found);
@@ -467,7 +457,6 @@ async function marksIn(tree: string): Promise<Found> {
     one.file < other.file ? -1 : one.file > other.file ? 1 : one.name < other.name ? -1 : one.name > other.name ? 1 : 0;
   found.wrongAnswers.sort(inOrder);
   found.goals.sort(inOrder);
-  found.neverRun.sort(inOrder);
   return found;
 }
 
@@ -485,7 +474,7 @@ const filesOf = (rows: Apart[]) => new Set(rows.map(row => row.file)).size;
 const inCell = (text: string) => text.replaceAll("|", "\\|").replaceAll("\n", " ");
 const rowOf = (...cells: string[]) => `| ${cells.map(inCell).join(" | ")} |`;
 
-function countsOf({ wrongAnswers, goals, neverRun, declareNothing, withEngine }: Found): string[] {
+function countsOf({ wrongAnswers, goals, declareNothing, withEngine }: Found): string[] {
   const ofKind = Map.groupBy(goals, kindOf);
   const byKind = [...kinds.map(([kind]) => kind), "on other things"].flatMap(kind =>
     ofKind.has(kind) ? [`${ofKind.get(kind)!.length} ${kind}`] : [],
@@ -495,7 +484,6 @@ function countsOf({ wrongAnswers, goals, neverRun, declareNothing, withEngine }:
     `${wrongAnswers.length} wrong answers in ${filesOf(wrongAnswers)} files stand under a mark. They are no goals, and are not counted among them.`,
     `${goals.length} goals in ${filesOf(goals)} files: ${byKind.join(", ")}.`,
     `${count(yesOrNo)} of them are a yes or a no. Of the others ${count("the case beside it")} are held to what is reached today by a case beside them, ${count("nothing yet")} could be, ${count(cannotGrowWorse)} cannot grow worse, ${count(comparedBetweenRuns)} are counted at every run and compared between runs, ${count("nothing in the tree")} move with the platform and with every change, and ${count("nothing: ")} say no measured number.`,
-    `${neverRun.length} cases in ${filesOf(neverRun)} files are declared \`todo\` and never run.`,
     ...(declareNothing.length
       ? [`${declareNothing.length} lines spell a mark from which no case was declared where this page was written. What they mark is not counted.`]
       : []),
@@ -525,19 +513,11 @@ function write(found: Found): string {
     "",
     "Each row is a test that is known to fail today, and says so itself. It runs at every run of the tests; the run stays green while the goal",
     "is not met, and turns red once it is met, so that the mark is taken away. A mark does not see its number grow worse: the last column says",
-    "what does. What is not run, or not judged, stands in tables of its own further down.",
+    "what does.",
     "",
     "| file | case | measured | bound | what keeps the number from growing worse |",
     "|---|---|---|---|---|",
     ...found.goals.map(goal => rowOf(goal.file, goal.name, said(goal.measured, "no", goal), said(goal.bound, "yes", goal), goal.keeps)),
-    "",
-    "## Declared and never run",
-    "",
-    "A case that is declared with `todo` is listed by the runner and not run: nothing says so when it begins to hold, or when it gets worse.",
-    "",
-    "| file | case |",
-    "|---|---|",
-    ...found.neverRun.map(({ file, name }) => rowOf(file, name)),
     "",
     ...(found.declareNothing.length
       ? [

@@ -2,15 +2,13 @@
 
 This page is written by `bun test/aot/tools/list-goals-not-met-yet.ts` out of the marks in the tree. Do not edit it: change the mark and run the tool.
 
-37 wrong answers in 13 files stand under a mark. They are no goals, and are not counted among them.
+44 wrong answers in 15 files stand under a mark. They are no goals, and are not counted among them.
 
-233 goals in 131 files: 162 on what a program reaches of the library and what --trim keeps, 18 on how a build grows with its program, 53 on other things.
+240 goals in 133 files: 162 on what a program reaches of the library and what --trim keeps, 22 on how a build grows with its program, 56 on other things.
 
-81 of them are a yes or a no. Of the others 35 are held to what is reached today by a case beside them, 6 could be, 1 cannot grow worse, 63 are counted at every run and compared between runs, 46 move with the platform and with every change, and 1 say no measured number.
+81 of them are a yes or a no. Of the others 35 are held to what is reached today by a case beside them, 6 could be, 1 cannot grow worse, 63 are counted at every run and compared between runs, 52 move with the platform and with every change, and 2 say no measured number.
 
-17 cases in 7 files are declared `todo` and never run.
-
-9 lines spell a mark from which no case was declared where this page was written. What they mark is not counted.
+5 lines spell a mark from which no case was declared where this page was written. What they mark is not counted.
 
 ## Wrong answers under a mark
 
@@ -19,12 +17,16 @@ known to fail, so the run stays green; it turns red once the compiled run says t
 
 | file | case | plain | compiled |
 |---|---|---|---|
+| test/aot/a-call-that-a-body-caught-ends-nothing-where-it-is-made-again.test.ts | a factory throws from the second time on, and the body would catch it: it prints what bun test prints | not said | under `bun test --aot` the import in the second test file is rejected and the mock behind it is not laid |
+| test/aot/a-call-that-a-body-caught-ends-nothing-where-it-is-made-again.test.ts | a mock is laid in front of a call whose throw the body does not catch: it prints what bun test prints | `bun test` reads the mock's | under `bun test --aot` the second test file reads the file's own word |
 | test/aot/a-file-runs-as-often-as-under-bun-test-where-a-second-mock-follows-one-that-was-imported.test.ts | it prints what bun test prints | `bun test` has run it 3 times | under `bun test --aot` the file has run 2 times |
 | test/aot/a-file-under-a-mock-at-a-reset-runs-as-often-as-under-bun-test-in-the-next-test-file.test.ts | gauge.cjs: it prints what bun test prints | `bun test` has run it once | under `bun test --aot` the file has run 2 times in the second test file |
 | test/aot/a-file-under-a-mock-at-a-reset-runs-as-often-as-under-bun-test-in-the-next-test-file.test.ts | gauge.mjs: it prints what bun test prints | `bun test` has run it once | under `bun test --aot` the file has run 2 times in the second test file |
 | test/aot/a-file-under-a-mock-at-a-reset-runs-as-often-as-under-bun-test-in-the-next-test-file.test.ts | two test files mock a file and a barrel over it that takes its original, and reset: it prints what bun test prints | not said | under `bun test --aot` the second says that the file has run 2 times |
 | test/aot/a-file-whose-mock-a-preload-laid-does-not-run-for-a-barrel-that-still-sees-the-mock.test.ts | a CommonJS file, and the test file imports the barrel by a statement: it prints what bun test prints | `bun test` never runs it | under `bun test --aot` the file has run once |
-| test/aot/an-import-eight-jobs-behind-the-old-answer-of-a-replaced-mock-gets-the-new-mock.test.ts | it prints what bun test prints | `bun test` gives it the new mock from the eighth job on | under `bun test --aot` the second import still gets the old answer |
+| test/aot/a-written-import-of-a-file-that-was-only-required-while-a-factory-has-yet-to-settle.test.ts | a written require() meanwhile: it prints what bun test prints | `bun test` runs the original a second time | under `bun test --aot` it gets the module that is loaded |
+| test/aot/a-written-import-of-a-file-that-was-only-required-while-a-factory-has-yet-to-settle.test.ts | another file makes the written import: it prints what bun test prints | `bun test` waits for the factory and gives the mock | under `bun test --aot` it gets the module that is loaded, patched |
+| test/aot/a-written-import-of-a-file-that-was-only-required-while-a-factory-has-yet-to-settle.test.ts | the factory is a plain arrow that returns a promise: it prints what bun test prints | not said | under `bun test --aot` it gets the module that is loaded, patched: the build takes only an async factory for one that may stay pending |
 | test/aot/every-read-and-store-of-a-stream-behind-proxies.test.ts | e listeners go | `bun <file>` reads it | under `bun build --compile --aot` removeListener() leaves the one listener that is left of two without a read of `warned` off the list |
 | test/aot/every-read-and-store-of-a-stream-behind-proxies.test.ts | e those who watch the listeners | `bun <file>` reads it | under `bun build --compile --aot` removeListener() leaves the one listener that is left of two without a read of `warned` off the list |
 | test/aot/every-read-and-store-of-a-stream-behind-proxies.test.ts | e unpiped | `bun <file>` reads it | under `bun build --compile --aot` removeListener() leaves the one listener that is left of two without a read of `warned` off the list |
@@ -56,12 +58,15 @@ known to fail, so the run stays green; it turns red once the compiled run says t
 | test/aot/parallel/commonjs/a-late-store-of-a-files-own-text-in-front-of-a-delete-by-another-file/main.cjs | it answers as plain Bun: "second" \| "none" | `bun <file>` prints "none" | under `bun build --compile --aot` it prints "second" |
 | test/aot/parallel/commonjs/both-files-store-behind-a-delete-and-the-other-file-is-the-later/main.cjs | it answers as plain Bun: "own" \| "foreign" | `bun <file>` prints "foreign" | under `bun build --compile --aot` it prints "own" |
 | test/aot/the-library-calls-the-same-built-ins-compiled-as-plain.test.ts | the library calls the same built-ins and asks for the same names compiled as plain: a file is written through a stream | `bun test` calls it 28 times | under `bun test --aot` the modules that load with the first stream of node:fs call bind 6 times |
+| test/aot/what-a-factory-that-ended-its-own-mock-over-a-preloads-returned-stays-out-of-the-next-test-file.test.ts | a CommonJS file: it prints what bun test prints | not said | under `bun test --aot` what the factory returned still answers behind the load that ran it |
+| test/aot/what-a-factory-that-ended-its-own-mock-over-a-preloads-returned-stays-out-of-the-next-test-file.test.ts | a package: it prints what bun test prints | not said | under `bun test --aot` what the factory returned still answers behind the load that ran it |
+| test/aot/what-a-factory-that-ended-its-own-mock-over-a-preloads-returned-stays-out-of-the-next-test-file.test.ts | an ES file by import(): it prints what bun test prints | not said | under `bun test --aot` what the factory returned still answers behind the load that ran it |
 
 ## Goals
 
 Each row is a test that is known to fail today, and says so itself. It runs at every run of the tests; the run stays green while the goal
 is not met, and turns red once it is met, so that the mark is taken away. A mark does not see its number grow worse: the last column says
-what does. What is not run, or not judged, stands in tables of its own further down.
+what does.
 
 | file | case | measured | bound | what keeps the number from growing worse |
 |---|---|---|---|---|
@@ -112,13 +117,19 @@ what does. What is not run, or not judged, stands in tables of its own further d
 | test/aot/asking-the-global-object-for-a-written-name-hands-it-to-nobody.test.ts | typeof Reflect.get(globalThis, "Bun")?.main: 13 lines say what blocks --trim and 201 features are kept as used, the goal is none | 13 | 0 | nothing yet: one more case beside it could hold it to this number |
 | test/aot/asking-the-global-object-for-a-written-name-hands-it-to-nobody.test.ts | typeof Reflect.get(globalThis, "Bun", globalThis)?.main: 13 lines say what blocks --trim and 201 features are kept as used, the goal is none | 13 | 0 | nothing yet: one more case beside it could hold it to this number |
 | test/aot/asking-the-global-object-for-a-written-name-hands-it-to-nobody.test.ts | typeof Reflect.getOwnPropertyDescriptor(globalThis, "Bun"): 13 lines say what blocks --trim and 201 features are kept as used, the goal is none | 13 | 0 | nothing yet: one more case beside it could hold it to this number |
-| test/aot/build-scaling/build-scaling-1.test.ts | compile/aot/build scaling > a union of object types that is told apart by a row of ifs over a tag: 3.60 times in instructions; the bound is 2.1 | 3.60 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
-| test/aot/build-scaling/build-scaling-1.test.ts | compile/aot/build scaling > branches in a row that each hand another element on, a name of its own read in front of each, in a loop: 2.88 times in instructions; the bound is 2.1 | 2.88 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
-| test/aot/build-scaling/build-scaling-1.test.ts | compile/aot/build scaling > classes that extend one another in a row, each constructed: 3.45 times in TableBytesEmitted; the bound is 2.1 | 3.45 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
-| test/aot/build-scaling/build-scaling-2.test.ts | compile/aot/build scaling > a union of object types that is told apart by a row of ifs over a tag, with a call between them: 3.56 times in instructions; the bound is 2.1 | 3.56 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
-| test/aot/build-scaling/build-scaling-4.test.ts | compile/aot/build scaling > a file that exports everything of many files, loaded behind a mock of the last, in a test run: 3.07 times in instructions; the bound is 2.1 | 3.07 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
-| test/aot/build-scaling/build-scaling-5.test.ts | compile/aot/build scaling > classes with a field each that extend one another in a row, all constructed at one place: 3.90 times in TableBytesEmitted; the bound is 2.1 | 3.90 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
-| test/aot/build-scaling/build-scaling-6.test.ts | compile/aot/build scaling > branches in a row that each hand another element on, a name of its own read in front of each: 3.08 times in instructions; the bound is 2.1 | 3.08 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-1.test.ts | compile/aot/build scaling > attributes that each stand in front of a spread of their own, in a check: 3.84 times in instructions; the bound is 2.1 | 3.84 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-2.test.ts | compile/aot/build scaling > classes in a chain, a method of each read off its own object: 4.13 times in ClassesClimbedAboveMembersOfFamilies; the bound is 2.1 | 4.13 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-3.test.ts | compile/aot/build scaling > setters by spread of one record, called by name: 3.50 times in instructions; the bound is 2.1 | 3.50 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-4.test.ts | compile/aot/build scaling > a union of object types that is told apart by a row of ifs over a tag: 3.60 times in instructions; the bound is 2.1 | 3.60 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-4.test.ts | compile/aot/build scaling > classes with a field each that extend one another in a row, all constructed at one place: 3.90 times in TableBytesEmitted; the bound is 2.1 | 3.90 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-4.test.ts | compile/aot/build scaling > setters by spread of one record, reached through a table: 2.81 times in instructions; the bound is 2.1 | 2.81 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-5.test.ts | compile/aot/build scaling > a union of object types that is told apart by a row of ifs over a tag, with a call between them: 3.56 times in instructions; the bound is 2.1 | 3.56 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-5.test.ts | compile/aot/build scaling > setters by spread of one record, reached through a table, that lay one name more: 2.80 times in instructions; the bound is 2.1 | 2.80 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-6.test.ts | compile/aot/build scaling > a file that exports everything of many files, loaded behind a mock of the last, in a test run: 3.07 times in instructions; the bound is 2.1 | 3.07 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-6.test.ts | compile/aot/build scaling > classes below one base with one object out of sight, a value of the family read under as many names that nobody declares: 3.99 times in GuardsOfClassGuardCounts; the bound is 2.1 | 3.99 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-6.test.ts | compile/aot/build scaling > classes that extend one another in a row, each constructed: 3.45 times in TableBytesEmitted; the bound is 2.1 | 3.45 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-6.test.ts | compile/aot/build scaling > names that each follow a spread of their own: 3.47 times in instructions; the bound is 2.1 | 3.47 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
+| test/aot/build-scaling/build-scaling-6.test.ts | compile/aot/build scaling > twice as many functions stored by name on an object behind one delete, in a file that a test requires: 2.18 times in instructions; the bound is 2.1 | 2.18 times | 2.1 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/bundler-in-a-trimmed-executable.test.ts | Bun.build, HTML routes and Bun.Transpiler in a trimmed executable > a program that runs none uses only the members that it names: its report says that it may use every member | no | yes | no number: the goal is a yes or a no |
 | test/aot/compiler/budgets.test.ts | compile/aot/compiler budgets > erased: instructions of compile: 1.24 of the budget (5000 per ValuesWalked + 2000 per MachineOperationsAppended) | 1.24 | 1.00 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/compiler/budgets.test.ts | compile/aot/compiler budgets > erased: instructions of lowering: 2.06 of the budget (4000 per ValuesLowered) | 2.06 | 1.00 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
@@ -130,10 +141,12 @@ what does. What is not run, or not judged, stands in tables of its own further d
 | test/aot/compiler/budgets.test.ts | compile/aot/compiler budgets > typed: instructions of walk: 1.77 of the budget (5000 per ValuesWalked) | 1.77 | 1.00 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/crash-in-compiled-code.test.ts | a crash in what a compiled function calls > abort ends a program with SIGABRT and a report where it listens for the signal: Bun's handler for a signal that JavaScript listens for takes the place of the crash handler's: abort() ends the process without a word | no | yes | no number: the goal is a yes or a no |
 | test/aot/crash-in-compiled-code.test.ts | a crash in what a compiled function calls > trap ends a program with SIGTRAP and a report where it listens for the signal: Bun's handler for a signal that JavaScript listens for takes the place of the crash handler's and returns: on x64 the program goes on behind the trap, on arm64 it traps for ever | no | yes | no number: the goal is a yes or a no |
+| test/aot/from-source/answers/a-store-into-an-object-that-the-turn-has-made-is-not-put-back-where-the-turn-begins-again.ir | the loops of the walk: a store that puts back the field of an object that nobody sees again, in the arm where the turn begins again | no | yes | no number: the goal is a yes or a no |
 | test/aot/from-source/link/a-record-written-out-keeps-its-whole-numbers-beside-a-spread-under-its-names.ir | Link: a literal that begins with a spread shares the layout, and what is proven of its fields, with the record that is written out under the same names | no | yes | no number: the goal is a yes or a no |
 | test/aot/from-source/link/appended-fields/stored-through-a-family-comes-to-no-class-that-never-met.ir | Link: where a family is born out of a type of the table every member is noted as met, so a name that is stored through a class with what extends it is appended to every class below it | no | yes | no number: the goal is a yes or a no |
 | test/aot/from-source/link/appended-fields/stored-through-records-that-met.ir | Link: a name that is stored through records that met is appended to none of them, so it lies out of line in each | no | yes | no number: the goal is a yes or a no |
 | test/aot/from-source/walk/guesses/library-method-handed-a-closure-in-a-loop-is-copied-behind-tests.ir | methods of lists: the row is off at its door, copyLibraryFunctionBehindTests(): it cost builds time and bought nothing that the programs measured show | no | yes | no number: the goal is a yes or a no |
+| test/aot/from-source/walk/loops/a-loop-whose-bound-is-a-known-integer-is-walked-once.ir | the loops of the walk: a walk of the loop is undone where the bound of the loop is a known integer | not said | not said | nothing: the name says no measured number beside its bound |
 | test/aot/heap-limit.test.ts | the address space for objects of a compiled program > two Workers each keep more alive than half a range holds: an entry takes 48 bytes for 32 | 48 bytes | 32 | nothing in the tree: the number moves with the platform and with every change, so a run that records it has to watch it |
 | test/aot/helpers-that-a-test-file-reaches-by-other-ways.test.ts | the same where the folder is taken out of a URL first, which a test run does not follow yet: one program | no | yes | no number: the goal is a yes or a no |
 | test/aot/in-place-executables.test.ts | the build of the scenes that load by name names dynamic-import alone: 4 causes for 1: eval, native-code and runtime-code beside it, none with a place | 4 | 1 | the case beside it: the build of the scenes that load by name names dynamic-import alone but for eval, native-code and runtime-code |
@@ -144,11 +157,10 @@ what does. What is not run, or not judged, stands in tables of its own further d
 | test/aot/missing-bun-types.test.ts | without Bun's type declarations > a build sees all that can run where Reflect.get() reads Bun off the global object: 13 lines say what blocks it, for 0 | 13 | 0 | nothing yet: one more case beside it could hold it to this number |
 | test/aot/names-of-unreached-code-in-executables.test.ts | compile/aot/names of unreached code, built by default > the executable does not hold the file names of modules of which no code is left: every module that is imported has a row in the table of modules | no | yes | no number: the goal is a yes or a no |
 | test/aot/names-of-unreached-code-in-executables.test.ts | compile/aot/names of unreached code, built without the source of functions > the executable does not hold the file names of modules of which no code is left: every module that is imported has a row in the table of modules | no | yes | no number: the goal is a yes or a no |
-| test/aot/parallel/arms-of-the-library/a-getter-under-resume-above-the-prototype-of-sockets.cjs | it answers as plain Bun: "1" \| "0": src/js/node/net.ts keeps Socket.prototype.resume for the short roads where it is compiled, and reads it for that | no | yes | no number: the goal is a yes or a no |
-| test/aot/parallel/arms-of-the-library/the-name-of-stats-is-deleted-ahead-of-node-fs.mjs | it answers as plain Bun: "false" \| "true": src/js/node/fs.ts names Dirent and Stats anew only where it is not compiled | no | yes | no number: the goal is a yes or a no |
 | test/aot/parallel/builtin-modules/bun-ffi-dlopen-image-size.js | ImageFunctionsEmitted <= 100: what this program reaches of Bun's library is not cut down to what it uses yet | printed by the run | <= 100 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/builtin-modules/members-compiled-module-read-object-body.ts | NativeFunctionTestsEmitted = 0: the count takes in the functions of Bun's library that come into this executable | printed by the run | = 0 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/builtin-modules/members-compiled-module-read-object-body.ts | NativeFunctionsCalledDirectly >= 3: path.isAbsolute, path.basename and path.extname are not entered by their direct bindings | printed by the run | >= 3 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
+| test/aot/parallel/classes-and-closures/closure-keeps-alive/main.ts | it answers as plain Bun under --aot-harden=proof-checks: "collected" \| "kept": the three rows of helpers across an await or a yield: that build makes the environment, as said above | no | yes | no number: the goal is a yes or a no |
 | test/aot/parallel/closed-world/an-object-of-the-host-out-of-sight-brings-what-is-used-of-it.js | FunctionsLowered <= 600: what this program reaches of Bun's library is not cut down to what it uses yet | printed by the run | <= 600 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/closed-world/function-bound-over-proxy.js | ImageFunctionsEmitted <= 30: what this program reaches of Bun's library is not cut down to what it uses yet | printed by the run | <= 30 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
 | test/aot/parallel/closed-world/proxy-listed-by-its-traps.js | ImageFunctionsEmitted <= 30: what this program reaches of Bun's library is not cut down to what it uses yet | printed by the run | <= 30 | two runs compared: the driver prints what it counted, and test/aot/tools/goals-that-grew.ts names a count that moved further from its bound |
@@ -299,41 +311,13 @@ what does. What is not run, or not judged, stands in tables of its own further d
 | the engine: aot/tests/types/like-records-that-never-meet.ir | front-end-tests: a family holds what looks like its type beside what flows into it, so it grows with the program | no | yes | no number: the goal is a yes or a no |
 | the engine: aot/tests/walk/parameter-guards/guard-of-a-number-that-char-codes-fill-tests-for-int32.ir | types of numbers: the row of charCodeAt writes `number`, fractions and all (builtins/string.builtins.ts: b.f64; the table has no word for "an integer or NaN"). So that is what Link holds at `ch`, a fraction counts against int32, the guard asks for a number and the fast version compares doubles | no | yes | no number: the goal is a yes or a no |
 
-## Declared and never run
-
-A case that is declared with `todo` is listed by the runner and not run: nothing says so when it begins to hold, or when it gets worse.
-
-| file | case |
-|---|---|
-| test/aot/development-server.test.ts | Bun.serve starts the development server in a compiled executable > app is stored into the options behind their literal |
-| test/aot/development-server.test.ts | Bun.serve starts the development server in a compiled executable > the options are parsed at run time |
-| test/aot/fault-inside-a-removed-range.test.ts | a fault at an address inside a removed range > is called a removed feature only where removed code was called: call filled, listening: on macOS x64 removed code is still filled with breakpoints |
-| test/aot/fault-inside-a-removed-range.test.ts | a fault at an address inside a removed range > is called a removed feature only where removed code was called: call mapped data: on macOS a crash is called "a removed feature" where none was called: a call into a mapped page that cannot be run |
-| test/aot/heap-limit.test.ts | the address space for objects of a compiled program > behind a fill at the depth of the loop that follows there is room for a built-in that the loop calls |
-| test/aot/in-place-executables.test.ts | Bun.Glob finds embedded files, once the sources have moved away |
-| test/aot/in-place-executables.test.ts | a computed package name resolves in a symlinked package store, once the sources have moved away |
-| test/aot/in-place-executables.test.ts | a computed package name resolves like the same literal name, once the sources have moved away |
-| test/aot/in-place-executables.test.ts | fs finds compiled files by path and in directory listings, once the sources have moved away |
-| test/aot/in-place-executables.test.ts | package.json is found for every compiled package, once the sources have moved away |
-| test/aot/in-place-executables.test.ts | require.resolve searches from the folders in its paths option, once the sources have moved away |
-| test/aot/isolate-doors.test.ts | --isolate=modules as one program |
-| test/aot/servers/express.test.ts | one more module that nothing uses moves none of its functions: 20 move |
-| test/aot/transpiler-parity-1.test.ts | test/bundler/bundler_decorator_metadata.test.ts: the entry point of each of its two tests holds the text of an untyped polyfill (TS7006 and others), and a type error stops the build |
-| test/aot/transpiler-parity-1.test.ts | test/bundler/transpiler/es-decorators-esbuild.test.ts: its runner imports each case by a computed specifier (:190), so the cases would be interpreted, and its boilerplate adds a property to Function.prototype (:19-20), which is read-only in a compiled program |
-| test/aot/transpiler-parity-1.test.ts | test/bundler/transpiler/jsx-production.test.ts: its program bundles itself with Bun.build() and imports the output from a blob: URL (jsx-production.tsx:36), and compiled code loads no code that was not compiled with it |
-| test/aot/transpiler-parity-1.test.ts | test/js/bun/resolve/esModule.test.ts: it stores to members of `import * as Self` (:14), and `bun build` stops at such a store, with --aot and without |
-
 ## Marks from which no case was declared
 
 These lines spell a mark that was not evaluated where this page was written: the file chooses by what that Bun or its platform can do.
 What they mark is missing above.
 
-- `test/aot/a-line-of-the-stage-log-goes-out-in-one-write.test.ts:24: const one = !shellOpensDatagramSockets ? test.skip : isNotMetYet ? test.todo : test;`
-- `test/aot/abort-is-reported.test.ts:15: test.skipIf(isASAN).todoIf(isWindows)(`
 - `test/aot/compiler/budgets.test.ts:186: (measuredWhereNotYetMet[dress][touch] ? test.failing : test.concurrent)(`
 - `test/aot/frameworks/run-framework.ts:228: ? test.failing`
 - `test/aot/process-env-opens-nothing.test.ts:95: (isWindows ? test.todo : test.concurrent)('${what} lets nothing more escape', async () => {`
-- `test/aot/sampling-profiler-tier-breakdown.test.ts:50: testCompiled.todoIf(isBuildKite && isWindows)(`
-- `test/aot/sampling-profiler-tier-breakdown.test.ts:67: test.todoIf(isBuildKite && isWindows)(`
 - `test/aot/servers/both-ways.ts:127: test.failing(`
 - `test/aot/servers/both-ways.ts:145: (reached === reachedBehindAnotherFile ? test : test.todo)(`

@@ -70,7 +70,6 @@ reading-a-property-of-null-throws-whatever-signal-actions-a-library-sets.test.ts
 resolver/resolution-cases.ts
 run-parallel-time-limit-message.test.ts
 same-program-however-the-threads-fall.ts
-servers/each-framework.ts
 shell-reports-missing-host-functions.test.ts
 texts-that-tell-builds-apart.test.ts
 the-typescript-compiler-checks-a-text.test.ts

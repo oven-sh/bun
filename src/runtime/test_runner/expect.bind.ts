@@ -278,6 +278,8 @@ export const toSatisfyAsCustomMatcher = b.fn({
   ...plain("Expect", "toSatisfyAsCustomMatcher", "to_satisfy_as_custom_matcher"),
   args: { received: b.any, predicate: b.any },
 });
+/** Where `expect.extend()` puts each matcher. `internal/test/globals` restores these objects between test files. */
+export const matcherHolders = b.fn({ ...plain("Expect", "matcherHolders", "matcher_holders_array") });
 export const stringify = b.fn({ ...utility("stringify", "stringify"), args: { value: b.any } });
 export const printExpected = b.fn({ ...utility("printExpected", "print_expected"), args: { value: b.any } });
 export const printReceived = b.fn({ ...utility("printReceived", "print_received"), args: { value: b.any } });

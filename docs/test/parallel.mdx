@@ -100,6 +100,7 @@ Keeps one global object for the whole run and gives each file its own copy of ev
 | The window of a [DOM environment](/test/dom)                         | new per file | new per file        |
 | Servers, sockets, watchers, subprocesses and timers a file left open | closed       | closed              |
 | `globalThis`, built-ins (`Array.prototype`, `console`, `Date.now`)   | new per file | changes are undone  |
+| Matchers from `expect.extend()`, values from `expect.setState()`     | removed      | removed             |
 | `process.env`, `process.cwd()`, listeners on `process`               | restored     | restored            |
 | Built-in modules (`node:fs`, `bun:sqlite`)                           | new per file | shared              |
 | JIT-compiled code                                                    | discarded    | kept                |
@@ -107,6 +108,8 @@ Keeps one global object for the whole run and gives each file its own copy of ev
 Use it with `--parallel` too: `bun test --parallel --isolate=modules`.
 
 Between files, Bun restores the properties of `globalThis`, of objects stored on `globalThis`, and of any function or prototype reachable from those. It doesn't restore a built-in module's exports (`fs.readFileSync = ...`) or state hidden inside a built-in object, so those changes carry over to the next file.
+
+Bun also restores the properties of `expect`, of `expect.prototype` and of the prototype of `expect.not`, although `globalThis` doesn't reach them. A matcher that one file adds with `expect.extend()` is gone in the next file, and a built-in matcher that the file replaced is back. The values that a file passes to `expect.setState()` are gone too. Bun runs a [preload script](/test/lifecycle#global-setup-and-teardown) and the modules that a file imports again for each file, so they add their matchers again.
 
 ## Concurrent tests within a file
 

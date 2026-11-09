@@ -41,7 +41,8 @@ impl Expect {
     }
 
     /// `--isolate=modules` keeps the global object. The next file's preloads and imports are evaluated again, and
-    /// register their equality testers and snapshot serializers again.
+    /// register their equality testers and snapshot serializers again. `internal/test/globals` removes the matchers
+    /// of `expect.extend()`.
     #[optimize(size)]
     pub(crate) fn reset_for_test_isolation(global: &JSGlobalObject) {
         if !global.bun_vm().test_isolation_state.shares_global {
@@ -51,6 +52,7 @@ impl Expect {
         let Some(utils) = utils_value.as_class_ref::<ExpectMatcherUtils>() else { return };
         js::equality_testers_set_cached(utils_value, global, JSValue::ZERO);
         js::snapshot_serializers_set_cached(utils_value, global, JSValue::ZERO);
+        js::state_set_cached(utils_value, global, JSValue::ZERO);
         utils.testers_of_file.set(Vec::new());
         utils.serializers_of_file.set(Vec::new());
     }

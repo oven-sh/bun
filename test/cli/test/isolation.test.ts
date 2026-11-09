@@ -1633,6 +1633,124 @@ describe.concurrent("bun test --isolate=modules", () => {
     expect((await passes(files, 1)).split("\n").filter(line => line.startsWith("["))).toEqual(["[]"]);
   });
 
+  // `globalThis` does not reach `expect`, `expect.prototype` and the prototype of `expect.not`: `expect` is an export of "bun:test".
+  const matcher = (from: string, pass = true) => `() { return { pass: ${pass}, message: () => "from ${from}" }; }`;
+
+  test("a matcher that a file adds with expect.extend() is gone in the next file", async () => {
+    const typesOf = `names => names.flatMap(name => [typeof expect(1)[name], typeof expect[name], typeof expect.not[name]])`;
+    // A second wrapper around the first, from the preload's second run, would count every call twice.
+    const callsOfWrapper = `(globalThis.callsOfWrapper = 0, expect([1]).toHaveLength(1), globalThis.callsOfWrapper)`;
+    const files = {
+      // Every module that has an `expect` adds to the same three objects.
+      "preload.js": `
+        import { expect } from "@jest/globals";
+        expect.extend({ toBeOfPreload${matcher("preload")} });
+        const { toHaveLength } = expect.prototype;
+        expect.prototype.toHaveLength = function (...args) {
+          globalThis.callsOfWrapper++;
+          return toHaveLength.apply(this, args);
+        };
+      `,
+      "helper.js": `import { expect } from "vitest"; expect.extend({ toBeOfHelper${matcher("helper")} });`,
+      "a.test.js": `
+        import "./helper.js";
+        expect.extend({ toBeOfFile${matcher("a")}, toEqual${matcher("a")}, toBeOfPreload${matcher("a", false)} });
+        beforeAll(() => expect.extend({ toBeOfHook${matcher("a")} }));
+        test("a", () => {
+          expect.extend({ toBeOfTest${matcher("a")} });
+          expect(1).toEqual(2);
+          expect((${typesOf})(["toBeOfFile", "toBeOfHelper", "toBeOfHook", "toBeOfTest"])).toStrictEqual(Array(12).fill("function"));
+          expect(() => expect(1).toBeOfPreload()).toThrow("from a");
+          expect(${callsOfWrapper}).toBe(1);
+        });
+      `,
+      // A file that adds the name itself runs its own matcher.
+      "b.test.js": `
+        expect.extend({ toBeOfFile${matcher("b", false)} });
+        test("b", () => {
+          expect(() => expect(1).toEqual(2)).toThrow("Expected: 2");
+          expect(() => expect(1).toBeOfFile()).toThrow("from b");
+          expect(1).toBeOfPreload();
+          expect((${typesOf})(["toBeOfHelper", "toBeOfHook", "toBeOfTest"])).toStrictEqual(Array(9).fill("undefined"));
+          expect(${callsOfWrapper}).toBe(1);
+        });
+      `,
+      "c.test.js": `
+        test("c", () => {
+          expect(() => expect(1).toEqual(2)).toThrow("Expected: 2");
+          expect(1).toBeOfPreload();
+          expect((${typesOf})(["toBeOfFile", "toBeOfHelper", "toBeOfHook", "toBeOfTest"])).toStrictEqual(Array(12).fill("undefined"));
+          expect(${callsOfWrapper}).toBe(1);
+        });
+      `,
+    };
+    const names = ["./a.test.js", "./b.test.js", "./c.test.js"];
+    // The helper is evaluated once for the file, so its matcher has to last through both runs.
+    await passes(files, 6, ["--preload", "./preload.js", "--rerun-each=2"]);
+    // One worker takes the three files.
+    using dir = tempDir("isolate-modules-worker", files);
+    const args = ["--isolate=modules", "--parallel=2", "--preload", "./preload.js"];
+    const worker = await runTests(String(dir), args, names, { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "60000" });
+    expect(worker.stderr).toContain(" 3 pass\n 0 fail\n");
+    expect(worker.exitCode).toBe(0);
+  });
+
+  test("a matcher of a file that throws while it loads is gone in the next file", async () => {
+    using dir = tempDir("isolate-modules-extend-throws", {
+      "a.test.js": `expect.extend({ toEqual${matcher("a")}, toBeLeft${matcher("a")} }); throw new Error("a throws while it loads");`,
+      "b.test.js": `test("b", () => { expect(() => expect(1).toEqual(2)).toThrow("Expected: 2"); expect(typeof expect(1).toBeLeft).toBe("undefined"); });`,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), ["--isolate=modules"], ["./a.test.js", "./b.test.js"]);
+    expect(stderr).toContain(" 1 pass\n 1 fail\n 1 error\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("every file finds expect as the first one did, whatever the files before it did to it", async () => {
+    // The address tells one function from another that has the same name.
+    const state = `JSON.stringify([
+      ...[expect, expect.prototype, Object.getPrototypeOf(expect.not)].map(holder =>
+        Reflect.ownKeys(holder).map(key => {
+          const { value, get, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(holder, key);
+          const shown = typeof value === "function" ? /0x[0-9a-f]+/.exec(jscDescribe(value))[0] : typeof value === "object" ? "object" : String(value);
+          return [String(key), shown, typeof get, writable, enumerable, configurable].join();
+        }),
+      ),
+      Object.keys(expect.getState()),
+    ])`;
+    // The restore compares a dictionary key by key after every file, so it makes the three objects plain ones first.
+    const dictionaries = `
+      const dictionary = {};
+      for (let i = 0; i < 600; i++) dictionary["key" + i] = i;
+      console.log("dictionaries", [expect, expect.prototype, Object.getPrototypeOf(expect.not), dictionary].map(object => /Dictionary/.test(jscDescribe(object))).join());
+    `;
+    const change = [
+      // One kind of change for each file, and first the ones that expect.extend() does not make.
+      `expect.prototype.toEqual = expect.any = Object.getPrototypeOf(expect.not).any = () => {};`,
+      `expect.left = expect.prototype.left = Object.getPrototypeOf(expect.not).left = 1; expect.prototype[Symbol.for("left")] = 1; expect._left = 1;`,
+      `Object.defineProperty(expect, "name", { value: "left" });`,
+      `expect.extend({ toBeLeft${matcher("a")}, toEqual${matcher("a")}, _toBeLeft${matcher("a")} });`,
+      `expect.extend({ not${matcher("a")}, resolvesTo${matcher("a")}, toBeNull${matcher("a")} });
+       Object.defineProperty(expect.prototype, "toBeNull", { get() {}, enumerable: false });`,
+      `expect.setState({ left: 1 }); expect.getState().alsoLeft = 1;`,
+      `expect.extend({ 0${matcher("a")} }); expect.prototype[1] = 1;`,
+      `expect(1).not.toBe(2); expect(() => expect(1).toEqual(2)).toThrow("Expected: 2"); expect("a").toEqual(expect.not.stringContaining("b"));`,
+    ];
+    const files = Object.fromEntries(
+      change.map((code, i) => [
+        `${i}.test.js`,
+        `import { jscDescribe } from "bun:jsc"; test("${i}", () => { ${i === 0 ? dictionaries : ""} console.log(${state}); ${code} });`,
+      ]),
+    );
+    const stdout = await passes(files, change.length);
+    const lines = stdout.split("\n").filter(line => line.startsWith("["));
+    expect(lines).toEqual(Array(change.length).fill(lines[0]));
+    const [ownOfExpect, , , stateKeys] = JSON.parse(lines[0]);
+    expect(ownOfExpect).toContainEqual(expect.stringMatching(/^extend,0x[0-9a-f]+,undefined,true,true,false$/));
+    expect(ownOfExpect).toContain("name,Expect,undefined,false,false,true");
+    expect(stateKeys).toEqual(expect.arrayContaining(["assertionCalls", "testPath"]));
+    expect(stdout).toContain("dictionaries false,false,false,true\n");
+  });
+
   test("Module._cache is the running file's require.cache", async () => {
     const file = `
       const Module = require("node:module");

@@ -1,5 +1,6 @@
 // Called by VirtualMachine.rs. With `bun test --isolate=modules`, all test files share one global object,
-// so after each file we restore what it changed: globals, builtins, `process.env` and `process` listeners.
+// so after each file we restore what it changed: globals, builtins, the matchers of `expect`, `process.env` and
+// `process` listeners.
 
 const isEnvironmentGlobal: (key: PropertyKey) => boolean = require("internal/test/environment").isEnvironmentGlobal;
 const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
@@ -17,6 +18,13 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
   "TestEnvironment.cpp",
   "jsFunctionDeleteOwnProperty",
   2,
+);
+// The objects that `expect.extend()` adds each matcher to. `globalThis` doesn't reach them: `expect` is an export of "bun:test".
+const getMatcherHolders: () => object[] = $bindgen("expect.bind.ts", "matcherHolders");
+const flattenDictionary: (object: object) => void = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionFlattenDictionary",
+  1,
 );
 
 // Builtin modules are loaded once and shared by all files. These two patch `Performance.prototype` and
@@ -46,6 +54,7 @@ const skippedKeys = new Set([
   "mainModule",
 ]);
 
+let matcherHolders: object[] = [];
 const objects: object[] = [];
 const savedProperties: Properties[] = [];
 const savedPropertyCounts: number[] = [];
@@ -61,15 +70,21 @@ function getDescriptor(object: object, key: PropertyKey): PropertyDescriptor | u
   return descriptor && ({ __proto__: null, ...descriptor } as PropertyDescriptor);
 }
 
+function isMatcherHolder(object: object) {
+  for (let i = 0; i < matcherHolders.length; i++) if (matcherHolders[i] === object) return true;
+  return false;
+}
+
 function isTracked(object: object, key: PropertyKey) {
   if (object === globalThis) return true;
-  // Underscore-prefixed properties hold internal state, like `process._events`.
-  if (typeof key === "string" && key.$charCodeAt(0) === 95) return false;
+  // Underscore-prefixed properties hold internal state, like `process._events`. A matcher can have any name.
+  if (typeof key === "string" && key.$charCodeAt(0) === 95) return isMatcherHolder(object);
   return !((object === process || object === Bun) && skippedKeys.$has(key as string));
 }
 
 // Walks globalThis, its object properties, every function reachable from those, and their prototypes.
-function saveProperties(object: object, isGlobalThis: boolean) {
+// Of an `isLeaf` object it saves the properties, and doesn't walk what they hold.
+function saveProperties(object: object, isGlobalThis: boolean, isLeaf = false) {
   if (seen.$has(object)) return;
   seen.$set(object, true);
   const properties: Properties = new Map();
@@ -85,6 +100,7 @@ function saveProperties(object: object, isGlobalThis: boolean) {
     if (!descriptor) continue;
     properties.$set(key, descriptor);
     savedPropertyCounts[index]++;
+    if (isLeaf) continue;
     const { value, get, set } = descriptor;
     if (
       typeof value === "function" ||
@@ -169,7 +185,14 @@ function saveShapes() {
 // The first call takes the snapshot. Later calls restore it.
 export default function restoreGlobals() {
   if (!env) {
+    matcherHolders = getMatcherHolders();
     saveProperties(globalThis, true);
+    for (let i = 0; i < matcherHolders.length; i++) {
+      // They start as dictionaries, which `shapesOf` can't describe: they would be compared key by key after every file.
+      flattenDictionary(matcherHolders[i]);
+      // `expect.extend()` writes only their own properties. The matchers would be 130 more objects to compare.
+      saveProperties(matcherHolders[i], false, true);
+    }
     saveShapes();
     env = new Map();
     const keys = getOwnPropertyNames(process.env);

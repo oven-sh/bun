@@ -493,6 +493,13 @@ impl<'a, 's> Syntax<'a, 's> {
         key
     }
 
+    /// The `accessor #x` member that `name` is the name of. Its value is in a field of another name, and only its setter stores to that field.
+    fn private_accessor(&self, name: u32) -> Option<&Member> {
+        let is_it =
+            |member: &&Member| member.name_pos == name && member.flags.contains(Flags::ACCESSOR);
+        (self.byte(name) == b'#').then(|| self.file.members.iter().find(is_it))?
+    }
+
     fn member_slots(&self, member: &Member, slots: &mut Vec<Slot>) {
         if member.kind == MemberKind::StaticBlock {
             return;
@@ -3075,15 +3082,24 @@ impl<'a> Transfer<'_, 'a, '_> {
                 {
                     insertions.add(slot.start, Order::Slot, b": undefined".to_vec());
                 }
+                // The checker takes the type of an `accessor #x;` from what the constructor or a static block stores. Here those stores go to the setter, so the field would have no type (TS7008).
+                if slot.place == Place::MemberType
+                    && output.byte(output.after_trivia(slot.start)) != b'='
+                    && module.syntax.private_accessor(key).is_some()
+                {
+                    insertions.add(slot.start, Order::Slot, b": any".to_vec());
+                }
                 continue;
             };
             let text = module.trimmed_text(found.start, found.end);
             let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
                 Place::MemberType
-                    if is_computed
-                        && text.starts_with(b":")
-                        && output.byte(output.after_trivia(slot.start)) != b'=' =>
+                    if text.starts_with(b":")
+                        && output.byte(output.after_trivia(slot.start)) != b'='
+                        && (is_computed
+                            || (module.syntax.private_accessor(found.key))
+                                .is_some_and(|it| !it.flags.contains(Flags::STATIC))) =>
                 {
                     (Order::Slot, [&b"!"[..], &text].concat())
                 }
@@ -3151,7 +3167,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                     .first_identifier(output_file[parameter].pat)
                     .is_some_and(|name| mappings.original(name).is_some())
             };
-            if mappings.original(Syntax::function_key(function)).is_some()
+            // The parameter of a setter has the type of its getter and cannot be optional (TS1051).
+            if matches!(function.kind, FnKind::Setter)
+                || mappings.original(Syntax::function_key(function)).is_some()
                 || function.params.iter().any(is_mapped)
             {
                 continue;
@@ -3398,12 +3416,46 @@ impl<'a> Transfer<'_, 'a, '_> {
                     .get(&(index as u32, syntax.file.exprs.get(obj.idx())?.pos))?;
                 Some([&b" as "[..], name, b".", syntax.word(name_pos)].concat())
             };
+            // The printed value of `accessor #x: T = <anonymous function or class>` is in a literal that names it, out of reach of `T`.
+            let is_named_by_literal = |member: &&Member| {
+                let is_decorator =
+                    |modifier: &Modifier| matches!(modifier.kind, ModifierKind::Decorator(_));
+                member.kind == MemberKind::Property
+                    && member.flags.contains(Flags::ACCESSOR)
+                    && syntax.byte(member.name_pos) == b'#'
+                    && !file
+                        .modifier_list(member.modifiers)
+                        .iter()
+                        .any(is_decorator)
+                    && member
+                        .init
+                        .some()
+                        .is_some_and(|value| match file[value].kind {
+                            ExprKind::Fn(function) => {
+                                file[function].kind == FnKind::Arrow
+                                    || file[function].name.is_none()
+                            }
+                            ExprKind::Class(class) => file[class].name.is_none(),
+                            _ => false,
+                        })
+            };
+            let typed_by_accessor: Vec<(ExprId, TypeNodeId)> = (file.members.iter())
+                .filter(is_named_by_literal)
+                .filter_map(|member| Some((member.init, member.ty.some()?)))
+                .collect();
+            let accessor_cast = |expr: ExprId| {
+                let annotation = typed_by_accessor.iter().find(|typed| typed.0 == expr)?.1;
+                let (start, end) = syntax.type_span(annotation);
+                Some([&b" satisfies ("[..], &module.text(start, end), b")"].concat())
+            };
             let mut chains = syntax.cast_chains();
             let operands: FxHashSet<ExprId> = chains.iter().map(|chain| chain.operand).collect();
             let members = (0..syntax.file.exprs.len() as u32)
                 .map(ExprId)
                 .filter(|&expr| !operands.contains(&expr) && enum_member_cast(expr).is_some());
-            chains.extend(members.map(|expr| CastChain {
+            let values_of_accessors = (typed_by_accessor.iter().map(|typed| typed.0))
+                .filter(|expr| !operands.contains(expr));
+            chains.extend(members.chain(values_of_accessors).map(|expr| CastChain {
                 operand: expr,
                 outermost: expr,
                 casts: Vec::new(),
@@ -3428,7 +3480,9 @@ impl<'a> Transfer<'_, 'a, '_> {
                 }) else {
                     continue;
                 };
-                let member = enum_member_cast(chain.operand).filter(|_| is_literal(operand));
+                let member = enum_member_cast(chain.operand)
+                    .filter(|_| is_literal(operand))
+                    .or_else(|| accessor_cast(chain.operand).filter(|_| chain.casts.is_empty()));
                 if member.is_none() && chain.casts.is_empty() {
                     continue;
                 }
@@ -3448,6 +3502,10 @@ impl<'a> Transfer<'_, 'a, '_> {
                 };
                 let (mut opens, mut suffix) = (0usize, Vec::new());
                 if let Some(member) = member {
+                    if level.lt(Level::Compare) {
+                        opens += 1;
+                        suffix.push(b')');
+                    }
                     suffix.extend_from_slice(&member);
                     level = Level::Compare;
                     let declared = widened

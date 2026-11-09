@@ -134,6 +134,139 @@ export function join(first: string, second: string): string {
     expect(readFileSync(join(String(dir), "out/index.aot.ts"), "utf8")).not.toContain("__DEV__");
   });
 
+  test("the field under an undecorated accessor #x keeps the type of the accessor", async () => {
+    using dir = tempDir("build-dts-accessor", {
+      ...project,
+      "src/join.ts": `export class Mode {
+  accessor #mode: "idle" | "busy" = "idle";
+  static accessor #count: number = 0;
+  accessor #echo = <T>(value: T): T => value;
+  busy(): boolean {
+    const mode = this.#echo<"idle" | "busy">(this.#mode);
+    switch (mode) {
+      case "idle":
+        return false;
+      case "busy":
+        return true;
+      default: {
+        const unreachable: never = mode;
+        return unreachable;
+      }
+    }
+  }
+  static next(): number {
+    return ++Mode.#count;
+  }
+}
+export function join(first: string, second: string): string {
+  return first + " " + second + (new Mode().busy() ? "!" : "") + Mode.next();
+}
+`,
+    });
+    // busy() passes the type checker only if #mode and #echo have their types. A file with a type error is left out, with a warning.
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    expect(typed).toContain('#mode_accessor_storage: "idle" | "busy" = "idle";');
+    expect(typed).toContain("static #count_accessor_storage: number = 0;");
+    // The parameter of a setter cannot be optional (TS1051), and the build does not stop at that error.
+    expect(typed).not.toContain("?: any");
+  });
+
+  test("a function in an undecorated accessor #x is checked against the type of the accessor", async () => {
+    using dir = tempDir("build-dts-accessor-function", {
+      ...project,
+      "src/join.ts": `export class Mode {
+  accessor #pick: () => "idle" | "busy" = () => "idle";
+  accessor #fixed: (size: number) => string = size => size.toFixed(2);
+  accessor #late: string;
+  static accessor #made: number;
+  static {
+    Mode.#made = 0;
+  }
+  constructor() {
+    this.#late = this.#pick() + this.#fixed(1) + ++Mode.#made;
+  }
+  get late(): string {
+    return this.#late;
+  }
+}
+export function join(first: string, second: string): string {
+  return first + " " + second + new Mode().late;
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    // The literal that names the function stands between it and the type of the field. Without the type, #pick returns a string, and the file is left out.
+    expect(typed).toContain('"#pick": (() => "idle") satisfies (() => "idle" | "busy")');
+    expect(typed).toContain('"#fixed": ((size) => size.toFixed(2)) satisfies ((size: number) => string)');
+    expect(typed).not.toContain(": any");
+    // The constructor stores through the setter, so the checker sees no value for the field (TS2564).
+    expect(typed).toContain("#late_accessor_storage!: string;");
+    // A static field takes no such mark (TS1255) and needs none.
+    expect(typed).toContain("static #made_accessor_storage: number;");
+  });
+
+  test("the field under an undecorated accessor #x with no type is any, and a plain field stays as it is", async () => {
+    using dir = tempDir("build-dts-accessor-untyped", {
+      ...project,
+      "src/join.ts": `import { Count } from "./count";
+export type Separator = " " | ", ";
+export class Joiner {
+  accessor #count;
+  accessor #separator;
+  static accessor #made;
+  #joined;
+  static #last;
+  static {
+    this.#made = 0;
+    this.#last = "";
+  }
+  constructor(separator: Separator) {
+    this.#count = new Count().next();
+    this.#separator = separator;
+    this.#joined = "";
+    Joiner.#made++;
+  }
+  join(first: string, second: string): string {
+    this.#count++;
+    this.#joined = first + this.#separator + second;
+    Joiner.#last = this.#joined;
+    return Joiner.#last;
+  }
+}
+export function join(first: string, second: string): string {
+  return new Joiner(" ").join(first, second);
+}
+`,
+      "src/count.ts": `// @ts-nocheck
+export class Count {
+  accessor #turns;
+  constructor() {
+    this.#turns = 0;
+  }
+  next() {
+    return ++this.#turns;
+  }
+}
+`,
+    });
+    const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out", "--dts");
+    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const typed = readFileSync(join(String(dir), "out/index.aot.ts"), "utf8");
+    // The checker takes the type of such a member from what the constructor or a static block stores. The stores of an accessor go to its setter in the written class, so its field would have no type (TS7008).
+    expect(typed).toContain("  #count_accessor_storage: any;\n");
+    expect(typed).toContain("  #separator_accessor_storage: any;\n");
+    expect(typed).toContain("  static #made_accessor_storage: any;\n");
+    // A store to a plain field is still a store to it.
+    expect(typed).toContain("  #joined;\n");
+    expect(typed).toContain("  static #last;\n");
+    // Nothing is written into a file that is not checked.
+    expect(typed).toContain("  // @ts-ignore\n  #turns_accessor_storage;\n");
+  });
+
   test("a build without it writes what it always did", async () => {
     using dir = tempDir("build-without-dts", project);
     const built = await bun(String(dir), "build", "./src/index.ts", "--outdir", "out");

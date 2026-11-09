@@ -1478,6 +1478,155 @@ test("disposes", () => {
   expect(plain.exitCode).toBe(0);
 });
 
+test("the getter and the setter that are printed for an undecorated accessor #x are no functions of the file", async () => {
+  using dir = tempDir("cov-accessor", {
+    // The test never stores to #a and #s. If their setters counted, the functions would be under the threshold.
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = 0.9\n`,
+    // An accessor with no value, and one whose value is on the next line, have no code of their own on their line.
+    "lib.ts": `export class C {
+  before = #a in this;
+  accessor #a = 1;
+  accessor #bare;
+  static accessor #s = 2;
+  static accessor #sbare;
+  accessor #next =
+    3;
+  accessor shown = 4;
+  #count = 5;
+  get #written() {
+    return this.#count;
+  }
+  use() {
+    this.#bare = this.#a + 1;
+    C.#sbare = C.#s + 1;
+    this.#next = this.#next + 1;
+    this.shown = this.shown + this.#written;
+    return this.#bare + C.#sbare + this.#next + this.shown;
+  }
+}
+`,
+    "lib.test.ts": `
+      import { test, expect } from "bun:test";
+      import { C } from "./lib";
+      test("use", () => {
+        const c = new C();
+        expect([c.before, c.use()]).toEqual([true, 18]);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("(pass) use");
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  // use(), the getter #written that the source has, and the pair of the public accessor.
+  expect(lcov.match(/^FN[FH]:\d+$/gm)).toEqual(["FNF:4", "FNH:4"]);
+  // A line runs as often as its field gets its value, not as often as the accessor is read.
+  expect(lcov.match(/^DA:\d+,\d+$/gm)?.join(" ")).toBe(
+    "DA:1,1 DA:2,1 DA:3,1 DA:4,1 DA:5,1 DA:6,1 DA:7,1 DA:8,1 DA:9,2 DA:10,1 DA:11,1 DA:12,1 DA:14,1 DA:15,1 DA:16,1 DA:17,1 DA:18,1 DA:19,1",
+  );
+  expect(exitCode).toBe(0);
+});
+
+test("the line of an accessor #x that never got its value is not run, however often the file is loaded", async () => {
+  using dir = tempDir("cov-accessor-two-loads", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "lib.cjs": `class C {
+  accessor #a = 1;
+  static m() {
+    return 1;
+  }
+}
+module.exports = { C };
+`,
+    "lib.test.ts": `
+      import { test, expect } from "bun:test";
+      test("two loads, no instance", () => {
+        const a = require("./lib.cjs");
+        delete require.cache[require.resolve("./lib.cjs")];
+        const b = require("./lib.cjs");
+        expect(a.C).not.toBe(b.C);
+        expect(a.C.m() + b.C.m()).toBe(2);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("(pass) two loads, no instance");
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  // No object is made, so no load gives #a its value.
+  expect(lcov.match(/^DA:\d+,\d+$/gm)?.join(" ")).toBe("DA:1,2 DA:2,0 DA:3,2 DA:4,2 DA:7,2");
+  expect(exitCode).toBe(0);
+});
+
+test("the marks of a printed get #x and set #x are read when the file comes from the transpiler cache", async () => {
+  using dir = tempDir("cov-accessor-transpiler-cache", {
+    // The cache leaves out a file of less than 4 KB. The object literal puts the list of braces into the same blob.
+    "lib.ts": `export const list = [
+  {
+    one: 1,
+  },
+];
+export class C {
+  before = #a in this;
+  accessor #a = 1;
+  static accessor #s = 2;
+  use() {
+    return this.#a + C.#s;
+  }
+}
+// ${Buffer.alloc(4096, "-")}
+`,
+    "lib.test.ts": `
+import { expect, test } from "bun:test";
+import { C, list } from "./lib.ts";
+test("use", () => { Object(list); const c = new C(); expect([c.before, c.use()]).toEqual([true, 3]); });
+`,
+  });
+  const cache = path.join(String(dir), "cache");
+  const run = async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+      env: {
+        ...bunEnv,
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache,
+        // A debug build only writes the cache without it.
+        BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
+      },
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+    return { record: lcov.split("end_of_record").find(r => r.includes("lib.ts\n")), exitCode };
+  };
+  // A run that does not take the entry writes it again.
+  const written = () =>
+    readdirSync(cache).map(name => [name, statSync(path.join(cache, name), { bigint: true }).mtimeNs]);
+  const printed = await run();
+  const entries = written();
+  expect(entries).not.toBeEmpty();
+  // use() alone: the two printed pairs are no functions of the file.
+  expect(printed.record?.match(/^FN[FH]:\d+$/gm)).toEqual(["FNF:1", "FNH:1"]);
+  expect(printed.record).toContain("DA:2,1\n");
+  expect(printed.record).toContain("DA:4,1\n");
+  expect(await run()).toEqual(printed);
+  expect(written()).toEqual(entries);
+  expect(printed.exitCode).toBe(0);
+});
+
 test("reports an error for a coverage directory longer than the path buffer", async () => {
   // A bunfig value can be longer than the buffer on every platform.
   using dir = tempDir("coverage-dir-too-long", {

@@ -73,6 +73,54 @@ struct DecoratedInitializer {
     extra: Expr,
 }
 
+/// Where the getter and the setter of an `accessor` keep its value.
+#[derive(Clone, Copy)]
+enum AccessorStorage {
+    /// A WeakMap next to the class.
+    WeakMap(Ref),
+    /// A `#private` field of the class.
+    Private(Ref),
+}
+
+/// `accessor #x` with no decorators.
+fn is_plain_private_accessor(prop: &Property) -> bool {
+    prop.kind == PropertyKind::AutoAccessor
+        && prop.ts_decorators.len_u32() == 0
+        && matches!(
+            prop.key.map(|key| key.data),
+            Some(js_ast::ExprData::EPrivateIdentifier(_))
+        )
+}
+
+/// What the name of the field of an undecorated `accessor #x` has behind `#x_accessor_storage`: digits, when the file declares a `#private` name of that form.
+fn accessor_storage_suffix<'a>(
+    symbols: &[js_ast::Symbol],
+    arena: &'a bun_alloc::Arena,
+) -> &'a [u8] {
+    let mut declared_digits: Option<usize> = None;
+    for symbol in symbols {
+        if !js_ast::Symbol::is_kind_private(symbol.kind) {
+            continue;
+        }
+        let name = symbol.original_name.slice();
+        let digits = name
+            .iter()
+            .rev()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
+        if name[..name.len() - digits].ends_with(b"_accessor_storage") {
+            declared_digits = declared_digits.max(Some(digits));
+        }
+    }
+    // One digit more than any declared name has there, so no declared name is equal.
+    let mut suffix = BumpVec::<u8>::new_in(arena);
+    if let Some(digits) = declared_digits {
+        suffix.push(b'1');
+        suffix.extend(core::iter::repeat_n(b'0', digits));
+    }
+    suffix.into_bump_slice()
+}
+
 fn is_constructor(prop: &Property) -> bool {
     prop.flags.contains(Flags::Property::IsMethod)
         && !prop.flags.contains(Flags::Property::IsStatic)
@@ -212,6 +260,102 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.bump_name3(b"_", &s.data, b"");
         }
         b"_accessor_storage"
+    }
+
+    /// `{ key: value }`: a property of that name is what names `value`, an anonymous function or class. The caller reads `key` from it.
+    fn naming_literal(
+        &mut self,
+        key: Expr,
+        value: Expr,
+        flags: Flags::PropertySet,
+        loc: bun_ast::Loc,
+    ) -> Expr {
+        let mut properties = bun_alloc::AstAlloc::vec();
+        VecExt::append(
+            &mut properties,
+            Property {
+                key: Some(key),
+                value: Some(value),
+                flags,
+                ..Default::default()
+            },
+        );
+        self.new_expr(
+            E::Object {
+                properties,
+                is_single_line: true,
+                names_value: true,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// `{ "#x": value }["#x"]` for the value of an `accessor #x`. Only `value` has a position.
+    fn named_by_key(&mut self, value: Expr, name: &'a [u8]) -> Expr {
+        let can_be_removed_if_unused = self.expr_can_be_removed_if_unused(&value);
+        let loc = bun_ast::Loc::EMPTY;
+        let key = self.new_expr(E::EString::init(name), loc);
+        let target = self.naming_literal(key, value, Flags::PROPERTY_NONE, loc);
+        self.new_expr(
+            E::Dot {
+                target,
+                name: name.into(),
+                name_loc: loc,
+                can_be_removed_if_unused,
+                ..Default::default()
+            },
+            loc,
+        )
+    }
+
+    /// Turns `prop`, an `accessor #x`, into the field under it. Returns `get #x` and `set #x`.
+    fn split_plain_private_accessor(&mut self, prop: &mut Property) -> [Property; 2] {
+        let key = prop.key.expect("a class member has a key");
+        let js_ast::ExprData::EPrivateIdentifier(accessor) = key.data else {
+            unreachable!("the key of an `accessor #x` is private");
+        };
+        let accessor_name: &'a [u8] = self.symbols[accessor.ref_.inner_index() as usize]
+            .original_name
+            .slice();
+        let suffix = *self
+            .accessor_storage_suffix
+            .get_or_insert_with(|| accessor_storage_suffix(&self.symbols, self.arena));
+        let storage_name = self.bump_name3(accessor_name, b"_accessor_storage", suffix);
+        let storage = self.new_sym(
+            if prop.flags.contains(Flags::Property::IsStatic) {
+                js_ast::symbol::Kind::PrivateStaticField
+            } else {
+                js_ast::symbol::Kind::PrivateField
+            },
+            storage_name,
+        );
+        self.accessor_storage_fields.push(storage);
+
+        // The field would name an anonymous function or class after itself.
+        if let Some(value) = prop.initializer
+            && value.is_anonymous_named()
+        {
+            prop.initializer = Some(self.named_by_key(value, accessor_name));
+        }
+        prop.key = Some(self.new_expr(E::PrivateIdentifier { ref_: storage }, key.loc));
+        prop.kind = PropertyKind::Normal;
+
+        let mut flags = prop.flags;
+        flags.insert(Flags::Property::IsMethod);
+        // The source has nothing of the pair, so nothing of it has a position: no line of the file runs when it is called.
+        let loc = bun_ast::Loc::EMPTY;
+        let ref_ = accessor.ref_;
+        let name = self.new_expr(E::PrivateIdentifier { ref_ }, loc);
+        let getter = self.accessor_getter(AccessorStorage::Private(storage), loc);
+        let setter = self.accessor_setter(AccessorStorage::Private(storage), loc);
+        [(PropertyKind::Get, getter), (PropertyKind::Set, setter)].map(|(kind, value)| Property {
+            key: Some(name),
+            value: Some(value),
+            kind,
+            flags,
+            ..Default::default()
+        })
     }
 
     // ── Private access rewriting ─────────────────────────
@@ -924,6 +1068,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             BumpVec::new_in(bump),
         ];
         let mut private_lowered_map: PrivateLoweredMap = PrivateLoweredMap::default();
+        // `get #x` and `set #x` of an undecorated `accessor #x`, until its field is a member.
+        let mut accessor_pair = BumpVec::<Property>::new_in(bump);
 
         for slot in class.properties.slice_mut().iter_mut() {
             let mut prop = core::mem::take(slot);
@@ -932,19 +1078,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
+            // Not the field `#x`: `#x in this` is true before the first field runs.
+            if is_plain_private_accessor(&prop) {
+                accessor_pair.extend(p.split_plain_private_accessor(&mut prop));
+            }
+
             let key = prop.key.expect("a class member has a key");
             let private_index = match &key.data {
                 js_ast::ExprData::EPrivateIdentifier(private) => Some(private.ref_.inner_index()),
                 _ => None,
             };
             let decorators: ExprNodeList = bun_alloc::AstAlloc::take(&mut prop.ts_decorators);
-            // An undecorated `accessor #x` behaves like the field `#x`.
-            if private_index.is_some()
-                && prop.kind == PropertyKind::AutoAccessor
-                && decorators.len_u32() == 0
-            {
-                prop.kind = PropertyKind::Normal;
-            }
             let is_static = prop.flags.contains(Flags::Property::IsStatic);
             let is_method = prop.flags.contains(Flags::Property::IsMethod);
             let kind: u8 = match prop.kind {
@@ -1081,7 +1225,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let (name_expr, key_temp) = p.host_key_effects(&mut prop, &mut key_effects, true);
                 let mut getter_flags = prop.flags;
                 getter_flags.insert(Flags::Property::IsMethod);
-                let getter = p.accessor_getter(storage, loc);
+                let getter = p.accessor_getter(AccessorStorage::WeakMap(storage), loc);
                 last_key_host = Some((members.len(), key_temp));
                 members.push(Property {
                     key: prop.key,
@@ -1093,7 +1237,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `__decorateElement` defines a decorated accessor itself: the
                 // getter only holds the key.
                 if dec_ref.is_none() {
-                    let setter = p.accessor_setter(storage, loc);
+                    let setter = p.accessor_setter(AccessorStorage::WeakMap(storage), loc);
                     members.push(Property {
                         key: Some(name_expr),
                         value: Some(setter),
@@ -1186,6 +1330,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 first_instance_host.get_or_insert((members.len(), field_name));
             }
             members.push(prop);
+            members.extend(accessor_pair.drain(..));
             if let Some(extra) = extra_initializer {
                 if is_static {
                     members.push(p.make_static_block(&[extra], loc));
@@ -1524,24 +1669,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     flags.insert(Flags::Property::IsComputed);
                 }
-                let mut properties = bun_alloc::AstAlloc::vec();
-                VecExt::append(
-                    &mut properties,
-                    Property {
-                        key: Some(key),
-                        value: Some(value),
-                        flags,
-                        ..Default::default()
-                    },
-                );
-                let object = self.new_expr(
-                    E::Object {
-                        properties,
-                        is_single_line: true,
-                        ..Default::default()
-                    },
-                    value.loc,
-                );
+                let object = self.naming_literal(key, value, flags, value.loc);
                 self.new_expr(
                     E::Index {
                         target: object,
@@ -1603,11 +1731,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         effects
     }
 
-    /// `function() { return __privateGet(this, storage) }`
-    fn accessor_getter(&mut self, storage: Ref, loc: bun_ast::Loc) -> Expr {
-        let this = self.new_expr(E::This {}, loc);
-        let storage = self.use_ref(storage, loc);
-        let get = self.call_rt(loc, b"__privateGet", &[this, storage]);
+    /// recordUsage + `this.#field`
+    fn this_private(&mut self, field: Ref, loc: bun_ast::Loc) -> Expr {
+        self.record_usage(field);
+        let target = self.new_expr(E::This {}, loc);
+        let index = self.new_expr(E::PrivateIdentifier { ref_: field }, loc);
+        self.new_expr(
+            E::Index {
+                target,
+                index,
+                optional_chain: None,
+                is_import_property_use: false,
+            },
+            loc,
+        )
+    }
+
+    /// `function() { return value }`, for the value in `storage`
+    fn accessor_getter(&mut self, storage: AccessorStorage, loc: bun_ast::Loc) -> Expr {
+        let get = match storage {
+            AccessorStorage::WeakMap(map) => {
+                let this = self.new_expr(E::This {}, loc);
+                let map = self.use_ref(map, loc);
+                self.call_rt(loc, b"__privateGet", &[this, map])
+            }
+            AccessorStorage::Private(field) => self.this_private(field, loc),
+        };
         let body = self
             .arena
             .alloc_slice_copy(&[self.s(S::Return { value: Some(get) }, loc)]);
@@ -1621,13 +1770,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(E::Function { func }, loc)
     }
 
-    /// `function(v) { __privateSet(this, storage, v) }`
-    fn accessor_setter(&mut self, storage: Ref, loc: bun_ast::Loc) -> Expr {
+    /// `function(v) { value = v }`, for the value in `storage`
+    fn accessor_setter(&mut self, storage: AccessorStorage, loc: bun_ast::Loc) -> Expr {
         let param = self.new_sym(js_ast::symbol::Kind::Other, b"v");
-        let this = self.new_expr(E::This {}, loc);
-        let storage = self.use_ref(storage, loc);
         let value = self.use_ref(param, loc);
-        let set = self.call_rt(loc, b"__privateSet", &[this, storage, value]);
+        let set = match storage {
+            AccessorStorage::WeakMap(map) => {
+                let this = self.new_expr(E::This {}, loc);
+                let map = self.use_ref(map, loc);
+                self.call_rt(loc, b"__privateSet", &[this, map, value])
+            }
+            AccessorStorage::Private(field) => Expr::assign(self.this_private(field, loc), value),
+        };
         let body = self.effect_stmts(&[set], loc);
         let arg = self.arena.alloc(G::Arg {
             binding: self.b(B::Identifier { r#ref: param }, loc),

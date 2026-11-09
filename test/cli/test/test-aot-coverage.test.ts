@@ -377,6 +377,39 @@ for (const name of ["first", "second", "third", "fourth"]) {
 `,
 };
 
+const privateAccessorFields = {
+  "package.json": `{ "name": "mixed", "type": "module" }`,
+  "tsconfig.json": `{}`,
+  "mixed.ts": `function log(value: Function, context: unknown) {
+  return value;
+}
+
+function plus(value: undefined, context: unknown) {
+  return (initial: number) => initial + 1;
+}
+
+export class Mixed {
+  @plus
+  counted = 1;
+  accessor #bare;
+  @log
+  called() {
+    return this.#bare;
+  }
+}
+`,
+  "mixed.test.ts": `import { expect, test } from "bun:test";
+import { Mixed } from "./mixed";
+
+for (const name of ["first", "second", "third", "fourth"]) {
+  test(name, () => {
+    const mixed = new Mixed();
+    expect([mixed.called(), mixed.called(), mixed.called()]).toEqual([undefined, undefined, undefined]);
+  });
+}
+`,
+};
+
 const neverRead = {
   "package.json": `{ "name": "never-read", "type": "module" }`,
   "things.ts": `const flag = Date.now() > 0;
@@ -467,6 +500,15 @@ test("standard decorators and accessor fields", async () => {
   const project = standardDecorators;
   const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
   expect(plain.table).toContain("marked.ts");
+  expect(compiled).toEqual(plain);
+});
+
+test("an accessor #x field beside decorated members", async () => {
+  const project = privateAccessorFields;
+  const [plain, compiled] = await Promise.all([report([], "", project), report(["--aot"], "", project)]);
+  expect(plain.table).toContain("mixed.ts");
+  // The line of the class runs once for an object, not once for a call of called().
+  expect(plain.lcov).toContain("DA:9,4\n");
   expect(compiled).toEqual(plain);
 });
 

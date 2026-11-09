@@ -1937,6 +1937,7 @@ impl Data {
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
                     was_originally_macro: el.was_originally_macro,
+                    names_value: el.names_value,
                     close_brace_loc: el.close_brace_loc,
                 });
                 Ok(Data::EObject(StoreRef::from_bump(item)))

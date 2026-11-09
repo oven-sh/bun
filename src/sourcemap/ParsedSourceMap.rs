@@ -259,6 +259,23 @@ impl ParsedSourceMap {
         }
     }
 
+    /// How many functions the printer marked as ones the source does not have. None in an executable: the blob is that of the Bun that built it, and an older Bun has a line count in those bytes.
+    pub fn invented_function_count(&self) -> u32 {
+        match &self.internal {
+            Some(ism) if self.standalone_module_graph.is_none() => ism.invented_function_count(),
+            _ => 0,
+        }
+    }
+
+    /// Where each of them begins in the generated text.
+    pub fn for_each_invented_function(&self, each: impl FnMut(crate::LineColumnOffset)) {
+        if let Some(ism) = &self.internal
+            && self.standalone_module_graph.is_none()
+        {
+            ism.for_each_invented_function(each);
+        }
+    }
+
     pub fn memory_cost(&self) -> usize {
         let mappings_cost = if let Some(ism) = &self.internal {
             ism.memory_cost()

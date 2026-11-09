@@ -377,6 +377,28 @@ export const cases: Record<string, Case> = {
  1|new Returns({});
 `,
   },
+  // The getter and the setter that Bun prints for an `accessor #x` are not functions of the file, and no line runs in them.
+  "private-accessors.ts": {
+    functions: "2/3",
+    lines: `
+ 1|export class Gauge {
+ 2|  accessor #level = 1;
+ 1|  accessor #unset: number | undefined;
+ 1|  static accessor #made = 0;
+ 2|  accessor #step =
+ 2|    () => 1;
+ 2|  read() {
+ 2|    Gauge.#made += this.#step();
+ 2|    return this.#level + Gauge.#made;
+ -|  }
+ 0|  reset() {
+ 0|    this.#unset = undefined;
+ -|  }
+ -|}
+ 1|new Gauge().read();
+ 1|new Gauge().read();
+`,
+  },
   "loops.ts": {
     functions: "1/1",
     lines: `

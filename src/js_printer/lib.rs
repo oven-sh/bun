@@ -2425,6 +2425,23 @@ pub(crate) mod __gated_printer {
             self.source_map_builder.mark_object_brace();
         }
 
+        /// Tells coverage that the `get #x` or `set #x` about to be printed is no function of the source: the lowering of an `accessor #x` made it.
+        #[inline]
+        fn mark_invented_accessor(&mut self, item: &G::Property) {
+            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
+                return;
+            }
+            // The parser gives every function that it reads the position of its `(`.
+            if let (Some(key), Some(value)) = (&item.key, &item.value)
+                && matches!(key.data, ExprData::EPrivateIdentifier(_))
+                && let ExprData::EFunction(function) = &value.data
+                && function.func.open_parens_loc.start == bun_ast::Loc::EMPTY.start
+            {
+                self.source_map_builder
+                    .mark_invented_function(self.writer.slice());
+            }
+        }
+
         #[inline]
         pub(crate) fn add_source_mapping_for_name(
             &mut self,
@@ -3938,7 +3955,10 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                     }
                     self.add_source_mapping(expr.loc);
-                    self.mark_object_brace();
+                    // A literal that a lowering made with no position has no mapping of its own to mark.
+                    if !(e.names_value && expr.loc.start == bun_ast::Loc::EMPTY.start) {
+                        self.mark_object_brace();
+                    }
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
@@ -4908,11 +4928,13 @@ pub(crate) mod __gated_printer {
                 match item.kind {
                     G::PropertyKind::Get => {
                         self.print_space_before_identifier();
+                        self.mark_invented_accessor(item_in);
                         self.print(b"get");
                         self.print_space();
                     }
                     G::PropertyKind::Set => {
                         self.print_space_before_identifier();
+                        self.mark_invented_accessor(item_in);
                         self.print(b"set");
                         self.print_space();
                     }

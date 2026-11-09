@@ -645,6 +645,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Temporary variables used for lowering
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
+    /// The `#private` field that the lowering made for each undecorated `accessor #x`.
+    pub(crate) accessor_storage_fields: List<'a, Ref>,
+    /// See `accessor_storage_suffix`.
+    pub(crate) accessor_storage_suffix: Option<&'a [u8]>,
 
     /// `(inner_class_ref, class name)` of each enclosing class whose body
     /// reads the class through `inner_class_ref`. A write to the name targets
@@ -9095,6 +9099,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.symbols[member.ref_.inner_index() as usize].set_must_not_be_renamed(true);
                 }
             }
+            // The minifier can give a `#private` name that it renames the spelling of one that an `eval` pins.
+            for field in self.accessor_storage_fields.iter() {
+                self.symbols[field.inner_index() as usize].set_must_not_be_renamed(true);
+            }
         }
 
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
@@ -9833,6 +9841,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            accessor_storage_fields: BumpVec::new_in(arena),
+            accessor_storage_suffix: None,
             decorated_class_names: BumpVec::new_in(arena),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,

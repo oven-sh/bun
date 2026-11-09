@@ -614,6 +614,22 @@ impl NewBuilder<'_, VLQSourceMap> {
         }
     }
 
+    /// Marks the end of `output`, where the printer is about to write a function that the source does not have.
+    #[cold]
+    pub fn mark_invented_function(&mut self, output: &[u8]) {
+        if self.source_map.ctx.internal.is_none() {
+            return;
+        }
+        self.update_generated_line_and_column(output);
+        let generated = crate::LineColumnOffset {
+            lines: crate::Ordinal(self.prev_state.generated_line),
+            columns: crate::Ordinal(self.generated_column.max(0)),
+        };
+        if let Some(internal) = &mut self.source_map.ctx.internal {
+            internal.mark_invented_function(generated);
+        }
+    }
+
     #[inline(never)]
     pub fn add_source_mapping(&mut self, loc: Loc, output: &[u8]) {
         if

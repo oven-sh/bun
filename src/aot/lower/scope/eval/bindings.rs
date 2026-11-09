@@ -11,6 +11,7 @@ use super::EvalContext;
 use crate::ir::generated::{EvalBinding, EvalBindingKind, EvalScopeFlags, HomeObjectKind};
 use crate::ir::{ClassSlot, StringId, ValueId, VariableKey};
 use crate::lower::captures::Capture;
+use crate::lower::class::{self, AccessorFunction};
 use crate::lower::member::PropertyName;
 use crate::lower::private_names::{PrivateBinding, PrivateHolder};
 use crate::lower::scope::{
@@ -440,7 +441,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
             let text = written_name(file.queries.atom_bytes(name.name));
             let text = file.intern_bytes(text);
             let binding = create_binding(EvalBindingKind::PrivateName, Some(text), depth);
-            let binding = match resolved.holder {
+            let binding = match resolved.presence {
                 PrivateHolder::Instance { layout, field } => EvalBinding {
                     layout: Some(layout),
                     field: Some(field),
@@ -464,7 +465,7 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
     ) {
         let (kind, function, setter) = match resolved.members {
             PrivateMembers::AutoAccessor(member) if resolved.is_decorated => {
-                match resolved.holder {
+                match resolved.presence {
                     PrivateHolder::Instance { layout, .. } => {
                         binding.field = layouts::own_fields(self.lowering.file, layout).brand();
                     }
@@ -479,8 +480,18 @@ impl EvalRecord<'_, '_, '_, '_, '_, '_> {
                 });
                 (EvalBindingKind::PrivateAccessor, function, setter)
             }
-            PrivateMembers::Field(member) | PrivateMembers::AutoAccessor(member) => {
-                match resolved.holder {
+            // The brand or the class says which objects have the name. Evaluated text reads and stores the value through a getter and a setter, as it does under `bun run`.
+            PrivateMembers::AutoAccessor(member) => {
+                let [function, setter] =
+                    [AccessorFunction::Getter, AccessorFunction::Setter].map(|half| {
+                        let id = class::declare_accessor_function(self.lowering.file, member, half);
+                        let closure = self.lowering.emit_closure(id, None);
+                        Some(self.add_value_operand(closure))
+                    });
+                (EvalBindingKind::PrivateAccessor, function, setter)
+            }
+            PrivateMembers::Field(member) => {
+                match resolved.presence {
                     PrivateHolder::Instance { .. } => self.bindings.push(binding),
                     PrivateHolder::ClassObject => {
                         self.add_stored(binding, class_slot(scope, ClassSlot::StaticField(member)));

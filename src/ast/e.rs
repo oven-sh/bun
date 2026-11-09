@@ -1274,9 +1274,13 @@ pub struct Object {
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
+    /// A lowering made this `{ key: value }` so that `key` names `value`, an anonymous function or class. The source has only `value`.
+    pub names_value: bool,
 
     pub close_brace_loc: crate::Loc,
 }
+// `names_value` lies in what was padding.
+const _: () = assert!(core::mem::size_of::<Object>() == 40);
 impl Default for Object {
     fn default() -> Self {
         Self {
@@ -1285,6 +1289,7 @@ impl Default for Object {
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
+            names_value: false,
             close_brace_loc: crate::Loc::EMPTY,
         }
     }
@@ -1332,6 +1337,7 @@ impl Object {
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
+        names_value: false,
         close_brace_loc: crate::Loc::EMPTY,
     };
 

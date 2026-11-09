@@ -115,6 +115,16 @@ impl Class {
                 && f.contains(flags::Property::IsStatic)
             {
                 for val in [property.value, property.initializer].into_iter().flatten() {
+                    // `{ key: value }[key]` that a lowering made to name `value` is `value`.
+                    let val = match &val.data {
+                        ExprData::EDot(read) => match &read.target.data {
+                            ExprData::EObject(object) if object.names_value => {
+                                object.properties.slice()[0].value.unwrap_or(val)
+                            }
+                            _ => val,
+                        },
+                        _ => val,
+                    };
                     match val.data {
                         ExprData::EArrow(..) | ExprData::EFunction(..) => {}
                         _ => {

@@ -1920,6 +1920,247 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("[[1,2],[1],1]\n");
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("the value of an undecorated accessor #x is a private field of the class", async () => {
+      // Its name is not one that the file declares, and its initializer runs
+      // as the field it is: no new.target, any constructor, a storage of its
+      // own for each evaluation of the class.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        class Own { #p_accessor_storage = "own"; accessor #p = "p"; accessor #p_accessor_storage2 = "p2"; @dec #p_accessor_storage3 = "p3";
+          read() { return [this.#p_accessor_storage, this.#p, this.#p_accessor_storage2, this.#p_accessor_storage3] } }
+        class Outer { #q_accessor_storage = "outer"; static Inner = class { accessor #q = "q"; read(outer) { return [outer.#q_accessor_storage, this.#q] } } }
+        class Around { accessor #r = "around"; static Nested = class { #r_accessor_storage = "nested"; read(around) { return [around.#r, this.#r_accessor_storage] } } }
+        class Base {}
+        class Last { accessor #p = new.target; static read(o) { return o.#p } }
+        class Cond extends Base { accessor #p = 1; constructor(c) { if (c) super(); else super(); } static read(o) { return o.#p } }
+        const twice = [];
+        for (let i = 0; i < 2; i++) { const C = class { accessor #p = i; static read(o) { return o.#p } }; twice.push([C, new C()]); }
+        console.log(JSON.stringify([new Own().read(), new Outer.Inner().read(new Outer()), new Around.Nested().read(new Around()), Last.read(new Last()), Cond.read(new Cond()), twice.map(([C, o]) => C.read(o))]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('[["own","p","p2","p3"],["outer","q"],["around","nested"],null,1,[0,1]]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent(
+      "a second construction with an undecorated accessor #x throws before an initializer runs again",
+      async () => {
+        const { stdout, stderr, exitCode } = await runDecorator(`
+        let runs = 0;
+        class Base { constructor(o) { return o; } }
+        class Twice extends Base { first = ++runs; accessor #p = 1; }
+        const o = {};
+        new Twice(o);
+        let thrown = "no throw";
+        try { new Twice(o); } catch (e) { thrown = e.constructor.name; }
+        console.log(thrown, runs);
+      `);
+        expect(stderr).toBe("");
+        expect(stdout).toBe("TypeError 1\n");
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("the private field of an undecorated accessor #x has a name that the file does not declare", () => {
+      const print = (source: string) => new Bun.Transpiler({ loader: "js" }).transformSync(source);
+      expect(print("class A { accessor #x = 1 }")).toContain("#x_accessor_storage = 1;");
+      // A number follows when the file declares a #private name of that form. It has one digit more than any of them.
+      const declared = "class A { accessor #x = 1 } class B { #y_accessor_storage = 2 }";
+      expect(print(declared)).toContain("#x_accessor_storage1 = 1;");
+      const nested = "class A { accessor #x = 1; static B = class { #x_accessor_storage12 = 2 } }";
+      expect(print(nested)).toContain("#x_accessor_storage100 = 1;");
+      const itself = "class A { accessor #x_accessor_storage = 1 }";
+      expect(print(itself)).toContain("#x_accessor_storage_accessor_storage1 = 1;");
+    });
+
+    test.concurrent("every form of read and write reaches an undecorated accessor #x", async () => {
+      using dir = tempDir("es-dec-accessor-forms", {
+        "forms.js": `
+          class U {
+            accessor #p = 1;
+            static accessor #s = 1;
+            self = this;
+            forms(o) {
+              const seen = [this.#p++, ++this.#p, (this.#p += 2), (this.#p ??= 9), o?.#p];
+              [this.#p] = [11];
+              ({ a: this.#p } = { a: this.#p + 1 });
+              seen.push(this.#p);
+              this.#p = () => 7;
+              seen.push(this.#p(), "" + U.#s++ + U.#s, #p in o, #s in U);
+              const same = o.self;
+              return seen.concat(same.#p === this.#p);
+            }
+          }
+          const u = new U();
+          console.log(JSON.stringify(u.forms(u)));
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["forms.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe('[1,3,5,5,5,12,7,"12",true,true,true]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a direct eval reaches an undecorated accessor #x as a getter and a setter", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class U {
+          before = eval("#p in this");
+          accessor #p = eval("#p in this") ? 1 : 0;
+          m() { eval("this.#p += 1"); return [this.before, eval("this.#p"), this.#p]; }
+        }
+        class S {
+          static before = eval("#s in S");
+          static accessor #s = 1;
+          static m() { eval("S.#s += 1"); return [S.before, eval("S.#s"), S.#s]; }
+        }
+        console.log(JSON.stringify([new U().m(), S.m()]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("[[true,2,2],[true,2,2]]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a bundle has no unused class with an undecorated accessor #x", async () => {
+      using dir = tempDir("es-dec-accessor-unused", {
+        "unused.js": `
+          class A { accessor #a = 1 }
+          class B { static accessor #b = 2 }
+          class C { static accessor #c = () => {} }
+          class D { static accessor #d = class {} }
+          class E { static accessor #e = function () {} }
+          console.log("kept");
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["build", "unused.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).not.toContain("class");
+      expect(stdout).toContain('console.log("kept")');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an anonymous function in an undecorated accessor #x has the name #x", async () => {
+      using dir = tempDir("es-dec-accessor-name", {
+        "names.js": `
+          class C {
+            accessor #p = () => {};
+            static accessor #s = class {};
+            accessor #q = function () {};
+            names() { return [this.#p.name, C.#s.name, this.#q.name]; }
+          }
+          // Beside a decorated member the class takes the other path through the lowering.
+          const dec = () => {};
+          class D {
+            @dec m() {}
+            accessor #p = () => {};
+            static accessor #s = class {};
+            names() { return [this.#p.name, D.#s.name]; }
+          }
+          // The field behind an accessor is also where the work of the decorated members around it is put.
+          class E {
+            @dec first = 1;
+            accessor #p = () => {};
+            accessor pub = #q in this;
+            accessor #q = function () {};
+            @dec #low = 2;
+            accessor #r = class {};
+            names() { return [this.#p.name, this.#q.name, this.#r.name, this.pub]; }
+          }
+          console.log(JSON.stringify([...new C().names(), ...new D().names(), ...new E().names()]));
+        `,
+      });
+      const plain = await runIn(String(dir), ["names.js"]);
+      expect(filterStderr(plain.stderr)).toBe("");
+      expect(plain.stdout).toBe('["#p","#s","#q","#p","#s","#p","#q","#r",true]\n');
+      expect(plain.exitCode).toBe(0);
+
+      // Bun does not parse a "--target=bun" bundle again when it runs it.
+      const build = await runIn(String(dir), ["build", "names.js", "--target=bun", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe('["#p","#s","#q","#p","#s","#p","#q","#r",true]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a bundle keeps a class with a static accessor #x above the module that extends it", async () => {
+      // "c.js" is required first and imports "b.js", which extends C before the body of "c.js" ran.
+      using dir = tempDir("es-dec-accessor-hoist", {
+        "entry.js": `
+          const { C } = require("./c.js");
+          const { D } = require("./b.js");
+          console.log(typeof C, typeof D, new D() instanceof C, C.kind());
+        `,
+        "c.js": `
+          import "./b.js";
+          export class C { static accessor #s = () => {}; static kind() { return typeof C.#s; } }
+        `,
+        "b.js": `
+          import { C } from "./c.js";
+          export class D extends C {}
+        `,
+      });
+      const build = await runIn(String(dir), ["build", "entry.js", "--target=bun", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe("function function true function\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a bundle leaves a class whose static accessor #x reads its module in that module", async () => {
+      // Outside the module the class would read "base" before "base" has its value.
+      using dir = tempDir("es-dec-accessor-stays", {
+        "entry.js": `
+          const { C } = require("./c.js");
+          console.log(C.made());
+        `,
+        "c.js": `
+          const base = 1;
+          export class C { static accessor #s = class { static made = base + 1 }; static made() { return C.#s.made; } }
+        `,
+      });
+      const build = await runIn(String(dir), ["build", "entry.js", "--target=bun", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe("2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a direct eval in the file pins the private field of an undecorated accessor", async () => {
+      // The eval keeps every `#private` name of the class. A field the minifier
+      // renames next to them gets a one letter name, and all of those are taken.
+      const letters = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
+      using dir = tempDir("es-dec-accessor-eval", {
+        "entry.js": `
+          function f() {
+            class A { ${letters.map(letter => `#${letter} = 1;`).join(" ")} accessor #acc = 2; m() { return eval("this.#a") + this.#acc } }
+            return new A().m();
+          }
+          console.log(f());
+        `,
+        // The eval is in a class around the accessor's, and after it.
+        "around.js": `
+          function f() {
+            class Outer { #a = 1; n() { return class { accessor #acc = 2; m() { return this.#acc } } } m() { return eval("this.#a") } }
+            return new (new Outer().n())().m();
+          }
+          console.log(f());
+        `,
+      });
+      const build = await runIn(String(dir), ["build", "--minify-identifiers", "entry.js", "--outfile=out.js"]);
+      expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["out.js"]);
+      expect(filterStderr(stderr)).toBe("");
+      expect(stdout).toBe("3\n");
+      expect(exitCode).toBe(0);
+
+      const around = await runIn(String(dir), ["build", "--minify-identifiers", "around.js"]);
+      expect(filterStderr(around.stderr)).toBe("");
+      expect(around.stdout).toContain("#acc_accessor_storage = 2");
+      expect(around.exitCode).toBe(0);
+    });
   });
 
   describe("accessor with TypeScript annotations", () => {
@@ -2205,6 +2446,24 @@ const installExpected = {
   values: [1, 2, null, 3, 4],
 };
 
+// An undecorated `accessor #p`, alone and next to a decorated member, after
+// the getter / setter pair it stands for, written by hand. Every class probes
+// `#p` from the initializers that run before the accessor's own, and from that one.
+function privateAccessorClasses(s: "" | "static ") {
+  const pair = `${s}#v = (this.b = #p in this, 1); ${s}get #p() { return this.#v; } ${s}set #p(v) { this.#v = v; }`;
+  const accessor = `${s}accessor #p = (this.b = #p in this, 1);`;
+  const classes = [pair, accessor, `${accessor} @id ${s}m() {}`].map(
+    members => `class {
+    ${s}a = #p in this;
+    ${s}r = attempt(() => this.#p);
+    ${s}w = attempt(() => (this.#p = 2));
+    ${members}
+    static probe(o) { return [o.a, o.r, o.w, o.b, #p in o, #p in Object.create(o), o.#p, (o.#p = 3, o.#p)]; }
+  }`,
+  );
+  return classes.join(", ");
+}
+
 const extraSections = `
 // \`this\` in a static initializer, decorated or not, is the class.
 {
@@ -2313,6 +2572,31 @@ const extraSections = `
   const before = pa.acc;
   pa.acc = 7;
   out.privateAccessor = [before, pa.acc, PA.bump()];
+}
+
+// An undecorated \`accessor #p\` is a private getter and setter: on the object
+// before its first initializer runs, over storage that is defined where the
+// accessor is written.
+{
+  const id = (v) => v;
+  const attempt = (f) => { try { return f(); } catch (e) { return e.constructor.name; } };
+  out.privateAccessorBrand = [${privateAccessorClasses("")}].map((C) => C.probe(new C()));
+  out.privateStaticAccessorBrand = [${privateAccessorClasses("static ")}].map((C) => C.probe(C));
+
+  // A constructor that returns an object puts the pair on that object, once:
+  // before the value, so also when the value throws.
+  class Ret { constructor(o) { return o; } }
+  let fails = true;
+  const value = () => { if (fails) throw new RangeError("no value"); return 1; };
+  class Twice extends Ret {
+    accessor #p = value();
+    static has(o) { return #p in o; }
+    static read(o) { return o.#p; }
+  }
+  const o = {};
+  const first = attempt(() => new Twice(o));
+  fails = false;
+  out.privateAccessorTwice = [first, Twice.has(o), attempt(() => new Twice(o) === o), attempt(() => Twice.read(o))];
 }
 
 // Undecorated \`#private\` members of a decorated class stay native, so every
@@ -2658,6 +2942,10 @@ const extraExpected = {
   namedExpr: { defLog: ["dec:m", "eblk"], self: true, y: true },
   derived: ["dec:b", "pre", "base", "a", "b", "post"],
   privateAccessor: ["acc", 7, 16],
+  // The pair by hand, the accessor alone, the accessor next to a decorated method.
+  privateAccessorBrand: Array(3).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
+  privateStaticAccessorBrand: Array(3).fill([true, "TypeError", "TypeError", true, true, false, 1, 3]),
+  privateAccessorTwice: ["RangeError", true, "TypeError", "TypeError"],
   privateUpdates: [6, 6, 12, "2n", 3, 2],
   superStatic: ["by", "bm:arg:SDer", 5, "by", "bm:blk:SDer", 15, 11, 10, 7, "by", 9, 9, 9, 10, 7, 3],
   staticScopes: [1, true, [1, 1], 2, 1, [1, 1]],

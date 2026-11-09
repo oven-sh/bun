@@ -330,6 +330,8 @@ pub(crate) struct Formatter<'a> {
     print_basic_prototype: bool,
     print_function_name: bool,
     serializers: Option<JSValue>,
+    /// A snapshot serializer threw what the print returns.
+    serializer_threw: bool,
     config: Option<JSValue>,
     /// Print the way Vitest's `inspect()` does: one line, single quotes, unsorted unquoted keys, function names.
     pub(crate) is_inline: bool,
@@ -364,6 +366,7 @@ impl<'a> Formatter<'a> {
             print_basic_prototype: false,
             print_function_name: false,
             serializers: None,
+            serializer_threw: false,
             config: None,
             is_inline: false,
             depth: 0,
@@ -3531,6 +3534,25 @@ impl bun_io::Write for ExpectedText<'_> {
     }
 }
 
+/// What `JestPrettyFormat::print_snapshot` threw.
+pub(crate) struct PrintError {
+    pub(crate) error: JsError,
+    /// A snapshot serializer threw it, and not the value.
+    pub(crate) is_of_serializer: bool,
+}
+
+impl From<JsError> for PrintError {
+    fn from(error: JsError) -> Self {
+        PrintError { error, is_of_serializer: false }
+    }
+}
+
+impl From<PrintError> for JsError {
+    fn from(thrown: PrintError) -> Self {
+        thrown.error
+    }
+}
+
 impl JestPrettyFormat {
     /// True if `saved` is what older versions of Bun wrote for `value`, so their snapshots still pass.
     /// They printed DOM nodes as plain objects, accessors as `[native code]`, and non-enumerable properties.
@@ -3556,15 +3578,17 @@ impl JestPrettyFormat {
         property_matchers: Option<JSValue>,
         out: &mut Vec<u8>,
         format: SnapshotFormat,
-    ) -> JsResult<bool> {
+    ) -> Result<bool, PrintError> {
         let mut formatter = Formatter::new(global);
         formatter.snapshot_format = format;
         formatter.serializers = Self::serializers(global)?;
+        let thrown = |formatter: &Formatter<'_>, error| PrintError { error, is_of_serializer: formatter.serializer_threw };
         if !format.is_pretty_format() {
             formatter.quote_strings = true;
             let tag = Tag::get(value, global)?;
             let mut bridge = AsFmt::new(out);
-            formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global)?;
+            let printed = formatter.format::<_, false>(tag, &mut bun_io::write::FmtAdapter::new(&mut bridge), value, global);
+            printed.map_err(|error| thrown(&formatter, error))?;
             return Ok(formatter.same_as_older_bun && formatter.serializers.is_none());
         }
 
@@ -3575,7 +3599,7 @@ impl JestPrettyFormat {
 
         // jest-snapshot's `addExtraLineBreaks(normalizeNewlines(format(value)))`.
         let mut printed = Vec::new();
-        formatter.print_like_pretty_format(&mut printed, value, false)?;
+        formatter.print_like_pretty_format(&mut printed, value, false).map_err(|error| thrown(&formatter, error))?;
         let multiline = strings::index_of_any(&printed, b"\r\n").is_some();
         if multiline {
             out.push(b'\n');
@@ -4811,6 +4835,12 @@ impl Formatter<'_> {
     #[cold]
     #[inline(never)]
     fn print_with_serializer(&mut self, out: &mut Vec<u8>, value: JSValue) -> JsResult<bool> {
+        let printed = self.ask_serializers(out, value);
+        self.serializer_threw |= printed.is_err();
+        printed
+    }
+
+    fn ask_serializers(&mut self, out: &mut Vec<u8>, value: JSValue) -> JsResult<bool> {
         let global = self.global_this;
         let Some(serializers) = self.serializers else { return Ok(false) };
         let mut iter = serializers.array_iterator(global)?;

@@ -475,15 +475,6 @@ pub(crate) fn inspect<'a>(
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
 pub(crate) fn bun_inspect_singleline(global_this: &JSGlobalObject, value: JSValue) -> BunString {
-    bun_inspect_singleline_show_hidden(global_this, value, false)
-}
-
-// HOST_EXPORT(Bun__inspect_singleline_show_hidden, c)
-pub(crate) fn bun_inspect_singleline_show_hidden(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    show_hidden: bool,
-) -> BunString {
     let mut array: Vec<u8> = Vec::new();
     if ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
@@ -498,7 +489,6 @@ pub(crate) fn bun_inspect_singleline_show_hidden(
             quote_strings: true,
             ordered_properties: false,
             single_line: true,
-            show_hidden,
             ..Default::default()
         },
     )

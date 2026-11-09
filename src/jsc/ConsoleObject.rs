@@ -5516,6 +5516,7 @@ pub mod formatter {
                     PropertyIteratorCtx::<C>::for_each,
                 )?;
             } else if hidden_keys == HiddenKeys::List {
+                // No caller asks for hidden keys and for an ordered or getter-calling walk in one print.
                 value.for_each_property_with_hidden(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),

@@ -44,7 +44,7 @@ pub(crate) struct TestContext {
     buntest: BunTestPtrWeak,
     group_index: usize,
     sequence_index: usize,
-    /// The module of the context's test, which its `expect` is of.
+    /// Whose rules the context's `expect` has: Vitest's if the test is called as Vitest calls one, with its context.
     flavor: Flavor,
     /// `BunTest::extra_execution_entries` owns the entries.
     deferred: JsCell<Vec<(Deferred, NonNull<ExecutionEntry>)>>,

@@ -15,7 +15,8 @@ import net from "node:net";
 import { Duplex } from "node:stream";
 import { describe, test } from "node:test";
 
-const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
+const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_REFUSED_STREAM, NGHTTP2_ENHANCE_YOUR_CALM } =
+  http2.constants;
 
 // Raw h2c server: replies 200 + one DATA frame and never sends END_STREAM, so the only way the
 // stream ends is via the client's close(code). With `reset`, it replies RST_STREAM alone.
@@ -253,6 +254,148 @@ describe("ClientHttp2Stream.close(code) while pending", () => {
     test(`close(${code})`, async () => {
       assert.deepStrictEqual(await closeWithoutResponse(code, false), expected);
     });
+  }
+});
+
+// What a request sends up to its first RST_STREAM. With nothing written, Node v26 sends the END_STREAM of the end()
+// that close(code) makes ahead of the reset. Node v27 sends the reset alone (nodejs/node#63249).
+describe("the frames of a request that close(code) closes", () => {
+  // `received` is all that one connection sent. The request is its first, so its stream is 1.
+  function sentUntilReset(received: Buffer): string[] {
+    const sent: string[] = [];
+    for (let at = 24 /* the preface */; at + 9 <= received.length;) {
+      const length = received.readUIntBE(at, 3);
+      if (at + 9 + length > received.length) break;
+      const type = received[at + 3];
+      const endStream = (received[at + 4] & 1) !== 0;
+      const onStream = (received.readUInt32BE(at + 5) & 0x7fffffff) === 1;
+      const payload = at + 9;
+      at = payload + length;
+      if (!onStream) continue;
+      if (type === 3 /* RST_STREAM */) return [...sent, `RST_STREAM ${received.readUInt32BE(payload)}`];
+      // Bun still sends an empty DATA frame with no flags where END_STREAM waits for trailers (#37712). Node sends none.
+      if (type === 0 /* DATA */ && length === 0 && !endStream) continue;
+      sent.push(`${type === 1 ? "HEADERS" : type === 0 ? "DATA" : type}${endStream ? " END_STREAM" : ""}`);
+    }
+    return sent;
+  }
+
+  // `before` runs on the request ahead of close(code). With `connected` the request has its stream id by then.
+  async function closeRequest(
+    code: number,
+    options?: http2.ClientSessionRequestOptions,
+    {
+      before,
+      withListener = true,
+      connected = false,
+    }: { before?: (req: http2.ClientHttp2Stream) => void; withListener?: boolean; connected?: boolean } = {},
+  ) {
+    const srv = rawH2Server();
+    let received = Buffer.alloc(0);
+    srv.on("connection", socket => {
+      socket.on("data", (chunk: Buffer) => (received = Buffer.concat([received, chunk])));
+    });
+    const client = http2.connect(`http://127.0.0.1:${await listen(srv)}`);
+    try {
+      const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+      client.on("error", reject);
+      if (connected) await Promise.race([closed, new Promise(ready => client.once("remoteSettings", ready))]);
+      const req = client.request({ ":path": "/", ":method": "POST" }, options);
+      let wantTrailers = 0;
+      if (withListener) req.on("wantTrailers", () => wantTrailers++);
+      req.on("error", () => {});
+      // What close() and _destroy() leave for the next turn of the event loop is sent by then.
+      req.on("close", () => setImmediate(resolve));
+      before?.(req);
+      assert.strictEqual(req.pending, !connected);
+      req.close(code);
+      await closed;
+      // The server has read everything the client sent before this.
+      await new Promise<void>((done, fail) => client.ping(error => (error ? fail(error) : done())));
+      return { sent: sentUntilReset(received), wantTrailers };
+    } finally {
+      client.destroy();
+      srv.close();
+    }
+  }
+
+  for (const code of [NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR, NGHTTP2_REFUSED_STREAM, NGHTTP2_CANCEL]) {
+    test(`close(${code}) while pending sends END_STREAM, then RST_STREAM`, async () => {
+      assert.deepStrictEqual(await closeRequest(code), {
+        sent: ["HEADERS", "DATA END_STREAM", `RST_STREAM ${code}`],
+        wantTrailers: 0,
+      });
+    });
+
+    // Trailers were to carry END_STREAM, and a closed request is not asked for them.
+    test(`close(${code}) while pending, with waitForTrailers, sends no END_STREAM`, async () => {
+      assert.deepStrictEqual(await closeRequest(code, { waitForTrailers: true }), {
+        sent: ["HEADERS", `RST_STREAM ${code}`],
+        wantTrailers: 0,
+      });
+    });
+
+    // With no listener an open stream ends with an empty DATA frame that has END_STREAM. A closed one does not.
+    test(`close(${code}) while pending, with waitForTrailers and no 'wantTrailers' listener, sends no END_STREAM`, async () => {
+      const { sent } = await closeRequest(code, { waitForTrailers: true }, { withListener: false });
+      assert.deepStrictEqual(sent, ["HEADERS", `RST_STREAM ${code}`]);
+    });
+
+    for (const [call, before, sent] of [
+      ["write()", (req: http2.ClientHttp2Stream) => void req.write("hello"), ["HEADERS", "DATA", `RST_STREAM ${code}`]],
+      ["end()", (req: http2.ClientHttp2Stream) => void req.end(), ["HEADERS", `RST_STREAM ${code}`]],
+      [
+        "end(chunk)",
+        (req: http2.ClientHttp2Stream) => void req.end("hello"),
+        ["HEADERS", "DATA", `RST_STREAM ${code}`],
+      ],
+    ] as const) {
+      test(`${call}, then close(${code}), while pending, with waitForTrailers, asks for no trailers`, async () => {
+        assert.deepStrictEqual(await closeRequest(code, { waitForTrailers: true }, { before }), {
+          sent,
+          wantTrailers: 0,
+        });
+      });
+    }
+
+    // Only the event: where END_STREAM goes for these two options together is not what this checks.
+    test(`close(${code}) while pending, with endStream and waitForTrailers, asks for no trailers`, async () => {
+      const { wantTrailers } = await closeRequest(code, { endStream: true, waitForTrailers: true });
+      assert.strictEqual(wantTrailers, 0);
+    });
+  }
+
+  // A request that has its id still ends with the reset alone when a write is in flight.
+  for (const code of [NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR]) {
+    test(`write(), then close(${code}), of a request that has its id sends no END_STREAM`, async () => {
+      const { sent } = await closeRequest(code, undefined, {
+        connected: true,
+        before: req => void req.write("hello"),
+      });
+      assert.deepStrictEqual(sent, ["HEADERS", "DATA", `RST_STREAM ${code}`]);
+    });
+  }
+
+  // Here the end() is the caller's, and close(code) returns before the write ahead of it is done.
+  for (const code of [NGHTTP2_NO_ERROR, NGHTTP2_INTERNAL_ERROR, NGHTTP2_CANCEL]) {
+    for (const withListener of [true, false]) {
+      const listener = withListener ? "" : " and no 'wantTrailers' listener";
+      test(`write(), end(), then close(${code}), of a request that has its id, with waitForTrailers${listener}, asks for no trailers`, async () => {
+        const closed = await closeRequest(
+          code,
+          { waitForTrailers: true },
+          {
+            connected: true,
+            withListener,
+            before: req => {
+              req.write("hello");
+              req.end();
+            },
+          },
+        );
+        assert.deepStrictEqual(closed, { sent: ["HEADERS", "DATA", `RST_STREAM ${code}`], wantTrailers: 0 });
+      });
+    }
   }
 });
 

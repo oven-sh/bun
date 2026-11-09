@@ -188,7 +188,7 @@ describe.concurrent(".resolves and .rejects", () => {
   });
 
   // Expected values measured on Vitest 5.0.3.
-  test('in a "vitest" test, a settled promise still gives a promise', async () => {
+  test('with the expect of "vitest", a settled promise still gives a promise', async () => {
     const { stdout, results, exitCode } = await run(["test"], {
       "a.test.js": `
         import { expect, test } from "vitest";
@@ -509,6 +509,33 @@ describe.concurrent(".resolves and .rejects", () => {
     `);
     expect(stdout).toEqual(["the second attempt ran to its end"]);
     expect(results).toEqual(["(fail) every attempt fails (attempt 2)", "(pass) next"]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Vitest 5.0.5 passes the two tests of the first group too, and reports the error. In the second it fails both tests.
+  test('the expect of "vitest" gives a promise in a concurrent test too, so a failure that is not awaited there is reported between tests', async () => {
+    const { report, exitCode } = await run(["test"], {
+      "a.test.js": `
+        import { describe, expect, test } from "vitest";
+        describe.concurrent("expect of the module", () => {
+          test("culprit", async () => { await 1; expect(Promise.resolve(1)).resolves.toBe(2); });
+          test("innocent", async () => { await 1; });
+        });
+        describe.concurrent("expect of the context", () => {
+          test("culprit", async ({ expect }) => { await 1; expect(Promise.resolve(1)).resolves.toBe(2); });
+          test("innocent", async () => { await 1; });
+        });
+      `,
+    });
+    expect(report.toSorted()).toEqual([
+      "# Unhandled error between tests",
+      "(fail) expect of the context > culprit",
+      "(pass) expect of the context > innocent",
+      "(pass) expect of the module > culprit",
+      "(pass) expect of the module > innocent",
+      "error: expect(received).toBe(expected)",
+      "error: expect(received).toBe(expected)",
+    ]);
     expect(exitCode).toBe(1);
   });
 

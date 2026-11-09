@@ -1377,6 +1377,34 @@ describe.concurrent("the fixtures and snapshot files that another runner wrote",
     expect(exitCode).toBe(0);
   });
 
+  // The runner cannot tell which concurrent test calls the expect of the module, so the module of that expect decides the format.
+  test.each([{ update: false }, { update: true }])(
+    "vitest: inline snapshots in concurrent tests are written the same, byte for byte: %j",
+    async ({ update }) => {
+      using dir = copyOf("vitest");
+      const name = "inline.fixture.ts";
+      const read = () => readFileSync(join(String(dir), name), "latin1");
+      const written = read();
+      // The expect of the module cannot store in the snapshot file from a concurrent test, so the one test that does that fails.
+      const unsupported = 'expect("inline").toMatchInlineSnapshot(`"inline"`)';
+      expect(written).toContain('expect("file 1").toMatchSnapshot();\n    ' + unsupported);
+      const empty = written.replace(/(InlineSnapshot\((?:\{.*?\})?)(?:, )?`(?:[^`\\]|\\[^])*`\)/g, "$1)");
+      if (!update) writeFileSync(join(String(dir), name), empty, "latin1");
+      const args = update ? ["--update-snapshots"] : [];
+      const { stderr, exitCode, pass, fail } = await runTests(
+        String(dir),
+        { CI: "false" },
+        "--concurrent",
+        ...args,
+        "./" + name,
+      );
+      expect(stderr).toContain("(fail) inline > counts together with file snapshots");
+      expect({ fail, pass }).toEqual({ fail: 1, pass: 18 });
+      expect(read()).toBe(update ? written : written.replace(unsupported, 'expect("inline").toMatchInlineSnapshot()'));
+      expect(exitCode).toBe(1);
+    },
+  );
+
   test("jest: Bun adds the same to its files, byte for byte", async () => {
     using dir = copyOf("jest");
     const written = contentsOf(String(dir));
@@ -1631,6 +1659,48 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       headers.bun + "\nexports[`d first 1`] = `[Function]`;\n\nexports[`d second 1`] = `[class A]`;\n",
     );
     expect(results.map(result => result.exitCode)).toEqual([0, 0]);
+  });
+
+  // `first` and `second` are the tests of a file, in their order. The expect of a context is Vitest's in a test that takes its context as a parameter.
+  const ofBun = `import { test as base, expect } from "bun:test";\nconst test = base.extend({});\n`;
+  const byContext = (name: string) =>
+    `test("${name}", ({ expect: ofContext }) => { ofContext(function named() {}).toMatchSnapshot(); });\n`;
+  const byImport = (name: string) => `test("${name}", ({}) => { expect(function named() {}).toMatchSnapshot(); });\n`;
+  const plain = (name: string) => `base("${name}", () => { expect(function named() {}).toMatchSnapshot(); });\n`;
+  test.each([
+    [
+      `a test of "vitest", with the expect of "bun:test"`,
+      "bun",
+      `import { test as base } from "vitest";\nimport { expect } from "bun:test";\n${plain("first")}`,
+    ],
+    [
+      `a test of "bun:test", with the expect of "vitest"`,
+      "vitest",
+      `import { test as base } from "bun:test";\nimport { expect } from "vitest";\n${plain("first")}`,
+    ],
+    [`a test.extend() test of "bun:test", with the expect that the file imports`, "bun", ofBun + byImport("first")],
+    [`a test.extend() test of "bun:test", with the expect of its context`, "vitest", ofBun + byContext("first")],
+    [`tests of "bun:test", with and without test.extend()`, "bun", ofBun + plain("first") + byImport("second")],
+    [`tests of "bun:test", without and with test.extend()`, "bun", ofBun + byImport("first") + plain("second")],
+    [
+      `the expect of the context first, then the one that the file imports`,
+      "vitest",
+      ofBun + byContext("first") + byImport("second"),
+    ],
+    [
+      `the expect that the file imports first, then the one of the context`,
+      "bun",
+      ofBun + byImport("first") + byContext("second"),
+    ],
+  ] as const)("a new file has the format of the expect that is the first to use it: %s", async (_, format, source) => {
+    using dir = tempDir("snapshot-new-file-expect", { "a.test.js": source });
+    const { stderr, exitCode, fail } = await runTests(String(dir), { CI: "false" });
+    expect({ fail, stderr: fail ? stderr : "" }).toEqual({ fail: 0, stderr: "" });
+    const keys = [...snap(dir).matchAll(/^exports\[`(.*)`\]/gm)].map(match => match[1]);
+    const written = { bun: "[Function: named]", vitest: "[Function]" }[format];
+    expect(snap(dir)).toBe(headers[format] + keys.map(key => `\nexports[\`${key}\`] = \`${written}\`;\n`).join(""));
+    expect(keys).toEqual(source.includes("second") ? ["first 1", "second 1"] : ["first 1"]);
+    expect(exitCode).toBe(0);
   });
 
   test("a snapshot in a hook is one of the test's, in the formats of Jest and Vitest", async () => {

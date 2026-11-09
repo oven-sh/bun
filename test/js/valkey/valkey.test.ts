@@ -66,6 +66,18 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(getValue).toMatchInlineSnapshot(`"${testValue}"`);
       });
 
+      test("should store a number as the string that String(number) returns", async () => {
+        const redis = ctx.redis;
+
+        // The first sample of docs/runtime/redis.mdx.
+        expect(await redis.set("counter", 0)).toBe("OK");
+        expect(await redis.get("counter")).toBe("0");
+        expect(await redis.incr("counter")).toBe(1);
+
+        expect(await redis.set("ratio", 1.5)).toBe("OK");
+        expect(await redis.get("ratio")).toBe("1.5");
+      });
+
       test("should test key existence", async () => {
         const redis = ctx.redis;
 

@@ -2862,14 +2862,14 @@ fn link(
                 // `typeof a` where the output has the default value of `a` in the function body: its parameter takes `undefined`.
                 let moved = (syntax.typeof_before(at))
                     .filter(|_| !may_have_default_without_slot(output.text, offset))
-                    .zip(
-                        defaults
-                            .get_or_insert_with(|| syntax.defaults_by_parameter())
-                            .get(&binding),
-                    );
+                    .and_then(|start| {
+                        let defaults =
+                            defaults.get_or_insert_with(|| syntax.defaults_by_parameter());
+                        Some((start, *defaults.get(&binding)?))
+                    });
                 // In the function body, the variable that holds the default value has the type of `a`.
                 let variable = moved
-                    .filter(|&(_, &(function, _))| !syntax.is_in_signature(function, at))
+                    .filter(|&(_, (function, _))| !syntax.is_in_signature(function, at))
                     .and_then(|_| {
                         let variables = moved_defaults
                             .get_or_insert_with(|| variables_of_moved_defaults(output, mappings));
@@ -2886,7 +2886,7 @@ fn link(
                     matches!(syntax.file[default].kind, ExprKind::Ident(_))
                         && syntax.word(syntax.file[default].pos) == b"undefined"
                 };
-                let Some((start, _)) = moved.filter(|&(_, &(_, default))| !is_undefined(default))
+                let Some((start, _)) = moved.filter(|&(_, (_, default))| !is_undefined(default))
                 else {
                     edits.push((at, end, new.to_vec()));
                     continue;

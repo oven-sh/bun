@@ -20,7 +20,7 @@ use super::diff_format::DiffFormatter;
 use self::expect_deferred::{Asked, ExpectDeferred, MatcherCall, Pass, Question};
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
-use super::pretty_format::JestPrettyFormat;
+use super::pretty_format::{JestPrettyFormat, PrintError};
 use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome};
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
@@ -1149,25 +1149,25 @@ impl Expect {
         let is_vitest = this.is_vitest();
         let format = if is_vitest { SnapshotFormat::Vitest } else { SnapshotFormat::Bun };
         let mut pretty_value: Vec<u8> = Vec::new();
+        // Trimmed before the print, so `print_threw` has the text to compare.
+        let mut buf = vec![0u8; result.map_or(0, <[u8]>::len)];
+        let saved = result.map(|saved_value| Self::trim_leading_whitespace_for_inline_snapshot(saved_value, &mut buf));
         let value = Self::value_to_snapshot(global_this, received, format)?;
-        let (shown, same_as_older_bun) =
-            this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name, format)?;
-        if this.bun_test().is_some() {
-            match runner.snapshots.format_of(&runner.files, this).and_then(|format| runner.snapshots.add_count(this, format, b"")) {
-                Ok(_) => {}
-                Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive) => {}
-                // Inline snapshots don't need the snapshot file, so leave these errors to a matcher that does.
-                Err(crate::Error::FailedToOpenSnapshotFile | crate::Error::ParseError) => {}
-                Err(err) => return Err(this.throw_snapshot_error(global_this, &err, b"")),
-            }
-        }
+        let shown = this.with_property_matchers(global_this, value, property_matchers, fn_name)?;
+        let printed = if format.is_pretty_format() { value } else { shown };
+        let same_as_older_bun =
+            match JestPrettyFormat::print_snapshot(global_this, printed, property_matchers, &mut pretty_value, format) {
+                Ok(same_as_older_bun) => same_as_older_bun,
+                Err(thrown) => {
+                    let saved = saved.as_ref().map(|trim_res| trim_res.trimmed);
+                    return this.print_threw(global_this, thrown, saved, received, shown, property_matchers);
+                }
+            };
+        this.count_inline_snapshot(global_this, runner)?;
 
         let mut start_indent: Option<Box<[u8]>> = None;
         let mut end_indent: Option<Box<[u8]>> = None;
-        if let Some(saved_value) = result {
-            let mut buf = vec![0u8; saved_value.len()];
-            let trim_res = Self::trim_leading_whitespace_for_inline_snapshot(saved_value, &mut buf);
-
+        if let Some(trim_res) = saved {
             if format.matches(trim_res.trimmed, &pretty_value) {
                 runner.snapshots.passed += 1;
                 return Ok(JSValue::UNDEFINED);
@@ -1257,6 +1257,50 @@ impl Expect {
         Ok(JSValue::UNDEFINED)
     }
 
+    #[inline(always)]
+    fn count_inline_snapshot(&self, global_this: &JSGlobalObject, runner: &mut super::jest::TestRunner<'static>) -> JsResult<()> {
+        if self.bun_test().is_some() {
+            match runner.snapshots.format_of(&runner.files, self).and_then(|format| runner.snapshots.add_count(self, format, b"")) {
+                Ok(_) => {}
+                Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive) => {}
+                // Inline snapshots don't need the snapshot file, so leave these errors to a matcher that does.
+                Err(crate::Error::FailedToOpenSnapshotFile | crate::Error::ParseError) => {}
+                Err(err) => return Err(self.throw_snapshot_error(global_this, &err, b"")),
+            }
+        }
+        Ok(())
+    }
+
+    /// An inline snapshot's value can't be printed in the format of its test. An older Bun called no accessor and no
+    /// `toJSON` to print, so the text it saved can still match: `was_written_by_another` prints the value once more
+    /// to tell. Any other text ends in what the print threw.
+    #[cold]
+    #[optimize(size)]
+    fn print_threw(
+        &self,
+        global_this: &JSGlobalObject,
+        thrown: PrintError,
+        saved: Option<&[u8]>,
+        received: Received,
+        shown: JSValue,
+        property_matchers: Option<JSValue>,
+    ) -> JsResult<JSValue> {
+        let PrintError { error, is_of_serializer } = thrown;
+        // `--update-snapshots` has to print the value, and no older Bun ran a snapshot serializer.
+        let runner = Jest::runner().filter(|runner| !runner.snapshots.update_snapshots && !is_of_serializer);
+        let (Some(runner), Some(saved)) = (runner, saved) else { return Err(error) };
+        if !matches!(error, JsError::Thrown) || global_this.has_pending_termination_exception() {
+            return Err(error);
+        }
+        let exception = global_this.take_exception(error);
+        if !Self::was_written_by_another(&[], true, global_this, received, shown, property_matchers, saved)? {
+            return Err(global_this.throw_value(exception));
+        }
+        self.count_inline_snapshot(global_this, runner)?;
+        runner.snapshots.passed += 1;
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[cold]
     #[optimize(size)]
     fn was_written_by_another(
@@ -1290,22 +1334,20 @@ impl Expect {
         Ok(false)
     }
 
-    /// Returns `value` with `property_matchers` substituted in, and `print_snapshot`'s result.
-    #[optimize(size)]
-    pub(crate) fn match_and_fmt_snapshot(
+    /// Returns `value` with `property_matchers` substituted in.
+    #[inline(always)]
+    fn with_property_matchers(
         &self,
         global_this: &JSGlobalObject,
         value: JSValue,
         property_matchers: Option<JSValue>,
-        pretty_value: &mut Vec<u8>,
         fn_name: &'static str,
-        format: SnapshotFormat,
-    ) -> JsResult<(JSValue, bool)> {
+    ) -> JsResult<JSValue> {
         let mut shown = value;
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(|_| (value, true));
+                return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(|_| value);
             }
 
             let prop_matchers = _prop_matchers;
@@ -1319,11 +1361,25 @@ impl Expect {
                     self, global_this, signature,
                     "\n\nExpected <green>propertyMatchers<r> to match properties from received object\n\nReceived: {}\n",
                     value.to_fmt(&mut formatter),
-                ).map(|_| (value, true));
+                ).map(|_| value);
             }
             shown = with_matchers;
         }
+        Ok(shown)
+    }
 
+    /// Returns `value` with `property_matchers` substituted in, and `print_snapshot`'s result.
+    #[optimize(size)]
+    pub(crate) fn match_and_fmt_snapshot(
+        &self,
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        property_matchers: Option<JSValue>,
+        pretty_value: &mut Vec<u8>,
+        fn_name: &'static str,
+        format: SnapshotFormat,
+    ) -> JsResult<(JSValue, bool)> {
+        let shown = self.with_property_matchers(global_this, value, property_matchers, fn_name)?;
         let printed = if format.is_pretty_format() { value } else { shown };
         let same_as_older_bun = JestPrettyFormat::print_snapshot(global_this, printed, property_matchers, pretty_value, format)?;
         Ok((shown, same_as_older_bun))
@@ -2649,7 +2705,7 @@ impl ExpectCustomAsymmetricMatcher {
                 &mut printed,
                 SnapshotFormat::Vitest,
             ) {
-                return Self::maybe_clear(global_this, e, dont_throw);
+                return Self::maybe_clear(global_this, e.error, dont_throw);
             }
             writer.write_all(&printed)?;
             return Ok(true);

@@ -327,7 +327,7 @@ Inline snapshots don't record which runner wrote them, so Bun accepts a match in
 
 The rule for a file that does not parse is Bun's own: Jest replaces such a file in every run that updates it, and Vitest 5 never replaces it.
 
-Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them.
+Earlier versions of Bun printed `[native code]` for an accessor instead of its value, included non-enumerable own properties, and printed DOM nodes as plain objects. Snapshots written that way still pass. Bun leaves them alone until `--update-snapshots` rewrites them. An inline snapshot written that way also passes when its value can no longer be printed, for example when an accessor throws in a test from `"vitest"`. `--update-snapshots` cannot rewrite that snapshot, so the test fails with the accessor's error. To update it, import `test` from `"bun:test"`.
 
 ## Best Practices
 

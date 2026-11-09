@@ -129,6 +129,34 @@ export function area(shape: Shape): Sizes.Size {
     expect(await compile(String(dir))).toEqual(USED);
   });
 
+  test("a class with an accessor field, a field without a value and a member without an annotation compiles with its types", async () => {
+    using dir = tempDir("aot-library-typed-file-class-members", {
+      ...library,
+      "library/src/area.ts": `import type { Shape } from "./index";
+class Meter {
+  accessor unit = 1;
+  kind: string;
+  scaled;
+  constructor(shape: Shape) {
+    this.kind = shape.kind;
+    this.scaled = shape.size * this.unit;
+  }
+  area(): number {
+    return this.kind === "circle" ? 3 * this.scaled ** 2 : this.scaled ** 2;
+  }
+}
+export function area(shape: Shape): number {
+  return new Meter(shape).area();
+}
+`,
+    });
+    await install(String(dir));
+    expect(await compile(String(dir))).toEqual(USED);
+    const typed = readFileSync(join(String(dir), "app/node_modules/shapes/index.aot.ts"), "utf8");
+    expect(typed).toContain("  get unit(): number {\n");
+    expect(typed).toContain("  kind: string = (__privateAdd(this, _unit, 1), undefined) as any;\n  scaled: number;\n");
+  });
+
   test("does not read index.js, so a change to it reaches plain Bun alone", async () => {
     using dir = tempDir("aot-library-typed-file-patched", library);
     await install(String(dir));

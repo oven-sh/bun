@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
 
@@ -150,6 +150,53 @@ export { join };
     });
     expect(built.logs).toEqual([]);
     expect(filesIn(join(root, "out"))).toContain("index.aot.ts");
+  });
+
+  test.each([
+    ["to outdir", true],
+    ["to outputs", false],
+  ])("a class member whose type the bundle loses keeps the type of the sources, written %s", async (_, toOutdir) => {
+    using dir = tempDir("build-api-dts-members", {
+      "tsconfig.json": project["tsconfig.json"],
+      "src/index.ts": `declare const __DEV__: boolean;
+function pick(value: string): string;
+function pick(value: number): undefined;
+function pick(value: string | number): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+export class Settings {
+  mode;
+  static count;
+  accessor level: number = 1;
+  static {
+    if (__DEV__) this.count = 1;
+  }
+  constructor() {
+    if (__DEV__) this.mode = "dev";
+  }
+  read() {
+    return pick(this.level);
+  }
+}
+`,
+    });
+    const root = String(dir);
+    const built = await Bun.build({
+      entrypoints: [join(root, "src/index.ts")],
+      outdir: toOutdir ? join(root, "out") : undefined,
+      tsconfig: join(root, "tsconfig.json"),
+      define: { __DEV__: "false" },
+      dts: true,
+    });
+    expect(built.logs).toEqual([]);
+    const typed = await built.outputs.find(output => output.path.endsWith("index.aot.ts"))?.text();
+    expect(typed?.match(/^  (static )?(get )?\w+(\(\))?: [^;{]+[;{]$/gm)).toEqual([
+      "  mode: string | undefined;",
+      "  static count: number | undefined;",
+      "  get level(): number {",
+      "  read(): undefined {",
+    ]);
+    expect(existsSync(join(root, "out/index.aot.ts"))).toBe(toOutdir);
   });
 
   test("two builds at once keep their files apart", async () => {

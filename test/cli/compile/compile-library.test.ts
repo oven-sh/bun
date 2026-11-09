@@ -904,6 +904,198 @@ export const left: number = __LEFT__;
     ]);
   });
 
+  const members = {
+    "src/index.ts": `import { Unchecked } from "./unchecked";
+declare const __DEV__: boolean;
+export type Mode = "fast" | "slow";
+export function mode(): Mode {
+  return "fast";
+}
+export class Base {
+  shared: number = 0;
+}
+export class Shapes extends Base {
+  optional?;
+  #hidden;
+  either;
+  flag;
+  picked;
+  kept;
+  shared;
+  valued = 1;
+  static count;
+  static accessor total: number = 0;
+  accessor step = 2;
+  accessor ready!: boolean;
+  protected accessor label: string = "";
+  accessor speed = mode();
+  static {
+    if (__DEV__) this.count = 1;
+  }
+  constructor(level: number, on: boolean) {
+    super();
+    this.shared = level;
+    this.kept = "kept";
+    if (__DEV__) this.optional = "dev";
+    if (__DEV__) this.#hidden = 1n;
+    if (__DEV__) this.either = "dev";
+    else this.either = level;
+    if (__DEV__) this.flag = on;
+    if (__DEV__) this.picked = mode();
+  }
+  read(): string {
+    this.ready = this.step > Shapes.total;
+    return [this.label, this.speed, this.optional, this.#hidden, this.either, this.flag, this.picked].join();
+  }
+  sum(): number {
+    return this.shared + this.valued + this.kept.length + (Shapes.count ?? 0) + new Unchecked().bare;
+  }
+}
+export class Hosts {
+  accessor a = 1;
+  annotated: string;
+  accessor b = 2;
+  noted;
+  accessor c = 3;
+  named;
+  accessor d = 4;
+  late!: boolean;
+  accessor e = 5;
+  valued = "v";
+  constructor() {
+    this.annotated = "s";
+    this.noted = 3;
+    this.named = new Date(0);
+  }
+}
+`,
+    "src/unchecked.ts": `// @ts-nocheck
+export class Unchecked {
+  bare;
+  accessor loose = 1;
+  constructor() {
+    this.bare = this.loose;
+  }
+}
+`,
+  };
+
+  test("a class member without an annotation has the type of the sources, whatever the bundle keeps of it", async () => {
+    using dir = tempDir("library-typed-file-members", library(members));
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--define", "__DEV__=false");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(json(join(String(dir), "dist/package.json")).exports["."]).toEqual(conditions("index"));
+    const typed = typedFile(dir);
+    const membersOf = (name: string) => {
+      const start = typed.indexOf(`class ${name} `);
+      // Fields, and the getters and setters that the build makes of `accessor` fields.
+      return typed.slice(start, typed.indexOf("\n}\n", start)).match(/^  (?! )(?:.*;|.*\b[gs]et \w+\(.*\{)$/gm);
+    };
+    expect(membersOf("Shapes")).toEqual([
+      "  optional?: string | undefined;",
+      "  #hidden: bigint | undefined;",
+      "  either: string | number;",
+      "  flag: boolean | undefined;",
+      '  picked: "fast" | "slow" | undefined;',
+      "  kept: string;",
+      "  shared: number;",
+      "  valued = 1;",
+      "  static count: number | undefined;",
+      "  static get total(): number {",
+      "  static set total(v) {",
+      "  get step(): number {",
+      "  set step(v) {",
+      "  get ready(): boolean {",
+      "  set ready(v) {",
+      "  protected get label(): string {",
+      "  protected set label(v) {",
+      '  get speed(): "fast" | "slow" {',
+      "  set speed(v) {",
+    ]);
+    // The build runs what an `accessor` starts with in the field after it. A field with no value gets `undefined` there.
+    expect(membersOf("Hosts")?.filter(member => member.endsWith(";"))).toEqual([
+      "  annotated: string = (__privateAdd(this, _a, 1), undefined) as any;",
+      "  noted: number = (__privateAdd(this, _b, 2), undefined) as any;",
+      "  named = (__privateAdd(this, _c, 3), undefined) as any;",
+      "  late: boolean = (__privateAdd(this, _d, 4), undefined) as any;",
+      '  valued = (__privateAdd(this, _e, 5), "v");',
+    ]);
+    // A module under `// @ts-nocheck` keeps what it has.
+    expect(membersOf("Unchecked")).toEqual(["  bare;", "  get loose() {", "  set loose(v) {"]);
+    const code = (text: string) => text.replace(/\s+/g, "");
+    const erased = new Bun.Transpiler({ loader: "ts", target: "node" }).transformSync(typed);
+    const javascript = readFileSync(join(String(dir), "dist/index.js"), "utf8");
+    expect(code(erased)).toBe(code(new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(javascript)));
+    // index.aot.ts is a source of this project for `bun check`. The build judges it as a dependency of another
+    // program, where TS7008, TS2564, TS1255 and TS2612 do not count.
+    const checked = await bun(String(dir), "check");
+    expect({ said: (checked.stdout + checked.stderr).match(/TS\d+[^\n]*/g), exitCode: checked.exitCode }).toEqual({
+      said: null,
+      exitCode: 0,
+    });
+    // The build, and then a type check of the project.
+  }, 60_000);
+
+  // The .aot.ts file has `any` for a namespace object, so `pick` answers with its first signature there.
+  // TODO: on Windows the build says nothing.
+  test.todoIf(isWindows)(
+    "a store that the .aot.ts file types in another way than the sources is a warning, not another type for the member",
+    async () => {
+      using dir = tempDir(
+        "library-typed-file-member-refused",
+        library({
+          "src/index.ts": `function pick(value: string): string;
+function pick(value: number): number;
+function pick(value: string | number): string | number {
+  return value;
+}
+export namespace Defaults {
+  export const size: number = 1;
+}
+export class Box {
+  size;
+  constructor() {
+    this.size = pick(Defaults.size);
+  }
+}
+`,
+        }),
+      );
+      const built = await bun(String(dir), "compile", "--library", "src/index.ts");
+      expect(built.stderr).toMatch(
+        /^warn: the \.aot\.ts files that --aot compiles a package from are left out: they have type errors, the first at index\.aot\.ts:\d+:\d+: TS2322: Type 'string' is not assignable to type 'number'\.\n$/,
+      );
+      expect(built.exitCode).toBe(0);
+      expect(readFileSync(join(String(dir), "dist/index.d.ts"), "utf8")).toContain("    size: number;\n");
+      expect(filesIn(join(String(dir), "dist")).filter(path => /\.aot\.|tsconfig/.test(path))).toEqual([]);
+      expect(JSON.stringify(json(join(String(dir), "dist/package.json")))).not.toContain('"aot"');
+    },
+  );
+
+  test("a member whose type names a declaration is left as the bundle has it", async () => {
+    using dir = tempDir(
+      "library-typed-file-member-named",
+      library({
+        "src/index.ts": `declare const __DEV__: boolean;
+export class Cache {
+  entries;
+  accessor latest = new Date(0);
+  constructor() {
+    if (__DEV__) this.entries = new Map<string, number>();
+  }
+  size(): number {
+    return (this.entries?.size ?? 0) + this.latest.getTime();
+  }
+}
+`,
+      }),
+    );
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--define", "__DEV__=false");
+    expect(built).toMatchObject({ stderr: "", exitCode: 0 });
+    expect(typedFile(dir)).toContain("  entries;\n");
+    expect(typedFile(dir)).toContain("  get latest() {\n");
+  });
+
   const rewritten = {
     "src/index.ts": `let notes = 0;
 const note = (): void => void notes++;

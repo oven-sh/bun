@@ -493,6 +493,13 @@ impl<'a, 's> Syntax<'a, 's> {
         key
     }
 
+    fn property(&self, key: u32) -> Option<&'a Member> {
+        let is_it = |member: &&Member| {
+            member.kind == MemberKind::Property && self.member_key(member) == key
+        };
+        self.file.members.iter().find(is_it)
+    }
+
     fn member_slots(&self, member: &Member, slots: &mut Vec<Slot>) {
         if member.kind == MemberKind::StaticBlock {
             return;
@@ -3075,11 +3082,30 @@ impl<'a> Transfer<'_, 'a, '_> {
                 {
                     insertions.add(slot.start, Order::Slot, b": undefined".to_vec());
                 }
+                if slot.place == Place::MemberType
+                    && output.byte(output.after_trivia(slot.start)) != b'='
+                    && let Some(noted) = module.types.and_then(|types| types.member_type(key))
+                {
+                    insertions.add(slot.start, Order::Slot, [&b": "[..], noted].concat());
+                }
                 continue;
             };
             let text = module.trimmed_text(found.start, found.end);
             let is_computed = module.syntax.is_in_computed_key(found.key);
             let (order, text) = match slot.place {
+                Place::MemberType if text == b"?" => {
+                    match module.types.and_then(|types| types.member_type(key)) {
+                        Some(noted) => (Order::Slot, [&b"?: "[..], noted].concat()),
+                        None => (Order::Slot, text),
+                    }
+                }
+                // No source has a value behind `!`: the build made this one, and TypeScript takes no `!` before it.
+                Place::MemberType
+                    if text.starts_with(b"!")
+                        && output.byte(output.after_trivia(slot.start)) == b'=' =>
+                {
+                    (Order::Slot, text[1..].to_vec())
+                }
                 Place::MemberType
                     if is_computed
                         && text.starts_with(b":")
@@ -3133,6 +3159,69 @@ impl<'a> Transfer<'_, 'a, '_> {
                 _ => (Order::Slot, text),
             };
             insertions.add(slot.start, order, text);
+        }
+        // The build makes two things in a class: the getter of an `accessor` field, and a value that hosts effects.
+        let members = (output_file.classes.iter()).flat_map(|class| class.members.iter());
+        for member in members.map(|member: MemberId| &output_file[member]) {
+            let is_made = |function: &FnId| {
+                let key = Syntax::function_key(&output_file[*function]);
+                member.kind == MemberKind::Getter && mappings.original(key).is_none()
+            };
+            let getter = member.func.some().filter(is_made);
+            // `(effects, undefined)`: the build runs the effects of earlier members in the next field.
+            let is_sequence = |value: &ExprId| {
+                let is_comma = matches!(
+                    output_file[*value].kind,
+                    ExprKind::Binary {
+                        op: BinOp::Comma,
+                        ..
+                    }
+                );
+                member.kind == MemberKind::Property && is_comma
+            };
+            let hosted = member.init.some().filter(is_sequence);
+            if getter.is_none() && hosted.is_none() {
+                continue;
+            }
+            let Some((source, key)) = mappings.original(output.member_key(member)) else {
+                continue;
+            };
+            let Some(module) = written[source as usize]
+                .as_ref()
+                .filter(|module| !module.is_unchecked())
+            else {
+                continue;
+            };
+            let Some(in_source) = module.syntax.property(key) else {
+                continue;
+            };
+            let written_type = source_slots.get(&(Place::MemberType, source, key));
+            let noted = (module.types)
+                .and_then(|types| types.member_type(key))
+                .map(|noted| [&b": "[..], noted].concat());
+            if let Some(getter) = getter.filter(|_| in_source.flags.contains(Flags::ACCESSOR)) {
+                // The setter has the type of the getter.
+                let annotation = match written_type {
+                    Some(found) => {
+                        let text = module.trimmed_text(found.start, found.end);
+                        let text = text.strip_prefix(b"!").unwrap_or(&text);
+                        text.starts_with(b":").then(|| text.to_vec())
+                    }
+                    None => noted,
+                };
+                let mut slots = Vec::new();
+                output.function_slots(getter, &mut slots);
+                let return_type = slots.iter().find(|slot| slot.place == Place::ReturnType);
+                if let (Some(annotation), Some(slot)) = (annotation, return_type) {
+                    insertions.add(slot.start, Order::Slot, annotation);
+                }
+            } else if let Some(value) = hosted.filter(|_| in_source.init.is_none()) {
+                // The member has no value in the sources, so the build made this one: `undefined` is not its type.
+                insertions.add(output.outer_span(value).1, Order::Slot, b" as any".to_vec());
+                if let (None, Some(noted)) = (written_type, noted) {
+                    insertions.add(output.member_name_end(member), Order::Slot, noted);
+                }
+            }
         }
     }
 
@@ -4119,6 +4208,8 @@ pub struct ModuleTypes {
     pub enum_objects: Vec<u32>,
     pub exports: Vec<(Box<[u8]>, Target)>,
     pub constants: Vec<(u32, Box<[u8]>)>,
+    /// The type of each unannotated class member that has no value or is an `accessor`, if it names nothing.
+    pub members: Vec<(u32, Box<[u8]>)>,
     pub functions_returning_undefined: Vec<u32>,
     pub globals: Vec<u32>,
     pub augmented_modules: Vec<(u32, Box<[u8]>)>,
@@ -4133,6 +4224,61 @@ impl ModuleTypes {
             .find(|constant| constant.0 == binding)
             .map(|constant| &constant.1[..])
     }
+
+    fn member_type(&self, key: u32) -> Option<&[u8]> {
+        self.members
+            .iter()
+            .find(|member| member.0 == key)
+            .map(|member| &member.1[..])
+    }
+}
+
+const NAMES_NOTHING: TypeFlags = TypeFlags::STRING_LITERAL
+    .union(TypeFlags::NUMBER_LITERAL)
+    .union(TypeFlags::BIG_INT_LITERAL)
+    .union(TypeFlags::INTRINSIC);
+
+fn names_nothing(flags: TypeFlags) -> bool {
+    flags.intersects(NAMES_NOTHING) && !flags.contains(TypeFlags::ENUM_LITERAL)
+}
+
+/// A union is written member by member: the checker prints the name of an alias that holds it.
+fn text_that_names_nothing(services: &mut Services<'_, '_, '_>, ty: TypeId) -> Option<Box<[u8]>> {
+    let format = TypeFormatFlags::DEFAULT | TypeFormatFlags::NO_TRUNCATION;
+    let flags = services.type_flags(ty);
+    if !flags.contains(TypeFlags::UNION) {
+        return names_nothing(flags).then(|| services.type_to_string(ty, None, format).into());
+    }
+    let parts = services.constituents(ty);
+    if !(parts.iter()).all(|&part| names_nothing(services.type_flags(part))) {
+        return None;
+    }
+    let count_of = |services: &mut Services<'_, '_, '_>, wanted: TypeFlags| {
+        let has_it = |&&part: &&TypeId| services.type_flags(part).intersects(wanted);
+        parts.iter().filter(has_it).count()
+    };
+    // `true | false` is `boolean`, and `null` and `undefined` come last, as the checker prints a union.
+    let is_boolean = count_of(services, TypeFlags::BOOLEAN_LITERAL) == 2;
+    let mut texts: Vec<Vec<u8>> = Vec::new();
+    let mut has_boolean = false;
+    for &part in parts {
+        let flags = services.type_flags(part);
+        if flags.intersects(TypeFlags::NULLABLE) {
+            continue;
+        }
+        if !is_boolean || !flags.contains(TypeFlags::BOOLEAN_LITERAL) {
+            texts.push(services.type_to_string(part, None, format));
+        } else if !std::mem::replace(&mut has_boolean, true) {
+            texts.push(b"boolean".to_vec());
+        }
+    }
+    if count_of(services, TypeFlags::NULL) > 0 {
+        texts.push(b"null".to_vec());
+    }
+    if count_of(services, TypeFlags::UNDEFINED) > 0 {
+        texts.push(b"undefined".to_vec());
+    }
+    Some(texts.join(&b" | "[..]).into())
 }
 
 fn is_project_source(checker: &Checker<'_, '_>, file: FileId) -> bool {
@@ -4393,13 +4539,9 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 node: hir.node(id),
             });
             let flags = services.type_flags(ty);
-            let names_nothing = TypeFlags::STRING_LITERAL
-                | TypeFlags::NUMBER_LITERAL
-                | TypeFlags::BIG_INT_LITERAL
-                | TypeFlags::INTRINSIC;
             if flags.contains(TypeFlags::UNIQUE_ES_SYMBOL) {
                 constants.push((hir[declaration.pat].pos, b"unique symbol"[..].into()));
-            } else if flags.intersects(names_nothing) && !flags.contains(TypeFlags::ENUM_LITERAL) {
+            } else if names_nothing(flags) {
                 constants.push((
                     hir[declaration.pat].pos,
                     services
@@ -4410,6 +4552,37 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                         )
                         .into(),
                 ));
+            }
+        }
+        let syntax = Syntax {
+            file: hir,
+            text: &hir.text[..],
+        };
+        // The build drops the dead stores that type a member, and writes an `accessor` as an untyped getter and setter.
+        let mut members = Vec::new();
+        let is_checked = hir.kind != FileKind::Declaration && hir.check_directive != Some(false);
+        let classes = if is_checked { &hir.classes[..] } else { &[] };
+        // Without `noImplicitAny` a member with no value is `any`, with and without its stores.
+        let is_typed_by_stores = services.compiler_options().no_implicit_any;
+        for id in classes.iter().flat_map(|class| class.members.iter()) {
+            let member = &hir[id];
+            let loses_its_type = match member.init.is_some() {
+                true => member.flags.contains(Flags::ACCESSOR),
+                false => is_typed_by_stores,
+            };
+            if member.kind != MemberKind::Property
+                || member.ty.is_some()
+                || syntax.is_type_only_member(member)
+                || !loses_its_type
+            {
+                continue;
+            }
+            let ty = services.type_at_location(NodeRef {
+                file,
+                node: hir.node(id),
+            });
+            if let Some(text) = text_that_names_nothing(services, ty) {
+                members.push((syntax.member_key(member), text));
             }
         }
         let mut functions_returning_undefined = Vec::new();
@@ -4429,10 +4602,6 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
                 functions_returning_undefined.push(Syntax::function_key(function));
             }
         }
-        let syntax = Syntax {
-            file: hir,
-            text: &hir.text[..],
-        };
         let mut augmented_modules = Vec::new();
         for statement in hir.ids(hir.body).map(|id| &hir[id]) {
             let StmtKind::Module(declared) = statement.kind else {
@@ -4452,6 +4621,7 @@ pub fn module_types(checker: &mut Checker<'_, '_>, file: FileId) -> Option<Modul
             enum_objects,
             exports,
             constants,
+            members,
             functions_returning_undefined,
             globals,
             augmented_modules,

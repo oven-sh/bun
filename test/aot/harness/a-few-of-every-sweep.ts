@@ -7,13 +7,20 @@ import { join } from "node:path";
 import { test } from "../supported";
 import { run } from "./run";
 
+// With it the build stops where a stage hands on what the next one does not take. Without it only some builds of Bun look.
+const checked = "--aot-check=VerifyEachStage";
+
 const writers = join(import.meta.dir, "..", "fuzz", "fuzzilli");
 
-// These have test files of their own, or take other arguments, or make their programs out of the stored ones, which come and go.
+// These have test files of their own, or take other arguments, or make their programs out of the stored ones, which come and go. And in the two on graphs of modules loads are in flight at once: in which order
+// `bun <file>` then runs the files is a matter of time, and on a busy machine it gives two answers.
 const asidesFromThese = new Set([
+  "write-everyday-awaiting-sweep.ts",
   "write-everyday-gathering-sweep.ts",
   "write-everyday-program-sweep.ts",
+  "write-half-run-sweep.ts",
   "write-member-sweep.ts",
+  "write-mixed-graph-sweep.ts",
   "write-near-helper-sweep.ts",
   "write-package-sweep.ts",
   "write-turn-sweep.ts",
@@ -62,7 +69,11 @@ export function aFewOfEverySweepIn(part: number, parts: number) {
         const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
         const [plain, build] = await Promise.all([
           run([bunExe(), "./" + entry], folder, bunEnv),
-          run([bunExe(), "build", "--compile", "--aot", "./" + entry, "--outfile", executable], folder, bunEnv),
+          run(
+            [bunExe(), "build", "--compile", "--aot", checked, "./" + entry, "--outfile", executable],
+            folder,
+            bunEnv,
+          ),
         ]);
         // A program that said nothing and ended well would be the same as any other that did.
         expect(plain.stdout !== "" || plain.exitCode !== 0).toBe(true);

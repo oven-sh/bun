@@ -1628,12 +1628,12 @@ describe("inbound stream lifecycle", () => {
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The peer's reset came before destroy(), so the request closes with no error.
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "wantTrailers id=1
       toString:start
       toString:end
       sendTrailers:returned
-      req error ERR_HTTP2_STREAM_CANCEL
       req close"
     `);
     expect(proc.signalCode).toBeNull();

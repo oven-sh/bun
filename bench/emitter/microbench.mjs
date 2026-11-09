@@ -40,6 +40,36 @@ groupForEmitter("on x 10_000 (handler)", ({ EventEmitter, name }) => {
   });
 });
 
+groupForEmitter("eventNames() 5 names", ({ EventEmitter, name }) => {
+  const emitter = new EventEmitter();
+  for (let i = 0; i < 5; i++) emitter.on("event" + i, () => {});
+
+  bench(name, () => {
+    id += emitter.eventNames().length;
+  });
+});
+
+// An emitter whose constructor ran twice keeps the key of a removed listener, with `undefined` in its slot.
+groupForEmitter("eventNames() 5 names + 5 removed", ({ EventEmitter, name }) => {
+  class ConstructedTwice extends EventEmitter {
+    constructor() {
+      super();
+      EventEmitter.call(this);
+    }
+  }
+  const emitter = new ConstructedTwice();
+  const removed = () => {};
+  for (let i = 0; i < 5; i++) {
+    emitter.on("removed" + i, removed);
+    emitter.on("event" + i, () => {});
+  }
+  for (let i = 0; i < 5; i++) emitter.off("removed" + i, removed);
+
+  bench(name, () => {
+    id += emitter.eventNames().length;
+  });
+});
+
 // for (let { impl: EventEmitter, name, monkey } of []) {
 //   if (monkey) {
 //     var monkeyEmitter = Object.assign({}, EventEmitter.prototype);

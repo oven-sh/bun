@@ -112,6 +112,23 @@ Bun doesn't read your Jest config file or the `jest` key in `package.json`. With
 
 ---
 
+Replace `fakeTimers: { enableGlobally: true }` with a [preload script](/test/configuration#preload-scripts) that calls `jest.useFakeTimers()`. Pass it the other `fakeTimers` options, such as `advanceTimers` or `doNotFake`.
+
+```ts title="setup.ts" icon="/icons/typescript.svg"
+import { jest } from "bun:test";
+
+jest.useFakeTimers();
+```
+
+```toml bunfig.toml icon="settings"
+[test]
+preload = ["./setup.ts"]
+```
+
+Jest turns the fake timers on again for each test file. Bun does too with `--isolate` or `--parallel`. Without those flags, the preload's fake timers end with the first test file that calls `jest.useFakeTimers()` or `jest.useRealTimers()` itself. The files after it start with real timers. See [Fake timers](/test/dates-times#fake-timers).
+
+---
+
 Many other Jest settings are irrelevant in `bun test`.
 
 - `transform` — Bun supports TypeScript & JSX. Configure other file types with [plugins](/runtime/plugins).

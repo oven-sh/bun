@@ -132,11 +132,9 @@ pub trait StandaloneModuleGraph: Send + Sync {
             self.compiled_program().is_some() && Resolver::import_path_names_directory(specifier);
         let file = match is_embedded && !is_left_to_program {
             true => self.resolve(source_dir, specifier).or_else(|| {
-                // An entry point above the root directory of the build is a file of the graph under `_.._`.
-                self.compiled_program()?;
+                let program = self.compiled_program()?;
                 let public_root = self.base_public_path_with_default_suffix();
-                let path =
-                    crate::compiled_program::join_public_path(public_root, source_dir, specifier)?;
+                let path = program.join_public_path(public_root, source_dir, specifier)?;
                 self.resolve(source_dir, &path)
             }),
             false => None,
@@ -183,27 +181,15 @@ pub trait StandaloneModuleGraph: Send + Sync {
                     search,
                 )
             });
-            let resolve_below = |root_on_disk: Vec<u8>| {
+            // `require(__dirname + "/a.js")`: the path is that of the machine that built the program, and the module is in the executable.
+            module.or_else(|| {
                 program.resolve_module_on_disk(
                     public_root,
-                    &root_on_disk,
                     source_dir,
                     specifier,
                     is_require,
                     search,
                 )
-            };
-            // `require(__dirname + "/a.js")`: the path is that of the machine that built the program, and the module is in the executable.
-            let module =
-                module.or_else(|| resolve_below(program.root_on_build_machine()?.to_vec()));
-            let beside_executable =
-                module.or_else(|| resolve_below(self.root_beside_executable()?));
-            beside_executable.or_else(|| {
-                let program = self.compiled_program()?;
-                if !program.knows_root_on_disk() {
-                    return None;
-                }
-                resolve_below(program.root_on_disk(crate::fs::FileSystem::get().top_level_dir())?)
             })
         })
     }
@@ -227,15 +213,20 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// `CompiledProgram::root_beside_executable`
     fn root_beside_executable(&self) -> Option<Vec<u8>> {
         let program = self.compiled_program()?;
+        if let Some(file) = crate::compiled_program::FILE_IN_PLACE_OF_EXECUTABLE.get() {
+            return program.root_beside_executable(&file.path);
+        }
         let executable = bun_core::self_exe_path().ok()?;
         program.root_beside_executable(executable.as_bytes())
     }
-    /// The root directory on disk: below the folder of the executable, else below the working directory of the process.
     fn root_on_disk(&self) -> Option<Vec<u8>> {
+        let program = self.compiled_program()?;
+        if !program.allows_code_from_disk {
+            return None;
+        }
         if let Some(root) = self.root_beside_executable() {
             return Some(root);
         }
-        let program = self.compiled_program()?;
         if !program.knows_root_on_disk() {
             return None;
         }
@@ -243,11 +234,12 @@ pub trait StandaloneModuleGraph: Send + Sync {
     }
     /// `compiled_program::directories_of_importer`.
     fn directories_of_importer(&self, source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
-        if self.compiled_program().is_none() {
+        let Some(program) = self.compiled_program() else {
             return Vec::new();
-        }
+        };
         let public_root = self.base_public_path_with_default_suffix();
-        crate::compiled_program::directories_of_importer(public_root, source_dir, base)
+        let levels = program.levels_above_root();
+        crate::compiled_program::directories_of_importer(public_root, levels, source_dir, base)
     }
     /// `StandaloneModuleGraph.base_public_path_with_default_suffix` — the
     /// virtual-root prefix used for embedded modules (e.g. `/$bunfs/root/`).

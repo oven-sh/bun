@@ -1,0 +1,30 @@
+# -- source: main.cjs
+# const said = [];
+# function say(value) { said.push(JSON.stringify(value.name)); }
+# const first = true && function () {}; say(first);
+# const second = false || (() => {}); say(second);
+# const third = null ?? class {}; say(third);
+# const fourth = 1 ? function () {} : 0; say(fourth);
+# const fifth = function () {} || 1; say(fifth);
+# const sixth = "" || (true && function () {}); say(sixth);
+# let seventh; seventh = true && function () {}; say(seventh);
+# const { eighth = true && function () {} } = {}; say(eighth);
+# class Holder { field = true && function () {}; #hidden = false || (() => {}); hidden() { return this.#hidden; } }
+# say(new Holder().field); say(new Holder().hidden());
+# const record = { member: true && function () {} }; say(record.member);
+# const own = true && function inner() {}; say(own);
+# const stays = said.length && function () {}; say(stays);
+# const chosen = said.length ? function () {} : 0; say(chosen);
+# const list = [] && function () {}; say(list);
+# print(said.join(" "));
+# -- end of source
+# `bun <file>` and the plain executable fold `true && f`, `f || 1`, `null ?? f`, `1 ? f : 0` to the one operand before the engine sees them: a function or class without a name then stands next to the name that it is given to
+# and takes it. (By the language it would not.) The front end gave the name to the operator, which dropped it. What is folded is asked of the one model of what `bun run` knows and leaves out (src/sema/fold).
+# The last three stay operators in `bun <file>`: no name. The file is CommonJS so that the shell does not run the source itself: it folds nothing, and by the language none of these takes a name.
+# THE RED CONTROL: find_operand_named_in_place_of() answers None: eleven empty names in front.
+# RUN: run-in-shell mechanisms=all
+# CHECK: "first" "second" "third" "fourth" "fifth" "sixth" "seventh" "eighth" "field" "#hidden" "member" "inner" "" "" ""
+# CHECK-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: "first" "second" "third" "fourth" "fifth" "sixth" "seventh" "eighth" "field" "#hidden" "member" "inner" "" "" ""
+# NONE-NEXT: exited with 0

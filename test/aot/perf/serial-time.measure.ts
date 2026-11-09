@@ -9,11 +9,11 @@
 // given in parts per million. For scale: one walk over every value of the program on one thread is about 500, and between
 // two runs on a busy machine a phase moves by up to 300.
 //
-//   bun test test/aot/perf/serial-time.test.ts                   prints the table; fails if a phase takes more than twice
+//   bun test ./test/aot/perf/serial-time.measure.ts              prints the table; fails if a phase takes more than twice
 //                                                                its number in ./serial-time.<os>-<arch>.json plus 500,
 //                                                                a step of the solver more than twice plus 60,
 //                                                                or if all phases together do, in each of four measurements
-//   AOT_PERF=update bun test test/aot/perf/serial-time.test.ts   rewrites that file
+//   AOT_PERF=update bun test ./test/aot/perf/serial-time.measure.ts   rewrites that file
 //
 // A phase that is not in the file counts as 0 there. Where the file is missing the table is printed and not judged, and on
 // musl too, because the numbers in the file are those of glibc. The
@@ -124,7 +124,7 @@ function build(folder: string, logs: boolean): Build {
       /^AOT phase times: (?!pass )(.+?) \| wall [-\d.e]+ ms \| .*\| outside parallel loops ([-\d.e]+) ms \|/.exec(line);
     if (found) phases.set(found[1], (phases.get(found[1]) ?? 0) + Number(found[2]));
     const step =
-      /^AOT (flow step \| .+?) \| [-\d.e]+ ms \| this thread's CPU [-\d.e]+ ms \| outside parallel loops ([-\d.e]+) ms$/.exec(
+      /^AOT (flow step \| .+?) \| [-\d.e]+ ms \| this thread's CPU [-\d.e]+ ms \| outside parallel loops ([-\d.e]+) ms(?: \||$)/.exec(
         line,
       );
     if (step && !step[1].includes("beside")) phases.set(step[1], (phases.get(step[1]) ?? 0) + Number(step[2]));
@@ -145,6 +145,7 @@ function quickest(modules: number): Build {
 function measure(): Record<string, number> {
   const [small, large] = sizes.map(quickest);
   expect(large.phases.size).toBeGreaterThan(50);
+  expect([...large.phases.keys()].filter(isStepOfSolver).length).toBeGreaterThan(30);
 
   const cpu = large.cpu - small.cpu;
   expect(cpu).toBeGreaterThan(0);

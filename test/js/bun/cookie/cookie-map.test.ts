@@ -433,7 +433,11 @@ describe("iterator", () => {
     c=d"
   `);
   });
-  test("an iterator that is done yields what set() adds after it, like FormData", () => {
+  // Only the empty map is pinned. CookieMap::Iterator walks one index over
+  // [modified..., original...] and set() appends to the modified half, so on a
+  // map with original cookies a set() under a live cursor shifts the originals
+  // and the cursor replays one (see "delete in a loop" above).
+  test("an iterator over an empty map that is done yields what set() adds after it", () => {
     const cookies = new Bun.CookieMap();
     const iterator = cookies.entries();
     expect(iterator.next()).toEqual({ value: undefined, done: true });

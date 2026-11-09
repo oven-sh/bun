@@ -11,10 +11,15 @@
 # (globalThis as any).answer = total(counts);
 # -- end of source
 # The compiler before this one: 13 instructions, 1 of them patches.
-# When the bound was taken: loop: operations 0, patches 0, moves 0, unlikely 6.
-# RUN(X64): loops most:0 f1 mechanisms=all-Inlining
+# The table is read once in front of the loop (CollectionTableFacts: how many entries are used, where the keys and the values lie, how wide they are, how
+# many deleted entries stand in front). Its rare arm, which moves a table out of the image, jumps back to the blocks that describe the table: that backward
+# jump is the first loop counted, and its operations run once, where the loop is entered. The loop as written holds the step's skip over deleted entries,
+# so it is not innermost: the second count is that skip, which runs only behind a deleted entry.
+# When the bounds were taken: loop: operations 15, patches 2, moves 4, unlikely 9. The second: operations 0, patches 0, moves 0, unlikely 6.
+# RUN(X64): loops most:19,0 f1 mechanisms=all-Inlining
 # REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
 # X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 19
 # X64-NEXT: loop: at most 0
 # The compiler before this one: 87 instructions, 2 of them patches.
 # When the bound was taken: steps: operations 53, patches 2, moves 9, unlikely or rare 42.

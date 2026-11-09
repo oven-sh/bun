@@ -16,6 +16,10 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/perf/loops-over-tables.test.ts": {
+    "default": 6000,
+    "asan": 24000
+  },
   "aot/engine/ir-alone-1.test.ts": {
     "default": 60000,
     "asan": 240000

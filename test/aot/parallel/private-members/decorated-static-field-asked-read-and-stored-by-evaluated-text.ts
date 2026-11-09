@@ -56,6 +56,12 @@ class Held {
   };
 }
 class Below extends Held {}
+// Before any store: 8 is what `doubled` made of 4. Every later probe stores first.
+both(
+  "the value that its decorator made, value.#twice, the class",
+  () => Held.ask("value.#twice", Held),
+  () => Held.compiled["value.#twice"](Held),
+);
 for (const text of Object.keys(Held.compiled)) {
   for (const [label, value] of [
     ["the class", Held],
@@ -73,6 +79,7 @@ console.log(lines.join("\n"));
 /* Output:
 before the value, #held in this: the text does the same. Compiled code: false
 before the value, a read: the text does the same. Compiled code: TypeError: Cannot access invalid private field (evaluating 'this.#held')
+the value that its decorator made, value.#twice, the class: the text does the same. Compiled code: 8
 #held in value, the class: the text does the same. Compiled code: true
 #held in value, a subclass: the text does the same. Compiled code: false
 #held in value, an object of no class: the text does the same. Compiled code: false

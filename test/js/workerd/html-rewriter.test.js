@@ -1845,21 +1845,35 @@ describe("HTMLRewriter", () => {
 
     // With { html: true } a string lands right next to what is already there: the
     // element's own text, or another inserted string. A check of the string alone
-    // misses a sequence that forms at that joint. setInnerContent leaves no joint.
+    // misses a sequence that forms at that joint. This is a matter of position, so
+    // it holds for every insertion inside the element. setInnerContent leaves no joint.
     const parts = ["b{}</sty", "le><p>"];
+    const existing = "<style>a{}</sty</style>";
     expect({
       eachPartPasses: parts.every(part => !/<\/style/i.test(part)),
       joinedIsCaught: /<\/style/i.test(parts.join("")),
       twoAppends: insert("style", "<style>a{}</style>", el => {
         for (const part of parts) el.append(part, { html: true });
       }),
-      appendAfterExistingText: insert("style", "<style>a{}</sty</style>", el => el.append(parts[1], { html: true })),
-      setInnerContent: insert("style", "<style>a{}</sty</style>", el => el.setInnerContent(parts[1], { html: true })),
+      append: insert("style", existing, el => el.append(parts[1], { html: true })),
+      prepend: insert("style", "<style>le><p></style>", el => el.prepend(parts[0], { html: true })),
+      endTagBefore: insert("style", existing, el => el.onEndTag(end => end.before(parts[1], { html: true }))),
+      textChunkBefore: new HTMLRewriter()
+        .on("style", {
+          text(chunk) {
+            if (chunk.lastInTextNode) chunk.before(parts[1], { html: true });
+          },
+        })
+        .transform(existing),
+      setInnerContent: insert("style", existing, el => el.setInnerContent(parts[1], { html: true })),
     }).toEqual({
       eachPartPasses: true,
       joinedIsCaught: true,
       twoAppends: "<style>a{}b{}</style><p></style>",
-      appendAfterExistingText: "<style>a{}</style><p></style>",
+      append: "<style>a{}</style><p></style>",
+      prepend: "<style>b{}</style><p></style>",
+      endTagBefore: "<style>a{}</style><p></style>",
+      textChunkBefore: "<style>a{}</style><p></style>",
       setInnerContent: "<style>le><p></style>",
     });
   });

@@ -61,10 +61,11 @@ declare namespace HTMLRewriterTypes {
      * `JSON.stringify(v).replaceAll("<", "\\u003c")`.
      *
      * That check is complete for `setInnerContent`, which replaces the
-     * element's text. With `append` and `prepend`, one of these sequences
-     * can also form where the string meets the element's existing text or
-     * another inserted string. Join strings that go into the same element
-     * and check the result.
+     * element's text. Every other insertion inside the element can land
+     * next to existing text or another inserted string, where one of these
+     * sequences can also form: `append`, `prepend`, `before` on the end
+     * tag, and `before`, `after` and `replace` on a text chunk. Join
+     * strings that go into the same element and check the result.
      *
      * The advice for script and style source is for HTML elements only
      * (`el.namespaceURI === "http://www.w3.org/1999/xhtml"`). Inside `<svg>`

@@ -548,7 +548,8 @@ describe.concurrent("Bun.cron (in-process) in a Worker", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (exitCode !== 0) console.error(stderr);
-    const { oldestFirst, newestFirst } = JSON.parse(stdout);
+    // Without output the costs are undefined, and the assertion shows the exit code.
+    const { oldestFirst, newestFirst } = stdout === "" ? {} : JSON.parse(stdout);
     // A stop costs about a tenth of a schedule. When each stop searched a list of the Worker's jobs,
     // to stop this many cost up to 3 (debug) or 39 (release) times as much as to schedule them.
     // A cost that is not below 1 stays in the result, so that a failure shows it.
@@ -598,7 +599,8 @@ describe.concurrent("Bun.cron (in-process) in a Worker", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       if (exitCode !== 0) console.error(stderr);
-      const cost = Number(stdout);
+      // Not a number without output, so that the assertion fails.
+      const cost = parseFloat(stdout);
       // The CPU time of the process to end the Worker, over the CPU time of the Worker to schedule its jobs: 0.4 to 1.1.
       // It was about 30 when each job searched the list for itself. Bun 1.4.2 did not search at the end of a Worker.
       expect({ cost: cost < 8 || cost, exitCode }).toEqual({ cost: true, exitCode: 0 });

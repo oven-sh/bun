@@ -145,7 +145,7 @@ const loadedLater = [
 const behindFlag = ["internal/quic/quic.ts", "internal/streams/iter/from.ts"];
 
 // They make no call while they load.
-const makeNone = ["bun:ffi", "node:trace_events"];
+const makeNone = ["bun:ffi", "node:path", "node:trace_events"];
 
 test("node:http has a second text", () => {
   expect(named).toContain("node:http");

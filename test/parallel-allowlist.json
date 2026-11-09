@@ -1763,6 +1763,8 @@
     "aot/builtins/records-whose-conditions-name-two-objects-stay-two.test.ts",
     "aot/typescript-that-tsc-rejects.test.ts",
     "aot/the-late-failure-of-a-factory-is-reported-as-often-as-under-bun-test.test.ts",
-    "aot/the-validators-answer-alike-on-either-side-of-what-they-pass-at-once.test.ts"
+    "aot/the-validators-answer-alike-on-either-side-of-what-they-pass-at-once.test.ts",
+    "aot/a-require-made-for-another-folder-finds-there-a-file-written-after-a-test-run-was-built.test.ts",
+    "aot/a-require-made-for-another-folder-finds-there-a-package-left-outside-the-executable.test.ts"
   ]
 }

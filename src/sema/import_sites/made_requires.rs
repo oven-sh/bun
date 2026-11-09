@@ -486,7 +486,12 @@ fn starts_at_own_folder(
                 let callee = hir[call].callee;
                 let export = text.find_export_read_off_module(callee, left, PATH_MODULES);
                 let joins = export == Some(known::join) || export == Some(known::resolve);
-                hir.ids(hir[call].args).next().filter(|_| joins)
+                let is_path_of_url = hir[call].args.len() == 1
+                    && text.find_export_read_off_module(callee, left, URL_MODULES)
+                        == Some(known::fileURLToPath);
+                hir.ids(hir[call].args)
+                    .next()
+                    .filter(|_| joins || is_path_of_url)
             }
             _ => None,
         };

@@ -1444,6 +1444,36 @@ const REQUIRES_MADE_FOR_PATHS: &[(&str, &str, Option<Option<&str>>)] = &[
         r#"import { createRequire } from "node:module"; const load = createRequire(load("url").fileURLToPath(import.meta.url)); load("./a");"#,
         Some(None),
     ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.ts",
+        r#"import { createRequire } from "node:module"; createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.cjs",
+        r#"process.getBuiltinModule("node:module").createRequire(__dirname + "/lib/")("./a");"#,
+        Some(Some("./lib/")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath } from "node:url"; createRequire(join(fileURLToPath(new URL(".", import.meta.url)), "lib", "index.js"))("./a");"#,
+        Some(Some("./lib/index.js")),
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath } from "node:url"; createRequire(join(fileURLToPath(new URL(".", import.meta.url), other), "lib", "index.js"))("./a");"#,
+        None,
+    ),
+    (
+        "a.mjs",
+        r#"import { createRequire } from "node:module"; import { join } from "node:path"; import { fileURLToPath } from "./own.mjs"; createRequire(join(fileURLToPath(new URL(".", import.meta.url)), "lib", "index.js"))("./a");"#,
+        None,
+    ),
 ];
 
 #[test]

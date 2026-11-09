@@ -16,6 +16,14 @@
       "windows-aarch64": "windows-aarch64-11-test-bun"
     }
   },
+  "aot/a-require-made-for-another-folder-finds-there-a-file-written-after-a-test-run-was-built.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
+  "aot/a-require-made-for-another-folder-finds-there-a-package-left-outside-the-executable.test.ts": {
+    "default": 60000,
+    "asan": 240000
+  },
   "aot/engine/ir-alone-1.test.ts": {
     "default": 60000,
     "asan": 240000

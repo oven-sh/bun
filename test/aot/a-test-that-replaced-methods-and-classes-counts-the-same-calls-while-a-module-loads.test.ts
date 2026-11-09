@@ -50,8 +50,8 @@ const differs = {
   "the functions of node:fs that node:net calls are written out for a compiled program, where `bun test` binds them": [
     "node:fs: Function.prototype.bind",
   ],
-  "the first text of node:path binds functions of its native half, and these are it or load it, or internal/fs/streams, while they load; the second texts are written out or load them later":
-    ["node:path: Function.prototype.bind", "node:test: Function.prototype.bind", "node:util: Function.prototype.bind"],
+  "the first texts of node:util and of internal/util/inspect, which loads with node:test, uncurry methods by `bind` (internal/primordials); the second texts are written out":
+    ["node:test: Function.prototype.bind", "node:util: Function.prototype.bind"],
 };
 
 // A compiled test replaces only what it spells out. What stands in has the length and the name of what it stands for:

@@ -256,10 +256,6 @@ const witnessed: Record<string, [line: string, witness: string][]> = {
   ],
   "ahead-of-time/node/path.ts": [
     [
-      'if (CAN_REPLACE_BUILT_IN_FUNCTIONS) require("internal/validators");',
-      "a-test-that-replaced-built-in-functions-sees-the-same-calls-while-a-module-loads.test.ts",
-    ],
-    [
       "IS_COMPILED_AHEAD_OF_TIME && !CAN_REPLACE_BUILT_INS",
       "parallel-test-runs/arms-of-the-library/the-first-matches-glob-loads-the-validators/a_test.js",
     ],
@@ -320,7 +316,7 @@ const owed: Record<string, number> = {
   "ahead-of-time/internal/streams/state.ts": 3,
   "ahead-of-time/internal/streams/transform.ts": 1,
   "ahead-of-time/internal/streams/utils.ts": 1,
-  "ahead-of-time/node/async_hooks.ts": 6,
+  "node/async_hooks.ts": 6,
   "ahead-of-time/node/events.ts": 9,
   "ahead-of-time/node/http2.ts": 2,
 };

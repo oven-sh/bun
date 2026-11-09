@@ -20,12 +20,7 @@ const deeds = [
   "a file is written through a stream",
 ];
 // What is owed, by the name of what is counted. Whatever else parts in such a deed is red.
-const owed: Record<string, { names: string[]; why: string }> = {
-  "a file is written through a stream": {
-    names: ["Function.prototype.bind"],
-    why: "a wrong answer today: under `bun test --aot` the modules that load with the first stream of node:fs call bind 6 times, where `bun test` calls it 28 times",
-  },
-};
+const owed: Record<string, { names: string[]; why: string }> = {};
 
 async function take(directory: string, ...flags: string[]) {
   const { stdout, stderr, exitCode } = await run(

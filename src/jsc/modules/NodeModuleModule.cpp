@@ -4,6 +4,7 @@
 #include "CodeGenerationFromStrings.h"
 #include "BunCompiledModules.h"
 #include "ModuleGraph.h"
+#include "Path.h"
 #include "WebCoreJSBuiltins.h"
 
 #include <JavaScriptCore/JSCInlines.h>
@@ -557,14 +558,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
     JSValue dirname;
     if (parent.filename) {
-        EncodedJSValue encodedFilename = JSValue::encode(parent.filename);
-#if OS(WINDOWS)
-        dirname = JSValue::decode(
-            Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
-#else
-        dirname = JSValue::decode(
-            Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
-#endif
+        dirname = Bun::pathDirname(globalObject, parent.filename);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         dirname = jsString(vm, String("."_s));

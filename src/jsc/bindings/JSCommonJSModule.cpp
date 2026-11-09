@@ -39,6 +39,7 @@
 #include "root.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "headers-handwritten.h"
+#include "Path.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
@@ -966,12 +967,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
         WTF::TextPosition(),
         JSC::SourceProviderSourceType::Program);
 
-    EncodedJSValue encodedFilename = JSValue::encode(filenameValue);
-#if OS(WINDOWS)
-    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, true, &encodedFilename, 1));
-#else
-    JSValue dirnameValue = JSValue::decode(Bun__Path__dirname(globalObject, false, &encodedFilename, 1));
-#endif
+    JSValue dirnameValue = Bun::pathDirname(globalObject, filenameValue);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     String dirnameString = dirnameValue.toWTFString(globalObject);

@@ -1,8 +1,8 @@
-// The native functions of `path.posix` and `path.win32` in a compiled program. src/js/ahead-of-time/node/path.ts puts them on the two objects.
+// The native functions of `path.posix` and `path.win32`. src/js/node/path.ts puts them on the two objects.
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 
-export default b.module({ rustPath: "crate::node::node_path" });
+export default b.module({ rustPath: "crate::node::path" });
 
 const text = b.string.allowStringObject.local;
 const result = b.string.local;

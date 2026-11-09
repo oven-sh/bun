@@ -16,9 +16,6 @@ const expected: string[] = [
   // Read off an object of Bun's own that no program gets hold of. The ahead-of-time text asks for each function by itself.
   "bun/ffi.ts linkSymbols",
   "bun/ffi.ts viewSource",
-  "node/path.ts extname",
-  "node/path.ts relative",
-  "node/path.ts toNamespacedPath",
   // It answers false, always.
   "internal/repl/history.ts isEnabled",
   // `globalThis.TypeError` and `Function.prototype.call`, each kept in a variable.

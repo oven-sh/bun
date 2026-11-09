@@ -606,10 +606,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             _ => test_of_value,
         };
         let operation = find_operation(&site, answer, given.len())?;
+        let is_left_to_loader = matches!(answer, SiteAnswer::Module(ModuleRef::External { .. }));
         if matches!(
             path_to_resolve_from,
             Some(ResolvedFrom::PathFromOwnFolder(_))
-        ) && !matches!(answer, SiteAnswer::Module(_))
+        ) && (!matches!(answer, SiteAnswer::Module(_)) || is_left_to_loader)
         {
             return None;
         }

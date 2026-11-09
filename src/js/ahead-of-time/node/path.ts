@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/path.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 11a2bc6353f4c400f6600bb96b851c2a4a3317951eeee2ccdbafd3b97b6b4c00.
+// Written against that file with the SHA-256 03984179ed1b60c8aaa162b928af21eb47feff5157782c9efb2f597fb4284cfb.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:path"
@@ -39,8 +39,6 @@ declare global {
 // Object lists a member from when it is first read. internal/validators, which is loaded at the first matchesGlob(), reads these three
 // when it loads: whoever imports this module finds them read, in this order.
 const { freeze: _ObjectFreeze, create: _ObjectCreate, defineProperty: _ObjectDefineProperty } = Object;
-// `bun run` loads it here. Only a test that has replaced a built-in function sees the calls that it makes while it loads.
-if (CAN_REPLACE_BUILT_IN_FUNCTIONS) require("internal/validators");
 
 const toNamespacedPathPosix = $bindgen("node_path.bind.ts", "toNamespacedPathPosix");
 const toNamespacedPathWin32 = $bindgen("node_path.bind.ts", "toNamespacedPathWin32");

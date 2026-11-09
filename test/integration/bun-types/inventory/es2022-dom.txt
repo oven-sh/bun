@@ -112,7 +112,7 @@ namespace $ (bun-types/shell.d.ts)
     quiet(isQuiet?: boolean | undefined): Bun.$.ShellPromise
     stdin [readonly]: WritableStream<any>
     text(encoding?: BufferEncoding | undefined): Promise<string>
-    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: Bun.$.ShellOutput) => PromiseLike<TResult1> | TResult1) | null | undefined, onrejected?: ((reason: any) => PromiseLike<TResult2> | TResult2) | null | undefined): Promise<TResult1 | TResult2>
+    then<TResult1 = Bun.$.ShellOutput, TResult2 = never>(onfulfilled?: ((value: Bun.$.ShellOutput) => PromiseLike<TResult1> | TResult1) | null | undefined, onrejected?: ((reason: any) => PromiseLike<TResult2> | TResult2) | null | undefined): Promise<TResult1 | TResult2>
     throws(shouldThrow: boolean): Bun.$.ShellPromise
     [static]
       construct new (executor: (resolve: (value: Bun.$.ShellOutput | PromiseLike<Bun.$.ShellOutput>) => void, reject: (reason?: any) => void) => void): Bun.$.ShellPromise
@@ -493,13 +493,13 @@ interface CronJob (bun-types/bun.d.ts)
 interface CronOptions (bun-types/bun.d.ts)
   tz [?]: string
 type CronWithAutocomplete (bun-types/bun.d.ts) = "@annually" | "@daily" | "@hourly" | "@midnight" | "@monthly" | "@weekly" | "@yearly" | (string & {}) | `${string} ${string} ${string} ${string} ${string}`
-class CryptoHashInterface<T> (bun-types/bun.d.ts)
+abstract class CryptoHashInterface<T> (bun-types/bun.d.ts)
   byteLength [readonly]: number
   digest(encoding: Bun.DigestEncoding): string
   digest(hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
   update(data: Bun.BlobOrStringOrBuffer): T
   [static]
-    construct new <T>(): Bun.CryptoHashInterface<T>
+    construct abstract new <T>(): Bun.CryptoHashInterface<T>
     hash(input: Bun.BlobOrStringOrBuffer, hashInto?: NodeJS.TypedArray<ArrayBufferLike> | undefined): NodeJS.TypedArray<ArrayBufferLike>
     hash(input: Bun.BlobOrStringOrBuffer, encoding: Bun.DigestEncoding): string
     prototype: Bun.CryptoHashInterface<any>
@@ -1279,13 +1279,13 @@ interface ReservedSQL (bun-types/sql.d.ts)
   [Symbol.asyncDispose](): PromiseLike<void>
   [Symbol.dispose](): void
   array(values: Array<any> | NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
-  begin<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  begin<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  beginDistributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  begin<const T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  begin<const T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  beginDistributed<const T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   close(options?: undefined | { timeout?: number; }): Promise<void>
   commitDistributed(name: string): Promise<void>
   connect(): Promise<Bun.SQL>
-  distributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  distributed<const T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   end(options?: undefined | { timeout?: number; }): Promise<void>
   file<T = any>(filename: string, values?: Array<any> | Record<string, any> | undefined): Bun.SQL.Query<T>
   flush(): void
@@ -1296,8 +1296,8 @@ interface ReservedSQL (bun-types/sql.d.ts)
   release(): Promise<void>
   reserve(options?: undefined | { signal?: AbortSignal; }): Promise<Bun.ReservedSQL>
   rollbackDistributed(name: string): Promise<void>
-  transaction<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  transaction<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  transaction<const T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  transaction<const T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   unsafe<T = any>(string: string, values?: Array<any> | Record<string, any> | undefined): Bun.SQL.Query<T>
 interface ResourceUsage (bun-types/bun.d.ts)
   contextSwitches: { voluntary: number; involuntary: number; }
@@ -1496,13 +1496,13 @@ class SQL (bun-types/sql.d.ts)
   call <T>(value: T & {}): Bun.SQL.Helper<T>
   [Symbol.asyncDispose](): PromiseLike<void>
   array(values: Array<any> | NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
-  begin<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  begin<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  beginDistributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  begin<const T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  begin<const T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  beginDistributed<const T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   close(options?: undefined | { timeout?: number; }): Promise<void>
   commitDistributed(name: string): Promise<void>
   connect(): Promise<Bun.SQL>
-  distributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  distributed<const T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   end(options?: undefined | { timeout?: number; }): Promise<void>
   file<T = any>(filename: string, values?: Array<any> | Record<string, any> | undefined): Bun.SQL.Query<T>
   flush(): void
@@ -1512,8 +1512,8 @@ class SQL (bun-types/sql.d.ts)
   options: Bun.__internal.Merge<Bun.SQL.PostgresOrMySQLOptions, Bun.SQL.SQLiteOptions> | Bun.__internal.Merge<Bun.SQL.SQLiteOptions, Bun.SQL.PostgresOrMySQLOptions>
   reserve(options?: undefined | { signal?: AbortSignal; }): Promise<Bun.ReservedSQL>
   rollbackDistributed(name: string): Promise<void>
-  transaction<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  transaction<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  transaction<const T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  transaction<const T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   unsafe<T = any>(string: string, values?: Array<any> | Record<string, any> | undefined): Bun.SQL.Query<T>
   [static]
     construct new (connectionString: URL | string): Bun.SQL
@@ -1641,7 +1641,7 @@ class SQL (bun-types/sql.d.ts)
     raw(): Bun.SQL.Query<T>
     readable(): ReadableStream<Uint8Array<ArrayBuffer>>
     simple(): Bun.SQL.Query<T>
-    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T & Bun.SQL.ResultMetadata) => PromiseLike<TResult1> | TResult1) | null | undefined, onrejected?: ((reason: any) => PromiseLike<TResult2> | TResult2) | null | undefined): Promise<TResult1 | TResult2>
+    then<TResult1 = T & Bun.SQL.ResultMetadata, TResult2 = never>(onfulfilled?: ((value: T & Bun.SQL.ResultMetadata) => PromiseLike<TResult1> | TResult1) | null | undefined, onrejected?: ((reason: any) => PromiseLike<TResult2> | TResult2) | null | undefined): Promise<TResult1 | TResult2>
     values(): Bun.SQL.Query<T>
     writable(): WritableStream<ArrayBufferLike | DataView<ArrayBufferLike> | NodeJS.TypedArray<ArrayBufferLike> | string>
   interface SQL.ResultColumn (bun-types/sql.d.ts)
@@ -1760,13 +1760,13 @@ interface SavepointSQL (bun-types/sql.d.ts)
   call <T>(value: T & {}): Bun.SQL.Helper<T>
   [Symbol.asyncDispose](): PromiseLike<void>
   array(values: Array<any> | NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
-  begin<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  begin<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  beginDistributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  begin<const T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  begin<const T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  beginDistributed<const T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   close(options?: undefined | { timeout?: number; }): Promise<void>
   commitDistributed(name: string): Promise<void>
   connect(): Promise<Bun.SQL>
-  distributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  distributed<const T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   end(options?: undefined | { timeout?: number; }): Promise<void>
   file<T = any>(filename: string, values?: Array<any> | Record<string, any> | undefined): Bun.SQL.Query<T>
   flush(): void
@@ -1778,8 +1778,8 @@ interface SavepointSQL (bun-types/sql.d.ts)
   rollbackDistributed(name: string): Promise<void>
   savepoint<T>(name: string, fn: Bun.SQL.SavepointContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   savepoint<T>(fn: Bun.SQL.SavepointContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  transaction<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  transaction<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  transaction<const T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  transaction<const T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   unsafe<T = any>(string: string, values?: Array<any> | Record<string, any> | undefined): Bun.SQL.Query<T>
 namespace Security (bun-types/security.d.ts)
   interface Security.Advisory (bun-types/security.d.ts)
@@ -2044,7 +2044,7 @@ namespace Spawn (bun-types/bun.d.ts)
   type Spawn.Writable (bun-types/bun.d.ts) = "ignore" | "inherit" | "pipe" | Blob | Bun.ArrayBufferView<ArrayBufferLike> | Bun.BunFile | ReadableStream<any> | Request | Response | null | number | undefined
   type Spawn.WritableIO (bun-types/bun.d.ts) = Bun.FileSink | number | undefined
   type Spawn.WritableToIO<X extends Bun.Spawn.Writable> (bun-types/bun.d.ts) = X extends "pipe" ? Bun.FileSink : X extends Blob | Bun.ArrayBufferView<ArrayBufferLike> | Bun.BunFile | Request | Response | number ? number : undefined
-SpawnOptions -> Spawn
+SpawnOptions -> Bun.Spawn
 type StringLike (bun-types/bun.d.ts) = string | { toString(): string; }
 type StringOrBuffer (bun-types/bun.d.ts) = ArrayBufferLike | NodeJS.TypedArray<ArrayBufferLike> | string
 interface StringWidthOptions (bun-types/bun.d.ts)
@@ -2290,13 +2290,13 @@ interface TransactionSQL (bun-types/sql.d.ts)
   call <T>(value: T & {}): Bun.SQL.Helper<T>
   [Symbol.asyncDispose](): PromiseLike<void>
   array(values: Array<any> | NodeJS.TypedArray<ArrayBufferLike>, typeNameOrTypeID?: Bun.ArrayType | number | undefined): Bun.SQLArrayParameter
-  begin<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  begin<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  beginDistributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  begin<const T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  begin<const T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  beginDistributed<const T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   close(options?: undefined | { timeout?: number; }): Promise<void>
   commitDistributed(name: string): Promise<void>
   connect(): Promise<Bun.SQL>
-  distributed<T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  distributed<const T>(name: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   end(options?: undefined | { timeout?: number; }): Promise<void>
   file<T = any>(filename: string, values?: Array<any> | Record<string, any> | undefined): Bun.SQL.Query<T>
   flush(): void
@@ -2308,8 +2308,8 @@ interface TransactionSQL (bun-types/sql.d.ts)
   rollbackDistributed(name: string): Promise<void>
   savepoint<T>(name: string, fn: Bun.SQL.SavepointContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   savepoint<T>(fn: Bun.SQL.SavepointContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  transaction<T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
-  transaction<T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  transaction<const T>(fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
+  transaction<const T>(options: string, fn: Bun.SQL.TransactionContextCallback<T>): Promise<Bun.SQL.ContextCallbackResult<T>>
   unsafe<T = any>(string: string, values?: Array<any> | Record<string, any> | undefined): Bun.SQL.Query<T>
 type Transferable (bun-types/bun.d.ts) = ArrayBuffer | MessagePort
 interface TransformerFlushCallback<O> (bun-types/bun.d.ts)
@@ -3104,11 +3104,11 @@ function sleepSync (bun-types/bun.d.ts)
 function sliceAnsi (bun-types/bun.d.ts)
   call (input: string, start?: number | undefined, end?: number | undefined, options?: Bun.SliceAnsiOptions | boolean | string | undefined, ambiguousIsNarrow?: boolean | undefined): string
 function spawn (bun-types/bun.d.ts)
-  call <In extends Bun.Spawn.Writable = "ignore", Out extends Bun.Spawn.Readable = "pipe", Err extends Bun.Spawn.Readable = "inherit">(options: Bun.Spawn.SpawnOptions<In, Out, Err> & { cmd: Array<string>; }): Bun.Subprocess<In, Out, Err>
-  call <In extends Bun.Spawn.Writable = "ignore", Out extends Bun.Spawn.Readable = "pipe", Err extends Bun.Spawn.Readable = "inherit">(cmds: Array<string>, options?: Bun.Spawn.SpawnOptions<In, Out, Err> | undefined): Bun.Subprocess<In, Out, Err>
+  call <const In extends Bun.Spawn.Writable = "ignore", const Out extends Bun.Spawn.Readable = "pipe", const Err extends Bun.Spawn.Readable = "inherit">(options: Bun.Spawn.SpawnOptions<In, Out, Err> & { cmd: Array<string>; }): Bun.Subprocess<In, Out, Err>
+  call <const In extends Bun.Spawn.Writable = "ignore", const Out extends Bun.Spawn.Readable = "pipe", const Err extends Bun.Spawn.Readable = "inherit">(cmds: Array<string>, options?: Bun.Spawn.SpawnOptions<In, Out, Err> | undefined): Bun.Subprocess<In, Out, Err>
 function spawnSync (bun-types/bun.d.ts)
-  call <In extends Bun.Spawn.Writable = "ignore", Out extends Bun.Spawn.Readable = "pipe", Err extends Bun.Spawn.Readable = "pipe">(options: Bun.Spawn.SpawnSyncOptions<In, Out, Err> & { cmd: Array<string>; onExit?: undefined; }): Bun.SyncSubprocess<Out, Err>
-  call <In extends Bun.Spawn.Writable = "ignore", Out extends Bun.Spawn.Readable = "pipe", Err extends Bun.Spawn.Readable = "pipe">(cmds: Array<string>, options?: Bun.Spawn.SpawnSyncOptions<In, Out, Err> | undefined): Bun.SyncSubprocess<Out, Err>
+  call <const In extends Bun.Spawn.Writable = "ignore", const Out extends Bun.Spawn.Readable = "pipe", const Err extends Bun.Spawn.Readable = "pipe">(options: Bun.Spawn.SpawnSyncOptions<In, Out, Err> & { cmd: Array<string>; onExit?: undefined; }): Bun.SyncSubprocess<Out, Err>
+  call <const In extends Bun.Spawn.Writable = "ignore", const Out extends Bun.Spawn.Readable = "pipe", const Err extends Bun.Spawn.Readable = "pipe">(cmds: Array<string>, options?: Bun.Spawn.SpawnSyncOptions<In, Out, Err> | undefined): Bun.SyncSubprocess<Out, Err>
 var sql (bun-types/sql.d.ts): Bun.SQL
 var stderr (bun-types/bun.d.ts): Bun.BunFile
 var stdin (bun-types/bun.d.ts): Bun.BunFile
@@ -3561,9 +3561,9 @@ class Database (bun-types/sqlite.d.ts)
   handle [readonly]: number
   inTransaction [readonly]: boolean
   loadExtension(extension: string, entryPoint?: string | undefined): void
-  onDelete: import("bun:sqlite").UpdateHook | null
-  onInsert: import("bun:sqlite").UpdateHook | null
-  onUpdate: import("bun:sqlite").UpdateHook | null
+  onDelete [set: import("bun:sqlite").UpdateHook | null | undefined]: import("bun:sqlite").UpdateHook | null
+  onInsert [set: import("bun:sqlite").UpdateHook | null | undefined]: import("bun:sqlite").UpdateHook | null
+  onUpdate [set: import("bun:sqlite").UpdateHook | null | undefined]: import("bun:sqlite").UpdateHook | null
   prepare<ReturnType, ParamsType extends Array<import("bun:sqlite").SQLQueryBindings> | import("bun:sqlite").SQLQueryBindings>(sql: string, params?: ParamsType | undefined): import("bun:sqlite").Statement<ReturnType, ParamsType extends Array<any> ? ParamsType : [ParamsType]>
   query<ReturnType, ParamsType extends Array<import("bun:sqlite").SQLQueryBindings> | import("bun:sqlite").SQLQueryBindings>(sql: string): import("bun:sqlite").Statement<ReturnType, ParamsType extends Array<any> ? ParamsType : [ParamsType]>
   run<ParamsType extends Array<import("bun:sqlite").SQLQueryBindings>>(sql: string, ...bindings: Array<ParamsType>): import("bun:sqlite").Changes
@@ -3702,7 +3702,7 @@ namespace constants (bun-types/sqlite.d.ts)
   var constants.SQLITE_PREPARE_NORMALIZE (bun-types/sqlite.d.ts): number
   var constants.SQLITE_PREPARE_NO_VTAB (bun-types/sqlite.d.ts): number
   var constants.SQLITE_PREPARE_PERSISTENT (bun-types/sqlite.d.ts): number
-default -> Database
+default -> import("bun:sqlite").Database
 
 # module "bun:test"
 type AsymmetricMatcher (bun-types/test.d.ts) = any
@@ -3733,10 +3733,10 @@ interface Describe<T extends ReadonlyArray<any>> (bun-types/test.d.ts)
   concurrent: import("bun:test").Describe<T>
   each<T extends readonly [any, ...Array<any>]>(table: ReadonlyArray<T>): import("bun:test").Describe<[...T]>
   each<T extends ReadonlyArray<any>>(table: ReadonlyArray<T>): import("bun:test").Describe<[...T]>
-  each<T>(table: ReadonlyArray<T>): import("bun:test").Describe<[T]>
+  each<const T>(table: ReadonlyArray<T>): import("bun:test").Describe<[T]>
   each(headings: TemplateStringsArray, ...values: Array<any>): import("bun:test").Describe<[row: any]>
-  each<T>(table: ReadonlyArray<T>): import("bun:test").Describe<[T]>
-  for<T>(table: ReadonlyArray<T>): import("bun:test").Describe<[row: T]>
+  each<const T>(table: ReadonlyArray<T>): import("bun:test").Describe<[T]>
+  for<const T>(table: ReadonlyArray<T>): import("bun:test").Describe<[row: T]>
   for(headings: TemplateStringsArray, ...values: Array<any>): import("bun:test").Describe<[row: any]>
   if(condition: boolean): import("bun:test").Describe<T>
   only: import("bun:test").Describe<T>
@@ -4050,14 +4050,14 @@ interface Test<T extends ReadonlyArray<unknown>> (bun-types/test.d.ts)
   describe: import("bun:test").Describe<[]>
   each<T extends readonly [unknown, ...Array<unknown>]>(table: ReadonlyArray<T>): import("bun:test").Test<T>
   each<T extends ReadonlyArray<unknown>>(table: ReadonlyArray<T>): import("bun:test").Test<T>
-  each<T>(table: ReadonlyArray<T>): import("bun:test").Test<[T]>
+  each<const T>(table: ReadonlyArray<T>): import("bun:test").Test<[T]>
   each(headings: TemplateStringsArray, ...values: Array<any>): import("bun:test").Test<[row: any]>
-  each<T>(table: ReadonlyArray<T>): import("bun:test").Test<[T]>
+  each<const T>(table: ReadonlyArray<T>): import("bun:test").Test<[T]>
   extend: import("bun:test").ExtendTest<object>
   failing: import("bun:test").Test<T>
   failingIf(condition: boolean): import("bun:test").Test<T>
   fails: import("bun:test").Test<T>
-  for<Row>(table: ReadonlyArray<Row>): import("bun:test").TestWithContext<object, [row: Row]>
+  for<const Row>(table: ReadonlyArray<Row>): import("bun:test").TestWithContext<object, [row: Row]>
   for(headings: TemplateStringsArray, ...values: Array<any>): import("bun:test").TestWithContext<object, [row: any]>
   if(condition: boolean): import("bun:test").Test<T>
   only: import("bun:test").Test<T>
@@ -4129,13 +4129,13 @@ interface TestWithContext<Context, Row extends ReadonlyArray<unknown> = []> (bun
   describe: import("bun:test").Describe<[]>
   each<T extends readonly [unknown, ...Array<unknown>]>(table: ReadonlyArray<T>): TestOfRows<T>
   each<T extends ReadonlyArray<unknown>>(table: ReadonlyArray<T>): TestOfRows<T>
-  each<T>(table: ReadonlyArray<T>): TestOfRows<[row: T]>
+  each<const T>(table: ReadonlyArray<T>): TestOfRows<[row: T]>
   each(headings: TemplateStringsArray, ...values: Array<any>): TestOfRows<[row: any]>
   extend: import("bun:test").ExtendTest<Context>
   failing: import("bun:test").TestWithContext<Context, Row>
   failingIf(condition: boolean): import("bun:test").TestWithContext<Context, Row>
   fails: import("bun:test").TestWithContext<Context, Row>
-  for<T>(table: ReadonlyArray<T>): import("bun:test").TestWithContext<Context, [row: T]>
+  for<const T>(table: ReadonlyArray<T>): import("bun:test").TestWithContext<Context, [row: T]>
   for(headings: TemplateStringsArray, ...values: Array<any>): import("bun:test").TestWithContext<Context, [row: any]>
   if(condition: boolean): import("bun:test").TestWithContext<Context, Row>
   only: import("bun:test").TestWithContext<Context, Row>
@@ -4270,7 +4270,7 @@ function spyOn (bun-types/test.d.ts)
   call <T extends object, K extends keyof T>(obj: T, property: K, accessType: "get"): import("bun:test").Mock<() => T[K]>
   call <T extends object, K extends keyof T>(obj: T, property: K, accessType: "set"): import("bun:test").Mock<(value: T[K]) => void>
   call <T extends object, K extends keyof T>(obj: T, methodOrPropertyValue: K): import("bun:test").Mock<Extract<T[K], (...args: Array<any>) => any>>
-test -> it
+test -> import("bun:test").it
 var vi (bun-types/test.d.ts)
   advanceTimersByTime(milliseconds: number): ...
   advanceTimersByTimeAsync(milliseconds: number): Promise<...>
@@ -4321,7 +4321,7 @@ var vi (bun-types/test.d.ts)
   waitUntil<T>(callback: () => Promise<T> | T, options?: number | undefined | { timeout?: number | undefined; interval?: number | undefined; }): Promise<Exclude<T, "" | 0 | 0n | false | null | undefined>>
 var xdescribe (bun-types/test.d.ts): import("bun:test").Describe<[]>
 var xit (bun-types/test.d.ts): import("bun:test").Test<[]>
-xtest -> xit
+xtest -> import("bun:test").xit
 
 # module "console"
 interface Console (@types/node/console.d.ts, bun-types/overrides.d.ts)
@@ -6241,6 +6241,10 @@ interface AsymmetricMatchersBuiltinNegated (bun-types/test.d.ts)
   stringContaining(str: String | string): any
   stringMatching(str: RegExp | String | string): any
   toSatisfy(predicate: (value: any) => unknown, message?: string | undefined): any
+interface BunConsumerConvenienceMethods (bun-types/overrides.d.ts)
+  bytes(): Promise<Uint8Array<ArrayBuffer>>
+  json(): Promise<any>
+  text(): Promise<string>
 interface FunctionLike (bun-types/test.d.ts)
   name [readonly]: string
 interface JestMock.ClassLike (bun-types/test.d.ts)
@@ -6315,6 +6319,8 @@ interface JestMock.MockInstance<T extends JestMock.FunctionLike = JestMock.Unkno
 interface JestMock.Replaced<T = unknown> (bun-types/test.d.ts)
   replaceValue(value: T): JestMock.Replaced<T>
   restore(): void
+interface JestMock.UnknownClass (bun-types/test.d.ts)
+  construct new (...args: Array<unknown>): unknown
 interface MatcherState (bun-types/test.d.ts)
   assertionCalls: number
   currentTestName [?]: string
@@ -6328,6 +6334,39 @@ interface MatcherUtils (bun-types/test.d.ts)
   customTesters: Array<import("bun:test").Tester>
   equals: import("bun:test").EqualsFunction
   utils: Readonly<{ stringify(value: unknown): string; printReceived(value: unknown): string; printExpected(value: unknown): string; diff(expected: unknown, received: unknown, options?: object | undefined): null | string; printWithType<T>(name: string, value: T, print: (value: T) => string): string; EXPECTED_COLOR(...text: Array<unknown>): string; RECEIVED_COLOR(...text: Array<unknown>): string; matcherHint(matcherName: string, received?: unknown, expected?: unknown, options?: undefined | { isNot?: boolean; promise?: string; isDirectExpectCall?: boolean; comment?: string; expectedColor?: MatcherHintColor; receivedColor?: MatcherHintColor; secondArgument?: string; secondArgumentColor?: MatcherHintColor; }): string; }>
+interface import("bun-types/vendor/expect-type/index").BaseExpectTypeOf<Actual, Options extends { positive: boolean; }> (bun-types/vendor/expect-type/index.d.ts)
+  asserts: Actual extends (v: any, ...args: Array<any>) => asserts v is infer T ? unknown extends T ? never : ExpectTypeOf<T, Options> : never
+  constructorParameters: import("bun-types/vendor/expect-type/index").ExpectTypeOf<import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<Actual>, Options>
+  exclude: <V>(v?: V | undefined) => import("bun-types/vendor/expect-type/index").ExpectTypeOf<Exclude<Actual, V>, Options>
+  extract: <V>(v?: V | undefined) => import("bun-types/vendor/expect-type/index").ExpectTypeOf<Extract<Actual, V>, Options>
+  guards: Actual extends (v: any, ...args: Array<any>) => v is infer T ? ExpectTypeOf<T, Options> : never
+  instance: Actual extends new (...args: Array<any>) => infer I ? ExpectTypeOf<I, Options> : never
+  items: Actual extends ArrayLike<infer ItemType> ? ExpectTypeOf<ItemType, Options> : never
+  map: <T>(fn: (value: Actual) => T) => import("bun-types/vendor/expect-type/index").ExpectTypeOf<T, Options>
+  omit: <KeyToOmit extends PropertyKey & Record<never, never> | keyof Actual>(keyToOmit?: KeyToOmit | undefined) => import("bun-types/vendor/expect-type/index").ExpectTypeOf<Omit<Actual, KeyToOmit>, Options>
+  parameter: <Index extends number>(index: Index) => import("bun-types/vendor/expect-type/index").ExpectTypeOf<OverloadParameters<Actual>[Index], Options>
+  parameters: import("bun-types/vendor/expect-type/index").ExpectTypeOf<import("bun-types/vendor/expect-type/overloads").OverloadParameters<Actual>, Options>
+  pick: <KeyToPick extends keyof Actual>(keyToPick?: KeyToPick | undefined) => import("bun-types/vendor/expect-type/index").ExpectTypeOf<Pick<Actual, KeyToPick>, Options>
+  resolves: Actual extends PromiseLike<infer ResolvedType> ? ExpectTypeOf<ResolvedType, Options> : never
+  returns: Actual extends Function ? import("bun-types/vendor/expect-type/index").ExpectTypeOf<import("bun-types/vendor/expect-type/overloads").OverloadReturnTypes<Actual>, Options> : never
+  thisParameter: import("bun-types/vendor/expect-type/index").ExpectTypeOf<ThisParameterType<Actual>, Options>
+  toBeAny: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectAny<Actual>, Options>
+  toBeArray: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectArray<Actual>, Options>
+  toBeBigInt: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectBigInt<Actual>, Options>
+  toBeBoolean: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectBoolean<Actual>, Options>
+  toBeCallableWith: Options["positive"] extends true ? <Args extends import("bun-types/vendor/expect-type/overloads").OverloadParameters<Actual>>(...args: Args) => import("bun-types/vendor/expect-type/index").ExpectTypeOf<import("bun-types/vendor/expect-type/overloads").OverloadsNarrowedByParameters<Actual, Args>, Options> : never
+  toBeConstructibleWith: Options["positive"] extends true ? <Args extends import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<Actual>>(...args: Args) => true : never
+  toBeFunction: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectFunction<Actual>, Options>
+  toBeNever: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNever<Actual>, Options>
+  toBeNull: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNull<Actual>, Options>
+  toBeNullable: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNullable<Actual>, Options>
+  toBeNumber: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectNumber<Actual>, Options>
+  toBeObject: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectObject<Actual>, Options>
+  toBeString: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectString<Actual>, Options>
+  toBeSymbol: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectSymbol<Actual>, Options>
+  toBeUndefined: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectUndefined<Actual>, Options>
+  toBeUnknown: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectUnknown<Actual>, Options>
+  toBeVoid: import("bun-types/vendor/expect-type/messages").Scolder<import("bun-types/vendor/expect-type/messages").ExpectVoid<Actual>, Options>
 interface import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<Actual> (bun-types/vendor/expect-type/index.d.ts)
   asserts: Actual extends (v: any, ...args: Array<any>) => asserts v is infer T ? unknown extends T ? never : NegativeExpectTypeOf<T> : never
   constructorParameters: import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<Actual>>
@@ -6410,22 +6449,35 @@ type AroundHook<Context> (bun-types/test.d.ts) = (fn: (run: () => Promise<void>,
 type ContextHook<Context> (bun-types/test.d.ts) = (fn: (context: Context & import("bun:test").TestContext) => unknown, options?: HookOptions | undefined) => void
 type DescribeLabel (bun-types/test.d.ts) = Function | FunctionLike | number | string
 type ExpectNot (bun-types/test.d.ts) = Omit<import("bun:test").AsymmetricMatchers, keyof AsymmetricMatchersBuiltin> & AsymmetricMatchersBuiltinNegated
+type Fixture<Value, Context> (bun-types/test.d.ts) = ((...args: Array<any>) => any) extends Value ? import("bun:test").FixtureFunction<Value, Context> : Value | import("bun:test").FixtureFunction<Value, Context>
 type HookOptions (bun-types/test.d.ts) = number | { timeout?: number; }
 type Inverted<T> (bun-types/vendor/expect-type/messages.d.ts) = { [inverted]: T; }
 type JestMock.FunctionLike (bun-types/test.d.ts) = (...args: any) => any
 type JestMock.MockFunctionResult<T extends JestMock.FunctionLike = JestMock.UnknownFunction> (bun-types/test.d.ts) = JestMock.MockFunctionResultIncomplete | JestMock.MockFunctionResultReturn<T> | JestMock.MockFunctionResultThrow
 type JestMock.RejectType<T extends JestMock.FunctionLike> (bun-types/test.d.ts) = ReturnType<T> extends PromiseLike<any> ? unknown : never
 type JestMock.ResolveType<T extends JestMock.FunctionLike> (bun-types/test.d.ts) = ReturnType<T> extends PromiseLike<infer U> ? U : never
+type JestMock.Spied<T extends JestMock.ClassLike | JestMock.FunctionLike> (bun-types/test.d.ts) = T extends JestMock.ClassLike ? JestMock.SpiedClass<T> : T extends JestMock.FunctionLike ? JestMock.SpiedFunction<T> : never
+type JestMock.SpiedClass<T extends JestMock.ClassLike = JestMock.UnknownClass> (bun-types/test.d.ts) = JestMock.MockInstance<(...args: ConstructorParameters<T>) => InstanceType<T>>
+type JestMock.SpiedFunction<T extends JestMock.FunctionLike = JestMock.UnknownFunction> (bun-types/test.d.ts) = JestMock.MockInstance<(...args: Parameters<T>) => ReturnType<T>>
+type JestMock.SpiedGetter<T> (bun-types/test.d.ts) = JestMock.MockInstance<() => T>
+type JestMock.SpiedSetter<T> (bun-types/test.d.ts) = JestMock.MockInstance<(arg: T) => void>
 type JestMock.UnknownFunction (bun-types/test.d.ts) = (...args: Array<unknown>) => unknown
 type MatcherContext (bun-types/test.d.ts) = MatcherUtils & MatcherState
 type MatcherHintColor (bun-types/test.d.ts) = (arg: string) => string
 type Mismatch (bun-types/vendor/expect-type/utils.d.ts) = { [mismatch]: "mismatch"; }
+type ReactElement (bun-types/jsx.d.ts) = unknown
+type ReadonlyEquivalent<X, Y> (bun-types/vendor/expect-type/utils.d.ts) = [<T>() => T extends X ? true : false] extends [<T>() => T extends Y ? true : false] ? true : false
+type Secret (bun-types/vendor/expect-type/utils.d.ts) = typeof secret
 type SuiteHook<Context> (bun-types/test.d.ts) = (fn: (context: Context, suite: import("bun:test").TestSuite) => unknown, options?: HookOptions | undefined) => void
 type TestOfRows<Row extends ReadonlyArray<unknown>> (bun-types/test.d.ts) = { (label: string, fn: (...args: Row) => Promise<unknown> | void, options: import("bun:test").TestOptions | number): void; (label: string, options: import("bun:test").TestOptions | number, fn: (...args: Row) => Promise<unknown> | void): void; (label: string, fn: (...args: Row) => Promise<unknown> | void, options?: import("bun:test").TestOptions | number | undefined): void }
 type __internal.Flatten<T, Copy extends T = T> (bun-types/test.d.ts) = { [Key in keyof T]: Copy[Key]; }
 type __internal.IfNeverThenElse<T, Else> (bun-types/test.d.ts) = [T] extends [never] ? Else : T
 type __internal.IsTuple<T> (bun-types/test.d.ts) = T extends ReadonlyArray<unknown> ? number extends T["length"] ? false : true : false
+type import("bun-types/jsx").JSX.Element (bun-types/jsx.d.ts) = unknown
+type import("bun-types/vendor/expect-type/branding").DeepBrand<T> (bun-types/vendor/expect-type/branding.d.ts) = import("bun-types/vendor/expect-type/utils").IsNever<T> extends true ? { type: "never"; } : import("bun-types/vendor/expect-type/utils").IsAny<T> extends true ? { type: "any"; } : import("bun-types/vendor/expect-type/utils").IsUnknown<T> extends true ? { type: "unknown"; } : T extends bigint | boolean | null | number | string | symbol | undefined | void ? { type: "primitive"; value: T; } : T extends (new (...args: Array<any>) => any) ? { type: "constructor"; params: import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<T>; instance: import("bun-types/vendor/expect-type/branding").DeepBrand<InstanceType<Extract<T, new (...args: any) => any>>>; } : T extends (...args: infer P) => infer R ? NumOverloads<T> extends 1 ? { type: "function"; params: DeepBrand<P>; return: DeepBrand<R>; this: DeepBrand<ThisParameterType<T>>; props: DeepBrand<Omit<T, keyof Function>>; } : UnionToTuple<OverloadsInfoUnion<T>> extends infer OverloadsTuple ? { type: "overloads"; overloads: { [K in keyof OverloadsTuple]: DeepBrand<OverloadsTuple[K]>; }; } : never : T extends Array<any> ? { type: "array"; items: { [K in keyof T]: T[K]; }; } : { type: "object"; properties: { [K in keyof T]: DeepBrand<T[K]>; }; readonly: ReadonlyKeys<T>; required: RequiredKeys<T>; optional: OptionalKeys<T>; constructorParams: DeepBrand<ConstructorOverloadParameters<T>>; }
 type import("bun-types/vendor/expect-type/branding").StrictEqualUsingBranding<Left, Right> (bun-types/vendor/expect-type/branding.d.ts) = Extends<DeepBrand<Left>, DeepBrand<Right>> | Extends<DeepBrand<Right>, DeepBrand<Left>> extends true ? true : false
+type import("bun-types/vendor/expect-type/index").ExpectTypeOf<Actual, Options extends { positive: boolean; }> (bun-types/vendor/expect-type/index.d.ts) = Options["positive"] extends true ? import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual> : import("bun-types/vendor/expect-type/index").NegativeExpectTypeOf<Actual>
+type import("bun-types/vendor/expect-type/index")._ExpectTypeOf (bun-types/vendor/expect-type/index.d.ts) = { <Actual>(actual: Actual): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>; <Actual>(): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual> }
 type import("bun-types/vendor/expect-type/messages").ExpectAny<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").IsAny<T>; [expectAny]: T; }
 type import("bun-types/vendor/expect-type/messages").ExpectArray<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, Array<any>>; [expectArray]: T; }
 type import("bun-types/vendor/expect-type/messages").ExpectBigInt<T> (bun-types/vendor/expect-type/messages.d.ts) = { result: import("bun-types/vendor/expect-type/utils").ExtendsExcludingAnyOrNever<T, bigint>; [expectBigInt]: T; }
@@ -6445,9 +6497,25 @@ type import("bun-types/vendor/expect-type/messages").MismatchInfo<Actual, Expect
 type import("bun-types/vendor/expect-type/messages").PrintType<T> (bun-types/vendor/expect-type/messages.d.ts) = import("bun-types/vendor/expect-type/utils").IsUnknown<T> extends true ? "unknown" : import("bun-types/vendor/expect-type/utils").IsNever<T> extends true ? "never" : import("bun-types/vendor/expect-type/utils").IsAny<T> extends true ? never : (boolean) extends T ? "boolean" : T extends boolean ? `literal boolean: ${T}` : string extends T ? "string" : T extends string ? `literal string: ${T}` : number extends T ? "number" : T extends number ? `literal number: ${T}` : bigint extends T ? "bigint" : T extends bigint ? `literal bigint: ${T}` : T extends null ? "null" : T extends undefined ? "undefined" : T extends ((...args: Array<any>) => any) ? "function" : "..."
 type import("bun-types/vendor/expect-type/messages").Scolder<Expecter extends { result: boolean; }, Options extends { positive: boolean; }> (bun-types/vendor/expect-type/messages.d.ts) = Expecter["result"] extends Options["positive"] ? () => true : Options["positive"] extends true ? Expecter : Inverted<Expecter>
 type import("bun-types/vendor/expect-type/overloads").ConstructorOverloadParameters<ConstructorType> (bun-types/vendor/expect-type/overloads.d.ts) = TSPost53ConstructorOverloadsInfoUnion<ConstructorType> extends infer Ctor extends new (...args: any) => any ? ConstructorParameters<Ctor> : never
+type import("bun-types/vendor/expect-type/overloads").ConstructorOverloadsUnion<ConstructorType> (bun-types/vendor/expect-type/overloads.d.ts) = import("bun-types/vendor/expect-type/overloads").TSPost53ConstructorOverloadsInfoUnion<ConstructorType>
+type import("bun-types/vendor/expect-type/overloads").DecreasingConstructorOverloadsInfoUnion<ConstructorType> (bun-types/vendor/expect-type/overloads.d.ts) = ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; new (...args: infer A3): infer R3; new (...args: infer A4): infer R4; new (...args: infer A5): infer R5; new (...args: infer A6): infer R6; new (...args: infer A7): infer R7; new (...args: infer A8): infer R8; new (...args: infer A9): infer R9; new (...args: infer A10): infer R10; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) | (new (...p: A3) => R3) | (new (...p: A4) => R4) | (new (...p: A5) => R5) | (new (...p: A6) => R6) | (new (...p: A7) => R7) | (new (...p: A8) => R8) | (new (...p: A9) => R9) | (new (...p: A10) => R10) : ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; new (...args: infer A3): infer R3; new (...args: infer A4): infer R4; new (...args: infer A5): infer R5; new (...args: infer A6): infer R6; new (...args: infer A7): infer R7; new (...args: infer A8): infer R8; new (...args: infer A9): infer R9; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) | (new (...p: A3) => R3) | (new (...p: A4) => R4) | (new (...p: A5) => R5) | (new (...p: A6) => R6) | (new (...p: A7) => R7) | (new (...p: A8) => R8) | (new (...p: A9) => R9) : ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; new (...args: infer A3): infer R3; new (...args: infer A4): infer R4; new (...args: infer A5): infer R5; new (...args: infer A6): infer R6; new (...args: infer A7): infer R7; new (...args: infer A8): infer R8; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) | (new (...p: A3) => R3) | (new (...p: A4) => R4) | (new (...p: A5) => R5) | (new (...p: A6) => R6) | (new (...p: A7) => R7) | (new (...p: A8) => R8) : ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; new (...args: infer A3): infer R3; new (...args: infer A4): infer R4; new (...args: infer A5): infer R5; new (...args: infer A6): infer R6; new (...args: infer A7): infer R7; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) | (new (...p: A3) => R3) | (new (...p: A4) => R4) | (new (...p: A5) => R5) | (new (...p: A6) => R6) | (new (...p: A7) => R7) : ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; new (...args: infer A3): infer R3; new (...args: infer A4): infer R4; new (...args: infer A5): infer R5; new (...args: infer A6): infer R6; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) | (new (...p: A3) => R3) | (new (...p: A4) => R4) | (new (...p: A5) => R5) | (new (...p: A6) => R6) : ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; new (...args: infer A3): infer R3; new (...args: infer A4): infer R4; new (...args: infer A5): infer R5; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) | (new (...p: A3) => R3) | (new (...p: A4) => R4) | (new (...p: A5) => R5) : ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; new (...args: infer A3): infer R3; new (...args: infer A4): infer R4; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) | (new (...p: A3) => R3) | (new (...p: A4) => R4) : ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; new (...args: infer A3): infer R3; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) | (new (...p: A3) => R3) : ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) : ConstructorType extends new (...args: infer A1) => infer R1 ? new (...p: A1) => R1 : never
+type import("bun-types/vendor/expect-type/overloads").DecreasingOverloadsInfoUnion<F> (bun-types/vendor/expect-type/overloads.d.ts) = F extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; (...args: infer A4): infer R4; (...args: infer A5): infer R5; (...args: infer A6): infer R6; (...args: infer A7): infer R7; (...args: infer A8): infer R8; (...args: infer A9): infer R9; (...args: infer A10): infer R10; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) | ((...p: A4) => R4) | ((...p: A5) => R5) | ((...p: A6) => R6) | ((...p: A7) => R7) | ((...p: A8) => R8) | ((...p: A9) => R9) | ((...p: A10) => R10) : F extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; (...args: infer A4): infer R4; (...args: infer A5): infer R5; (...args: infer A6): infer R6; (...args: infer A7): infer R7; (...args: infer A8): infer R8; (...args: infer A9): infer R9; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) | ((...p: A4) => R4) | ((...p: A5) => R5) | ((...p: A6) => R6) | ((...p: A7) => R7) | ((...p: A8) => R8) | ((...p: A9) => R9) : F extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; (...args: infer A4): infer R4; (...args: infer A5): infer R5; (...args: infer A6): infer R6; (...args: infer A7): infer R7; (...args: infer A8): infer R8; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) | ((...p: A4) => R4) | ((...p: A5) => R5) | ((...p: A6) => R6) | ((...p: A7) => R7) | ((...p: A8) => R8) : F extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; (...args: infer A4): infer R4; (...args: infer A5): infer R5; (...args: infer A6): infer R6; (...args: infer A7): infer R7; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) | ((...p: A4) => R4) | ((...p: A5) => R5) | ((...p: A6) => R6) | ((...p: A7) => R7) : F extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; (...args: infer A4): infer R4; (...args: infer A5): infer R5; (...args: infer A6): infer R6; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) | ((...p: A4) => R4) | ((...p: A5) => R5) | ((...p: A6) => R6) : F extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; (...args: infer A4): infer R4; (...args: infer A5): infer R5; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) | ((...p: A4) => R4) | ((...p: A5) => R5) : F extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; (...args: infer A4): infer R4; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) | ((...p: A4) => R4) : F extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) : F extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; } ? ((...p: A1) => R1) | ((...p: A2) => R2) : F extends (...args: infer A1) => infer R1 ? (...p: A1) => R1 : never
+type import("bun-types/vendor/expect-type/overloads").InferConstructor<ConstructorType extends new (...args: any) => any> (bun-types/vendor/expect-type/overloads.d.ts) = ConstructorType
+type import("bun-types/vendor/expect-type/overloads").InferFunctionType<FunctionType extends (...args: any) => any> (bun-types/vendor/expect-type/overloads.d.ts) = FunctionType
+type import("bun-types/vendor/expect-type/overloads").IsUselessConstructorOverloadInfo<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = (<T>() => T extends T | (FunctionType & T) ? true : false) extends <T>() => T extends T | (UnknownConstructor & T) ? true : false ? IsNever<FunctionType> extends false ? true : false : false
+type import("bun-types/vendor/expect-type/overloads").IsUselessOverloadInfo<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = (<T>() => T extends T | (FunctionType & T) ? true : false) extends <T>() => T extends T | (UnknownFunction & T) ? true : false ? IsNever<FunctionType> extends false ? true : false : false
+type import("bun-types/vendor/expect-type/overloads").NumOverloads<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = UnionToTuple<TSPost53OverloadsInfoUnion<FunctionType>>["length"]
 type import("bun-types/vendor/expect-type/overloads").OverloadParameters<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = TSPost53OverloadsInfoUnion<FunctionType> extends infer Fn extends (...args: any) => any ? Parameters<Fn> : never
+type import("bun-types/vendor/expect-type/overloads").OverloadReturnTypes<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = TSPost53OverloadsInfoUnion<FunctionType> extends infer Fn extends (...args: any) => any ? ReturnType<Fn> : never
+type import("bun-types/vendor/expect-type/overloads").OverloadsInfoUnion<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = import("bun-types/vendor/expect-type/overloads").TSPost53OverloadsInfoUnion<FunctionType>
+type import("bun-types/vendor/expect-type/overloads").OverloadsNarrowedByParameters<FunctionType, Args extends import("bun-types/vendor/expect-type/overloads").OverloadParameters<FunctionType>> (bun-types/vendor/expect-type/overloads.d.ts) = (SelectOverloadsInfo<TSPost53OverloadsInfoUnion<FunctionType>, Args> extends any ? (distributedUnion: SelectOverloadsInfo<TSPost53OverloadsInfoUnion<FunctionType>, Args>) => void : never) extends (mergedIntersection: infer Intersection) => void ? Intersection : never
 type import("bun-types/vendor/expect-type/overloads").SelectOverloadsInfo<Union extends import("bun-types/vendor/expect-type/overloads").UnknownFunction, Args extends Array<unknown>> (bun-types/vendor/expect-type/overloads.d.ts) = Union extends infer Fn extends (...args: any) => any ? Args extends Parameters<Fn> ? Fn : never : never
+type import("bun-types/vendor/expect-type/overloads").TSPost53ConstructorOverloadsInfoUnion<ConstructorType> (bun-types/vendor/expect-type/overloads.d.ts) = ConstructorType extends { new (...args: infer A1): infer R1; new (...args: infer A2): infer R2; new (...args: infer A3): infer R3; new (...args: infer A4): infer R4; new (...args: infer A5): infer R5; new (...args: infer A6): infer R6; new (...args: infer A7): infer R7; new (...args: infer A8): infer R8; new (...args: infer A9): infer R9; new (...args: infer A10): infer R10; } ? (new (...p: A1) => R1) | (new (...p: A2) => R2) | (new (...p: A3) => R3) | (new (...p: A4) => R4) | (new (...p: A5) => R5) | (new (...p: A6) => R6) | (new (...p: A7) => R7) | (new (...p: A8) => R8) | (new (...p: A9) => R9) | (new (...p: A10) => R10) : never
 type import("bun-types/vendor/expect-type/overloads").TSPost53OverloadsInfoUnion<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = FunctionType extends { (...args: infer A1): infer R1; (...args: infer A2): infer R2; (...args: infer A3): infer R3; (...args: infer A4): infer R4; (...args: infer A5): infer R5; (...args: infer A6): infer R6; (...args: infer A7): infer R7; (...args: infer A8): infer R8; (...args: infer A9): infer R9; (...args: infer A10): infer R10; } ? ((...p: A1) => R1) | ((...p: A2) => R2) | ((...p: A3) => R3) | ((...p: A4) => R4) | ((...p: A5) => R5) | ((...p: A6) => R6) | ((...p: A7) => R7) | ((...p: A8) => R8) | ((...p: A9) => R9) | ((...p: A10) => R10) : never
+type import("bun-types/vendor/expect-type/overloads").TSPre53ConstructorOverloadsInfoUnion<ConstructorType> (bun-types/vendor/expect-type/overloads.d.ts) = Tuplify<DecreasingConstructorOverloadsInfoUnion<ConstructorType>> extends infer Tup ? Tup extends [infer Ctor] ? StrictEqualUsingTSInternalIdenticalToOperator<Ctor, UnknownConstructor> extends true ? never : Ctor : never : never
+type import("bun-types/vendor/expect-type/overloads").TSPre53OverloadsInfoUnion<FunctionType> (bun-types/vendor/expect-type/overloads.d.ts) = Tuplify<DecreasingOverloadsInfoUnion<FunctionType>> extends infer Tup ? Tup extends [infer Fn] ? StrictEqualUsingTSInternalIdenticalToOperator<Fn, UnknownFunction> extends true ? never : Fn : never : never
+type import("bun-types/vendor/expect-type/overloads").Tuplify<Union> (bun-types/vendor/expect-type/overloads.d.ts) = Union extends infer X ? [X] : never
+type import("bun-types/vendor/expect-type/overloads").UnknownConstructor (bun-types/vendor/expect-type/overloads.d.ts) = new (...args: Array<unknown>) => unknown
 type import("bun-types/vendor/expect-type/overloads").UnknownFunction (bun-types/vendor/expect-type/overloads.d.ts) = (...args: Array<unknown>) => unknown
 type import("bun-types/vendor/expect-type/utils").AValue (bun-types/vendor/expect-type/utils.d.ts) = bigint | boolean | null | number | string | symbol | undefined | void | { [avalue]?: undefined; }
 type import("bun-types/vendor/expect-type/utils").And<Types extends Array<boolean>> (bun-types/vendor/expect-type/utils.d.ts) = Types[number] extends true ? true : false
@@ -6459,7 +6527,19 @@ type import("bun-types/vendor/expect-type/utils").IsAny<T> (bun-types/vendor/exp
 type import("bun-types/vendor/expect-type/utils").IsNever<T> (bun-types/vendor/expect-type/utils.d.ts) = [T] extends [never] ? true : false
 type import("bun-types/vendor/expect-type/utils").IsUnion<T> (bun-types/vendor/expect-type/utils.d.ts) = Extends<TuplifyUnion<T, LastOf<T>>["length"], 1> extends true ? false : true
 type import("bun-types/vendor/expect-type/utils").IsUnknown<T> (bun-types/vendor/expect-type/utils.d.ts) = [unknown] extends [T] ? import("bun-types/vendor/expect-type/utils").Not<import("bun-types/vendor/expect-type/utils").IsAny<T>> : false
+type import("bun-types/vendor/expect-type/utils").LastOf<Union> (bun-types/vendor/expect-type/utils.d.ts) = UnionToIntersection<Union extends any ? () => Union : never> extends () => infer R ? R : never
 type import("bun-types/vendor/expect-type/utils").MismatchArgs<ActualResult extends boolean, ExpectedResult extends boolean> (bun-types/vendor/expect-type/utils.d.ts) = import("bun-types/vendor/expect-type/utils").Eq<ActualResult, ExpectedResult> extends true ? [] : [Mismatch]
+type import("bun-types/vendor/expect-type/utils").MutuallyExtends<Left, Right> (bun-types/vendor/expect-type/utils.d.ts) = Extends<Left, Right> | Extends<Right, Left> extends true ? true : false
 type import("bun-types/vendor/expect-type/utils").Not<T extends boolean> (bun-types/vendor/expect-type/utils.d.ts) = T extends true ? false : true
+type import("bun-types/vendor/expect-type/utils").OptionalKeys<T> (bun-types/vendor/expect-type/utils.d.ts) = keyof T extends Extract<{ [K in keyof T]-?: {} extends Pick<T, K> ? never : K; }[keyof T], keyof T> ? never : keyof T
+type import("bun-types/vendor/expect-type/utils").ReadonlyKeys<T> (bun-types/vendor/expect-type/utils.d.ts) = { [K in keyof T]-?: ([<T>() => T extends { [_K in K]: T[K]; } ? true : false] extends [<T>() => T extends { -readonly [_K in K]: T[K]; } ? true : false] ? true : false) extends true ? never : K; }[keyof T] extends keyof T ? { [K in keyof T]-?: ([<T>() => T extends { [_K in K]: T[K]; } ? true : false] extends [<T>() => T extends { -readonly [_K in K]: T[K]; } ? true : false] ? true : false) extends true ? never : K; }[keyof T] : never
+type import("bun-types/vendor/expect-type/utils").RequiredKeys<T> (bun-types/vendor/expect-type/utils.d.ts) = { [K in keyof T]-?: {} extends Pick<T, K> ? never : K; }[keyof T] extends keyof T ? { [K in keyof T]-?: {} extends Pick<T, K> ? never : K; }[keyof T] : never
 type import("bun-types/vendor/expect-type/utils").StrictEqualUsingTSInternalIdenticalToOperator<L, R> (bun-types/vendor/expect-type/utils.d.ts) = (<T>() => T extends (L & T) | T ? true : false) extends (<T>() => T extends (R & T) | T ? true : false) ? import("bun-types/vendor/expect-type/utils").IsNever<L> extends import("bun-types/vendor/expect-type/utils").IsNever<R> ? true : false : false
+type import("bun-types/vendor/expect-type/utils").TuplifyUnion<Union, LastElement = import("bun-types/vendor/expect-type/utils").LastOf<Union>> (bun-types/vendor/expect-type/utils.d.ts) = import("bun-types/vendor/expect-type/utils").IsNever<Union> extends true ? [] : [...import("bun-types/vendor/expect-type/utils").TuplifyUnion<Exclude<Union, LastElement>, import("bun-types/vendor/expect-type/utils").LastOf<Exclude<Union, LastElement>>>, LastElement]
 type import("bun-types/vendor/expect-type/utils").UnionToIntersection<Union> (bun-types/vendor/expect-type/utils.d.ts) = (Union extends any ? (distributedUnion: Union) => void : never) extends (mergedIntersection: infer Intersection) => void ? Intersection : never
+type import("bun-types/vendor/expect-type/utils").UnionToTuple<Union> (bun-types/vendor/expect-type/utils.d.ts) = IsNever<Union> extends true ? [] : [...TuplifyUnion<Exclude<Union, LastOf<Union>>, LastOf<Exclude<Union, LastOf<Union>>>>, LastOf<Union>]
+type import("bun-types/vendor/expect-type/utils").UsefulKeys<T> (bun-types/vendor/expect-type/utils.d.ts) = T extends Array<any> ? { [K in keyof T]: K; }[number] : keyof T
+var import("bun-types/vendor/expect-type/index").expectTypeOf (bun-types/vendor/expect-type/index.d.ts)
+  call <Actual>(actual: Actual): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
+  call <Actual>(): import("bun-types/vendor/expect-type/index").PositiveExpectTypeOf<Actual>
+var secret (bun-types/vendor/expect-type/utils.d.ts): typeof secret

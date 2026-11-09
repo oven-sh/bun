@@ -17,6 +17,9 @@ on:
       # the inventory snapshots record the typescript and @types/node versions
       - "package.json"
       - "bun.lock"
+      # bun-types.test.ts type-checks with the typescript of the test project
+      - "test/package.json"
+      - "test/bun.lock"
   pull_request:
     paths:
       - "packages/bun-types/**"
@@ -28,6 +31,9 @@ on:
       # the inventory snapshots record the typescript and @types/node versions
       - "package.json"
       - "bun.lock"
+      # bun-types.test.ts type-checks with the typescript of the test project
+      - "test/package.json"
+      - "test/bun.lock"
 
 env:
   BUN_VERSION: "canary"

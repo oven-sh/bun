@@ -32,7 +32,10 @@ Edits to **TypeScript type declarations** (`packages/bun-types/**/*.d.ts`) do no
 
 ```sh
 bun test test/integration/bun-types/bun-types.test.ts
+bun test test/integration/bun-types/inventory.test.ts
 ```
+
+The second test compares `test/integration/bun-types/inventory/*.txt` with the types every `lib` preset resolves to. When it fails because you meant to change a type, regenerate the files with `bun packages/bun-types/scripts/inventory.ts`, read the diff, and commit it (see `packages/bun-types/authoring.md`).
 
 This is an explicit exception to the "never use `bun test` directly" rule. There are no native changes for a debug build to pick up, so don't wait on one.
 

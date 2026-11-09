@@ -118,14 +118,17 @@ There is one file per preset:
 - `test-globals` and `vitest-globals` are the entry points that `index.d.ts` does not load (`/// <reference types="bun-types/test-globals" />`). Each file lists only what the entry point adds.
 - `ts7.1/` is not covered.
 
-A file ends with the declarations that the listed types name and that nothing exports, such as an interface that a module keeps to itself.
+A file has one section per module (`# module "bun:test"`), then `# globals`. The section says what an entry is: an entry under `# module "vitest"` is an export of `"vitest"`, and an entry under `# globals` is a global. The last section lists the declarations that the listed types name and that nothing exports, such as an interface that a module keeps to itself.
 
 How to read a line:
 
 - `name(a: A): B` is a method, with one line per overload. `name: (a: A) => B` is a property with a function type. TypeScript compares the parameters of a method bivariantly, so a change from one form to the other is a type change.
 - Overloads are in the order in which a call tries them. The first line that accepts the arguments is the one a user gets. When an interface merges with `lib.dom.d.ts`, the signatures of the later declaration come first, and bun-types is loaded after the lib files. So in `esnext-dom` a signature that bun-types declares inline wins over the one of lib.dom.
-- `[?]`, `[readonly]` and `[static]` after a name are its modifiers. The presets set `exactOptionalPropertyTypes`, so `x [?]: T` is `x?: T` and `x [?]: T | undefined` is `x?: T | undefined`.
-- `Bun.X` is an export of the module `"bun"`. `import("bun:test").X` is an export of another module. A name with no prefix is a global.
+- `[?]`, `[readonly]`, `[static]`, `[private]`, `[protected]` and `[abstract]` after a name are its modifiers. The presets set `exactOptionalPropertyTypes`, so `x [?]: T` is `x?: T` and `x [?]: T | undefined` is `x?: T | undefined`.
+- `x [set: U]: T` is an accessor that returns `T` and accepts `U`.
+- `<const T>`, `<in T>` and `<out T>` are the modifiers of a type parameter.
+- Inside a type, `Bun.X` is an export of the module `"bun"` and `import("bun:test").X` is an export of another module. A name with no prefix is a global, or one of the declarations in the last section.
+- `a -> Bun.b` means that `a` is another name for `Bun.b`, which has its own entry.
 - `...` stands for the type literal that the line is part of (`vi.useFakeTimers(): ...`).
 - The members of a union are in alphabetical order, not in source order.
 
@@ -135,7 +138,7 @@ How to read a line:
 bun packages/bun-types/scripts/inventory.ts
 ```
 
-Read the diff before you commit it. A line that disappears from a preset, or a member whose type changed, is a breaking change for the users on that preset. A change that only moves a declaration produces no diff when it stays in its file. A move to another file changes the file name in parentheses after the symbol, and nothing else.
+Read the diff before you commit it. A line that disappears from a preset, or a member whose type changed, can break the users on that preset. Check each one: a parameter that accepts more is safe, a return type that changes is not. A change that only moves a declaration produces no diff when it stays in its file. A move to another file changes the file name in parentheses after the symbol, and nothing else.
 
 ## Questions
 

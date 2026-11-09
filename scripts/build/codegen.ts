@@ -48,8 +48,30 @@ export interface Ctx {
   sources: Sources;
   o: CodegenOutputs;
   dirStamp: string;
+  /** The list of every `.bind.ts` and its crate, written at configure time (`writeBindgenSources`). */
+  bindgenSources: BindgenSources;
   /** The JavaScriptCore this graph builds against (deps/webkit.ts webkitEngineSources). Undefined: the graph has none (`mode: "codegen"`). */
   engine?: EngineSources | undefined;
+}
+
+/** The `.bind.ts` files as the two steps that read them all (emitBindgen, emitBuiltinsTable) take them. */
+export interface BindgenSources {
+  /** A file with one `<crate>=<path>` line per `.bind.ts`, which the steps take as `--sources=@<path>`. */
+  path: string;
+  /** The Cargo package of each `.bind.ts` (`crateOf`), by path. */
+  crates: ReadonlyMap<string, string>;
+}
+
+/**
+ * Write the list of `.bind.ts` files for the steps that read them all. On the command line the list is 150 entries
+ * and over 10000 characters, which cmd.exe refuses on a Windows host (#48301). Written at configure time, like
+ * emitCppBind's cxx-sources.txt, with `writeIfChanged` so an unchanged list keeps its mtime and the edges that name
+ * it as an input stay clean.
+ */
+export function writeBindgenSources(path: string, bindgen: readonly string[]): BindgenSources {
+  const crates = new Map(bindgen.map(src => [src, crateOf(src)]));
+  writeIfChanged(path, bindgen.map(src => `${crates.get(src)}=${src}\n`).join(""));
+  return { path, crates };
 }
 
 /**
@@ -127,11 +149,13 @@ export function registerCodegenRules(n: Ninja, cfg: CodegenFields): void {
     command: codegenCommand(cfg.jsRuntime),
     description: "gen $desc",
     restat: true,
+    hostShell: true,
   });
   n.rule("codegen_bun", {
     command: codegenCommand(bun),
     description: "gen $desc",
     restat: true,
+    hostShell: true,
   });
 
   // esbuild invocations. No restat — esbuild always touches outputs.
@@ -139,6 +163,7 @@ export function registerCodegenRules(n: Ninja, cfg: CodegenFields): void {
   n.rule("esbuild", {
     command: hostWin ? `cmd /c "cd /d $cwd && ${esbuild} $args"` : `cd $cwd && ${esbuild} $args`,
     description: "esbuild $desc",
+    hostShell: true,
   });
 
   // bun install. Inputs: package.json + bun.lock. Outputs: a stamp file we
@@ -163,6 +188,7 @@ export function registerCodegenRules(n: Ninja, cfg: CodegenFields): void {
     restat: true,
     // bun install can be memory-hungry and grabs a lockfile; serialize.
     pool: "bun_install",
+    hostShell: true,
   });
   n.pool("bun_install", 1);
 
@@ -177,6 +203,7 @@ export function registerCodegenRules(n: Ninja, cfg: CodegenFields): void {
       description: "npm install $dir",
       restat: true,
       pool: "bun_install",
+      hostShell: true,
     });
   }
 
@@ -307,7 +334,8 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engi
     rootInstall,
   };
 
-  const ctx: Ctx = { n, cfg, sources, o, dirStamp, engine };
+  const bindgenSources = writeBindgenSources(resolve(cfg.codegenDir, "bindgen-sources.txt"), sources.bindgen);
+  const ctx: Ctx = { n, cfg, sources, o, dirStamp, bindgenSources, engine };
 
   // Configure-time write (not a ninja edge — it's a constant manifest like
   // depVersionsHeader). bun_core `include!`s it, and bun_core/build.rs emits the
@@ -590,9 +618,8 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const jsOutputs = sources.nodeFallbacks.map(s => resolve(outDir, basename(s)));
   const outputs = [...jsOutputs, ...jsOutputs.map(o => `${o}.zst`)];
 
-  // The script (build-fallbacks.ts) reads its args as [outdir, ...sources]
-  // but actually ignores the sources — it does readdirSync(".") to discover
-  // files. We pass them anyway so ninja tracks them as inputs.
+  // The script (build-fallbacks.ts) takes the output directory and finds the
+  // sources with readdirSync("."); they are inputs so ninja tracks them.
   const script = resolve(sourceDir, "build-fallbacks.ts");
   n.build({
     outputs,
@@ -604,7 +631,7 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
       cwd: sourceDir,
       desc: "node-fallbacks/*.js",
       // `bun run build-fallbacks` resolves to `./build-fallbacks.ts` in cwd
-      args: shJoin(cfg, ["run", "build-fallbacks", outDir, ...sources.nodeFallbacks]),
+      args: shJoin(cfg, ["run", "build-fallbacks", outDir]),
     },
   });
 
@@ -941,9 +968,9 @@ export function typesOnlyFlag(cfg: CodegenFields, sources: Sources): string {
 }
 
 /** Exported for test/internal/build-codegen-declared-outputs.test.ts. */
-export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
+export function emitBindgen({ n, cfg, sources, o, dirStamp, bindgenSources, engine }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
-  const crates = new Map(sources.bindgen.map(src => [src, crateOf(src)]));
+  const { crates } = bindgenSources;
   const compiled = sources.bindgen.filter(src => isCompiled(cfg, src));
 
   // What bindgen.ts writes follows from the names and places of its inputs alone.
@@ -968,7 +995,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void
     outputs: [...cpp, ...headers, ...rust, types],
     rule: "codegen",
     inputs: [...sources.bindgen, ...sources.bindgenCodegen],
-    implicitInputs: [...declaredTypeInputs(cfg), ...guardInputs({ cfg, engine })],
+    implicitInputs: [bindgenSources.path, ...declaredTypeInputs(cfg), ...guardInputs({ cfg, engine })],
     orderOnlyInputs: [dirStamp],
     vars: {
       cwd: cfg.cwd,
@@ -976,7 +1003,7 @@ export function emitBindgen({ n, cfg, sources, o, dirStamp, engine }: Ctx): void
       args: shJoin(cfg, [
         script,
         // Every schema: build/types is shared by every profile, so Bindgen.d.ts describes them all.
-        `--sources=${sources.bindgen.map(src => `${crates.get(src)}=${src}`).join(",")}`,
+        `--sources=@${bindgenSources.path}`,
         typesOnlyFlag(cfg, sources),
         `--codegen-path=${cfg.codegenDir}`,
         `--types-path=${cfg.typesDir}`,

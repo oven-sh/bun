@@ -10,7 +10,7 @@ import { builtinFunctionIds } from "../builtin-function-ids.ts";
 import { nativeCalls, type EngineFunctions } from "../builtins-manifest-model.ts";
 import { engineDirectory, engineFile } from "../engine-directory.ts";
 import { nativeCallListStamp } from "../generate-js2native.ts";
-import { argParse, writeIfNotChanged } from "../helpers.ts";
+import { argParse, listOption, writeIfNotChanged } from "../helpers.ts";
 import { tableEntryRecord } from "../removable-entry-points.ts";
 import { buildModel } from "./build-model.ts";
 import { describeUndescribedResults, summarizeUndescribedResults } from "./check-dependencies.ts";
@@ -97,7 +97,7 @@ const ownBunRoot = resolve(import.meta.dir, "..", "..", "..");
 
 const usage =
   "usage: bun src/codegen/builtins/index.ts --codegen-path=<dir> " +
-  `--target=<${targetPlatforms.join("|")}> --sources=<crate>=<a.bind.ts>,.. ` +
+  `--target=<${targetPlatforms.join("|")}> --sources=<crate>=<a.bind.ts>,..|@<file> ` +
   "(--javascriptcore=<Source/JavaScriptCore> [--engine-out=<dir>] | --prebuilt-generated=<dir>) " +
   "[--engine-directory=<Source/JavaScriptCore/aot>] [--types-only=<b.bind.ts>,..] [--left-out=<global>,..] [--check]";
 
@@ -328,8 +328,6 @@ function checkFilesAreCurrent(directory: string, files: ReadonlyMap<string, stri
   problems.throwIfAny();
 }
 
-const listOf = (value: string): string[] => value.split(",").filter(item => item !== "");
-
 function readCommandLine(): CommandLine {
   const flags: Record<string, string | boolean | undefined> = argParse([
     "codegen-path",
@@ -368,9 +366,9 @@ function readCommandLine(): CommandLine {
       javaScriptCore,
       prebuiltGenerated,
       target,
-      bindgenSources: listOf(sources).sort(compareBytes),
-      typesOnly: listOf(textOf("types-only") ?? ""),
-      leftOut: listOf(textOf("left-out") ?? ""),
+      bindgenSources: listOption(sources).sort(compareBytes),
+      typesOnly: listOption(textOf("types-only") ?? ""),
+      leftOut: listOption(textOf("left-out") ?? ""),
     },
     codegenPath,
     engineOut,

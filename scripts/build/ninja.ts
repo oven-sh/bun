@@ -126,7 +126,26 @@ export interface Rule {
   rspfile?: string;
   /** Content written to rspfile (usually $in or $in_newline). */
   rspfile_content?: string;
+  /**
+   * The command needs a shell (`cd`, `&&`, `>`). Ninja runs a command through `/bin/sh -c` on posix and through
+   * CreateProcess on Windows, so the rule's Windows-host text is `cmd /c "..."`, and cmd.exe refuses a command line
+   * over 8191 characters. `build()` asserts that each edge's command stays within HOST_SHELL_COMMAND_BUDGET on every
+   * host: CI configures on Linux and macOS alone (it cross-compiles the Windows binaries), so only a developer's
+   * native Windows build would find the overrun otherwise.
+   */
+  hostShell?: boolean;
 }
+
+/**
+ * The most characters the command of a `hostShell` edge may have, as this host's configure expands it. cmd.exe's
+ * limit is 8191. Half of it is left for a Windows host: its rule text wraps the command (`cmd /c "cd /d ... && set
+ * ...&& "`, about 40 characters more), and its checkout path may be longer than this host's, up to MAX_PATH (260),
+ * where a command names a checkout-rooted path several times (the working directory, the runtime, the script, the
+ * output directory). That leaves room for 16 such paths to grow by 246 characters each. A list of source files names
+ * one per entry and overruns the budget on every host: 150 `.bind.ts` files on one command were 10151 characters on a
+ * 14-character checkout (#48301). Such a list goes in a file the command names: see writeBindgenSources in codegen.ts.
+ */
+export const HOST_SHELL_COMMAND_BUDGET = 4096;
 
 /**
  * A ninja `build` statement — the only primitive of the build graph.
@@ -233,7 +252,7 @@ export class Ninja {
   private readonly ninjaVersion: string;
 
   private readonly lines: string[] = [];
-  private readonly ruleNames = new Set<RuleName>();
+  private readonly rules = new Map<RuleName, Rule>();
   private readonly generatorRules = new Set<RuleName>();
   private readonly outputSet = new Set<string>();
   private readonly pools = new Map<string, number>();
@@ -286,8 +305,8 @@ export class Ninja {
 
   /** Define a ninja rule. */
   rule(name: RuleName, spec: Rule): void {
-    assert(!this.ruleNames.has(name), `Duplicate rule: ${name}`);
-    this.ruleNames.add(name);
+    assert(!this.rules.has(name), `Duplicate rule: ${name}`);
+    this.rules.set(name, spec);
 
     const declared: readonly string[] = ruleVars[name];
     const used = variablesIn(spec.command, spec.description, spec.depfile, spec.rspfile, spec.rspfile_content);
@@ -343,7 +362,7 @@ export class Ninja {
    */
   build<R extends RuleName | "phony">(node: { rule: R } & BuildNode<R>): void {
     assert(node.outputs.length > 0, `Build node must have at least one output (rule: ${node.rule})`);
-    assert(node.rule === "phony" || this.ruleNames.has(node.rule), `Unknown rule: ${node.rule}`, {
+    assert(node.rule === "phony" || this.rules.has(node.rule), `Unknown rule: ${node.rule}`, {
       hint: `Define the rule with ninja.rule("${node.rule}", {...}) first`,
     });
     const vars: Record<string, string> = node.vars ?? {};
@@ -356,6 +375,29 @@ export class Ninja {
         assert(
           declared.includes(v),
           `A ${node.rule} edge (${node.outputs[0]}) binds ${v}, which ruleVars does not list for that rule`,
+        );
+      }
+      const spec = this.rules.get(rule)!;
+      if (spec.hostShell === true) {
+        const command = expand(spec.command, name =>
+          name === "in"
+            ? node.inputs.map(p => this.rel(p)).join(" ")
+            : name === "in_newline"
+              ? node.inputs.map(p => this.rel(p)).join("\n")
+              : name === "out"
+                ? node.outputs.map(p => this.rel(p)).join(" ")
+                : (vars[name] ?? ""),
+        );
+        const longest = Object.entries(vars).sort(([, a], [, b]) => b.length - a.length)[0];
+        assert(
+          command.length <= HOST_SHELL_COMMAND_BUDGET,
+          `The command of a ${rule} edge (${node.outputs[0]}) is ${command.length} characters, over the budget of ${HOST_SHELL_COMMAND_BUDGET}: on a Windows host the rule runs through cmd.exe, which takes at most 8191.`,
+          {
+            hint:
+              longest === undefined
+                ? "Shorten the rule's text."
+                : `$${longest[0]} is ${longest[1].length} characters. A list goes in a file written at configure time, whose path the command names (emitCppBind, writeBindgenSources in codegen.ts).`,
+          },
         );
       }
     }

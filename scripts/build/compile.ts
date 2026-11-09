@@ -715,6 +715,7 @@ export function registerDirStamps(n: Ninja, cfg: Pick<Config, "host" | "buildDir
   n.rule("mkdir_stamp", {
     command: cfg.host.os === "windows" ? `cmd /c "mkdir $dir 2>nul & type nul > $out"` : `mkdir -p $dir && touch $out`,
     description: "mkdir $dir",
+    hostShell: true,
   });
 
   n.build({

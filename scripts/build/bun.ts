@@ -874,6 +874,7 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
     n.rule("copy_exe", {
       command: cfg.host.os === "windows" ? `cmd /c "copy /Y $in $out"` : `cp $in $out`,
       description: "copy $out (windows: no strip)",
+      hostShell: true,
     });
   } else {
     // Darwin cross: llvm-strip regenerates a bare linker-style ad-hoc

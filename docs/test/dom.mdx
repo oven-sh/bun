@@ -59,7 +59,7 @@ By default, test files share one global object and one module registry. Files wi
 
 With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library, because a shared module stays bound to the first window it saw.
 
-The DOM package itself is the exception: each process loads it once, outside the files' globals, so its code stays compiled from file to file. Every window has the package's classes, so Bun puts them back after each file: a method that one file patches on `HTMLElement.prototype` is the original again in the next file. As in Vitest's `vmThreads` and `vmForks` pools, the plain arrays, promises and functions that jsdom's own code creates belong to another realm:
+The DOM package itself is the exception: each process loads it once, outside the files' globals, so its code stays compiled from file to file. As in Vitest's `vmThreads` and `vmForks` pools, the plain arrays, promises and functions that jsdom's own code creates belong to another realm:
 
 ```ts
 event.composedPath() instanceof Array; // false with --isolate
@@ -69,6 +69,16 @@ element instanceof HTMLElement; // true
 ```
 
 With [`--isolate=modules`](/test/parallel#--isolate) there is one global object, the package is loaded into it, and these are ordinary arrays.
+
+In both modes, the files' windows share that one copy of the package. Every happy-dom window has the package's own DOM classes, such as `HTMLElement`. Before Bun makes a file's window, it puts back the classes that are properties of the window, and the classes that those inherit from, to what they were when the package was loaded. So a method that one file patches on `HTMLElement.prototype` is the original again in the next file.
+
+The restore has limits:
+
+- Bun can't tell who changed a class. What happy-dom itself writes on its classes while a file runs, such as a method that it installs on first use, is undone as well, and happy-dom doesn't install it again.
+- A class that a file reaches only through an object is not put back. The prototypes of `element.classList`, `element.dataset` and `document.implementation` keep what a file wrote on them.
+- jsdom makes most of its classes for each window, and Bun puts none of them back. jsdom 28 and older share their CSS classes, such as `CSSStyleSheet`, between windows.
+
+A file that needs a copy of the package that no other file has touched can [register happy-dom in a preload](#registering-happy-dom-in-a-preload): with `--isolate`, the preload loads the package again for each file.
 
 `require("jsdom")` in a test file loads a second copy of the package. The window's own `JSDOM` object is `globalThis.jsdom`.
 

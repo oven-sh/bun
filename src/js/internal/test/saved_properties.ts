@@ -1,9 +1,11 @@
-// Saves the own properties of an object, of every function reachable from it and of their prototypes, to put them back.
+// Saves the own properties of an object, of its object properties, of every function reachable from those and of their
+// prototypes, to put them back.
 
-const shapesOf: (objects: object[]) => unknown[] = $newCppFunction(
+// The second argument lists the objects to take out of dictionary mode first: a delete can leave one in it.
+const shapesOf: (objects: object[], lostProperties?: number[]) => unknown[] = $newCppFunction(
   "TestEnvironment.cpp",
   "jsFunctionShapesOfObjects",
-  1,
+  2,
 );
 const indexesOfChanged: (objects: object[], shapes: unknown[]) => number[] = $newCppFunction(
   "TestEnvironment.cpp",
@@ -19,11 +21,12 @@ const deleteOwnProperty: (object: object, key: PropertyKey) => boolean = $newCpp
 
 // This module is evaluated before any test file runs. Test files can patch builtins later,
 // so only use what's captured here, $-private names, index loops and null-prototype descriptors.
-const { getPrototypeOf, getOwnPropertyDescriptor, defineProperty, isExtensible } = Object;
+const { getPrototypeOf, setPrototypeOf, getOwnPropertyDescriptor, defineProperty, isExtensible } = Object;
 const { ownKeys } = Reflect;
 
 type Properties = Map<PropertyKey, PropertyDescriptor>;
 export type KeyFilter = (object: object, key: PropertyKey) => boolean;
+export type Objects = Map<object, true>;
 
 function getDescriptor(object: object, key: PropertyKey): PropertyDescriptor | undefined {
   const descriptor = getOwnPropertyDescriptor(object, key);
@@ -44,55 +47,58 @@ function isSame(current: PropertyDescriptor, saved: PropertyDescriptor) {
   );
 }
 
-// Visits `root`, every function reachable from it and their prototypes, each once. The global object only as the root.
+// Visits `root`, its object properties, every function reachable from those and their prototypes, each once.
+// The global object only as the root, and nothing that `others` has.
 function walk(
   root: object,
-  descendsIntoObjects: boolean,
-  isTracked: KeyFilter | undefined,
-  seen: Map<object, true>,
-  found: (object: object) => Properties | undefined,
+  isTracked: KeyFilter,
+  others: Objects | undefined,
+  seen: Objects,
+  found: (object: object, prototype: object | null) => Properties | undefined,
 ) {
-  function visit(object: object, descendsIntoObjects: boolean) {
-    if (seen.$has(object) || (object === globalThis && object !== root)) return;
+  function visit(object: object) {
+    if (seen.$has(object) || (object === globalThis && object !== root) || others?.$has(object)) return;
     seen.$set(object, true);
-    const properties = found(object);
+    const prototype = getPrototypeOf(object);
+    const properties = found(object, prototype);
     const keys = ownKeys(object);
     for (let i = 0; i < keys.length; i++) {
       const key = keys[i];
-      if (isTracked && !isTracked(object, key)) continue;
+      if (!isTracked(object, key)) continue;
       const descriptor = getDescriptor(object, key);
       if (!descriptor) continue;
       properties?.$set(key, descriptor);
       const { value, get, set } = descriptor;
       if (
         typeof value === "function" ||
-        (typeof value === "object" && value !== null && (descendsIntoObjects || key === "prototype"))
+        (typeof value === "object" && value !== null && (object === root || key === "prototype"))
       )
-        visit(value, false);
-      if (get) visit(get, false);
-      if (set) visit(set, false);
+        visit(value);
+      if (get) visit(get);
+      if (set) visit(set);
     }
-    const prototype = getPrototypeOf(object);
-    if (prototype) visit(prototype, false);
+    if (prototype) visit(prototype);
   }
-  visit(root, descendsIntoObjects);
+  visit(root);
 }
 
+// Returns whether it deleted a property.
 function restoreProperties(
   object: object,
   properties: Properties,
-  isTracked: KeyFilter | undefined,
+  isTracked: KeyFilter,
   isLeftAlone: KeyFilter | undefined,
 ) {
   const keys = ownKeys(object);
   let found = 0;
+  let deleted = false;
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
     const saved = properties.$get(key);
     if (saved) found++;
     if (isLeftAlone?.(object, key)) continue;
     if (!saved) {
-      if (!isTracked || isTracked(object, key)) deleteOwnProperty(object, key);
+      if (isTracked(object, key) && deleteOwnProperty(object, key)) deleted = true;
       continue;
     }
     const current = getOwnPropertyDescriptor(object, key)!;
@@ -100,74 +106,74 @@ function restoreProperties(
     if (!$getByIdDirect(current, "configurable")) {
       // A sealed or frozen object keeps its properties: one that is deleted can't be defined again.
       if (!isExtensible(object)) continue;
-      if (saved.configurable) deleteOwnProperty(object, key);
+      if (saved.configurable) deleted = deleteOwnProperty(object, key) || deleted;
       // Some builtins have a read-only property that gives a new value each time it's read.
       else if (!$getByIdDirect(current, "writable")) continue;
     }
     defineProperty(object, key, saved);
   }
-  if (found === properties.$size || !isExtensible(object)) return;
+  if (found === properties.$size || !isExtensible(object)) return deleted;
   properties.$forEach((saved, key) => {
     if (!getOwnPropertyDescriptor(object, key)) defineProperty(object, key, saved);
   });
+  return deleted;
 }
 
 class SavedProperties {
-  #isTracked: KeyFilter | undefined;
+  #isTracked: KeyFilter;
+  #others: Objects | undefined;
   #objects: object[] = [];
   #properties: Properties[] = [];
-  #seen = new $Map<object, true>();
+  #prototypes: (object | null)[] = [];
   // Nearly all of the objects are untouched by a test file. Native code tells which ones may not be.
   #shapes: unknown[] = [];
   #alwaysComparedCount = 0;
 
-  // `isTracked` says which properties to save, and which to delete when a file added them.
-  constructor(isTracked?: KeyFilter) {
+  // `isTracked` says which properties to save, and which to delete when a file added them. What `others` has is left to another set.
+  constructor(isTracked: KeyFilter, others?: Objects) {
     this.#isTracked = isTracked;
+    this.#others = others;
   }
 
-  // Saves what is reachable from `root` and not saved yet. A walk that a proxy's trap stops saves nothing.
-  save(root: object, descendsIntoObjects: boolean) {
-    if (this.#seen.$has(root)) return;
-    const objects = this.#objects;
-    const properties = this.#properties;
-    const start = objects.length;
-    try {
-      walk(root, descendsIntoObjects, this.#isTracked, this.#seen, object => {
-        const saved: Properties = new $Map();
-        $arrayPush(objects, object);
-        $arrayPush(properties, saved);
-        return saved;
-      });
-    } catch (error) {
-      for (let i = start; i < objects.length; i++) this.#seen.$delete(objects[i]);
-      objects.length = start;
-      properties.length = start;
-      throw error;
-    }
+  // Saves what is reachable from `root`, and returns those objects. A walk that a proxy's trap stops saves nothing.
+  save(root: object) {
+    const objects: object[] = [];
+    const properties: Properties[] = [];
+    const prototypes: (object | null)[] = [];
+    const seen: Objects = new $Map();
+    walk(root, this.#isTracked, this.#others, seen, (object, prototype) => {
+      const saved: Properties = new $Map();
+      $arrayPush(objects, object);
+      $arrayPush(properties, saved);
+      $arrayPush(prototypes, prototype);
+      return saved;
+    });
+    this.#objects = objects;
+    this.#properties = properties;
+    this.#prototypes = prototypes;
     this.#saveShapes();
+    return seen;
   }
 
-  // Forgets what isn't reachable from `root`. The rest keeps its saved properties.
-  keepReachableFrom(root: object, descendsIntoObjects: boolean) {
-    this.restore();
-    const reachable = new $Map<object, true>();
-    walk(root, descendsIntoObjects, this.#isTracked, reachable, () => undefined);
+  // Forgets what isn't reachable from `root`. The rest keeps its saved properties. What changed since the last restore() stays.
+  keepReachableFrom(root: object) {
+    const reachable: Objects = new $Map();
+    walk(root, this.#isTracked, this.#others, reachable, () => undefined);
     const objects = this.#objects;
     const properties = this.#properties;
+    const prototypes = this.#prototypes;
     let kept = 0;
     for (let i = 0; i < objects.length; i++) {
       const object = objects[i];
-      if (!reachable.$has(object)) {
-        this.#seen.$delete(object);
-        continue;
-      }
+      if (!reachable.$has(object)) continue;
       objects[kept] = object;
       properties[kept] = properties[i];
+      prototypes[kept] = prototypes[i];
       kept++;
     }
     objects.length = kept;
     properties.length = kept;
+    prototypes.length = kept;
     this.#saveShapes();
   }
 
@@ -175,18 +181,22 @@ class SavedProperties {
   restore(isLeftAlone?: KeyFilter) {
     const objects = this.#objects;
     const changed = indexesOfChanged(objects, this.#shapes);
+    let lostProperties: number[] | undefined;
     for (let i = 0; i < changed.length; i++) {
       const index = changed[i];
+      const object = objects[index];
       try {
-        restoreProperties(objects[index], this.#properties[index], this.#isTracked, isLeftAlone);
+        if (restoreProperties(object, this.#properties[index], this.#isTracked, isLeftAlone))
+          $arrayPush((lostProperties ??= []), index);
+        if (getPrototypeOf(object) !== this.#prototypes[index]) setPrototypeOf(object, this.#prototypes[index]);
       } catch {}
     }
-    // A property that was deleted and put back is in another slot.
-    if (changed.length !== this.#alwaysComparedCount) this.#saveShapes();
+    // A property that was put back can be in another slot. A class also gets another structure when it is first used.
+    if (lostProperties || changed.length !== this.#alwaysComparedCount) this.#saveShapes(lostProperties);
   }
 
-  #saveShapes() {
-    this.#shapes = shapesOf(this.#objects);
+  #saveShapes(lostProperties?: number[]) {
+    this.#shapes = shapesOf(this.#objects, lostProperties);
     this.#alwaysComparedCount = indexesOfChanged(this.#objects, this.#shapes).length;
   }
 }

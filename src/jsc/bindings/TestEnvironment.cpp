@@ -84,10 +84,20 @@ static void forEachPropertySlot(JSC::JSObject* object, JSC::Structure* structure
 }
 
 // For each object its structure and then its property slots, or null if those do not tell whether it has changed.
+// The second argument has the indexes of the objects that lost a property since the last call.
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunctionShapesOfObjects, __attribute__((minsize)), (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto* objects = uncheckedDowncast<JSC::JSArray>(callFrame->uncheckedArgument(0));
+    if (auto* lostProperties = dynamicDowncast<JSC::JSArray>(callFrame->argument(1))) {
+        for (unsigned i = 0, length = lostProperties->length(); i < length; ++i) {
+            auto* object = asObject(objects->getIndexQuickly(lostProperties->getIndexQuickly(i).asInt32()));
+            auto* structure = object->structure();
+            // Deletes leave an object an uncacheable dictionary, which JSC flattens for an inline cache only once.
+            if (structure->isUncacheableDictionary() && !(structure->typeInfo().overridesGetOwnPropertySlot() && object->type() != JSC::JSFunctionType))
+                object->flattenDictionaryObject(vm);
+        }
+    }
     JSC::MarkedArgumentBuffer shapes;
     for (unsigned i = 0, length = objects->length(); i < length; ++i) {
         auto* object = asObject(objects->getIndexQuickly(i));

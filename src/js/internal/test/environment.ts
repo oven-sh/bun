@@ -4,6 +4,7 @@ const { createRequire } = require("node:module");
 const types = require("node:util/types");
 const SavedProperties = require("internal/test/saved_properties");
 type SavedProperties = InstanceType<typeof SavedProperties>;
+type Objects = ReturnType<SavedProperties["save"]>;
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 const isInPreload = $bindgen("environment.bind.ts", "isInPreload");
@@ -33,19 +34,12 @@ interface Environment {
   close(): void | Promise<void>;
 }
 
-// The classes of a package, which a process loads once and every window shares. Put back before the next window is made.
-interface PackageClasses {
-  // What the first root has is saved. The second root tells which of it is the package's and not the root's own.
-  add(root: object, descendsIntoObjects: boolean): void;
-  // Puts back the classes of every package: they share the builtins of the global they were loaded into.
-  restore(): void;
-}
-
 interface Package {
   packagePath: string;
   requireFromTest: NodeJS.Require;
   load(): any;
-  classes?: PackageClasses;
+  // Puts back the classes of every package that outlives the test files: they share the builtins of one global.
+  restoreClasses?(): void;
 }
 
 // Always copied from the window, even when `globalThis` already has them.
@@ -279,11 +273,9 @@ function acceptBinaryDataOfOtherRealms(win: any) {
   }
 }
 
-function createJSDOM({ requireFromTest, classes }: Package, exports: any, options: any): Environment | string {
+function createJSDOM({ requireFromTest }: Package, exports: any, options: any): Environment | string {
   const { CookieJar, JSDOM, ResourceLoader, VirtualConsole } = exports;
   if (typeof JSDOM !== "function") return "the package does not export JSDOM";
-  // jsdom makes the classes of each window. A file reaches the package's through `jsdom.constructor`.
-  classes?.add(exports, false);
   const {
     html = "<!DOCTYPE html>",
     userAgent,
@@ -368,7 +360,16 @@ function createJSDOM({ requireFromTest, classes }: Package, exports: any, option
   return { ...globals, forgetLastFile, close: () => win.close() };
 }
 
-function createHappyDOM({ classes }: Package, exports: any, options: any): Environment | string {
+async function closeHappyDOM(win: any) {
+  if (win.close && win.happyDOM.abort) {
+    await win.happyDOM.abort();
+    win.close();
+  } else {
+    win.happyDOM.cancelAsync();
+  }
+}
+
+function createHappyDOM(_: Package, exports: any, options: any): Environment | string {
   const Window = exports.GlobalWindow || exports.Window;
   if (typeof Window !== "function") return "the package does not export Window";
   const win = new Window({
@@ -377,63 +378,59 @@ function createHappyDOM({ classes }: Package, exports: any, options: any): Envir
     url: options.url || "http://localhost:3000",
     settings: { ...options.settings, disableErrorCapturing: true },
   });
-  // The window has the package's classes, a subclass of some that is its own, and objects like `happyDOM` and `NodeFilter`.
-  classes?.add(win, true);
   // prettier-ignore
   const globals = windowProperties(win, [
     "Request", "Response", "MessagePort", "fetch", "Headers", "AbortController", "AbortSignal", "URL",
     "URLSearchParams", "FormData",
   ]);
   addReportError(win, globals);
-  return {
-    ...globals,
-    async close() {
-      if (win.close && win.happyDOM.abort) {
-        await win.happyDOM.abort();
-        win.close();
-      } else {
-        win.happyDOM.cancelAsync();
-      }
-    },
-  };
+  return { ...globals, close: () => closeHappyDOM(win) };
 }
 
 // Without --isolate, modules outlive a file and hold on to DOM nodes, so the window has to outlive it too.
 const kept = new $Map<string, Environment>();
 // require() of a module with top-level await throws only the first time, so rethrow that error for every file.
 const failedToLoad = new $Map<string, unknown>();
-const classesOfPackages = new $Map<string, PackageClasses>();
+// One for each copy of happy-dom: its classes, which every window has, and what those reach. With --isolate that includes
+// the builtins of the global that outlives the files. With --isolate=modules the builtins are globals.ts's to put back.
 const savedClassesOfPackages: SavedProperties[] = [];
+let builtinsOfSharedGlobal: Objects | undefined;
 
-// Underscore-prefixed properties hold internal state. Reading `console._stdout` opens the stream.
-function isNotInternal(_: object, key: PropertyKey) {
-  return typeof key !== "string" || key.$charCodeAt(0) !== 95;
+// Bun's console: reading its `_stdout` opens the stream. Underscore-prefixed keys are tracked: zone.js marks what it patched with one.
+function isNotConsole(_: object, key: PropertyKey) {
+  return key !== "console";
 }
 
 function restoreClassesOfPackages() {
   for (let i = 0; i < savedClassesOfPackages.length; i++) savedClassesOfPackages[i].restore();
 }
 
-function classesOf(packagePath: string): PackageClasses {
-  let classes = classesOfPackages.$get(packagePath);
-  if (classes) return classes;
-  const saved = new SavedProperties(isNotInternal);
-  $arrayPush(savedClassesOfPackages, saved);
-  let roots = 0;
-  classes = {
-    add(root, descendsIntoObjects) {
-      if (roots === 0) saved.save(root, descendsIntoObjects);
-      else if (roots === 1) saved.keepReachableFrom(root, descendsIntoObjects);
-      roots++;
-    },
-    restore: restoreClassesOfPackages,
-  };
-  classesOfPackages.$set(packagePath, classes);
-  return classes;
+function ignore() {}
+
+// Two windows that are no test file's tell the package's classes from what a window makes for itself.
+function saveClassesOfHappyDOM(exports: any) {
+  try {
+    const Window = exports.GlobalWindow || exports.Window;
+    const first = new Window({ console, settings: { disableErrorCapturing: true } });
+    const second = new Window({ console, settings: { disableErrorCapturing: true } });
+    const saved = new SavedProperties(isNotConsole, builtinsOfSharedGlobal);
+    saved.save(first);
+    saved.keepReachableFrom(second);
+    $arrayPush(savedClassesOfPackages, saved);
+    closeHappyDOM(first).$then(ignore, ignore);
+    closeHappyDOM(second).$then(ignore, ignore);
+  } catch {}
 }
 
 function isClosed(window: Environment["window"]) {
   return window.closed || !window.document;
+}
+
+// --rerun-each loads the file again. It only needs a new window if the file closed its own.
+let opensWindowForSameFile = false;
+function needsNewWindow(environment: Environment) {
+  environment.forgetLastFile?.();
+  return (opensWindowForSameFile = isClosed(environment.window));
 }
 
 // jsdom parses its default style sheet with the first window that's asked for a computed style, and keeps that window.
@@ -457,7 +454,7 @@ function find(name: string, file: string, outlivesTestFiles: boolean): Package |
     packagePath,
     requireFromTest,
     // Without --isolate the files share a window, and what they change on the package stays by design.
-    classes: outlivesTestFiles ? classesOf(packagePath) : undefined,
+    restoreClasses: outlivesTestFiles ? restoreClassesOfPackages : undefined,
     load() {
       if (failedToLoad.$has(packagePath)) throw failedToLoad.$get(packagePath);
       const isLoaded = packagePath in requireFromTest.cache;
@@ -468,7 +465,8 @@ function find(name: string, file: string, outlivesTestFiles: boolean): Package |
         failedToLoad.$set(packagePath, error);
         throw error;
       }
-      if (outlivesTestFiles && !isLoaded && name === "jsdom") openWindowForJSDOMToKeep(exports);
+      if (outlivesTestFiles && !isLoaded)
+        (name === "jsdom" ? openWindowForJSDOMToKeep : saveClassesOfHappyDOM)(exports);
       return exports;
     },
   };
@@ -482,12 +480,14 @@ function open(
   beforeCreating: () => void,
   sharesGlobal = false,
 ) {
+  const isForSameFile = opensWindowForSameFile;
+  opensWindowForSameFile = false;
   // With --isolate every file has a new global. Loaded into that, the package would be evaluated and compiled again for each file.
   const lasting = keep || sharesGlobal ? undefined : lastingCopyOfThisModule();
   const found = (lasting ? lasting.find : find)(name, file, !keep);
   if (typeof found === "string") return found;
-  // happy-dom's window has the classes of the global that the package is loaded into.
-  if (name === "happy-dom") lasting?.acceptBinaryDataOfTestFiles();
+  // happy-dom's window has the lasting global's binary classes. For jsdom too: its own `instanceof` must not depend on the files before.
+  lasting?.acceptBinaryDataOfTestFiles();
   const { packagePath } = found;
 
   const id = `${packagePath}\n${optionsText ?? ""}`;
@@ -502,7 +502,8 @@ function open(
   } catch (error) {
     return `its options are not JSON: ${(error as Error).message}`;
   }
-  found.classes?.restore();
+  // The file's preloads and modules are not evaluated again, so what they put on the package's classes stays.
+  if (!isForSameFile) found.restoreClasses?.();
   const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(found, found.load(), options ?? {});
   if (keep && typeof environment !== "string") kept.$set(id, environment);
   return environment;
@@ -549,10 +550,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
   environment.forgetLastFile?.();
 
   function teardown(isLoadingFileAgain: boolean) {
-    if (isLoadingFileAgain) {
-      environment.forgetLastFile?.();
-      return isClosed(environment.window);
-    }
+    if (isLoadingFileAgain) return needsNewWindow(environment);
     // What can't be put back is this file's error, not the next one's.
     if (!keep || !isExtensible(globalThis)) return leave();
     for (let i = 0; i < defined.length; i++) if (ownProperty(defined[i])?.configurable === false) return leave();
@@ -665,9 +663,7 @@ function setupSharedGlobal(
   const environment = result;
   installOnSharedGlobal(environment);
   return function teardown(isLoadingFileAgain: boolean) {
-    if (!isLoadingFileAgain) return environment.close();
-    environment.forgetLastFile?.();
-    return isClosed(environment.window);
+    return isLoadingFileAgain ? needsNewWindow(environment) : environment.close();
   };
 }
 
@@ -728,5 +724,8 @@ setup.acceptBinaryDataOfTestFiles = () => {
 };
 // For internal/test/globals.ts.
 setup.isEnvironmentGlobal = (key: PropertyKey) => originalDescriptors.$has(key as string);
+setup.leaveBuiltinsToGlobals = (builtins: Objects) => {
+  builtinsOfSharedGlobal = builtins;
+};
 
 export default setup;

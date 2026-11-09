@@ -1,5 +1,8 @@
 import { SavedProperties } from "bun:internal-for-testing";
+import { describe as describeValue } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
+
+const everyKey = () => true;
 
 // The snapshot that `bun test --isolate=modules` restores globalThis from after each file, and that the DOM
 // environments restore a package's classes from before each file's window.
@@ -15,8 +18,8 @@ describe("SavedProperties", () => {
     }
     class Child extends Parent {}
     const root = { Child, object: { left: 1 } };
-    const saved = new SavedProperties();
-    saved.save(root, true);
+    const saved = new SavedProperties(everyKey);
+    saved.save(root);
 
     const { method } = Parent.prototype;
     Parent.prototype.method = () => "patched";
@@ -46,23 +49,26 @@ describe("SavedProperties", () => {
     });
   });
 
-  test("does not descend into objects unless asked, except a prototype", () => {
+  test("descends into the objects of the root and into a prototype, and into no other object", () => {
     class Class {}
+    Class.object = { left: 1 };
     const root = { object: { left: 1 }, Class };
-    const saved = new SavedProperties();
-    saved.save(root, false);
+    const saved = new SavedProperties(everyKey);
+    saved.save(root);
     root.object.left = 2;
+    Class.object.left = 2;
     Class.prototype.added = 1;
     saved.restore();
-    expect(root.object.left).toBe(2);
+    expect(root.object.left).toBe(1);
+    expect(Class.object.left).toBe(2);
     expect("added" in Class.prototype).toBe(false);
   });
 
   test("leaves a sealed or frozen object as it is", () => {
     const sealed = { left: 1, fn() {} };
     const frozen = { left: 1, fn() {} };
-    const saved = new SavedProperties();
-    saved.save({ sealed, frozen }, true);
+    const saved = new SavedProperties(everyKey);
+    saved.save({ sealed, frozen });
     sealed.left = 2;
     Object.seal(sealed);
     Object.freeze(frozen);
@@ -73,11 +79,11 @@ describe("SavedProperties", () => {
     expect(Object.isFrozen(frozen)).toBe(true);
   });
 
-  test("a walk that throws saves nothing, and a later walk can save the same objects", () => {
+  test("a walk that throws keeps what was saved before it, and a later walk can save the same objects", () => {
     class Earlier {}
     class Before {}
-    const saved = new SavedProperties();
-    saved.save({ Earlier }, true);
+    const saved = new SavedProperties(everyKey);
+    saved.save({ Earlier });
     const trap = new Proxy(
       {},
       {
@@ -87,7 +93,7 @@ describe("SavedProperties", () => {
       },
     );
     const root = { Before, trap };
-    expect(() => saved.save(root, true)).toThrow("trap");
+    expect(() => saved.save(root)).toThrow("trap");
     Before.prototype.left = 1;
     Earlier.prototype.left = 1;
     root.added = 1;
@@ -97,7 +103,7 @@ describe("SavedProperties", () => {
     expect("left" in Earlier.prototype).toBe(false);
 
     root.trap = 1;
-    saved.save(root, true);
+    saved.save(root);
     delete Before.prototype.left;
     root.added = 2;
     saved.restore();
@@ -105,9 +111,55 @@ describe("SavedProperties", () => {
     expect(root.added).toBe(1);
   });
 
+  test("save returns what it saved, and a set leaves those objects to the set that has them", () => {
+    class Builtin {}
+    class OfPackage extends Builtin {}
+    const builtins = new SavedProperties(everyKey).save({ Builtin });
+    expect(builtins.has(Builtin.prototype)).toBe(true);
+    expect(builtins.has(OfPackage)).toBe(false);
+
+    const saved = new SavedProperties(everyKey, builtins);
+    saved.save({ OfPackage });
+    Builtin.prototype.left = 1;
+    OfPackage.prototype.left = 1;
+    saved.restore();
+    expect(Object.hasOwn(Builtin.prototype, "left")).toBe(true);
+    expect(Object.hasOwn(OfPackage.prototype, "left")).toBe(false);
+  });
+
+  test("puts back the prototype of an object", () => {
+    class Parent {}
+    class Child extends Parent {}
+    const saved = new SavedProperties(everyKey);
+    saved.save({ Child });
+    Object.setPrototypeOf(Child.prototype, { shim: true });
+    Object.setPrototypeOf(Child, null);
+    saved.restore();
+    expect(Object.getPrototypeOf(Child.prototype)).toBe(Parent.prototype);
+    expect(Object.getPrototypeOf(Child)).toBe(Parent);
+  });
+
+  // A delete makes JSC give up on the shape of an object. Property reads through it are not cached after that.
+  test("an object that loses what many files added to it is not left a dictionary", () => {
+    class Class {
+      method() {}
+    }
+    const saved = new SavedProperties(everyKey);
+    saved.save({ Class });
+    for (let file = 0; file < 40; file++) {
+      for (let i = 0; i < 20; i++) Class.prototype["added" + i] = i;
+      saved.restore();
+      expect(Object.keys(Class.prototype)).toEqual([]);
+      expect(describeValue(Class.prototype)).not.toContain("Dictionary");
+    }
+    Class.prototype.method = () => "patched";
+    saved.restore();
+    expect(Class.prototype.method.name).toBe("method");
+  });
+
   test("does not descend into the global object", () => {
-    const saved = new SavedProperties();
-    saved.save({ global: globalThis, Class: class {} }, true);
+    const saved = new SavedProperties(everyKey);
+    saved.save({ global: globalThis, Class: class {} });
     globalThis.leftByTheTest = 1;
     try {
       saved.restore();
@@ -120,7 +172,7 @@ describe("SavedProperties", () => {
   test("leaves alone what the filters name", () => {
     const root = { kept: 1, _internal: 1 };
     const saved = new SavedProperties((object, key) => typeof key !== "string" || !key.startsWith("_"));
-    saved.save(root, false);
+    saved.save(root);
     root.kept = 2;
     root._internal = 2;
     root.added = 1;
@@ -137,10 +189,11 @@ describe("SavedProperties", () => {
     }
     class First extends Shared {}
     class Second extends Shared {}
-    const saved = new SavedProperties();
-    saved.save({ First }, true);
+    const saved = new SavedProperties(everyKey);
+    saved.save({ First });
     First.prototype.left = 1;
-    saved.keepReachableFrom({ Second }, true);
+    saved.restore();
+    saved.keepReachableFrom({ Second });
     expect("left" in First.prototype).toBe(false);
 
     const { method } = Shared.prototype;
@@ -155,10 +208,11 @@ describe("SavedProperties", () => {
 
   test("keepReachableFrom keeps the saved properties of an object that is not first in the list", () => {
     const objects = Array.from({ length: 20 }, (_, i) => ({ index: i, fn() {} }));
-    const saved = new SavedProperties();
-    saved.save(Object.fromEntries(objects.map((object, i) => [i, object])), true);
+    const saved = new SavedProperties(everyKey);
+    saved.save(Object.fromEntries(objects.map((object, i) => [i, object])));
     for (const object of objects) object.index = -1;
-    saved.keepReachableFrom({ last: objects[19] }, true);
+    saved.restore();
+    saved.keepReachableFrom({ last: objects[19] });
     expect(objects[19].index).toBe(19);
     const { fn } = objects[19];
     objects[19].fn = () => {};
@@ -170,16 +224,21 @@ describe("SavedProperties", () => {
     expect(objects[0].added).toBe(1);
   });
 
-  test("a later save adds what a new root reaches", () => {
-    class A {}
-    class B {}
-    const saved = new SavedProperties();
-    saved.save({ A }, false);
-    saved.save({ B }, false);
-    A.prototype.left = 1;
-    B.prototype.left = 1;
+  // The caller restores first. What is written after that is the package's own, such as what a window's constructor writes.
+  test("keepReachableFrom leaves what changed since the last restore, until that object changes again", () => {
+    class Shared {}
+    const saved = new SavedProperties(everyKey);
+    saved.save({ Shared });
     saved.restore();
-    expect("left" in A.prototype).toBe(false);
-    expect("left" in B.prototype).toBe(false);
+    Shared.current = "second";
+    saved.keepReachableFrom({ Shared });
+    expect(Shared.current).toBe("second");
+    saved.restore();
+    expect(Shared.current).toBe("second");
+
+    Shared.added = 1;
+    saved.restore();
+    expect("current" in Shared).toBe(false);
+    expect("added" in Shared).toBe(false);
   });
 });

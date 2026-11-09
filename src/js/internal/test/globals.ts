@@ -1,7 +1,8 @@
 // Called by VirtualMachine.rs. With `bun test --isolate=modules`, all test files share one global object,
 // so after each file we restore what it changed: globals, builtins, `process.env` and `process` listeners.
 
-const isEnvironmentGlobal: (key: PropertyKey) => boolean = require("internal/test/environment").isEnvironmentGlobal;
+const environment = require("internal/test/environment");
+const isEnvironmentGlobal: (key: PropertyKey) => boolean = environment.isEnvironmentGlobal;
 const SavedProperties = require("internal/test/saved_properties");
 type SavedProperties = InstanceType<typeof SavedProperties>;
 
@@ -74,7 +75,8 @@ export default function restoreGlobals() {
   if (!env) {
     // globalThis, its object properties, every function reachable from those, and their prototypes.
     saved = new SavedProperties(isTracked);
-    saved.save(globalThis, true);
+    // A DOM package that is loaded into this global reaches the same builtins. They are put back here, by one rule.
+    environment.leaveBuiltinsToGlobals(saved.save(globalThis));
     env = new Map();
     const keys = getOwnPropertyNames(process.env);
     for (let i = 0; i < keys.length; i++) env.$set(keys[i], process.env[keys[i]]);

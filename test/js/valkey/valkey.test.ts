@@ -11,6 +11,7 @@ import {
   expectType,
   isEnabled,
   randomCoinFlip,
+  recordCommands,
   setupDockerContainer,
   TLS_REDIS_OPTIONS,
   TLS_REDIS_URL,
@@ -438,6 +439,25 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const count = await redis.bitcount(bitKey);
         expect(count).toBe(3);
+      });
+
+      test("should count bits within a range with BITCOUNT", async () => {
+        const redis = ctx.redis;
+        const key = "bitcount-range";
+        // "foobar" has 26 set bits: 'f' = 4, 'o' = 6, 'o' = 6, 'b' = 3, 'a' = 3, 'r' = 4.
+        await redis.set(key, "foobar");
+
+        expect(
+          await Promise.all([
+            redis.bitcount(key),
+            redis.bitcount(key, 0, 0),
+            redis.bitcount(key, 1, 1),
+            redis.bitcount(key, 1, 1, "BYTE"),
+            redis.bitcount(key, -1, -1),
+            redis.bitcount(key, 5, 30, "BIT"),
+            redis.bitcount(key, 0, -1),
+          ]),
+        ).toEqual([26, 4, 6, 6, 4, 17, 26]);
       });
 
       test("should get range of string", async () => {
@@ -990,7 +1010,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.unlink({} as any);
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'unlink'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'unlink'."`);
       });
 
       test("should reject invalid additional key in UNLINK", async () => {
@@ -1004,7 +1024,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.touch(null as any);
-        }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'touch'."`);
       });
 
       test("should reject invalid additional key in TOUCH", async () => {
@@ -3395,16 +3415,14 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrem({} as any, "member");
-        }).toThrowErrorMatchingInlineSnapshot(`"Expected additional arguments to be a string or buffer for 'zrem'."`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zrem'."`);
       });
 
       test("should reject invalid key in ZMSCORE", async () => {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zmscore([] as any, "member");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zmscore'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zmscore'."`);
       });
 
       test("should add members to sorted set with ZADD", async () => {
@@ -4279,7 +4297,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrangebylex(null as any, "-", "+");
-        }).toThrowErrorMatchingInlineSnapshot(`"The "key" argument must be specified"`);
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zrangebylex'."`);
       });
 
       test("should return members in reverse lexicographical order with ZREVRANGEBYLEX", async () => {
@@ -4381,9 +4399,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const redis = ctx.redis;
         expect(async () => {
           await redis.zrevrangebylex({} as any, "+", "-");
-        }).toThrowErrorMatchingInlineSnapshot(
-          `"Expected additional arguments to be a string or buffer for 'zrevrangebylex'."`,
-        );
+        }).toThrowErrorMatchingInlineSnapshot(`"Expected key to be a string or buffer for 'zrevrangebylex'."`);
       });
 
       test("should reject invalid destination in ZRANGESTORE", async () => {
@@ -7517,6 +7533,323 @@ describe("RedisClient argument validation", () => {
     } finally {
       client.close();
     }
+  });
+
+  // A required argument that is missing or undefined/null used to be dropped, and
+  // the arguments after it moved into its place: zrank(key, undefined, "WITHSCORE")
+  // looked up a member named WITHSCORE, rpush(undefined, "a", "b") pushed onto "a".
+  test.each<[call: string, invoke: (client: any) => unknown, argument: string]>([
+    ['hscan("h")', c => c.hscan("h"), "cursor"],
+    ['hscan("h", null)', c => c.hscan("h", null), "cursor"],
+    ['hscan("h", {})', c => c.hscan("h", {}), "cursor"],
+    ['hscan("h", undefined, "MATCH", "f*")', c => c.hscan("h", undefined, "MATCH", "f*"), "cursor"],
+    ["hscan()", c => c.hscan(), "key"],
+    ['zrank("z", undefined, "WITHSCORE")', c => c.zrank("z", undefined, "WITHSCORE"), "member"],
+    ['zrevrank("z", null, "WITHSCORE")', c => c.zrevrank("z", null, "WITHSCORE"), "member"],
+    ['zrangebylex("z", undefined, "+")', c => c.zrangebylex("z", undefined, "+"), "min"],
+    ['zrangebylex("z", "-")', c => c.zrangebylex("z", "-"), "max"],
+    ['zrevrangebylex("z", undefined, "-")', c => c.zrevrangebylex("z", undefined, "-"), "max"],
+    ['zrevrangebylex("z", "+")', c => c.zrevrangebylex("z", "+"), "min"],
+    ['hdel("h")', c => c.hdel("h"), "field"],
+    ['zrem("z", undefined)', c => c.zrem("z", undefined), "member"],
+    ['zmscore("z")', c => c.zmscore("z"), "member"],
+    ['lpush("l")', c => c.lpush("l"), "value"],
+    ['lpushx("l", null)', c => c.lpushx("l", null), "value"],
+    ['rpush(undefined, "a", "b")', c => c.rpush(undefined, "a", "b"), "key"],
+    ['rpush("l")', c => c.rpush("l"), "value"],
+    ['rpushx("l")', c => c.rpushx("l"), "value"],
+    ["del()", c => c.del(), "key"],
+    ['mget(null, "b")', c => c.mget(null, "b"), "key"],
+    ["lpop({})", c => c.lpop({}), "key"],
+    ['unlink(undefined, "b")', c => c.unlink(undefined, "b"), "key"],
+    ["bitcount({}, 0, -1)", c => c.bitcount({}, 0, -1), "key"],
+  ])("%s throws and names the required argument", (call, invoke, argument) => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      const command = call.slice(0, call.indexOf("("));
+      expect(syncThrow(() => invoke(client))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `Expected ${argument} to be a string or buffer for '${command}'.`,
+      });
+    } finally {
+      client.close();
+    }
+  });
+
+  // An undefined/null that a real argument follows is refused with its position in
+  // the call. set, sadd, srem and hmget used to stop there and drop every later
+  // argument; mget and zmscore dropped the hole, so the replies no longer lined up
+  // with the keys asked for; hscan dropped it, so MATCH took the next option as its pattern.
+  test.each<[call: string, invoke: (client: any) => unknown, label: string, received: string, index: number]>([
+    ['sadd("s", "a", undefined, "b")', c => c.sadd("s", "a", undefined, "b"), "member", "undefined", 2],
+    ['sadd("s", "a", null, "b")', c => c.sadd("s", "a", null, "b"), "member", "null", 2],
+    ['sadd("s", undefined, "b")', c => c.sadd("s", undefined, "b"), "member", "undefined", 1],
+    [
+      'sadd("s", ...["a", "b", undefined, "d"])',
+      c => c.sadd("s", ...["a", "b", undefined, "d"]),
+      "member",
+      "undefined",
+      3,
+    ],
+    ['srem("s", "a", undefined, "b")', c => c.srem("s", "a", undefined, "b"), "member", "undefined", 2],
+    ['set("k", "v", undefined, "EX", 10)', c => c.set("k", "v", undefined, "EX", 10), "arguments", "undefined", 2],
+    ['set("k", "v", "NX", null, "EX", 10)', c => c.set("k", "v", "NX", null, "EX", 10), "arguments", "null", 3],
+    ['hmget("h", "f1", undefined, "f2")', c => c.hmget("h", "f1", undefined, "f2"), "field", "undefined", 2],
+    ['mget("a", undefined, "c")', c => c.mget("a", undefined, "c"), "additional arguments", "undefined", 1],
+    ['zmscore("z", "a", null, "c")', c => c.zmscore("z", "a", null, "c"), "additional arguments", "null", 2],
+    ['bitcount("k", undefined, 5)', c => c.bitcount("k", undefined, 5), "additional arguments", "undefined", 1],
+    [
+      'hscan("h", 0, "MATCH", undefined, "NOVALUES")',
+      c => c.hscan("h", 0, "MATCH", undefined, "NOVALUES"),
+      "additional arguments",
+      "undefined",
+      3,
+    ],
+    [
+      'hscan("h", 0, undefined, "COUNT", 10)',
+      c => c.hscan("h", 0, undefined, "COUNT", 10),
+      "additional arguments",
+      "undefined",
+      2,
+    ],
+  ])("%s throws instead of sending a shorter command", (call, invoke, label, received, index) => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      const command = call.slice(0, call.indexOf("("));
+      expect(syncThrow(() => invoke(client))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `Expected ${label} to be a string or buffer for '${command}', got ${received} at arguments[${index}].`,
+      });
+      expect(client.connected).toBe(false);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("a list that is only undefined/null is refused like an empty one", () => {
+    const client: any = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      expect(syncThrow(() => client.sadd("s", undefined))).toMatchObject({
+        message: "SADD requires at least a key and one member",
+      });
+      expect(syncThrow(() => client.srem("s", null, undefined))).toMatchObject({
+        message: "SREM requires at least a key and one member",
+      });
+      expect(syncThrow(() => client.hmget("h", undefined))).toMatchObject({
+        message: "HMGET requires at least a key and one field",
+      });
+    } finally {
+      client.close();
+    }
+  });
+
+  test("an argument of the wrong type after the required ones keeps its error", () => {
+    const client: any = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    try {
+      for (const [call, label, command] of [
+        [() => client.bitcount("k", {}, -1), "additional arguments", "bitcount"],
+        [() => client.del("a", {}, "c"), "additional arguments", "del"],
+        [() => client.sadd("s", "a", {}, "c"), "member", "sadd"],
+        [() => client.set("k", "v", "EX", {}), "arguments", "set"],
+      ] as const) {
+        expect(syncThrow(call)).toMatchObject({
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `Expected ${label} to be a string or buffer for '${command}'.`,
+        });
+      }
+    } finally {
+      client.close();
+    }
+  });
+});
+
+describe("RedisClient command encoding", () => {
+  test("bitcount() sends its range and unit", async () => {
+    const received = await recordCommands(async client => {
+      await client.bitcount("k");
+      await client.bitcount("k", 0, 10);
+      await client.bitcount("k", -2, -1);
+      await client.bitcount("k", 5, 30, "BIT");
+      await client.bitcount("k", 1, 1, "BYTE");
+      await client.bitcount(Buffer.from("binary-key"), 0, 0);
+    });
+    expect(received).toEqual([
+      ["BITCOUNT", "k"],
+      ["BITCOUNT", "k", "0", "10"],
+      ["BITCOUNT", "k", "-2", "-1"],
+      ["BITCOUNT", "k", "5", "30", "BIT"],
+      ["BITCOUNT", "k", "1", "1", "BYTE"],
+      ["BITCOUNT", "binary-key", "0", "0"],
+    ]);
+  });
+
+  test("the arguments after the required ones are sent in order", async () => {
+    const received = await recordCommands(async client => {
+      await client.hdel("h", "f1", "f2", Buffer.from("f3"));
+      await client.zrem("z", "a", "b");
+      await client.zrank("z", "a", "WITHSCORE");
+      await client.zrevrank("z", "a");
+      await client.zrangebylex("z", "-", "+", "LIMIT", 0, 10);
+      await client.zrevrangebylex("z", "+", "-", "LIMIT", "0", "10");
+      await client.zmscore("z", "a", "b", "c");
+      await client.lpush("l", "a", "b");
+      await client.lpushx("l", "a");
+      await client.rpush("l", "1", "2", "3");
+      await client.rpushx("l", "a");
+      await client.del("a", "b", "c");
+      await client.mget("a", "b", "c");
+      await client.unlink("a");
+      await client.touch("a", "b");
+      await client.lpop("l", 2);
+      await client.rpop("l");
+      await client.zpopmin("z", 2);
+      await client.zpopmax("z");
+      await client.hrandfield("h", 2, "WITHVALUES");
+      await client.zrandmember("z", 2, "WITHSCORES");
+      await client.hscan("h", 0);
+      await client.hscan("h", "42", "MATCH", "field:*", "COUNT", 25);
+      await client.sadd("s", "a", "b");
+      await client.srem("s", "a", "b");
+      await client.hmget("h", "f1", "f2");
+      await client.set("k", "v", "EX", 10);
+      await client.set("k", "v", "PX", "1500", "NX");
+    });
+    expect(received).toEqual([
+      ["HDEL", "h", "f1", "f2", "f3"],
+      ["ZREM", "z", "a", "b"],
+      ["ZRANK", "z", "a", "WITHSCORE"],
+      ["ZREVRANK", "z", "a"],
+      ["ZRANGEBYLEX", "z", "-", "+", "LIMIT", "0", "10"],
+      ["ZREVRANGEBYLEX", "z", "+", "-", "LIMIT", "0", "10"],
+      ["ZMSCORE", "z", "a", "b", "c"],
+      ["LPUSH", "l", "a", "b"],
+      ["LPUSHX", "l", "a"],
+      ["RPUSH", "l", "1", "2", "3"],
+      ["RPUSHX", "l", "a"],
+      ["DEL", "a", "b", "c"],
+      ["MGET", "a", "b", "c"],
+      ["UNLINK", "a"],
+      ["TOUCH", "a", "b"],
+      ["LPOP", "l", "2"],
+      ["RPOP", "l"],
+      ["ZPOPMIN", "z", "2"],
+      ["ZPOPMAX", "z"],
+      ["HRANDFIELD", "h", "2", "WITHVALUES"],
+      ["ZRANDMEMBER", "z", "2", "WITHSCORES"],
+      ["HSCAN", "h", "0"],
+      ["HSCAN", "h", "42", "MATCH", "field:*", "COUNT", "25"],
+      ["SADD", "s", "a", "b"],
+      ["SREM", "s", "a", "b"],
+      ["HMGET", "h", "f1", "f2"],
+      ["SET", "k", "v", "EX", "10"],
+      ["SET", "k", "v", "PX", "1500", "NX"],
+    ]);
+  });
+
+  test("undefined/null at the end of the arguments is an omitted tail", async () => {
+    const received = await recordCommands(async (client: any) => {
+      await client.lpop("l", undefined);
+      await client.zrank("z", "m", undefined);
+      await client.hscan("h", 0, undefined);
+      await client.set("k", "v", undefined);
+      await client.set("k", "v", "NX", null, undefined);
+      await client.bitcount("k", undefined, undefined);
+      await client.sadd("s", "a", undefined);
+      await client.hmget("h", "f1", null);
+      await client.del("a", undefined);
+      await client.mget("a", "b", null);
+      await client.rpush("l", "a", undefined);
+    });
+    expect(received).toEqual([
+      ["LPOP", "l"],
+      ["ZRANK", "z", "m"],
+      ["HSCAN", "h", "0"],
+      ["SET", "k", "v"],
+      ["SET", "k", "v", "NX"],
+      ["BITCOUNT", "k"],
+      ["SADD", "s", "a"],
+      ["HMGET", "h", "f1"],
+      ["DEL", "a"],
+      ["MGET", "a", "b"],
+      ["RPUSH", "l", "a"],
+    ]);
+  });
+
+  test("a call that is refused for an undefined/null argument writes nothing", async () => {
+    const received = await recordCommands(async (client: any) => {
+      for (const refused of [
+        () => client.mget("a", undefined, "c"),
+        () => client.zmscore("z", "a", undefined, "c"),
+        () => client.sadd("s", "a", undefined, "b"),
+        () => client.srem("s", "a", null, "b"),
+        () => client.hmget("h", "f1", undefined, "f2"),
+        () => client.set("lock", "owner-2", undefined, "NX"),
+        () => client.hscan("h", 0, "MATCH", undefined, "NOVALUES"),
+        () => client.zrank("z", undefined, "WITHSCORE"),
+        () => client.rpush(undefined, "a", "b"),
+      ]) {
+        expect(refused).toThrow("to be a string or buffer");
+      }
+      await client.ping();
+    });
+    expect(received).toEqual([["PING"]]);
+  });
+
+  // Every method is called with ("a", 1, undefined or null, "d"). A rest parameter starts at the
+  // first, second or third argument, so the undefined/null is inside it and a real argument
+  // follows it. A method has to throw before it writes, unless it is listed here.
+  const readsNoArgument = ["dbsize", "lastsave", "randomkey", "time"];
+  // prettier-ignore
+  const readsOneArgument = [
+    "decr", "dump", "echo", "exists", "expiretime", "get", "getdel", "hgetall", "hkeys", "hlen", "hvals", "incr",
+    "keys", "llen", "persist", "pexpiretime", "ping", "pttl", "scard", "smembers", "strlen", "ttl", "type", "xlen",
+    "zcard",
+  ];
+  // prettier-ignore
+  const readsTwoArguments = [
+    "append", "decrby", "expire", "expireat", "getbit", "getset", "hexists", "hget", "hstrlen", "incrby",
+    "incrbyfloat", "lindex", "pexpire", "pexpireat", "pfadd", "rename", "renamenx", "rpoplpush", "setnx", "sismember",
+    "spop", "spublish", "srandmember", "wait", "zscore",
+  ];
+  // prettier-ignore
+  const dropsTheArgument = [
+    "del", "hdel", "hrandfield", "lpop", "lpush", "lpushx", "rpop", "rpush", "rpushx", "touch", "unlink", "zpopmax",
+    "zpopmin", "zrandmember", "zrangebylex", "zrank", "zrem", "zrevrangebylex", "zrevrank",
+  ];
+  // hincrby and hincrbyfloat are not called: they send an undefined/null increment as the text
+  // "undefined" or "null". #41640 makes them throw.
+  const notCalled = new Set(["constructor", "connect", "close", "duplicate", "hincrby", "hincrbyfloat"]);
+
+  test.each([undefined, null])("only the listed methods write a command for (a, 1, %p, d)", async hole => {
+    const methods = Object.getOwnPropertyNames(RedisClient.prototype).filter(
+      name =>
+        !notCalled.has(name) &&
+        typeof Object.getOwnPropertyDescriptor(RedisClient.prototype, name)!.value === "function",
+    );
+    expect(methods.length).toBeGreaterThan(200);
+
+    const wrote: string[] = [];
+    const received = await recordCommands(async (client: any) => {
+      for (const name of methods) {
+        let reply;
+        try {
+          reply = client[name]("a", 1, hole, "d");
+        } catch {
+          continue;
+        }
+        wrote.push(name);
+        await reply;
+      }
+      await client.ping();
+    });
+    expect(Object.fromEntries(wrote.map((name, i) => [name, received[i]]))).toEqual({
+      ...Object.fromEntries(readsNoArgument.map(name => [name, [name.toUpperCase()]])),
+      ...Object.fromEntries(readsOneArgument.map(name => [name, [name.toUpperCase(), "a"]])),
+      ...Object.fromEntries(readsTwoArguments.map(name => [name, [name.toUpperCase(), "a", "1"]])),
+      ...Object.fromEntries(dropsTheArgument.map(name => [name, [name.toUpperCase(), "a", "1", "d"]])),
+      getBuffer: ["GET", "a"],
+    });
+    expect(received.slice(wrote.length)).toEqual([["PING"]]);
   });
 });
 

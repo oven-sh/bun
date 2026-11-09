@@ -314,8 +314,10 @@ describe.concurrent("`import` rules give each importer the parse error of its ow
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     if (!stdout.startsWith("[")) throw new Error(`exit code ${exitCode}\n${stdout}\n${stderr}`);
-    const results: { filePath: string; messages: { ruleId: string | null; line: number; column: number; message: string }[] }[] =
-      JSON.parse(stdout);
+    const results: {
+      filePath: string;
+      messages: { ruleId: string | null; line: number; column: number; message: string }[];
+    }[] = JSON.parse(stdout);
     return results
       .flatMap(it => it.messages.map(m => ({ ...m, path: relative(String(dir), it.filePath).replaceAll("\\", "/") })))
       .filter(it => it.ruleId?.startsWith("import/"))
@@ -392,20 +394,25 @@ describe.concurrent("`import` rules give each importer the parse error of its ow
   });
 
   // Both importers read ES2017. A `/* eslint-env */` comment in the imported file raises the edition only where the
-  // config gets it from an `env`, because `parserOptions.ecmaVersion` wins over every environment.
-  test.each(sides)("an ESLint 8 config's `env` and a comment decide the edition (%s first)", async (first, second) => {
-    const files = {
-      ".eslintrc.json": `{ "root": true, "plugins": ["import"], "rules": { "import/default": "error" } }`,
-      "with/.eslintrc.json": `{ "parserOptions": { "ecmaVersion": 2017, "sourceType": "module" } }`,
-      "without/.eslintrc.json": `{ "env": { "es2017": true }, "parserOptions": { "sourceType": "module" } }`,
-      "shared.js": "/* eslint-env es2020 */\nconst a = null ?? 1;\nexport default a;\n",
-      "with/a.mjs": importer,
-      "without/b.mjs": importer,
-    };
-    expect(await lintImporters(files, first, second)).toEqual([
-      `with/a.mjs 1:20 import/default Parse errors in imported module '../shared.js': Unexpected token ? (2:17)`,
-    ]);
-  });
+  // config gets it from an `env`, because `parserOptions.ecmaVersion` wins over every environment. Resolving an ESLint
+  // 8 config takes a debug build a few seconds.
+  test.each(sides)(
+    "an ESLint 8 config's `env` and a comment decide the edition (%s first)",
+    async (first, second) => {
+      const files = {
+        ".eslintrc.json": `{ "root": true, "plugins": ["import"], "rules": { "import/default": "error" } }`,
+        "with/.eslintrc.json": `{ "parserOptions": { "ecmaVersion": 2017, "sourceType": "module" } }`,
+        "without/.eslintrc.json": `{ "env": { "es2017": true }, "parserOptions": { "sourceType": "module" } }`,
+        "shared.js": "/* eslint-env es2020 */\nconst a = null ?? 1;\nexport default a;\n",
+        "with/a.mjs": importer,
+        "without/b.mjs": importer,
+      };
+      expect(await lintImporters(files, first, second)).toEqual([
+        `with/a.mjs 1:20 import/default Parse errors in imported module '../shared.js': Unexpected token ? (2:17)`,
+      ]);
+    },
+    20_000,
+  );
 });
 
 describe.concurrent("rules that sort", () => {

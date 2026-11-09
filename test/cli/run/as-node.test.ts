@@ -26,6 +26,52 @@ describe("fake node cli", () => {
       expect(exitCode).toBe(0);
     }
   });
+  test("finds node after bun's own flags", () => {
+    using dir = tempDir("fake-node", { "index.js": `console.log("ran")` });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "--cwd", String(dir), "node", "index.js"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("ran");
+    expect(exitCode).toBe(0);
+  });
+  test("skips a node option instead of using it as the file", () => {
+    using dir = tempDir("fake-node", { "index.js": `console.log("ran")` });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", "--inspect", "index.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString().trim()).toBe("ran");
+    expect(exitCode).toBe(0);
+  });
+  test("runs an explicitly empty eval script", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", "-e", ""],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("");
+    expect(exitCode).toBe(0);
+  });
+  test("rejects an eval option with no value", () => {
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "node", "-e"],
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stderr.toString()).toContain("--eval");
+    expect(exitCode).not.toBe(0);
+  });
   test("reads a script from stdin with -", () => {
     const { stdout, stderr, exitCode } = Bun.spawnSync({
       cmd: [bunExe(), "--bun", "node", "-"],

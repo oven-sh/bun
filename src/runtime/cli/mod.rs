@@ -779,27 +779,9 @@ pub(crate) mod command {
             return Tag::RunAsNodeCommand;
         }
 
-        let Some(mut first_arg_name) = iter.next() else {
+        let Some(first_arg_name) = super::script_or_command::first_word() else {
             return Tag::AutoCommand;
         };
-        while !first_arg_name.is_empty()
-            && first_arg_name[0] == b'-'
-            && !(first_arg_name.len() > 1 && first_arg_name[1] == b'e')
-        {
-            // `--interactive` stays on AutoCommand: Arguments.rs parses it and the no-target check
-            // routes to RunCommand::exec_node_repl. An early ReplCommand return here would bypass
-            // that and boot the legacy `bun repl` implementation instead.
-            match iter.next() {
-                Some(n) => first_arg_name = n,
-                None => return Tag::AutoCommand,
-            }
-        }
-
-        // `bun --cwd <dir> lint`: `<dir>` is the value of a flag.
-        let starts_with_flag = argv.get(1).is_some_and(|it| it.starts_with(b"-"));
-        if starts_with_flag && let Some(it) = super::script_or_command::command_after_flags() {
-            first_arg_name = it;
-        }
 
         if first_arg_name == b"node" {
             // `bun node <file>`: emulate node even though argv0 is "bun".

@@ -7,8 +7,8 @@
 //! | `hasSpreadOperator(context, property)` | `property.is_rest()` |
 //! | `name in Object.prototype` | `util_prop_types::is_in_object_prototype(name)` |
 //!
-//! Where upstream throws, nothing is done: an `ObjectPattern` that is no parameter, two levels
-//! below a property with the name of a lifecycle method.
+//! Nothing happens where upstream throws, which is for an `ObjectPattern` that isn't a parameter
+//! and sits two levels below a property named like a lifecycle method.
 
 use crate::util_ast::{
     self, Property, get_key_value, get_property_name_node, in_constructor, is_assignment_lhs,
@@ -51,12 +51,12 @@ fn concat<'a>(parent_names: &[&'a [u8]], name: &'a [u8]) -> AllNames<'a> {
     all_names
 }
 
-/// `createPropVariables`: the variable by its name, to its definition. Where upstream copies the
-/// map for a scope, this remembers what the scope overwrites, and puts it back at the end.
+/// `createPropVariables`: maps a variable's name to its definition. Where upstream copies the map
+/// for a scope, this records what the scope overwrites and restores it at the end.
 struct PropVariables<'a> {
     prop_variables: FxHashMap<Name<'a>, AllNames<'a>>,
     has_been_written: bool,
-    /// For each scope that has a map of its own upstream: how long `overwritten` was before.
+    /// For each scope that has its own map upstream: the length of `overwritten` before it.
     stack: Vec<Option<usize>>,
     overwritten: Vec<(Name<'a>, Option<AllNames<'a>>)>,
 }
@@ -71,8 +71,9 @@ impl<'a> PropVariables<'a> {
         }
     }
 
-    /// As upstream, `has_been_written` stays what the last `pop_scope` has made it: after that, a
-    /// scope in one that has written writes to the map of that one.
+    /// Like upstream, this leaves `has_been_written` as the last `pop_scope` set it. So after a
+    /// `pop_scope`, a new scope inside a scope that has written keeps writing to that outer scope's
+    /// map.
     fn push_scope(&mut self) {
         self.stack.push(None);
     }
@@ -103,7 +104,7 @@ impl<'a> PropVariables<'a> {
         self.overwritten.push((name, before));
     }
 
-    /// The definition of a variable.
+    /// Returns a variable's definition.
     fn get(&self, name: Name<'a>) -> Option<&AllNames<'a>> {
         self.prop_variables.get(&name)
     }
@@ -117,22 +118,22 @@ fn must_be_validated(component: &Component<'_>) -> bool {
     !component.ignore_props_validation
 }
 
-/// `name` is in `LIFE_CYCLE_METHODS`, or in the other list if that counts.
+/// True if `name` is in `LIFE_CYCLE_METHODS`, or in the async-safe list if that's checked too.
 fn is_name_of_life_cycle_method(name: &[u8], check_async_safe_life_cycles: bool) -> bool {
     LIFE_CYCLE_METHODS.contains(&name)
         || (check_async_safe_life_cycles && ASYNC_SAFE_LIFE_CYCLE_METHODS.contains(&name))
 }
 
-/// `node.parent`, if that has a `key`, for a function, a class or the initializer of a field: a
-/// `Member` or a `Prop`.
+/// `node.parent` if it has a `key`, for a function, a class or a field's initializer. The result is
+/// a `Member` or a `Prop`.
 fn parent_with_key(node: Node<'_>) -> Option<Node<'_>> {
-    let written = node.as_written();
-    match written {
+    let source_node = node.owner_or_self();
+    match source_node {
         // A signature is the node itself.
-        Node::Member(member) => (!member.is_signature()).then_some(written),
+        Node::Member(member) => (!member.is_signature()).then_some(source_node),
         Node::Expr(e) => match e.parent() {
             parent @ Node::Prop(_) => Some(parent),
-            // Not from a decorator.
+            // A decorator doesn't count.
             parent @ Node::Member(member) => (member.init() == Some(e)).then_some(parent),
             _ => None,
         },
@@ -156,14 +157,14 @@ fn is_node_a_life_cycle_method(node: Node<'_>, check_async_safe_life_cycles: boo
 }
 
 fn is_set_state_updater(node: Func<'_>) -> bool {
-    let Some(written) = node.owner().as_expr() else {
+    let Some(function_expr) = node.owner().as_expr() else {
         return false;
     };
-    let parent = written.parent().as_expr().and_then(Expr::as_call);
+    let parent = function_expr.parent().as_expr().and_then(Expr::as_call);
     parent.is_some_and(|parent| {
         is_member_called(unwrap_ts_as_expression(parent.callee()), "setState")
             // Make sure we are in the updater not the callback
-            && parent.args().first() == Some(written)
+            && parent.args().first() == Some(function_expr)
     })
 }
 
@@ -187,7 +188,7 @@ fn is_in_class_component(node: Node<'_>, pragmas: &Pragmas<'_>) -> bool {
         || get_parent_es5_component(node, pragmas).is_some()
 }
 
-/// `isThisDotProps`, for a node that is reached from above.
+/// `isThisDotProps`, for a node as its parent sees it.
 fn is_this_dot_props(node: Expr<'_>) -> bool {
     is_member_called(node, "props")
         && (node.object()).is_some_and(|it| unwrap_ts_as_expression(it).tag() == ExprTag::This)
@@ -218,7 +219,7 @@ fn is_prop_types_usage_by_member_expression(
     name.is_some_and(|name| name.is("props")) && !is_assignment_lhs(node)
 }
 
-/// `getPropertyName`. It can be empty.
+/// `getPropertyName`. The result can be empty.
 fn get_property_name<'a>(
     node: Expr<'a>,
     pragmas: &Pragmas<'_>,
@@ -270,7 +271,7 @@ fn get_parent_component<'a>(
     components.get(parent_component)
 }
 
-/// `components.set(component ? component.node : node, ..)`: whose properties are assigned to.
+/// `components.set(component ? component.node : node, ..)`. Returns the component whose properties are assigned.
 fn set<'a>(
     component: Option<ComponentId>,
     node: Node<'a>,
@@ -280,11 +281,12 @@ fn set<'a>(
     components.set(node)
 }
 
-/// `usedPropTypes` of `markPropTypesAsUsed`.
+/// `usedPropTypes` in `markPropTypesAsUsed`.
 struct UsedPropTypes<'a> {
-    /// It is the array of this component itself: what is pushed is in there at once, twice too.
+    /// Set if it's this component's own array. Then a push lands in the component immediately, duplicates included.
     of: Option<ComponentId>,
-    /// It is another array: at the end, what the component does not have yet is added.
+    /// Otherwise it's a separate array. At the end, the entries that the component doesn't have yet
+    /// are merged in.
     new: Vec<UsedPropType<'a>>,
 }
 
@@ -314,7 +316,7 @@ fn jsx_spread_attribute<'a>(node: Prop<'a>, components: &mut Components<'a>) {
 struct UsedPropTypesInstructions<'a> {
     check_async_safe_life_cycles: bool,
     prop_variables: PropVariables<'a>,
-    /// What `isInLifeCycleMethod` has found.
+    /// Cache for `isInLifeCycleMethod`.
     life_cycle_methods: AncestorMemo<'a, ()>,
 }
 
@@ -328,7 +330,7 @@ pub(crate) fn used<'a>(file: &'a File<'a>) -> Box<dyn Instructions<'a> + 'a> {
 }
 
 impl<'a> UsedPropTypesInstructions<'a> {
-    /// `isInLifeCycleMethod`, for a node that is no `MethodDefinition` and no `Property` itself.
+    /// `isInLifeCycleMethod`, for a node that isn't a `MethodDefinition` or `Property` itself.
     fn is_in_life_cycle_method(&mut self, node: Node<'a>) -> bool {
         let check_async_safe_life_cycles = self.check_async_safe_life_cycles;
         let found = (self.life_cycle_methods).find_with(node, estree_parent, |_, parent| {
@@ -363,7 +365,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
                 if let Some(name) = name.filter(|it| !it.is_empty()) {
                     let all_names = concat(parent_names, name);
                     match member.parent() {
-                        // It is in a `ChainExpression`.
+                        // Its parent is a `ChainExpression`.
                         _ if member.is_chain_root() => {}
                         // Match props.foo.bar, don't match bar[props.foo]
                         Node::Expr(parent)
@@ -400,7 +402,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
                         });
                 }
             }
-            // A `TSEmptyBodyFunctionExpression` is not looked at.
+            // Upstream skips a `TSEmptyBodyFunctionExpression`.
             Node::Func(func) if !func.has_body() => {}
             Node::Func(func) => properties = prop_param(func).and_then(properties_of_param),
             Node::Pat(pat) => match pat.kind() {
@@ -429,7 +431,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
                 ignore_unused_prop_types_validation = true;
                 break;
             }
-            // Only the value of a computed key is made here.
+            // Only a computed key produces an owned value, and those were handled above.
             let Some(Cow::Borrowed(prop_name)) = get_key_value(Node::PatProp(property)) else {
                 break;
             };
@@ -454,7 +456,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
                 PatKind::Object(_) => {
                     let value = Node::Pat(property.value());
                     self.mark_prop_types_as_used(value, &all_names, components);
-                    // Which has given the component another array.
+                    // That call replaced the component's array.
                     used_prop_types.of = None;
                 }
                 PatKind::Ident(value) => self.prop_variables.set(value, all_names),
@@ -477,13 +479,13 @@ impl<'a> UsedPropTypesInstructions<'a> {
         components: &mut Components<'a>,
     ) {
         let destructuring = prop_param(node).and_then(properties_of_param).is_some();
-        // Of a declaration it is a block, the program or an `export`, which are no components.
+        // A declaration's parent is a block, the program or an `export`, none of which is a component.
         let parent = || {
-            let written = node.owner().as_expr()?;
+            let function_expr = node.owner().as_expr()?;
             match estree_parent(Node::Func(node)) {
-                // It is in a `JSXExpressionContainer`, in a `Decorator`.
-                _ if written.jsx_container_span().is_some() => None,
-                Node::Class(class) if class.extends() != Some(written) => None,
+                // It's in a `JSXExpressionContainer` or a `Decorator`.
+                _ if function_expr.jsx_container_span().is_some() => None,
+                Node::Class(class) if class.extends() != Some(function_expr) => None,
                 parent => Some(parent),
             }
         };
@@ -557,7 +559,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
                 let key = get_key_value(Node::PatProp(property));
                 !property.is_rest() && key.is_some_and(|it| &*it == b"props")
             });
-            // With a default it is an `AssignmentPattern`.
+            // With a default, it's an `AssignmentPattern`.
             let Some(value) = props_property.filter(|it| it.default().is_none()) else {
                 return;
             };
@@ -620,7 +622,7 @@ impl<'a> UsedPropTypesInstructions<'a> {
 
 impl<'a> Instructions<'a> for UsedPropTypesInstructions<'a> {
     fn nodes(&self, file: &'a File<'a>, add: &mut dyn FnMut(Node<'a>, Visit)) {
-        // All that can be the name of the props or get into `propVariables`.
+        // Every name that can refer to the props or end up in `propVariables`.
         let mut names: FxHashSet<Name<'a>> = FxHashSet::default();
         names.extend(["props", "nextProps", "prevProps"].map(|it| file.name_of(it)));
 
@@ -714,7 +716,7 @@ impl<'a> Instructions<'a> for UsedPropTypesInstructions<'a> {
             Node::Func(node) => self.handle_function_like_expressions(node, components),
             Node::Prop(node) => jsx_spread_attribute(node, components),
             Node::Expr(node) => self.member_expression(node, components),
-            // ObjectPattern: `nodes` has looked at `node.parent.parent`.
+            // ObjectPattern: `nodes` has already checked `node.parent.parent`.
             Node::Pat(node) => {
                 if let Node::Param(param) = node.parent()
                     && let Some(func) = param.func()

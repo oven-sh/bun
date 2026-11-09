@@ -1,0 +1,281 @@
+use bun_sema::bind::{FnOwner, Parent};
+use bun_sema::check::aot::{
+    ClassDeclaration, ClassMember, ClassParent, ClassRef, FunctionRef, MemberName,
+    ObjectMemberKind, ShapeKind, TypeShape,
+};
+use bun_sema::fold::Constant;
+use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, Flags, FnBody, FnKind, MemberKey, UnOp};
+use smallvec::{SmallVec, smallvec};
+
+use crate::ir::generated::IllTypedCause;
+use crate::ir::{DeclaredType, PositionFlags, Primitives};
+use crate::lower::{CheckerTypeId, FileLowering, expression};
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum Construct {
+    Flow,
+    Assertion,
+    CallResult {
+        declaration: Option<FunctionRef>,
+        is_instantiated: bool,
+    },
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum Numbers {
+    None,
+    Int32s,
+    Any,
+}
+
+fn is_int32(number: f64) -> bool {
+    number == f64::from(number as i32) && (number != 0.0 || number.is_sign_positive())
+}
+
+pub(super) fn find_function_shape<'c>(
+    file: &mut FileLowering<'_, 'c, '_, '_>,
+    ty: CheckerTypeId,
+) -> Option<TypeShape<'c>> {
+    let shape = file.queries.type_shape(ty).ok()?;
+    let is_function = matches!(
+        shape.kind,
+        ShapeKind::Function(_) | ShapeKind::ClassConstructor(_)
+    );
+    is_function.then_some(shape)
+}
+
+impl FileLowering<'_, '_, '_, '_> {
+    pub(super) fn classify_call_result(&self, declaration: Option<FunctionRef>) -> IllTypedCause {
+        let Some(declaration) = declaration else {
+            return IllTypedCause::UnprovenCallee;
+        };
+        if !self.queries.file_trust(declaration.file).is_trusted() {
+            return IllTypedCause::DeclarationWithoutBody;
+        }
+        let files = self.queries.files();
+        let function = files.hir(declaration.file)[declaration.function];
+        match function.body {
+            FnBody::Block(_) | FnBody::Expr(_) => return IllTypedCause::None,
+            FnBody::None => {}
+        }
+        match function.kind {
+            FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
+                let bound = files.bound(declaration.file);
+                let is_implemented_elsewhere = match bound.fns[declaration.function.idx()].owner {
+                    FnOwner::Member(member) => {
+                        let is_abstract = files.hir(declaration.file)[member]
+                            .flags
+                            .contains(Flags::ABSTRACT);
+                        is_abstract || bound.member_class(member).is_none()
+                    }
+                    FnOwner::None | FnOwner::Expr(_) | FnOwner::Stmt(_) | FnOwner::Type(_) => false,
+                };
+                match is_implemented_elsewhere {
+                    true => IllTypedCause::None,
+                    false => IllTypedCause::DeclarationWithoutBody,
+                }
+            }
+            FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::StaticBlock => {
+                IllTypedCause::DeclarationWithoutBody
+            }
+            _ => IllTypedCause::None,
+        }
+    }
+
+    fn is_non_null_assertion(&self, mut expression: ExprId) -> bool {
+        while let ExprKind::Satisfies { expr: operand, .. } = self.hir[expression].kind {
+            expression = operand;
+        }
+        matches!(self.hir[expression].kind, ExprKind::NonNull(_))
+    }
+
+    fn find_numbers(&mut self, expression: ExprId) -> Numbers {
+        let Ok(ty) = self.queries.expression_type(expression) else {
+            return Numbers::Any;
+        };
+        if let Some(shape) = find_function_shape(self, ty) {
+            return match shape.trust.is_trusted() {
+                true => Numbers::None,
+                false => Numbers::Any,
+            };
+        }
+        let mapped = self.map_type_at(ty);
+        let ty = self.fragment.types.get(mapped.ty);
+        if !mapped.is_checked || ty.primitives.contains(Primitives::NUMBER) {
+            return Numbers::Any;
+        }
+        match ty.integer_range() {
+            None => Numbers::None,
+            Some((minimum, maximum)) => {
+                match i64::from(i32::MIN) <= minimum && maximum <= i64::from(i32::MAX) {
+                    true => Numbers::Int32s,
+                    false => Numbers::Any,
+                }
+            }
+        }
+    }
+
+    pub(in crate::lower) fn breaks_no_int32_promise(&mut self, source: ExprId) -> bool {
+        let hir = self.hir;
+        let decisions = self.decisions();
+        let mut pending: SmallVec<[ExprId; 4]> = smallvec![source];
+        while let Some(flowing) = pending.pop() {
+            match expression::find_constant(self, flowing) {
+                Some(Constant::Number(number)) if !is_int32(number) => return false,
+                Some(_) => continue,
+                None => {}
+            }
+            if let Some(operand) = hir.type_assertion_operand(flowing) {
+                pending.push(operand);
+                continue;
+            }
+            let is_read = match hir[flowing].kind {
+                ExprKind::Cond { branches, .. } => {
+                    let Branches { yes, no } = hir.branches(branches);
+                    pending.extend(
+                        [yes, no]
+                            .into_iter()
+                            .filter(|&arm| !decisions.is_dead_expr(arm)),
+                    );
+                    continue;
+                }
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } => {
+                    pending.extend(
+                        [left, right]
+                            .into_iter()
+                            .filter(|&side| !decisions.is_dead_expr(side)),
+                    );
+                    continue;
+                }
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => {
+                    pending.push(right);
+                    continue;
+                }
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                    !self.reads_field_that_may_be_absent(flowing)
+                }
+                ExprKind::Ident(_)
+                | ExprKind::Call(_)
+                | ExprKind::TaggedTemplate(_)
+                | ExprKind::Await(_) => true,
+                _ => false,
+            };
+            match self.find_numbers(flowing) {
+                Numbers::None => {}
+                Numbers::Int32s if is_read => {}
+                Numbers::Int32s | Numbers::Any => return false,
+            }
+        }
+        true
+    }
+
+    fn reads_field_that_may_be_absent(&mut self, access: ExprId) -> bool {
+        let Some((object, MemberKey::Name(name))) = self.hir.member_key(access) else {
+            return false;
+        };
+        let receiver = self.queries.expression_type(object);
+        let shape = receiver.and_then(|receiver| self.queries.type_shape(receiver));
+        let Ok(ShapeKind::Class(class)) = shape.map(|shape| shape.kind) else {
+            return false;
+        };
+        let is_read =
+            |member: &&ClassMember| !member.is_static && member.name == MemberName::String(name);
+        let mut row: SmallVec<[ClassRef; 4]> = smallvec![class];
+        loop {
+            let class = row[row.len() - 1];
+            if let Some(member) = self.queries.class_shape(class).members.iter().find(is_read) {
+                return member.kind == ObjectMemberKind::Field && member.is_optional;
+            }
+            match self.queries.class_parent(class) {
+                Some(ClassParent::Declared(ClassDeclaration::Class(above)))
+                    if !row.contains(&above) =>
+                {
+                    row.push(above);
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    fn is_reckoned_with(&self, read: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut value = read;
+        while let Parent::Expr(user) = bound.parent_of_expr(value)
+            && user.is_some()
+        {
+            match hir[user].kind {
+                ExprKind::Unary {
+                    op: UnOp::Plus | UnOp::Minus | UnOp::BitNot,
+                    ..
+                }
+                | ExprKind::Assign { op: Some(_), .. }
+                | ExprKind::Call(_) => return true,
+                ExprKind::Binary { op, .. } => match op {
+                    BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => value = user,
+                    BinOp::EqEq
+                    | BinOp::NotEq
+                    | BinOp::EqEqEq
+                    | BinOp::NotEqEq
+                    | BinOp::In
+                    | BinOp::Instanceof => return false,
+                    _ => return true,
+                },
+                ExprKind::Cond { test, .. } if test != value => value = user,
+                ExprKind::NonNull(_) | ExprKind::As { .. } | ExprKind::Satisfies { .. } => {
+                    value = user;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    pub(in crate::lower) fn position_of_int32_read(
+        &mut self,
+        read: ExprId,
+    ) -> Option<DeclaredType> {
+        if self.find_numbers(read) != Numbers::Int32s || self.reads_field_that_may_be_absent(read) {
+            return None;
+        }
+        let ty = self.queries.expression_type(read).ok()?;
+        let mapped = self.map_type_at(ty);
+        let range = self.fragment.types.get(mapped.ty).integer_range();
+        let every_int32 = (i64::from(i32::MIN), i64::from(i32::MAX));
+        (range == Some(every_int32) || self.is_reckoned_with(read))
+            .then(|| DeclaredType::new(mapped, None, PositionFlags::default()))
+    }
+
+    pub(super) fn find_cause(
+        &self,
+        position: DeclaredType,
+        source: Option<ExprId>,
+        construct: Construct,
+    ) -> IllTypedCause {
+        if position.is_expected() {
+            return IllTypedCause::None;
+        }
+        if source.is_some_and(|source| self.is_non_null_assertion(source)) {
+            return IllTypedCause::Assertion;
+        }
+        match construct {
+            Construct::Flow => IllTypedCause::None,
+            Construct::Assertion => IllTypedCause::Assertion,
+            Construct::CallResult {
+                is_instantiated: true,
+                ..
+            } => IllTypedCause::FromLooseType,
+            Construct::CallResult {
+                declaration,
+                is_instantiated: false,
+            } => self.classify_call_result(declaration),
+        }
+    }
+}

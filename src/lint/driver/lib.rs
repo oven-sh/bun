@@ -1,16 +1,15 @@
-//! `bun lint` and `bun fmt` without the command line: finds the configuration and the files,
-//! parses them, type checks them if a rule asks for types, runs the rules or the formatter on all
-//! cores, and prints what they report.
+//! `bun lint` and `bun fmt` without the command line: finds the config and the files, parses them, type checks them if
+//! a rule needs types, runs the rules or the formatter on all cores, and prints the results.
 //!
 //! - [`cli`]: the flags.
 //! - [`bunfig`]: their defaults in bunfig.toml.
-//! - [`run`]: `bun lint`, given the flags and an [`Environment`].
+//! - [`run`]: runs `bun lint`, given the flags and an [`Environment`].
 //! - [`fmt`]: the same for `bun fmt`.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
-// For what a flag like `--doctor`, `--rules` or `--init` runs once: `#[optimize(size)]` roughly halves it, and how fast it is
-// doesn't matter. Nothing that runs for each file has it.
+// For code that a flag like `--doctor`, `--rules` or `--init` runs once. `#[optimize(size)]` roughly halves its size,
+// and its speed doesn't matter. Nothing that runs per file has it.
 #![feature(optimize_attribute)]
 
 mod args;
@@ -43,11 +42,11 @@ mod run;
 mod suppressions;
 mod typed;
 
-/// With all the rules that there are.
+/// A linter with every rule registered.
 pub(crate) type Linter = bun_lint::linter::Linter<rules::Rules>;
 
 pub use args::Param;
 pub use bun_lint::js_plugin;
 pub(crate) use bun_lint::paths;
 pub use bun_lint::paths::from_native as from_native_path;
-pub use run::{Environment, Outcome, Script, Stream, refuse_command_line, run};
+pub use run::{Environment, Outcome, Script, Stream, reject_command_line, run};

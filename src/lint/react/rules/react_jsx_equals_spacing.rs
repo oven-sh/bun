@@ -4,14 +4,14 @@ use bun_lint::rule::Plugin;
 
 /// Enforce or disallow spaces around equal signs in JSX attributes
 pub struct JsxEqualsSpacing {
-    /// `"always"`, not `"never"`
+    /// True for `"always"`, false for `"never"`.
     always: bool,
 }
 
-const NO_SPACE_BEFORE: Message = Message::new("noSpaceBefore", "There should be no space before '='");
-const NO_SPACE_AFTER: Message = Message::new("noSpaceAfter", "There should be no space after '='");
-const NEED_SPACE_BEFORE: Message = Message::new("needSpaceBefore", "A space is required before '='");
-const NEED_SPACE_AFTER: Message = Message::new("needSpaceAfter", "A space is required after '='");
+const NO_SPACE_BEFORE: &Message = &Message::new("noSpaceBefore", "There should be no space before '='");
+const NO_SPACE_AFTER: &Message = &Message::new("noSpaceAfter", "There should be no space after '='");
+const NEED_SPACE_BEFORE: &Message = &Message::new("needSpaceBefore", "A space is required before '='");
+const NEED_SPACE_AFTER: &Message = &Message::new("needSpaceAfter", "A space is required after '='");
 
 impl Rule for JsxEqualsSpacing {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-equals-spacing", Kind::None).fixable(Fixable::Code);
@@ -57,7 +57,7 @@ impl Rule for JsxEqualsSpacing {
     }
 }
 
-/// `isSpaceBetweenTokens` of `first` and the token that starts at `second`, the next one.
+/// `isSpaceBetweenTokens` for `first` and the next token, which starts at `second`.
 fn is_spaced<'a>(file: &'a File<'a>, first: Span, second: u32) -> bool {
     match file.slice(Span::after(first, second)).first() {
         None => false,

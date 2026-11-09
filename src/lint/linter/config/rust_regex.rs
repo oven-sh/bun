@@ -1,9 +1,9 @@
-//! What Rust's `regex` says about a pattern that it cannot parse. oxlint compiles the patterns in the options of its rules with
-//! it, and refuses a configuration file with these words.
+//! The errors of Rust's `regex` crate for a pattern it can't parse. oxlint compiles the patterns in its rules' options
+//! with that crate, and rejects a config file with these messages.
 //!
-//! This is the parser of `regex-syntax` 0.8 without the tree: function by function, under the same names. Of what comes after the
-//! parser it has what `(?-u)` makes wrong. It does not know the names of Unicode's properties that are longer than a letter, how
-//! deep a pattern can be nested or how large a compiled one can be, and lets all that pass.
+//! This is `regex-syntax` 0.8's parser without the tree, function by function, under the same names. Of the stages
+//! after the parser, it only has the checks that `(?-u)` can fail. It doesn't know the Unicode property names longer
+//! than one letter, the nesting limit or the size limit of a compiled pattern, so it accepts all of those.
 
 use bun_core::strings;
 
@@ -11,7 +11,7 @@ use bun_core::strings;
 struct Position {
     offset: usize,
     line: usize,
-    /// In characters, from 1.
+    /// In characters, 1-based.
     column: usize,
 }
 
@@ -24,7 +24,7 @@ struct Span {
 struct Error {
     kind: &'static str,
     span: Span,
-    /// Where the first of two is.
+    /// The span of the first of two conflicting items.
     original: Option<Span>,
 }
 
@@ -39,7 +39,7 @@ enum Primitive {
     Assertion,
 }
 
-/// What a repetition would repeat.
+/// The item a repetition operator would repeat.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Last {
     Nothing,
@@ -47,14 +47,14 @@ enum Last {
     Expression,
 }
 
-/// What flags say about `x` and `u`.
+/// A flag group's settings for `x` and `u`.
 #[derive(Copy, Clone, Default)]
 struct Flags {
     ignore_whitespace: Option<bool>,
     unicode: Option<bool>,
 }
 
-/// Which of them are on.
+/// The current state of those flags.
 #[derive(Copy, Clone)]
 struct Modes {
     ignore_whitespace: bool,
@@ -62,7 +62,7 @@ struct Modes {
 }
 
 enum GroupState {
-    /// With what holds again after it.
+    /// With the modes to restore after it.
     Group {
         span: Span,
         modes: Modes,
@@ -96,11 +96,11 @@ struct Parser<'p> {
     pos: Position,
     modes: Modes,
     stack_group: Vec<GroupState>,
-    /// A class that is open and whether it is negated, or `None` for an operator in one.
+    /// An open class and whether it's negated, or `None` for an operator inside one.
     stack_class: Vec<Option<(Span, bool)>>,
     capture_names: Vec<(&'p str, Span)>,
-    /// The first thing that is refused after all of the pattern is parsed.
-    later: Option<Error>,
+    /// The first error that's only reported after the whole pattern has parsed.
+    deferred_error: Option<Error>,
 }
 
 #[optimize(size)]
@@ -186,11 +186,11 @@ impl<'p> Parser<'p> {
 
     #[optimize(size)]
     fn bump_if(&mut self, prefix: &str) -> bool {
-        let is_there = self.rest().starts_with(prefix);
-        if is_there {
+        let has_prefix = self.rest().starts_with(prefix);
+        if has_prefix {
             prefix.chars().for_each(|_| _ = self.bump());
         }
-        is_there
+        has_prefix
     }
 
     #[optimize(size)]
@@ -241,7 +241,7 @@ impl<'p> Parser<'p> {
             return self.peek();
         }
         let mut is_in_comment = false;
-        // Whatever is in a comment ends it, as there.
+        // Any non-space character inside a comment ends the search, as in upstream.
         self.rest().chars().skip(1).find(|&c| {
             if c.is_whitespace() {
                 return false;
@@ -296,9 +296,9 @@ impl<'p> Parser<'p> {
     }
 
     #[optimize(size)]
-    fn refuse_after_parsing(&mut self, span: Span, kind: &'static str) {
-        if self.later.is_none() {
-            self.later = Some(Error {
+    fn defer_error(&mut self, span: Span, kind: &'static str) {
+        if self.deferred_error.is_none() {
+            self.deferred_error = Some(Error {
                 kind,
                 span,
                 original: None,
@@ -306,11 +306,11 @@ impl<'p> Parser<'p> {
         }
     }
 
-    /// With `(?-u)` a pattern matches bytes, and must not match what is no UTF-8.
+    /// With `(?-u)` a pattern matches bytes, and it must not match invalid UTF-8.
     #[optimize(size)]
-    fn refuse_later(&mut self, span: Span, kind: &'static str) {
+    fn defer_error_unless_unicode(&mut self, span: Span, kind: &'static str) {
         if !self.modes.unicode {
-            self.refuse_after_parsing(span, kind);
+            self.defer_error(span, kind);
         }
     }
 
@@ -532,7 +532,7 @@ impl<'p> Parser<'p> {
         Ok(())
     }
 
-    /// Whether there are none, and what they say.
+    /// Returns whether there are no flags, and what the flags set.
     #[optimize(size)]
     fn parse_flags(&mut self) -> Parsed<(bool, Flags)> {
         let mut items: Vec<(char, Span)> = Vec::new();
@@ -577,7 +577,7 @@ impl<'p> Parser<'p> {
     fn parse_primitive(&mut self) -> Parsed<()> {
         match self.char() {
             '\\' => return self.parse_escape(false).map(|_| ()),
-            '.' => self.refuse_later(self.span_char(), INVALID_UTF8),
+            '.' => self.defer_error_unless_unicode(self.span_char(), INVALID_UTF8),
             _ => {}
         }
         self.bump();
@@ -600,24 +600,24 @@ impl<'p> Parser<'p> {
                 let (c, end, is_byte) = self.parse_hex()?;
                 let span = Span { start, end };
                 match c.is_ascii() {
-                    false if is_byte => self.refuse_later(span, INVALID_UTF8),
-                    false if is_in_class => self.refuse_later(span, NO_UNICODE),
+                    false if is_byte => self.defer_error_unless_unicode(span, INVALID_UTF8),
+                    false if is_in_class => self.defer_error_unless_unicode(span, NO_UNICODE),
                     _ => {}
                 }
                 return Ok((Primitive::Literal(c), span));
             }
             'p' | 'P' => {
                 let is_known = self.parse_unicode_class()?;
-                self.refuse_later(self.span_from(start), NO_UNICODE);
+                self.defer_error_unless_unicode(self.span_from(start), NO_UNICODE);
                 if !is_known {
-                    self.refuse_after_parsing(self.span_from(start), "Unicode property not found");
+                    self.defer_error(self.span_from(start), "Unicode property not found");
                 }
                 return Ok((Primitive::Class, self.span_from(start)));
             }
             'd' | 's' | 'w' | 'D' | 'S' | 'W' => {
                 self.bump();
                 if c.is_ascii_uppercase() {
-                    self.refuse_later(self.span_from(start), INVALID_UTF8);
+                    self.defer_error_unless_unicode(self.span_from(start), INVALID_UTF8);
                 }
                 return Ok((Primitive::Class, self.span_from(start)));
             }
@@ -684,7 +684,7 @@ impl<'p> Parser<'p> {
         }
     }
 
-    /// The character, where the literal ends, and whether it is `\xFF`, which is a byte with `(?-u)`.
+    /// Returns the character, the literal's end, and whether it's `\xFF`, which is a byte with `(?-u)`.
     #[optimize(size)]
     fn parse_hex(&mut self) -> Parsed<(char, Position, bool)> {
         let digits = match self.char() {
@@ -803,7 +803,7 @@ impl<'p> Parser<'p> {
                     let open = self.stack_class.pop().flatten();
                     self.bump();
                     if let Some((open, true)) = open {
-                        self.refuse_later(self.span_from(open.start), INVALID_UTF8);
+                        self.defer_error_unless_unicode(self.span_from(open.start), INVALID_UTF8);
                     }
                     if self.stack_class.is_empty() {
                         return Ok(());
@@ -867,13 +867,13 @@ impl<'p> Parser<'p> {
         }
         let item = (Primitive::Literal(self.char()), self.span_char());
         if !self.char().is_ascii() {
-            self.refuse_later(item.1, NO_UNICODE);
+            self.defer_error_unless_unicode(item.1, NO_UNICODE);
         }
         self.bump();
         Ok(item)
     }
 
-    /// Where it is, and whether the class is negated.
+    /// Returns its span, and whether the class is negated.
     #[optimize(size)]
     fn parse_set_class_open(&mut self) -> Parsed<(Span, bool)> {
         let start = self.pos;
@@ -897,7 +897,7 @@ impl<'p> Parser<'p> {
         Ok((self.span_from(start), is_negated))
     }
 
-    /// Whether `[:alpha:]` or the like was here.
+    /// True if `[:alpha:]` or similar was parsed here.
     #[optimize(size)]
     fn maybe_parse_ascii_class(&mut self) -> bool {
         let start = self.pos;
@@ -935,16 +935,16 @@ impl<'p> Parser<'p> {
                         | "xdigit"
                 )
         };
-        let is_one = parse();
-        if !is_one {
+        let is_ascii_class = parse();
+        if !is_ascii_class {
             self.pos = start;
         } else if is_negated {
-            self.refuse_later(self.span_from(start), INVALID_UTF8);
+            self.defer_error_unless_unicode(self.span_from(start), INVALID_UTF8);
         }
-        is_one
+        is_ascii_class
     }
 
-    /// Whether there can be such a class.
+    /// Returns whether such a class can exist.
     #[optimize(size)]
     fn parse_unicode_class(&mut self) -> Parsed<bool> {
         if !self.bump_and_bump_space() {
@@ -982,7 +982,7 @@ fn lines(pattern: &[u8]) -> Vec<&[u8]> {
     all
 }
 
-/// `Display` of `regex_syntax::Error`
+/// `regex_syntax::Error`'s `Display`.
 #[optimize(size)]
 fn describe(pattern: &[u8], error: &Error) -> Vec<u8> {
     let lines = lines(pattern);
@@ -991,7 +991,7 @@ fn describe(pattern: &[u8], error: &Error) -> Vec<u8> {
         0 | 1 => 0,
         _ => line_count.to_string().len(),
     };
-    // In the order of the pattern.
+    // In pattern order.
     let spans: Vec<Span> = match error.original {
         Some(original) if original.start.offset <= error.span.start.offset => {
             vec![original, error.span]
@@ -1051,7 +1051,7 @@ fn describe(pattern: &[u8], error: &Error) -> Vec<u8> {
     out
 }
 
-/// What `regex::Regex::new(pattern)` fails with, as it is printed. `None`: nothing is wrong with the syntax.
+/// The printed error of `regex::Regex::new(pattern)`. `None` if the syntax is fine.
 #[optimize(size)]
 pub(super) fn syntax_error(pattern: &[u8]) -> Option<Vec<u8>> {
     let text = std::str::from_utf8(pattern).ok()?;
@@ -1069,8 +1069,8 @@ pub(super) fn syntax_error(pattern: &[u8]) -> Option<Vec<u8>> {
         stack_group: Vec::new(),
         stack_class: Vec::new(),
         capture_names: Vec::new(),
-        later: None,
+        deferred_error: None,
     };
-    let error = parser.parse().err().or(parser.later)?;
+    let error = parser.parse().err().or(parser.deferred_error)?;
     Some(describe(pattern, &error))
 }

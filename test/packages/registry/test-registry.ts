@@ -1,5 +1,5 @@
 import { write } from "bun";
-import { tempDir, type DirectoryTree } from "harness";
+import { bunEnv, tempDir, type DirectoryTree } from "harness";
 import { join } from "node:path";
 import { Registry, type RegistryOptions } from "./src/registry.ts";
 
@@ -21,6 +21,15 @@ export type BunfigOptions = {
 
 /** The packages that bun's install tests share: `test/cli/install/registry/packages`. */
 export const fixturePackages = join(import.meta.dir, "..", "..", "cli", "install", "registry", "packages");
+
+/**
+ * The environment for `bun install` in a project that must not share its cache (and with it the global store,
+ * `<cache>/links`) with the tests that run at the same time. `writeBunfig()` names the same directory, but CI exports
+ * one `BUN_INSTALL_CACHE_DIR` per test file, and the variable wins over bunfig.toml.
+ */
+export function installEnv(dir: string, env: NodeJS.Dict<string> = bunEnv) {
+  return { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
+}
 
 /**
  * A registry that serves the fixture packages, with the helpers that bun's install tests need.

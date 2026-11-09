@@ -195,12 +195,7 @@ public:
         m_sb.append(m_paramsRaw ? "}"_s : "}}"_s);
         if (m_sb.is8Bit()) [[likely]] {
             auto s = m_sb.span8();
-            // OR-accumulate: all bytes < 0x80 → no high bit → valid ASCII.
-            // One pass, no branching. Commands are typically <512B.
-            Latin1Character acc = 0;
-            for (auto c : s)
-                acc |= c;
-            if (!(acc & 0x80)) [[likely]] {
+            if (charactersAreAllASCII(s)) [[likely]] {
                 sink(reinterpret_cast<const char*>(s.data()), s.size());
                 sink("\0", 1);
                 return;

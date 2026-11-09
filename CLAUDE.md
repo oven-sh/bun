@@ -114,7 +114,7 @@ test("(multi-file test) my feature", async () => {
 - **Rust code** (`src/**/*.rs`): Core runtime, JavaScript bindings, bundler, package manager. This is what compiles and ships.
 - **C++ code** (`src/jsc/bindings/*.cpp`): JavaScriptCore bindings, Web APIs
 - **TypeScript** (`src/js/`): Built-in JavaScript modules with special syntax (see JavaScript Modules section)
-- **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.classes.ts` and other sources. The build regenerates them automatically when their inputs change.
+- **Generated code**: Many `.rs` and `.cpp` files are auto-generated from `.bind.ts` and other sources. The build regenerates them automatically when their inputs change.
 
 ### Core Source Organization
 
@@ -129,7 +129,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/transpiler/` - Wrapper around the parser/printer with sourcemap support
 - `src/resolver/` - Module resolution system
 - `src/ast/` - AST node types and arena allocation
-- `src/jsc/bindings/` - C++ JavaScriptCore bindings (generated classes from `.classes.ts` + manual bindings)
+- `src/jsc/bindings/` - C++ JavaScriptCore bindings (classes generated from `.bind.ts` + manual bindings)
 - `src/jsc/` - Rust-side JSC glue (`VirtualMachine.rs`, `web_worker.rs`, `event_loop.rs`, FFI imports)
 - `src/runtime/api/` - Bun-specific JS-visible APIs (`BunObject.rs`, `JSBundler.rs`, `Glob`, `Archive`, …)
 - `src/runtime/server/` - `Bun.serve` HTTP/WebSocket server
@@ -147,7 +147,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), hdrhistogram, highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), highway (SIMD), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation (C++)
 
@@ -165,8 +165,7 @@ When implementing JavaScript classes in C++:
 
 Code generation happens automatically as part of the build process. The main scripts are:
 
-- `src/codegen/generate-classes.ts` - Generates Rust & C++ bindings from `*.classes.ts` files
-- `src/codegen/generate-jssink.ts` - Generates stream-related classes
+- `src/codegen/bindgen.ts` - Generates Rust, C++ & TypeScript bindings from `*.bind.ts` files (`docs/project/bindgen.mdx`)
 - `src/codegen/bundle-modules.ts` - Bundles built-in modules like `node:fs`
 - `src/codegen/bundle-functions.ts` - Bundles global functions like `ReadableStream`
 

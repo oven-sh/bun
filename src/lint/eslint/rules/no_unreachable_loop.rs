@@ -2,12 +2,12 @@ use bun_lint::prelude::*;
 
 /// Disallow loops with a body that allows only one iteration.
 pub struct NoUnreachableLoop {
-    /// The kinds of loops that are not ignored.
+    /// The kinds of loops that aren't ignored.
     checked: Vec<StmtTag>,
 }
 
-const INVALID: Message =
-    Message::new("invalid", "Invalid loop. Its body allows only one iteration.");
+const INVALID: &Message =
+    &Message::new("invalid", "Invalid loop. Its body allows only one iteration.");
 
 impl Rule for NoUnreachableLoop {
     const META: Meta = Meta::eslint("no-unreachable-loop", Kind::Problem).reports_at_the_end();
@@ -40,7 +40,7 @@ impl Rule for NoUnreachableLoop {
     }
 
     fn stmt<'a>(&self, it: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        // The analysis does not tell enough about a loop that cannot be reached.
+        // The analysis doesn't have enough information about an unreachable loop.
         if !it.is_repeating_loop() && it.is_reachable() {
             cx.report(it, INVALID);
         }

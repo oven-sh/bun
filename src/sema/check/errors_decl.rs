@@ -1,12 +1,10 @@
-//! Misplaced or conflicting declarations:
-//! 2369 2370 2371 2463, 2372 2373, 2428, 2440, 2374, 2717 2403 2687.
+//! Misplaced or conflicting declarations: 2372 2373, 2428, 2374, 2717 2403 2687.
 //!
-//! Follows `checkParameter`, the end of `onSuccessfullyResolvedSymbol`,
-//! `checkTypeParameterListsIdentical`, `checkAliasSymbol`, `getSymbolFlags`,
-//! `getExternalModuleMember`, `checkTypeForDuplicateIndexSignatures` and
-//! `checkVariableLikeDeclaration` of TypeScript 7.0.2's checker.go, and `Resolve` of its
-//! nameresolver.go.
+//! Mirrors the end of `onSuccessfullyResolvedSymbol`, `checkTypeParameterListsIdentical`,
+//! `checkTypeForDuplicateIndexSignatures` and `checkVariableLikeDeclaration` in TypeScript 7.0.2's checker.go, and
+//! `Resolve` in its nameresolver.go.
 
+use super::aot::DiagnosticSubject;
 use super::*;
 use crate::bind::{Decl, PatParent, SymbolId};
 use smallvec::SmallVec;
@@ -19,11 +17,11 @@ impl Checker<'_, '_> {
         self.check_index_signatures(file);
     }
 
-    /// `check_reference_in_parameter` for the identifiers of `file`.
+    /// Runs `check_reference_in_parameter` for the identifiers of `file`.
     fn check_parameter_references(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for &(id, within, _) in bound.identifiers_in_parameters.iter() {
-            let local = bound.expr_symbol[id.idx()];
+        for &(id, within) in bound.identifiers_in_parameters.iter() {
+            let local = bound.symbol_of_expr(id);
             if local.is_none() || bound.is_in_type_query(id) || bound.is_unchecked(id.idx()) {
                 continue;
             }
@@ -38,11 +36,10 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `onSuccessfullyResolvedSymbol`: "If we're in a parameter initializer or binding name, we
-    /// can't reference the values of the parameter whose initializer we're within or parameters to
-    /// the right". `associated_declaration`:
-    /// `associatedDeclarationForContainingInitializerOrBindingName`, where the name is not
-    /// `withinDeferredContext` and is resolved as a value.
+    /// `onSuccessfullyResolvedSymbol`: "If we're in a parameter initializer or binding name, we can't reference the
+    /// values of the parameter whose initializer we're within or parameters to the right". `associated_declaration` is
+    /// `associatedDeclarationForContainingInitializerOrBindingName`, where the name isn't `withinDeferredContext` and
+    /// is resolved as a value.
     pub(super) fn check_reference_in_parameter(
         &mut self,
         file: FileId,
@@ -52,7 +49,7 @@ impl Checker<'_, '_> {
     ) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let name = hir.name(associated_declaration);
-        // `bindParameter` declares the property last: it is the symbol of a parameter property.
+        // `bindParameter` declares the property last, so that's the symbol of a parameter property.
         let property = match hir.data(associated_declaration) {
             NodeData::Param(p) => bound.symbol_of_declaration(Decl::ParameterProperty(p)),
             _ => SymbolId::NONE,
@@ -64,8 +61,8 @@ impl Checker<'_, '_> {
         };
         // `DeclarationNameToString`
         let text_of = |c: &Self, node: Node| {
-            let written = hir.start(node) as usize..c.end_of_node(file, node) as usize;
-            hir.text.get(written).unwrap_or_default()
+            let text_range = hir.start(node) as usize..c.end_of_node(file, node) as usize;
+            hir.text.get(text_range).unwrap_or_default()
         };
         if declared.is_some() && candidate == files.sym(file, declared) {
             let args = [Arg::Bytes(text_of(self, name))];
@@ -99,7 +96,7 @@ impl Checker<'_, '_> {
     fn check_merged_declarations(&mut self, file: FileId) {
         let bound = self.bound(file);
         for i in 0..bound.symbols.len() {
-            let symbol = &bound.symbols[i];
+            let symbol = bound.symbol(SymbolId(i as u32));
             if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
                 || !symbol
                     .flags
@@ -112,17 +109,7 @@ impl Checker<'_, '_> {
                 continue;
             }
             let decls = self.files().decls_of(sym);
-            if symbol
-                .flags
-                .intersects(SymFlags::CLASS | SymFlags::INTERFACE)
-            {
-                // `getClassOrInterfaceDeclarationsOfSymbol`
-                let is_one =
-                    |d: &&(FileId, Decl)| matches!(d.1, Decl::Class(_) | Decl::Interface(_));
-                if decls.iter().filter(is_one).count() > 1 {
-                    self.check_type_parameter_lists_identical(file, sym, &decls);
-                }
-            }
+            self.check_type_parameter_lists_identical(file, sym, &decls);
         }
     }
 
@@ -133,13 +120,16 @@ impl Checker<'_, '_> {
         sym: Sym,
         decls: &[(FileId, Decl)],
     ) {
-        // With `declaration.Name()`, which is nil for `export default class {}`.
+        // `getClassOrInterfaceDeclarationsOfSymbol`. Each with its `declaration.Name()`, which is nil for
+        // `export default class {}`.
         let lists: Vec<(FileId, Span<TypeParamId>, Option<u32>)> = decls
             .iter()
             .filter_map(|&(f, d)| match d {
                 Decl::Class(c) => {
                     let class = &self.hir(f)[c];
                     let name = class.name.is_some().then_some(class.name_pos);
+                    let name =
+                        name.or_else(|| self.files.is_compile_build().then_some(class.start));
                     Some((f, class.type_params, name))
                 }
                 Decl::Interface(i) => {
@@ -185,10 +175,18 @@ impl Checker<'_, '_> {
             }
         }
         if !identical {
+            let files = self.files();
+            let is_alone_but_for_brought =
+                lists.iter().filter(|l| !files.is_brought(l.0)).count() < 2;
+            let subject = match is_alone_but_for_brought {
+                true => DiagnosticSubject::BroughtDeclaration,
+                false => DiagnosticSubject::None,
+            };
             for l in lists.iter().filter(|l| l.0 == file) {
                 match l.2 {
                     Some(name) => {
-                        self.error_at((file, name, 0), 2428, &[Arg::Sym(sym)]);
+                        self.error_at((file, name, 0), 2428, &[Arg::Sym(sym)])
+                            .subject = subject;
                     }
                     // `c.error(nil, ..)`
                     None => {
@@ -201,8 +199,8 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The variables and parameters of `file` that `checkVariableLikeDeclaration` is called for,
-    /// where the symbol has other declarations. `check_members` calls it for a property.
+    /// Calls `checkVariableLikeDeclaration` for the variables and parameters of `file` whose symbol has other
+    /// declarations. `check_members` calls it for a property.
     fn check_variable_like_declarations(&mut self, file: FileId) {
         let bound = self.bound(file);
         for (i, symbol) in bound.symbols.iter().enumerate() {
@@ -213,16 +211,15 @@ impl Checker<'_, '_> {
             {
                 continue;
             }
-            for &node in &symbol.decls {
+            for &node in symbol.decls {
                 let is_checked = match node {
                     Decl::Var(_) | Decl::ParameterProperty(_) => true,
-                    // `bindParameter` declares the property last, so that is the symbol of the node.
+                    // `bindParameter` declares the property last, so that's the node's symbol.
                     Decl::Param(pat) => !matches!(bound.pat_parent[pat.idx()], PatParent::Param(p)
                         if bound.symbol_of_declaration(Decl::ParameterProperty(p)).is_some()),
                     _ => false,
                 };
-                // The local symbol of a module or a namespace also lists the declarations exported
-                // under the name.
+                // A module's or namespace's local symbol also lists the declarations exported under the name.
                 if is_checked && bound.symbol_of_declaration(node).idx() == i {
                     let current = CurrentNode::Node(file, self.hir(file).node(node));
                     let saved = self.enter_source_element(current);
@@ -233,11 +230,11 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The end of `checkVariableLikeDeclaration`, starting at `if ast.IsBigIntLiteral(name)`,
-    /// except for the initializer.
+    /// The end of `checkVariableLikeDeclaration`, starting at `if ast.IsBigIntLiteral(name)`, except for the
+    /// initializer.
     pub(super) fn check_variable_like_declaration(&mut self, file: FileId, node: Decl) {
         let (own, hir) = ((file, node), self.hir(file));
-        // The source text of the default library is not stored: there is no name to report.
+        // The default library's source text isn't stored, so there's no name to report.
         if hir.text.is_empty() {
             return;
         }
@@ -278,21 +275,38 @@ impl Checker<'_, '_> {
                     && !self.are_declaration_flags_identical(d, own)
             })
         } else {
-            self.check_type_of_secondary_declaration(symbol, value_declaration, own, at, name);
+            let files = self.files();
+            let first_not_brought = declarations.iter().find(|d| !files.is_brought(d.0));
+            let first_not_brought = first_not_brought.copied().filter(|&d| d != own);
+            let declared = (value_declaration, first_not_brought, own);
+            self.check_type_of_secondary_declaration(symbol, declared, at, name);
             !self.are_declaration_flags_identical(own, value_declaration)
         };
         if differs {
-            self.error_at(at, 2687, &[name]);
+            let differs_from_what_is_not_brought = declarations.iter().any(|&d| {
+                d != own
+                    && !self.files().is_brought(d.0)
+                    && self.is_variable_like(d)
+                    && !self.are_declaration_flags_identical(d, own)
+            });
+            let diagnostic = self.error_at(at, 2687, &[name]);
+            if !differs_from_what_is_not_brought {
+                diagnostic.subject = DiagnosticSubject::BroughtDeclaration;
+            }
         }
     }
 
     /// "Node is a secondary declaration, check that type is identical to primary declaration", with
-    /// `errorNextVariableOrPropertyDeclarationMustHaveSameType`.
+    /// `errorNextVariableOrPropertyDeclarationMustHaveSameType`. Without the declarations that the build has brought,
+    /// `first_not_brought` is the primary declaration, or `node` itself if there is none.
     fn check_type_of_secondary_declaration(
         &mut self,
         symbol: Sym,
-        value_declaration: (FileId, Decl),
-        node: (FileId, Decl),
+        (value_declaration, first_not_brought, node): (
+            (FileId, Decl),
+            Option<(FileId, Decl)>,
+            (FileId, Decl),
+        ),
         at: (FileId, u32, u32),
         name: Arg<'_>,
     ) {
@@ -302,7 +316,7 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        // `getTypeOfSymbol`: `getTypeOfAccessors` adds no optionality.
+        // `getTypeOfSymbol`: `getTypeOfAccessors` doesn't add optionality.
         let t = if self.files().flags(symbol).intersects(SymFlags::ACCESSOR)
             || self.is_prototype_symbol(symbol)
         {
@@ -324,14 +338,25 @@ impl Checker<'_, '_> {
         let related =
             related.map(|(start, end)| self.new_diagnostic((of, start, end), 6203, &[name]));
         let code = if is_property { 2717 } else { 2403 };
+        let is_primary_brought = self.files().is_brought(of);
+        let differs_without_brought = is_primary_brought
+            && first_not_brought.is_some_and(|primary| {
+                let ty = self.get_widened_type_for_variable_like_declaration(primary);
+                !self.is_error_type(ty) && !self.is_identical(ty, declaration_type)
+            });
         let args = [name, Arg::Type(t), Arg::Type(declaration_type)];
-        self.error_at(at, code, &args)
-            .related_information
-            .extend(related);
+        let diagnostic = self.error_at(at, code, &args);
+        diagnostic.related_information.extend(related);
+        if is_primary_brought {
+            diagnostic.subject = match differs_without_brought {
+                true => DiagnosticSubject::None,
+                false => DiagnosticSubject::BroughtDeclaration,
+            };
+        }
     }
 
-    /// `convertAutoToAny(getWidenedTypeForVariableLikeDeclaration(declaration, false))`. For
-    /// `symbol.ValueDeclaration` it is `getTypeOfSymbol(symbol)`.
+    /// `convertAutoToAny(getWidenedTypeForVariableLikeDeclaration(declaration, false))`. For `symbol.ValueDeclaration`
+    /// it's `getTypeOfSymbol(symbol)`.
     fn get_widened_type_for_variable_like_declaration(
         &mut self,
         (file, declaration): (FileId, Decl),
@@ -366,8 +391,7 @@ impl Checker<'_, '_> {
 
     /// `areDeclarationFlagsIdentical`
     fn are_declaration_flags_identical(&self, left: (FileId, Decl), right: (FileId, Decl)) -> bool {
-        // The parameter, if the declaration is a parameter itself rather than a binding element in
-        // one.
+        // The parameter, if the declaration is itself a parameter rather than a binding element in one.
         let parameter = |(file, decl): (FileId, Decl)| match decl {
             Decl::ParameterProperty(p) => Some(p),
             Decl::Param(pat) => match self.bound(file).pat_parent[pat.idx()] {
@@ -403,8 +427,8 @@ impl Checker<'_, '_> {
             || flags(left) == flags(right)
     }
 
-    /// `checkTypeForDuplicateIndexSignatures`: 2374 for each `__index` of a class, an interface or
-    /// a type literal of `file`.
+    /// `checkTypeForDuplicateIndexSignatures`: 2374 for each `__index` of a class, an interface or a type literal in
+    /// `file`.
     fn check_index_signatures(&mut self, file: FileId) {
         let (bound, files) = (self.bound(file), self.files());
         let unchecked = self.unchecked_jsdoc_types(file);
@@ -416,8 +440,8 @@ impl Checker<'_, '_> {
                 continue;
             }
             let index_symbol = files.sym(file, SymbolId(i as u32));
-            // `getIndexSymbol`: among the members. Static members of a class are among its exports,
-            // which are not searched.
+            // `getIndexSymbol` searches the members. A class's static members are among its exports, which aren't
+            // searched.
             if files
                 .parent_of_symbol(index_symbol)
                 .and_then(|parent| files.member(parent, known::index_signature))

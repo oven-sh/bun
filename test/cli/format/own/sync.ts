@@ -1,4 +1,4 @@
-// Writes what Prettier and oxfmt print for the inputs in `cases`, next to them.
+// Writes Prettier's and oxfmt's output for the inputs in `cases` next to them.
 //
 //   bun test/cli/format/own/sync.ts <directory with node_modules/prettier> <directory with node_modules/.bin/oxfmt>
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -24,17 +24,17 @@ for (const [path, bytes] of files) {
   for (const options of rowsOf(name, files)) {
     const failure = (error: Error) => `<${error.name}>`;
     const printed = await prettier.format(Buffer.from(bytes).toString(), { ...options, filepath: name }).catch(failure);
-    // Prettier has no TOML: only oxfmt judges.
+    // Prettier doesn't support TOML, so only oxfmt's output is recorded.
     if (printed !== "<UndefinedParserError>") asPrettier.push([options, printed]);
     const directory = mkdtempSync(join(tmpdir(), "oxfmt-"));
     writeFileSync(join(directory, ".oxfmtrc.json"), JSON.stringify(options));
     const { stdout, exitCode } = Bun.spawnSync([oxfmt, `--stdin-filepath=${basename(name)}`], { cwd: directory, stdin: bytes });
-    // What oxfmt refuses, only Prettier judges.
+    // If oxfmt rejects the input, only Prettier's output is recorded.
     if (exitCode === 0) asOxfmt.push([options, stdout.toString()]);
     rmSync(directory, { recursive: true });
   }
   writeFileSync(join(import.meta.dir, `${name}.prettier.snap`), render(asPrettier));
-  // `.todo`: `bun fmt` does not print that yet, and it is not compared.
+  // `.todo` means `bun fmt` doesn't print that yet, so it isn't compared.
   const snapshot = join(import.meta.dir, `${name}.snap`);
   if (asOxfmt.length > 0) writeFileSync(existsSync(`${snapshot}.todo`) ? `${snapshot}.todo` : snapshot, render(asOxfmt));
 }

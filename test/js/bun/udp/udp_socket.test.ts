@@ -266,6 +266,19 @@ describe("udpSocket()", () => {
     expect(() => udpSocket({ port })).toThrow('Expected "port" to be an integer between 0 and 65535');
   });
 
+  test.each([
+    ["nodebuffer", "buffer"],
+    ["uint16array", "uint16array"],
+    ["Float32Array", "float32array"],
+  ] as const)("binaryType %p reads back as %p", async (binaryType, reported) => {
+    const socket = await udpSocket({ binaryType: binaryType as any, socket: {} });
+    try {
+      expect(socket.binaryType).toBe(reported);
+    } finally {
+      socket.close();
+    }
+  });
+
   test("send/sendMany reject out-of-range ports", async () => {
     const server = await udpSocket({ port: 0, hostname: "127.0.0.1" });
     try {
@@ -286,6 +299,24 @@ describe("udpSocket()", () => {
         client.close();
       }
     } finally {
+      server.close();
+    }
+  });
+
+  test("send() on a connected socket accepts undefined for port and address", async () => {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    const server = await udpSocket({ hostname: "127.0.0.1", socket: { data: (_, data) => resolve(data.toString()) } });
+    const client = await udpSocket({ hostname: "127.0.0.1", connect: { hostname: "127.0.0.1", port: server.port } });
+    try {
+      // @ts-expect-error
+      expect(client.send("hello", undefined, undefined)).toBe(true);
+      expect(await promise).toBe("hello");
+      // @ts-expect-error
+      expect(client.send("hello", undefined, undefined, "ignored")).toBe(true);
+      // @ts-expect-error
+      expect(() => client.send("hello", server.port)).toThrow("Cannot specify destination on connected socket");
+    } finally {
+      client.close();
       server.close();
     }
   });

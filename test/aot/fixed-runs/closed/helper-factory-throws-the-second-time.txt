@@ -1,0 +1,18 @@
+The factory of a mock that a helper module laid is called once for each test file that imports the helper, and throws the second time.
+#### a.test.js
+import "./helper.js";
+import { test } from "bun:test";
+test("a", async () => { console.log("| CASE a", await import("./tax.js").then(tax => tax.rate, error => "threw " + error.message)); });
+#### b.test.js
+import "./helper.js";
+import { test } from "bun:test";
+test("b", async () => { console.log("| CASE b", await import("./tax.js").then(tax => tax.rate, error => "threw " + error.message)); });
+#### helper.js
+import { mock, vi } from "bun:test";
+vi.mock("./tax.js", () => {
+  globalThis.callsOfTheFactoryThatThrows = (globalThis.callsOfTheFactoryThatThrows ?? 0) + 1;
+  if (globalThis.callsOfTheFactoryThatThrows === 2) throw new Error("the second time");
+  return { rate: "mock rate" };
+});
+#### tax.js
+export const rate = "real rate";

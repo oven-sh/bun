@@ -21,7 +21,14 @@ using namespace JSC;
 
 class BunPlugin {
 public:
-    using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>>;
+    // What a name loads without a file: the function that build.module() was given, a mock of the name, or both.
+    // With both, the name loads the mock, and the function is there for when the mock is removed.
+    struct VirtualModule {
+        JSC::Strong<JSC::JSObject> provider;
+        JSC::Strong<JSC::JSObject> mock;
+    };
+    using VirtualModuleMap = WTF::UncheckedKeyHashMap<String, VirtualModule>;
+    using ModuleMockMap = WTF::UncheckedKeyHashMap<String, JSC::Strong<JSC::JSObject>>;
 
     // This is a list of pairs of regexps and functions to match against
     class Group {
@@ -77,6 +84,8 @@ public:
     };
 
     class OnLoad final : public Base {
+        // An entry has a provider, a mock, or both.
+        VirtualModuleMap* _Nullable virtualModules = nullptr;
 
     public:
         OnLoad()
@@ -84,7 +93,6 @@ public:
         {
         }
 
-        VirtualModuleMap* _Nullable virtualModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         // Set right before requestImportModule(), to tell moduleLoaderResolve() it's a script's import(), which can't use NUL-prefixed keys.
         bool isResolvingImportCall = false;
@@ -145,7 +153,7 @@ public:
         // The pending loads those modules are waiting for. Each gets exactly one reaction. Weak, so a load that never settles doesn't keep its global object alive.
         WTF::UncheckedKeyHashMap<JSC::JSPromise*, JSC::Weak<JSC::JSPromise>> loadsOfModulesToEvict = {};
         // The mock a fetch in flight keeps resolving to, even if the mock is replaced or removed meanwhile (keepModuleMockOfLoadInFlight).
-        VirtualModuleMap moduleMocksBeingLoaded = {};
+        ModuleMockMap moduleMocksBeingLoaded = {};
         // Modules that vi.importActual() was the first to load, under their own key because nothing mocked them yet.
         WTF::UncheckedKeyHashSet<String> loadedByImportActual = {};
 
@@ -161,7 +169,63 @@ public:
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
-        void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        // A copy with handles of its own, for a caller that runs script while it holds them.
+        VirtualModule virtualModule(const String& key) const { return virtualModules ? virtualModules->get(key) : VirtualModule {}; }
+        bool containsVirtualModule(const String& key) const { return findVirtualModule(key); }
+        // Whether the name loads what build.module() gave for it: no mock stands in front.
+        bool loadsProvidedModule(const String& key) const
+        {
+            auto* virtualModule = findVirtualModule(key);
+            return virtualModule && virtualModule->provider && !virtualModule->mock;
+        }
+        bool loadsSomeProvidedModule() const
+        {
+            if (!virtualModules)
+                return false;
+            for (auto& virtualModule : virtualModules->values()) {
+                if (virtualModule.provider && !virtualModule.mock)
+                    return true;
+            }
+            return false;
+        }
+        JSC::JSObject* moduleMockOf(const String& key) const
+        {
+            auto* virtualModule = findVirtualModule(key);
+            return virtualModule ? virtualModule->mock.get() : nullptr;
+        }
+        // `functor` gives, mocks and removes nothing.
+        template<typename Functor>
+        void forEachModuleMock(const Functor& functor) const
+        {
+            if (!virtualModules)
+                return;
+            for (auto& virtualModule : virtualModules->values()) {
+                if (JSC::JSObject* mock = virtualModule.mock.get())
+                    functor(mock);
+            }
+        }
+
+        void setProvider(JSC::VM& vm, const String& name, JSC::JSObject* provider)
+        {
+            ensureVirtualModule(name).provider = JSC::Strong<JSC::JSObject> { vm, provider };
+        }
+        void addModuleMock(JSC::VM& vm, const String& key, JSC::JSObject* mock)
+        {
+            ensureVirtualModule(key).mock = JSC::Strong<JSC::JSObject> { vm, mock };
+        }
+        // What build.module() gave for the name stays.
+        void removeModuleMock(const String& key)
+        {
+            if (!virtualModules)
+                return;
+            auto entry = virtualModules->find(key);
+            if (entry == virtualModules->end())
+                return;
+            if (entry->value.provider)
+                entry->value.mock.clear();
+            else
+                virtualModules->remove(entry);
+        }
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
@@ -238,6 +302,16 @@ public:
             if (virtualModules) {
                 delete virtualModules;
             }
+        }
+
+    private:
+        // Valid until the next call that gives, mocks or removes a module.
+        const VirtualModule* findVirtualModule(const String& key) const;
+        VirtualModule& ensureVirtualModule(const String& key)
+        {
+            if (!virtualModules)
+                virtualModules = new VirtualModuleMap;
+            return virtualModules->ensure(key, [] { return VirtualModule {}; }).iterator->value;
         }
     };
 

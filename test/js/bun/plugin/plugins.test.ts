@@ -1,6 +1,6 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock, vi } from "bun:test";
 import { bunEnv, bunExe, Heap, isWindows } from "harness";
 import { resolve } from "path";
 
@@ -336,6 +336,30 @@ describe("module", () => {
     // @ts-expect-error
     expect((await import("bun:my-resolved-module")).hello).toBe("my-resolved-module");
     expect(require("bun:my-resolved-module").hello).toBe("my-resolved-module");
+  });
+
+  it("is there again when a mock of its name is removed", async () => {
+    const name = "my-mocked-virtual-module";
+    const give = (hello: string) =>
+      Bun.plugin({
+        name: "a module that is mocked",
+        setup(builder) {
+          builder.module(name, () => ({ exports: { hello }, loader: "object" }));
+        },
+      });
+    const seen = async () => [(await import(name)).hello, require(name).hello];
+
+    give("world");
+    mock.module(name, () => ({ hello: "mock" }));
+    expect(await seen()).toEqual(["mock", "mock"]);
+    vi.doUnmock(name);
+    expect(await seen()).toEqual(["world", "world"]);
+    expect(require.resolve(name)).toBe(name);
+
+    // Of mock.module() and builder.module(), the later call has the name.
+    mock.module(name, () => ({ hello: "mock" }));
+    give("again");
+    expect(await seen()).toEqual(["again", "again"]);
   });
 });
 

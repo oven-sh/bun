@@ -703,7 +703,6 @@ fn clonefile_force(
     syscall: sys::Tag,
 ) -> Maybe<ret::CopyFile> {
     // https://www.manpagez.com/man/2/clonefile/
-    // `clonefile` also clones directories. `copyFile` copies regular files only.
     let stat_ = match Syscall::stat(src) {
         Ok(stat_) => stat_,
         Err(err) => return Err(err.with_path(src)),

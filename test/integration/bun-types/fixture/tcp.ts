@@ -1,4 +1,6 @@
 import * as Bun from "bun";
+import type { X509Certificate } from "node:crypto";
+import { expectType } from "./utilities";
 
 await Bun.connect({
   data: { arg: "asdf" },
@@ -165,4 +167,24 @@ await Bun.connect({
   },
   hostname: "localhost",
   port: 1,
+});
+
+// A Unix domain socket has no IP address, and a socket that is not connected has none to read.
+// A socket without TLS has no TLS version, no server name and no peer certificate.
+Bun.listen({
+  socket: {
+    open(socket) {
+      expectType(socket.remoteFamily).is<"IPv4" | "IPv6" | undefined>();
+      expectType(socket.remoteAddress).is<string | undefined>();
+      expectType(socket.remotePort).is<number | undefined>();
+      expectType(socket.localFamily).is<"IPv4" | "IPv6" | undefined>();
+      expectType(socket.localAddress).is<string | undefined>();
+      expectType(socket.localPort).is<number | undefined>();
+      expectType(socket.getTLSVersion()).is<string | null>();
+      expectType(socket.getServername()).is<string | undefined>();
+      expectType(socket.getPeerX509Certificate()).is<X509Certificate | undefined>();
+    },
+    data() {},
+  },
+  unix: "asdf",
 });

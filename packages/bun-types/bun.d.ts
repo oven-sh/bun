@@ -7259,39 +7259,72 @@ declare module "bun" {
 
     /**
      * IP protocol family used for the remote endpoint of the socket
+     *
+     * `undefined` when there is no remote IP address to report: the socket is not
+     * an IP socket (for example a Unix domain socket), it is not connected, or the
+     * peer has already disconnected. That can be the case in any handler, `open`
+     * included. Bun caches the first read, so a value read while the peer was
+     * connected is still there after the socket closes.
      * @example "IPv4" | "IPv6"
      */
-    readonly remoteFamily: "IPv4" | "IPv6";
+    readonly remoteFamily: "IPv4" | "IPv6" | undefined;
 
     /**
      * Remote IP address connected to the socket
+     *
+     * `undefined` when there is no remote IP address to report: the socket is not
+     * an IP socket (for example a Unix domain socket), it is not connected, or the
+     * peer has already disconnected. That can be the case in any handler, `open`
+     * included. Bun caches the first read, so a value read while the peer was
+     * connected is still there after the socket closes.
      * @example "192.168.1.100" | "2001:db8::1"
      */
-    readonly remoteAddress: string;
+    readonly remoteAddress: string | undefined;
 
     /**
      * Remote port connected to the socket
+     *
+     * `undefined` when there is no remote port to report: the socket is not an IP
+     * socket (for example a Unix domain socket), it is not connected, or the peer
+     * has already disconnected. That can be the case in any handler, `open`
+     * included. Bun does not cache this value, so it is `undefined` after the
+     * socket closes.
      * @example 8080
      */
-    readonly remotePort: number;
+    readonly remotePort: number | undefined;
 
     /**
      * IP protocol family used for the local endpoint of the socket
+     *
+     * `undefined` when there is no local IP address to report: the socket is not
+     * an IP socket (for example a Unix domain socket), or it is not connected, as
+     * in `connectError` and after it closes. Bun caches the first read, so a value
+     * read while the socket was connected is still there after it closes.
      * @example "IPv4" | "IPv6"
      */
-    readonly localFamily: "IPv4" | "IPv6";
+    readonly localFamily: "IPv4" | "IPv6" | undefined;
 
     /**
      * Local IP address connected to the socket
+     *
+     * `undefined` when there is no local IP address to report: the socket is not
+     * an IP socket (for example a Unix domain socket), or it is not connected, as
+     * in `connectError` and after it closes. Bun caches the first read, so a value
+     * read while the socket was connected is still there after it closes.
      * @example "192.168.1.100" | "2001:db8::1"
      */
-    readonly localAddress: string;
+    readonly localAddress: string | undefined;
 
     /**
      * Local port connected to the socket
+     *
+     * `undefined` when there is no local port to report: the socket is not
+     * an IP socket (for example a Unix domain socket), or it is not connected, as
+     * in `connectError` and after it closes. Bun caches the first read, so a value
+     * read while the socket was connected is still there after it closes.
      * @example 8080
      */
-    readonly localPort: number;
+    readonly localPort: number | undefined;
 
     /**
      * `true` if the peer certificate was signed by one of the CAs
@@ -7392,7 +7425,12 @@ declare module "bun" {
      * @return A certificate object.
      */
     getPeerCertificate(): import("node:tls").PeerCertificate;
-    getPeerX509Certificate(): import("node:crypto").X509Certificate;
+    /**
+     * Returns the peer's certificate as an `X509Certificate`.
+     *
+     * `undefined` if the peer sent no certificate, or if the socket has closed.
+     */
+    getPeerX509Certificate(): import("node:crypto").X509Certificate | undefined;
 
     /**
      * See [SSL\_get\_shared\_sigalgs](https://www.openssl.org/docs/man1.1.1/man3/SSL_get_shared_sigalgs.html) for more information.
@@ -7434,7 +7472,7 @@ declare module "bun" {
      * Returns a string containing the negotiated SSL/TLS protocol version of the
      * current connection. The value `'unknown'` is returned for connected
      * sockets that have not completed the handshaking process. The value `null` is
-     * returned for server sockets or disconnected client sockets.
+     * returned for a socket without TLS and for a socket that has closed.
      *
      * Protocol versions are:
      *
@@ -7445,7 +7483,7 @@ declare module "bun" {
      * * `'TLSv1.3'`
      *
      */
-    getTLSVersion(): string;
+    getTLSVersion(): string | null;
 
     /**
      * **TLS only:** Checks if the current TLS session was resumed from a previous session.
@@ -7575,9 +7613,12 @@ declare module "bun" {
     /**
      * Returns the servername of the socket.
      *
+     * `undefined` for a socket without TLS, for a socket that has closed, and
+     * when the client sent no server name.
+     *
      * @see {@link setServername}
      */
-    getServername(): string;
+    getServername(): string | undefined;
 
     /**
      * Sets the servername of the socket.
@@ -8620,7 +8661,7 @@ declare module "bun" {
     /**
      * Synchronously get the exit code of the process
      *
-     * `null` if the process hasn't exited yet
+     * `null` if the process hasn't exited yet, or if a signal ended it
      */
     readonly exitCode: number | null;
 
@@ -8697,7 +8738,14 @@ declare module "bun" {
   > {
     stdout: SpawnOptions.ReadableToSyncIO<Out>;
     stderr: SpawnOptions.ReadableToSyncIO<Err>;
-    exitCode: number;
+    /**
+     * The exit code of the process
+     *
+     * `null` if a signal ended the process. {@link SyncSubprocess.signalCode} is
+     * then the signal. The `timeout` and `maxBuffer` options send a signal
+     * (`killSignal`) to stop the process.
+     */
+    exitCode: number | null;
     success: boolean;
     /**
      * Resource usage of the process, such as max RSS and CPU time

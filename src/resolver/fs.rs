@@ -384,12 +384,12 @@ impl ListingIdentity {
         self.kind
     }
 
-    /// `None` when the file system keeps no change time (FAT reports 0): such a listing is never kept.
+    /// `None` when `fstat` fails.
     pub(crate) fn read(fd: Fd) -> Option<Self> {
         Self::from_stat(&bun_sys::fstat(fd).ok()?)
     }
 
-    /// `stat` of `path`, links followed. `None` when it fails or the file system keeps no change time.
+    /// `stat` of `path`, links followed. `None` when it fails.
     pub(crate) fn stat(path: &bun_core::ZStr) -> Option<Self> {
         Self::from_stat(&bun_sys::stat(path).ok()?)
     }
@@ -402,10 +402,9 @@ impl ListingIdentity {
                 .saturating_add(t.nsec)
         };
         let ctime_ns = ns(stat.ctime());
-        if ctime_ns <= 0 {
-            return None;
-        }
-        let settled = bun_core::time::nano_timestamp() - ctime_ns as i128 > Self::SETTLED_AFTER_NS;
+        // A file system that keeps no change time (FAT reports 0) never settles: its listings are read again.
+        let settled = ctime_ns > 0
+            && bun_core::time::nano_timestamp() - ctime_ns as i128 > Self::SETTLED_AFTER_NS;
         let kind = if bun_sys::kind_from_mode(stat.mode as bun_sys::Mode)
             == bun_sys::FileKind::Directory
         {
@@ -596,6 +595,7 @@ impl DirEntry {
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
+                            || existing.is_link.load(Ordering::Relaxed)
                             || Some(existing.cache().kind) != found_kind,
                         Ordering::Release,
                     );

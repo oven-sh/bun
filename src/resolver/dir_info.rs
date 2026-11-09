@@ -146,6 +146,10 @@ pub struct DirInfo {
     pub abs_real_path: &'static [u8],
 
     pub(crate) flags: Flags,
+    /// `stat` of the directory when the listing these facts derive from was read.
+    pub(crate) built_from: fs::ListingIdentity,
+    /// The generation at which `abs_real_path` was last checked against the link. Shared with bundle threads.
+    pub(crate) real_path_checked_at: core::sync::atomic::AtomicU64,
 }
 
 impl Default for DirInfo {
@@ -164,6 +168,8 @@ impl Default for DirInfo {
             tsconfig_json: None,
             abs_real_path: b"",
             flags: Flags::empty(),
+            built_from: fs::ListingIdentity::default(),
+            real_path_checked_at: core::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -266,13 +272,6 @@ impl DirInfo {
         rfs.entries_at_locked(self.entries, generation)?
             .as_entries()?
             .get(query)
-    }
-
-    /// The identity the read of the listing recorded.
-    pub(crate) fn listing_identity(&self) -> Option<fs::ListingIdentity> {
-        let rfs = &mut fs::FileSystem::instance().fs;
-        let _lock = rfs.entries_mutex.lock_guard();
-        Some(rfs.entries.at_index(self.entries)?.as_entries()?.identity)
     }
 
     /// As-cached listing access with no generation check and no locking.

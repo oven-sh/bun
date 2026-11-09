@@ -195,6 +195,25 @@ describe.concurrent("a file or package created after the resolver read its direc
     expect(Bun.resolveSync("pk/b.ts", root)).toBe(path.join(root, "pk2", "b.ts"));
   });
 
+  test("a linked package replaced by a real directory after the first lookup", async () => {
+    using dir = tempDir("runtime-cache-link-to-dir", {
+      "pk1/a.ts": `export const a = "pk1";`,
+      "node_modules/.keep": "",
+    });
+    const root = String(dir);
+    const at = path.join(root, "node_modules", "pk");
+    link(path.join(root, "pk1"), at);
+    const req = createRequire(path.join(root, "main.ts"));
+
+    expect(req("pk/a.ts")).toEqual({ a: "pk1" });
+    rmSync(at);
+    mkdirSync(at);
+    writeFileSync(path.join(at, "a.ts"), `export const a = "real";`);
+    writeFileSync(path.join(at, "b.ts"), `export const b = "real";`);
+    expect(req("pk/b.ts")).toEqual({ b: "real" });
+    expect(Bun.resolveSync("pk/a.ts", root)).toBe(path.join(at, "a.ts"));
+  });
+
   test("a package subpath that missed, then was written", async () => {
     using dir = tempDir("runtime-cache-miss-then-write", {
       "node_modules/@pk/a.ts": `export const a = 1;`,

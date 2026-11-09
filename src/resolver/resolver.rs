@@ -2855,13 +2855,13 @@ impl<'a> Resolver<'a> {
         let Some(now) = self.stat_in(info.abs_path, b"") else {
             return true;
         };
-        let recorded = info.listing_identity().unwrap_or_default();
+        let built_from = info.built_from;
         // Another device or inode (a retargeted link) invalidates the real path in the DirInfo.
-        if recorded.is_recorded() && recorded.file_id() != now.file_id() {
+        if built_from.is_recorded() && built_from.file_id() != now.file_id() {
             return true;
         }
-        // Nothing added, removed or renamed since the listing was read: its facts hold. Else stat the names it derives from.
-        if !recorded.holds_for(&now) {
+        // Nothing added, removed or renamed since the listing the facts derive from was read: they hold. Else stat the names.
+        if !built_from.holds_for(&now) {
             let kind_of = |this: &mut Self, name: &[u8]| this.stat_in(info.abs_path, name)?.kind();
             if !info.is_node_modules()
                 && info.has_node_modules()
@@ -4752,14 +4752,20 @@ impl<'a> Resolver<'a> {
 
     /// Drops a DirInfo under a link, and its ancestors under the link, when the link points somewhere else now.
     fn drop_if_retargeted(&mut self, info: DirInfoRef) -> bool {
-        if info.abs_real_path.is_empty() {
+        if info.abs_real_path.is_empty()
+            || info
+                .real_path_checked_at
+                .load(core::sync::atomic::Ordering::Relaxed)
+                == self.generation
+        {
             return false;
         }
+        let key = strings::without_trailing_slash_windows_path(info.abs_path);
         let parent_key = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(
-            info.abs_path,
+            key,
             bun_paths::Platform::AUTO,
         ));
-        if parent_key.is_empty() || parent_key.len() >= info.abs_path.len() {
+        if parent_key.is_empty() || parent_key.len() >= key.len() {
             return false;
         }
         // Through the cache, not `get_parent()`: a parent dropped here is no longer the one to compare with.
@@ -4772,7 +4778,10 @@ impl<'a> Resolver<'a> {
         };
         let stale = self.drop_if_retargeted(parent) || !self.real_path_holds(parent, info);
         if stale {
-            self.dir_cache_mut().remove(info.abs_path);
+            self.dir_cache_mut().remove(key);
+        } else {
+            info.real_path_checked_at
+                .store(self.generation, core::sync::atomic::Ordering::Relaxed);
         }
         stale
     }
@@ -4792,8 +4801,9 @@ impl<'a> Resolver<'a> {
         if !symlink.is_empty() {
             return symlink == info.abs_real_path;
         }
+        // No link here and none above: the directory was a link when the DirInfo was built.
         if parent.abs_real_path.is_empty() {
-            return true;
+            return false;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         self.fs_ref()
@@ -6662,6 +6672,7 @@ impl<'a> Resolver<'a> {
             // .abs_real_path = path,
             parent: parent_index,
             entries: dir_entry_index,
+            built_from: entries!().identity,
             ..Default::default()
         };
 

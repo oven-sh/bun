@@ -202,12 +202,37 @@ for (const [name, inspect] of process.versions.bun
     const parent = { name: "parent", [customSymbol]: custom };
     const inheritedConstructor = Object.create(parent, { name: { value: "inherited" } });
     parent.constructor = { prototype: inheritedConstructor };
+    // decimal.js gives each instance an own `constructor`.
+    function Decimal() {
+      this.name = "instance";
+      this.constructor = Decimal;
+    }
+    Decimal.prototype[customSymbol] = custom;
 
     for (const value of [nullConstructor, primitiveConstructor, otherConstructor, accessorConstructor]) {
       expect(inspect(value)).toBe("custom");
     }
     expect(inspect(inheritedConstructor)).toBe("custom");
-    expect(receivers).toEqual(["null", "primitive", "other", "accessor", "inherited"]);
+    expect(inspect(new Decimal())).toBe("custom");
+    expect(receivers).toEqual(["null", "primitive", "other", "accessor", "inherited", "instance"]);
+  });
+
+  // `constructor` of Iterator.prototype is an accessor, so Node's test finds no constructor for it.
+  test(name + " calls inspect.custom of Iterator.prototype", () => {
+    const receivers = [];
+    Object.defineProperty(Iterator.prototype, customSymbol, {
+      value() {
+        receivers.push(this === Iterator.prototype);
+        return "iterator";
+      },
+      configurable: true,
+    });
+    try {
+      expect(inspect(Iterator.prototype)).toBe("iterator");
+    } finally {
+      delete Iterator.prototype[customSymbol];
+    }
+    expect(receivers).toEqual([true]);
   });
 
   const exceptions = [new Error("don't crash!"), 42];
@@ -386,6 +411,9 @@ describe("Web Streams [nodejs.util.inspect.custom]", () => {
     expect(inspect(ReadableStream.prototype)).toContain("[ReadableStream]");
     expect(Bun.inspect(ReadableStream.prototype).length > 0).toBeTrue();
     expect(Bun.inspect(TransformStream.prototype).length > 0).toBeTrue();
+    // Bun.inspect does not call the hook of a prototype. An object that inherits from one gets the call.
+    expect(Bun.inspect(Object.create(ReadableStream.prototype))).toStartWith("ReadableStream {");
+    expect(Bun.inspect(Object.create(TransformStream.prototype))).toStartWith("TransformStream {");
   });
 
   // Unlike the classes above, these two brand-check, matching Node.

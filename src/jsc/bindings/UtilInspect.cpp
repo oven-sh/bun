@@ -40,7 +40,7 @@ JSObject* createInspectOptionsObject(VM& vm, Zig::GlobalObject* globalObject, un
     return options;
 }
 
-// The test of Node's formatValue for a prototype object, on data properties only: no getter and no Proxy trap runs.
+// Node's formatValue, with the same reads: ObjectGetOwnPropertyDescriptor(value, 'constructor')?.value?.prototype === value
 static NEVER_INLINE bool isPrototypeOfItsConstructor(VM& vm, JSGlobalObject* globalObject, JSObject* object)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -49,20 +49,17 @@ static NEVER_INLINE bool isPrototypeOfItsConstructor(VM& vm, JSGlobalObject* glo
     PropertySlot constructorSlot(object, PropertySlot::InternalMethodType::GetOwnProperty);
     bool hasConstructor = object->methodTable()->getOwnPropertySlot(object, globalObject, vm.propertyNames->constructor, constructorSlot);
     RETURN_IF_EXCEPTION(scope, false);
+    // An accessor has no `value`. That of `Iterator.prototype` is a native one.
     if (!hasConstructor || constructorSlot.isAccessor() || (constructorSlot.attributes() & PropertyAttribute::CustomAccessor))
         return false;
-    JSValue constructorValue = constructorSlot.getValue(globalObject, vm.propertyNames->constructor);
+    JSValue constructor = constructorSlot.getValue(globalObject, vm.propertyNames->constructor);
     RETURN_IF_EXCEPTION(scope, false);
-    JSObject* constructor = constructorValue.getObject();
-    if (!constructor)
+    if (constructor.isUndefinedOrNull())
         return false;
 
-    PropertySlot prototypeSlot(constructor, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    bool hasPrototype = constructor->getNonIndexPropertySlot(globalObject, vm.propertyNames->prototype, prototypeSlot);
+    JSValue prototype = constructor.get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!hasPrototype || !prototypeSlot.isValue())
-        return false;
-    RELEASE_AND_RETURN(scope, prototypeSlot.getValue(globalObject, vm.propertyNames->prototype) == JSValue(object));
+    return prototype == JSValue(object);
 }
 
 extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
@@ -79,7 +76,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (JSObject* thisObject = thisValue.getObject()) {
-        // An instance has no own `constructor`: the Structure of an ordinary object or a typed array (a Buffer) says so.
+        // Most instances have no own `constructor`: the Structure of an ordinary object or a typed array (a Buffer) says so.
         auto flags = thisObject->inlineTypeFlags();
         bool structureListsOwnProperties = !TypeInfo::hasStaticPropertyTable(flags)
             && (!TypeInfo::overridesGetOwnPropertySlot(flags) || isTypedArrayType(thisObject->type()));

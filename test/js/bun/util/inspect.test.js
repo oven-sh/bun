@@ -1665,9 +1665,10 @@ describe("[nodejs.util.inspect.custom] of a prototype object is not called", () 
 
   it("when the hook is on String.prototype", () => {
     calls = 0;
+    const withoutHook = Bun.inspect(String.prototype);
     Object.defineProperty(String.prototype, Bun.inspect.custom, { value: hook, configurable: true });
     try {
-      expect([Bun.inspect(new String("s")), Bun.inspect(String.prototype)]).toEqual(["from the hook", '""']);
+      expect([Bun.inspect(new String("s")), Bun.inspect(String.prototype)]).toEqual(["from the hook", withoutHook]);
     } finally {
       delete String.prototype[Bun.inspect.custom];
     }
@@ -1700,8 +1701,8 @@ describe("[nodejs.util.inspect.custom] of a prototype object is not called", () 
     expect(calls).toBe(0);
   });
 
-  // The [[Get]] of Node runs these, so Node takes each of the four objects for a prototype.
-  it("and no getter or Proxy trap of the constructor runs to find out", () => {
+  // Node reads `constructor.prototype` with a [[Get]]: a getter or a `get` trap of the constructor answers.
+  it("when a getter or a Proxy trap of the constructor answers", () => {
     let ran = 0;
     const withGetter = object => ({
       get prototype() {
@@ -1715,23 +1716,52 @@ describe("[nodejs.util.inspect.custom] of a prototype object is not called", () 
           ran++;
           return key === "prototype" ? object : Reflect.get(target, key, receiver);
         },
-        getOwnPropertyDescriptor(target, key) {
-          ran++;
-          return Reflect.getOwnPropertyDescriptor(target, key);
-        },
-        getPrototypeOf(target) {
-          ran++;
-          return Reflect.getPrototypeOf(target);
-        },
       });
     const inherits = constructorOf => object => Object.create(constructorOf(object));
 
+    calls = 0;
     const printed = [withGetter, proxy, inherits(withGetter), inherits(proxy)].map(constructorOf => {
-      const object = { [Bun.inspect.custom]: hook };
-      object.constructor = constructorOf(object);
+      const object = { label: "own" };
+      Object.defineProperty(object, Bun.inspect.custom, { value: hook });
+      Object.defineProperty(object, "constructor", { value: constructorOf(object) });
       return Bun.inspect(object);
     });
-    expect({ printed, ran }).toEqual({ printed: Array(4).fill("from the hook"), ran: 0 });
+    expect({ printed, calls, ran }).toEqual({ printed: Array(4).fill('{\n  label: "own",\n}'), calls: 0, ran: 4 });
+  });
+
+  it("and what that getter throws comes out of the print", () => {
+    const object = Object.defineProperty({}, Bun.inspect.custom, { value: hook });
+    Object.defineProperty(object, "constructor", {
+      value: {
+        get prototype() {
+          throw new RangeError("from the getter");
+        },
+      },
+    });
+    expect(() => Bun.inspect(object)).toThrow(new RangeError("from the getter"));
+  });
+
+  // The global of a node:vm context hands the [[GetOwnProperty]] of `constructor` on to its sandbox.
+  it("and a Proxy sandbox of a node:vm global answers for its own constructor", () => {
+    const globalOf = getOwnPropertyDescriptor =>
+      vm.runInContext(
+        "this",
+        vm.createContext(new Proxy({ [Bun.inspect.custom]: hook }, { getOwnPropertyDescriptor })),
+      );
+    const asked = [];
+    const recording = globalOf((target, key) => {
+      asked.push(key);
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    });
+    const throwing = globalOf((target, key) => {
+      if (key === "constructor") throw new RangeError("from the trap");
+      return Reflect.getOwnPropertyDescriptor(target, key);
+    });
+
+    calls = 0;
+    asked.length = 0;
+    expect([Bun.inspect(recording), calls, asked]).toEqual(["from the hook", 1, ["constructor"]]);
+    expect(() => Bun.inspect(throwing)).toThrow(new RangeError("from the trap"));
   });
 
   it("in the message of a matcher", () => {

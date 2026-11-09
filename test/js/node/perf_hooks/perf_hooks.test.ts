@@ -496,6 +496,9 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
          toJSONEnumerable: Object.getOwnPropertyDescriptor(PerformanceMark.prototype, "toJSON").enumerable,
          generic: PerformanceEntry.prototype[custom].call({ constructor: { name: "Fake" }, toJSON: () => ({ z: 1 }) }, 1, {}, inspect),
        };
+       // Node reads constructor.prototype with a [[Get]]: a prototype whose constructor is a Proxy of the class prints too.
+       Object.defineProperty(PerformanceMeasure.prototype, "constructor", { value: new Proxy(PerformanceMeasure, {}), configurable: true, writable: true });
+       result.proxyConstructor = Bun.inspect(PerformanceMeasure.prototype).split("\\n")[0];
        // util.inspect forwards an option it does not know to the hook as-is, so the hook's copy
        // of the options has to cope with an index key.
        result.indexOption = inspect(mark, { 0: 1 }).split("\\n")[0];
@@ -528,6 +531,7 @@ test("mark/measure toJSON and inspection include detail without perf_hooks being
     "PerformanceMeasure {",
   ]);
   expect(result.direct).toBe("ERR_INVALID_THIS");
+  expect(result.proxyConstructor).toBe("PerformanceMeasure {");
   expect(result.descriptor).toEqual({
     value: "[nodejs.util.inspect.custom]",
     writable: true,

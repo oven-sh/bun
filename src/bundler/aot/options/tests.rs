@@ -444,6 +444,43 @@ fn node_env_decides_jsx_development() {
 
 #[test]
 #[cfg_attr(miri, ignore)]
+fn node_env_and_stated_jsx_development_go_before_tsconfig() {
+    let mut log = Log::init();
+    let mut options = default_options(&mut log);
+    let node_envs = [
+        ForceNodeEnv::Unspecified,
+        ForceNodeEnv::Development,
+        ForceNodeEnv::Production,
+    ];
+    for node_env in node_envs {
+        for production in [false, true] {
+            let node_env_chose = node_env != ForceNodeEnv::Unspecified || production;
+            for stated in [None, Some(true), Some(false)] {
+                options.force_node_env = node_env;
+                options.production = production;
+                options.transform_options = Arc::new(api::TransformOptions {
+                    jsx: Some(api::Jsx {
+                        development: stated,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                });
+                assert_eq!(
+                    options.leaves_jsx_development_to_tsconfig(),
+                    !node_env_chose && stated.is_none(),
+                    "{node_env:?} {production} {stated:?}"
+                );
+            }
+        }
+    }
+    options.force_node_env = ForceNodeEnv::Unspecified;
+    options.production = false;
+    options.transform_options = Arc::new(api::TransformOptions::default());
+    assert!(!options.leaves_jsx_development_to_tsconfig());
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn react_compiler_follows_option() {
     let load = convert_load(|options| options.react_compiler = ReactCompilerMode::Ssr);
     assert_eq!(load.react_compiler, ReactCompilerMode::Ssr);

@@ -197,7 +197,7 @@ pub(crate) mod js_bundler {
                     fragment: Box::default(),
                     runtime: api::JsxRuntime::Automatic,
                     import_source: Box::default(),
-                    development: Some(true), // Default to development mode like old Pragma
+                    development: None,
                     ..Default::default()
                 },
                 force_node_env: options::ForceNodeEnv::Unspecified,

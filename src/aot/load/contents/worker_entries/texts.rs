@@ -140,9 +140,11 @@ impl ContentsScan<'_, '_> {
                 if let Some((held, r#type)) = behind_object_url {
                     let held = held.iter().map(|contents| (atoms.intern(contents), r#type));
                     self.found.texts_behind_object_urls.extend(held);
-                } else if let Some(text) = self.find_text(value, &mut Vec::new()) {
+                } else if let Some(text) = self.find_text(value, &mut Vec::new())
+                    && (is_evaluated || is_url_with_text(&text))
+                {
                     texts.push(atoms.intern(&text));
-                } else {
+                } else if is_evaluated || !self.gives_files_alone(value) {
                     is_put_together = false;
                 }
             }
@@ -177,7 +179,7 @@ impl ContentsScan<'_, '_> {
         })
     }
 
-    fn find_values_given(&self, argument: ExprId) -> Vec<ExprId> {
+    pub(super) fn find_values_given(&self, argument: ExprId) -> Vec<ExprId> {
         let &FinishedFile { hir, analysis, .. } = self.request;
         let mut values = Vec::new();
         let mut followed = FxHashSet::default();

@@ -405,6 +405,7 @@ impl<'s> Folder<'_, 's> {
         self.specifiers.shared_sort_unstable_by_key(|entry| entry.0);
         self.paths_from_own_directory.shared_sort_unstable();
         self.paths_made_by_calls.shared_sort_unstable();
+        (self.paths_written_from_own_directory).shared_sort_unstable_by_key(|entry| entry.0);
         (self.names_made_by_calls).shared_sort_unstable_by_key(|entry| entry.0);
         let DeadRoots { all, in_bun_run } = self.find_dead_roots();
         let folds_more_under_minify_syntax =

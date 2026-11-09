@@ -10,8 +10,8 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue, ends_in_name_with_extension};
 use bun_sema::hir::{
-    BinOp, CallId, ExportSpecId, ExprId, ExprKind, File, MemberKey, NodeData, PatId, PatKind,
-    PropKey, PropKind, StmtId, StmtKind, UnOp,
+    BinOp, CallId, ExportSpecId, ExprId, ExprKind, File, Flags, MemberKey, NodeData, PatId,
+    PatKind, PropKey, PropKind, StmtId, StmtKind, UnOp,
 };
 use bun_sema::import_sites::{
     ENCODERS, Encoder, ImportSiteKind, ImportSpecifier, ResolvedForm, is_exported,
@@ -21,7 +21,7 @@ use bun_sema::resolve::{
     CodeResolution, ComputedCandidate, ComputedResolution, ExternalKind, FinishedFile,
     SiteResolution,
 };
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
 use super::NodeWorkerOutOfSight;
@@ -112,6 +112,12 @@ fn worker_builtins() -> &'static WorkerBuiltins {
 enum Constructor {
     Worker,
     Url,
+}
+
+type FileGiven = (ExprId, Option<(ImportSpecifier, WorkerNameForm)>);
+
+fn is_each_a_file(given: &[FileGiven]) -> bool {
+    !given.is_empty() && given.iter().all(|value| value.1.is_some())
 }
 
 fn may_load(resolution: SiteResolution<'_>, module: RuntimeModule) -> bool {
@@ -544,6 +550,43 @@ impl ContentsScan<'_, '_> {
         }
     }
 
+    fn follows_load(&self, kind: ImportSiteKind, module: RuntimeModule) -> bool {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        // bun_sema names no file through a path or URL module that is loaded in these two ways.
+        let is_of_threads = || Some(module) == worker_builtins().threads;
+        match kind {
+            ImportSiteKind::Import(_)
+            | ImportSiteKind::Require(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+            | ImportSiteKind::GetBuiltinModule(_) => true,
+            ImportSiteKind::ImportEquals(import) => {
+                let alias = bound.declared_symbol(Decl::ImportEquals(import));
+                is_of_threads()
+                    && matches!(bound.symbol(alias).decls, [Decl::ImportEquals(_)])
+                    && !hir[import].flags.contains(Flags::EXPORT)
+            }
+            ImportSiteKind::ImportCall(call) => {
+                is_of_threads() && self.is_awaited_at_once_or_unused(call)
+            }
+            _ => false,
+        }
+    }
+
+    fn is_awaited_at_once_or_unused(&self, promise: ExprId) -> bool {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let mut node = promise;
+        loop {
+            match bound.parent_of_expr(node) {
+                Parent::Expr(parent) if hir.type_assertion_operand(parent).is_some() => {
+                    node = parent;
+                }
+                Parent::Expr(parent) => return matches!(hir[parent].kind, ExprKind::Await(_)),
+                Parent::Stmt(statement) => return matches!(hir[statement].kind, StmtKind::Expr(_)),
+                _ => return false,
+            }
+        }
+    }
+
     fn note_node_worker_handed_on(&mut self, at: NodeData) {
         self.found.names_worker_constructor = true;
         self.found.hands_worker_constructor_on = true;
@@ -576,10 +619,12 @@ impl ContentsScan<'_, '_> {
             let is_certain = matches!(resolution, SiteResolution::Constant(_));
             match site.kind {
                 ImportSiteKind::Import(_)
+                | ImportSiteKind::ImportEquals(_)
+                | ImportSiteKind::ImportCall(_)
                 | ImportSiteKind::Require(_)
                 | ImportSiteKind::ImportMetaRequire(_)
                 | ImportSiteKind::GetBuiltinModule(_)
-                    if is_certain =>
+                    if is_certain && self.follows_load(site.kind, threads) =>
                 {
                     bound_at.get_or_insert_with(|| self.find_node_of_site(site.kind));
                 }
@@ -645,6 +690,7 @@ impl ContentsScan<'_, '_> {
                     | ExprKind::Dot { .. }
                     | ExprKind::Index { .. }
                     | ExprKind::Call(_)
+                    | ExprKind::Await(_)
             );
             if !may_name_part
                 || analysis.decisions.is_dead_expr(expression)
@@ -745,6 +791,12 @@ impl ContentsScan<'_, '_> {
         }
         let (name, form) = self.find_name_given_to_worker(argument);
         let is_text_put_together = self.add_code_given_to_worker(argument, options, &name);
+        if name == ImportSpecifier::Unknown
+            && is_text_put_together
+            && self.add_files_given(construction, argument, options)
+        {
+            return;
+        }
         let callee = hir.skip_type_assertions(hir[call].callee);
         let builtin = self.find_builtin_that_may_be_named(callee);
         let is_of_web = builtin.is_some_and(|builtin| {
@@ -773,6 +825,132 @@ impl ContentsScan<'_, '_> {
             form,
             place: PlaceOfName::Constructor,
         });
+    }
+
+    fn add_files_given(
+        &mut self,
+        construction: ExprId,
+        argument: ExprId,
+        options: Option<ExprId>,
+    ) -> bool {
+        if options.is_some_and(|options| self.is_told_to_evaluate(options)) {
+            return false;
+        }
+        let given = self.find_files_given(argument);
+        let named = given.iter().filter_map(|&(name_node, file)| {
+            let (name, form) = file?;
+            Some(WorkerStart {
+                at: construction,
+                name_node,
+                name,
+                form,
+                place: PlaceOfName::Constructor,
+            })
+        });
+        self.found.worker_starts.extend(named);
+        is_each_a_file(&given)
+    }
+
+    fn find_files_given(&self, argument: ExprId) -> Vec<FileGiven> {
+        let mut given = Vec::new();
+        let mut looked_at = FxHashSet::default();
+        let mut pending = self.find_values_given(argument);
+        while let Some(value) = pending.pop() {
+            if !looked_at.insert(value) {
+                continue;
+            }
+            match self.find_what_names_same_file(value) {
+                Some(inner) => pending.append(&mut self.find_values_given(inner)),
+                None => given.push((value, self.find_file_written(value))),
+            }
+        }
+        given
+    }
+
+    fn find_what_names_same_file(&self, value: ExprId) -> Option<ExprId> {
+        let &FinishedFile { hir, atoms, .. } = self.request;
+        match hir[value].kind {
+            ExprKind::Call(call) | ExprKind::New(call) if self.spells_same_file(call) => {
+                hir.ids(hir[call].args).next()
+            }
+            ExprKind::Dot { .. } => match hir.member_key(value) {
+                Some((url, MemberKey::Name(name)))
+                    if matches!(atoms.bytes(name), b"href" | b"pathname") =>
+                {
+                    Some(url)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn gives_files_alone(&self, argument: ExprId) -> bool {
+        is_each_a_file(&self.find_files_given(argument))
+    }
+
+    fn find_file_written(&self, written: ExprId) -> Option<(ImportSpecifier, WorkerNameForm)> {
+        let decisions = &self.request.analysis.decisions;
+        if self.names_own_file(written) {
+            return Some((ImportSpecifier::Unknown, WorkerNameForm::OwnFile));
+        }
+        if let Some(name) = decisions.find_path_written_from_own_directory(written) {
+            return Some((
+                ImportSpecifier::Constant(name),
+                WorkerNameForm::FromOwnFolder,
+            ));
+        }
+        if let Some(answer) = self.find_file_asked_of_resolver(written) {
+            return Some(answer);
+        }
+        let (name, form) = self.find_name_given_to_worker(written);
+        (!self.may_be_out_of_sight(&name)).then_some((name, form))
+    }
+
+    fn find_file_asked_of_resolver(
+        &self,
+        call: ExprId,
+    ) -> Option<(ImportSpecifier, WorkerNameForm)> {
+        let &FinishedFile {
+            hir,
+            analysis,
+            atoms,
+            ..
+        } = self.request;
+        let ExprKind::Call(written) = hir[call].kind else {
+            return None;
+        };
+        let site = &analysis.import_sites[analysis.import_site_of_call(call)?];
+        let form = match site.kind {
+            ImportSiteKind::RequireResolve(_) => ResolvedForm::Path,
+            ImportSiteKind::ImportMetaResolve(_) => ResolvedForm::Url,
+            _ => return None,
+        };
+        let is_beside = matches!(site.specifier, ImportSpecifier::Constant(name)
+            if is_relative_path(atoms.bytes(name)));
+        (hir[written].args.len() == 1 && is_beside)
+            .then_some((site.specifier, WorkerNameForm::Resolved(form)))
+    }
+
+    fn names_own_file(&self, written: ExprId) -> bool {
+        let &FinishedFile { hir, bound, .. } = self.request;
+        let filename = CommonJsVariable::Filename;
+        match hir[written].kind {
+            ExprKind::Ident(known::filename) => {
+                bound.binding(written) == Binding::CommonJs(filename)
+                    && self.find_source_path(written, filename).is_some()
+            }
+            ExprKind::Dot { .. } => match hir.member_key(written) {
+                Some((meta, MemberKey::Name(known::url | known::meta_filename | known::path))) => {
+                    matches!(
+                        hir[hir.skip_type_assertions(meta)].kind,
+                        ExprKind::ImportMeta
+                    ) && !bound.import_meta_may_be_modified()
+                }
+                _ => false,
+            },
+            _ => false,
+        }
     }
 
     fn add_preloads(&mut self, construction: ExprId, options: ExprId) {
@@ -1030,9 +1208,16 @@ impl ContentsScan<'_, '_> {
             let ExprKind::New(call) = hir[parent].kind else {
                 return false;
             };
+            // An argument that gives the start no name stays a name that is written elsewhere.
             return hir.ids(hir[call].args).next() == Some(node)
-                && self.find_constructor_called(call) == Some(Constructor::Worker);
+                && self.find_constructor_called(call) == Some(Constructor::Worker)
+                && self.gives_start_a_name(node);
         }
+    }
+
+    fn gives_start_a_name(&self, argument: ExprId) -> bool {
+        let name = self.find_name_given_to_worker(argument).0;
+        !self.may_be_out_of_sight(&name) || self.gives_files_alone(argument)
     }
 
     fn is_constructed_or_only_tested(&self, mention: ExprId) -> bool {
@@ -1105,23 +1290,24 @@ impl ContentsScan<'_, '_> {
         let Some(site) = site else {
             return false;
         };
-        let evaluates_to_module = matches!(
-            self.request.analysis.import_sites[site].kind,
-            ImportSiteKind::Import(_)
-                | ImportSiteKind::Require(_)
-                | ImportSiteKind::ImportMetaRequire(_)
-                | ImportSiteKind::GetBuiltinModule(_)
-        );
+        let kind = self.request.analysis.import_sites[site].kind;
         let resolution = self.request.resolutions[site];
-        evaluates_to_module
-            && matches!(resolution, SiteResolution::Constant(_))
+        matches!(resolution, SiteResolution::Constant(_))
             && may_load(resolution, module)
+            && self.follows_load(kind, module)
     }
 
-    fn requires_module(&self, call: ExprId, module: RuntimeModule) -> bool {
+    fn evaluates_to_module(&self, load: ExprId, module: RuntimeModule) -> bool {
         let &FinishedFile { hir, analysis, .. } = self.request;
-        matches!(hir[call].kind, ExprKind::Call(_))
-            && self.loads_module(analysis.import_site_of_call(call), module)
+        let site = match hir[load].kind {
+            ExprKind::Call(_) => analysis.import_site_of_call(load),
+            ExprKind::Await(promise) => {
+                let call = hir.skip_type_assertions(promise);
+                analysis.import_site_index(ImportSiteKind::ImportCall(call))
+            }
+            _ => None,
+        };
+        self.loads_module(site, module)
     }
 
     fn holds_module(&self, symbol: SymbolId, module: RuntimeModule) -> bool {
@@ -1131,20 +1317,22 @@ impl ContentsScan<'_, '_> {
             analysis,
             ..
         } = self.request;
-        let import = match *bound.symbol(symbol).decls {
-            [Decl::ImportNamespace(import) | Decl::ImportDefault(import)] => Some(import),
-            [Decl::ImportSpec(specifier)] if hir[specifier].imported == known::default => {
-                Some(hir[specifier].import)
+        let load = match *bound.symbol(symbol).decls {
+            [Decl::ImportNamespace(import) | Decl::ImportDefault(import)] => {
+                Some(ImportSiteKind::Import(import))
             }
+            [Decl::ImportSpec(specifier)] if hir[specifier].imported == known::default => {
+                Some(ImportSiteKind::Import(hir[specifier].import))
+            }
+            [Decl::ImportEquals(import)] => Some(ImportSiteKind::ImportEquals(import)),
             _ => None,
         };
-        if let Some(import) = import {
-            let site = analysis.import_site_index(ImportSiteKind::Import(import));
-            return self.loads_module(site, module);
+        if let Some(load) = load {
+            return self.loads_module(analysis.import_site_index(load), module);
         }
         match bound.binding_initializer(hir, symbol) {
             BindingInitializer::Expression(source) => {
-                self.requires_module(hir.skip_type_assertions(source), module)
+                self.evaluates_to_module(hir.skip_type_assertions(source), module)
             }
             _ => false,
         }
@@ -1152,7 +1340,7 @@ impl ContentsScan<'_, '_> {
 
     fn names_module(&self, expression: ExprId, module: RuntimeModule) -> bool {
         match self.request.hir[expression].kind {
-            ExprKind::Call(_) => self.requires_module(expression, module),
+            ExprKind::Call(_) | ExprKind::Await(_) => self.evaluates_to_module(expression, module),
             ExprKind::Ident(_) => {
                 let symbol = self.find_symbol_read(expression);
                 symbol.is_some_and(|symbol| self.holds_module(symbol, module))
@@ -1268,7 +1456,7 @@ impl ContentsScan<'_, '_> {
         let hir = self.request.hir;
         match hir[pattern].kind {
             PatKind::Ident(_) => {
-                matches!(hir[mention].kind, ExprKind::Call(_))
+                matches!(hir[mention].kind, ExprKind::Call(_) | ExprKind::Await(_))
                     && self.is_stable_unexported_name(pattern)
             }
             PatKind::Object(properties) => properties.iter().all(|property| {

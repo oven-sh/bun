@@ -1,0 +1,130 @@
+# Cells of fuzz/grids/a-worker-of-node-starts-however-its-module-is-loaded-held-and-given-its-path.ts that do not answer in silence today:
+# `<load>.<holder>.<path>.<place> <verdict>`, a line each, sorted.
+#   answers, and the build warned      the Worker starts, and the build warns that it can't tell which file the Worker starts from
+#   no answer, and the build warned    the build warns so, and the Worker does not start in the executable
+# A cell that does otherwise than its line says fails, and so does a cell that isn't named and does not answer in silence.
+# When a cell moves, change its line or take it out with the change that moves it.
+# No line may say `NO ANSWER AND NO WARNING`: the grid refuses a list that expects a Worker to be lost without a warning.
+default.hoisted.const.entry-in-package no answer, and the build warned
+default.hoisted.const.own answers, and the build warned
+default.hoisted.const.package no answer, and the build warned
+default.hoisted.filename.entry-in-package answers, and the build warned
+default.hoisted.filename.own answers, and the build warned
+default.hoisted.filename.package no answer, and the build warned
+default.hoisted.join.entry-in-package no answer, and the build warned
+default.hoisted.join.own answers, and the build warned
+default.hoisted.join.package no answer, and the build warned
+default.hoisted.resolve.entry-in-package no answer, and the build warned
+default.hoisted.resolve.own answers, and the build warned
+default.hoisted.resolve.package no answer, and the build warned
+default.hoisted.url.entry-in-package no answer, and the build warned
+default.hoisted.url.own answers, and the build warned
+default.hoisted.url.package no answer, and the build warned
+default.member.const.entry-in-package answers, and the build warned
+default.member.const.own answers, and the build warned
+default.member.const.package answers, and the build warned
+default.member.filename.entry-in-package answers, and the build warned
+default.member.filename.own answers, and the build warned
+default.member.filename.package answers, and the build warned
+default.member.join.entry-in-package answers, and the build warned
+default.member.join.own answers, and the build warned
+default.member.join.package answers, and the build warned
+default.member.resolve.entry-in-package answers, and the build warned
+default.member.resolve.own answers, and the build warned
+default.member.resolve.package answers, and the build warned
+default.member.url.entry-in-package answers, and the build warned
+default.member.url.own answers, and the build warned
+default.member.url.package answers, and the build warned
+default.named.const.entry-in-package no answer, and the build warned
+default.named.const.own answers, and the build warned
+default.named.const.package no answer, and the build warned
+default.named.filename.entry-in-package answers, and the build warned
+default.named.filename.own answers, and the build warned
+default.named.filename.package no answer, and the build warned
+default.named.join.entry-in-package no answer, and the build warned
+default.named.join.own answers, and the build warned
+default.named.join.package no answer, and the build warned
+default.named.resolve.entry-in-package no answer, and the build warned
+default.named.resolve.own answers, and the build warned
+default.named.resolve.package no answer, and the build warned
+default.named.url.entry-in-package no answer, and the build warned
+default.named.url.own answers, and the build warned
+default.named.url.package no answer, and the build warned
+default.renamed.const.entry-in-package no answer, and the build warned
+default.renamed.const.own answers, and the build warned
+default.renamed.const.package no answer, and the build warned
+default.renamed.filename.entry-in-package answers, and the build warned
+default.renamed.filename.own answers, and the build warned
+default.renamed.filename.package no answer, and the build warned
+default.renamed.join.entry-in-package no answer, and the build warned
+default.renamed.join.own answers, and the build warned
+default.renamed.join.package no answer, and the build warned
+default.renamed.resolve.entry-in-package no answer, and the build warned
+default.renamed.resolve.own answers, and the build warned
+default.renamed.resolve.package no answer, and the build warned
+default.renamed.url.entry-in-package no answer, and the build warned
+default.renamed.url.own answers, and the build warned
+default.renamed.url.package no answer, and the build warned
+require.hoisted.url.entry-in-package no answer, and the build warned
+require.hoisted.url.own no answer, and the build warned
+require.hoisted.url.package no answer, and the build warned
+then.hoisted.const.entry-in-package answers, and the build warned
+then.hoisted.const.own answers, and the build warned
+then.hoisted.const.package answers, and the build warned
+then.hoisted.filename.entry-in-package answers, and the build warned
+then.hoisted.filename.own answers, and the build warned
+then.hoisted.filename.package answers, and the build warned
+then.hoisted.join.entry-in-package answers, and the build warned
+then.hoisted.join.own answers, and the build warned
+then.hoisted.join.package answers, and the build warned
+then.hoisted.resolve.entry-in-package answers, and the build warned
+then.hoisted.resolve.own answers, and the build warned
+then.hoisted.resolve.package answers, and the build warned
+then.hoisted.url.entry-in-package answers, and the build warned
+then.hoisted.url.own answers, and the build warned
+then.hoisted.url.package answers, and the build warned
+then.member.const.entry-in-package answers, and the build warned
+then.member.const.own answers, and the build warned
+then.member.const.package answers, and the build warned
+then.member.filename.entry-in-package answers, and the build warned
+then.member.filename.own answers, and the build warned
+then.member.filename.package answers, and the build warned
+then.member.join.entry-in-package answers, and the build warned
+then.member.join.own answers, and the build warned
+then.member.join.package answers, and the build warned
+then.member.resolve.entry-in-package answers, and the build warned
+then.member.resolve.own answers, and the build warned
+then.member.resolve.package answers, and the build warned
+then.member.url.entry-in-package answers, and the build warned
+then.member.url.own answers, and the build warned
+then.member.url.package answers, and the build warned
+then.named.const.entry-in-package no answer, and the build warned
+then.named.const.own answers, and the build warned
+then.named.const.package no answer, and the build warned
+then.named.filename.entry-in-package answers, and the build warned
+then.named.filename.own answers, and the build warned
+then.named.filename.package no answer, and the build warned
+then.named.join.entry-in-package no answer, and the build warned
+then.named.join.own answers, and the build warned
+then.named.join.package no answer, and the build warned
+then.named.resolve.entry-in-package no answer, and the build warned
+then.named.resolve.own answers, and the build warned
+then.named.resolve.package no answer, and the build warned
+then.named.url.entry-in-package no answer, and the build warned
+then.named.url.own answers, and the build warned
+then.named.url.package no answer, and the build warned
+then.renamed.const.entry-in-package no answer, and the build warned
+then.renamed.const.own answers, and the build warned
+then.renamed.const.package no answer, and the build warned
+then.renamed.filename.entry-in-package answers, and the build warned
+then.renamed.filename.own answers, and the build warned
+then.renamed.filename.package no answer, and the build warned
+then.renamed.join.entry-in-package no answer, and the build warned
+then.renamed.join.own answers, and the build warned
+then.renamed.join.package no answer, and the build warned
+then.renamed.resolve.entry-in-package no answer, and the build warned
+then.renamed.resolve.own answers, and the build warned
+then.renamed.resolve.package no answer, and the build warned
+then.renamed.url.entry-in-package no answer, and the build warned
+then.renamed.url.own answers, and the build warned
+then.renamed.url.package no answer, and the build warned

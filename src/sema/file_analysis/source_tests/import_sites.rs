@@ -2774,6 +2774,14 @@ const NAMES_OF_WORKERS_THAT_ARE_KNOWN_IN_PART: &[(&str, &[&str])] = &[
         "with (scope) { new Worker('./a/' + x + '.js'); }",
         &["./a/*.js"],
     ),
+    (
+        "export {}; const { Worker: Thread } = await import('node:worker_threads'); new Thread('./a/' + x + '.js');",
+        &["./a/*.js"],
+    ),
+    (
+        "export {}; const threads = await import('worker_threads'); const Thread = threads.Worker; new Thread(c ? './a.js' : './b.js');",
+        &["./a.js", "./b.js"],
+    ),
 ];
 
 const NAMES_OF_WORKERS_THAT_ARE_WHOLE_OR_UNKNOWN: &[&str] = &[
@@ -2791,6 +2799,9 @@ const NAMES_OF_WORKERS_THAT_ARE_WHOLE_OR_UNKNOWN: &[&str] = &[
     "export {}; import { MessageChannel as Worker } from 'node:worker_threads'; new Worker('./a/' + x);",
     "Worker('./a/' + x);",
     "if (false) new Worker('./a/' + x);",
+    "export {}; const { Worker: Thread } = await import('./pool.js'); new Thread('./a/' + x);",
+    "export {}; const { MessageChannel: Thread } = await import('node:worker_threads'); new Thread('./a/' + x);",
+    "export {}; const Thread = (await import('node:worker_threads')).default.Worker; new Thread('./a/' + x);",
 ];
 
 fn describe_name_of_worker(text: &str) -> Option<Vec<String>> {
@@ -2850,6 +2861,14 @@ const URLS_WITH_CODE_GIVEN_TO_CONSTRUCTORS: &[(&str, bool)] = &[
         false,
     ),
     ("new Other('data:text/javascript,' + '1');", false),
+    (
+        "export {}; const { Worker: Thread } = await import('node:worker_threads'); new Thread('data:text/javascript,' + '1');",
+        true,
+    ),
+    (
+        "export {}; const { Worker: Thread } = await import('./pool.js'); new Thread('data:text/javascript,' + '1');",
+        false,
+    ),
 ];
 
 #[test]

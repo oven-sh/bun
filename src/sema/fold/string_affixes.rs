@@ -5,8 +5,8 @@ use crate::atom::{Atom, known};
 use crate::bind::{Binding, BindingInitializer, Bound, CommonJsVariable, SymbolId};
 use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
 use crate::import_sites::{
-    ENCODERS, ImportSiteKind, ImportSpecifier, call_site_arguments, call_site_kind,
-    find_imported_export, is_process, names_own_file, settled_symbol,
+    ENCODERS, ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export, is_process,
+    names_own_file, settled_symbol,
 };
 use crate::util::{FxHashMap, FxHashSet};
 use bun_core::strings;
@@ -777,11 +777,8 @@ fn walk_to_module(
                 break is_module_request(hir, bound, e, hir[call], find_constant, is_module);
             }
             ExprKind::Await(awaited) if follows_awaited_imports => {
-                let awaited = hir.skip_type_assertions(awaited);
-                let specifier = match call_site_kind(hir, bound, awaited) {
-                    Some(ImportSiteKind::ImportCall(_)) => call_site_arguments(hir, bound, awaited)
-                        .and_then(|arguments| hir.ids(arguments).next())
-                        .and_then(find_constant),
+                let specifier = match hir[hir.skip_type_assertions(awaited)].kind {
+                    ExprKind::ImportCall { args } => hir.ids(args).next().and_then(find_constant),
                     _ => None,
                 };
                 break matches!(specifier, Some(Constant::String(text)) if is_module(text));

@@ -1185,8 +1185,9 @@ fn find_whether_constructor_is_worker(
         Some(ExprKind::String(text)) => Some(Constant::String(text)),
         _ => None,
     };
-    let export = find_export_of_module(hir, bound, callee, &find_constant, &is_worker_threads);
-    if let Some(export) = export {
+    let members =
+        find_members_below_module(hir, bound, callee, &find_constant, &is_worker_threads, true);
+    if let Some(&[export]) = members.as_deref() {
         return Some(export == known::Worker);
     }
     let constructor = follow_settled_bindings(hir, bound, callee);

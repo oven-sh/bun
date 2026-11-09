@@ -1,0 +1,25 @@
+# -- source: main.js
+# const NullObject = (() => { const C = function () {}; C.prototype = Object.create(null); return C; })();
+# function Gives(value) { return value; }
+# Gives.prototype.kind = "gives";
+# function parse(key) { const found = new NullObject(); found[key] = 1; return found; }
+# function give(value) { return new Gives(value); }
+# globalThis.keep = [parse, give];
+# -- end of source
+# f2 = parse, f3 = give
+# A constructor function whose body never names `this` takes no `this`. Its objects are made as those of any other constructor function: the prototype is read off the function, the object is made in line,
+# the body is walked. `new NullObject()` is the idiom of content-type, fast-querystring and find-my-way: an empty body, and a prototype that lies below nothing.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[prototype]]{{*}} = GetConstructPrototype
+# CHECK: @Cell = NewObject [[prototype]] layout=L
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-NOT: = Construct
+# What the body gives back is taken where it is an object, and the object that was made where it is none.
+# RUN(GIVES): walk f3 mechanisms=all
+# GIVES-LABEL: code f3:Body
+# GIVES: = GetConstructPrototype
+# GIVES: @Cell = NewObject
+# GIVES: = TypeTest v0 testedType=object
+# RUN(BOTH): walk f3 mechanisms=all
+# BOTH-NOT: = Construct

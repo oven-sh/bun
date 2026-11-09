@@ -2,7 +2,6 @@ use bun_paths::platform::Posix;
 use bun_paths::resolve_path::join_spill;
 use bun_sema::resolve::DeclaredSideEffects;
 
-/// The answer of the bundler's `SideEffects::has_side_effects`, negated.
 pub(super) fn is_declared_free_of_side_effects(
     declared: DeclaredSideEffects<'_>,
     path: &[u8],

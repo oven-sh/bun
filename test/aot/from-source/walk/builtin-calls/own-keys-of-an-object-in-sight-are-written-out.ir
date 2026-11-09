@@ -1,0 +1,31 @@
+# the state knows every own key of an object that was made here and that nothing else has. So the list is a literal of the names, of what the slots hold, or of pairs of both: the run time is not asked, and nothing is left of the object
+# handed out, the object may have got another key by the time it is listed, so the call stands there too
+# the functions are handed to sink: nobody knows their callers
+# f1 = keys, f2 = values, f3 = entries, f4 = handed
+# -- source: own-keys-of-an-object-in-sight-are-written-out.ts
+# declare function sink(...values: unknown[]): void;
+# function keys(i: number) { const o = { a: i, b: 1 }; return Object.keys(o); }
+# function values(i: number) { const o = { a: i, b: 1 }; return Object.values(o); }
+# function entries(i: number) { const o = { a: i, b: 1 }; return Object.entries(o); }
+# function handed(i: number) { const o = { c: i, d: 1 }; sink(o); return Object.values(o); }
+# sink(keys, values, entries, handed);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArray
+# RUN(NOKEYS): walk f1 mechanisms=all
+# NOKEYS-NOT: overload=ObjectKeys
+# NOKEYS-NOT: NewObject
+# RUN(VALUES): walk f2 mechanisms=all
+# VALUES-LABEL: code f2:Body
+# VALUES: = NewArray
+# RUN(NOVALUES): walk f2 mechanisms=all
+# NOVALUES-NOT: overload=ObjectValues
+# NOVALUES-NOT: NewObject
+# RUN(FEWEST): walk f2 mechanisms=none+DirectCalls+BuiltinCalls+TypedOperations+Folding+EscapeAnalysis
+# FEWEST-LABEL: code f2:Body
+# FEWEST: = NewArray
+# The entries stay with their row until lists-5D lands.
+# RUN(HANDED): walk f4 mechanisms=all
+# HANDED-LABEL: code f4:Body
+# HANDED: overload=ObjectValues

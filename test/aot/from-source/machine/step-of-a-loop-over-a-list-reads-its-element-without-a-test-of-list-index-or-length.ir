@@ -1,0 +1,26 @@
+# -- source: step-of-a-loop-over-a-list-reads-one-kind-of-storage-in-line.js
+# function joined(table, key) { let s = ""; for (const v of table[key]) s += v; return s; }
+# globalThis.kept = joined;
+# console.log(joined(JSON.parse('{"a":[1,2]}'), "a"));
+# -- end of source
+# The step of a loop over a list has tested for the list and counts the index itself, below the length that it has just read. So the read of the element tests neither, boxes nothing and compares no length:
+# it looks at the kind of storage, loads, and looks for a hole. Storage of boxed values is read in line. One stub answers for the rest:
+# it asks the cell of the list whether anything may stand under an index above it, since a turn of the loop may have ended that.
+# RUN: walk f1 mechanisms=all
+# REQUIRES: entries-of-bun
+# CHECK-LABEL: code f1:Body
+# CHECK: [[length]]: {{*}} = GetArrayLength
+# CHECK: [[inside]]: boolean {{*}} = Less [[position]], [[length]] form=Integers
+# CHECK: [[index]]: int[0, 4294967294] @Int64 = Narrowed [[position]], [[inside]]
+# CHECK-NEXT: = GetArrayElement {{*}}, [[index]] level=Expected [keyIsIntegral, isInBounds]
+# RUN(RAW): walk f1 mechanisms=all
+# REQUIRES(RAW): entries-of-bun
+# RAW-NOT: = Box {{*}}int[
+# RUN(ARMS): emit f1:Body mechanisms=all
+# REQUIRES(ARMS): entries-of-bun
+# ARMS-LABEL: unit f1:Body
+# ARMS-NOT: = Load({{*}}indexedDoubleProperties
+# RUN(LENGTH): emit f1:Body mechanisms=all
+# REQUIRES(LENGTH): entries-of-bun
+# LENGTH-COUNT-1: Butterfly_publicLength
+# LENGTH-NOT: Butterfly_publicLength

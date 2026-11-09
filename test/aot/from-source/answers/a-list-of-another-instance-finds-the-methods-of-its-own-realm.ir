@@ -1,0 +1,28 @@
+# Two instances of the image in one heap, in a build that admits replaced built-ins, as a test run with --isolate is. Each makes a list, and each calls `push` and `indexOf` by name on its own list and on the list of the other.
+# A list finds the methods of the realm that made it. Then the second instance replaces the `push` of its realm: its lists find the new one, whoever calls, and the lists of the first find the one that was made.
+# Under the word that checks the walk a stub that takes `push` to be as the class was made is asked again: the list of the other instance finds the `push` of its own realm, which is as that realm made it.
+# -- source: main.js
+# import { make, listOf, addToField, addToParameter, where, spoil } from "./lists.js";
+# register(make, listOf, addToField, addToParameter, where, spoil);
+# -- source: lists.js
+# class Keeper { constructor() { this.list = []; } }
+# export function make() { return new Keeper(); }
+# export function listOf(kept) { return kept.list; }
+# export function addToField(kept, thing) { return kept.list.push(thing); }
+# export function addToParameter(list, thing) { return list.push(thing); }
+# export function where(kept, thing) { return kept.list.indexOf(thing); }
+# export function spoil() { Array.prototype.push = function () { return "the push of realm " + id(); }; }
+# -- end of source
+# OPTIONS: several-realms admit=ReplacedBuiltins testing=CheckWalkAtRunTime
+# RUN: run-in-shell (function () { "use strict"; const second = createGlobalObject(); const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { second.runCompiledEntryPoint(entry); return start(entry); }; globalThis.id = () => 1; second.id = () => 2; const kitOf = f => ({ make: f[0], listOf: f[1], addToField: f[2], addToParameter: f[3], where: f[4], spoil: f[5] }); const kits = { }; const finish = () => { if (!kits.first || !kits.second) return; const a = kits.first, b = kits.second; const ours = a.make(), theirs = b.make(); print("own", a.addToField(ours, 4), b.addToField(theirs, 4)); print("the field of theirs", a.addToField(theirs, 5)); print("the field of ours", b.addToField(ours, 5)); print("a parameter", a.addToParameter(b.listOf(theirs), 6), b.addToParameter(a.listOf(ours), 6)); print("where", a.where(theirs, 4), b.where(ours, 4)); b.spoil(); print("behind: ours", a.addToField(ours, 7), b.addToField(ours, 8), b.addToParameter(a.listOf(ours), 9)); print("behind: theirs, they call:", b.addToField(theirs, 8), b.addToParameter(b.listOf(theirs), 9)); print("behind: theirs, we call:", a.addToField(theirs, 7), a.addToParameter(b.listOf(theirs), 9)); print(a.listOf(ours).length, b.listOf(theirs).length); }; globalThis.register = (...f) => { kits.first = kitOf(f); finish(); }; second.register = (...f) => { kits.second = kitOf(f); finish(); }; })();
+# CHECK: own 1 1
+# CHECK-NEXT: the field of theirs 2
+# CHECK-NEXT: the field of ours 2
+# CHECK-NEXT: a parameter 3 3
+# CHECK-NEXT: where 0 0
+# CHECK-NEXT: behind: ours 4 5 6
+# CHECK-NEXT: behind: theirs, they call: the push of realm 2 the push of realm 2
+# CHECK-NEXT: behind: theirs, we call: the push of realm 2 the push of realm 2
+# CHECK-NEXT: 6 3
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the shell cannot run the source itself

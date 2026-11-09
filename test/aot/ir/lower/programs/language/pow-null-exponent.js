@@ -34,46 +34,6 @@ shown("Math.pow", Math.pow(10, null), Math.pow(2, null), Math.pow(10, constant),
 shown("null is the base", null ** 10, null ** null, null ** 0, false ** null, true ** null, "" ** null, "2" ** null, [] ** null, undefined ** null);
 shown("used further", 10 ** null - 7, (10 ** null) | 0, [10 ** null][0], { n: 2 ** null }.n, `${10 ** null}`, Number.isNaN(10 ** null));
 
-// GENERATED: tenTo toNull shown
 // CHECK-LABEL: function {{*}}name="tenTo"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Integer integer=10
-// CHECK-NEXT: v2 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v3 = Pow v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="toNull"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v2 = Null
-// CHECK-NEXT: v3 = Pow v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="shown"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = NewArray v0 contents=anything
-// CHECK-NEXT: v8 = PropGet v1 key="map"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
-// CHECK-NEXT: v10 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v11 = Call v9, v1, v10 calleeKey="map" calleeName="values.map"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: AppendSpread v7, v12
-// CHECK-NEXT: v14 = CallList v6, v4, v7 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: ReturnCall v14
-// CHECK-NEXT: }

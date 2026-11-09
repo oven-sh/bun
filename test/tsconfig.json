@@ -52,6 +52,7 @@
     "aot/programs", // many declare globals, and the folder has its own tsconfig.json
     "aot/parallel", // many declare globals, run-parallel.ts builds each under the nearest tsconfig.json
     "aot/fixtures", // what the programs of aot/parallel import
+    "aot/answers", // programs whose one free name is report(): engine/answers.ts makes a test of each
     "aot/ir", // texts that the compiler is asked about: some declare globals, and each folder has its own tsconfig.json
     "aot/checker-queries",
     "aot/backend-packages/dd-trace",

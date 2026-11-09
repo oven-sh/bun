@@ -494,7 +494,7 @@ describe("subclassing", () => {
     ["(cookieString)", ["id=1; Path=/app"]],
     ["(options)", [{ name: "id", value: "1", path: "/app" }]],
   ])("new (class extends Bun.Cookie)%s returns an instance of the subclass", (_overload, args) => {
-    const cookie = new SessionCookie(...(args as any));
+    const cookie = new SessionCookie(...(args as ConstructorParameters<typeof SessionCookie>));
     expect(Object.getPrototypeOf(cookie)).toBe(SessionCookie.prototype);
     expect(cookie).toBeInstanceOf(Bun.Cookie);
     expect(cookie.pair()).toBe("id=1");

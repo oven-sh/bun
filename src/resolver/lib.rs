@@ -412,10 +412,8 @@ pub mod fs {
         /// `DirnameStore` or a process-lifetime buffer like `cwd_buf`).
         #[inline]
         pub fn set_top_level_dir(&self, dir: &'static [u8]) {
-            // As in `bust_dir_cache`: the check of a memo hit on another thread must not see `dir` with the old epoch.
-            if bun_core::Environment::CI_ASSERT {
-                crate::resolution_epoch::bump();
-            }
+            // Not under a lock: another thread can read `dir` before the epoch moves.
+            let _change = crate::resolution_epoch::Change::begin();
             bun_core::set_top_level_dir(dir);
             crate::resolution_epoch::bump();
         }
@@ -890,8 +888,13 @@ pub mod fs {
                 crate::resolution_epoch::bump();
             }
         }
+        /// Whether the map had an answer for `key`.
         pub(crate) fn remove(&mut self, key: &[u8]) -> bool {
-            self.inner().remove(key)
+            let removed = self.inner().remove(key);
+            if removed {
+                crate::resolution_epoch::bump();
+            }
+            removed
         }
     }
 
@@ -1121,10 +1124,6 @@ pub mod fs {
                     )));
                 }
             }
-
-            // From here on a cached listing is read again, or found unreadable: on every way out.
-            let _bump_epoch =
-                in_place.map(|_| scopeguard::guard((), |()| crate::resolution_epoch::bump()));
 
             let had_handle = maybe_handle.is_some();
             let handle: Fd = match maybe_handle {
@@ -1483,8 +1482,6 @@ pub mod fs {
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
                 if existing.generation < generation {
-                    // The cached listing is read again, or found unreadable: on every way out.
-                    let _bump_epoch = scopeguard::guard((), |()| crate::resolution_epoch::bump());
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
@@ -1509,6 +1506,8 @@ pub mod fs {
                             unsafe { (*e_ptr).data.clear() };
                             // SAFETY: see above — slot is exclusively owned here.
                             unsafe { *e_ptr = new_entry };
+                            // No write to the map follows, which is what moves the epoch for the other ways out.
+                            crate::resolution_epoch::bump();
                         }
                         Err(err) => {
                             // SAFETY: see above.
@@ -2323,6 +2322,7 @@ pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 pub mod compiled_program;
 pub mod options;
 pub mod package_names;
+pub mod resolution_memo;
 pub mod resolver;
 pub mod result;
 pub mod standalone_module_graph;

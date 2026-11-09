@@ -898,6 +898,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__isThreadShareable(
     return WTFStringImpl__isThreadIsolated(wtf) && (wtf->isStatic() || (wtf->hasHash() && !wtf->canBecomeAtom()));
 }
 
+// A substring keeps its base impl alive, and an external impl the memory of whoever made it.
+extern "C" [[ZIG_EXPORT(nothrow)]] bool WTFStringImpl__ownsItsCharacters(
+    const WTF::StringImpl* wtf)
+{
+    return !wtf->isSubString() && !wtf->isExternal();
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ensureHash(WTF::StringImpl* str)
 {
     str->hash();

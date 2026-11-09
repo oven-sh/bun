@@ -440,10 +440,17 @@ macro_rules! bufs {
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 /// Moves when a past resolution can come out differently. One per process, like the directory cache.
+///
+/// Only this crate moves it, in the functions that write what the resolver reads: the map of directory listings, the
+/// map of `DirInfo`, a listing that is read again in place, and the working directory.
 pub mod resolution_epoch {
-    use core::sync::atomic::{AtomicU64, Ordering};
+    use core::cell::Cell;
+    use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-    /// On a cache line of its own: every resolution reads it, and it is seldom written.
+    use bun_core::Environment::CI_ASSERT;
+
+    /// On a cache line of its own: every resolution reads it. A write is a directory that is read again or dropped, a
+    /// `process.chdir()`, or a lookup that fails, which drops a directory.
     #[repr(align(64))]
     struct Epoch(AtomicU64);
 
@@ -458,8 +465,67 @@ pub mod resolution_epoch {
     /// Call after the change. Cold: its callers are on the resolver's hot path.
     #[cold]
     #[inline(never)]
-    pub fn bump() {
+    pub(crate) fn bump() {
+        if CI_ASSERT {
+            BUMPS_OF_THIS_THREAD.with(|bumps| bumps.set(bumps.get() + 1));
+        }
         EPOCH.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    // The rest is for the checks that builds with assertions make of a remembered answer.
+
+    /// Changes that another thread can see before their bump.
+    static CHANGES_IN_PROGRESS: AtomicU32 = AtomicU32::new(0);
+
+    thread_local! {
+        static BUMPS_OF_THIS_THREAD: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// While it lives, a change is under way that is not under one lock with its bump.
+    pub(crate) struct Change(());
+
+    impl Change {
+        pub(crate) fn begin() -> Self {
+            if CI_ASSERT {
+                CHANGES_IN_PROGRESS.fetch_add(1, Ordering::SeqCst);
+            }
+            Self(())
+        }
+    }
+
+    impl Drop for Change {
+        fn drop(&mut self) {
+            if CI_ASSERT {
+                CHANGES_IN_PROGRESS.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Says whether another thread changed what the resolver reads, from `watch()` on.
+    pub struct Watch {
+        epoch: u64,
+        bumps_of_this_thread: u64,
+        was_quiet: bool,
+    }
+
+    pub fn watch() -> Watch {
+        // Before the epoch: the bump of a change comes after the change.
+        let was_quiet = CHANGES_IN_PROGRESS.load(Ordering::SeqCst) == 0;
+        Watch {
+            epoch: get(),
+            bumps_of_this_thread: BUMPS_OF_THIS_THREAD.with(Cell::get),
+            was_quiet,
+        }
+    }
+
+    impl Watch {
+        /// What this thread's own resolver runs did to the caches does not count: a remembered answer has to hold
+        /// then too.
+        pub fn is_undisturbed(&self) -> bool {
+            let is_quiet = CHANGES_IN_PROGRESS.load(Ordering::SeqCst) == 0;
+            let bumps = BUMPS_OF_THIS_THREAD.with(Cell::get) - self.bumps_of_this_thread;
+            self.was_quiet && is_quiet && get() - self.epoch == bumps
+        }
     }
 }
 
@@ -597,6 +663,12 @@ pub struct Resolver<'a> {
 
     /// Why "exports" or "imports" led to no file: the first time since this was last `None`.
     pub esm_failure: Option<crate::package_json::Status>,
+
+    /// How often a lookup of a directory went past the cache. A run that leaves it as it was read the caches alone, and
+    /// `resolution_epoch` moves when they change: its answer can be remembered.
+    pub dir_cache_misses: u32,
+    /// In builds with assertions: how many of those lookups ended with a read of the disk that no cache holds.
+    pub unrecorded_reads: u32,
 }
 
 /// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
@@ -665,6 +737,8 @@ impl<'a> Resolver<'a> {
             // never carried across worker init.
             custom_dir_paths: None,
             esm_failure: None,
+            dir_cache_misses: 0,
+            unrecorded_reads: 0,
         }
     }
 
@@ -820,12 +894,12 @@ impl<'a> Resolver<'a> {
     /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
     /// `ref_at_index` are only durable until the next map access.
     #[inline(always)]
-    pub(crate) fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
+    pub(crate) fn dir_cache_mut(&mut self) -> DirInfo::Map<'_> {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
         // `DirInfo::hash_map_instance()` static (set in `init1`, never
         // reassigned, never freed). Resolver mutex serializes all mutation
         // across worker clones; `&mut self` rules out intra-instance aliasing.
-        unsafe { &mut *self.dir_cache }
+        DirInfo::Map(unsafe { &mut *self.dir_cache })
     }
 
     /// Lazily initializing
@@ -1021,6 +1095,8 @@ impl<'a> Resolver<'a> {
             prefer_module_field: true,
             custom_dir_paths: None,
             esm_failure: None,
+            dir_cache_misses: 0,
+            unrecorded_reads: 0,
         }
     }
 
@@ -2845,15 +2921,10 @@ impl<'a> Resolver<'a> {
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
-        // Not under one lock: the check of a memo hit on another thread must not see the drop with the old epoch.
-        if bun_core::Environment::CI_ASSERT {
-            resolution_epoch::bump();
-        }
+        // The two drops are not under one lock.
+        let _change = resolution_epoch::Change::begin();
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
-        if first_bust || second_bust {
-            resolution_epoch::bump();
-        }
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",
@@ -3893,7 +3964,6 @@ impl<'a> Resolver<'a> {
                 Some(p) => {
                     // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
                     unsafe { *p = new_entry };
-                    resolution_epoch::bump();
                     p
                 }
                 None => bun_core::heap::into_raw(Box::new(new_entry)),
@@ -4667,6 +4737,24 @@ impl<'a> Resolver<'a> {
         input_path: &[u8],
         top_result: allocators::Result,
     ) -> crate::CrateResult<Option<DirInfoRef>> {
+        self.dir_cache_misses = self.dir_cache_misses.wrapping_add(1);
+        let is_recorded = core::cell::Cell::new(true);
+        let found = self.dir_info_from_disk(enable_logging, input_path, top_result, &is_recorded);
+        if bun_core::Environment::CI_ASSERT && !is_recorded.get() {
+            self.unrecorded_reads = self.unrecorded_reads.wrapping_add(1);
+        }
+        found
+    }
+
+    /// `is_recorded`: false at the end if the same call can read the disk again and find something else, because a
+    /// directory that it opened, or has yet to open, is in no cache.
+    fn dir_info_from_disk(
+        &mut self,
+        enable_logging: bool,
+        input_path: &[u8],
+        top_result: allocators::Result,
+        is_recorded: &core::cell::Cell<bool>,
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         let dir_info_uncached_path_buf = bufs!(dir_info_uncached_path);
 
         let mut i: usize = 1;
@@ -4845,6 +4933,7 @@ impl<'a> Resolver<'a> {
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
             let queue_top_safe_path = queue_top.safe_path;
             queue_slice_len -= 1;
+            is_recorded.set(false);
 
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
@@ -4936,6 +5025,8 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
+                            // The next call opens the first of the directories below this one.
+                            is_recorded.set(queue_slice_len == 0);
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
@@ -5088,7 +5179,6 @@ impl<'a> Resolver<'a> {
                     Some(p) => {
                         // SAFETY: dir_entries_ptr is a live BSSMap slot (`in_place`).
                         unsafe { *p = new_entry };
-                        resolution_epoch::bump();
                         p
                     }
                     None => bun_core::heap::into_raw(Box::new(new_entry)),
@@ -5144,6 +5234,7 @@ impl<'a> Resolver<'a> {
                 open_dir,
                 None,
             )?;
+            is_recorded.set(true);
 
             top_parent = queue_top.result;
 

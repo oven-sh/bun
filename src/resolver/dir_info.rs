@@ -406,6 +406,42 @@ pub use Flags as Flag;
 // COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;
 
+/// What the resolver does with the map besides `put_slot`. As there, a write that gives a directory another answer
+/// moves `resolution_epoch`.
+pub(crate) struct Map<'a>(pub(crate) &'a mut HashMap);
+
+impl<'a> Map<'a> {
+    #[inline]
+    pub(crate) fn get_or_put(
+        self,
+        key: &[u8],
+    ) -> core::result::Result<allocators::Result, bun_alloc::AllocError> {
+        self.0.get_or_put(key)
+    }
+
+    #[inline]
+    pub(crate) fn at_index(self, index: allocators::IndexType) -> Option<&'a mut DirInfo> {
+        self.0.at_index(index)
+    }
+
+    pub(crate) fn mark_not_found(self, result: allocators::Result) {
+        let was_found = result.status == allocators::ItemStatus::Exists;
+        self.0.mark_not_found(result);
+        if was_found {
+            crate::resolution_epoch::bump();
+        }
+    }
+
+    /// Whether the map had an answer for `key`.
+    pub(crate) fn remove(self, key: &[u8]) -> bool {
+        let removed = self.0.remove(key);
+        if removed {
+            crate::resolution_epoch::bump();
+        }
+        removed
+    }
+}
+
 /// Insert `value` at `result`'s slot and return a retag-durable slot pointer
 /// (see [`slot_ptr_at`]). Takes a raw map pointer, not `&mut self`: a
 /// protected `&mut` receiver would be invalidated when `slot_ptr_at` goes

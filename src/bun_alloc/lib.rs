@@ -783,6 +783,11 @@ impl WTFStringImplStruct {
     pub fn is_thread_shareable(&self) -> bool {
         WTFStringImpl__isThreadShareable(self)
     }
+    /// Not a slice of another impl's characters, and not characters that someone else frees.
+    #[inline]
+    pub fn owns_its_characters(&self) -> bool {
+        WTFStringImpl__ownsItsCharacters(self)
+    }
     /// Compute the hash() if necessary
     #[inline]
     pub fn ensure_hash(&self) {
@@ -812,6 +817,7 @@ unsafe extern "C" {
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
     safe fn WTFStringImpl__isThreadIsolated(this: &WTFStringImplStruct) -> bool;
     safe fn WTFStringImpl__isThreadShareable(this: &WTFStringImplStruct) -> bool;
+    safe fn WTFStringImpl__ownsItsCharacters(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
 }
 

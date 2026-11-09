@@ -1911,8 +1911,8 @@ describe.concurrent("an inline snapshot does not say who wrote it", () => {
 });
 
 // Jest 30.5.2 wrote these texts for `value`, in a `.snap` file and inline, each with the `snapshotFormat` option that
-// names it. Vitest 5.0.3 wrote the same in a `.snap` file, and inline with two more spaces before each line.
-// Jest 28.1.3 wrote `both` with its defaults. To add a case, run it under that runner. Never update these with Bun.
+// names it (`indent: 4`). Vitest 5.0.3 wrote the same in a `.snap` file, and inline with two more spaces before each
+// line. Jest 28.1.3 wrote `both` with its defaults. To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("a snapshot that Jest or Vitest wrote with another `snapshotFormat` than the default", () => {
   const value = String.raw`{ list: [{}, 'say "hi"'], path: "a\\b" }`;
   const written = {
@@ -1952,6 +1952,15 @@ Object {
   "path": "a\\\\b",
 }
 `,
+    indent: String.raw`
+{
+    "list": [
+        {},
+        "say "hi"",
+    ],
+    "path": "a\\b",
+}
+`,
   };
   const prefixes = ["- Object {", '-   "list": Array [', "-     Object {},", "+ {", '+   "list": [', "+     {},"];
   const escapes = [
@@ -1960,7 +1969,24 @@ Object {
     String.raw`-   "path": "a\\b",`,
     String.raw`+   "path": "a\b",`,
   ];
-  const difference = { printBasicPrototype: prefixes, escapeString: escapes, both: [...prefixes, ...escapes] };
+  const indents = [
+    '-     "list": [',
+    "-         {},",
+    '-         "say "hi"",',
+    "-     ],",
+    String.raw`-     "path": "a\b",`,
+    '+   "list": [',
+    "+     {},",
+    '+     "say "hi"",',
+    "+   ],",
+    String.raw`+   "path": "a\b",`,
+  ];
+  const difference = {
+    printBasicPrototype: prefixes,
+    escapeString: escapes,
+    both: [...prefixes, ...escapes],
+    indent: indents,
+  };
   // The lines that the diff of each test file marks, sorted: how a diff groups them is not what is tested.
   const marked = (stderr: string) =>
     Object.fromEntries(
@@ -1986,8 +2012,10 @@ Object {
       { name: "jest-prefixes", format: "jest", header: headers.jest, form: "printBasicPrototype" },
       { name: "jest-escapes", format: "jest", header: headers.jest, form: "escapeString" },
       { name: "jest-28", format: "jest", header: older, form: "both" },
+      { name: "jest-indent", format: "jest", header: headers.jest, form: "indent" },
       { name: "vitest-prefixes", format: "vitest", header: headers.vitest, form: "printBasicPrototype" },
       { name: "vitest-escapes", format: "vitest", header: headers.vitest, form: "escapeString" },
+      { name: "vitest-indent", format: "vitest", header: headers.vitest, form: "indent" },
     ] as const;
     const keys = { jest: "outer inner 1", vitest: "outer > inner 1" };
     const tests = `describe("outer", () => { test("inner", () => { expect(${value}).toMatchSnapshot(); }); });\n`;

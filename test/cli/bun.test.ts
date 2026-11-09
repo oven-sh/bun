@@ -676,13 +676,16 @@ describe("bun", () => {
         ["--splitting", "--format=cjs", "--outdir", "out", "--define", "1x=2"],
         notIdentifier("1x"),
       ],
-      [
-        "a value that does not parse",
-        ["--define", "K={"],
-        `1 | {\n    ^\nerror: Expected "}" but found end of file\n    at defines.json:1:1\n`,
-      ],
     ])("bun build prints only the log: %s", async (_, args, stderr) => {
       expect(await bun(["build", ...args, "entry.js"])).toEqual({ stdout: "", stderr, exitCode: 1 });
+    });
+
+    // The stop is for a key. Another error of the defines keeps the line that names it.
+    test("bun build names the error of a value that does not parse, as before", async () => {
+      const log = `1 | {\n    ^\nerror: Expected "}" but found end of file\n    at defines.json:1:1\n`;
+      const { stdout, stderr, exitCode } = await bun(["build", "--define", "K={", "entry.js"]);
+      expect({ stdout, log: stderr.slice(0, log.length), exitCode }).toEqual({ stdout: "", log, exitCode: 1 });
+      expect(stderr.slice(log.length)).toContain("ParserError");
     });
   });
 

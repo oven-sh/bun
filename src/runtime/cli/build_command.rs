@@ -557,8 +557,9 @@ impl BuildCommand {
         }
 
         if let Err(err) = this_transpiler.configure_defines() {
-            crate::run_main::exit_if_logged(log_ref);
-            return Err(err.into());
+            let err = err.into();
+            crate::run_main::exit_if_logged(&err, log_ref);
+            return Err(err);
         }
         this_transpiler.configure_linker();
 

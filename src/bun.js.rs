@@ -51,11 +51,16 @@ pub(crate) fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
     Global::exit(1);
 }
 
-/// For a command whose `configure_defines` failed: when the log says why, prints it and exits 1.
+/// `BuildFailed` says that the log has the cause.
+pub(crate) fn is_logged(err: &crate::Error, log: &bun_ast::Log) -> bool {
+    matches!(err, crate::Error::Bundler(bun_bundler::Error::BuildFailed)) && log.has_errors()
+}
+
+/// For a command whose `configure_defines` failed: when the log has the cause, prints it and exits 1.
 #[cold]
 #[inline(never)]
-pub(crate) fn exit_if_logged(log: &bun_ast::Log) {
-    if log.has_errors() {
+pub(crate) fn exit_if_logged(err: &crate::Error, log: &bun_ast::Log) {
+    if is_logged(err, log) {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
         Global::exit(1);
     }

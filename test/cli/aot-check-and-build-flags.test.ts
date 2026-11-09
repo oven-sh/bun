@@ -95,11 +95,12 @@ describe.concurrent.skipIf(!!unsupported)("a define key that is not a valid iden
     120_000,
   );
 
-  test("bun --aot prints only the log for a value that does not parse", async () => {
+  // The stop is for a key. Another error of the defines keeps the line that names it.
+  test("bun --aot names the error of a value that does not parse, as before", async () => {
     using dir = tempDir("aot-run-define-value", files);
     expect(await bun(String(dir), "--aot", "--define", "K={", "a.ts")).toEqual({
       stdout: "",
-      stderr: `1 | {\n    ^\nerror: Expected "}" but found end of file\n    at defines.json:1:1\n`,
+      stderr: `1 | {\n    ^\nerror: Expected "}" but found end of file\n    at defines.json:1:1\nerror: ParserError\n`,
       exitCode: 1,
     });
   }, 120_000);
@@ -111,9 +112,11 @@ describe.concurrent.skipIf(!!unsupported)("a define key that is not a valid iden
 console.log(JSON.stringify([result.success, ...result.logs.map(log => String(log.message))]));
 `,
     });
-    expect((await bun(String(dir), "build.ts")).stdout).toBe(
-      JSON.stringify([false, 'define key "1x" must be a valid identifier']) + "\n",
-    );
+    expect(await bun(String(dir), "build.ts")).toEqual({
+      stdout: JSON.stringify([false, 'define key "1x" must be a valid identifier']) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   }, 120_000);
 });
 

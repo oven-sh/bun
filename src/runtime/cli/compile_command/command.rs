@@ -70,7 +70,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
     let configuration = match configuration::configure(&mut *ctx) {
         Ok(configuration) => configuration,
         Err(err) => {
-            crate::run_main::exit_if_logged(ctx.log_ref());
+            crate::run_main::exit_if_logged(&err, ctx.log_ref());
             return Err(err);
         }
     };
@@ -92,7 +92,8 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
         location.root_dir.fd,
         origin,
     );
-    let result = compile_to_executable(&mut request).and_then(|outcome| {
+    // `move`: frees the two paths here. Nothing after this statement returns.
+    let result = compile_to_executable(&mut request).and_then(move |outcome| {
         write_metafiles(&outcome, &metafile_path, &metafile_markdown_path)?;
         Ok(outcome)
     });

@@ -83,4 +83,19 @@ check("instance of a class, method", () => { const v = py.view(); return new (cl
     console.log("FAIL prototype that was taken out of the chain: " + results);
   }
 }
+{
+  // In the frame that a call is filling from something like an array, whose last item asks. The frame may be longer than the caller has registers.
+  const f = (...all) => [all[0], all.at(-1)];
+  const call = list => { const result = f.apply(null, list); return result; };
+  const callInTailPosition = list => f.apply(null, list);
+  for (const [name, g, length] of [["call", call, 2], ["call with many arguments", call, 300], ["call in tail position", callInTailPosition, 2]]) {
+    const results = g({ length, get 0() { return py.view(); }, get [length - 1]() { return py.blocked(); } });
+    results[0] = py.released();
+    results.push(py.blocked());
+    if (results[0] !== false || results[1] !== true || results[2] !== false) {
+      failures++;
+      console.log(`FAIL argument of a ${name} that is being prepared: ` + results);
+    }
+  }
+}
 console.log(failures ? `${failures} failed` : "ok");

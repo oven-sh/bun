@@ -29,6 +29,8 @@ def until_compiled(function, call):
         call(5000)
         if jsc.numberOfDFGCompiles(function):
             break
+    # (With the compilers turned off it pretends a million.)
+    print('compiled:', bool(jsc.numberOfDFGCompiles(function)))
 holder = js.eval('(resize) => ({ get x() { return resize() } })')(resize)
 
 # Two calls deep. Python has the view.
@@ -48,6 +50,19 @@ warm[0] = True
 said.clear()
 outer, drive = js.eval('''(() => { "use strict";
   function inner(o, view, use) { const r = o.x; return r + use(view) }
+  function outer(o, make, use) { return inner(o, make(), use) }
+  return [outer, (o, make, use, n) => { for (let i = 0; i < n; i++) outer(o, make, use) }]
+})()''')
+until_compiled(outer, lambda n: drive(holder, make, use, n))
+warm[0] = False
+print(outer(holder, make, use), said, len(data))
+
+# The same, and what was inlined is a closure.
+warm[0] = True
+said.clear()
+outer, drive = js.eval('''(() => { "use strict";
+  const k = 1;
+  const inner = (o, view, use) => { const r = o.x; return r + k + use(view) };
   function outer(o, make, use) { return inner(o, make(), use) }
   return [outer, (o, make, use, n) => { for (let i = 0; i < n; i++) outer(o, make, use) }]
 })()''')

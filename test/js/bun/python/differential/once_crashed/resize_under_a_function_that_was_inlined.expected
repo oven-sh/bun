@@ -1,5 +1,9 @@
 status: 0
 oracle: none
 ---
+compiled: True
 540 ['BufferError', 'BufferError', 'BufferError'] 8 97
+compiled: True
 2 ['BufferError', 97] 8
+compiled: True
+3 ['BufferError', 97] 8

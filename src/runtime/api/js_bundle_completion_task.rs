@@ -1299,9 +1299,11 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
+        // Not for a build that the log already stops: it needs no executable.
         transpiler.options.compile_target_builtins = match &config.compile {
             Some(compile)
                 if config.bytecode
+                    && !transpiler.log().has_errors()
                     && (!compile.compile_target.is_default()
                         || !compile.executable_path.list.is_empty()) =>
             {

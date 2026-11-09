@@ -524,6 +524,29 @@ describe("Bun.build", () => {
       });
     });
 
+    // `bytecode` for another executable reads that executable, or downloads it, while the options load.
+    test("stop the build before it reads the executable that it compiles for", async () => {
+      using dir = tempDir("bun-build-define-key-executable", {
+        "entry.js": "0;\n",
+        // Only the start of this executable: a build that reads it has one more log.
+        "bun-cut-short": Buffer.from(await Bun.file(process.execPath).slice(0, 4096).arrayBuffer()),
+      });
+      const logs = async (define: Record<string, string>) => {
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "entry.js")],
+          bytecode: true,
+          compile: { executablePath: join(String(dir), "bun-cut-short"), outfile: join(String(dir), "out") },
+          define,
+          throw: false,
+        });
+        return result.logs.map(log => log.message);
+      };
+      expect({ key: await logs({ "1x": "2" }), value: await logs({ K: "{" }) }).toEqual({
+        key: [keyError("1x")],
+        value: ['Expected "}" but found end of file'],
+      });
+    });
+
     // The build stops before it has read an entry point, and it has to free what it made until then.
     test.skipIf(!isASAN)("lose no memory, and neither does a value that does not parse", async () => {
       using dir = tempDir("bun-build-define-leak", { "entry.js": "0;\n" });

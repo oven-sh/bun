@@ -135,7 +135,7 @@ impl MatchedPlace {
         callback: ForEachPropertyWithRowsCallback,
     ) -> JsResult<bool> {
         let (rows, place) = self.cell_and_handle();
-        // SAFETY: `cell_and_handle` returns the cell of a `jest_deep_match` call and a place of that cell.
+        // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
         unsafe {
             object.for_each_property_ordered_calling_getters_with_rows(
                 global, ctx, callback, rows, place,
@@ -154,7 +154,7 @@ impl MatchedPlace {
         callback: ForEachPropertyWithRowsCallback,
     ) -> JsResult<()> {
         let (rows, place) = self.cell_and_handle();
-        // SAFETY: `cell_and_handle` returns the cell of a `jest_deep_match` call and a place of that cell.
+        // SAFETY: a `MatchedRows` is empty or the cell that `jest_deep_match` returned, which its holder keeps on the stack, and `cell_and_handle` asserts that it is not empty.
         unsafe {
             object.for_each_property_ordered_with_non_enumerable_with_rows(
                 global, ctx, callback, rows, place,
@@ -162,7 +162,7 @@ impl MatchedPlace {
         }
     }
 
-    /// What the `JSValue` walkers with rows take. Rows that are not empty are the cell that `jest_deep_match` returned, and C++ named every handle: the root, the child of a row, the `child_place` of a walk.
+    /// The rows cell and the handle of this place, which must not be none. The handle is not checked against the cell: C++ answers for any number.
     #[inline(always)]
     fn cell_and_handle(self) -> (JSValue, PlaceHandle) {
         assert!(!self.is_none() && !self.rows.is_empty());

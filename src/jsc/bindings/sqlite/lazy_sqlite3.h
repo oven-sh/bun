@@ -507,7 +507,8 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
         lazy_sqlite3_stmt_status = [](sqlite3_stmt*, int, int) -> int { return 0; };
     }
 
-    // sqlite3_db_name was added in 3.39.0. Without it the exit checkpoint only sees "main".
+    // sqlite3_db_name was added in 3.39.0. Without it the exit checkpoint can only ask about
+    // "main": a writable main still checkpoints every schema, a read-only main checkpoints none.
     if (!lazy_sqlite3_db_name) {
         lazy_sqlite3_db_name = [](sqlite3*, int N) -> const char* { return N == 0 ? "main" : nullptr; };
     }

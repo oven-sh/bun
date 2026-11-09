@@ -2614,20 +2614,15 @@ test.concurrent("process exit does not checkpoint an unclosed read-only database
 // file read-write. The exit checkpoint decides per schema: it flushes the
 // writable one and leaves the read-only one alone.
 describe.concurrent("process exit checkpoints each writable schema and skips each read-only one", () => {
-  // Both databases are WAL with a fully backfilled, non-empty -wal. A second
-  // connection in this process keeps the -wal files from being deleted at close.
-  function setup(dir: string) {
-    const main = path.join(dir, "main.db");
-    const att = path.join(dir, "att.db");
-    const held = [new DatabaseSync(main), new DatabaseSync(att)];
-    for (const db of held) {
-      db.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1)");
-      db.exec("PRAGMA wal_checkpoint(PASSIVE)");
-    }
-    const sizes = { main: statSync(main + "-wal").size, att: statSync(att + "-wal").size };
-    expect(sizes.main).toBeGreaterThan(0);
-    expect(sizes.att).toBeGreaterThan(0);
-    return { held, sizes };
+  // WAL with a fully backfilled, non-empty -wal. The connection stays open so
+  // the -wal file is not deleted when the child closes.
+  function prime(db: DatabaseSync) {
+    db.exec("PRAGMA journal_mode = WAL; CREATE TABLE t (x INTEGER); INSERT INTO t VALUES (1)");
+    db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+  }
+
+  function walSizes(dir: string) {
+    return { main: statSync(path.join(dir, "main.db-wal")).size, att: statSync(path.join(dir, "att.db-wal")).size };
   }
 
   async function runChild(dir: string, source: string) {
@@ -2644,44 +2639,42 @@ describe.concurrent("process exit checkpoints each writable schema and skips eac
 
   test("read-only main, writable attached", async () => {
     using dir = tempDir("node-sqlite-exit-ro-main", {});
-    const { held, sizes } = setup(String(dir));
-    try {
-      await runChild(
-        String(dir),
-        `const db = new DatabaseSync('file:main.db?mode=ro');
-         db.exec("ATTACH 'att.db' AS a");
-         db.exec('INSERT INTO a.t VALUES (2)');
-         console.log(db.prepare('SELECT count(*) AS c FROM a.t').get().c);
-         // intentionally not closed`,
-      );
-      expect({
-        main: statSync(path.join(String(dir), "main.db-wal")).size,
-        att: statSync(path.join(String(dir), "att.db-wal")).size,
-      }).toEqual({ main: sizes.main, att: 0 });
-    } finally {
-      for (const db of held) db.close();
-    }
+    using main = new DatabaseSync(path.join(String(dir), "main.db"));
+    using att = new DatabaseSync(path.join(String(dir), "att.db"));
+    prime(main);
+    prime(att);
+    const before = walSizes(String(dir));
+    expect(before.main).toBeGreaterThan(0);
+    expect(before.att).toBeGreaterThan(0);
+    await runChild(
+      String(dir),
+      `const db = new DatabaseSync('file:main.db?mode=ro');
+       db.exec("ATTACH 'att.db' AS a");
+       db.exec('INSERT INTO a.t VALUES (2)');
+       console.log(db.prepare('SELECT count(*) AS c FROM a.t').get().c);
+       // intentionally not closed`,
+    );
+    expect(walSizes(String(dir))).toEqual({ main: before.main, att: 0 });
   });
 
   test("writable main, read-only attached", async () => {
     using dir = tempDir("node-sqlite-exit-ro-attached", {});
-    const { held, sizes } = setup(String(dir));
-    try {
-      await runChild(
-        String(dir),
-        `const db = new DatabaseSync('main.db');
-         db.exec("ATTACH 'file:att.db?mode=ro' AS a");
-         db.exec('INSERT INTO main.t VALUES (2)');
-         console.log(db.prepare('SELECT count(*) AS c FROM main.t').get().c);
-         // intentionally not closed`,
-      );
-      expect({
-        main: statSync(path.join(String(dir), "main.db-wal")).size,
-        att: statSync(path.join(String(dir), "att.db-wal")).size,
-      }).toEqual({ main: 0, att: sizes.att });
-    } finally {
-      for (const db of held) db.close();
-    }
+    using main = new DatabaseSync(path.join(String(dir), "main.db"));
+    using att = new DatabaseSync(path.join(String(dir), "att.db"));
+    prime(main);
+    prime(att);
+    const before = walSizes(String(dir));
+    expect(before.main).toBeGreaterThan(0);
+    expect(before.att).toBeGreaterThan(0);
+    await runChild(
+      String(dir),
+      `const db = new DatabaseSync('main.db');
+       db.exec("ATTACH 'file:att.db?mode=ro' AS a");
+       db.exec('INSERT INTO main.t VALUES (2)');
+       console.log(db.prepare('SELECT count(*) AS c FROM main.t').get().c);
+       // intentionally not closed`,
+    );
+    expect(walSizes(String(dir))).toEqual({ main: 0, att: before.att });
   });
 });
 

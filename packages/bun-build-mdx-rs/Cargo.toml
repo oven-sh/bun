@@ -3,6 +3,9 @@ edition = "2021"
 name = "bun-mdx-rs"
 version = "0.0.0"
 
+# Standalone crate: opt out of the repo-root [workspace].
+[workspace]
+
 [lib]
 crate-type = ["cdylib"]
 

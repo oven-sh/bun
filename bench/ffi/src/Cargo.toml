@@ -3,6 +3,10 @@ edition = "2021"
 version = "0.1.0"
 name = "ffi_napi_bench"
 
+# Standalone crate: opt out of the repo-root [workspace], so that this builds
+# in place with its own Cargo.lock.
+[workspace]
+
 [lib]
 crate-type = ["cdylib"]
 

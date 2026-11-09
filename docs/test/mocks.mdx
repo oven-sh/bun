@@ -533,7 +533,13 @@ test("hoisted", () => {
 });
 ```
 
-`mock.module()`, `vi.doMock()` and `jest.doMock()` aren't hoisted, and neither are calls inside a block or a function. They run where they're written.
+A hoisted call takes its arguments with it. Bun evaluates the path and the factory before the file's top-level variables are initialized, and before the imports that become `await import()` load (see below). Write the path as a string literal and the factory as an inline function. If you pass the factory by name, as in `vi.mock("./math", makeFake)`, the result depends on what `makeFake` is:
+
+- A `const`, a `let` or one of those imports: the file fails with a `ReferenceError`.
+- A `var`: it is still `undefined`, so Bun mocks the module [without a factory](#mocking-without-a-factory) and reports no error.
+- A function declaration, or a variable declared with `vi.hoisted()` above the call: the call gets its value.
+
+`mock.module()`, `vi.doMock()` and `jest.doMock()` aren't hoisted, and neither are calls inside a block or a function. They run where they're written. Use one of them when the file computes the path or the factory.
 
 As in Vitest, `vi.doMock()` leaves a module that's already imported as it is. Whatever imported it keeps the real module. The next `import()` calls the factory and gets the mock. After `vi.doUnmock()`, an `import()` gets the module that was loaded before. `mock.module()` and `jest.doMock()` update the loaded module instead, so its importers get the mock too.
 

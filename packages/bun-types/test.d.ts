@@ -1437,7 +1437,8 @@ declare module "bun:test" {
     concurrentIf(condition: boolean): TestWithContext<Context, Row>;
     serialIf(condition: boolean): TestWithContext<Context, Row>;
     /**
-     * Each row is spread over the callback's parameters, so the callback doesn't receive the context.
+     * If every row is an array, the elements of a row are passed as separate arguments. Otherwise each row is
+     * passed as one argument. The callback doesn't receive the context.
      * The title is formatted the way Vitest formats it, as for {@link Test.for}.
      */
     each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): TestOfRows<T>;

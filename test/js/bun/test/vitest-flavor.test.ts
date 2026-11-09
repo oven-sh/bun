@@ -936,15 +936,19 @@ describe.concurrent("each and for", () => {
     expect([vitest.exitCode, bun.exitCode, jest.exitCode]).toEqual([0, 0, 0]);
   });
 
-  // `.for()` takes Vitest's format in every module. docs/test/writing-tests.mdx lists these differences from `.each()`.
-  test("titles: test.for and describe.for follow Vitest's format in every module", async () => {
+  // `.for()` and `.extend()` take Vitest's format in every module. docs/test/writing-tests.mdx lists what differs.
+  test("titles: test.for, describe.for and an extended test follow Vitest's format in every module", async () => {
     const file = (module: string) => `
       import { test, describe } from "${module}";
+      const extended = test.extend({});
       test.for(["a"])("for %p, 100%% %s", () => {});
       test.for([{ n: "x" }])("for %o $# $n $missing", () => {});
       test.for([[1, 2]])("for $0 $1", () => {});
       test.for([null])("for null %s", () => {});
       describe.for([{ n: "x" }])("describe.for %p %o $#", () => { test("test", () => {}); });
+      extended.for(["a"])("extended for %p, 100%% %s", () => {});
+      extended.each(["a"])("extended each %p, 100%% %s", () => {});
+      extended.each([null])("extended each null %s", () => {});
       test.each(["a"])("each %p, 100%% %s", () => {});
       test.each([{ n: "x" }])("each %o $# $n $missing", () => {});
       test.each([[1, 2]])("each $0 $1", () => {});
@@ -960,6 +964,9 @@ describe.concurrent("each and for", () => {
       "(pass) for 1 2",
       "(pass) for null undefined",
       "(pass) describe.for %p { n: 'x' } $# > test",
+      "(pass) extended for %p, 100% a undefined",
+      "(pass) extended each %p, 100% a undefined",
+      "(pass) extended each null null",
     ];
     expect(vitest.results).toEqual([
       ...titlesOfFor,

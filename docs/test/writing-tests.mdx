@@ -446,7 +446,7 @@ Bun formats a `test.for` or `describe.for` title the way Vitest does. The main d
 | In the title                                       | `test.each`, `describe.each`  | `test.for`, `describe.for`                                                    |
 | -------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------- |
 | `%p`                                               | pretty-format                 | not a specifier: it stays `%p` and takes no value                             |
-| `%%`                                               | `%`                           | `%`, a space and the next value                                               |
+| `%%`                                               | `%`                           | `%`, a space and the next value. With no value left, `% undefined`            |
 | A specifier with no value left                     | left as is                    | `undefined`, `NaN` for `%d`, `%i` and `%f`, nothing for `%c`                  |
 | An object or array for `%s`, `%o`, `%O` or `$name` | `{ n: "x" }`, `[ 1, 2 ]`      | `{ n: 'x' }`, cut short at about 40 characters. `%s` prints an array as `1,2` |
 | A string of more than 40 characters for `$name`    | printed in full               | cut to 40 characters, with `…` at the end                                     |

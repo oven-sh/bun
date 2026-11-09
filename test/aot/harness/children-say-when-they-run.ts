@@ -1,7 +1,8 @@
 // Preloaded into one of Bun's own test files. Each `bun test` that the file starts runs as the file asked, without `--aot`. Beside it a question is asked that no
 // expectation of the file asks: in a copy of the child's project every source file says, as its first statement, that it runs and in which realm. Is the list under
-// `--aot` the list of a plain run: the same files, as often, in the same order? If not, the child's `exited` rejects (Bun.spawnSync throws), and the test that
-// started it fails. A byte in the file AOT_CHILDREN_STARTED counts each compiled run. A child that the `$` shell starts is not asked yet.
+// `--aot` the list of a plain run: the same files, as often, in the same order? If not, nor that of a plain run that reads its files on one thread
+// (`withoutReadingThread`), the child's `exited` rejects (Bun.spawnSync throws), and the test that started it fails. A byte in the file AOT_CHILDREN_STARTED
+// counts each compiled run. A child that the `$` shell starts is not asked yet.
 // A run that was cut off, by a limit of time or by its death, ran fewer files than it would have: it is no list, plain or compiled. The test fails by what cut the run off, and a line
 // in the file AOT_CHILDREN_STOPPED says so.
 import {
@@ -81,6 +82,34 @@ function hold(plain: string, compiled: string) {
     );
 }
 
+// `bun test` reads each file of a project on another thread, and which file comes back first can decide what runs where nothing waits for the call that asked
+// (docs/compiler/compatibility.mdx, "Under `bun test --aot`"). Without that thread a project has one list in every run. So where the two lists part, plain is asked
+// once more without it, and that list counts if it is the compiled one: ../mock-sweep-cases.ts holds a compiled run to a plain run with the thread or without it
+// in the same way. The compiled run is not asked again.
+const withoutReadingThread = { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" };
+
+/** What hold() throws for two lists, or nothing. */
+function parting(...lists: Parameters<typeof hold>) {
+  try {
+    hold(...lists);
+  } catch (error) {
+    return error;
+  }
+}
+
+type List = Parameters<typeof hold>[0];
+
+/** Whether the second plain run has the list of the compiled run. One that was cut off has no list, which listRuns() has noted: the first verdict stands. */
+const agrees = (again: List | undefined, compiled: List) => again !== undefined && !parting(again, compiled);
+
+// Not through console.error(), which a suite may have replaced. ./runner-suites.ts prints the line.
+function sayThatPlainWavered({ cmd, cwd }: Options, bun: number) {
+  const testFiles = readdirSync(cwd ?? process.cwd()).filter(name => /\.(?:test|spec)\./.test(name));
+  process.stderr.write(
+    `THE REFERENCE WAVERED: \`bun ${cmd.slice(bun + 1).join(" ")}\` beside ${testFiles.join(", ") || "no test file"}: the first plain run had another list than the compiled run, and a plain run that reads its files on one thread had the same\n`,
+  );
+}
+
 const madeForTheRun = realpathSync(tmpdir()) + sep;
 const findBun = ({ cmd, cwd }: Options) => {
   // ./run.ts puts words in front of a command.
@@ -96,16 +125,28 @@ Bun.spawn = function (this: unknown, first: string[] | Options, second?: Omit<Op
   const bun = findBun(options);
   if (bun < 0) return spawn.call(this, first as never, second as never);
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
-  // Both copies are made before the child can write into its project.
-  const lists = [[], ["--aot"]].map(async flags => {
-    const copy = copyOf(options, bun, flags);
+  const listOf = async (copy: ReturnType<typeof copyOf>, flags: string[]) => {
     const child = spawn(copy);
     const [stderr] = await Promise.all([child.stderr.text(), child.exited]);
     rmSync(copy.cwd, { recursive: true, force: true });
     return listRuns(flags, stderr, child);
-  });
+  };
+  // Every copy is made before the child can write into its project. The last one runs only where plain is asked again.
+  const [plainCopy, compiledCopy, spare] = [[], ["--aot"], []].map(flags => copyOf(options, bun, flags));
+  const lists = [listOf(plainCopy, []), listOf(compiledCopy, ["--aot"])];
   const child = spawn.call(this, first as never, second as never);
-  const exited = Promise.all([child.exited, ...lists]).then(([code, plain, compiled]) => (hold(plain, compiled), code));
+  const exited = Promise.all([child.exited, ...lists])
+    .then(async ([code, plain, compiled]) => {
+      const parted = parting(plain, compiled);
+      if (!parted) return code;
+      const again = await listOf({ ...spare, env: { ...spare.env, ...withoutReadingThread } }, []).catch(
+        () => undefined,
+      );
+      if (!agrees(again, compiled)) throw parted;
+      sayThatPlainWavered(options, bun);
+      return code;
+    })
+    .finally(() => rmSync(spare.cwd, { recursive: true, force: true }));
   return Object.defineProperty(child, "exited", { value: exited });
 } as typeof Bun.spawn;
 
@@ -114,12 +155,24 @@ Bun.spawnSync = function (this: unknown, first: string[] | Options, second?: Omi
   const bun = findBun(options);
   if (bun < 0) return spawnSync.call(this, first as never, second as never);
   appendFileSync(process.env.AOT_CHILDREN_STARTED!, ".");
-  const [plain, compiled] = [[], ["--aot"]].map(flags => {
+  // The child runs last, so each copy is of its project as it was.
+  const listOf = (flags: string[], env: Record<string, string> = {}) => {
     const copy = copyOf(options, bun, flags);
-    const ended = spawnSync(copy);
+    const ended = spawnSync({ ...copy, env: { ...copy.env, ...env } });
     rmSync(copy.cwd, { recursive: true, force: true });
     return listRuns(flags, ended.stderr.toString(), ended);
-  });
-  hold(plain, compiled);
+  };
+  const [plain, compiled] = [[], ["--aot"]].map(flags => listOf(flags));
+  const parted = parting(plain, compiled);
+  if (parted) {
+    let again: List | undefined;
+    try {
+      again = listOf([], withoutReadingThread);
+    } catch {
+      again = undefined;
+    }
+    if (!agrees(again, compiled)) throw parted;
+    sayThatPlainWavered(options, bun);
+  }
   return spawnSync.call(this, first as never, second as never);
 } as typeof Bun.spawnSync;

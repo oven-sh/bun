@@ -109,6 +109,9 @@ function hold(title: string, preloaded: string, list: string, parts: string[]) {
         expect(readFileSync(started).length).toBeGreaterThan(0);
         // A failing test quotes what its child run printed, which has results of its own. Some runs list their own failures once more at the end.
         const lines = (stdout + "\n" + stderr).split("\n");
+        // A plain run that was asked again has said so: ./children-say-when-they-run.ts.
+        for (const line of new Set(lines.filter(line => line.startsWith("THE REFERENCE WAVERED: "))))
+          console.error(`${part}: ${line}`);
         const listed = lines.findLastIndex(line => /^\d+ tests? failed:$/.test(line));
         // The last count is the run's own. Where it is none, every failure above it is one that a child run printed, as some are meant to.
         const count = lines.findLast(line => /^ *\d+ fail$/.test(line))!;

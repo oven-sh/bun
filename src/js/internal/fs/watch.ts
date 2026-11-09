@@ -34,7 +34,9 @@ function createIgnoreMatcher(ignore: unknown) {
   const matchers = $isArray(ignore) ? ignore : [ignore];
   const compiled: Matcher[] = [];
 
-  for (const matcher of matchers) {
+  // By index, here and below: script can replace the array iterator.
+  for (let i = 0; i < matchers.length; i++) {
+    const matcher = matchers[i];
     if (typeof matcher === "string") {
       if (matcher.length === 0) {
         throw $ERR_INVALID_ARG_VALUE("options.ignore", matcher, "must not be empty");
@@ -46,7 +48,7 @@ function createIgnoreMatcher(ignore: unknown) {
         // matchBase: patterns without slashes match against the basename
         compiled.push(makeGlobOrBasenameMatcher(glob));
       }
-    } else if (matcher instanceof RegExp) {
+    } else if ($isRegExpObject(matcher)) {
       compiled.push(makeRegexMatcher(matcher));
     } else if (typeof matcher === "function") {
       compiled.push(matcher as Matcher);
@@ -59,7 +61,9 @@ function createIgnoreMatcher(ignore: unknown) {
     // With encoding: "buffer" the watcher delivers Buffer filenames; the
     // string/glob matchers (and basename()) need a string.
     if (typeof filename !== "string") filename = String(filename);
-    for (const match of compiled) {
+    for (let i = 0; i < compiled.length; i++) {
+      // A local: `compiled[i](filename)` would hand this list to a function of the caller as `this`.
+      const match = compiled[i];
       if (match(filename as string)) return true;
     }
     return false;

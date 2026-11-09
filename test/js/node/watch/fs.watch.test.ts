@@ -1952,3 +1952,122 @@ test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target d
 
   expect(runs).toEqual(runs.map(() => ({ stdout: "OK", stderr: "", exitCode: 0 })));
 });
+
+// Node v26.12.1 prints the same.
+test("fs.watch and fs.promises.watch with an ignore list do not iterate an array, and take a RegExp of another realm", async () => {
+  using dir = tempDir("fs-watch-ignore-array-iterator", {
+    "watched/.keep": "",
+    "hooks.cjs": `
+      // Pass-through counters on the two things of the array iteration protocol that a script can replace.
+      const arrayIteratorPrototype = Object.getPrototypeOf([][Symbol.iterator]());
+      const realIterator = Array.prototype[Symbol.iterator];
+      const realNext = arrayIteratorPrototype.next;
+      const apply = Reflect.apply;
+      let iterations = 0;
+      exports.install = () => {
+        iterations = 0;
+        Array.prototype[Symbol.iterator] = function () { iterations++; return apply(realIterator, this, arguments); };
+        arrayIteratorPrototype.next = function () { iterations++; return apply(realNext, this, arguments); };
+      };
+      exports.remove = () => { Array.prototype[Symbol.iterator] = realIterator; arrayIteratorPrototype.next = realNext; return iterations; };
+    `,
+    "ignore.cjs": `
+      // Prints the same under Node v26.12.1.
+      const fs = require("node:fs"); const fsp = require("node:fs/promises"); const vm = require("node:vm");
+      const hooks = require("./hooks.cjs");
+      const dir = __dirname + "/watched";
+      const ignore = [/\\.tmp$/, name => name === "skipped.txt"];
+      // Written again until the event comes: a watcher that just started can miss the first writes.
+      function writeUntilStopped(seen) {
+        let round = 0;
+        const writes = setInterval(() => {
+          if (++round > 200) {
+            console.log("no event for kept.txt, saw: " + JSON.stringify(Array.from(seen)));
+            process.exit(1);
+          }
+          fs.writeFileSync(dir + "/a.tmp", String(round));
+          fs.writeFileSync(dir + "/skipped.txt", String(round));
+          fs.writeFileSync(dir + "/kept.txt", String(round));
+        }, 20);
+        return () => clearInterval(writes);
+      }
+      const ignoredNames = seen => (seen.has("a.tmp") ? 1 : 0) + (seen.has("skipped.txt") ? 1 : 0);
+      (async () => {
+        // The first watchers load what a watcher needs.
+        fs.watch(dir, { ignore: [/never/] }).close();
+        { const first = new AbortController(); const next = fsp.watch(dir, { signal: first.signal, ignore: [/never/] })[Symbol.asyncIterator]().next().catch(() => {}); first.abort(); await next; }
+        const out = {};
+
+        // fs.watch(): the counters stay on from the creation of the watcher to its first event.
+        {
+          const seen = new Set();
+          const { promise, resolve } = Promise.withResolvers();
+          hooks.install();
+          let watcher;
+          try { watcher = fs.watch(dir, { ignore }); } catch (error) { out["fs.watch"] = String(error); hooks.remove(); }
+          if (watcher) {
+            watcher.on("change", (event, name) => { seen.add(name); if (name === "kept.txt") resolve(); });
+            const stop = writeUntilStopped(seen);
+            await promise;
+            out["fs.watch"] = { iterations: hooks.remove(), ignoredNamesSeen: ignoredNames(seen) };
+            stop(); watcher.close();
+          }
+        }
+
+        // fs.promises.watch(): the same, from the call to the first event that the iterator gives.
+        {
+          const seen = new Set();
+          const abort = new AbortController();
+          hooks.install();
+          let stop;
+          try {
+            const iterator = fsp.watch(dir, { signal: abort.signal, ignore })[Symbol.asyncIterator]();
+            stop = writeUntilStopped(seen);
+            while (!seen.has("kept.txt")) seen.add((await iterator.next()).value.filename);
+            out["fs.promises.watch"] = { iterations: hooks.remove(), ignoredNamesSeen: ignoredNames(seen) };
+          } catch (error) { out["fs.promises.watch"] = String(error); hooks.remove(); }
+          stop?.(); abort.abort();
+        }
+
+        // A RegExp of another realm is a RegExp.
+        try { fs.watch(dir, { ignore: vm.runInNewContext("/x/") }).close(); out.otherRealm = "accepted"; } catch (error) { out.otherRealm = error.code; }
+        console.log(JSON.stringify(out));
+      })();
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "ignore.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = {
+    "fs.watch": { iterations: 0, ignoredNamesSeen: 0 },
+    "fs.promises.watch": { iterations: 0, ignoredNamesSeen: 0 },
+    otherRealm: "accepted",
+  };
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(expected) + "\n", stderr: "", exitCode: 0 });
+});
+
+// Node v26.12.1 calls the function as a member of its list of matchers, so the function gets that list as `this`.
+test("fs.watch does not hand its list of matchers to a function of the ignore list", async () => {
+  using dir = tempDir("fs-watch-ignore-this", { "a.txt": "" });
+  const { promise, resolve } = Promise.withResolvers<unknown>();
+  const watcher = fs.watch(String(dir), {
+    ignore: [
+      function (this: unknown) {
+        resolve(this);
+        return false;
+      },
+    ],
+  });
+  const interval = repeat(() => fs.writeFileSync(path.join(String(dir), "a.txt"), "x"));
+  try {
+    expect(await promise).toBeUndefined();
+  } finally {
+    clearInterval(interval);
+    watcher.close();
+  }
+});

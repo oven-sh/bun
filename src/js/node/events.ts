@@ -1093,8 +1093,9 @@ function listenersController() {
     },
     removeAll() {
       while (listeners.length > 0) {
-        const [emitter, event, handler, flags] = listeners.pop()!;
-        eventTargetAgnosticRemoveListener(emitter, event, handler, flags);
+        // By index: script can replace the array iterator.
+        const entry = listeners.pop()!;
+        eventTargetAgnosticRemoveListener(entry[0], entry[1], entry[2], entry[3]);
       }
     },
   };

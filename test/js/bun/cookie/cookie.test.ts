@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
@@ -473,6 +474,183 @@ describe("cookie name parsing from Cookie header", () => {
     });
     expect(await res.json()).toEqual({ host: null, raw: "attacker" });
     expect(res.status).toBe(200);
+  });
+});
+
+// The value of a cookie made from a cookie string is the text of that string.
+// toString() must not percent-encode that text a second time.
+describe("the value of a cookie made from a cookie string", () => {
+  // Each value is an RFC 6265 cookie-value in which every "%" starts an escape.
+  const keptPairs = [
+    "a=b%20c",
+    "sid=s%3Aabc",
+    "connect.sid=s%3Aabc.def%2Fghi",
+    "j=%7B%22a%22%3A1%7D",
+    "u=%e8%af%bb",
+    "x=%fF",
+    "tok=YWJj+/==",
+    "k=a=b==",
+    "p=!#$&'()*+-./:<>?@[]^_`{|}~",
+    'q="abc"',
+    'q="b%20c"',
+    'e=""',
+    "n=",
+  ];
+  // [pair, the pair that toString() writes]. These values have a "%" that does not start an escape.
+  const strayPercentPairs: [string, string][] = [
+    ["a=100%", "a=100%25"],
+    ["a=50%-off", "a=50%25-off"],
+    ["a=%zz", "a=%25zz"],
+    ["a=a%2", "a=a%252"],
+    ["a=%", "a=%25"],
+    ["a=x%%20y", "a=x%25%2520y"],
+    ["a=a%2Gb", "a=a%252Gb"],
+    ["a=%G2", "a=%25G2"],
+    ["a=%u00e9", "a=%25u00e9"],
+    ['a="a%"', "a=%22a%25%22"],
+  ];
+  // [pair, the pair that toString() writes]. These values keep the bytes that Bun 1.4.3 writes.
+  const encodedPairs: [string, string][] = [
+    // a character that is not a cookie-octet
+    ["a=b c", "a=b%20c"],
+    ["a=b\tc", "a=b%09c"],
+    ["a=x,y", "a=x%2Cy"],
+    ["a=b\\c", "a=b%5Cc"],
+    ["a=b\x01c", "a=b%01c"],
+    ["a=b\x7Fc", "a=b%7Fc"],
+    ["a=caf\u00e9", "a=caf%C3%A9"],
+    // a double quote that is not one of a pair around cookie-octets
+    ['a="b c"', "a=%22b%20c%22"],
+    ['a="abc', "a=%22abc"],
+    ['a=abc"', "a=abc%22"],
+    ['a=b"c', "a=b%22c"],
+    ['a="', "a=%22"],
+    ...strayPercentPairs,
+    // one such character sends the whole value to the encoder
+    ["a=b%20c d", "a=b%2520c%20d"],
+    ["a=caf\u00e9%20x", "a=caf%C3%A9%2520x"],
+  ];
+  const valueOf = (pair: string) => pair.slice(pair.indexOf("=") + 1);
+  // The same text in a string that JavaScriptCore holds in 16 bits. The value of the cookie is then 16-bit too.
+  const as16Bit = (text: string) => {
+    const wide = Buffer.from(text, "utf16le").toString("utf16le");
+    expect(jscDescribe(wide)).toContain("8Bit:(0)");
+    return wide;
+  };
+
+  describe.each([
+    ["Bun.Cookie.parse(string)", (cookieString: string) => Bun.Cookie.parse(cookieString)],
+    ["new Bun.Cookie(string)", (cookieString: string) => new Bun.Cookie(cookieString)],
+    [
+      "new (class extends Bun.Cookie)(string)",
+      (cookieString: string) => new (class extends Bun.Cookie {})(cookieString),
+    ],
+  ])("%s", (_, make) => {
+    test.each([
+      ["an 8-bit string", (text: string) => text],
+      ["a 16-bit string", as16Bit],
+    ])("writes a cookie-value from %s back as it is", (_, encoding) => {
+      const actual = keptPairs.map(pair => {
+        const cookie = make(encoding(pair + "; Path=/p; HttpOnly"));
+        return [cookie.value, cookie.toJSON().value, cookie.toString(), cookie.serialize(), `${cookie}`];
+      });
+      expect(actual).toEqual(
+        keptPairs.map(pair => {
+          const written = pair + "; Path=/p; HttpOnly; SameSite=Lax";
+          return [valueOf(pair), valueOf(pair), written, written, written];
+        }),
+      );
+    });
+
+    test.each([
+      ["an 8-bit string", (text: string) => text],
+      ["a 16-bit string", as16Bit],
+    ])("percent-encodes every other value from %s", (_, encoding) => {
+      const actual = encodedPairs.map(([pair]) => {
+        const cookie = make(encoding(pair));
+        return [cookie.value, cookie.toString()];
+      });
+      expect(actual).toEqual(
+        encodedPairs.map(([pair, written]) => [valueOf(pair), written + "; Path=/; SameSite=Lax"]),
+      );
+    });
+  });
+
+  test("toString() does not change when its output is parsed again", () => {
+    const pairs = [...keptPairs, ...encodedPairs.map(([pair]) => pair)];
+    const first = pairs.map(pair => Bun.Cookie.parse(pair).toString());
+    const third = first.map(header => Bun.Cookie.parse(Bun.Cookie.parse(header).toString()).toString());
+    expect(third).toEqual(first);
+  });
+
+  test("a change to an attribute does not change how the value is written", () => {
+    const cookie = Bun.Cookie.parse("a=b%20c");
+    cookie.domain = "example.com";
+    cookie.path = "/x";
+    cookie.maxAge = 60;
+    cookie.secure = true;
+    cookie.httpOnly = true;
+    cookie.partitioned = true;
+    cookie.sameSite = "strict";
+    expect(cookie.toString()).toBe(
+      "a=b%20c; Domain=example.com; Path=/x; Max-Age=60; Secure; HttpOnly; Partitioned; SameSite=Strict",
+    );
+  });
+
+  test("a value that is assigned is text, so toString() percent-encodes it", () => {
+    const cookie = Bun.Cookie.parse("a=b%20c");
+    cookie.value = "x y";
+    expect(cookie.toString()).toBe("a=x%20y; Path=/; SameSite=Lax");
+    cookie.value = "b%20c";
+    expect(cookie.toString()).toBe("a=b%2520c; Path=/; SameSite=Lax");
+
+    const assignedToItself = Bun.Cookie.parse("a=b%20c");
+    assignedToItself.value = assignedToItself.value;
+    expect(assignedToItself.toString()).toBe("a=b%2520c; Path=/; SameSite=Lax");
+  });
+
+  test("a copy made from a cookie string is written like its source", () => {
+    const cookie = Bun.Cookie.parse("a=b%20c; Path=/p; HttpOnly");
+    expect([
+      Bun.Cookie.parse(cookie.toString()).toString(),
+      new Bun.Cookie(`${cookie.name}=${cookie.value}`).toString(),
+    ]).toEqual(["a=b%20c; Path=/p; HttpOnly; SameSite=Lax", "a=b%20c; Path=/; SameSite=Lax"]);
+  });
+
+  test("a copy made from the name and the value is text, so toString() percent-encodes it", () => {
+    const cookie = Bun.Cookie.parse("a=b%20c");
+    const copies = [
+      new Bun.Cookie("a", "b%20c"),
+      new Bun.Cookie(cookie.name, cookie.value),
+      Bun.Cookie.from(cookie.name, cookie.value),
+      new Bun.Cookie(cookie.toJSON()),
+      // The constructor reads a Cookie the way it reads any object with a name and a value.
+      new Bun.Cookie(cookie),
+    ];
+    expect(copies.map(copy => copy.toString())).toEqual([
+      "a=b%2520c; Path=/; SameSite=Lax",
+      "a=b%2520c; Path=/; SameSite=Lax",
+      "a=b%2520c; Path=/; SameSite=Lax",
+      "a=b%2520c; Path=/; SameSite=Lax",
+      "a=b%2520c; Path=/; SameSite=Lax",
+    ]);
+  });
+
+  // Bun.CookieMap reads a "%" that does not start an escape as U+FFFD. So toString() percent-encodes
+  // a parsed value that has one, and Bun.CookieMap reads the text back.
+  test("Bun.CookieMap reads back a written value with a '%' that does not start an escape", () => {
+    const readBack = strayPercentPairs.map(([pair]) => {
+      const written = Bun.Cookie.parse(pair).toString().split(";")[0];
+      return new Bun.CookieMap(written).get("a");
+    });
+    expect(readBack).toEqual(strayPercentPairs.map(([pair]) => valueOf(pair)));
+  });
+
+  // When this test passes, Bun.CookieMap keeps such a "%", and toString() can write these values as parsed.
+  // Then remove the "%" check from isEncodedCookieValue in Cookie.cpp and move strayPercentPairs into keptPairs.
+  test.failing("Bun.CookieMap reads a '%' that does not start an escape without U+FFFD", () => {
+    const read = strayPercentPairs.map(([pair]) => new Bun.CookieMap(pair).get("a")!);
+    expect(read.filter(value => value.includes("\uFFFD"))).toEqual([]);
   });
 });
 

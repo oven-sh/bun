@@ -62,7 +62,11 @@ public:
     const String& name() const { return m_name; }
 
     const String& value() const { return m_value; }
-    void setValue(const String& value) { m_value = value; }
+    void setValue(const String& value)
+    {
+        m_value = value;
+        m_valueIsWireText = false;
+    }
 
     const String& domain() const { return m_domain; }
     ExceptionOr<void> setDomain(const String& domain)
@@ -133,6 +137,8 @@ private:
     bool m_httpOnly = false;
     double m_maxAge = std::numeric_limits<double>::quiet_NaN();
     bool m_partitioned = false;
+    // Set by parse(): m_value is the value text of a cookie string, which appendTo() writes back as it is when it is a valid cookie-value.
+    bool m_valueIsWireText = false;
 };
 
 } // namespace WebCore

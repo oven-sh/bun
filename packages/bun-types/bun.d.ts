@@ -911,6 +911,126 @@ declare module "bun" {
    */
   function stripANSI(input: string): string;
 
+  /**
+   * Convert a string to camelCase.
+   *
+   * @category Utilities
+   *
+   * @param input The string to convert.
+   * @returns The string in camelCase.
+   *
+   * @example
+   * ```ts
+   * Bun.camelCase("two words"); // "twoWords"
+   * ```
+   */
+  function camelCase(input: string): string;
+
+  /**
+   * Convert a string to Capital Case.
+   *
+   * @category Utilities
+   *
+   * @param input The string to convert.
+   * @returns The string in Capital Case.
+   *
+   * @example
+   * ```ts
+   * Bun.capitalCase("two words"); // "Two Words"
+   * ```
+   */
+  function capitalCase(input: string): string;
+
+  /**
+   * Convert a string to CONSTANT_CASE.
+   *
+   * @category Utilities
+   *
+   * @param input The string to convert.
+   * @returns The string in CONSTANT_CASE.
+   *
+   * @example
+   * ```ts
+   * Bun.constantCase("two words"); // "TWO_WORDS"
+   * ```
+   */
+  function constantCase(input: string): string;
+
+  /**
+   * Convert a string to dot.case.
+   *
+   * @category Utilities
+   *
+   * @param input The string to convert.
+   * @returns The string in dot.case.
+   *
+   * @example
+   * ```ts
+   * Bun.dotCase("two words"); // "two.words"
+   * ```
+   */
+  function dotCase(input: string): string;
+
+  /**
+   * Convert a string to kebab-case.
+   *
+   * @category Utilities
+   *
+   * @param input The string to convert.
+   * @returns The string in kebab-case.
+   *
+   * @example
+   * ```ts
+   * Bun.kebabCase("two words"); // "two-words"
+   * ```
+   */
+  function kebabCase(input: string): string;
+
+  /**
+   * Convert a string to PascalCase.
+   *
+   * @category Utilities
+   *
+   * @param input The string to convert.
+   * @returns The string in PascalCase.
+   *
+   * @example
+   * ```ts
+   * Bun.pascalCase("two words"); // "TwoWords"
+   * ```
+   */
+  function pascalCase(input: string): string;
+
+  /**
+   * Convert a string to snake_case.
+   *
+   * @category Utilities
+   *
+   * @param input The string to convert.
+   * @returns The string in snake_case.
+   *
+   * @example
+   * ```ts
+   * Bun.snakeCase("two words"); // "two_words"
+   * ```
+   */
+  function snakeCase(input: string): string;
+
+  /**
+   * Convert a string to Train-Case.
+   *
+   * @category Utilities
+   *
+   * @param input The string to convert.
+   * @returns The string in Train-Case.
+   *
+   * @example
+   * ```ts
+   * Bun.trainCase("two words"); // "Two-Words"
+   * ```
+   */
+  function trainCase(input: string): string;
+
   interface SliceAnsiOptions {
     /**
      * If set, and content was cut at either edge of the requested range,

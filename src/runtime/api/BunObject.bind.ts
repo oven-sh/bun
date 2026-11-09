@@ -29,6 +29,24 @@ export const braces = b.fn({
   throws: true,
 });
 
+export const camelCase = b.fn({
+  args: { input: b.string },
+  returns: b.string,
+  rustPath: "crate::api::bun_object::camel_case",
+});
+
+export const capitalCase = b.fn({
+  args: { input: b.string },
+  returns: b.string,
+  rustPath: "crate::api::bun_object::capital_case",
+});
+
+export const constantCase = b.fn({
+  args: { input: b.string },
+  returns: b.string,
+  rustPath: "crate::api::bun_object::constant_case",
+});
+
 /** `windowBits` is converted and not used. */
 export const ZlibCompressionOptions = b.dictionary(
   {
@@ -70,6 +88,12 @@ const zlib = (
 const compressionInput = b.bytes({ from: ["string", "buffer"], shared: "copied" });
 
 export const deflateSync = zlib("deflate_sync", ZlibCompressionOptions, compressionInput);
+
+export const dotCase = b.fn({
+  args: { input: b.string },
+  returns: b.string,
+  rustPath: "crate::api::bun_object::dot_case",
+});
 
 export const gc = b.fn({
   args: {
@@ -116,6 +140,12 @@ export const inspect = b.fn({
   throws: true,
 });
 
+export const kebabCase = b.fn({
+  args: { input: b.string },
+  returns: b.string,
+  rustPath: "crate::api::bun_object::kebab_case",
+});
+
 export const MMapOptions = b.dictionary(
   {
     shared: b.bool.loose.default(true),
@@ -154,6 +184,12 @@ export const openInEditor = b.fn({
   throws: true,
 });
 
+export const pascalCase = b.fn({
+  args: { input: b.string },
+  returns: b.string,
+  rustPath: "crate::api::bun_object::pascal_case",
+});
+
 /** Without a `moduleId` or a `parent`, `resolveSync` throws and `resolve` rejects. */
 const resolveSignature = {
   args: { moduleId: b.string.loose.nullable, parent: b.string.loose.nullable, esm: b.bool.default(true) },
@@ -180,6 +216,12 @@ export const sleepSync = b.fn({
   throws: true,
 });
 
+export const snakeCase = b.fn({
+  args: { input: b.string },
+  returns: b.string,
+  rustPath: "crate::api::bun_object::snake_case",
+});
+
 /** The table of what is not an object is `""`. */
 const tabularData = b.object.otherAsNull;
 const tableSignature = {
@@ -202,6 +244,12 @@ export const table = b.overloads(
     rustPath: "crate::api::bun_object::table",
   },
 );
+
+export const trainCase = b.fn({
+  args: { input: b.string },
+  returns: b.string,
+  rustPath: "crate::api::bun_object::train_case",
+});
 
 export const WhichOptions = b.dictionary(
   {

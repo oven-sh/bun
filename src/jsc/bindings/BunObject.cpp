@@ -1026,8 +1026,11 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     allocUnsafe                                    Bun::Bindgen::Generated::BunObject::jsAllocUnsafe                   DontDelete|Function 1
     argv                                           BunObject_lazyPropCb_wrap_argv                                      DontDelete|PropertyCallback
     build                                          Bun::Bindgen::Generated::JSBundler::jsBuild                         DontDelete|Function 1
+    camelCase                                      Bun::Bindgen::Generated::BunObject::jsCamelCase                     DontDelete|Function 1
+    capitalCase                                    Bun::Bindgen::Generated::BunObject::jsCapitalCase                   DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        Bun::Bindgen::Generated::Listener::jsConnect                        DontDelete|Function 1
+    constantCase                                   Bun::Bindgen::Generated::BunObject::jsConstantCase                  DontDelete|Function 1
     cron                                           BunObject_lazyPropCb_wrap_cron                                      DontDelete|PropertyCallback
     cwd                                            BunObject_lazyPropCb_wrap_cwd                                       DontEnum|DontDelete|PropertyCallback
     color                                          Bun::Bindgen::Generated::ColorJs::jsColor                           DontDelete|Function 2
@@ -1035,6 +1038,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
     deflateSync                                    Bun::Bindgen::Generated::BunObject::jsDeflateSync                   DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
+    dotCase                                        Bun::Bindgen::Generated::BunObject::jsDotCase                       DontDelete|Function 1
     enableANSIColors                               BunObject_lazyPropCb_wrap_enableANSIColors                          DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     jsFunctionBunEscapeHTML                                             DontDelete|Function 2
@@ -1052,12 +1056,14 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     isMainThread                                   constructIsMainThread                                               ReadOnly|DontDelete|PropertyCallback
     isStandaloneExecutable                         BunObject_lazyPropCb_wrap_isStandaloneExecutable                    ReadOnly|DontDelete|PropertyCallback
     jest                                           Bun::Bindgen::Generated::Jest::jsJest                               DontEnum|DontDelete|Function 1
+    kebabCase                                      Bun::Bindgen::Generated::BunObject::jsKebabCase                     DontDelete|Function 1
     listen                                         Bun::Bindgen::Generated::Listener::jsListen                         DontDelete|Function 1
     udpSocket                                      Bun::Bindgen::Generated::UdpSocket::jsUdpSocket                     DontDelete|Function 1
     main                                           bunObjectMain                                                       DontDelete|CustomAccessor
     mmap                                           Bun::Bindgen::Generated::BunObject::jsMmap                          DontDelete|Function 1
     nanoseconds                                    functionBunNanoseconds                                              DontDelete|Function 0
     openInEditor                                   Bun::Bindgen::Generated::BunObject::jsOpenInEditor                  DontDelete|Function 1
+    pascalCase                                     Bun::Bindgen::Generated::BunObject::jsPascalCase                    DontDelete|Function 1
     origin                                         BunObject_lazyPropCb_wrap_origin                                    DontEnum|ReadOnly|DontDelete|PropertyCallback
     version_with_sha                               constructBunVersionWithSha                                          DontEnum|ReadOnly|DontDelete|PropertyCallback
     password                                       Bun::Bindgen::Generated::PasswordObject::createPassword             DontDelete|PropertyCallback
@@ -1087,6 +1093,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     sliceAnsi                                      jsFunctionBunSliceAnsi                                              DontDelete|Function 5
     sleep                                          functionBunSleep                                                    DontDelete|Function 1
     sleepSync                                      Bun::Bindgen::Generated::BunObject::jsSleepSync                     DontDelete|Function 1
+    snakeCase                                      Bun::Bindgen::Generated::BunObject::jsSnakeCase                     DontDelete|Function 1
     spawn                                          Bun::Bindgen::Generated::JsBunSpawnBindings::jsSpawn                DontDelete|Function 1
     spawnSync                                      Bun::Bindgen::Generated::JsBunSpawnBindings::jsSpawnSync            DontDelete|Function 1
     stderr                                         BunObject_lazyPropCb_wrap_stderr                                    DontDelete|PropertyCallback
@@ -1094,6 +1101,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     stdout                                         BunObject_lazyPropCb_wrap_stdout                                    DontDelete|PropertyCallback
     stringWidth                                    jsFunctionBunStringWidth                                            DontDelete|Function 2
     stripANSI                                      jsFunctionBunStripANSI                                              DontDelete|Function 1
+    trainCase                                      Bun::Bindgen::Generated::BunObject::jsTrainCase                     DontDelete|Function 1
     wrapAnsi                                       jsFunctionBunWrapAnsi                                               DontDelete|Function 3
     Terminal                                       Bun::Bindgen::Generated::Terminal::getTerminalConstructor           DontDelete|PropertyCallback
     unsafe                                         Bun::Bindgen::Generated::UnsafeObject::createUnsafe                 DontDelete|PropertyCallback

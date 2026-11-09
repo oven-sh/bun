@@ -507,7 +507,10 @@ inline int lazyLoadSQLiteUnlocked(WTF::String* errorMessage = nullptr)
         lazy_sqlite3_stmt_status = [](sqlite3_stmt*, int, int) -> int { return 0; };
     }
 
-    // sqlite3_db_name was added in 3.39.0.
+    // sqlite3_db_readonly was added in 3.7.11 and sqlite3_db_name in 3.39.0.
+    if (!lazy_sqlite3_db_readonly) {
+        lazy_sqlite3_db_readonly = [](sqlite3*, const char*) -> int { return 0; };
+    }
     if (!lazy_sqlite3_db_name) {
         lazy_sqlite3_db_name = [](sqlite3*, int N) -> const char* { return N == 0 ? "main" : nullptr; };
     }

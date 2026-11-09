@@ -64,6 +64,14 @@ impl Format {
         self != Format::Bun
     }
 
+    /// What the owner of a file that doesn't parse deletes to start it over. The first line keeps a file in Jest's or Vitest's format: no new file is in Jest's, and only a test of `"vitest"` makes one in Vitest's.
+    pub(crate) fn start_over(self) -> &'static str {
+        match self {
+            Format::Bun => "delete it",
+            Format::Jest | Format::Vitest => "delete everything below its first line",
+        }
+    }
+
     pub(crate) fn matches(self, saved: &[u8], received: &[u8]) -> bool {
         match self {
             Format::Vitest => saved.trim_ascii() == received.trim_ascii(),
@@ -115,8 +123,8 @@ enum Pending {
 
 /// Why `--update-snapshots` left a snapshot file as it is.
 pub(crate) enum LeftAsItIs {
-    /// Only a run of every test and hook to the end has all the entries that replace a file nobody can read. This has its path.
-    DoesNotParse(Box<[u8]>),
+    /// Only a run of every test and hook to the end has all the entries that replace a file nobody can read. This has its path and format.
+    DoesNotParse(Box<[u8]>, Format),
     NotWritable(bun_sys::Error),
 }
 
@@ -258,7 +266,7 @@ pub(crate) struct File {
     pending: Pending,
     /// The length of the text that was loaded. New entries go behind that text only while the file has this length.
     loaded_len: usize,
-    /// With `--update-snapshots`, a file in Bun's format that doesn't parse, until a run of every test and hook to the end replaces it.
+    /// With `--update-snapshots`, a file that doesn't parse, until a run of every test and hook to the end replaces or removes it.
     unparsed: bool,
     /// The file can't be opened for writing, or a run could not tell which entries have no test. A later run of the file can't either: it may register fewer tests (module cache).
     keeps_all: bool,
@@ -409,7 +417,7 @@ impl Snapshots {
         let mut unparsed = false;
         if !contents.is_empty() && self.parse_file(path, &contents).is_err() {
             self.values.clear();
-            if !(self.update_snapshots && format == Format::Bun) {
+            if !self.update_snapshots {
                 return Err(Error::ParseError);
             }
             unparsed = true;
@@ -610,12 +618,17 @@ impl Snapshots {
             self.values.clear();
             file.pending = Pending::Nothing;
             if taken == 0 {
+                // A run of every test to the end that asks for no entry leaves none, as in a file that parses. A file in Bun's format can be another tool's: it is any file with no header of Jest or Vitest.
+                if !file.keeps_all && file.format != Format::Bun {
+                    Self::remove_file(files, file.id).map_err(LeftAsItIs::NotWritable)?;
+                    file.unparsed = false;
+                }
                 return Ok(());
             }
             let mut path_buf = bun_paths::path_buffer_pool::get();
             let (_, _, len) = snapshot_file_path(files, file.id, path_buf.0.as_mut_slice())
                 .ok_or_else(|| LeftAsItIs::NotWritable(Self::path_is_too_long()))?;
-            return Err(LeftAsItIs::DoesNotParse(Box::from(&path_buf.0[..len])));
+            return Err(LeftAsItIs::DoesNotParse(Box::from(&path_buf.0[..len]), file.format));
         }
         if file.keeps_all {
             return Ok(());

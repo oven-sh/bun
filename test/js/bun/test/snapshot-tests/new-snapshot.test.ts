@@ -547,8 +547,7 @@ describe.concurrent("--update-snapshots", () => {
       snapshot: unreadable,
       stderr: expect.stringContaining(
         `error: --update-snapshots left "${join("__snapshots__", "a.test.ts.snap")}" as it is: the file doesn't parse\n` +
-          "note: A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. " +
-          "A test that is skipped, filtered out, test.failing or a todo with a body does not.\n" +
+          "note: A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end.\n" +
           "note: Fix the snapshot file, or delete it and run --update-snapshots again.\n",
       ),
       exitCode: 1,
@@ -605,7 +604,7 @@ describe.concurrent("--update-snapshots", () => {
     });
   });
 
-  // No test asks the file for an entry, so the run has nothing to put in its place. The second file is not Bun's.
+  // No test asks the file for an entry, so the run has nothing to put in its place. The third file is not Bun's.
   const inline = `test("a", () => { expect("a").toMatchInlineSnapshot(\`"a"\`); });`;
   test.each([
     ["a test is skipped", `${inline}\ntest.skip("b", () => { expect("b").toMatchSnapshot(); });`, unreadable],

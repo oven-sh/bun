@@ -4162,14 +4162,15 @@ impl TestCommand {
                     reporter.jest.current_file.print_if_needed();
                     let top_level_dir = FileSystem::instance().top_level_dir();
                     let failure = match left {
-                        LeftAsItIs::DoesNotParse(path) => {
+                        LeftAsItIs::DoesNotParse(path, format) => {
                             let message = format!(
                                 "--update-snapshots left {} as it is: the file doesn't parse",
                                 bun_fmt::quote(resolve_path::relative(top_level_dir, &path))
                             );
                             pretty_error!(
-                                "<r><red>error<r>: {}\n<blue>note<r><d>:<r> A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end. A test that is skipped, filtered out, test.failing or a todo with a body does not.\n<blue>note<r><d>:<r> Fix the snapshot file, or delete it and run --update-snapshots again.\n",
-                                message
+                                "<r><red>error<r>: {}\n<blue>note<r><d>:<r> A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end.\n<blue>note<r><d>:<r> Fix the snapshot file, or {} and run --update-snapshots again.\n",
+                                message,
+                                format.start_over()
                             );
                             TestFailure {
                                 message: message.into_bytes(),

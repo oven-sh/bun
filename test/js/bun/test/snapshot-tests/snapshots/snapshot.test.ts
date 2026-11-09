@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, isDebug, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
@@ -1835,6 +1835,109 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
       const { exitCode } = await runTests(String(dir), { CI: "false" }, "--update-snapshots");
       expect(readdirSync(join(String(dir), "__snapshots__"))).toEqual([]);
       expect(exitCode).toBe(0);
+    });
+
+    // Neither runner has this rule. Jest 30 reads such a file as one with no entry, so its update writes only the entries of the tests that ran. Vitest 5 stops: "Invalid snapshot file, please manually fix or delete it".
+    describe.each(formats)("%s: a file that does not parse", format => {
+      const module = importing(format === "vitest" ? "vitest" : null);
+      const unreadable =
+        headers[format] +
+        '\n<<<<<<< ours\nexports[`b 1`] = `"ours"`;\n=======\nexports[`b 1`] = `"theirs"`;\n>>>>>>> theirs\n';
+      const a = `test("a", () => { expect("a").toMatchSnapshot(); });\n`;
+      // The file of this snapshot is not the .snap, so a run that leaves the .snap as it is writes it too.
+      const ofItsOwnFile = `test("file", async () => { await expect("x").toMatchFileSnapshot("./x.txt"); });\n`;
+      // A new file is in Bun's format, or in Vitest's for a test of "vitest". The first line keeps a file in the other two.
+      const startOver = format === "bun" ? "delete it" : "delete everything below its first line";
+      const left = {
+        snapshot: unreadable,
+        stderr: expect.stringContaining(
+          `error: --update-snapshots left "${join("__snapshots__", "a.test.js.snap")}" as it is: the file doesn't parse\n` +
+            "note: A run replaces a snapshot file that doesn't parse only when every test and hook of its test file runs to the end.\n" +
+            `note: Fix the snapshot file, or ${startOver} and run --update-snapshots again.\n`,
+        ),
+        exitCode: 1,
+      };
+      const snapPath = (dir: unknown) => join(String(dir), "__snapshots__", "a.test.js.snap");
+      const read = (dir: unknown) => ({
+        snapshot: existsSync(snapPath(dir)) ? snap(dir) : null,
+        ofItsOwnFile: existsSync(join(String(dir), "x.txt")) ? readFileSync(join(String(dir), "x.txt"), "utf8") : null,
+      });
+      async function update(tests: string, ...args: string[]) {
+        using dir = tempDir("snapshot-unreadable", {
+          "a.test.js": module + tests,
+          "__snapshots__/a.test.js.snap": unreadable,
+        });
+        const { stderr, exitCode } = await runTests(String(dir), { CI: "false" }, ...args);
+        return { ...read(dir), stderr, exitCode };
+      }
+
+      test("is replaced in its format when every test ran to the end", async () => {
+        expect(await update(body + ofItsOwnFile, "--update-snapshots")).toMatchObject({
+          snapshot: headers[format] + entries[format],
+          ofItsOwnFile: "x",
+          exitCode: 0,
+        });
+      });
+
+      test("is left as it is when a test is skipped", async () => {
+        const skipped = `test.skip("b", () => { expect("new").toMatchSnapshot(); });\n`;
+        expect(await update(a + skipped + ofItsOwnFile, "--update-snapshots")).toMatchObject({
+          ...left,
+          ofItsOwnFile: "x",
+        });
+      });
+
+      test("is left as it is when -t leaves a test out, and what the note says to delete starts it over in its format", async () => {
+        using dir = tempDir("snapshot-unreadable", {
+          "a.test.js": module + a + `test("b", () => { expect("new").toMatchSnapshot(); });`,
+          "__snapshots__/a.test.js.snap": unreadable,
+        });
+        const run = () => runTests(String(dir), { CI: "false" }, "--update-snapshots", "-t", "a");
+        const { stderr, exitCode } = await run();
+        expect({ ...read(dir), stderr, exitCode }).toMatchObject(left);
+
+        if (format === "bun") rmSync(snapPath(dir));
+        else writeFileSync(snapPath(dir), headers[format]);
+        const again = await run();
+        expect({ ...read(dir), exitCode: again.exitCode }).toMatchObject({
+          snapshot: file(format, { "a 1": "a" }),
+          exitCode: 0,
+        });
+      });
+
+      // Vitest counts a todo, and a test.fails that throws, as tests that ran.
+      test.each([
+        ["a todo that has a body", `test.todo("b", () => { expect("new").toMatchSnapshot(); });`, { "a 1": "a" }],
+        [
+          "a test.fails that throws",
+          `test.fails("b", () => { expect("new").toMatchSnapshot(); throw new Error("as expected"); });`,
+          { "a 1": "a", "b 1": "new" },
+        ],
+      ])("with %s, is replaced only in Vitest's format", async (_, b, entriesOfVitest) => {
+        expect(await update(a + b, "--update-snapshots")).toMatchObject(
+          format === "vitest" ? { snapshot: file(format, entriesOfVitest), exitCode: 0 } : left,
+        );
+      });
+
+      // Such a run leaves no entry in a file of Jest or Vitest that parses either. A file in Bun's format can be another tool's.
+      test("when every test ran to the end and none asks it for a snapshot, is removed only in Jest's and Vitest's formats", async () => {
+        const inline = `test("inline", () => { expect(1).toMatchInlineSnapshot(\`1\`); });\n`;
+        const result = await update(inline + ofItsOwnFile, "--update-snapshots");
+        expect(result).toMatchObject({
+          snapshot: format === "bun" ? unreadable : null,
+          ofItsOwnFile: "x",
+          exitCode: 0,
+        });
+        expect(result.stderr).not.toContain("error");
+      });
+
+      test("fails the test that asks it for a snapshot when the run does not update", async () => {
+        expect(await update(a)).toMatchObject({
+          snapshot: unreadable,
+          stderr: expect.stringContaining("error: Failed to parse snapshot file for: "),
+          exitCode: 1,
+        });
+      });
     });
 
     // A run leaves tests out of three that have an entry each. The next run, in which "two" prints another value, fails if the entry of "two" is still there.

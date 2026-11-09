@@ -54,6 +54,11 @@ public:
     bool m_dependsOnMoreThanSource { false };
     // Set by IsolatedModuleCache::insert() and compared by lookup().
     uint64_t m_madeFromHash { 0 };
+    // Set by IsolatedModuleCache for its didFinishFile().
+    uint32_t m_lastUsedByFile { 0 };
+    uint32_t m_filesThatUsedIt { 0 };
+    bool m_isMainModule { false };
+    bool m_releasesSourceMap { false };
 
 private:
     SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,

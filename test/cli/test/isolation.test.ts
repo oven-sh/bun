@@ -3427,3 +3427,276 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     });
   });
 });
+
+describe.concurrent("--isolate: the sources and source maps kept for later files are bounded", () => {
+  const ones = 14;
+  // --isolate=modules holds the last 8 files, and --isolate the last one or two (see "only the last two finished files").
+  const atMost = (flag = "--isolate") => (flag === "--isolate=modules" ? 11 : 7);
+  const env = {
+    ...bunEnv,
+    BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+    // JSC's CodeCache also keeps a source, until 16 MB of others have come after it.
+    BUN_JSC_useCodeCache: "0",
+  };
+  // `fails()` throws on line 4, which is line 2 of the output. The output is 12 KB.
+  const module = (name: string) => `type T = {
+  ${name}: number;
+};
+export function fails(): T { throw new Error("thrown in ${name}"); }
+export const text = ${JSON.stringify(Buffer.alloc(12 * 1024, name[0]).toString())};
+`;
+  const testFile = (imports: string[], more = "", head = "") => `type T = {
+      test: number;
+    };
+    import { test, expect, vi } from "bun:test";
+    import vm from "node:vm";
+    import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+    ${imports.map((path, i) => `import { fails as fails${i} } from "./${path}";`).join("\n")}
+    ${head}
+    const isCached = name => isolatedModuleCacheSourceType(require.resolve(name)) !== null;
+    // A source map also applies to a script of the same name. Every source here starts with a type, so it moves a line.
+    const hasSourceMap = name =>
+      [2, 6].some(line => {
+        const script = new vm.Script("\\n".repeat(line - 1) + "new Error().stack", { filename: require.resolve(name) });
+        return script.runInThisContext().match(/:(\\d+):\\d+/)[1] !== String(line);
+      });
+    const isKept = name => {
+      expect(hasSourceMap(name)).toBe(isCached(name));
+      return isCached(name);
+    };
+    const failingLine = fails => {
+      try { fails(); } catch (error) { return error.stack.match(/:(\\d+):\\d+/)[1]; }
+    };
+    test("runs", async () => {
+      expect([${imports.map((_, i) => `fails${i}`).join(", ")}].map(failingLine)).toEqual(${JSON.stringify(imports.map(() => "4"))});
+      expect(hasSourceMap(import.meta.path)).toBe(true);
+      ${more}
+      Bun.gc(true);
+    });
+  `;
+  const fileName = (i: number) => `${String(i).padStart(2, "0")}.test.ts`;
+  const all = `Array.from({ length: ${ones} }, (_, i) => i)`;
+
+  // The last file is last.test.ts, which prints one line of JSON per call of `print`.
+  async function run(files: Record<string, string>, flags: string[], maxBytes?: number) {
+    using dir = tempDir("isolate-bounded-sources", files);
+    const testFiles = Object.keys(files).filter(name => name.endsWith(".test.ts"));
+    const { stdout, stderr, exitCode } = await runTests(
+      String(dir),
+      flags,
+      testFiles.map(name => "./" + name),
+      { ...env, BUN_TEST_ISOLATION_SOURCE_CACHE_MAX_BYTES: maxBytes?.toString() },
+    );
+    expect(stderr).toContain(` ${testFiles.length} pass`);
+    expect(exitCode).toBe(0);
+    // With --parallel, the output of a test is on stderr.
+    return (stdout + stderr)
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line));
+  }
+  const print = (value: string) => `console.log(JSON.stringify(${value}));`;
+
+  test.each([...isolateFlags, "--parallel=1"])(
+    "%s: a module that only one file uses goes, one that every file uses stays",
+    async flag => {
+      const files: Record<string, string> = { "shared.ts": module("shared") };
+      for (let i = 0; i < ones; i++) {
+        files[`one${i}.ts`] = module("one" + i);
+        files[fileName(i)] = testFile(["shared", "one" + i]);
+      }
+      files["last.test.ts"] = testFile(
+        ["shared"],
+        print(`{ shared: isKept("./shared.ts"), kept: ${all}.filter(i => isKept("./one" + i + ".ts")) }`),
+      );
+      const [{ shared, kept }] = await run(files, [flag], 0);
+      expect(shared).toBe(true);
+      expect(kept.length).toBeLessThanOrEqual(atMost(flag));
+    },
+  );
+
+  test("a module that files use now and then outlives those that one file used", async () => {
+    const files: Record<string, string> = { "many.ts": module("many") };
+    for (let i = 0; i < ones; i++) {
+      files[`one${i}.ts`] = module("one" + i);
+      files[fileName(i)] = testFile(i % 3 === 0 ? ["many", "one" + i] : ["one" + i]);
+    }
+    files["last.test.ts"] = testFile(
+      [],
+      print(`{ many: isKept("./many.ts"), kept: ${all}.filter(i => isKept("./one" + i + ".ts")) }`),
+    );
+    // Room for four.
+    const [{ many, kept }] = await run(files, ["--isolate"], 4 * 13 * 1024);
+    expect(many).toBe(true);
+    expect(kept.length).toBeLessThanOrEqual(atMost());
+  });
+
+  test("a module that files used long ago makes room for one that files use now and then", async () => {
+    const files: Record<string, string> = { "early.ts": module("early"), "late.ts": module("late") };
+    for (let i = 0; i < ones; i++) {
+      files[fileName(i)] = testFile([...(i < 2 ? ["early"] : []), ...(i > 2 && i % 3 === 0 ? ["late"] : [])]);
+    }
+    files["last.test.ts"] = testFile([], print(`{ early: isKept("./early.ts"), late: isKept("./late.ts") }`));
+    // Room for one.
+    expect(await run(files, ["--isolate"], 13 * 1024)).toEqual([{ early: false, late: true }]);
+  });
+
+  test.each(isolateFlags)("%s: below the limit only the test files go", async flag => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < ones; i++) {
+      files[`one${i}.ts`] = module("one" + i);
+      files[fileName(i)] = testFile(["one" + i]);
+    }
+    files["last.test.ts"] = testFile(
+      [],
+      print(`{
+        kept: ${all}.filter(i => isKept("./one" + i + ".ts")),
+        keptTests: ${all}.filter(i => hasSourceMap("./" + String(i).padStart(2, "0") + ".test.ts")),
+      }`),
+    );
+    const [{ kept, keptTests }] = await run(files, [flag]);
+    expect(kept).toEqual(Array.from({ length: ones }, (_, i) => i));
+    expect(keptTests.length).toBeLessThanOrEqual(atMost(flag));
+  });
+
+  test("a module that went is transpiled again, and its source map with it", async () => {
+    const files: Record<string, string> = { "again.ts": module("again") };
+    for (let i = 0; i < ones; i++) {
+      files[fileName(i)] = testFile(
+        i % 5 === 0 ? ["again"] : [],
+        i % 5 === 4 ? print(`{ ${i}: isKept("./again.ts") }`) : "",
+      );
+    }
+    files["last.test.ts"] = testFile(["again"], print(`{ last: isKept("./again.ts") }`));
+    const printed = Object.assign({}, ...(await run(files, ["--isolate"], 0)));
+    expect(Object.keys(printed)).toEqual(["4", "9", "last"]);
+    expect(printed.last).toBe(true);
+    expect(Object.values(printed)).toContain(false);
+  });
+
+  // The modules below share the path of another one, and with it the source map.
+  test("a module with a query keeps its source map when the one without goes", async () => {
+    const files: Record<string, string> = { "both.ts": module("both"), [fileName(0)]: testFile(["both", "both.ts?v"]) };
+    for (let i = 1; i < 8; i++) files[fileName(i)] = testFile(["both.ts?v"]);
+    files["last.test.ts"] = testFile(
+      ["both.ts?v"],
+      print(`{ without: isCached("./both.ts"), sourceMap: hasSourceMap("./both.ts") }`),
+    );
+    expect(await run(files, ["--isolate"], 0)).toEqual([{ without: false, sourceMap: true }]);
+  });
+
+  // This and the next passed before there was a limit, and must go on to.
+  test("an imported test file keeps its source map", async () => {
+    const files: Record<string, string> = {};
+    const lib = `${module("lib")}
+      import { test } from "bun:test";
+      test("is also a test file", () => {});
+    `;
+    files["00-lib.test.ts"] = lib;
+    for (let i = 1; i < 8; i++) {
+      files[fileName(i)] = `
+        import { test, expect } from "bun:test";
+        import { fails } from "./00-lib.test.ts?x";
+        let stack; try { fails(); } catch (error) { ({ stack } = error); }
+        test("uses it", () => { expect(stack).toMatch(/00-lib\\.test\\.ts:4:/); Bun.gc(true); });
+      `;
+    }
+    using dir = tempDir("isolate-imported-test-file", files);
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      Object.keys(files).map(name => "./" + name),
+      env,
+    );
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the original of a mocked module keeps its source map when the module goes", async () => {
+    const files: Record<string, string> = { "mocked.ts": module("mocked"), [fileName(0)]: testFile(["mocked"]) };
+    for (let i = 1; i < 8; i++) {
+      files[fileName(i)] = testFile(
+        [],
+        `expect(failingLine((await import("./mocked")).fails)).toBe("4");`,
+        `vi.mock("./mocked", async importOriginal => ({ ...(await importOriginal()) }));`,
+      );
+    }
+    files["last.test.ts"] = testFile([], print("{}"));
+    expect(await run(files, ["--isolate"], 0)).toEqual([{}]);
+  });
+
+  test("the source maps of modules that are never cached go too", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < ones; i++) {
+      // The result of import.meta.glob() depends on more than the source.
+      files[`glob${i}.ts`] = module("glob" + i) + `export const files = import.meta.glob("./*.json");\n`;
+      files[fileName(i)] = testFile(["glob" + i]);
+    }
+    files["last.test.ts"] = testFile([], print(`{ kept: ${all}.filter(i => hasSourceMap("./glob" + i + ".ts")) }`));
+    const [{ kept }] = await run(files, ["--isolate"]);
+    expect(kept.length).toBeLessThanOrEqual(atMost());
+  });
+
+  test("CommonJS modules go as well", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < ones; i++) {
+      files[`one${i}.cts`] = module("one" + i)
+        .replace("export function fails", "exports.fails = function")
+        .replace("export const text", "exports.text");
+      files[fileName(i)] = testFile([], `expect(failingLine(require("./one${i}.cts").fails)).toBe("4");`);
+    }
+    files["last.test.ts"] = testFile([], print(`{ kept: ${all}.filter(i => isKept("./one" + i + ".cts")) }`));
+    const [{ kept }] = await run(files, ["--isolate"], 0);
+    expect(kept.length).toBeLessThanOrEqual(atMost());
+  });
+
+  test.each([
+    [
+      "module._compile() is overridden",
+      `
+      const Module = require("node:module");
+      const compile = Module.prototype._compile;
+      Module.prototype._compile = function (code, filename) { return compile.call(this, code, filename); };
+      require("./one.cts");`,
+    ],
+    [
+      "import() and require() of it overlap",
+      `const pending = import("./one.cts"); require("./one.cts"); await pending;`,
+    ],
+  ])("the source map of a module goes when %s", async (_, load) => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < ones; i++) {
+      files[`one${i}.cts`] = module("one" + i)
+        .replace("export function fails", "exports.fails = function")
+        .replace("export const text", "exports.text");
+      files[fileName(i)] = testFile([], load.replaceAll("one.cts", `one${i}.cts`));
+    }
+    files["last.test.ts"] = testFile([], print(`{ kept: ${all}.filter(i => hasSourceMap("./one" + i + ".cts")) }`));
+    const [{ kept }] = await run(files, ["--isolate"], 0);
+    expect(kept.length).toBeLessThanOrEqual(atMost());
+  });
+
+  // This too.
+  test("--coverage reports the modules of every file", async () => {
+    const files: Record<string, string> = { "shared.ts": module("shared") };
+    for (let i = 0; i < 6; i++) {
+      files[`one${i}.ts`] = module("one" + i);
+      files[fileName(i)] = testFile(i % 3 === 0 ? ["one" + i, "shared"] : ["one" + i]);
+    }
+    const reports: string[] = [];
+    for (const maxBytes of ["0", undefined]) {
+      using dir = tempDir("isolate-bounded-coverage", files);
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate", "--coverage", "--coverage-reporter=lcov", "--coverage-dir=coverage"],
+        [],
+        { ...env, BUN_TEST_ISOLATION_SOURCE_CACHE_MAX_BYTES: maxBytes },
+      );
+      expect(stderr).toContain(" 6 pass");
+      expect(exitCode).toBe(0);
+      reports.push(fs.readFileSync(join(String(dir), "coverage", "lcov.info"), "utf8"));
+    }
+    expect(reports[0]).toContain("SF:one0.ts\nFNF:1\nFNH:1\n");
+    expect(reports[0]).toBe(reports[1]);
+  });
+});

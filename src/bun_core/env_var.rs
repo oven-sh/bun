@@ -162,6 +162,8 @@ platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows
 // `process.on('exit')` checks (e.g. common.mustCall) see completed async work.
 // Opt-in for the vendored node:test suite and run() children.
 new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
+// `IsolatedModuleCache::didFinishFile()`.
+new!(pub BUN_TEST_ISOLATION_SOURCE_CACHE_MAX_BYTES: unsigned, "BUN_TEST_ISOLATION_SOURCE_CACHE_MAX_BYTES", { default: 128 * 1024 * 1024 });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
 new!(pub CI: boolean, "CI", {});

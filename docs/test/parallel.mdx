@@ -84,6 +84,8 @@ Isolating every file is how Jest and Vitest behave by default. It makes "passes 
 
 To keep that cost low, Bun caches transpiled source and bytecode at the process level and shares them across globals. The second file to import a module skips reading, transpiling and parsing it and goes straight to evaluation. Only the module's top-level code runs again.
 
+Of the modules that the last file did not use, each process keeps up to 128 MB of sources. Beyond that, Bun forgets the modules that the fewest files imported, the longest ago. The next file to import one reads and transpiles it again. With `--coverage`, it keeps them all.
+
 Without `--isolate` (the default), all files share one global and one module registry. That is the fastest mode and is fine for suites whose files don't leak state into each other.
 
 ### `--isolate=modules`

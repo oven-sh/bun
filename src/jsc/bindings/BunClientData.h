@@ -306,8 +306,9 @@ public:
     // avoid pulling ZigSourceProvider.h into this header; the cache class
     // downcasts on lookup. Values hold strong refs by design: this map is the
     // only owner once the previous global is GC'd, so a weak map would empty
-    // after every swap.
+    // after every swap. IsolatedModuleCache::didFinishFile() bounds it.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+    uint32_t isolationFileNumber { 0 };
     Vector<Bun::IsolatedInternalModule> isolationInternalModules;
 
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope) final;

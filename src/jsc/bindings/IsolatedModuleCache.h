@@ -80,6 +80,11 @@ public:
 
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);
+
+    // Between two files: drops the main modules, which are never looked up again, and all but `maxBytes` of the sources that
+    // the finished file didn't use and that only the cache keeps alive. What was used in the fewest files, the longest ago, goes
+    // first.
+    static void didFinishFile(JSC::VM&, size_t maxBytes);
 };
 
 // bun:internal-for-testing — returns the cached provider's sourceType name

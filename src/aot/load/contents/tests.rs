@@ -1646,7 +1646,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
-            Esm,
+            CommonJs,
         ),
         (
             &[
@@ -1677,7 +1677,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
-            Esm,
+            CommonJs,
         ),
         (
             &[
@@ -1685,7 +1685,7 @@ fn file_found_for_a_load_is_read_as_that_load_reads_it() {
                 ("setup.cjs", NO_KIND),
             ],
             "setup.cjs",
-            Esm,
+            CommonJs,
         ),
     ];
     for (files, asked, format) in rows {

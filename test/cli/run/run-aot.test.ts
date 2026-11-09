@@ -647,6 +647,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
     "imports-cjs.mjs": 1,
     "imports-js-of-commonjs-package.mjs": 1,
     "imports-cjs-of-commonjs-package.mjs": 1,
+    "imports-cjs-of-package-without-type.mjs": 1,
     "imports-dynamically.mjs": 4,
     "requires.cjs": 4,
   })) {
@@ -663,9 +664,12 @@ describe.skipIf(!supported)("bun run --aot", () => {
           "commonjs-package/entry.cjs": text,
           "module-package/package.json": `{ "type": "module" }`,
           "module-package/entry.cjs": text,
+          "package-without-type/package.json": `{ "name": "package-without-type" }`,
+          "package-without-type/entry.cjs": text,
           "imports-cjs.mjs": `import "./imported.cjs";`,
           "imports-js-of-commonjs-package.mjs": `import "./commonjs-package/entry.js";`,
           "imports-cjs-of-commonjs-package.mjs": `import "./commonjs-package/entry.cjs";`,
+          "imports-cjs-of-package-without-type.mjs": `import "./package-without-type/entry.cjs";`,
           "imports-dynamically.mjs": `
             await import("./imported.cjs");
             await import("./commonjs-package/entry.js");

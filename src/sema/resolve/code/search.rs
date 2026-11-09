@@ -180,7 +180,19 @@ impl<'h> Resolver<'h> {
     }
 
     pub(crate) fn module_type_where_imported(&self, path: &[u8]) -> DeclaredModuleType {
-        let of_package = self.package_module_type(path);
+        let manifest = if path.starts_with(b"/") {
+            self.module_type_manifest(dirname::<Posix>(path))
+        } else {
+            None
+        };
+        let of_package = match manifest {
+            Some(manifest) => manifest.module_type,
+            // Without a package, runtime imports retain the extension's format.
+            None if self.code_options().builds_executable => {
+                module_type_from_extension(path, DeclaredModuleType::Unknown)
+            }
+            None => DeclaredModuleType::Unknown,
+        };
         let is_contradicted = self.code_options().builds_executable
             && of_package == DeclaredModuleType::CommonJs
             && self.declared_module_type(path) == DeclaredModuleType::Esm;

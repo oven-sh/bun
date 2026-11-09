@@ -290,7 +290,7 @@ Bun reads and writes each snapshot file in the format of the runner that created
 
 Bun's format and `pretty-format` print most values the same way. They differ on functions (`[Function: name]` in Bun's format, `[Function]` in Jest's and Vitest's), classes, mock functions, regular expressions, symbol keys, React elements and a few others.
 
-In a file in Jest's format, the stored text also has a `Cause:` line for each error in the `cause` chain, as in Jest 30. Bun has one `Error` for your tests and for the runtime, and Jest on Node.js has two. So a `Proxy` of an error that the runtime created, such as a file system error, gets a `Cause:` line in Bun and none in Jest.
+In a file in Jest's format, the stored text also has a `Cause:` line for each error in the `cause` chain, as in Jest 30. Bun stores at most 100 of these lines, and it stops when a cause repeats. Bun has one `Error` for your tests and for the runtime, and Jest on Node.js has two. So a `Proxy` of an error that the runtime created, such as a file system error, gets a `Cause:` line in Bun and none in Jest.
 
 Jest 29 and earlier versions of Bun stored the message alone. If such an entry fails because of a `Cause:` line, run `bun test --update-snapshots` to rewrite it.
 

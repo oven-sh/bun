@@ -654,11 +654,11 @@ describe("document type declaration", () => {
     // space (#x20) characters. A \n, \t or \r from a character reference
     // is not a space and stays at either edge.
     const decls = (type: string) => `<!DOCTYPE r [<!ATTLIST r v ${type} #IMPLIED>]>`;
-    expect(XML.parse(`${decls("NMTOKEN")}<r v="a&#xA;"/>`)).toEqual({ r: { "@v": "a\n" } });
-    expect(XML.parse(`${decls("NMTOKEN")}<r v="&#x9;a&#xD;"/>`)).toEqual({ r: { "@v": "\ta\r" } });
-    expect(XML.parse(`${decls("NMTOKENS")}<r v="a&#xA;"/>`)).toEqual({ r: { "@v": "a\n" } });
-    expect(XML.parse(`${decls("ID")}<r v="a&#xA;"/>`)).toEqual({ r: { "@v": "a\n" } });
-    expect(XML.parse(`${decls("(a|b)")}<r v="a&#xA;"/>`)).toEqual({ r: { "@v": "a\n" } });
+    const types = ["ID", "IDREF", "IDREFS", "ENTITY", "ENTITIES", "NMTOKEN", "NMTOKENS", "NOTATION (x)", "(a|b)"];
+    for (const type of types) {
+      expect(XML.parse(`${decls(type)}<r v="a&#xA;"/>`)).toEqual({ r: { "@v": "a\n" } });
+      expect(XML.parse(`${decls(type)}<r v="&#x9;a&#xD;"/>`)).toEqual({ r: { "@v": "\ta\r" } });
+    }
     // Spaces around the referenced character are still trimmed, and a
     // referenced #x20 is a space like any other.
     expect(XML.parse(`${decls("NMTOKEN")}<r v=" &#xA;a "/>`)).toEqual({ r: { "@v": "\na" } });
@@ -666,6 +666,7 @@ describe("document type declaration", () => {
     expect(XML.parse(`${decls("NMTOKEN")}<r v="&#x20;&#xA;  a  &#xA;&#x20;"/>`)).toEqual({ r: { "@v": "\n a \n" } });
     // A default value declared with a tokenized type gets the same treatment.
     expect(XML.parse(`<!DOCTYPE r [<!ATTLIST r v NMTOKEN " a&#xA; ">]><r/>`)).toEqual({ r: { "@v": "a\n" } });
+    expect(XML.parse(`<!DOCTYPE r [<!ATTLIST r v NMTOKEN #FIXED " a&#xA; ">]><r/>`)).toEqual({ r: { "@v": "a\n" } });
     // CDATA keeps everything.
     expect(XML.parse(`${decls("CDATA")}<r v=" a&#xA; "/>`)).toEqual({ r: { "@v": " a\n " } });
   });
@@ -1056,9 +1057,9 @@ describe("XML.stringify", () => {
   });
 
   test("deep values are a catchable error", () => {
-    // Must overflow on every build: release frames are far smaller than
-    // debug/ASAN ones, so use a depth no native stack survives.
-    const depth = 1_000_000;
+    // Must overflow on every build. A release build on an 18 MB stack (the
+    // darwin and Windows main thread) overflows below 65_000 levels.
+    const depth = 200_000;
     let deep: any = "x";
     for (let i = 0; i < depth; i++) deep = { a: deep };
     expect(() => XML.stringify(deep)).toThrow(RangeError);
@@ -1066,5 +1067,5 @@ describe("XML.stringify", () => {
     let node: any = { name: "a", children: ["x"] };
     for (let i = 0; i < depth; i++) node = { name: "a", children: [node] };
     expect(() => XML.stringify(node)).toThrow(RangeError);
-  }, 30_000); // a debug build needs over 10 s for the two million allocations
+  });
 });

@@ -759,8 +759,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_values, (JSGlobalObje
             preventCancel = preventCancelValue.toBoolean(lexicalGlobalObject);
     }
 
-    // next() returns a promise, so a source that fails to start is its rejection.
-    stream->materializeOrError(lexicalGlobalObject);
+    stream->materializeIfNeeded(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto* domGlobalObject = defaultGlobalObject(lexicalGlobalObject);
